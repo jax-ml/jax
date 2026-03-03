@@ -123,8 +123,12 @@ class VerificationCache(CacheInterface):
     self._verified_keys: set[str] = set()
 
   @property
-  def _path(self):
+  def _path(self):  # pyrefly: ignore[bad-override]
     return self._base_cache._path
+
+  @_path.setter
+  def _path(self, value):
+    self._base_cache._path = value
 
   def get(self, key: str) -> bytes | None:
     if key not in self._verified_keys:

@@ -2048,7 +2048,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 
     hlo.return_([*mlir.flatten_ir_values(out_tokens),
                  *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
-                 *mlir.flatten_ir_values(new_z)])
+                 *mlir.flatten_ir_values(new_z)])  # pyrefly: ignore[bad-argument-type]
 
   outputs = mlir.unflatten_ir_values_like_types(while_op.results, loop_carry_types)
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])

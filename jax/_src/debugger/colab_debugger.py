@@ -30,6 +30,8 @@ if colab_lib.IS_COLAB_ENABLED:
   from google.colab import output
 try:
   import pygments
+  import pygments.lexers
+  import pygments.formatters
   IS_PYGMENTS_ENABLED = True
 except ImportError:
   IS_PYGMENTS_ENABLED = False

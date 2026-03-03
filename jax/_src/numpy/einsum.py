@@ -299,7 +299,7 @@ def einsum(
       for d in np.shape(op) if not core.is_constant_dim(d)
   }
   if not non_constant_dim_types:
-    contract_path = opt_einsum.contract_path
+    contract_path: Any = opt_einsum.contract_path
   else:
     ty = next(iter(non_constant_dim_types))
     contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
@@ -419,8 +419,10 @@ def einsum_path(
   .. _opt_einsum: https://github.com/dgasmith/opt_einsum
   """
   if isinstance(optimize, bool):
-    optimize = 'optimal' if optimize else Unoptimized()
-  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
+    optimize2: Any = 'optimal' if optimize else Unoptimized()
+  else:
+    optimize2 = optimize
+  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize2)
 
 def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))

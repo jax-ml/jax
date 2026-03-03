@@ -299,7 +299,9 @@ def _approx_top_k_lowering(ctx, operand, *, k,
 
   init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))
   init_val_array = _get_init_val_literal(ctx.avals_in[0].dtype, is_max_k)
-  init_val = mlir.ir_constant(init_val_array.reshape(()))
+  init_vals = mlir.flatten_ir_values(
+      [mlir.ir_constant(init_val_array.reshape(()))
+  ])
 
   backend_config = {
     "reduction_dim" : mlir.i64_attr(reduction_dimension),
@@ -313,16 +315,19 @@ def _approx_top_k_lowering(ctx, operand, *, k,
   if all(core.is_constant_shape(aval_out.shape) for aval_out in ctx.avals_out):
     result_shapes = None
   else:
-    result_shapes = [
+    result_shapes = mlir.flatten_ir_values(
         mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
-        for aval_out in ctx.avals_out]
+        for aval_out in ctx.avals_out
+    )
 
   if core.is_constant_dim(k):
     backend_config["top_k"] = mlir.i64_attr(k)
     out = mlir.custom_call(
         "ApproxTopK",
-        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-        operands=[operand, iota, init_val, init_arg],
+        result_types=mlir.flatten_ir_types(
+            mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
+        ),
+        operands=[operand, iota, *init_vals, init_arg],
         called_computations=[comparator.name.value],
         backend_config=backend_config,
         result_shapes=result_shapes)
@@ -330,8 +335,10 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out = mlir.custom_call(
         "stablehlo.dynamic_approx_top_k",
-        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-        operands=[operand, iota, init_val, init_arg, k_value],
+        result_types=mlir.flatten_ir_types(
+            mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
+        ),
+        operands=[operand, iota, *init_vals, init_arg, k_value],
         called_computations=[comparator.name.value],
         backend_config=backend_config,
         result_shapes=result_shapes)

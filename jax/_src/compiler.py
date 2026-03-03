@@ -334,7 +334,7 @@ def backend_compile_and_load(
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
     if isinstance(backend, _jax.CompileOnlyPyClient):
       if host_callbacks:
-        return backend.compile(
+        return backend.compile(  # type: ignore
             module,
             executable_devices=executable_devices,  # type: ignore
             compile_options=options,

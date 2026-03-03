@@ -83,6 +83,11 @@ class custom_transpose:
 
   @traceback_util.api_boundary
   def __call__(self, out_types, res_arg, lin_arg):
+    if self.transpose is None:
+      raise ValueError(
+          "Missing a transpose function. Use @def_transpose to define one."
+      )
+
     _, res_tree = tree_flatten(res_arg)
     _, lin_tree = tree_flatten(lin_arg)
     args_flat, in_tree = tree_flatten((res_arg, lin_arg))

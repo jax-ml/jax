@@ -1200,7 +1200,7 @@ def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
   def lower_constant(ctx: mlir.LoweringRuleContext, *,
                      i: int) -> Sequence[ir.Value]:
     v = mlir.ir_constant(np.int32(i))
-    return [v]
+    return mlir.flatten_ir_values([v])
 
   platform_rules: dict[str, mlir.LoweringRule] = {}
   default_rule = None

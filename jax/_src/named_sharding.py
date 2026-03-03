@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
-from typing import Any, Union
+from typing import Any, Union, overload
 
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
@@ -286,6 +286,18 @@ def flatten_spec(spec):
   return out
 
 
+@overload
+def get_array_mapping(axis_resources: PartitionSpec) -> ArrayMapping:
+  ...
+
+@overload
+def get_array_mapping(axis_resources: AUTO) -> AUTO:
+  ...
+
+@overload
+def get_array_mapping(axis_resources: UnspecifiedValue) -> UnspecifiedValue:
+  ...
+
 def get_array_mapping(
     axis_resources: PartitionSpec | AUTO | UnspecifiedValue
 ) -> ArrayMappingOrAutoOrUnspecified:
@@ -468,11 +480,11 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
     reverse_map[index].append(axis)
     if index > max_index:
       max_index = index
-  partitions = []
+  partitions: list[MeshAxisName | None] = []
   for i in range(max_index + 1):
     axis = reverse_map[i]
     if axis:
-      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))
+      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))  # pytype: disable=container-type-mismatch
     else:
       partitions.append(None)
   return PartitionSpec(*partitions)

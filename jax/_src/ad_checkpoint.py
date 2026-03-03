@@ -1037,21 +1037,23 @@ class RematTraced(VJPHiPrimitive):
     primals_out, f_lin = api.linearize(self.traced, *primals)
     return primals_out, primals
 
-  def linearized(self, primals, *tangents):
+  def linearized(self, primals, *tangents):  # pyrefly: ignore[bad-param-name-override]
     _, f_lin = api.linearize(self.traced, *primals)
     return f_lin(*tangents)
 
 class CheckpointName(VJPHiPrimitive):
+  name: str
+
   def __init__(self, name, aval):
     self.in_avals = aval,
     self.out_aval = aval
     self.params = dict(name=name)
     super().__init__()
 
-  def expand(self, x):
+  def expand(self, x):  # pyrefly: ignore[bad-override]
     return x
 
-  def remat(self, policy, x):
+  def remat(self, policy, x):  # pyrefly: ignore[bad-override]
     saveable = self.name in policy
     rem = partial(primal_left_tangent_right, x) if saveable else lambda x: x
     return x, rem

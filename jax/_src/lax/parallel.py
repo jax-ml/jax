@@ -1477,7 +1477,7 @@ def _ragged_all_to_all_lowering(
   if not all(split_count == len(g) for g in replica_groups):
     raise ValueError('Replica groups must be equally sized')
 
-  ragged_all_to_all_attrs = {
+  ragged_all_to_all_attrs: dict[str, ir.Attribute] = {
       "replica_groups": _replica_groups_hlo(replica_groups)
   }
   is_spmd = isinstance(

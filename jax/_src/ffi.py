@@ -177,7 +177,7 @@ def include_dir() -> str:
 
 
 def _aval_shape(aval: core.AbstractValue) -> Shape:
-  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pytype: disable=attribute-error
+  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
 
 
 def _convert_layout_for_lowering(
@@ -676,7 +676,7 @@ def ffi_call_lowering(
                       operand_output_aliases=dict(input_output_aliases),
                       api_version=custom_call_api_version,
                       backend_config=legacy_backend_config)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))  # pyrefly: ignore[bad-return]
 
 
 def ffi_batching_rule(

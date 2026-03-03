@@ -386,7 +386,7 @@ def pass_scalars_as_refs(
   if copy_to_smem:
     smem_alloc = [
         state.AbstractRef(
-            jax_core.ShapedArray((1,), aval.dtype),
+            jax_core.ShapedArray((1,), aval.dtype),  # pyrefly: ignore[missing-attribute]
             memory_space=MemorySpace.SMEM,
         )
         for aval in scalar_const_avals
@@ -416,7 +416,7 @@ def pass_scalars_as_refs(
   # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
   scalar_const_trace_avals = [
       state.AbstractRef(
-          jax_core.ShapedArray((1,), aval.dtype),
+          jax_core.ShapedArray((1,), aval.dtype),  # pyrefly: ignore[missing-attribute]
           memory_space=MemorySpace.HBM if copy_to_smem else MemorySpace.SMEM,
       )
       for aval in scalar_const_avals

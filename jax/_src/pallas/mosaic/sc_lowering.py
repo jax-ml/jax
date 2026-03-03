@@ -257,7 +257,7 @@ def lower_pipelined_jaxpr_into_module(
     )
     pipeline.emit_pipeline(
         body_fn,
-        grid=sequential_grid,
+        grid=sequential_grid,  # pyrefly: ignore[bad-argument-type]
         in_specs=map(make_block_spec, in_block_mappings),
         out_specs=map(make_block_spec, out_block_mappings),
         tiling=tiling,
@@ -345,7 +345,6 @@ def lower_pipelined_jaxpr_into_module(
         kernel_type=kernel_type,
         mesh=mesh,
     )
-  return module
 
 
 def lower_jaxpr_into_module(
@@ -359,7 +358,7 @@ def lower_jaxpr_into_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
-) -> ir.Module:
+):
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(

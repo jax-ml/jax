@@ -59,8 +59,10 @@ def remat_transform(policy, f, *args):
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, rs))
 
 class RematTracer(core.Tracer):
+  _trace: RematTrace  # pyrefly: ignore[bad-override]
+
   def __init__(self, trace, x, jaxpr_tracer):
-    self._trace = trace  # type: ignore
+    self._trace = trace  # pytype: disable=name-error
     self.val = x
     self.tracer = jaxpr_tracer
 
@@ -139,4 +141,4 @@ def _remat_jaxpr(jaxpr, policy):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
   fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, len(rem_consts)
+  return fwd_jaxpr, rem_jaxpr, len(rem_consts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385

@@ -17,6 +17,7 @@ from collections.abc import Callable, Hashable, Sequence, Set
 import enum
 from functools import partial
 import inspect
+import itertools
 from math import prod
 import operator as op
 from typing import Any, TypeVar, Union, cast, overload
@@ -931,7 +932,7 @@ def _shardy_shard_map_sharding(
 
 def _get_token_sharding(
     ctx: mlir.LoweringRuleContext, mesh
-  ) -> ir.Attribute:
+  ) -> sharding_impls.SdyArray:
   ns = _make_scoped_manual_sharding(ctx, mesh, P())
   return ns._to_sdy_sharding(0)
 
@@ -1024,19 +1025,21 @@ def _shard_map_lowering_shardy(
         config._check_vma(check_vma)):
     dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(  # type: ignore
         block.arguments, [num_dim_vars, num_tokens, num_const_args])
-    block_const_lowering = {
-        (id(c), aval): ca
-        for c, aval, ca in zip(const_args, const_avals, const_arg_values)
-    }
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,
         mlir.TokenSet(zip(ctx.tokens_in.effects(), token_arg_values)),
         (), *in_args,
         dim_var_values=dim_var_values,
-        const_lowering=block_const_lowering,
+        const_lowering={
+            (id(c), aval): ca
+            for c, aval, ca in zip(const_args, const_avals, const_arg_values)
+        },
         outer_traceback=_jax.Traceback())
-    sdy.ReturnOp([ir.Value(x) for x in (*[v for _, v in tokens_out.items()],
-                                        *out_nodes_)])
+    sdy.ReturnOp(
+        mlir.flatten_ir_values(
+            itertools.chain((v for _, v in tokens_out.items()), out_nodes_)
+        )
+    )
     num_tokens = len(tokens_out.effects())
     tokens_out = tokens_out.update_tokens(mlir.TokenSet(zip(
         ctx.tokens_in.effects(), manual_computation_op.results[:num_tokens])))

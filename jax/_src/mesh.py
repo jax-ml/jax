@@ -251,6 +251,7 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
+  _size: int
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
               axis_names: str | Sequence[MeshAxisName],
@@ -354,7 +355,7 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
         for name, size in safe_zip(self.axis_names, self.devices.shape))
 
   @functools.cached_property
-  def shape_tuple(self):
+  def shape_tuple(self):  # pyrefly: ignore[bad-override]
     return tuple(
         (name, size)
         for name, size in safe_zip(self.axis_names, self.devices.shape))
@@ -538,7 +539,7 @@ class AbstractMesh(BaseMesh):
     return collections.OrderedDict(self.shape_tuple)
 
   @functools.cached_property
-  def shape_tuple(self):
+  def shape_tuple(self):  # pyrefly: ignore[bad-override]
     return tuple(
         (name, size)
         for name, size in safe_zip(self.axis_names, self.axis_sizes))

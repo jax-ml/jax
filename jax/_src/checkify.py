@@ -87,12 +87,12 @@ class JaxException(Exception):
   def __init_subclass__(cls):
     jtu.register_pytree_node_class(cls)
 
-  def tree_flatten(self):
+  def tree_flatten(self, /):
     return ([], self.traceback_info)
 
   @classmethod
-  def tree_unflatten(cls, metadata, payload):
-    del payload
+  def tree_unflatten(cls, metadata, payload, /):
+    del payload  # Unused.
     return cls(metadata)
 
   def get_effect_type(self) -> ErrorEffect:
@@ -134,7 +134,8 @@ class NaNError(JaxException):
     return ([], (self.traceback_info, self.prim))
 
   @classmethod
-  def tree_unflatten(cls, metadata, _):
+  def tree_unflatten(cls, metadata, payload):
+    del payload
     return cls(*metadata)
 
   def get_effect_type(self):
@@ -156,7 +157,7 @@ class OOBError(JaxException):
 
   @classmethod
   def tree_unflatten(cls, metadata, payload):
-    return cls(*metadata, payload[0])
+    return cls(*metadata, payload=payload[0])
 
   def __str__(self):
     return (f'out-of-bounds indexing for array of '
@@ -227,11 +228,11 @@ class Error:
 
   def get_exception(self) -> JaxException | None:
     """Returns Python exception if error happened, None if no error happened."""
-    if any(map(np.shape, self._pred.values())):
+    if any(np.shape(v) for v in self._pred.values()):
       return self._get_batched_exception()
     else:
-      min_code = None
-      cur_effect = None
+      min_code: Int | None = None
+      cur_effect: ErrorEffect | None = None
       for error_effect, code in self._code.items():
         if self._pred[error_effect]:
           if min_code is None or code < min_code:
@@ -255,8 +256,8 @@ class Error:
     shape = np.shape(list(self._pred.values())[0])
     error_mapping = {}
     for idx in np.ndindex(*shape):
-      min_code = None
-      cur_effect = None
+      min_code: Int | None = None
+      cur_effect: ErrorEffect | None = None
       for error_effect, code in self._code.items():
         if self._pred[error_effect][idx]:   # type: ignore
           if min_code is None or code[idx] < min_code:  # type: ignore[index]
