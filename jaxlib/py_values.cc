@@ -818,8 +818,8 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[dtypes.np_intc.ptr()] = HandleNumpyScalar<int32_t>;
     return p;
   };
-  const PyObjectDeviceHandlerMap& handlers =
-      xla::SafeStaticInit<PyObjectDeviceHandlerMap>(init_fn);
+  static xla::SafeStatic<PyObjectDeviceHandlerMap> handlers_init;
+  const PyObjectDeviceHandlerMap& handlers = handlers_init.Get(init_fn);
 
   if (arg.type().ptr() == PyArray::type().ptr()) {
     auto array = nb::borrow<PyArray>(arg);
@@ -866,9 +866,11 @@ using ToPyArgSignatureHandler =
 
 absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                                                      bool jax_enable_x64) {
+  static xla::SafeStatic<
+      absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>
+      handlers_init;
   const absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>& handlers =
-      xla::SafeStaticInit<
-          absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>([] {
+      handlers_init.Get([] {
         auto p = std::make_unique<
             absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>>();
 

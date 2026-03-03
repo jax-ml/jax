@@ -173,7 +173,8 @@ NamedSharding::NamedSharding(nb::object mesh, nb_class_ptr<PartitionSpec> spec,
     nb::module_ si = nb::module_::import_("jax._src.named_sharding");
     return std::make_unique<nb::object>(si.attr("check_pspec"));
   };
-  nb::object& check_pspec = xla::SafeStaticInit<nb::object>(init_fn);
+  static xla::SafeStatic<nb::object> check_pspec_init;
+  nb::object& check_pspec = check_pspec_init.Get(init_fn);
   check_pspec(mesh_, spec_);
 }
 

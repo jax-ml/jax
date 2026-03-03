@@ -427,7 +427,8 @@ nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
   static auto* lru_list = new CacheT::LRUList(4096);
   static auto* cache = new CacheT(lru_list);
 
-  const nb::object& shaped_array = xla::SafeStaticInit<nb::object>([]() {
+  static xla::SafeStatic<nb::object> shaped_array_init;
+  const nb::object& shaped_array = shaped_array_init.Get([]() {
     nb::object jax_core;
     try {
       jax_core = nb::module_::import_("jax.core");

@@ -296,7 +296,8 @@ class PmapFunction {
                                   size_t nargs, PyObject* kwnames);
 
   nb::object PythonSignature() {
-    const nb::module_& inspect = xla::SafeStaticInit<nb::module_>([]() {
+    static xla::SafeStatic<nb::module_> inspect_init;
+    const nb::module_& inspect = inspect_init.Get([]() {
       return std::make_unique<nb::module_>(nb::module_::import_("inspect"));
     });
     return inspect.attr("signature")(fun_);
