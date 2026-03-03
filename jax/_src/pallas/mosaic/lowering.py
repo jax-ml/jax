@@ -341,7 +341,7 @@ def _dtype_to_ir_type(dtype: DTypeLike,
     dtype = BOOL_MEMREF_TYPE
   # TODO(justinfu): Remove after mosaic supports unsigned types.
   # This conversion makes mosaic interpret all unsigned types as signed types.
-  type = mlir.dtype_to_ir_type(jnp.dtype(dtype))
+  type =  mlir.dtype_to_ir_type(jnp.dtype(dtype))
   if isinstance(type, ir.IntegerType):
     return ir.IntegerType.get_signless(type.width)
   else:
@@ -2229,14 +2229,6 @@ def _dot_general_lowering_rule(
     preferred_element_type,
     **_,
 ):
-  for aval in ctx.avals_in:
-    if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
-      raise NotImplementedError(
-          f"Unsigned integer dtype {aval.dtype} is not supported for"
-          " dot_general (matmul) on the Pallas Mosaic TPU backend because"
-          " dot_general interprets all integer inputs as signed. Consider"
-          " casting to a signed type before the dot operation."
-      )
   (lhs_dims, rhs_dims), _ = dimension_numbers
   (aval_out,) = ctx.avals_out
   out_type = ctx.aval_to_ir_type(aval_out)
