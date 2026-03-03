@@ -813,8 +813,9 @@ def _export_lowered(
 
   cur_mesh = None
   if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain.from_iterable([
-        all_in_shardings, lowering.compile_args["out_shardings"]]):
+    for sharding in itertools.chain(
+        all_in_shardings, lowering.compile_args["out_shardings"]
+    ):
       if isinstance(sharding, sharding_impls.NamedSharding):
         cur_mesh = sharding.mesh
         break

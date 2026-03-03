@@ -2236,8 +2236,7 @@ def lower_sharding_computation(
   number of out_avals might not be known at that time and
   lower_sharding_computation calculates the number of out_avals so it can apply
   the singleton UNSPECIFIED to all out_avals."""
-  auto_spmd_lowering = check_if_any_auto(
-      it.chain.from_iterable([in_shardings, out_shardings]))
+  auto_spmd_lowering = check_if_any_auto(it.chain(in_shardings, out_shardings))
 
   all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
 
@@ -3054,7 +3053,7 @@ class UnloadedMeshExecutable:
 
     mesh = None
     if auto_spmd_lowering:
-      for i in it.chain.from_iterable([in_shardings, out_shardings]):
+      for i in it.chain(in_shardings, out_shardings):
         if isinstance(i, AUTO):
           mesh = i.mesh
           break
