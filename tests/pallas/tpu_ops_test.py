@@ -912,6 +912,22 @@ class OpsTest(ptu.PallasTPUTest):
         jax.nn.sigmoid(x),
     )
 
+  @parameterized.parameters(jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32)
+  def test_unsigned_dtype_dot_raises(self, dtype):
+    k = 256
+    packing = 32 // jnp.iinfo(dtype).bits
+    lhs = jnp.zeros((8 * packing, k), dtype=dtype)
+    rhs = jnp.zeros((k, 128), dtype=dtype)
+
+    def kernel(lhs_ref, rhs_ref, o_ref):
+      o_ref[...] = pl.dot(lhs_ref[...], rhs_ref[...])
+
+    out_shape = jax.ShapeDtypeStruct((8 * packing, 128), dtype)
+    with self.assertRaisesRegex(
+        NotImplementedError, "Unsigned integer dtype.*dot_general.*matmul"
+    ):
+      self.pallas_call(kernel, out_shape=out_shape)(lhs, rhs)
+
 
 if __name__ == "__main__":
   absltest.main()
