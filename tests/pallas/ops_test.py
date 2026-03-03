@@ -16,6 +16,8 @@ from collections.abc import Callable, Sequence
 import functools
 import itertools
 import math
+import re
+import subprocess
 import sys
 from typing import Any
 import unittest
