@@ -186,7 +186,7 @@ possible. The `git rebase -i` command might be useful to this end.
 
 ### Linting and type-checking
 
-JAX uses [mypy](https://mypy.readthedocs.io/) and
+JAX uses [Pyrefly](https://pyrefly.org/) and
 [ruff](https://docs.astral.sh/ruff/) to statically test code quality; the
 easiest way to run these checks locally is via the
 [pre-commit](https://pre-commit.com/) framework:
