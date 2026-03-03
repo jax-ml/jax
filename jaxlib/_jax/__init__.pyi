@@ -17,7 +17,7 @@ import enum
 import inspect
 import traceback
 import types
-from typing import Annotated, Any, TypeAlias, overload
+from typing import Annotated, Any, Self, TypeAlias, overload
 
 import numpy
 from numpy.typing import NDArray
@@ -1376,7 +1376,7 @@ class Traceback:
 
   @property
   def frames(self) -> list[Frame]: ...
-  def __add__(self, other: object) -> object:
+  def __add__(self, other: Self) -> Self:
     """Concatenates two tracebacks."""
 
   def raw_frames(self) -> tuple[list[types.CodeType], list[int]]: ...

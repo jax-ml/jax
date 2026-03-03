@@ -426,7 +426,8 @@ void Traceback::Register(nb::module_& m) {
         }
         return traceback;
       },
-      nb::is_method(), nb::arg("other"), "Concatenates two tracebacks.");
+      nb::is_method(), nb::arg("other"), "Concatenates two tracebacks.",
+      nb::sig("def __add__(self, other: typing.Self) -> typing.Self"));
 
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
