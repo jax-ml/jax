@@ -2483,7 +2483,7 @@ def _make_reduce_harness(name, *,
                          dtype=np.float32):  # The dtype of first operand
   def reducer(*args):
     init_val = np.array(init_value, dtype=dtype)
-    init_values = [init_val]
+    init_values: list[np.ndarray] = [init_val]
     if nr_operands == 2:
       init_values.append(np.array(0, dtype=np.int32))
     return lax.reduce(args[0:nr_operands], tuple(init_values),

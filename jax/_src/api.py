@@ -1845,8 +1845,8 @@ def _cpp_pmap(
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
-          input_devices=in_handler.local_devices,
-          input_indices=in_handler.input_indices,
+          input_devices=in_handler.local_devices,  # pyrefly: ignore[bad-argument-type]
+          input_indices=in_handler.input_indices,  # pyrefly: ignore[bad-argument-type]
           input_array_shardings=in_handler.in_shardings,
           out_avals=out_handler.out_avals,
           out_array_shardings=out_array_shardings,
@@ -2087,6 +2087,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
                                (in_tree, out_tree), out_pvals), consts)
   if has_aux:
     [aux] = maybe_aux
+    assert aux_tree is not None
     return out_primal_py, lifted_jvp, tree_unflatten(aux_tree, aux)
   else:
     [] = maybe_aux

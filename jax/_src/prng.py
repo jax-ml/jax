@@ -177,7 +177,7 @@ class PRNGKeyArray(Array):
     self._base_array = key_data
 
   def _replace_with(self, value: PRNGKeyArray):
-    self._base_array._replace_with(value._base_array)
+    self._base_array._replace_with(value._base_array)  # pyrefly: ignore[missing-attribute]
 
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
@@ -217,7 +217,7 @@ class PRNGKeyArray(Array):
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
-  device = property(op.attrgetter('_base_array.device'))
+  device = property(op.attrgetter('_base_array.device'))  # pyrefly: ignore[bad-override]
   devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
   is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
   is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
@@ -319,7 +319,7 @@ class PRNGKeyArray(Array):
   def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
   @property
   def T(self)                   -> PRNGKeyArray: assert False
-  def __getitem__(self, _)      -> PRNGKeyArray: assert False
+  def __getitem__(self, key)    -> PRNGKeyArray: assert False
   def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
   def ravel(self, *_, **__)     -> PRNGKeyArray: assert False
   def reshape(self, *_, **__)   -> PRNGKeyArray: assert False
@@ -504,8 +504,8 @@ def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 
-def key_array_constant_handler(x, aval):
-  arr = x._base_array
+def key_array_constant_handler(val, aval):
+  arr = val._base_array
   return mlir.get_constant_handler(type(arr))(arr, aval)
 mlir.register_constant_handler(PRNGKeyArray, key_array_constant_handler)
 
@@ -1114,13 +1114,13 @@ def threefry_2x32(keypair, count):
   odd_size = flat_count.shape[0] % 2
   if core.is_constant_dim(odd_size):
     if odd_size:
-      x = list(jnp.split(jnp.concatenate([flat_count, np.uint32([0])]), 2))
+      x = list(jnp.split(jnp.concatenate([flat_count, jnp.uint32([0])]), 2))
     else:
       x = list(jnp.split(flat_count, 2))
   else:
     # With symbolic shapes we cannot always tell statically if odd_size is true
     # or false, so we rewrite this without a conditional.
-    flat_count_padded = jnp.concatenate([flat_count, np.uint32([0])])
+    flat_count_padded = jnp.concatenate([flat_count, jnp.uint32([0])])
     flat_count_padded_half_size = flat_count_padded.shape[0] // 2
     x = [
       lax_slicing.dynamic_slice(flat_count_padded, (0,),

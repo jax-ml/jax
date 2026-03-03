@@ -1636,7 +1636,8 @@ def _convert_element_type(
     if new_dtype == old_dtype:
       if sharding is None:
         return operand
-      if isinstance(operand, core.Tracer) and operand.aval.sharding == sharding:
+      if (isinstance(operand, core.Tracer) and
+          operand.aval.sharding == sharding):  # pyrefly: ignore[missing-attribute]
         return operand
     if sharding is not None or weak_type:
       raise NotImplementedError
@@ -3584,7 +3585,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
-    sharding = x.aval.sharding
+    sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
   else:
     # If `x` has a sharding but no `_committed` attribute
     # (in case of ShapeDtypeStruct), default it to True.
@@ -8228,9 +8229,12 @@ def _top_k_lower(ctx, operand, k, axis):
     out_values_aval, out_indices_aval, = ctx.avals_out
     results = mlir.custom_call(
         "stablehlo.dynamic_top_k",
-        result_types=[mlir.aval_to_ir_type(out_values_aval),
-        mlir.aval_to_ir_type(out_indices_aval)],
-        operands=[operand, k_value]).results
+        result_types=mlir.flatten_ir_types([
+            mlir.aval_to_ir_type(out_values_aval),
+            mlir.aval_to_ir_type(out_indices_aval)
+        ]),
+        operands=[operand, k_value],
+    ).results
 
   # Move last dimension back into place
   if perm is not None:
@@ -8419,10 +8423,13 @@ def _rng_bit_generator_lowering(
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
     out_key, out_vals = mlir.custom_call(
         "stablehlo.dynamic_rng_bit_generator",
-        result_types=[key.type,
-                      mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
-        operands=[key, output_shape],
-        extra_attributes=dict(rng_algorithm=algorithm_attr)).results
+        result_types=mlir.flatten_ir_types([
+            key.type,
+            mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))
+        ]),
+        operands=mlir.flatten_ir_values([key, output_shape]),
+        extra_attributes=dict(rng_algorithm=algorithm_attr),
+    ).results
   else:
     out_key, out_vals = hlo.RngBitGeneratorOp(
         key.type,

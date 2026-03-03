@@ -666,7 +666,7 @@ def _eigh_tpu_lowering(
     v_aval, w_aval = ctx.avals_out
     eigvecs_type = mlir.aval_to_ir_type(v_aval)
     eigvals_type = mlir.aval_to_ir_type(w_aval)
-    result_types = [eigvecs_type, eigvals_type]
+    result_types = mlir.flatten_ir_types([eigvecs_type, eigvals_type])
 
     backend_config = f"{int(lower)},{int(sort_eigenvalues)},100,1e-6"
 

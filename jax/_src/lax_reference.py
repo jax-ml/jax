@@ -241,8 +241,8 @@ dot = np.dot
 def dot_general(lhs, rhs, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   new_id = itertools.count()
-  lhs_axis_ids = [next(new_id) for _ in lhs.shape]
-  rhs_axis_ids = [next(new_id) for _ in rhs.shape]
+  lhs_axis_ids: list[int | None] = [next(new_id) for _ in lhs.shape]
+  rhs_axis_ids: list[int | None] = [next(new_id) for _ in rhs.shape]
   lhs_out_axis_ids = lhs_axis_ids[:]
   rhs_out_axis_ids = rhs_axis_ids[:]
 
@@ -267,8 +267,9 @@ def dot_general(lhs, rhs, dimension_numbers):
                         batch_ids + lhs_out_axis_ids + rhs_out_axis_ids)
   assert lhs.dtype == rhs.dtype
   dtype = np.float32 if lhs.dtype == dtypes.bfloat16 else None
-  out = np.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids,
-                   dtype=dtype)
+  out = np.einsum(  # pyrefly: ignore[no-matching-overload]
+      lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids, dtype=dtype
+  )
   return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
 
 def ragged_dot(

@@ -480,7 +480,7 @@ def prepare_axis_resources(axis_resources, arg_name,
       axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
 
-  new_entries = []
+  new_entries: list[Any] = []
   for entry in entries:
     if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
       new_entries.append(entry)

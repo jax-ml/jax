@@ -29,13 +29,17 @@ zip, unsafe_zip = safe_zip, zip
 
 # EArray is an Array that can contain extended dtypes.
 class EArray(basearray.Array):
-  __slots__ = ['aval', '_data']
+  __slots__ = ['_aval', '_data']
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
 
   def __init__(self, aval, data):
-    self.aval = aval
+    self._aval = aval
     self._data = data
+
+  @property
+  def aval(self):
+    return self._aval
 
   def block_until_ready(self):
     _ = self._data.block_until_ready()

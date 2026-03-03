@@ -140,8 +140,10 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces):
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
   ctx.set_tokens_out(tokens_out)
-  return [mlir.wrap_with_memory_kind(on, core.mem_space_to_kind(oms), out_aval)
-          for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)]
+  return [
+      mlir.wrap_with_memory_kind(on, core.mem_space_to_kind(oms), out_aval)  # pyrefly: ignore[bad-argument-type]
+      for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)
+  ]
 
 mlir.register_lowering(compute_on_p, _compute_on_lowering)
 

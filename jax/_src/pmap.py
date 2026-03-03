@@ -119,7 +119,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
         no_kwargs=lowered._no_kwargs,  # pylint: disable=protected-access
     )
 
-  wrapped.lower = lower
+  wrapped.lower = lower  # pyrefly: ignore[missing-attribute]
   return wrapped
 
 
