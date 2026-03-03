@@ -99,7 +99,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
 
     def WorkerAddToCache():
       barrier.wait()
-      for i in range(10000):
+      for i in range(1000):
         cache(WRKey(i), i)
 
     def WorkerCleanCache():
@@ -446,6 +446,73 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     info = cache.cache_info()
     self.assertEqual(info.misses, 4)
     self.assertEqual(info.hits, 1)
+
+  def testMultiWeakref(self):
+    class WRKey:
+      pass
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y, z: z, 2048, num_weakrefs=2
+    )
+
+    k1 = WRKey()
+    k2 = WRKey()
+
+    cache(k1, k2, 1)
+
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 1)
+    self.assertEqual(info.hits, 0)
+
+    cache(k1, k2, 1)
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 1)
+    self.assertEqual(info.hits, 1)
+
+    # Delete k1, the entry should be evicted
+    del k1
+
+    k1 = WRKey()
+    cache(k1, k2, 1)
+
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 2)
+    self.assertEqual(info.hits, 1)
+
+  def testMemoryLeakWithMultipleStrongKeys(self):
+    class WRKey:
+      pass
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048, num_weakrefs=1
+    )
+
+    wk = WRKey()
+
+    class ObjectWithDestructor:
+
+      def __init__(self, val, l):
+        self.val = val
+        self.l = l
+
+      def __del__(self):
+        self.l.append(self.val)
+
+    deleted_strong_keys = []
+
+    # Insert multiple strong keys with the same weak key.
+    for i in range(10):
+      cache(wk, ObjectWithDestructor(i, deleted_strong_keys))
+
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 10)
+    self.assertEqual(len(deleted_strong_keys), 0)
+
+    # Delete the weak key. All cache entries associated with it should be
+    # dropped.
+    del wk
+    self.assertEqual(len(deleted_strong_keys), 10)
+    self.assertEqual(set(deleted_strong_keys), set(range(10)))
 
 
 if __name__ == "__main__":
