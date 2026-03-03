@@ -422,6 +422,7 @@ def einsum_path(
     optimize2: Any = 'optimal' if optimize else Unoptimized()
   else:
     optimize2 = optimize
+  # pyrefly: ignore[no-matching-overload]
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize2)
 
 def _removechars(s, chars):
