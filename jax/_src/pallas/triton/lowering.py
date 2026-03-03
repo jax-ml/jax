@@ -503,72 +503,6 @@ def _atomic_rmw(
   )
 
 
-@register_lowering(primitives.atomic_rmw_p)
-def _atomic_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args_flat,
-    args_tree,
-    atomic_type: primitives.AtomicOpType,
-):
-  block_info, *_ = ctx.block_infos
-  assert block_info is not None
-  ptr, indexers, val, mask = args_tree.unflatten(args_flat)
-  *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
-  indexers = list(indexers)
-  if not indexers or not isinstance(indexers[-1], indexing.NDIndexer):
-    ref_aval = state.transform_type(indexers, ctx.avals_in[0])
-    assert isinstance(ref_aval, state.AbstractRef)
-    indexers.append(NDIndexer.make_trivial_indexer(ref_aval.shape))
-  if len(indexers) != 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  idx = indexers[0]
-  ptr = _compute_pointers_from_indices(ptr, block_info, idx)
-  val = _ensure_ir_value(val, value_aval)
-  if mask is not None:
-    mask = _ensure_ir_value(mask, mask_aval)
-  if atomic_type == primitives.AtomicOpType.XCHG:
-    op = tt_dialect.RMWOp.XCHG
-  elif atomic_type == primitives.AtomicOpType.ADD:
-    if isinstance(val.type, ir.IntegerType):
-      op = tt_dialect.RMWOp.ADD
-    else:
-      op = tt_dialect.RMWOp.FADD
-  elif atomic_type == primitives.AtomicOpType.MIN:
-    op = tt_dialect.RMWOp.MIN
-  elif atomic_type == primitives.AtomicOpType.MAX:
-    op = tt_dialect.RMWOp.MAX
-  elif atomic_type == primitives.AtomicOpType.AND:
-    op = tt_dialect.RMWOp.AND
-  elif atomic_type == primitives.AtomicOpType.OR:
-    op = tt_dialect.RMWOp.OR
-  elif atomic_type == primitives.AtomicOpType.XOR:
-    op = tt_dialect.RMWOp.XOR
-  else:
-    raise NotImplementedError(f"unsupported atomic operation: {atomic_type}")
-  return _atomic_rmw(op, ptr, val, mask=mask)
-
-
-@register_lowering(primitives.atomic_cas_p)
-def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
-  _, cmp_aval, val_aval = ctx.avals_in
-  if isinstance(ptr.type, ir.RankedTensorType):
-    ptr_type = ir.RankedTensorType(ptr.type)
-    element_type = tt_dialect.PointerType(ptr_type.element_type)
-    result_type = ir.RankedTensorType.get(
-        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
-    )
-  else:
-    result_type = tt_dialect.PointerType(ptr.type).pointee_type
-  return tt_dialect.atomic_cas(
-      result_type,
-      ptr,
-      _ensure_ir_value(cmp, cmp_aval),
-      _ensure_ir_value(val, val_aval),
-      sem=tt_dialect.MemSemantic.ACQUIRE_RELEASE,
-      scope=tt_dialect.MemSyncScope.GPU,
-  )
-
-
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
   (axis,) = axes
@@ -1401,18 +1335,6 @@ def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   _set_attr(
       x,
       "tt.divisibility",
-      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
-  )
-  return x
-
-
-@register_lowering(primitives.max_contiguous_p)
-def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
-  [x_aval] = ctx.avals_in
-  assert len(x_aval.shape) == len(values)
-  _set_attr(
-      x,
-      "tt.contiguity",
       ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
   )
   return x
