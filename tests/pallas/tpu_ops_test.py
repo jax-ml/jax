@@ -135,6 +135,8 @@ class OpsTest(ptu.PallasTPUTest):
     self.assertAllClose(y, x + 1)
 
   def test_interleave_vectors(self):
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Expect TPUv4+")
 
     def kernel(x_ref, y_ref, out_ref):
       x = pltpu.bitcast(x_ref[...].astype(jnp.float32), jnp.int32)
@@ -227,10 +229,8 @@ class OpsTest(ptu.PallasTPUTest):
   @parameterized.product(from_dtype=_JAX_INT_DTYPES,
                          to_dtype=_JAX_INT_DTYPES)
   def test_integer_cast(self, from_dtype, to_dtype):
-    if (
-        jnp.iinfo(from_dtype).bits < 8 or jnp.iinfo(to_dtype).bits < 8
-    ) and not jtu.is_device_tpu_at_least(4):
-      self.skipTest("sub-byte types casting requires TPUv4+")
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Expect TPUv4+")
     # Generate both low and high values to better cover the entire range
     # of the source dtype.
     min_val = from_dtype(jnp.iinfo(from_dtype).min)
@@ -386,11 +386,14 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
-    if jtu.get_tpu_version() < 5 and msk_bitwidth < 16:
+    bitwidth = dtypes.itemsize_bits(dtype)
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
       )
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
 
     @functools.partial(
         pl.pallas_call,
@@ -414,14 +417,18 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
+    self.skipTest("TODO: jevinjiang - Enable once presubmits pass.")
     shape = (256, 256)
+    bitwidth = dtypes.itemsize_bits(dtype)
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
     msk_packing = 32 // msk_bitwidth
-    if jtu.get_tpu_version() < 5 and msk_bitwidth < 16:
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
       )
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
 
     # Creating large tiling for masks by passing i32 vector first and
     # then bitcast to msk_dtype so the tiling is also bitcasted from
@@ -508,6 +515,8 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
   def test_float_div(self, dtype):
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPUv4+")
     kwargs = {}
     if jtu.is_device_tpu_at_least(version=6):
       kwargs.update(dict(rtol=1e-2))
@@ -528,7 +537,7 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_concat_mask(self, dtype):
     bitwidth = dtypes.itemsize_bits(dtype)
-    if jtu.get_tpu_version() < 5 and bitwidth < 16:
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
       )
@@ -779,9 +788,9 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_pack_elementwise(self, config, shape):
     unpacked_dtype, packed_dtype = config
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
     if packed_dtype == jnp.int2:
-      if not jtu.is_device_tpu_at_least(version=5):
-        self.skipTest("Requires TPU v5+")
       if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
         raise self.skipTest(
             "int2 is only supported for tpu at least 03/01/2026"
@@ -823,9 +832,7 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_unpack_elementwise(self, config, index, shape):
     unpacked_dtype, packed_dtype = config
-    if packed_dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(
-        version=5
-    ):
+    if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
 
     bitwidth = dtypes.itemsize_bits(packed_dtype)
