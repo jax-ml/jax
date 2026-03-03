@@ -15,6 +15,7 @@
 """Python bindings for the XLA FFI."""
 
 import enum
+
 import numpy
 import typing_extensions
 

@@ -16,6 +16,7 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:py_binary.bzl", "py_binary")
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
@@ -333,6 +334,7 @@ nanobind_pywrap_extension(
         "//jaxlib/mlir:ir",
     ],
     enable_stub_generation = True,
+    postprocess_stubgen = "//jaxlib:backport_stubs",
     pytype_deps = py_deps(["numpy"]),
     pytype_srcs = glob(["_jax/*.pyi"]),
     stub_replacement_patterns = {
@@ -443,6 +445,11 @@ nanobind_pywrap_extension(
         # we support MPI collectives only in OSS builds
         "//conditions:default": if_oss(["@xla//xla/backends/cpu/collectives:mpi_collectives"]),
     }),
+)
+
+py_binary(
+    name = "backport_stubs",
+    srcs = ["backport_stubs.py"],
 )
 
 cc_library(
