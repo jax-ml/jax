@@ -128,11 +128,6 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set ROCm requirements lock file
-        if: inputs.build_jaxlib == 'false'
-        run: |
-          PY_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION//./_}"
-          echo "JAXCI_ROCM_LOCK_FLAG=--repo_env=HERMETIC_REQUIREMENTS_LOCK=build/requirements_lock_${PY_VERSION}_rocm.txt" >> $GITHUB_ENV
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
         run: |

@@ -1,0 +1,166 @@
+# CI - Build ROCm Artifacts
+# This workflow builds ROCm wheels (jax-rocm-plugin, jax-rocm-pjrt) in a ROCm container
+# and uploads them to an S3 bucket. It can be triggered manually via workflow_dispatch or
+# called by other workflows via workflow_call.
+name: CI - Build ROCm Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: choice
+        default: "linux-x86-64-1gpu-amd"
+        options:
+        - "linux-x86-64-1gpu-amd"
+      artifact:
+        description: "Which ROCm artifact to build?"
+        type: choice
+        default: "jax-rocm-plugin"
+        options:
+        - "jax-rocm-plugin"
+        - "jax-rocm-pjrt"
+      python:
+        description: "Which python version should the artifact be built for?"
+        type: choice
+        default: "3.12"
+        options:
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.14"
+      rocm-version:
+        description: "Which ROCm version to build for?"
+        type: string
+        default: "7"
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: choice
+        default: "1"
+        options:
+        - "1"
+        - "0"
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        default: "linux-x86-64-1gpu-amd"
+      artifact:
+        description: "Which ROCm artifact to build?"
+        type: string
+        default: "jax-rocm-plugin"
+      python:
+        description: "Which python version should the artifact be built for?"
+        type: string
+        default: "3.12"
+      rocm-version:
+        description: "Which ROCm version to build for?"
+        type: string
+        default: "7"
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        default: "1"
+      upload_artifacts_to_s3:
+        description: "Should the artifacts be uploaded to S3?"
+        default: true
+        type: boolean
+      s3_upload_uri:
+        description: "S3 location prefix to where the artifacts should be uploaded"
+        default: 's3://jax-ci-amd/rocm-jax-plugin-wheels'
+        type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+    outputs:
+      s3_upload_uri:
+        description: "S3 location prefix to where the artifacts were uploaded"
+        value: ${{ jobs.build-artifacts.outputs.s3_upload_uri }}
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  build-artifacts:
+    defaults:
+      run:
+        shell: bash
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
+    container:
+      image: "rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72"
+      volumes:
+        - /data:/data
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/dri
+        --security-opt seccomp=unconfined
+        --group-add video
+        --shm-size 64G
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
+
+    name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-version }}"
+
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Install Bazelisk
+        run: |
+          curl -fSsL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
+          chmod +x /usr/local/bin/bazel
+      - name: ROCm Info
+        run: rocminfo
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Create dist dir
+        run: mkdir -p $JAXCI_OUTPUT_DIR/
+      - name: Build ${{ inputs.artifact }}
+        timeout-minutes: 120
+        run: |
+          bazel --bazelrc=build/rocm/rocm.bazelrc run \
+                --config=rocm_release_wheel \
+                --config=rocm_rbe \
+                --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
+                $DEPLOY_TARGET -- $JAXCI_OUTPUT_DIR/
+        env:
+          DEPLOY_TARGET: ${{ inputs.artifact == 'jax-rocm-plugin' && '//jaxlib/tools:deploy_rocm_plugin_wheel' || '//jaxlib/tools:deploy_rocm_pjrt_wheel' }}
+      - name: Configure AWS Credentials
+        if: ${{ inputs.upload_artifacts_to_s3 }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      - name: Upload artifacts to S3
+        if: ${{ inputs.upload_artifacts_to_s3 }}
+        run: |
+          echo "Uploading wheels to S3..."
+          ls -lh $JAXCI_OUTPUT_DIR/*.whl
+          aws s3 cp --only-show-errors --recursive $JAXCI_OUTPUT_DIR/ "${INPUTS_S3_UPLOAD_URI}"/
+          echo "Upload complete."
+        env:
+          INPUTS_S3_UPLOAD_URI: ${{ inputs.s3_upload_uri }}
+      - name: Store the S3 upload URI as an output
+        if: ${{ inputs.upload_artifacts_to_s3 }}
+        id: store-s3-upload-uri
+        run: echo "s3_upload_uri=${INPUTS_S3_UPLOAD_URI}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUTS_S3_UPLOAD_URI: ${{ inputs.s3_upload_uri }}

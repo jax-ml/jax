@@ -587,6 +587,27 @@ def jax_wheel(
         source_files = source_files,
     )
 
+def deploy_wheel(name, wheel):
+    """Creates a runnable target that copies a wheel to a given directory.
+
+    Usage: bazel run <target> -- /output/dir
+
+    Args:
+      name: the target name
+      wheel: the wheel target to deploy
+    """
+    native.genrule(
+        name = name + "_gen",
+        srcs = [wheel],
+        outs = [name + ".sh"],
+        cmd = "echo '#!/bin/bash\ncp $(rootpath {wheel}) $$1' > $@".format(wheel = wheel),
+    )
+    native.sh_binary(
+        name = name,
+        srcs = [name + ".sh"],
+        data = [wheel],
+    )
+
 def jax_source_package(
         name,
         source_package_binary,

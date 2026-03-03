@@ -20,6 +20,9 @@ common:rocm --copt=-Qunused-arguments
 # Used for @xla//build_tools/rocm:parallel_gpu_execute
 common:rocm --legacy_external_runfiles=true
 
+build:rocm_release_wheel --config=rocm
+build:rocm_release_wheel --@local_config_rocm//rocm:rocm_path_type=link_only
+
 test:rocm --test_timeout=920,2400,7200,9600
 test:rocm --flaky_test_attempts=3
 test:rocm --test_verbose_timeout_warnings
