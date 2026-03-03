@@ -21,9 +21,11 @@ from typing import TypeAlias
 
 import jax
 from jax._src import core as jax_core
+from jax._src import effects
 from jax._src import state
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.triton import dialect as tt_dialect
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.triton import lowering
 from jax.interpreters import mlir
@@ -134,12 +136,23 @@ def debug_barrier() -> None:
   return debug_barrier_p.bind()
 
 
+class BarrierEffect(jax_core.Effect):
+  pass
+
+barrier_effect = BarrierEffect()
+
+pallas_core.kernel_local_effects.add_type(BarrierEffect)
+effects.control_flow_allowed_effects.add_type(BarrierEffect)
+
+
 debug_barrier_p = jax_core.Primitive("debug_barrier_p")
 debug_barrier_p.multiple_results = True
 
-@debug_barrier_p.def_abstract_eval
-def _debug_barrier_abstract_eval() -> Sequence[jax_core.ShapedArray]:
-  return ()
+
+@debug_barrier_p.def_effectful_abstract_eval
+def _debug_barrier_abstract_eval():
+  return (), {barrier_effect}
+
 
 @lowering.register_lowering(debug_barrier_p)
 def _debug_barrier_lowering(ctx: lowering.LoweringRuleContext):

@@ -45,6 +45,7 @@ pytype_strict_library(
         "//jax/_src:ad_util",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:effects",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
