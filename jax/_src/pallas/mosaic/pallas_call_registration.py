@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
-import functools
 import json
 from typing import Any, cast
 
@@ -385,10 +384,7 @@ def pallas_call_tpu_lowering_rule(
         tpu_core.CoreType.SC_SCALAR_SUBCORE
         | tpu_core.CoreType.SC_VECTOR_SUBCORE
     ):
-      lower_jaxpr_to_module = functools.partial(
-          sc_lowering.lower_pipelined_jaxpr_to_module,
-          use_tc_tiling=mosaic_params.use_tc_tiling_on_sc,
-      )
+      lower_jaxpr_to_module = sc_lowering.lower_jaxpr_to_module
     case _:
       raise ValueError(f"Unsupported kernel type: {mosaic_params.kernel_type}")
 
@@ -522,9 +518,7 @@ def mpmd_map_tpu_lowering_rule(
 
   match [*{mesh.kernel_type for mesh in meshes}]:
     case [kernel_type]:
-      mosaic_params = dataclasses.replace(
-          mosaic_params, kernel_type=kernel_type
-      )
+      mosaic_params = dataclasses.replace(mosaic_params, kernel_type=kernel_type)
     case _:
       # Use a stub ``kernel_type`` if we are lowering multiple kernels.
       # This will hopefully cause a runtime error if ``kernel_type`` is ever

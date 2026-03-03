@@ -62,10 +62,10 @@ SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
 
-LiteralDimensionSemantics = Literal[
-    "parallel", "core_parallel", "subcore_parallel", "arbitrary"
-]
-DimensionSemantics = LiteralDimensionSemantics | GridDimensionSemantics
+DimensionSemantics = (
+    Literal["parallel", "core_parallel", "subcore_parallel", "arbitrary"]
+    | GridDimensionSemantics
+)
 
 
 class SideEffectType(enum.Enum):
