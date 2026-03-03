@@ -1402,7 +1402,8 @@ def symbolic_shape(shape_spec: str | None,
     scope: optionally, you can specify that the parsed symbolic expressions
       be created in the given scope. If this is missing, then a new
       `SymbolicScope` is created with the given `constraints`.
-      You cannot specify both a `scope` and `constraints`.
+      You cannot specify both a `scope` and `constraints` (cannot add new
+      constraints to a `scope`).
       See [the documentation](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
       for usage.
     like: when `shape_spec` contains placeholders ("_", "..."), use this

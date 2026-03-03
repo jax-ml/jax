@@ -1051,6 +1051,12 @@ class JaxExportTest(jtu.JaxTestCase):
           jax.ShapeDtypeStruct(export.symbolic_shape(poly_spec), x.dtype))
       exp.call(x)
 
+  def test_constraint_invalid_var_in_constraints(self):
+    m, = jax.export.symbolic_shape("m", constraints=["m >= m1"])
+    with self.assertRaisesRegex(Exception, "Encountered dimension variable 'm1'"):
+      get_exported(jax.jit(lambda x: x))(
+          jax.ShapeDtypeStruct((m,), np.float32))
+
   def test_poly_booleans(self):
     # For booleans we use a special case ConvertOp to cast to and from
     # dynamic shapes arguments.
