@@ -865,16 +865,13 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   CUDA_RETURN_IF_ERROR(cuCtxGetCurrent(&ctx));
   CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
 
-  {
-    absl::MutexLock lock(&cache->mutex);
-    auto it = cache->contexts.find(key);
-    if (it != cache->contexts.end()) {
-      VLOG(5) << "Found Mosaic GPU kernel in cache";
-      return it->second;
-    }
+  absl::MutexLock lock(cache->mutex);
+  auto it = cache->contexts.find(key);
+  if (it != cache->contexts.end()) {
+    VLOG(5) << "Found Mosaic GPU kernel in cache";
+    return it->second;
   }
   TF_ASSIGN_OR_RETURN(void* context, InitKernel(*kernel));
-  absl::MutexLock lock(&cache->mutex);
   cache->contexts.insert_or_assign(key, context);
   return context;
 }
