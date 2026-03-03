@@ -31,7 +31,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -333,20 +332,6 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       raise ValueError(msg) from None
     return out_ft.unflatten()
   return cast(F, wrapped)
-
-
-@lu.transformation_with_aux2
-def _broadcast_out_specs(_fun, _store, out_specs, axis_names, *args, **kwargs):
-  ans = _fun(*args, **kwargs)
-
-  try:
-    out_specs_flat = broadcast_prefix(out_specs, ans)
-  except ValueError:
-    e, *_ = prefix_errors(out_specs, ans)
-    raise e('shard_map out_specs') from None
-
-  _store.store(tuple(out_specs_flat))
-  return ans
 
 
 def _axes_to_pspec(axis_name, axis):
@@ -705,25 +690,25 @@ class Tup:
 
 # Primitive
 
-@lu.transformation2
-def _implicit_pvary_on_output(f, out_specs_thunk, *args, **kwargs):
-  out_flat = f(*args, **kwargs)
-  return [pvary(o, tuple(_spec_to_vma(sp) - typeof(o).vma))
-          if isinstance(sp, P) else o for o, sp in zip(out_flat, out_specs_thunk())]
+# @lu.transformation2
+# def _implicit_pvary_on_output(f, out_specs_thunk, *args, **kwargs):
+#   out_flat = f(*args, **kwargs)
+#   return [pvary(o, tuple(_spec_to_vma(sp) - typeof(o).vma))
+#           if isinstance(sp, P) else o for o, sp in zip(out_flat, out_specs_thunk())]
 
 
-@lu.transformation2
-def _implicit_unreduced_on_output(f, out_specs_thunk, *args, **kwargs):
-  out_flat = f(*args, **kwargs)
-  new_out_flat = []
-  for o, sp in zip(out_flat, out_specs_thunk()):
-    o_aval = typeof(o)
-    if isinstance(sp, P) and (unreduced := sp.unreduced - o_aval.sharding.spec.unreduced):
-      axes = order_wrt_mesh(o_aval.sharding.mesh, unreduced)
-      new_out_flat.append(lax_parallel.vary_unreduced_cast(o, axes))
-    else:
-      new_out_flat.append(o)
-  return new_out_flat
+# @lu.transformation2
+# def _implicit_unreduced_on_output(f, out_specs_thunk, *args, **kwargs):
+#   out_flat = f(*args, **kwargs)
+#   new_out_flat = []
+#   for o, sp in zip(out_flat, out_specs_thunk()):
+#     o_aval = typeof(o)
+#     if isinstance(sp, P) and (unreduced := sp.unreduced - o_aval.sharding.spec.unreduced):
+#       axes = order_wrt_mesh(o_aval.sharding.mesh, unreduced)
+#       new_out_flat.append(lax_parallel.vary_unreduced_cast(o, axes))
+#     else:
+#       new_out_flat.append(o)
+#   return new_out_flat
 
 
 JaxType = Any
@@ -767,18 +752,18 @@ def _extend_axis_env(mesh, manual_axes):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
                                   if k in manual_axes])
 
-@lu.transformation_with_aux2
-def _lojax_traceable(_fun, _store, hi_avals_in, *lo_tracers):
-  hi_args = pe.raise_lo_outs(hi_avals_in, lo_tracers)
-  hi_ans = _fun(*hi_args)
-  hi_avals_out = map(typeof, hi_ans)
-  lo_ans = [lo_val for hi_ty, hi_val in zip(hi_avals_out, hi_ans)
-            for lo_val in hi_ty.lower_val(hi_val)]
-  _store.store(tuple(hi_avals_out))
-  return lo_ans
+  # @lu.transformation_with_aux2
+  # def _lojax_traceable(_fun, _store, hi_avals_in, *lo_tracers):
+  #   hi_args = pe.raise_lo_outs(hi_avals_in, lo_tracers)
+  #   hi_ans = _fun(*hi_args)
+  #   hi_avals_out = map(typeof, hi_ans)
+  #   lo_ans = [lo_val for hi_ty, hi_val in zip(hi_avals_out, hi_ans)
+  #             for lo_val in hi_ty.lower_val(hi_val)]
+  #   _store.store(tuple(hi_avals_out))
+  #   return lo_ans
 
 def _shard_map_staging(
-    trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
+    trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: Callable,
     args: Sequence[Any], *, mesh: Mesh,
     in_specs, check_vma: bool, manual_axes: frozenset, debug_info
   ) -> Sequence[pe.DynamicJaxprTracer]:
@@ -1495,7 +1480,7 @@ eager_rules[core.reduced_vary_cast_p] = raise_notimplemented
 # Batching
 
 def _shard_map_batch(
-    trace: batching.BatchTrace, prim: core.Primitive, fun: lu.WrappedFun,
+    trace: batching.BatchTrace, prim: core.Primitive, fun: Callable,
     in_tracers: Sequence[batching.BatchTracer], mesh: Mesh,
     in_specs, check_vma: bool, manual_axes: frozenset,
     debug_info: DebugInfo
@@ -1644,32 +1629,66 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
 ad.JVPTrace.process_shard_map = _shard_map_jvp
 
 def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
-                            f: lu.WrappedFun, tracers, mesh, in_specs,
-                            out_specs_thunk, check_vma, manual_axes):
+                            f: Callable, tracers, mesh, in_specs,
+                            check_vma, manual_axes, debug_info):
   tracers = map(trace.to_jaxpr_tracer, tracers)
   in_pvals = [t.pval for t in tracers]
   in_knowns, in_avals, in_consts = pe.partition_pvals(in_pvals)
   unk_in_specs, known_in_specs = pe.partition_list(in_knowns, in_specs)
   in_avals_sharded = map(partial(shard_aval, mesh, manual_axes, check_vma),
                          unk_in_specs, in_avals)
-  f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.tag, f.debug_info, False)
-  f = _promote_scalar_residuals(f)
-  f_known, aux = pe.partial_eval_wrapper_nounits2(
-      f, (*in_knowns,), (*in_avals_sharded,))
-  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
+  def f_pe(*in_consts):
+    in_avals_, in_consts_ = iter(in_avals_sharded), iter(in_consts)
+    in_pvals = [pe.PartialVal.known(next(in_consts_)) if known else
+                pe.PartialVal.unknown(next(in_avals_)) for known in in_knowns]
+    sentinel = object()
+    assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
+    jaxpr, fwd_data = pe.trace_to_subjaxpr_nounits_fwd2(
+          f, trace.tag, debug_info.with_unknown_names(), False, in_pvals)
+    (input_fwds, output_fwds, out_pvals, res, env) = fwd_data
+    out_knowns, _, out_consts = pe.partition_pvals(out_pvals)
+    res_avals = [typeof(r) for r in res]
+    aux = (input_fwds, output_fwds, out_knowns, res_avals, jaxpr, env)
+    breakpoint()
+#      return (*out_consts, *res)
 
-  @as_hashable_function(closure=out_specs_thunk)
-  def known_out_specs():
-    _, _, out_knowns, res_avals, _, _ = aux()
-    _, out_known_specs = pe.partition_list(out_knowns, out_specs_thunk())
-    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
-    return (*out_known_specs, *res_specs)
+# def partial_eval_wrapper_nounits2(
+#     f: Callable,
+#     store: lu.Store,
+#     in_knowns: Sequence[bool],
+#     in_avals: Sequence[AbstractValue],
+#     *in_consts: Any):
+#   in_avals_, in_consts_ = iter(in_avals), iter(in_consts)
+#   in_pvals = [PartialVal.known(next(in_consts_)) if known else
+#               PartialVal.unknown(next(in_avals_)) for known in in_knowns]
+#   sentinel = object()
+#   assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
+#   jaxpr, (*maybe_fwds, out_pvals, res, env) = f(in_pvals)
+#   out_knowns, _, out_consts = partition_pvals(out_pvals)
+#   res_avals = [typeof(r) for r in res]
+#   store.store((*maybe_fwds, out_knowns, res_avals, jaxpr, env))
+#   return (*out_consts, *res)
 
+
+#   f = _promote_scalar_residuals(f)
+#   f_known, aux = pe.partial_eval_wrapper_nounits2(
+#       f, (*in_knowns,), (*in_avals_sharded,))
+#   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
+# 
+#   @as_hashable_function(closure=out_specs_thunk)
+#   def known_out_specs():
+#     _, _, out_knowns, res_avals, _, _ = aux()
+#     _, out_known_specs = pe.partition_list(out_knowns, out_specs_thunk())
+#     if check_vma:
+#       res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
+#     else:
+#       res_specs = [P(all_names)] * len(res_avals)
+#     return (*out_known_specs, *res_specs)
+# 
   known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
-                      out_specs_thunk=known_out_specs, check_vma=check_vma,
-                      manual_axes=manual_axes)
-  out = shard_map_p.bind_with_trace(trace.parent_trace,
-                                    (f_known.with_unknown_names(), *in_consts),
+                      check_vma=check_vma, manual_axes=manual_axes,
+                      debug_info=debug_info.with_unknown_names())
+  out = shard_map_p.bind_with_trace(trace.parent_trace, (f_pe, *in_consts),
                                     known_params)
   in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
   num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
@@ -1778,26 +1797,26 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   return primals_out.map3(partial(ad.maybe_linearize_tracer, trace), nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 
-@lu.transformation2
-def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
-  ans = f(*args, **kwargs)
-  _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
-  num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-  residuals = ans[:num_res_out]
-  primals = ans[num_res_out:]
-  residuals = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-               for x in residuals]
-  return *residuals, *primals
+# @lu.transformation2
+# def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
+#   ans = f(*args, **kwargs)
+#   _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
+#   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+#   residuals = ans[:num_res_out]
+#   primals = ans[num_res_out:]
+#   residuals = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+#                for x in residuals]
+#   return *residuals, *primals
 
-@lu.transformation2
-def _promote_scalar_residuals(f: Callable, *args, **kwargs):
-  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
-  which = [f1 is None and f2 is None and not v.aval.shape
-           for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
-  jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
-  out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-                for x in out_consts]
-  return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
+# @lu.transformation2
+# def _promote_scalar_residuals(f: Callable, *args, **kwargs):
+#   jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
+#   which = [f1 is None and f2 is None and not v.aval.shape
+#             for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
+#    jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
+#    out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+#                  for x in out_consts]
+#    return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   def fun(*res_and_args):
@@ -1806,9 +1825,8 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
     return core.eval_jaxpr(jaxpr, res, *args)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
-  in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(fun, debug_info=jaxpr.debug_info), in_avals)
+  in_avals = FlatTree.flatten(((*res_avals, *[v.aval for v in jaxpr.invars]), {}))
+  jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
   return jaxpr
 
 
