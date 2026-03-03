@@ -81,9 +81,9 @@ class CompatTest(jtu.JaxTestCase):
                            **kwargs) -> bytearray:
     """Export and serialize a function.
 
-    The test data is saved in TEST_UNDECLARED_OUTPUTS_DIR (or
-    "/tmp/back_compat_testdata" if not set) and should be copied as explained
-    in the module docstring.
+    The test data for the current _SERIALIZATION_VERSION is saved in
+    TEST_UNDECLARED_OUTPUTS_DIR (or "/tmp/back_compat_testdata" if not set)
+    and should be copied as explained in the module docstring.
     """
     exp = _export.export(fun, platforms=platforms)(*args, **kwargs)
     serialized = exp.serialize(vjp_order=vjp_order)
