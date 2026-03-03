@@ -16,10 +16,10 @@ limitations under the License.
 #include "jaxlib/gpu/solver_interface.h"
 
 #include <map>
-#include <mutex>
 #include <tuple>
 
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
@@ -489,8 +489,8 @@ rocblas_status GesddQueryImpl<gpuDoubleComplex>(gpusolverDnHandle_t handle,
 // runs the full rocsolver path with nullptr) on every call. Same shape =>
 // same size; query once per (m, n, job) and dtype.
 namespace {
-std::mutex& GesddWorkspaceCacheMutex() {
-  static std::mutex mu;
+absl::Mutex& GesddWorkspaceCacheMutex() {
+  static absl::Mutex mu;
   return mu;
 }
 
@@ -540,7 +540,7 @@ absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
 
   Key key(m, n, jobu);
   {
-    std::lock_guard<std::mutex> lock(GesddWorkspaceCacheMutex());
+    absl::MutexLock lock(&GesddWorkspaceCacheMutex());
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
   }
@@ -563,7 +563,7 @@ absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
   JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
                                             "rocblas_stop_device_memory_size_query"));
   {
-    std::lock_guard<std::mutex> lock(GesddWorkspaceCacheMutex());
+    absl::MutexLock lock(&GesddWorkspaceCacheMutex());
     cache[key] = size;
   }
   return size;
