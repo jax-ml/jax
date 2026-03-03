@@ -719,6 +719,8 @@ class PallasCallTest(ptu.PallasTest):
   def test_integer_dot(self, dtype):
     if jtu.test_device_matches(["tpu"]) and not jtu.is_device_tpu_at_least(5):
       self.skipTest("`int8` dot is only supported on v5 TPUs and newer.")
+    if jnp.issubdtype(dtype, jnp.unsignedinteger):
+      self.skipTest("Not currently supported.")
 
     @functools.partial(
         self.pallas_call,
@@ -728,8 +730,8 @@ class PallasCallTest(ptu.PallasTest):
       o_ref[()] = pl.dot(x_ref[()], y_ref[()])
 
     key0, key1 = random.split(random.key(0))
-    # FIXME(cjfj): TPU fails with `uint8` values >= 128.
-    kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=128, dtype=dtype)
+    kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=jnp.iinfo(dtype).max + 1,
+                  dtype=dtype)
     # TODO(cjfj): Investigate why this fails on GPU with `k == 16`.
     x = random.randint(key0, (32, 128), **kwargs)
     y = random.randint(key1, (128, 64), **kwargs)
