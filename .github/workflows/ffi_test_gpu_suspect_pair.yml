@@ -1,0 +1,103 @@
+name: CI - FFI GPU Suspect Pair
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner to use"
+        type: choice
+        default: "linux-x86-g2-48-l4-4gpu"
+        options:
+        - "linux-x86-g2-48-l4-4gpu"
+        - "linux-x86-a3-8g-h100-8gpu"
+        - "linux-x86-a4-224-b200-1gpu"
+      python:
+        description: "Hermetic Python version"
+        type: choice
+        default: "3.11"
+        options:
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.13-nogil"
+        - "3.14"
+        - "3.14-nogil"
+      cuda-version:
+        description: "CUDA version"
+        type: choice
+        default: "13"
+        options:
+        - "12"
+        - "13"
+      enable-x64:
+        description: "Enable x64 mode"
+        type: choice
+        default: "0"
+        options:
+        - "0"
+        - "1"
+      build-jax:
+        description: "Value for --//jax:build_jax"
+        type: choice
+        default: "wheel"
+        options:
+        - "true"
+        - "wheel"
+      build-jaxlib:
+        description: "Value for --//jax:build_jaxlib"
+        type: choice
+        default: "wheel"
+        options:
+        - "true"
+        - "wheel"
+      clone-main-xla:
+        description: "Clone XLA at HEAD when XLA commit override is not set"
+        type: choice
+        default: "0"
+        options:
+        - "0"
+        - "1"
+      base-xla-commit:
+        description: "Optional XLA commit override for base run"
+        type: string
+        default: ""
+      head-xla-commit:
+        description: "Optional XLA commit override for head run"
+        type: string
+        default: ""
+      halt-for-connection:
+        description: "Pause job for remote debugging"
+        type: choice
+        default: "no"
+        options:
+        - "yes"
+        - "no"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-suspect-pair:
+    uses: ./.github/workflows/ffi_test_gpu_before_after.yml
+    with:
+      base-ref: "edf82d1088f5eb184a046301c8beba3a031b2513"
+      head-ref: "68b2565e6bc9f94de1384bbe90d4d33615a817de"
+      expected-base: "pass"
+      expected-head: "fail"
+      runner: ${{ github.event_name == 'pull_request' && 'linux-x86-g2-48-l4-4gpu' || inputs.runner }}
+      python: ${{ github.event_name == 'pull_request' && '3.11' || inputs.python }}
+      cuda-version: ${{ github.event_name == 'pull_request' && '13' || inputs.cuda-version }}
+      enable-x64: ${{ github.event_name == 'pull_request' && '0' || inputs.enable-x64 }}
+      build-jax: ${{ github.event_name == 'pull_request' && 'wheel' || inputs.build-jax }}
+      build-jaxlib: ${{ github.event_name == 'pull_request' && 'wheel' || inputs.build-jaxlib }}
+      clone-main-xla: ${{ github.event_name == 'pull_request' && '0' || inputs.clone-main-xla }}
+      base-xla-commit: ${{ github.event_name == 'pull_request' && '' || inputs.base-xla-commit }}
+      head-xla-commit: ${{ github.event_name == 'pull_request' && '' || inputs.head-xla-commit }}
+      halt-for-connection: ${{ github.event_name == 'pull_request' && 'no' || inputs.halt-for-connection }}
