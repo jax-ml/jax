@@ -320,7 +320,7 @@ def gather_add_one(x, indices):
       ),
       out_specs=pl.BlockSpec((gather_window_size, value_dim), lambda i: (i, 0)),
       compiler_params=pltpu.CompilerParams(
-          kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+          kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
           dimension_semantics=(pltpu.PARALLEL,),
       ),
   )
