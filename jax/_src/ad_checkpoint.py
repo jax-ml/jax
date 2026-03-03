@@ -577,7 +577,7 @@ def _remat_bind(*args, jaxpr, prevent_cse, differentiated, policy):
   assert isinstance(prevent_cse, bool) or len(prevent_cse) == len(args)
   return core.Primitive.bind(remat_p, *args, jaxpr=jaxpr, prevent_cse=prevent_cse,
                              differentiated=differentiated, policy=policy)
-remat_p.bind = _remat_bind  # type: ignore
+remat_p.bind = _remat_bind
 
 @remat_p.def_impl
 def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
@@ -645,7 +645,8 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
   _, tracers_staged = partition_list(in_used_staged, tracers)
-  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # type: ignore
+  # pyrefly: ignore [no-matching-overload, unsupported-operation]
+  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   if isinstance(prevent_cse, tuple):
@@ -806,7 +807,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts = in_cts[len(consts):]
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
-    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # type: ignore[missing-attribute]
+    # pyrefly: ignore [missing-attribute]
+    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
@@ -815,7 +817,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  return transposed_jaxpr, cell.in_cts_zero
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
@@ -883,7 +886,8 @@ def _remat_lowering(
     policy,
 ):
   if isinstance(prevent_cse, bool):
-    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # type: ignore
+    # pyrefly: ignore [bad-assignment]
+    prevent_cse = (prevent_cse,) * len(ctx.avals_in)
   assert isinstance(prevent_cse, tuple)
   if differentiated and any(prevent_cse):
     _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)
@@ -892,7 +896,7 @@ def _remat_lowering(
         mlir.flatten_ir_values(barrier_args))
     barrier_results = mlir.unflatten_ir_values_like_types(
         barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-    args = merge_lists(prevent_cse, other_args, barrier_results)  # type: ignore
+    args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
       ctx.tokens_in, (), *args, dim_var_values=ctx.dim_var_values,
@@ -905,7 +909,7 @@ mlir.register_lowering(remat_p, _remat_lowering)
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.is_high
-remat_p.is_high = _remat_is_high  # type: ignore
+remat_p.is_high = _remat_is_high
 
 
 def _remat_to_lojax(*hi_args, jaxpr, **kwds):
@@ -1017,7 +1021,7 @@ class RematTraced(VJPHiPrimitive):
     super().__init__()
 
   def expand(self, *args):
-    return self.traced(*args)  # type: ignore
+    return self.traced(*args)
 
   def vjp_fwd(self, _nzs_in, *primals):
     primals_out, fwd2 = remat_transform(self.policy, self.traced, *primals)

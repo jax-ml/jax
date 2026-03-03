@@ -66,7 +66,8 @@ def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
   is_int_indexing = [not isinstance(i, Slice) for i in indexer.indices]
   slice_indexers, int_indexers = partition_list(
       is_int_indexing, indexer.indices)
-  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # type: ignore
+  # pyrefly: ignore [bad-argument-type]
+  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)
 
 def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
@@ -209,7 +210,8 @@ class NDIndexer(state_types.Transform):
             "Ref cannot be mixed with other non-slice indexers"
         )
       [ref_indexer] = ref_indexers
-      indexer_shape = ref_indexer.shape  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      indexer_shape = ref_indexer.shape
       try:
         core.canonicalize_shape(indexer_shape)
       except TypeError:
@@ -232,7 +234,8 @@ class NDIndexer(state_types.Transform):
       # and this module.
       from jax._src.state import primitives as sp  # pytype: disable=import-error
       other_indexers = [
-          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # type: ignore[arg-type]
+          # pyrefly: ignore [bad-argument-type]
+          sp.broadcast_to(i, indexer_shape) for i in other_indexers
       ]
       indices = tuple(
           merge_lists(is_slice_indexing, other_indexers, slice_indexers)
@@ -331,7 +334,8 @@ class NDIndexer(state_types.Transform):
       if isinstance(idx, Slice):
         indices.append(_pp_slice(context, dim, idx))
       else:
-        indices.append(core.pp_var(idx, context, print_literal_dtype=False))  # type: ignore
+        # pyrefly: ignore [bad-argument-type]
+        indices.append(core.pp_var(idx, context, print_literal_dtype=False))
     return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])
 
 

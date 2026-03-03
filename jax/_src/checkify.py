@@ -240,7 +240,8 @@ class Error:
             cur_effect = error_effect
 
       if cur_effect is not None:
-        return tree_unflatten(self._metadata[int(min_code)],  # type: ignore
+        # pyrefly: ignore [no-matching-overload]
+        return tree_unflatten(self._metadata[int(min_code)],
                               self._payload[cur_effect])
     return None
 
@@ -259,14 +260,18 @@ class Error:
       min_code: Int | None = None
       cur_effect: ErrorEffect | None = None
       for error_effect, code in self._code.items():
-        if self._pred[error_effect][idx]:   # type: ignore
-          if min_code is None or code[idx] < min_code:  # type: ignore[index]
-            min_code = code[idx]   # type: ignore
+        # pyrefly: ignore [bad-index]
+        if self._pred[error_effect][idx]:
+          # pyrefly: ignore [bad-index]
+          if min_code is None or code[idx] < min_code:
+            # pyrefly: ignore [bad-index]
+            min_code = code[idx]
             cur_effect = error_effect
 
       if cur_effect is not None:
         payload = tree_map(lambda x, i=idx: x[i], self._payload[cur_effect])
-        jax_error = tree_unflatten(self._metadata[int(min_code)], payload)  # type: ignore
+        # pyrefly: ignore [no-matching-overload]
+        jax_error = tree_unflatten(self._metadata[int(min_code)], payload)
         error_mapping[idx] = jax_error
     if error_mapping:
       return BatchedError(error_mapping)
@@ -463,7 +468,7 @@ def _reduce_any_error(error: Error):
 ## check_p primitive
 
 check_p = core.Primitive('check')
-check_p.is_effectful = lambda _: True  # type: ignore
+check_p.is_effectful = lambda _: True
 check_p.multiple_results = True  # zero results
 
 
@@ -984,7 +989,7 @@ def shard_map_error_check(
     in_avals[i] = sharder(mesh, manual_axes, check_vma, new_in_specs[i], v)
 
   with (jshmap._extend_axis_env(mesh, manual_axes),
-        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),  # type: ignore[arg-type]
+        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),
         config._check_vma(check_vma)):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(

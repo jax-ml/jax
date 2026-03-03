@@ -32,7 +32,7 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   ty = typeof(x)
   if isinstance(ty, HiType):
     return ty.vspace_add(x, y)
@@ -45,7 +45,7 @@ add_any_p = add_jaxvals_p
 @add_jaxvals_p.def_impl
 def add_impl(x, y):
   return raw_jaxval_adders[type(x)](x, y)
-raw_jaxval_adders = {}  # type: ignore
+raw_jaxval_adders = {}
 
 @add_jaxvals_p.def_abstract_eval
 def add_abstract(x, y):

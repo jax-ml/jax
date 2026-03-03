@@ -191,10 +191,10 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
-  aval = core.physical_aval(aval)  # type: ignore
+  aval = core.physical_aval(aval)
   if not core.is_constant_shape(aval.shape):
-    return _dynamic_array_ir_types(aval)  # type: ignore
-  return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))  # type: ignore
+    return _dynamic_array_ir_types(aval)
+  return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> ir.Type:
   dyn_size = ir.ShapedType.get_dynamic_size()
@@ -311,13 +311,15 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic,
   elif 0 in val.strides and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
-    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)  # type: ignore
+    # pyrefly: ignore [bad-index]
+    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     out = hlo.broadcast_in_dim(
         ir.RankedTensorType.get(
-            val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
+            val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val),
-        dense_int_array(other_axes))  # type: ignore
+        # pyrefly: ignore [bad-argument-type]
+        dense_int_array(other_axes))
     return out
   else:
     return _numpy_array_constant(val)
@@ -330,7 +332,7 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
-  register_constant_handler(_scalar_type, _ndarray_constant_handler)  # type: ignore
+  register_constant_handler(_scalar_type, _ndarray_constant_handler)
 
 def _python_scalar_handler(val, aval: core.AbstractValue | None):
   assert isinstance(aval, core.ShapedArray), aval
@@ -369,14 +371,14 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   x = np.ascontiguousarray(x)
   try:
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
   except ValueError:
     # Backwards compatibility fallback for old MLIR versions.
     # Delete once minimum supported jaxlib version is 0.9.1.
     if x.dtype != np.bool_:
       raise
     x = np.ascontiguousarray(np.packbits(x, bitorder='little'))
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -398,7 +400,7 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
-  register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)  # type: ignore
+  register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)
 
 def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:
   return ir.TypeAttr.get(dtype_to_ir_type(dtype))
@@ -980,7 +982,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, core.ShapedArray):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape), sharding=None)  # type: ignore
+  return aval.update(sharding.shard_shape(aval.shape), sharding=None)
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -1005,7 +1007,8 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
       return ir_constant(np.array(d, dtype=np.int32))
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
-      if d.type != i32_type:  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      if d.type != i32_type:
         return hlo.convert(i32_type, d)
       else:
         return d
@@ -1021,7 +1024,8 @@ def eval_dynamic_shape_as_ivals(
       return d
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
-      if d.type != i32_type:  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      if d.type != i32_type:
         return hlo.convert(i32_type, d)
       else:
         return d
@@ -1078,7 +1082,8 @@ def _to_physical_op_sharding(
     return None
   if isinstance(sharding, AUTO):
     if config.use_shardy_partitioner.value:
-      return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      return sharding._to_sdy_sharding(aval.ndim)
     return None
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
@@ -1092,8 +1097,8 @@ def _to_physical_op_sharding(
       axis_ctx.manual_axes):
     sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
   if config.use_shardy_partitioner.value:
-    return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
-  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
+    return sharding._to_sdy_sharding(aval.ndim)
+  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
 
 
 def _to_xla_layout(layout: Layout | None | AutoLayout,
@@ -1104,7 +1109,8 @@ def _to_xla_layout(layout: Layout | None | AutoLayout,
     return "auto"
   if aval is core.abstract_token:
     return None
-  return str(layout._to_xla_layout(aval.dtype))  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  return str(layout._to_xla_layout(aval.dtype))
 
 
 def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
@@ -1602,7 +1608,7 @@ def lower_jaxpr_to_fun(
   token_types = [token_type() for _ in effects]
   token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, const_args, array inputs
-  input_avals = dim_var_avals + token_avals + list(in_avals)  # type: ignore
+  input_avals = dim_var_avals + token_avals + list(in_avals)
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
   output_types = [*token_types, *output_types]
@@ -1694,7 +1700,7 @@ def lower_jaxpr_to_fun(
       if pom is not None and mk is None:
         res.append([pom] * len_ir_types(types))
       else:
-        res.append([mk] * len_ir_types(types))  # type: ignore
+        res.append([mk] * len_ir_types(types))
       # To add the custom call on the output to signal a transfer, only do it
       # if memory kind comes from out_shardings on `jit` and result_memory_kinds
       # comes from out_shardings on `jit`.
@@ -1806,7 +1812,7 @@ def lower_jaxpr_to_fun(
 
   if use_sharding_annotations and ir_result_shardings is not None:
     for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                   unconstrained_variants):  # type: ignore
+                                   unconstrained_variants):
       if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
@@ -1881,7 +1887,7 @@ def lower_jaxpr_to_fun(
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
           for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 arg_shardings)  # type: ignore
+                                 arg_shardings)
       ]
 
     _, token_args, _, unflattened_args = util.split_list(
@@ -1914,7 +1920,7 @@ def lower_jaxpr_to_fun(
     if ir_result_shardings is not None:
       temp_flat_outputs = []
       for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                  output_avals, unconstrained_variants):  # type: ignore
+                                  output_avals, unconstrained_variants):
         if (s is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
@@ -1946,7 +1952,7 @@ def lower_jaxpr_to_fun(
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 result_shardings)  # type: ignore
+                                 result_shardings)
       ]
 
     func_dialect.return_(flat_outputs)
@@ -2206,7 +2212,8 @@ def _emit_lowering_rule_as_fun(
 
   const_args, const_arg_avals = util.unzip2(core.eqn_params_const_args(params))
 
-  input_types = map(aval_to_ir_type, const_arg_avals + avals_in)  # type: ignore
+  # pyrefly: ignore [unsupported-operation]
+  input_types = map(aval_to_ir_type, const_arg_avals + avals_in)
   output_types = map(aval_to_ir_type, avals_out)
   token_types = [token_type() for _ in ordered_effects]
   input_types = [*dim_var_types, *token_types, *input_types]
@@ -2246,7 +2253,7 @@ def _emit_lowering_rule_as_fun(
     if sub_ctx.tokens_out:
       outs = [
           *(sub_ctx.tokens_out.get(eff) for eff in ordered_effects),
-          *outs  # pyrefly: ignore[not-iterable]
+          *outs
       ]
     outs = flatten_ir_values(outs)  # pyrefly: ignore[bad-argument-type]
     func_dialect.return_(outs)
@@ -2508,7 +2515,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun, ctx.avals_in, lower=True)
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
-      from jax._src.interpreters import pxla  # type: ignore
+      from jax._src.interpreters import pxla
       closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
       closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
       jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
@@ -2690,16 +2697,21 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # broadcast_dimension[i] is the axis of the result where the axis i of
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape  # type: ignore
-    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    # pyrefly: ignore [missing-attribute]
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
+    # pyrefly: ignore [missing-attribute]
+    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
     physical_aval_out = core.physical_aval(aval_out)
     return broadcast_in_dim(
         ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
   else:
-    if not core.is_constant_shape(aval_out.shape):  # type: ignore
-      shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    if not core.is_constant_shape(aval_out.shape):
+      # pyrefly: ignore [missing-attribute]
+      shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
       out = hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
@@ -2707,7 +2719,8 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
-                 for d in aval_out.shape), aval_out  # type: ignore
+                 # pyrefly: ignore [missing-attribute]
+                 for d in aval_out.shape), aval_out
       out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           dense_int_array(broadcast_dimensions))
@@ -2722,10 +2735,13 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   """Broadcasts multiple ops to the out_shape."""
   out = []
   for op, op_aval in zip(ops, ops_avals):
-    op_aval_shape = op_aval.shape  # type: ignore
-    op_aval_sharding = op_aval.sharding  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    op_aval_shape = op_aval.shape
+    # pyrefly: ignore [missing-attribute]
+    op_aval_sharding = op_aval.sharding
     out_aval = core.ShapedArray(
-        out_shape, op_aval.dtype, sharding=out_sharding)  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        out_shape, op_aval.dtype, sharding=out_sharding)
     if core.definitely_equal_shape(op_aval_shape, out_shape):
       if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
         out.append(op)
@@ -2746,8 +2762,10 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
   aval_out = core.physical_aval(aval_out)
-  if not core.is_constant_shape(aval_out.shape):  # type: ignore
-    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  if not core.is_constant_shape(aval_out.shape):
+    # pyrefly: ignore [missing-attribute]
+    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
     return hlo.dynamic_reshape(
         aval_to_ir_type(aval_out), op, shape,
     )
@@ -2786,7 +2804,8 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
-    dtype = index_avals[0].dtype if index_avals else np.int32  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    dtype = index_avals[0].dtype if index_avals else np.int32
     trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
     start_indices = (*start_indices, *trailing_zeros)
     aval_out = core.physical_aval(aval_out)
@@ -2802,7 +2821,8 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
       shape_tensor([0] * len(start_indices)),
       shape_tensor(start_indices),
       hlo.subtract(
-        eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        eval_dynamic_shape_as_tensor(ctx, x_aval.shape),
         slice_sizes))
     return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out), x,
@@ -2818,7 +2838,8 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
-    dtype = index_avals[0].dtype if index_avals else np.int32  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    dtype = index_avals[0].dtype if index_avals else np.int32
     zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
     start_indices = (*start_indices, *zeros)
     physical_aval_out = core.physical_aval(aval_out)
@@ -2930,7 +2951,8 @@ def _wrap_with_spmd_op(name: str,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
   if config.use_shardy_partitioner.value and allow_shardy_lowering:
-    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result
 
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
@@ -2941,7 +2963,8 @@ def _wrap_with_spmd_op(name: str,
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
-  out_shape = core.physical_aval(aval_out).shape  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  out_shape = core.physical_aval(aval_out).shape
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
@@ -2999,15 +3022,15 @@ def get_sharding_attr(
     sharding: xc.OpSharding | SdyArray | SdyArrayList
 ) -> ir.Attribute:
   if isinstance(sharding, (SdyArray, SdyArrayList)):
-    return sharding.build()  # type: ignore
+    return sharding.build()
   else:
     # If there are very large numbers of devices, use the proto representation.
     # The MHLO to HLO conversion supports both, and the proto representation is
     # more compact.
-    if len(sharding.tile_assignment_devices) > 100:  # type: ignore
-      return ir.StringAttr.get(sharding.SerializeToString())  # type: ignore
+    if len(sharding.tile_assignment_devices) > 100:
+      return ir.StringAttr.get(sharding.SerializeToString())
     else:
-      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))  # type: ignore[arg-type]
+      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))
 
 
 def wrap_with_layout_op(ctx: LoweringRuleContext,
@@ -3017,7 +3040,8 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                         aval_in: core.AbstractValue):
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
-  out_shape = core.physical_aval(aval_out).shape  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  out_shape = core.physical_aval(aval_out).shape
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
@@ -3027,7 +3051,8 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                    api_version=1,
                    result_shapes=result_shapes,
                    # Set operand layouts to anything. XLA will ignore it.
-                   operand_layouts=[list(range(aval_in.ndim))],  # type: ignore
+                   # pyrefly: ignore [missing-attribute]
+                   operand_layouts=[list(range(aval_in.ndim))],
                    # TODO(yashkatariya): Figure out how to pass tiling to the
                    # custom call.
                    result_layouts=[layout.major_to_minor[::-1]])

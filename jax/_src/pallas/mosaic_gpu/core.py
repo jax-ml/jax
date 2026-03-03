@@ -426,7 +426,8 @@ def infer_tmem_layout(
     packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
-  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
+  # pyrefly: ignore [bad-argument-type]
+  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)
 
 
 def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
@@ -1078,7 +1079,7 @@ class BlockSpec(pallas_core.BlockSpec):
     )
     block_inner_aval = bm.block_aval.inner_aval
     for t in self.transforms:
-      block_inner_aval = t.transform_type(block_inner_aval)  # type: ignore[arg-type]
+      block_inner_aval = t.transform_type(block_inner_aval)
     return bm.replace(
         transformed_block_aval=bm.block_aval.update(
             inner_aval=block_inner_aval

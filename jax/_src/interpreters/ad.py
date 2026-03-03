@@ -103,7 +103,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
       del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
-  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
+  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)
   jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is _tag) for c in consts]
@@ -350,7 +350,8 @@ def backward_pass3(
       v, = eqn.outvars
       lin_eqns.append(eqn)
       if eqn.primitive is core.ref_p or eqn.primitive is core.empty_ref_p:
-        env[v] = RefAccum(v.aval.inner_aval)  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        env[v] = RefAccum(v.aval.inner_aval)
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval)
       elif eqn.primitive is core.accum_grad_in_ref_p:
@@ -368,7 +369,7 @@ def backward_pass3(
       ans = ans if eqn.primitive.multiple_results else [ans]
       foreach(env.setdefault, eqn.outvars, ans)
 
-  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack  # type: ignore
+  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
   for acc, ct in zip(map(read, jaxpr.outvars), cotangents_in):
     if isinstance(acc, GradAccum):
@@ -471,7 +472,7 @@ def ct_check(primal, ct):
   if config.disable_bwd_checks.value:
     return
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
-  ct_aval_expected = primal.aval.to_cotangent_aval()  # type: ignore
+  ct_aval_expected = primal.aval.to_cotangent_aval()
   if not core.typematch(ct_aval, ct_aval_expected, no_dtype_check=True):
     # TODO(yashkatariya, mattjj): Add primitive name here for
     # better error message?
@@ -1007,7 +1008,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     if user_facing_symbolic_zeros:
       zero_type = SymbolicZero
     else:
-      zero_type = Zero  # type: ignore[assignment]
+      zero_type = Zero
 
     with core.set_current_trace(trace):
       tangent_args = [trace.new_arg(pe.PartialVal.unknown(a)) if nz else make_zero(a)
@@ -1204,7 +1205,7 @@ def instantiate_zeros(tangent):
     if hasattr(tangent.aval, 'sharding'):
       # TODO(dougalm, yashkatariya): Delete this context manager once we figure
       # out how to ensure jaxpr arguments always have the context mesh.
-      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):
         return zeros_like_aval(tangent.aval)
     return zeros_like_aval(tangent.aval)
   return tangent
@@ -1232,7 +1233,8 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
     args = unproject_accums(specs, primals_ctrefs)
     backward_pass3(call_jaxpr, False, (), args, cts)
     cts_out = [x.freeze() if isinstance(x, ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    cts_out, cell.out_tree = tree_flatten(cts_out)
     return cts_out
 
   update_params = call_transpose_param_updaters.get(primitive)
@@ -1241,7 +1243,8 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
                            [type(x) is not Zero for x in cts])
 
   out_flat = primitive.bind(transposed, *flat_args, **params)
-  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):
     if isinstance(x, ValAccum): x.accum(ct)
 fancy_transposes[core.call_p] = partial(call_transpose_fancy, call_p)
 

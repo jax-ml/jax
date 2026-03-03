@@ -77,7 +77,8 @@ class AbstractRef(state.AbstractRef):
 
     self.tiling = tiling
 
-  def update(  # type: ignore[override]
+  # pyrefly: ignore [bad-param-name-override]
+  def update(
       self,
       inner_aval: Any | None = None,
       memory_space: Any | None = None,

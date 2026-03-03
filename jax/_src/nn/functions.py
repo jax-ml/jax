@@ -708,7 +708,8 @@ def _one_hot(x: Array, num_classes: int, *,
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)
   except TypeError:
     axis_size = lax.axis_size(axis)
     if num_classes != axis_size:
@@ -716,7 +717,8 @@ def _one_hot(x: Array, num_classes: int, *,
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
     return jnp.asarray(x == axis_idx, dtype=dtype)
-  axis = operator.index(axis)  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  axis = operator.index(axis)
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)

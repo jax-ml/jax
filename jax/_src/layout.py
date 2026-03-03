@@ -49,7 +49,8 @@ class Layout:
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
     xla_layout = pjrt_layout._xla_layout()
     return Layout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
-                  xla_layout.tiling(),  # type: ignore[arg-type]
+                  # pyrefly: ignore [bad-argument-type]
+                  xla_layout.tiling(),
                   xla_layout.element_size_in_bits())
 
   def __repr__(self):

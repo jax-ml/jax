@@ -486,7 +486,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise BufferError(
           "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
+          f"{self.platform()}"
       )
 
   def __reduce__(self):
@@ -587,7 +587,7 @@ class ArrayImpl(basearray.Array):
     for buf in self._arrays:
       buf.delete()
     self._arrays = None  # pyrefly: ignore[bad-assignment]
-    self._npy_value = None  # pyrefly: ignore[bad-assignment]
+    self._npy_value = None
 
   @use_cpp_method()
   def is_deleted(self):
@@ -611,7 +611,7 @@ class ArrayImpl(basearray.Array):
     return self
 
   @use_cpp_method()
-  def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:  # type: ignore
+  def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
     ...  # pytype: disable=bad-return-type
 
   @use_cpp_method()
@@ -790,7 +790,7 @@ def make_array_from_callback(
     return r
 
   if sharding.is_fully_replicated:
-    devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
+    devices = list(sharding._internal_device_list.addressable_device_list)
     # Only compute data once.
     per_device_values = [get_data((slice(None),) * len(shape))] * len(devices)
   else:
@@ -831,7 +831,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]  # type: ignore
+    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
@@ -991,7 +991,8 @@ def _array_from_process_local_data(
   # making local_to_global_shape available in the api.
   local_shape = local_data.shape
   if global_shape is None:
-    global_shape = local_to_global_shape(sharding, local_shape)  # type: ignore[assignment]
+    # pyrefly: ignore [bad-assignment]
+    global_shape = local_to_global_shape(sharding, local_shape)
     assert global_shape is not None
     if None in global_shape:
       raise ValueError(
@@ -1334,5 +1335,5 @@ def _token_global_result_handler(global_aval, out_sharding, committed):
       core.get_token_aval(), out_sharding, committed)
   def wrapper(array):
     return core.Token(array)
-  return array_handler.wrap(wrapper)  # type: ignore
+  return array_handler.wrap(wrapper)
 pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler

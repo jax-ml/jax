@@ -456,10 +456,12 @@ def _compute_newshape(arr: Array, newshape: DimSize | Shape) -> Shape:
   """Fixes a -1 value in newshape, if present."""
   orig_newshape = newshape  # for error messages
   try:
-    iter(newshape)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    iter(newshape)
   except:
     newshape = [newshape]
-  newshape = core.canonicalize_shape(newshape)  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  newshape = core.canonicalize_shape(newshape)
   neg1s = [i for i, d in enumerate(newshape) if type(d) is int and d == -1]
   if len(neg1s) > 1:
     raise TypeError("can only specify one unknown axis size with a `-1` value, "
@@ -860,7 +862,7 @@ class _IndexUpdateRef:
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, out_sharding=out_sharding,  # type: ignore
+        mode=mode, out_sharding=out_sharding,
         normalize_indices=wrap_negative_indices)
 
   def apply(self, func: Callable[[ArrayLike], Array], *,
@@ -905,7 +907,7 @@ class _IndexUpdateRef:
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter_add,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, out_sharding=out_sharding,  # type: ignore
+        mode=mode, out_sharding=out_sharding,
         normalize_indices=wrap_negative_indices)
 
   def subtract(self, values: ArrayLike, *,

@@ -214,7 +214,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   args_avals = args.map(core.get_aval)
   init_avals, xs_avals = args_avals.unpack()
 
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if any(isinstance(a, HiType) for a in xs_avals):
     if length is None:
       raise ValueError("must provide `length` to `scan`")
@@ -361,7 +361,8 @@ def _infer_scan_length(
       msg = ('The `length` argument to `scan` expects a concrete `int` value.'
              ' For scan-like iteration with a dynamic length, use `while_loop`'
              ' or `fori_loop`.')
-      raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      raise core.ConcretizationTypeError(length, msg) from None
     else:
       if not all(length == l for l in lengths):
         msg = ("scan got `length` argument of {} which disagrees with "
@@ -1353,7 +1354,7 @@ def _scan_state_partial_discharge_rule(
   return refvals_out, [*carry, *ys]
 
 scan_p = core.Primitive("scan")
-scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
+scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 scan_p.multiple_results = True
 scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
@@ -1373,7 +1374,7 @@ state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_disc
 
 def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
-scan_p.is_high = _scan_is_high  # type: ignore
+scan_p.is_high = _scan_is_high
 
 def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   # move qdd binders and corresponding hi_args from consts slots to carry slots
@@ -1592,12 +1593,12 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
         f"while_loop {len(body_jaxpr.in_avals)=} but {len(body_consts_avals) + len(in_avals)=}")
   # TODO(mattjj): check body carry type
   # TODO(mattjj): make these typecompat checks work with bints
-  # if not all(_map(core.typecompat, [*cond_consts_avals, *in_avals], cond_jaxpr.in_avals)):  # type: ignore
+  # if not all(_map(core.typecompat, [*cond_consts_avals, *in_avals], cond_jaxpr.in_avals)):
   #   cond_avals = [*cond_consts_avals, *in_avals]
   #   a1, a2 = next((a1, a2) for a1, a2 in zip(cond_avals, cond_jaxpr.in_avals)
   #                 if not core.typecompat(a1, a2))
   #   raise core.JaxprTypeError(f"while_loop cond function input type error: {a1} != {a2}")
-  # if not all(_map(core.typecompat, [*body_consts_avals, *in_avals], body_jaxpr.in_avals)):  # type: ignore
+  # if not all(_map(core.typecompat, [*body_consts_avals, *in_avals], body_jaxpr.in_avals)):
   #   body_avals = [*body_consts_avals, *in_avals]
   #   a1, a2 = next((a1, a2) for a1, a2 in zip(body_avals, body_jaxpr.in_avals)
   #                 if not core.typecompat(a1, a2))
@@ -2237,7 +2238,7 @@ state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharg
 
 def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
   return cond_jaxpr.is_high or body_jaxpr.is_high
-while_p.is_high = _while_is_high  # type: ignore
+while_p.is_high = _while_is_high
 
 def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
   if any(a.has_qdd for a in cond_jaxpr.in_avals[:cond_nconsts]):
@@ -2274,7 +2275,7 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(body_jaxpr)])
   pe.apply_himut(body_jaxpr, [*hi_bconsts, *hi_carry], out_mut)
   return pe.raise_lo_outs(body_jaxpr.out_avals, lo_outs)
-while_p.to_lojax = _while_to_lojax  # type: ignore
+while_p.to_lojax = _while_to_lojax
 
 def _insert_binders(jaxpr, n_after, vals):
   avals = _map(typeof, vals)
@@ -2463,9 +2464,9 @@ def fori_loop(lower, upper, body_fun, init_val,
                      "are statically known.")
 
   if lower_dtype != dtype:
-    lower = lax.convert_element_type(lower, dtype)  # type: ignore
+    lower = lax.convert_element_type(lower, dtype)
   if upper_dtype != dtype:
-    upper = lax.convert_element_type(upper, dtype)  # type: ignore
+    upper = lax.convert_element_type(upper, dtype)
   while_body_fun = _fori_body_fun(body_fun, body_fun_dbg)
   _, _, result = while_loop(_fori_cond_fun, while_body_fun,
                             (lower, upper, init_val))
@@ -2512,7 +2513,7 @@ def _batch_and_remainder(x, batch_size: int):
     remainder_leaves = [_remainder_leaf(leaf, batch_elems) for leaf in leaves]
     return None, treedef.unflatten(remainder_leaves)
   elif remainder:
-    scan_leaves, remainder_leaves = unzip2(  # type: ignore
+    scan_leaves, remainder_leaves = unzip2(
         [(_scan_leaf(leaf, batch_elems, num_batches, batch_size),
           _remainder_leaf(leaf, batch_elems)) for leaf in leaves])
     return treedef.unflatten(scan_leaves), treedef.unflatten(remainder_leaves)

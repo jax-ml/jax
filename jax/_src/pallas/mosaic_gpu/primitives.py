@@ -273,7 +273,7 @@ def _copy_smem_to_gmem_lowering(
       indices,
       slice_lengths,
       predicate=predicate,
-      commit_group=commit_group,  # type: ignore[call-arg]
+      commit_group=commit_group,
       reduction_op=reduction_op_attr,
   )
   return ()
@@ -569,7 +569,7 @@ def _copy_gmem_to_smem_lowering(
     # Bytes is the destination size, which is only half of the total
     # size of the partitioned transfer so we need to double it.
     bytes *= 2
-    if len(collective) != 1:  # type: ignore
+    if len(collective) != 1:
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
@@ -598,7 +598,7 @@ def _copy_gmem_to_smem_lowering(
       if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),  # type: ignore
+            mgpu.utils.cluster_idx(collective[0]),
             mgpu.c(0, ir.IndexType.get()),
         )
         barrier.arrive_expect_tx(bytes, predicate=first_block)
@@ -614,7 +614,7 @@ def _copy_gmem_to_smem_lowering(
       if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),  # type: ignore
+            mgpu.utils.cluster_idx(collective[0]),
             mgpu.c(0, ir.IndexType.get()),
         )
         with mgpu.when(first_block):
@@ -795,7 +795,8 @@ def _async_prefetch_lowering(
         collective=collective,
         partitioned=partitioned_axis,
         **copy_params,
-        **predicate_kwarg,  # type: ignore[arg-type]
+        # pyrefly: ignore [bad-argument-type]
+        **predicate_kwarg,
     )
     return ()
 
@@ -932,7 +933,8 @@ def _barrier_arrive_lowering(
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = barrier_aval.inner_aval.dtype  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  sem_dtype = barrier_aval.inner_aval.dtype
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
   if orders_tensor_core:
     # We arrive on only one lane for barriers with orders_tensor_core=True,
@@ -1010,7 +1012,8 @@ def _barrier_wait_lowering(
   assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False
   )
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
@@ -1397,7 +1400,7 @@ def _wgmma_warpgroup_lowering(
     a_transforms_num_leaves = a_transforms_tree.num_leaves
   else:
     a_transforms_num_leaves = 0
-    b_transforms_leaves = transforms_leaves  # type: ignore
+    b_transforms_leaves = transforms_leaves
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
@@ -1883,13 +1886,14 @@ def _tcgen05_mma_lowering(
       ):
         lhs_transpose = True
       case () if isinstance(a_ref, tcgen05.TMEMRef):
-        lhs_tiling = None  # type: ignore
+        lhs_tiling = None
       case _:
         raise NotImplementedError(
             f"Unsupported transforms for LHS: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
-      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)  # type: ignore
+      # pyrefly: ignore [unsupported-operation]
+      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
       if lhs_tiling != (8, swizzle_elems):
         raise ValueError("MMA lhs tiling does not fit swizzle. "
                         f"{lhs_tiling=} expected={(8, swizzle_elems)}")
@@ -3761,7 +3765,7 @@ def try_cluster_cancel_lowering(
           f"Unimplemented transforms for result ref: {res_transforms}"
       )
   else:
-    barrier_transforms_leaves = transforms_leaves  # type: ignore
+    barrier_transforms_leaves = transforms_leaves
 
   if barrier_transforms_tree is not None:
     base_index = _extract_barrier_slice_base(
@@ -3896,7 +3900,8 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
   i32 = ir.IntegerType.get_signless(32)
   # Divide out the cluster dimensions.
   for axis in ctx.module_ctx.axis_names.cluster:
-    dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
     cta_grid[dim] = arith_dialect.divui(
         cta_grid[dim],
         mgpu.c(ctx.launch_ctx.cluster_size[dim], i32))

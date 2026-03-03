@@ -157,7 +157,8 @@ class Jaxpr:
                # We want all calls to pass a DebugInfo object, but for backwards
                # compatibility we have to allow calls when the debug_info
                # is missing.
-               debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
+               # pyrefly: ignore [bad-function-definition]
+               debug_info: DebugInfo = None,
                is_high: bool = False,
                ):
     """
@@ -549,7 +550,7 @@ class Literal:
         except (TypeError, AttributeError, ValueError):
           return None
 
-  __hash__ = None  # type: ignore
+  __hash__ = None
 
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del context  # unused
@@ -587,13 +588,13 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
     return []
   consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
   for v in jaxpr.outvars:
-    if type(v) is Literal and np.shape(v.val):  # type: ignore
-      consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+    if type(v) is Literal and np.shape(v.val):
+      consts_by_id[id(v)] = (v.val, v.aval)
 
   for eqn in jaxpr.eqns:
     for v in eqn.invars:
-      if type(v) is Literal and np.shape(v.val):  # type: ignore
-        consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+      if type(v) is Literal and np.shape(v.val):
+        consts_by_id[id(v)] = (v.val, v.aval)
     consts_by_id.update({id(v_aval[0]): v_aval
                          for v_aval in eqn_params_const_args(eqn.params)})
   return list(consts_by_id.values())
@@ -660,7 +661,8 @@ class Primitive:
     else:
       if self.is_high(*in_type, **params) and trace.requires_low:
         with set_current_trace(trace):
-          return self.to_lojax(*args, **params)  # type: ignore
+          # pyrefly: ignore [not-callable]
+          return self.to_lojax(*args, **params)
       return trace.process_primitive(self, args, params)
     trace.process_primitive(self, args, params)  # may raise lojax error
     raise Exception(f"couldn't apply typeof to args: {args}")
@@ -912,7 +914,7 @@ else:
 class Tracer(TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
   __slots__ = ['__weakref__', '_trace', '_line_info']
-  __hash__ = None  # type: ignore
+  __hash__ = None
 
   _trace: Trace
   _line_info: source_info_util.SourceInfo | None
@@ -1753,7 +1755,7 @@ class AbstractValue:
     return unshard_aval(mesh, check_vma, spec, self)
 
   def vspace_add(self, x, y):
-    from jax._src.ad_util import add_jaxvals  # type: ignore
+    from jax._src.ad_util import add_jaxvals
     return add_jaxvals(x, y)
 
 InputType = tuple[AbstractValue, ...]
@@ -1942,13 +1944,15 @@ class AvalQDD:
 
   has_qdd = True
   def lo_ty(self):
-    return self.aval.lo_ty_qdd(self.qdd)  # type: ignore
+    return self.aval.lo_ty_qdd(self.qdd)
 
   def read_loval(self, val):
-    return self.aval.read_loval(self.qdd, val)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    return self.aval.read_loval(self.qdd, val)
 
   def new_from_loval(self, *lovals):
-    return self.aval.new_from_loval(self.qdd, *lovals)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    return self.aval.new_from_loval(self.qdd, *lovals)
 
   def to_tangent_aval(self):
     if not hasattr(self.qdd, "to_tangent_qdd"):
@@ -1964,7 +1968,8 @@ def cur_qdd(x):
   prev_trace = trace_ctx.trace
   trace_ctx.set_trace(eval_trace)
   try:
-    return prev_trace.cur_qdd(x)  # type: ignore[missing-attribute]
+    # pyrefly: ignore [missing-attribute]
+    return prev_trace.cur_qdd(x)
   finally:
     trace_ctx.set_trace(prev_trace)
 
@@ -1998,7 +2003,7 @@ def physical_aval(aval):
   if (isinstance(aval, ShapedArray) and
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
-    from jax._src.sharding_impls import physical_sharding  # type: ignore
+    from jax._src.sharding_impls import physical_sharding
     return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
                        sharding=physical_sharding(aval, aval.sharding),
                        vma=aval.vma)
@@ -2009,7 +2014,7 @@ def physical_shape(logical_shape, dtype):
   return (*logical_shape, *elt_aval.shape)
 
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
-  duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
+  duck = edtype._rules.physical_element_aval(edtype)
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
 
 
@@ -2566,10 +2571,14 @@ class Ref(metaclass=RefMeta):
   dtype = property(lambda self: self._aval.dtype)
 
   # get operations from aval, munging the name
-  def __getitem__(self, idx): return self._aval._getitem(self, idx)  # type: ignore[missing-attribute]
-  def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)  # type: ignore[missing-attribute]
-  def __len__(self) -> int: return self._aval._len(self)  # type: ignore[missing-attribute]
-  def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  def __getitem__(self, idx): return self._aval._getitem(self, idx)
+  # pyrefly: ignore [missing-attribute]
+  def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
+  # pyrefly: ignore [missing-attribute]
+  def __len__(self) -> int: return self._aval._len(self)
+  # pyrefly: ignore [missing-attribute]
+  def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)
 
   # some attributes/methods only work for lojax refs
   sharding = property(lambda self: self._refs._buf.sharding)
@@ -2610,16 +2619,16 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
   """
   return ref_p.bind(init_val, memory_space=memory_space, kind=kind)
 ref_p = Primitive('new_ref')
-ref_p.is_effectful = lambda params: True  # type: ignore
+ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
 
-ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high  # type: ignore
+ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
 def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
-  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
+  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
   return Ref(AbstractRef(val_ty), hival_of_refs)
-ref_p.to_lojax = _ref_to_lojax  # type: ignore
+ref_p.to_lojax = _ref_to_lojax
 
 
 # TODO(mattjj,dougalm): merge with ref_p
@@ -2628,7 +2637,7 @@ def empty_ref(ty, memory_space=None):
   return empty_ref_p.bind(ty=aval, memory_space=memory_space)
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
-empty_ref_p.is_effectful = lambda _: True  # type: ignore
+empty_ref_p.is_effectful = lambda _: True
 
 
 @empty_ref_p.def_effectful_abstract_eval
@@ -2646,7 +2655,7 @@ def free_ref(ref: Ref):
 
 free_ref_p = Primitive('free_ref')
 free_ref_p.multiple_results = True
-free_ref_p.is_effectful = lambda _: True  # type: ignore
+free_ref_p.is_effectful = lambda _: True
 free_ref_p.ref_primitive = True
 
 
@@ -2710,7 +2719,7 @@ def freeze(ref: Ref) -> Array:
   """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
-freeze_p.is_effectful = lambda params: True  # type: ignore
+freeze_p.is_effectful = lambda params: True
 freeze_p.ref_primitive = True
 
 @freeze_p.def_effectful_abstract_eval
@@ -2725,10 +2734,10 @@ def accum_grad_in_ref(x):
   return accum_grad_in_ref_p.bind(x)
 
 accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
-accum_grad_in_ref_p.is_high = lambda *_: True  # type: ignore
-accum_grad_in_ref_p.to_lojax = lambda x: x  # type: ignore
-accum_grad_in_ref_p.def_abstract_eval(lambda x: x)  # type: ignore
-accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
+accum_grad_in_ref_p.is_high = lambda *_: True
+accum_grad_in_ref_p.to_lojax = lambda x: x
+accum_grad_in_ref_p.def_abstract_eval(lambda x: x)
+accum_grad_in_ref_p.def_impl(lambda x: x)
 
 
 class AbstractToken(AbstractValue):
@@ -2993,7 +3002,8 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
       return operator.index(d)
     except:
       # Is a _DimExpr
-      return d._evaluate(env)  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      return d._evaluate(env)
   return tuple(eval_one_dim(d) for d in shape)
 
 def dim_value_dtype():
@@ -3082,9 +3092,10 @@ class MapPrimitive(Primitive):
     return [subfun], new_params
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if isinstance(aval, HiType):
-    return aval.dec_rank(size, axis)  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    return aval.dec_rank(size, axis)
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
@@ -3097,9 +3108,10 @@ def mapped_leading_aval(size, aval) -> AbstractValue:
 # TODO(yashkatariya): take axis data
 def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if isinstance(aval, HiType):
-    return aval.inc_rank(size, axis)  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    return aval.inc_rank(size, axis)
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, explicit_mesh_axis, aval)
@@ -3225,9 +3237,9 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
     return t1.dtype == t2.dtype and cmp_shape_shd_vma_memsp(t1, t2)
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    return (typematch(t1.inner_aval, t2.inner_aval, no_dtype_check) and  # type: ignore
-            (t1.memory_space is None or t2.memory_space is None or  # type: ignore
-             t1.memory_space == t2.memory_space))  # type: ignore
+    return (typematch(t1.inner_aval, t2.inner_aval, no_dtype_check) and
+            (t1.memory_space is None or t2.memory_space is None or
+             t1.memory_space == t2.memory_space))
   else:
     return False
 
@@ -3420,7 +3432,8 @@ def _check_jaxpr(
       if prim.ref_primitive:
         if prim in _ref_allocating_primitives:
           outvar, = eqn.outvars
-          in_idx[outvar] = None  # type: ignore
+          # pyrefly: ignore [unsupported-operation]
+          in_idx[outvar] = None
           mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
@@ -3712,7 +3725,7 @@ def _sds_aval_mapping(x):
   aval = update_aval_with_sharding(
       aval, x.sharding, vma=(frozenset() if x.vma is None else x.vma))
   if x.is_ref:
-    from jax._src.state.types import AbstractRef  # type: ignore
+    from jax._src.state.types import AbstractRef
     return AbstractRef(aval)
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
@@ -4019,12 +4032,12 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
       del env[v]
 
 # Used in shard_map for converting avals
-shard_aval_handlers = {}  # type: ignore
-unshard_aval_handlers = {}  # type: ignore
+shard_aval_handlers = {}
+unshard_aval_handlers = {}
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if isinstance(aval, HiType):
     return aval.shard(mesh, manual_axes, check_vma, spec)
   if (handler := shard_aval_handlers.get(type(aval))):
@@ -4033,7 +4046,7 @@ def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
 
 def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
                  ) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if isinstance(aval, HiType):
     return aval.unshard(mesh, check_vma, spec)
   if (handler := unshard_aval_handlers.get(type(aval))):

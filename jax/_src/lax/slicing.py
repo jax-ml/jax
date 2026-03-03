@@ -173,7 +173,7 @@ def dynamic_slice(
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
-  sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
+  sizes = core.canonicalize_shape(slice_sizes)
   operand, *start_indices = core.standard_insert_pvary(operand, *start_indices)
   return dynamic_slice_p.bind(operand, *start_indices, slice_sizes=tuple(sizes))
 
@@ -2370,7 +2370,8 @@ def _get_updates_batching_dims(indices_batching_dims, update_window_dims,
                                index_vector_dim, updates_shape):
   scatter_dim_in_updates = list(range(index_vector_dim))
   for i in update_window_dims:
-    scatter_dim_in_updates.insert(i, None)  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    scatter_dim_in_updates.insert(i, None)
   assert len(scatter_dim_in_updates) == len(updates_shape)
   return tuple(scatter_dim_in_updates.index(i) for i in indices_batching_dims)
 
@@ -3404,9 +3405,11 @@ def _dynamic_slice_indices(
           "vs {})")
     raise ValueError(msg.format(len(start_indices), operand.shape))
   if not isinstance(start_indices, (tuple, list)):
-    if start_indices.ndim != 1:  # type: ignore[union-attr]
+    # pyrefly: ignore [missing-attribute]
+    if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
-                       .format(start_indices.shape))  # type: ignore[union-attr]
+                       # pyrefly: ignore [missing-attribute]
+                       .format(start_indices.shape))
     start_indices = list(start_indices)
   result: list[ArrayLike] = []
   if isinstance(allow_negative_indices, bool):

@@ -516,7 +516,8 @@ def sdy_sharding_rule_to_mlir(
       # Argument 1 to "_get_batching_dim_factor_name" has incompatible type "str | None"; expected "str"  [arg-type]
       dim_mappings.append(
         sdy.DimMappingAttr.get(factor_indices=[
-          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]])) # type: ignore
+          # pyrefly: ignore [bad-argument-type]
+          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]]))
 
     for j, dim in enumerate(value):
       if isinstance(dim, str):

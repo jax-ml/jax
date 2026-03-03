@@ -22,7 +22,8 @@ import warnings
 
 filelock: Any | None = None
 try:
-  import filelock  # type: ignore[no-redef]
+  # pyrefly: ignore [missing-import]
+  import filelock
 except ImportError:
   pass
 
@@ -181,7 +182,8 @@ class LRUCache(CacheInterface):
       # `pathlib` and `etils[epath]` have different API for obtaining the size
       # of a file, and we need to support them both.
       # See also https://github.com/google/etils/issues/630
-      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # type: ignore[missing-attribute]
+      # pyrefly: ignore [missing-attribute]
+      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"

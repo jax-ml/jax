@@ -52,7 +52,7 @@ Ref: TypeAlias = state_types.AbstractRef | TransformedRef
 _T = TypeVar("_T")
 
 load_p = jax_core.Primitive("load")
-load_p.is_effectful = lambda params: True  # type: ignore
+load_p.is_effectful = lambda params: True
 
 
 @load_p.def_effectful_abstract_eval
@@ -105,14 +105,15 @@ def load_expanded(ref: Ref, *, mask: jax.Array) -> jax.Array:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    # pyrefly: ignore [bad-index]
+    ref = ref.at[...]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   return load_p.bind(ref.ref, *flat_transforms, mask, has_mask=True, tree=tree)
 
 
 swap_p = jax_core.Primitive("swap")
-swap_p.is_effectful = lambda params: True  # type: ignore
+swap_p.is_effectful = lambda params: True
 
 
 @swap_p.def_effectful_abstract_eval
@@ -170,7 +171,8 @@ def store_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    # pyrefly: ignore [bad-index]
+    ref = ref.at[...]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -195,7 +197,8 @@ def addupdate(ref: Ref, x: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    # pyrefly: ignore [bad-index]
+    ref = ref.at[...]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -212,7 +215,8 @@ def addupdate_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    # pyrefly: ignore [bad-index]
+    ref = ref.at[...]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -240,7 +244,7 @@ def _indexed_shape(ref: Ref, indices: Sequence[jax.Array]) -> tuple[int, ...]:
 
 
 gather_p = jax_core.Primitive("gather")
-gather_p.is_effectful = lambda params: True  # type: ignore
+gather_p.is_effectful = lambda params: True
 
 
 @gather_p.def_effectful_abstract_eval
@@ -305,7 +309,7 @@ def load_gather(
 
 
 scatter_p = jax_core.Primitive("scatter")
-scatter_p.is_effectful = lambda params: True  # type: ignore
+scatter_p.is_effectful = lambda params: True
 scatter_p.multiple_results = True
 
 
@@ -737,7 +741,7 @@ def sort_key_val(
 
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")
-parallel_loop_p.is_effectful = lambda params: bool(params["jaxpr"].effects)  # type: ignore
+parallel_loop_p.is_effectful = lambda params: bool(params["jaxpr"].effects)
 parallel_loop_p.multiple_results = True
 
 

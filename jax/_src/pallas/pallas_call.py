@@ -149,7 +149,7 @@ pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 def _pallas_call_is_high(*_, jaxpr, **params):
   del params
   return jaxpr.is_high
-pallas_call_p.is_high = _pallas_call_is_high  # type: ignore
+pallas_call_p.is_high = _pallas_call_is_high
 
 
 def _get_index_mapping(avals) -> dict[int, tuple[int, ...]]:
@@ -250,7 +250,7 @@ def _pallas_call_to_lojax(
   return pe.raise_lo_outs(out_avals, lo_outs)
 
 
-pallas_call_p.to_lojax = _pallas_call_to_lojax  # type: ignore
+pallas_call_p.to_lojax = _pallas_call_to_lojax
 
 
 def _pallas_call_jvp_rule(
@@ -834,7 +834,8 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
   )
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    num_iterations = reduce(jnp.multiply, grid)
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -1251,7 +1252,8 @@ def _pallas_call_state_discharge_rule(
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
-          array_aval=ref_aval.inner_aval,  # type: ignore[arg-type]
+          # pyrefly: ignore [bad-argument-type]
+          array_aval=ref_aval.inner_aval,
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
@@ -1585,30 +1587,30 @@ def _pallas_call(
 try:
   from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
 except ImportError:
-  mosaic_tpu_backend = None  # type: ignore
+  mosaic_tpu_backend = None
 
 
 try:
   from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend
 except ImportError:
-  mosaic_gpu_backend = None  # type: ignore
+  mosaic_gpu_backend = None
 
 
 try:
   from jax._src.pallas.triton import pallas_call_registration as triton_backend
 except ImportError:
-  triton_backend = None  # type: ignore
+  triton_backend = None
 
 try:
   from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
 except ImportError:
-  mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
+  mosaic_tpu_interpret = types.SimpleNamespace(
       InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
   )
 
 try:
   from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
 except ImportError:
-  mosaic_gpu_interpret = types.SimpleNamespace(  # type: ignore
+  mosaic_gpu_interpret = types.SimpleNamespace(
       InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
   )

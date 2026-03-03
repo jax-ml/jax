@@ -334,16 +334,18 @@ def backend_compile_and_load(
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
     if isinstance(backend, _jax.CompileOnlyPyClient):
       if host_callbacks:
-        return backend.compile(  # type: ignore
+        # pyrefly: ignore [bad-return]
+        return backend.compile(
             module,
-            executable_devices=executable_devices,  # type: ignore
+            executable_devices=executable_devices,
             compile_options=options,
-            host_callbacks=host_callbacks,  # type: ignore
+            host_callbacks=host_callbacks,
         )
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
       # to take in `host_callbacks`
-      return backend.compile(  # type: ignore
+      # pyrefly: ignore [bad-return]
+      return backend.compile(
           module,
           executable_devices=executable_devices,
           compile_options=options,
@@ -651,8 +653,10 @@ def _share_fdo_profiles(
     )
     return fdo_profile
 
-  if profile_key in _share_fdo_profiles.modules_profiles:  # type: ignore[missing-attribute]
-    return _share_fdo_profiles.modules_profiles[profile_key]  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  if profile_key in _share_fdo_profiles.modules_profiles:
+    # pyrefly: ignore [missing-attribute]
+    return _share_fdo_profiles.modules_profiles[profile_key]
 
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   if distributed.global_state.process_id == min_process_id:
@@ -672,11 +676,13 @@ def _share_fdo_profiles(
         profile_key, share_timeout
     )
 
-  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile
   return fdo_profile
 
 
-_share_fdo_profiles.modules_profiles = {}  # type: ignore[missing-attribute]
+# pyrefly: ignore [missing-attribute]
+_share_fdo_profiles.modules_profiles = {}
 
 
 # The process with the first_process_id should compile the module and write it
@@ -694,8 +700,10 @@ def _compile_and_share_module(
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
-  if cache_key in _compile_and_share_module.modules_cache:  # type: ignore[missing-attribute]
-    return _compile_and_share_module.modules_cache[cache_key]  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  if cache_key in _compile_and_share_module.modules_cache:
+    # pyrefly: ignore [missing-attribute]
+    return _compile_and_share_module.modules_cache[cache_key]
 
   if distributed.global_state.process_id == first_process_id:
     logger.debug("Process %d compiling and sharing module: %s",
@@ -724,13 +732,15 @@ def _compile_and_share_module(
         serialized_executable
     )
     executable = backend.deserialize_executable(
-        serialized_executable, executable_devices, compile_options)  # type: ignore
+        serialized_executable, executable_devices, compile_options)
 
-  _compile_and_share_module.modules_cache[cache_key] = executable  # type: ignore[missing-attribute]
+  # pyrefly: ignore [missing-attribute]
+  _compile_and_share_module.modules_cache[cache_key] = executable
   return executable
 
 
-_compile_and_share_module.modules_cache = {}  # type: ignore[missing-attribute]
+# pyrefly: ignore [missing-attribute]
+_compile_and_share_module.modules_cache = {}
 
 
 def _compile_and_write_cache(

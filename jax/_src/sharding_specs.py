@@ -119,7 +119,7 @@ def _sharding_spec_repr(self):
 
 ShardingSpec.indices = _sharding_spec_indices
 # mypy raises: error: Cannot assign to a method  [assignment]
-ShardingSpec.__repr__ = _sharding_spec_repr  # type: ignore
+ShardingSpec.__repr__ = _sharding_spec_repr
 
 
 Index = Union[int, slice, tuple[Union[int, slice], ...]]
@@ -143,7 +143,7 @@ def spec_to_indices(shape: Sequence[int],
     int, a slice object with step=1, or a tuple thereof, to be treated as an
     index into the full logical array.
   """
-  return tuple(spec.indices(shape).flat)  # type: ignore
+  return tuple(spec.indices(shape).flat)
 
 
 def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],

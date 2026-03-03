@@ -207,7 +207,8 @@ class _PerfettoServer(http.server.SimpleHTTPRequestHandler):
     return super().end_headers()
 
   def do_GET(self):
-    self.server.last_request = self.path  # type: ignore[missing-attribute]
+    # pyrefly: ignore [missing-attribute]
+    self.server.last_request = self.path
     return super().do_GET()
 
   def do_POST(self):
@@ -243,9 +244,10 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     sess = _profile_state.profile_session
-    sess.stop_and_export(str(_profile_state.log_dir))  # type: ignore
+    sess.stop_and_export(str(_profile_state.log_dir))
     if _profile_state.create_perfetto_trace:
-      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)  # type: ignore[bad-argument-type]
+      # pyrefly: ignore [bad-argument-type]
+      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
       if _profile_state.create_perfetto_link:
         _host_perfetto_trace_file(abs_filename)
     _profile_state.reset()

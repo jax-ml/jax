@@ -45,7 +45,8 @@ _PPRINT_USE_COLOR = config.bool_state(
 def _can_use_color() -> bool:
   try:
     # Check if we're in IPython or Colab
-    ipython = get_ipython()  # type: ignore[name-defined]
+    # pyrefly: ignore [unknown-name]
+    ipython = get_ipython()
     shell = ipython.__class__.__name__
     if shell == "ZMQInteractiveShell":
       # Jupyter Notebook
@@ -83,7 +84,8 @@ def _format(
       width, use_color=use_color, annotation_prefix=annotation_prefix,
       source_map=source_map)
 Doc.format = _format
-Doc.__str__ = lambda self: self.format()  # type: ignore[method-assign]
+# pyrefly: ignore [missing-attribute]
+Doc.__str__ = lambda self: self.format()
 
 nil = _pretty_printer.nil
 text = _pretty_printer.text

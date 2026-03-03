@@ -240,12 +240,14 @@ def _transpose_jaxpr(jaxpr, in_avals, in_tree):
     primals_in, cts_in = tree_unflatten(in_tree, in_flat)
     out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
-    cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    cts_out, cell.out_tree = tree_flatten(out)
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree
 
 def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
                           out_memory_spaces):

@@ -40,7 +40,8 @@ def remat_transform(policy, f, *args):
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
     args_ft = FlatTree.flatten_static_argnums_argnames(args, {}, (), ())
-    new_arg = lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(core.typeof(x), None))  # noqa F821  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    new_arg = lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(core.typeof(x), None))  # noqa F821
     in_tracers = args_ft.map(new_arg)
     with core.set_current_trace(trace):
       args, kwargs = in_tracers.unflatten()
@@ -125,7 +126,7 @@ def _remat_jaxpr(jaxpr, policy):
   src = source_info_util.current()
 
   def new_arg(a):
-    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # type: ignore  # noqa: F821
+    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))    # noqa: F821
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):

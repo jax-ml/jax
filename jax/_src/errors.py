@@ -30,7 +30,8 @@ class _JAXErrorMixin:
     class_name = self.__class__.__name__
     error_msg = f'{message}\nSee {error_page}#{module_name}.{class_name}'
     # https://github.com/python/mypy/issues/5887
-    super().__init__(error_msg)  # type: ignore
+    # pyrefly: ignore [bad-argument-count]
+    super().__init__(error_msg)
 
 
 @export

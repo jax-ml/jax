@@ -502,7 +502,7 @@ def _trace_for_jit(
   assert None not in out_shardings_leaves
 
   in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,  # type: ignore
+    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
     args_ft)
   assert avals_ft is not None
 
@@ -754,7 +754,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                            "pjit arguments", allow_uneven_sharding=False)
   check_aval_layout_compatibility(
       in_layouts_flat, in_avals,
-      dbg.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
+      dbg.safe_arg_names(len(in_avals)), "jit arguments")
   return in_shardings_flat, in_layouts_flat
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -788,7 +788,7 @@ def _check_and_canonicalize_out_shardings(
       "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
-_seen_qdds = weakref.WeakKeyDictionary()  # type: ignore
+_seen_qdds = weakref.WeakKeyDictionary()
 
 def _seen_qdds_get(fun, in_type) -> list:
   cache = _seen_qdds.setdefault(fun, defaultdict(list))
@@ -855,13 +855,13 @@ def check_aval_layout_compatibility(
 # -------------------- pjit rules --------------------
 
 jit_p = core.Primitive("jit")
-jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
+jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
 
 def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
-jit_p.is_high = _is_high  # type: ignore
+jit_p.is_high = _is_high
 
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
@@ -1028,7 +1028,8 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if isinstance(pjit_in_s, UnspecifiedValue):
       resolved_in_shardings.append(finalize_arg_sharding(arg_s, committed))
     else:
-      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
+      # pyrefly: ignore [missing-attribute]
+      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1044,15 +1045,17 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
-        if pjit_in_s.memory_kind != arg_s.memory_kind:  # type: ignore[union-attr]
+        # pyrefly: ignore [missing-attribute]
+        if pjit_in_s.memory_kind != arg_s.memory_kind:
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
-              f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
+              f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '
               f'arg memory kind: {arg_s.memory_kind} for arg type: {arg.aval}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_hlo_shardings_equal(
-                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore[union-attr]
+                # pyrefly: ignore [missing-attribute]
+                pjit_in_s._to_xla_hlo_sharding(arg.ndim),
                 arg_s._to_xla_hlo_sharding(arg.ndim))):
           raise ValueError('Sharding passed to jit does not match the sharding '
                            'on the respective arg. '
@@ -1079,7 +1082,7 @@ def _resolve_and_lower(
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
 
-_pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
+_pgle_profiler_dict = weakref.WeakKeyDictionary()
 
 
 @dataclass(frozen=True)
@@ -1090,7 +1093,7 @@ class MetaTy:
   committed: bool
   is_np_array: bool
 
-  replace = replace  # type: ignore
+  replace = replace
 
   @property
   def shape(self):
@@ -1161,7 +1164,8 @@ def _pjit_call_impl_python(
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
-        args, compiled._in_shardings, compiled._in_layouts,  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        args, compiled._in_shardings, compiled._in_layouts,
         jaxpr.jaxpr.debug_info.safe_arg_names(len(args)))
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
@@ -1370,9 +1374,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
   in_avals = (*const_arg_avals, *jaxpr.in_avals)
   ca_shardings = const_args_shardings(const_args)
-  in_shardings = ca_shardings + in_shardings  # type: ignore
+  in_shardings = ca_shardings + in_shardings
   ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
-  in_layouts = ca_layouts + in_layouts  # type: ignore
+  in_layouts = ca_layouts + in_layouts
 
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, len(const_args), in_avals,
@@ -1473,7 +1477,7 @@ def _pjit_batcher_for_sharding(
           s.mesh, pxla.batch_spec(s.spec, dim, PartitionSpec.UNCONSTRAINED))
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
-    tad.insert(dim, 1)  # type: ignore
+    tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(s._internal_device_list, new_op)
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
@@ -1659,7 +1663,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   unknown_ins = tuple(not k for k in known_ins)
   known_jaxpr, unknown_jaxpr, unknown_outs, res_out_avals, in_fwd_res = \
       pe.partial_eval_jaxpr_nounits_fwd(jaxpr, unknown_ins, instantiate=False)
-  unknown_outs = tuple(unknown_outs)  # type: ignore[assignment]
+  unknown_outs = tuple(unknown_outs)
   known_outs = tuple(not uk for uk in unknown_outs)
 
   # out_shardings and out_layouts for residual values output by known_jaxpr
@@ -1773,7 +1777,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   if effects.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
-    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))  # type: ignore
+    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 
 pe.custom_partial_eval_rules[jit_p] = _pjit_partial_eval
@@ -1836,7 +1840,7 @@ def _pjit_transpose_fancy(
     compiler_options_kvs):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
+  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
               else a for x in in_flat]
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
@@ -1883,12 +1887,14 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
     args = ad.unproject_accums(specs, primals_ctrefs)
     ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    cts_out, cell.out_tree = tree_flatten(cts_out)
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache
@@ -2449,7 +2455,7 @@ def _layout_constraint_impl(x, *, layout):
     raise ValueError(
         'with_layout_constraint in eager mode can only be applied to'
         f' jax.Arrays. Got {type(x)}')
-  if x.format.layout == layout:  # type: ignore
+  if x.format.layout == layout:
     return x
   return api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)
 layout_constraint_p.def_impl(_layout_constraint_impl)

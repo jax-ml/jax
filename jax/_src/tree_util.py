@@ -720,7 +720,7 @@ def flatten_one_level_with_keys(
     tree: Any,
 ) -> tuple[Iterable[KeyLeafPair], Hashable]:
   """Flatten the given pytree node by one level, with keys."""
-  out = default_registry.flatten_one_level_with_keys(tree)  # type: ignore
+  out = default_registry.flatten_one_level_with_keys(tree)
   if out is None:
     raise ValueError(f"can't tree-flatten type: {type(tree)}")
   else:
@@ -1550,13 +1550,13 @@ def filter_statics_from_treedef(registry, treedef, statics):
     filtered = tuple(
         filter_statics_from_treedef(registry, td, s)
         for td, s in zip(treedef.children(), statics) if s is not True)
-    return treedef.from_node_data_and_children(registry, treedef.node_data(), filtered)  # type: ignore
+    return treedef.from_node_data_and_children(registry, treedef.node_data(), filtered)
   elif isinstance(statics, dict):
-    ty, keys = treedef.node_data()  # type: ignore
+    ty, keys = treedef.node_data()
     filtered_keys, filtered_subtrees = unzip2(
         (k, filter_statics_from_treedef(registry, td, statics[k]))
         for td, k in zip(treedef.children(), keys) if statics[k] is not True)
-    return treedef.from_node_data_and_children(registry, (ty, filtered_keys), filtered_subtrees)  # type: ignore
+    return treedef.from_node_data_and_children(registry, (ty, filtered_keys), filtered_subtrees)
   else:
     assert False, "unreachable"
 

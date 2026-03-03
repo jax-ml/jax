@@ -156,7 +156,7 @@ class SingleDeviceSharding(jsharding.Sharding):
   def with_memory_kind(self, kind: str) -> SingleDeviceSharding:
     return SingleDeviceSharding(self._device, memory_kind=kind)
 
-  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:  # type: ignore
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     return {self._device: (slice(None),) * len(global_shape)}
 
   @property
@@ -189,7 +189,8 @@ def pmap_sharding_devices_indices_map(
     self, global_shape: Shape) -> Mapping[Device, Index]:
   self.shard_shape(global_shape)  # raises a good error message
   indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
-  return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
+  # pyrefly: ignore [no-matching-overload]
+  return dict(safe_zip(self.devices.flat, indices))
 
 
 @use_cpp_class(xc.PmapSharding)
@@ -233,7 +234,8 @@ class PmapSharding(jsharding.Sharding):
     return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
             f'devices={self.devices})')
 
-  def is_equivalent_to(self: PmapSharding, other: PmapSharding,  # type: ignore
+  # pyrefly: ignore [bad-override]
+  def is_equivalent_to(self: PmapSharding, other: PmapSharding,
                        ndim: int) -> bool:
     return self == other
 
@@ -1042,7 +1044,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
       phys_spec = (*phys_sharding.spec,
                    *[None] * (len(phys_shape) - len(phys_sharding.spec)))
     else:
-      phys_spec = phys_sharding.spec  # type: ignore
+      phys_spec = phys_sharding.spec
     return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)

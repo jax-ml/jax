@@ -963,7 +963,8 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
   """
   x, y = util.ensure_arraylike("histogram2d", x, y)
   try:
-    N = len(bins)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    N = len(bins)
   except TypeError:
     N = 1
 
@@ -1043,19 +1044,23 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
   N, D = np.shape(sample)
 
   if range is not None and (
-      len(range) != D or any(r is not None and np.shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
+      # pyrefly: ignore [no-matching-overload]
+      len(range) != D or any(r is not None and np.shape(r)[0] != 2 for r in range)):
     raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    num_bins = len(bins)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    num_bins = len(bins)
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # type: ignore[assignment]
+    # pyrefly: ignore [bad-assignment]
+    bins_per_dimension: list[ArrayLike] = D * [bins]
   else:
     if num_bins != D:
       raise ValueError("should be a bin for each dimension.")
-    bins_per_dimension = list(bins)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    bins_per_dimension = list(bins)
 
   bin_idx_by_dim: list[Array] = []
   bin_edges_by_dim: list[Array] = []
@@ -1978,7 +1983,8 @@ def reshape(
   try:
     if out_sharding is None:
       # forward to method for ndarrays
-      return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
+      # pyrefly: ignore [missing-attribute]
+      return a.reshape(shape, order=order)
   except AttributeError:
     pass
   return asarray(a).reshape(shape, order=order, out_sharding=out_sharding)
@@ -3404,7 +3410,7 @@ def clip(
   if min is not None:
     arr = ufuncs.maximum(min, arr)
   if max is not None:
-    arr = ufuncs.minimum(max, arr) # type: ignore
+    arr = ufuncs.minimum(max, arr)
   return asarray(arr)
 
 
@@ -4545,11 +4551,13 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   """
   A = util.ensure_arraylike("tile", A)
   try:
-    iter(reps)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    iter(reps)
   except TypeError:
     reps_tup: tuple[DimSize, ...] = (reps,)
   else:
-    reps_tup = tuple(reps)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    reps_tup = tuple(reps)
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                    for rep in reps_tup)
   # lax.tile expects reps and A.shape to have the same rank.
@@ -6422,13 +6430,13 @@ def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
     return auto_axes(partial(fun, repeats, axis=axis,
                              total_repeat_length=total_repeat_length),
                      out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes  # type: ignore
+                     axes=out_sharding.mesh.explicit_axes
                      )(a)
   else:
     return auto_axes(
         partial(fun, axis=axis, total_repeat_length=total_repeat_length),
         out_sharding=out_sharding,
-        axes=out_sharding.mesh.explicit_axes  # type: ignore
+        axes=out_sharding.mesh.explicit_axes
         )(repeats, a)
 
 def _repeat(repeats, arr, *, axis: int,
@@ -6454,7 +6462,7 @@ def _repeat(repeats, arr, *, axis: int,
       axis = _canonicalize_axis(axis, len(input_shape))
       aux_axis = axis + 1
       aux_shape: list[DimSize] = list(input_shape)
-      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)  # type: ignore
+      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)
       arr = lax.broadcast_in_dim(
         arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
@@ -7713,7 +7721,8 @@ def delete(
 
   # Case 1: obj is a static integer.
   try:
-    obj = operator.index(obj)  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    obj = operator.index(obj)
     obj = _canonicalize_axis(obj, a.shape[axis])
   except TypeError:
     pass
@@ -7738,7 +7747,7 @@ def delete(
     obj = asarray(obj).ravel()
     obj = clip(where(obj < 0, obj + a.shape[axis], obj), 0, a.shape[axis])
     obj = sort(obj)
-    obj -= arange(len(obj), dtype=obj.dtype)  # type: ignore
+    obj -= arange(len(obj), dtype=obj.dtype)
     i = arange(a.shape[axis] - obj.size, dtype=obj.dtype)
     i += (i[None, :] >= obj[:, None]).sum(0, dtype=i.dtype)
     return a[(slice(None),) * axis + (i,)]
@@ -9505,7 +9514,8 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
       'compare_all': _searchsorted_via_compare_all,
   }[method]
   a, v = core.standard_insert_pvary(a, v)
-  return impl(a, v, side, dtype)  # type: ignore
+  # pyrefly: ignore [bad-argument-type]
+  return impl(a, v, side, dtype)
 
 
 @export

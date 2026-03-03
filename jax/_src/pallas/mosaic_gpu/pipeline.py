@@ -124,7 +124,6 @@ class BufferedRef:
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
-        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
@@ -136,7 +135,6 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
-        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
@@ -275,7 +273,7 @@ def emit_pipeline(
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
-                (max_concurrent_steps, *_get_block_shape(spec)),  # type: ignore
+                (max_concurrent_steps, *_get_block_shape(spec)),
                 ref.dtype,
                 transforms=tuple(
                     gpu_core.batch_transform(t, 1)
@@ -697,7 +695,7 @@ def emit_pipeline_warp_specialized(
       slots = max_concurrent_steps if has_seq_dim else 1
       smem_allocs.append(
           gpu_core.SMEM(
-              (slots, *_get_block_shape(spec)),   # type: ignore
+              (slots, *_get_block_shape(spec)),
               gmem_ref.dtype,
               transforms=getattr(spec, "transforms", ()),
           )
@@ -712,7 +710,7 @@ def emit_pipeline_warp_specialized(
     consumed_barrier_type: Any
     if collective_axes:
       consumed_barrier_type = functools.partial(
-          gpu_core.ClusterBarrier, collective_axes=collective_axes  # type: ignore
+          gpu_core.ClusterBarrier, collective_axes=collective_axes
       )
     else:
       consumed_barrier_type = gpu_core.Barrier
@@ -1047,7 +1045,8 @@ def emit_pipeline_warp_specialized(
         memory_block
     )
   # Mypy doesn't notice the .get_allocations assignment above.
-  return pipeline  # type: ignore
+  # pyrefly: ignore [bad-return]
+  return pipeline
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.

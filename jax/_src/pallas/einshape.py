@@ -327,7 +327,7 @@ def _einshape_lo_abstract_eval(
 ):
   del assert_is_tile_preserving
   out_sds = api.eval_shape(
-      functools.partial(_einshape, equation, **dict(sizes)), x_aval  # type: ignore
+      functools.partial(_einshape, equation, **dict(sizes)), x_aval
   )
   return x_aval.update(shape=out_sds.shape, dtype=out_sds.dtype)
 
@@ -365,7 +365,7 @@ class Einshape(hijax.VJPHiPrimitive):
   ):
     self.in_avals = (x_aval,)
     out_type = api.eval_shape(
-        functools.partial(_einshape, equation, **sizes), x_aval  # type: ignore
+        functools.partial(_einshape, equation, **sizes), x_aval
     )
     self.out_aval = hijax.ShapedArray(out_type.shape, out_type.dtype)
     self.equation = equation
@@ -493,7 +493,7 @@ def _init_dims(shape: tuple[int, ...], t1: int, t2: int) -> list[list[Factor]]:
     if s // t_size > 1:
       current_dim.append(Factor(s // t_size, "outer"))
     if t_size > 1 or kind != "outer":
-      current_dim.append(Factor(t_size, kind))  # type: ignore
+      current_dim.append(Factor(t_size, kind))
     dims.append(_consolidate(current_dim))
   return dims
 
@@ -553,7 +553,8 @@ def _tile_preserving_einshape_kernel(
   assert isinstance(t1, int)
   assert isinstance(t2, int)
   dims = _init_dims(x.shape, t1, t2)
-  tiles = _array_to_2d_tile_array(x, tiling)  # type: ignore
+  # pyrefly: ignore [bad-argument-type]
+  tiles = _array_to_2d_tile_array(x, tiling)
   transforms = get_einshape_transforms(equation, x.shape, **size_vars)
 
   def get_outer_shape(dims_list: list[list[Factor]]) -> tuple[int, ...]:
@@ -633,7 +634,8 @@ def _einshape_kernel(
     return _default_einshape_kernel(equation, x, **size_vars)
   tiling = tpu_info.infer_tiling(jax_core.ShapedArray(x.shape, x.dtype))
   if tiling is not None and _is_tile_preserving(
-      x.shape, transforms, tiling[-2:]  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      x.shape, transforms, tiling[-2:]
   ):
     return _tile_preserving_einshape_kernel(equation, x, **size_vars)
   elif assert_is_tile_preserving:

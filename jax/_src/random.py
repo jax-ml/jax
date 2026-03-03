@@ -340,7 +340,8 @@ def wrap_key_data(key_bits_array: Array, *,
 
 def _check_shape(name: str, shape: Shape, *param_shapes) -> None:
   if param_shapes:
-    shape_ = lax.broadcast_shapes(shape, *param_shapes)  # type: ignore
+    # pyrefly: ignore [no-matching-overload]
+    shape_ = lax.broadcast_shapes(shape, *param_shapes)
     if shape != shape_:
       msg = ("{} parameter shapes must be broadcast-compatible with shape "
              "argument, and the result of broadcasting the shapes must equal "
@@ -692,7 +693,7 @@ def permutation(key: ArrayLike,
 def _permutation(key, x, axis, independent):
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
-  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
+  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)
   return jnp.take(x, ind, axis, unique_indices=True)
 
 

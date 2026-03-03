@@ -140,7 +140,7 @@ def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
     config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
 
 def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
-  config.pallas_tpu_interpret_mode_context_manager.set_global(params)  # type: ignore[arg-type]
+  config.pallas_tpu_interpret_mode_context_manager.set_global(params)
 
 
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
@@ -562,7 +562,7 @@ def get(
       else:
         ctx = source_info_util.user_context(
             traceback=source_info.traceback, name_stack=source_info.name_stack
-        )  # type: ignore[assignment]
+        )
       with ctx:
         if input_name is None:
           raise IndexError(
@@ -1708,7 +1708,7 @@ def interpret_pallas_call(
     mosaic_params = mosaic_core.CompilerParams()
   else:
     assert isinstance(compiler_params, mosaic_core.CompilerParams)
-    mosaic_params = compiler_params  # type: ignore[assignment]
+    mosaic_params = compiler_params
   del compiler_params
 
   args = [remove_memory_space_p.bind(a) for a in args]
@@ -1889,7 +1889,8 @@ def interpret_pallas_call(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
 
   if grid:
-    num_iterations = functools.reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    num_iterations = functools.reduce(jnp.multiply, grid)
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -1900,21 +1901,23 @@ def interpret_pallas_call(
     randomized_grid_coordinates = (jnp.array((), dtype=jnp.int32),) * len(grid)
   else:
     randomized_grid_coordinates = _get_randomized_grid_coordinates(
-        grid, mosaic_params, interpret_params.random_seed  # type: ignore[arg-type]
+        # pyrefly: ignore [bad-argument-type]
+        grid, mosaic_params, interpret_params.random_seed
     )
 
   parallel_dim_semantics = _get_parallel_dim_semantics(
       mosaic_params, len(grid)
   )
   parallel_subgrid_size = _get_parallel_subgrid_size(
-      parallel_dim_semantics, grid  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      parallel_dim_semantics, grid
   )
   num_points_in_parallel_subgrid_per_core = (
       parallel_subgrid_size + interpret_params.num_cores_per_device - 1
   ) // interpret_params.num_cores_per_device  # We round up here.
   num_iterations_per_point_in_parallel_subgrid = (
       # This is evenly divisible.
-      num_iterations // parallel_subgrid_size  # type: ignore[operator]
+      num_iterations // parallel_subgrid_size
   )
   num_iterations_per_core = (
       num_points_in_parallel_subgrid_per_core
@@ -2150,7 +2153,8 @@ def interpret_pallas_call(
           assert len(next_start_indices[num_inputs + j].shape) == 1
           transform = indexing.NDIndexer(
               indices=tuple(
-                  indexing.ds(st, sz) if not iid else st  # type: ignore[misc]
+                  # pyrefly: ignore [bad-argument-type]
+                  indexing.ds(st, sz) if not iid else st
                   for st, sz, iid in zip(
                       cur_start_indices[num_inputs + j],
                       block_shapes[num_inputs + j],

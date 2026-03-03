@@ -50,8 +50,8 @@ from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
 import numpy as np
 
-unsafe_map, map = map, safe_map  # type: ignore
-unsafe_zip, zip = zip, safe_zip  # type: ignore
+unsafe_map, map = map, safe_map
+unsafe_zip, zip = zip, safe_zip
 
 
 ### parallel traceables

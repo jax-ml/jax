@@ -42,7 +42,7 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
         f'{pkg_name}.cuda_plugin_extension'
     )
   except ImportError:
-    cuda_plugin_extension = None  # type: ignore
+    cuda_plugin_extension = None
   else:
     break
 

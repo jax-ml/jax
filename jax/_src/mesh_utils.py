@@ -437,7 +437,8 @@ def _create_device_mesh_for_nd_torus_splitting_axes(
           )
       ):
         best_logical_axis_assignment = logical_axis_assignment
-    assignment[:, logical_axis] = best_logical_axis_assignment  # type: ignore  # numpy 2.2
+    # pyrefly: ignore [unsupported-operation]
+    assignment[:, logical_axis] = best_logical_axis_assignment    # numpy 2.2
 
   # Read out the assignment.
   logical_mesh = _generate_logical_mesh(

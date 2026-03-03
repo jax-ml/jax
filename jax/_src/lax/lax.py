@@ -1618,7 +1618,7 @@ def convert_element_type(operand: ArrayLike,
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
-  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
+  return _convert_element_type(operand, new_dtype, weak_type=False)
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
@@ -3374,7 +3374,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     fill_dtype = _dtype(fill_value)
   else:
     if dtypes.issubdtype(dtype, dtypes.extended):
-      return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
+      # pyrefly: ignore [missing-attribute]
+      return dtype._rules.full(shape, fill_value, dtype)
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
@@ -3578,11 +3579,12 @@ def full_like(x: ArrayLike | DuckTypedArray,
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
+  # pyrefly: ignore [no-matching-overload]
+  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = _dtype(dtype) if dtype is not None else _dtype(x)
   if dtypes.issubdtype(dtype, dtypes.extended):
-    return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
+    return dtype._rules.full(fill_shape, fill_value, dtype)
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
@@ -3600,10 +3602,12 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and (x.sharding._is_concrete or not get_concrete_mesh().empty)
         and getattr(x, '_committed', True)
         and not weak_type
-        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
+        # pyrefly: ignore [no-matching-overload]
+        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)
     )
     if use_x_sharding:
-      sharding = x.sharding  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      sharding = x.sharding
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
   if config._check_vma.value:
@@ -3876,7 +3880,8 @@ def _iter(tracer):
               for i in range(n))
     else:
       return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
-ShapedArray._iter = staticmethod(_iter)  # type: ignore[bad-assignment]
+# pyrefly: ignore [bad-assignment]
+ShapedArray._iter = staticmethod(_iter)
 
 def _add_arrays(x, y):
   if (isinstance(a := core.get_aval(x), ShapedArray) and
@@ -5081,7 +5086,7 @@ ad.defjvp(to_edtype_p,
           lambda t, x, edtype:
           convert_element_type(t, core.primal_dtype_to_tangent_dtype(edtype)))
 ad.primitive_transposes[to_edtype_p] = \
-    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]  # type: ignore
+    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
 mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
 
@@ -8375,7 +8380,8 @@ class RandomAlgorithm(enum.IntEnum):
   "The Philox-4x32 PRNG algorithm."
 
 
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[method-assign]
+# pyrefly: ignore [bad-assignment]
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name
 
 def _rng_algorithm(algorithm: RandomAlgorithm):
   if algorithm == RandomAlgorithm.RNG_THREE_FRY:

@@ -70,10 +70,10 @@ traceback_util.register_exclusion(__file__)
 # `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
-get_p.is_effectful = lambda params: True  # type: ignore
+get_p.is_effectful = lambda params: True
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 
-get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
+get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high
 def _get_to_lojax(ref, *idx, tree):
   val_ty = core.typeof(ref._refs)
   transforms = tree_util.tree_unflatten(tree, idx)
@@ -82,7 +82,7 @@ def _get_to_lojax(ref, *idx, tree):
     idx = transforms[-1]
     return val_ty.ref_get_to_lojax(ref, idx)
   return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
-get_p.to_lojax = _get_to_lojax  # type: ignore
+get_p.to_lojax = _get_to_lojax
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
@@ -173,10 +173,10 @@ def ref_get(
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
-swap_p.is_effectful = lambda params: True  # type: ignore
+swap_p.is_effectful = lambda params: True
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
-swap_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
+swap_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high
 def _swap_to_lojax(ref, val, *idx, tree):
   ref_val_ty = core.typeof(ref._refs)
   val_ty = core.typeof(val)
@@ -190,7 +190,7 @@ def _swap_to_lojax(ref, val, *idx, tree):
   outs = [ref_swap(lo_ref, idx, lo_val) for lo_ref, lo_val
           in zip(lo_refs, lo_vals)]
   return val_ty.raise_val(*outs)
-swap_p.to_lojax = _swap_to_lojax  # type: ignore
+swap_p.to_lojax = _swap_to_lojax
 
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
@@ -324,7 +324,7 @@ def ref_set(
 # _ = swap ref c *idx
 # ```
 addupdate_p = core.Primitive('addupdate')
-addupdate_p.is_effectful = lambda params: True  # type: ignore
+addupdate_p.is_effectful = lambda params: True
 addupdate_p.multiple_results = True
 addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
@@ -767,7 +767,7 @@ def _batch_indexer(
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
                                        bcast_dims)
           else:
-            idx = batching.moveaxis(idx, dim, 0)  # type: ignore[arg-type]
+            idx = batching.moveaxis(idx, dim, 0)
           new_indices.append(idx)
     else:
       if ref_dim is not batching.not_mapped:
@@ -783,7 +783,7 @@ def _batch_indexer(
       batch_idx = lax.broadcasted_iota(
           np.dtype('int32'), new_integer_indexer_shape, 0)
     else:
-      batch_idx = indexing.Slice(0, axis_size)  # type: ignore
+      batch_idx = indexing.Slice(0, axis_size)
       new_integer_indexer_shape = ()
 
     new_indices.insert(ref_dim, batch_idx)

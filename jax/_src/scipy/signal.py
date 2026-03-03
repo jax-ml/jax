@@ -768,7 +768,8 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       # reasonably expect to receive.
       def detrend_func(d):
         d = jnp.moveaxis(d, axis, -1)
-        d = detrend_type(d)  # type: ignore[not-callable]  # pyrefly#40
+        # pyrefly: ignore [not-callable]
+        d = detrend_type(d)    # pyrefly#40
         return jnp.moveaxis(d, -1, axis)
     else:
       detrend_func = detrend_type
@@ -1161,7 +1162,8 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
     try:
-      from scipy.signal import get_window  # type: ignore[import-error]  # pytype: disable=import-error
+      # pyrefly: ignore [missing-module-attribute]
+      from scipy.signal import get_window    # pytype: disable=import-error
     except ImportError as err:
       raise ImportError(f"scipy must be available to use {window=}") from err
     win = get_window(window, nperseg_int)

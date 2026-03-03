@@ -628,7 +628,7 @@ def _inspect_sharding_jvp_rule(primals, _, **params):
   return inspect_sharding_p.bind(*primals, **params), []
 ad.primitive_jvps[inspect_sharding_p] = _inspect_sharding_jvp_rule
 
-sharding_callbacks = weakref.WeakValueDictionary()  # type: ignore
+sharding_callbacks = weakref.WeakValueDictionary()
 _INSPECT_SHARDING_CALL_NAME = "InspectSharding"
 
 class ShardingCallbackInfo:

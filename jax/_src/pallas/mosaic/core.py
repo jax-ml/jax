@@ -211,7 +211,8 @@ class MemorySpace(enum.Enum):
           stacklevel=2,
       )
       return pallas_core.MemorySpace.ANY
-    return super().__getattr__(name)  # type: ignore
+    # pyrefly: ignore [missing-attribute]
+    return super().__getattr__(name)
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):

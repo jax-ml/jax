@@ -218,13 +218,20 @@ class PRNGKeyArray(Array):
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
   device = property(op.attrgetter('_base_array.device'))  # pyrefly: ignore[bad-override]
-  devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
-  is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
-  is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
-  delete = property(op.attrgetter('_base_array.delete'))  # type: ignore[assignment]
-  is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
-  on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
-  unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
+  # pyrefly: ignore [bad-override]
+  devices = property(op.attrgetter('_base_array.devices'))
+  # pyrefly: ignore [bad-override]
+  is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))
+  # pyrefly: ignore [bad-override]
+  is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))
+  # pyrefly: ignore [bad-override]
+  delete = property(op.attrgetter('_base_array.delete'))
+  # pyrefly: ignore [bad-override]
+  is_deleted = property(op.attrgetter('_base_array.is_deleted'))
+  # pyrefly: ignore [bad-override]
+  on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))
+  # pyrefly: ignore [bad-override]
+  unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))
 
   def addressable_data(self, index: int) -> PRNGKeyArray:
     return PRNGKeyArray(self._impl, self._base_array.addressable_data(index))
@@ -300,7 +307,7 @@ class PRNGKeyArray(Array):
     out._consumed = self._consumed  # TODO(jakevdp): is this correct?
     return out
 
-  __hash__ = None  # type: ignore[assignment]
+  __hash__ = None
   __array_priority__ = 100
 
   def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
@@ -316,7 +323,8 @@ class PRNGKeyArray(Array):
 
   # Overwritten immediately below
   @property
-  def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
+  # pyrefly: ignore [bad-override]
+  def at(self)                  -> _IndexUpdateHelper: assert False
   @property
   def T(self)                   -> PRNGKeyArray: assert False
   def __getitem__(self, key)    -> PRNGKeyArray: assert False

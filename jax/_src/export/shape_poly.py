@@ -222,9 +222,11 @@ class _DimFactor:
         normalized_var = _DimExpr._from_var(self.var, scope)
         if core.is_constant_dim(normalized_var):
           return normalized_var
-        non_trivial_normalization = (v1 := normalized_var._to_var()) is None or v1 != self.var  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        non_trivial_normalization = (v1 := normalized_var._to_var()) is None or v1 != self.var
         if non_trivial_normalization:
-          return normalized_var._evaluate(env)  # type: ignore
+          # pyrefly: ignore [missing-attribute]
+          return normalized_var._evaluate(env)
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
             f"The following dimension variables are appearing in the shapes of the function arguments: {list(env.keys())}.\n"
@@ -233,9 +235,9 @@ class _DimFactor:
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
       if self.operation == _DimFactor.FLOORDIV:
-        return divmod(*operand_values)[0]  # type: ignore
+        return divmod(*operand_values)[0]
       elif self.operation == _DimFactor.MOD:
-        return divmod(*operand_values)[1]  # type: ignore
+        return divmod(*operand_values)[1]
       elif self.operation == _DimFactor.MAX:
         op1, op2 = operand_values
         if core.is_constant_dim(op1) and core.is_constant_dim(op2):
@@ -584,13 +586,13 @@ class _DimExpr:
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedTerms, i1: int, f1: int,
-      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...
 
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedFactors, i1: int, f1: int,
-      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...
 
   @staticmethod
   def _linear_combination_sorted_pairs(
@@ -764,7 +766,8 @@ class _DimExpr:
     if modulo is not None:
       raise NotImplementedError("__pow__ modulo not implemented")
     if is_symbolic_dim(power):
-      return power.__rpow__(self)  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      return power.__rpow__(self)
     if power != int(power):
       raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
     if power >= 0:
@@ -876,7 +879,7 @@ class _DimExpr:
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
-      while is_symbolic_dim(dividend) and not dividend._is_constant:  # type: ignore[attribute-error,unused-ignore]
+      while is_symbolic_dim(dividend) and not dividend._is_constant:
         mon, count = dividend._leading_term
         if isinstance(divisor, _DimExpr):
           dterm, dcount = divisor._leading_term
@@ -891,7 +894,7 @@ class _DimExpr:
         quotient += q
         dividend -= q * divisor
 
-      dividend = int(dividend)  # type: ignore[assignment]
+      dividend = int(dividend)
       if isinstance(divisor, _DimExpr):
         if dividend != 0:
           raise InconclusiveDimensionOperation("")
@@ -911,7 +914,7 @@ class _DimExpr:
       return quotient, remainder
     except InconclusiveDimensionOperation:
       return (_DimExpr._from_operation(_DimFactor.FLOORDIV, self, divisor,
-                                       scope=self.scope),  # type: ignore
+                                       scope=self.scope),
               _DimExpr._from_operation(_DimFactor.MOD, self, divisor,
                                        scope=self.scope))
 
@@ -1052,9 +1055,9 @@ class SymbolicScope:
       if cmp_pos < 0:
         raise ValueError("Constraint parsing error: must contain one of '==' or '>=' or '<='")
     e1_str = c_str[:cmp_pos]
-    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
     e2_str = c_str[cmp_pos + 2:]
-    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
     if cmp == Comparator.GEQ and not is_geq:
       e1, e2 = e2, e1
 
@@ -1079,7 +1082,7 @@ class SymbolicScope:
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
 
-      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error,unused-ignore]
+      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)
       if before in self._normalization_rules:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
@@ -1277,7 +1280,7 @@ def _einsum_contract_path(*operands, **kwargs):
 shape_assertion_p = core.Primitive("shape_assertion")
 shape_assertion_p.multiple_results = True
 shape_assertion_p.def_effectful_abstract_eval(
-  lambda *_, **__: ((), {shape_assertion_effect}))  # type: ignore
+  lambda *_, **__: ((), {shape_assertion_effect}))
 
 def _shape_assertion_lowering_rule(ctx: mlir.LoweringRuleContext,
                                    assert_what: mlir.ir.Value,
@@ -1344,7 +1347,8 @@ def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
   res, = mlir.eval_dynamic_shape(ctx, (dim,))
   out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
-  if out_type != res.type:  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  if out_type != res.type:
     return [mlir.hlo.convert(out_type, res)]
   else:
     return [res]
@@ -1544,7 +1548,7 @@ class _Parser:
   def next_tok(self) -> tokenize.TokenInfo:
     while True:
       try:
-        t = next(self.tokstream)  # type: ignore[attribute-error,unused-ignore]
+        t = next(self.tokstream)
       except StopIteration:
         raise self.parse_err(None, "unexpected end of string")
       if t.exact_type not in [tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT]:
@@ -1598,14 +1602,16 @@ class _Parser:
             f"{len(self.dimensions)} already and 'like' shape has "
             f"only {len(self.like_shape)} dimensions")
       if tok.exact_type == tokenize.ELLIPSIS:
-        to_add = self.like_shape[len(self.dimensions):]  # type: ignore[index]
+        # pyrefly: ignore [unsupported-operation]
+        to_add = self.like_shape[len(self.dimensions):]
         for ad in to_add:
           self.add_dim(ad, tok)
         tok = self.next_tok()
         break
 
       if tok.exact_type == tokenize.NAME and tok.string == "_":
-        e = self.like_shape[len(self.dimensions)]  # type: ignore[index]
+        # pyrefly: ignore [unsupported-operation]
+        e = self.like_shape[len(self.dimensions)]
         tok = self.next_tok()
       else:
         e, tok = self.expr(tok)
@@ -1632,7 +1638,7 @@ class _Parser:
       t: Any
       t, tok = self.term(tok)
       t_sign = - t if next_t_negated else t
-      acc = acc + t_sign if acc is not None else t_sign  # type: ignore[operator]
+      acc = acc + t_sign if acc is not None else t_sign
       if tok.exact_type in self.FOLLOW_EXPR:
         return acc, tok
       next_t_negated = (tok.exact_type == tokenize.MINUS)
@@ -1654,9 +1660,9 @@ class _Parser:
         power, tok = self.integer(tok)
         f = f ** power
 
-      acc = acc * f if acc is not None else f  # type: ignore[operator]
+      acc = acc * f if acc is not None else f
       if tok.exact_type in self.FOLLOW_TERM:
-        return acc, tok  # type: ignore[bad-return-type,unused-ignore]
+        return acc, tok
       tok = self.consume_token(tok, tokenize.STAR)
 
   def factor(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
@@ -1759,9 +1765,11 @@ class ShapeEvaluator:
 
   def evaluate(self, e: DimSize):
     if core.is_constant_dim(e):
-      res = op.index(e)  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      res = op.index(e)
     else:
-      res = e._evaluate(self.env)  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      res = e._evaluate(self.env)
     return res
 
 
@@ -2029,7 +2037,7 @@ def compute_dim_vars_from_arg_shapes(
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)
   shape_constraints.shape_assertions(synthetic_eval)
-  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)  # type: ignore[arg-type]
+  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)
 
 def _solve_dim_equations(
     eqns: list[_DimEquation],
@@ -2089,7 +2097,8 @@ def _solve_dim_equations(
       if var_k == 1:
         var_value = dim_value
       else:
-        var_value, var_remainder = divmod(dim_value, core.dim_constant(var_k))  # type: ignore
+        # pyrefly: ignore [bad-argument-type]
+        var_value, var_remainder = divmod(dim_value, core.dim_constant(var_k))
         shape_constraints.add_constraint(
             Comparator.EQ, var_remainder, 0,
             error_message_pieces=([
@@ -2100,9 +2109,11 @@ def _solve_dim_equations(
                 solution_err_msg_trailer_errors]))
 
       if not isinstance(var_value, _DimExpr):
-        assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error,unused-ignore]
-      shape_env[var] = var_value  # type: ignore
-      solution_error_message_pieces.extend([  # type: ignore[container-type-mismatch,unused-ignore]
+        # pyrefly: ignore [missing-attribute]
+        assert var_value.dtype == core.dim_value_dtype()
+      # pyrefly: ignore [unsupported-operation]
+      shape_env[var] = var_value
+      solution_error_message_pieces.extend([
         f"'{var}' = ", var_value,
         f" from specification '{eqn.aval_dim_expr}' "
         f"for dimension {eqn.dim_name} (= ",
@@ -2142,7 +2153,8 @@ def _solve_dim_equations(
     for constr in scope._explicit_constraints:
       # We can't just construct constr.e1 - constr.e2 because for an equality
       # constraint it would be reduced to 0.
-      c_diff = constr.diff._evaluate(shape_env) if not core.is_constant_dim(constr.diff) else constr.diff  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      c_diff = constr.diff._evaluate(shape_env) if not core.is_constant_dim(constr.diff) else constr.diff
       shape_constraints.add_constraint(
           constr.cmp, c_diff, 0,
           error_message_pieces=[

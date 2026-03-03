@@ -684,7 +684,7 @@ def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
       "configs": [configs[2], configs[0]]
   }
   grad_lhs = scaled_dot_general_transpose_lhs(*args, **lhs_kw_args)
-  grad_rhs = scaled_dot_general_transpose_rhs(*args, **rhs_kw_args)  # pyrefly: ignore[bad-argument-type]
+  grad_rhs = scaled_dot_general_transpose_rhs(*args, **rhs_kw_args)
 
   # We apply a Straight-Through Estimator (STE) with zero-out behavior: if
   # inputs are clipped during quantization in fprop, their corresponding gradients

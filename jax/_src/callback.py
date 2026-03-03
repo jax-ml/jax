@@ -165,7 +165,7 @@ def _callback_op_sharding(
     if config.use_shardy_partitioner.value:
       op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
     else:
-      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding = xc.OpSharding()
       op_sharding.type = xc.OpSharding.Type.MANUAL
     return op_sharding
 
@@ -205,7 +205,7 @@ def _callback_op_sharding(
               dim_shardings=[],
               logical_device_ids=(device_index,))])
     else:
-      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding = xc.OpSharding()
       op_sharding.type = xc.OpSharding.Type.MAXIMAL
       op_sharding.tile_assignment_dimensions = [1]
       op_sharding.tile_assignment_devices = [device_index]
@@ -866,7 +866,7 @@ def emit_python_callback(
   call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
     callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+    def _wrapped_callback(token, *args):    # pylint: disable=function-redefined
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (
@@ -895,7 +895,7 @@ def emit_python_callback(
   ifrt_callback = _wrapped_callback
   ctx.module_context.add_host_callback(ifrt_callback)
   index = np.uint64(len(ctx.module_context.host_callbacks) - 1)
-  result = ffi.build_ffi_lowering_function(  # type: ignore
+  result = ffi.build_ffi_lowering_function(
       call_target_name,
       has_side_effect=has_side_effect,
   )(ctx, *operands, index=np.uint64(index))
@@ -903,9 +903,9 @@ def emit_python_callback(
   if sharding is not None:
     mlir.set_sharding(result, sharding)
 
-  results = result.results  # type: ignore
+  results = result.results
 
   if token:
-    token, *results = results  # type: ignore
+    token, *results = results
 
-  return results, token, ifrt_callback  # type: ignore
+  return results, token, ifrt_callback

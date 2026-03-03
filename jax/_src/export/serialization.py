@@ -98,11 +98,11 @@ def _serialize_exported(
   # _has_named_shardings.
   in_shardings = _serialize_array(
       builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
-      zip(exp._in_named_shardings, exp.in_shardings_hlo)  # type: ignore
+      zip(exp._in_named_shardings, exp.in_shardings_hlo)
   )
   out_shardings = _serialize_array(
       builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
-      zip(exp._out_named_shardings, exp.out_shardings_hlo)  # type: ignore
+      zip(exp._out_named_shardings, exp.out_shardings_hlo)
   )
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
@@ -201,16 +201,20 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
                                 for s in itertools.chain(in_shardings, out_shardings))
   if has_named_shardings:
     in_avals = tuple(
-      _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])
       for i in range(exp.InAvalsLength())
     )
     out_avals = tuple(
-      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])
       for i in range(exp.OutAvalsLength())
     )
-    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)
                              for s, aval in zip(in_shardings, in_avals))
-    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)
                              for s, aval in zip(out_shardings, out_avals))
   else:
     in_avals = _deserialize_tuple(exp.InAvalsLength, exp.InAvals,
@@ -218,9 +222,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
     out_avals = _deserialize_tuple(exp.OutAvalsLength, exp.OutAvals,
                                    partial(_deserialize_aval, scope=scope, sharding=None))
     in_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], in_shardings)
-    in_shardings = (None,) * len(in_shardings)  # type: ignore
+    in_shardings = (None,) * len(in_shardings)
     out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
-    out_shardings = (None,) * len(out_shardings)  # type: ignore
+    out_shardings = (None,) * len(out_shardings)
   platforms = _deserialize_tuple(
       exp.PlatformsLength,
       exp.Platforms,
@@ -257,8 +261,10 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       in_shardings_hlo=in_shardings_hlo,
       out_shardings_hlo=out_shardings_hlo,
       _has_named_shardings=has_named_shardings,
-      _in_named_shardings=in_shardings,  # type: ignore
-      _out_named_shardings=out_shardings,  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      _in_named_shardings=in_shardings,
+      # pyrefly: ignore [bad-argument-type]
+      _out_named_shardings=out_shardings,
       platforms=platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
@@ -479,7 +485,7 @@ def _serialize_partition_spec_one_axis(builder: flatbuffers.Builder,
   if spec is None:
     axes = ()
   else:
-    axes = (spec,) if isinstance(spec, str) else spec  # type: ignore
+    axes = (spec,) if isinstance(spec, str) else spec
 
   axes_offset = _serialize_array(builder,
                                  lambda builder, ps: builder.CreateString(ps),
@@ -502,10 +508,10 @@ def _serialize_partition_spec(builder: flatbuffers.Builder,
                               spec: partition_spec.PartitionSpec) -> int:
   partitions = _serialize_array(builder, _serialize_partition_spec_one_axis,
                                 spec._partitions)  # pyrefly: ignore[bad-argument-type]
-  reduced = _serialize_array(builder,  # type: ignore
+  reduced = _serialize_array(builder,
                              lambda builder, ps: builder.CreateString(ps),
                              spec.reduced)
-  unreduced = _serialize_array(builder,  # type: ignore
+  unreduced = _serialize_array(builder,
                                lambda builder, ps: builder.CreateString(ps),
                                spec.unreduced)
 

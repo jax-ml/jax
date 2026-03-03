@@ -326,7 +326,7 @@ def ffi_lowering(
         **lowering_args,
     )(ctx, *operands, **params)
 
-    return result.results  # type: ignore
+    return result.results
 
   return _lowering
 
@@ -338,7 +338,7 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
   avals: list[core.AbstractValue] = []
   for idx, result in enumerate(results):
     if result is core.abstract_token:
-      avals.append(result)  # type: ignore
+      avals.append(result)
     else:
       if not hasattr(result, "shape") or not hasattr(result, "dtype"):
         raise ValueError(
@@ -495,13 +495,15 @@ def ffi_call(
 
   output_layouts_: Sequence[FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
-    output_layouts_ = output_layouts  # type: ignore
+    # pyrefly: ignore [bad-assignment]
+    output_layouts_ = output_layouts
     multiple_results = True
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
     result_avals = _result_avals([result_shape_dtypes])
-    output_layouts_ = (output_layouts,)  # type: ignore
+    # pyrefly: ignore [bad-assignment]
+    output_layouts_ = (output_layouts,)
 
   if custom_call_api_version >= 4 and legacy_backend_config is not None:
     raise ValueError(
@@ -639,7 +641,8 @@ def ffi_call_abstract_eval(
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else
                r.update(sharding=(core.get_cur_mesh_sharding()
-                                  if r.sharding.mesh.empty else r.sharding))  # type: ignore
+                                  # pyrefly: ignore [missing-attribute]
+                                  if r.sharding.mesh.empty else r.sharding))
                for r in result_avals), effects
 
 

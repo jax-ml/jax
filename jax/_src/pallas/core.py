@@ -932,7 +932,8 @@ class GridMapping:
   def static_grid(self) -> StaticGrid:
     if self.num_dynamic_grid_bounds:
       raise ValueError("Expected a grid with fully static bounds")
-    return self.grid  # type: ignore
+    # pyrefly: ignore [bad-return]
+    return self.grid
 
   @contextlib.contextmanager
   def trace_env(self):
@@ -1146,14 +1147,17 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # type: ignore
+      # pyrefly: ignore [bad-argument-type]
+      grid_names, grid = util.unzip2(grid)
 
     # TODO(b/353730556): allow NumPy scalars in grids
-    if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    if not all(_is_valid_grid_dim(g) for g in grid):
       raise ValueError(
           f"Grid must be a tuple of integers or jax.Array, got {grid}"
       )
-    self.grid = grid  # type: ignore
+    # pyrefly: ignore [bad-assignment]
+    self.grid = grid
     self.grid_names = grid_names
 
   def _make_scalar_ref_aval(self, aval):
@@ -1173,7 +1177,7 @@ def get_grid_mapping(
   if dynamic_shapes_export_enabled():
     dim_check : Any = jax_core.is_dim
   else:
-    dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
+    dim_check : Any = jax_core.is_constant_dim
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid = tuple(
       dynamic_grid_dim if (
@@ -1235,7 +1239,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,  # type: ignore[arg-type]
+          grid=grid_mapping_grid,
           vmapped_dims=(),
           debug=debug,
       ),
@@ -1258,7 +1262,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,  # type: ignore[arg-type]
+          grid=grid_mapping_grid,
           vmapped_dims=(),
           debug=debug,
       ),
@@ -1267,7 +1271,8 @@ def get_grid_mapping(
       out_avals,
   )
   grid_mapping = GridMapping(
-      grid=grid_mapping_grid,  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      grid=grid_mapping_grid,
       grid_names=grid_spec.grid_names,
       block_mappings=(*in_block_mappings, *out_block_mappings),
       index_map_avals=index_map_avals,
@@ -1297,7 +1302,7 @@ def unzip_dynamic_grid_bounds(
   if dynamic_shapes_export_enabled():
     new_grid : Any = grid_spec.grid
   else:
-    new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
+    new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
@@ -1377,7 +1382,7 @@ core_map_p.multiple_results = True
 def _core_map_is_high(*avals, jaxpr, **params):
   del avals, params
   return jaxpr.is_high
-core_map_p.is_high = _core_map_is_high  # type: ignore[method-assign]
+core_map_p.is_high = _core_map_is_high
 
 def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
   closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
@@ -1723,7 +1728,7 @@ def lower_as_mlir(
     exported = export(f, platforms=platforms)(*args, **kwargs)
     stablehlo = exported.mlir_module()
 
-  return stablehlo  # type: ignore[return-value]
+  return stablehlo
 
 
 _out_shape_to_aval_mapping: dict[

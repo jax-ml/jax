@@ -339,7 +339,7 @@ def einsum(
 
 # Enable other modules to override einsum_contact_path.
 # Indexed by the type of the non constant dimension
-_poly_einsum_handlers = {}  # type: ignore
+_poly_einsum_handlers = {}
 
 def _default_poly_einsum_handler(*operands, **kwargs):
   dummy = collections.namedtuple('dummy', ['shape', 'dtype'])
@@ -571,7 +571,7 @@ def _einsum(
         out_sharding = (_get_inverse_sharding(out_sharding, names, result_names)
                         if out_sharding is not None and names != result_names
                         else out_sharding)
-        dot_out_sharding = ({} if out_sharding is None else  # type: ignore
+        dot_out_sharding = ({} if out_sharding is None else
                             {'out_sharding': out_sharding})
         operand = _dot_general(lhs, rhs, dimension_numbers, precision,
                                 preferred_element_type=preferred_element_type,

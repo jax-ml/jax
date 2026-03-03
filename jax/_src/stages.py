@@ -480,7 +480,7 @@ class Traced(Stage):
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      from jax._src.pjit import _resolve_and_lower  # type: ignore
+      from jax._src.pjit import _resolve_and_lower
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)
@@ -495,7 +495,7 @@ class Traced(Stage):
 
 
 def lojax_expand_params(jaxpr, params):
-  from jax._src.pjit import _lojax_expand_params  # type: ignore
+  from jax._src.pjit import _lojax_expand_params
   lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
@@ -556,8 +556,8 @@ class Lowered(Stage):
     self.args_info = args_info
     self.out_tree = out_tree
     self._no_kwargs = no_kwargs
-    self._in_types = in_types  # type: ignore
-    self._out_types = out_types  # type: ignore
+    self._in_types = in_types
+    self._out_types = out_types
 
   @property
   def in_avals(self):
@@ -592,7 +592,7 @@ class Lowered(Stage):
     """Compile, returning a corresponding ``Compiled`` instance."""
     kw: dict[str, Any] = {"compiler_options": compiler_options,
                           "device_assignment": device_assignment}
-    return Compiled(self._lowering.compile(**kw), self._lowering.const_args,  # type: ignore
+    return Compiled(self._lowering.compile(**kw), self._lowering.const_args,
                     self.args_info, self.out_tree, self._no_kwargs,
                     self._in_types, self._out_types)
 
@@ -826,7 +826,7 @@ class Compiled(Stage):
       _in_hi_tree, final_qdds = params.in_types
       # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
       args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                  else a.lower_val(x) for x in hi_args_flat]  # pyrefly: ignore[unbound-name]
+                  else a.lower_val(x) for x in hi_args_flat]
       args_flat, in_tree = \
           tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
     else:
@@ -886,7 +886,7 @@ class Compiled(Stage):
     return self._call(*args, **kwargs)
 
 def _raise_lo_outs(avals, lo_outs):
-  from jax._src.interpreters import partial_eval as pe  # type: ignore
+  from jax._src.interpreters import partial_eval as pe
   return pe.raise_lo_outs(avals, lo_outs)
 
 # TODO(mattjj): de-dup with partial_eval.py
@@ -899,7 +899,8 @@ def _apply_himut(final_qdds, hi_args, out_mut):
   for i, a in enumerate(final_qdds):
     if isinstance(a, core.AvalQDD):
       lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
-      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)
   assert next(out_mut_, None) is None
 
 

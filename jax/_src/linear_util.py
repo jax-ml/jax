@@ -374,19 +374,22 @@ class DebugInfo(NamedTuple):
     assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
     self.assert_result_paths(expected_count)
     if self.result_paths is not None:
-      return self.result_paths  # type: ignore
+      # pyrefly: ignore [bad-return]
+      return self.result_paths
 
     return ("",) * expected_count
 
   def assert_result_paths(self, expected_count: int):
-    assert self.result_paths is None or len(self.result_paths) == expected_count, (  # type: ignore
+    # pyrefly: ignore [bad-argument-type]
+    assert self.result_paths is None or len(self.result_paths) == expected_count, (
         expected_count, self)
 
   def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...] | None:
     """Keep only the result_paths for which `keep` is True."""
     assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
     if self.result_paths is None: return None
-    return tuple(v for v, b in zip(self.result_paths, keep) if b)  # type: ignore
+    # pyrefly: ignore [no-matching-overload]
+    return tuple(v for v, b in zip(self.result_paths, keep) if b)
 
   def with_unknown_names(self) -> DebugInfo:
     return self._replace(arg_names=None, result_paths=None)
@@ -450,7 +453,7 @@ def cache(call: Callable, *,
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
-    cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
+    cache = fun_caches.setdefault(fun.f, new_cache := {})
     key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
@@ -461,7 +464,8 @@ def cache(call: Callable, *,
         start = time.time()
       ans = call(fun, *args)
       if do_explain:  # pyrefly: ignore[unbound-name]  # pyrefly#2382
-        explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
+        # pyrefly: ignore [not-callable, unbound-name]
+        explain(fun, cache is new_cache, cache, key, time.time() - start)
       cache[key] = (ans, fun.stores)
 
     return ans
@@ -469,8 +473,10 @@ def cache(call: Callable, *,
   def _evict_function(f):
     fun_caches.pop(f, None)
 
-  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
-  memoized_fun.evict_function = _evict_function  # type: ignore
+  # pyrefly: ignore [missing-attribute]
+  memoized_fun.cache_clear = fun_caches.clear
+  # pyrefly: ignore [missing-attribute]
+  memoized_fun.evict_function = _evict_function
   register_cache(memoized_fun, str(call))
   return memoized_fun
 

@@ -155,12 +155,12 @@ class State:
             coordinator_bind_address, num_processes,
             heartbeat_timeout=heartbeat_timeout_seconds,
             shutdown_timeout=shutdown_timeout_seconds,
-            recoverable=_ENABLE_RECOVERABILITY.value) # type: ignore
+            recoverable=_ENABLE_RECOVERABILITY.value)
       else:
         self.service = _jax.get_distributed_runtime_service(
             coordinator_bind_address, num_processes,
             heartbeat_timeout=heartbeat_timeout_seconds,
-            shutdown_timeout=shutdown_timeout_seconds) # type: ignore
+            shutdown_timeout=shutdown_timeout_seconds)
 
     self.num_processes = num_processes
 
@@ -170,12 +170,13 @@ class State:
     if jaxlib_extension_version >= 405:
       self.client = _jax.get_distributed_runtime_client(
           coordinator_address, process_id, init_timeout=initialization_timeout,
-          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds)  # type: ignore
+          use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds)
     else:
       self.client = _jax.get_distributed_runtime_client(
           coordinator_address, process_id, init_timeout=initialization_timeout,
           use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
-          recoverable=_ENABLE_RECOVERABILITY.value)  # type: ignore
+          # pyrefly: ignore [unexpected-keyword]
+          recoverable=_ENABLE_RECOVERABILITY.value)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
@@ -185,7 +186,7 @@ class State:
       jax_partition_index = os.environ.get('JAX_PARTITION_INDEX')
       jax_slice_index = os.environ.get('JAX_SLICE_INDEX')
       if jax_partition_index is not None:
-        partition_index = int(jax_partition_index)  # type: ignore
+        partition_index = int(jax_partition_index)
       elif jax_slice_index is not None:
         # Deprecation added 2025-08-05. Should be removed after 3 months.
         warnings.warn(
@@ -193,7 +194,7 @@ class State:
             ' JAX_PARTITION_INDEX instead.',
             DeprecationWarning,
         )
-        partition_index = int(jax_slice_index)  # type: ignore
+        partition_index = int(jax_slice_index)
     self.partition_index = partition_index
 
   def shutdown(self):
@@ -221,7 +222,8 @@ class State:
           'Preemption sync manager should only be initialized once.')
     self.preemption_sync_manager = (
         _jax.create_preemption_sync_manager())
-    self.preemption_sync_manager.initialize(self.client)  # type: ignore[bad-argument-type]
+    # pyrefly: ignore [bad-argument-type]
+    self.preemption_sync_manager.initialize(self.client)
 
 global_state = State()
 

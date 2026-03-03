@@ -257,7 +257,8 @@ class TypedNdArray:
     return self.val.clip(*args, **kwargs)
 
   def astype(self, dtype, order: str = 'K', casting: str = 'unsafe', subok: bool = True, copy: bool = True):
-    return self.val.astype(  # type: ignore[no-matching-overload, call-overload]
+    # pyrefly: ignore [no-matching-overload]
+    return self.val.astype(
         dtype, order=order, casting=casting, subok=subok, copy=copy
     )
 

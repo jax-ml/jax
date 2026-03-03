@@ -37,7 +37,8 @@ def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
     grid = (grid,)
   elif len(grid) > 3:
     raise ValueError("`grid` should have three or fewer dimensions.")
-  return tuple(grid) + (1,) * (3 - len(grid))  # type: ignore
+  # pyrefly: ignore [bad-argument-type, bad-return]
+  return tuple(grid) + (1,) * (3 - len(grid))
 
 
 def avals_to_layouts(avals):
@@ -78,7 +79,7 @@ def pallas_call_lowering(
     triton_params = triton_core.CompilerParams()
   else:
     assert isinstance(compiler_params, triton_core.CompilerParams)
-    triton_params = compiler_params  # type: ignore[assignment]
+    triton_params = compiler_params
 
   num_warps = 4 if triton_params.num_warps is None else triton_params.num_warps
   num_stages = triton_params.num_stages

@@ -91,7 +91,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
 
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
-  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)  # type: ignore[arg-type]
+  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
@@ -260,7 +260,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   # check that shape is concrete
-  shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  shape = core.canonicalize_shape(shape)
   arr_shape = np.shape(arr)
   if (core.definitely_equal_shape(arr_shape, shape) and
       (sharding is None or core.typeof(arr).sharding == sharding)):
@@ -364,7 +365,8 @@ def ndim(a: ArrayLike | SupportsNdim) -> int:
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.ndim if available.
-  return np.ndim(a)  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  return np.ndim(a)
 
 
 @export
@@ -408,7 +410,7 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.shape if available.
-  return np.shape(a)  # type: ignore[arg-type]
+  return np.shape(a)
 
 
 @export
@@ -457,6 +459,7 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | Sequence[int] 
   check_arraylike("size", a, emit_warning=True)
   if axis is None and hasattr(a, "size"):
     return a.size
-  _shape = shape(a)  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  _shape = shape(a)
   axis = canonicalize_axis_tuple(axis, len(_shape), allow_duplicate=False)
   return math.prod(_shape[i] for i in axis)

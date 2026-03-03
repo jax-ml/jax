@@ -143,7 +143,8 @@ SimplifiedTraceback.__module__ = "jax.errors"
 def _running_under_ipython() -> bool:
   """Returns true if we appear to be in an IPython session."""
   try:
-    get_ipython()  # type: ignore
+    # pyrefly: ignore [unknown-name]
+    get_ipython()
     return True
   except NameError:
     return False
@@ -236,9 +237,10 @@ def api_boundary(
 
 try:
   # TODO: import from the final location
-  from jax._src import repro  # type: ignore
+  # pyrefly: ignore [missing-module-attribute]
+  from jax._src import repro
   repro_is_enabled = repro.is_enabled
 
 except ImportError:
-  repro = None  # type: ignore
-  def repro_is_enabled(): return False # type: ignore
+  repro = None
+  def repro_is_enabled(): return False

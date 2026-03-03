@@ -252,7 +252,8 @@ def _eval_jaxpr_discharge_state(
                   f"Did not ask for inval to be discharged but it was. ({invar=},"
                   f" {new_inval=})"
               )
-            env.write(invar, new_inval)  # type: ignore[arg-type]
+            # pyrefly: ignore [bad-argument-type]
+            env.write(invar, new_inval)
       else:
         # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
         # we assume any higher-order primitives inside of the jaxpr are *not*
@@ -678,7 +679,7 @@ run_state_p.multiple_results = True
 
 def _run_state_is_high(*_, jaxpr, **__):
   return jaxpr.is_high
-run_state_p.is_high = _run_state_is_high  # type: ignore
+run_state_p.is_high = _run_state_is_high
 
 def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
   assert not jaxpr.constvars
@@ -693,7 +694,7 @@ def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
   pe.apply_himut(jaxpr, args, out_mut)
   return pe.raise_lo_outs(arg_avals, lo_outs)
-run_state_p.to_lojax = _run_state_to_lojax  # pyrefly: ignore[bad-assignment]
+run_state_p.to_lojax = _run_state_to_lojax
 
 
 def _default_initialization(x):

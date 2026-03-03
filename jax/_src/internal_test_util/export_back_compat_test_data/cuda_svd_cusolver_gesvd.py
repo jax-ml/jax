@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# type: ignore
+
 # ruff: noqa
 
 import datetime
@@ -185,6 +185,7 @@ module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_parti
     nr_devices=1,
 )  # End paste
 
+# pyrefly: ignore [unsupported-operation]
 data_2024_10_08["jacobi"]["c64"] = dict(
     testdata_version=1,
     platform='cuda',

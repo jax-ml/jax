@@ -496,7 +496,8 @@ class BufferedRef(BufferedRefBase):
     """Returns the number of buffers used for multiple buffering."""
     if not self.is_buffered:
       raise ValueError("buffer count is undefined")
-    return self.window_ref.shape[0]  # type: ignore[union-attr]
+    # pyrefly: ignore [missing-attribute]
+    return self.window_ref.shape[0]
 
   @staticmethod
   def buffer_types() -> type[BufferType]:
@@ -512,7 +513,8 @@ class BufferedRef(BufferedRefBase):
       needs_swap_ref=True,
       grid_rank=0,
       use_lookahead=False,
-      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
+      # pyrefly: ignore [not-a-type]
+      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,
       tiling: tpu_info.Tiling | None = None,
   ) -> BufferedRef:
     """Create a BufferedRef.
@@ -821,7 +823,8 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return self
     if not self.is_input:
       return self
-    current_slot = (self.copy_in_slot[0] if  # type: ignore[index]
+    # pyrefly: ignore [unsupported-operation]
+    current_slot = (self.copy_in_slot[0] if
                     self._copy_in_slot_reg is None else self._copy_in_slot_reg)
     new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
     if self._copy_in_slot_reg is not None:
@@ -835,7 +838,8 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return self
     if not self.is_input:
       return self
-    current_slot = (self.wait_in_slot[0] if  # type: ignore[index]
+    # pyrefly: ignore [unsupported-operation]
+    current_slot = (self.wait_in_slot[0] if
                     self._wait_in_slot_reg is None else self._wait_in_slot_reg)
     new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
     if self._wait_in_slot_reg is not None:
@@ -849,7 +853,8 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return self
     if not self.is_output:
       return self
-    current_slot = (self.copy_out_slot[0] if self._copy_out_slot_reg  # type: ignore[index]
+    # pyrefly: ignore [unsupported-operation]
+    current_slot = (self.copy_out_slot[0] if self._copy_out_slot_reg
                     is None else self._copy_out_slot_reg)
     new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
     if self._copy_out_slot_reg is not None:
@@ -863,7 +868,8 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return self
     if not self.is_output:
       return self
-    current_slot = (self.wait_out_slot[0] if self._wait_out_slot_reg  # type: ignore[index]
+    # pyrefly: ignore [unsupported-operation]
+    current_slot = (self.wait_out_slot[0] if self._wait_out_slot_reg
                     is None else self._wait_out_slot_reg)
     new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
     if self._wait_out_slot_reg is not None:
@@ -1840,7 +1846,7 @@ def _partition_grid(
     # TODO(sharadmv): take the product of many nondivisible dimensions to
     # potentially divide it more evenly
     largest_parallel_dimension = max(grid[i] for i in parallel_dimensions
-                                     if isinstance(grid[i], int))  # type: ignore
+                                     if isinstance(grid[i], int))
     partition_dimension, *_ = (
         i
         for i, d in enumerate(grid)
@@ -1867,7 +1873,7 @@ def _partition_grid(
         # pyrefly: ignore[bad-argument-type]
         (0,) * len(grid), partition_dimension, grid_offset
     )
-  return new_grid, offsets  # type: ignore[return-value]
+  return new_grid, offsets
 
 
 def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
@@ -1894,9 +1900,9 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
   )
   if copy_in:
     tpu_helpers.sync_copy(hbm_ref.at[hbm_slice],
-                          bref.current_ref.at[bref_slice])  # type: ignore[union-attr]
+                          bref.current_ref.at[bref_slice])
   else:
-    tpu_helpers.sync_copy(bref.current_ref.at[bref_slice],  # type: ignore[union-attr]
+    tpu_helpers.sync_copy(bref.current_ref.at[bref_slice],
                           hbm_ref.at[hbm_slice])
 
 

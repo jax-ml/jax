@@ -632,7 +632,7 @@ run_scoped_p.multiple_results = True
 def _run_scoped_is_high(*avals, jaxpr, **params):
   del avals, params
   return jaxpr.is_high
-run_scoped_p.is_high = _run_scoped_is_high  # type: ignore[method-assign]
+run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
   closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)

@@ -403,7 +403,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
   z: Array | None = None
   result: Array | None = None
   while n > 0:
-    z = arr if z is None else (z @ z)  # type: ignore[operator]
+    z = arr if z is None else (z @ z)
     n, bit = divmod(n, 2)
     if bit:
       result = z if result is None else (result @ z)
@@ -1174,7 +1174,8 @@ def norm(x: ArrayLike, ord: int | str | None = None,
     return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
 
   elif num_axes == 2:
-    row_axis, col_axis = axis  # type: ignore[bad-unpacking]
+    # pyrefly: ignore [bad-unpacking]
+    row_axis, col_axis = axis
     if ord is None or ord in ('f', 'fro'):
       return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                         keepdims=keepdims))
@@ -2130,7 +2131,8 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
+  # pyrefly: ignore [no-matching-overload]
+  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),
                        optimize='auto', precision=precision)
 
 

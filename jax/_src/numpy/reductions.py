@@ -165,9 +165,11 @@ def _reduction_dims(a: ArrayLike, axis: Axis):
   if axis is None:
     return (tuple(range(np.ndim(a))),) * 2
   elif not isinstance(axis, (np.ndarray, tuple, list)):
-    axis = (axis,)  # type: ignore[assignment]
+    # pyrefly: ignore [bad-assignment]
+    axis = (axis,)
   canon_axis = tuple(_canonicalize_axis_allow_named(x, np.ndim(a))
-                     for x in axis)  # type: ignore[union-attr]
+                     # pyrefly: ignore [not-iterable]
+                     for x in axis)
   if len(canon_axis) != len(set(canon_axis)):
     raise ValueError(f"duplicate value in 'axis': {axis}")
   canon_pos_axis = tuple(x for x in canon_axis if isinstance(x, int))
@@ -787,7 +789,8 @@ def amax(a: ArrayLike, axis: Axis = None, out: None = None,
 
 def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
   if not isinstance(axis, (tuple, list)):
-    axis_seq: Sequence[int] = (axis,)  # type: ignore[assignment]
+    # pyrefly: ignore [bad-assignment]
+    axis_seq: Sequence[int] = (axis,)
   else:
     axis_seq = axis
   size = 1

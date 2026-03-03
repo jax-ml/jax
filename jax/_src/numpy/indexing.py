@@ -113,7 +113,8 @@ class IndexType(enum.Enum):
 
 class ParsedIndex(NamedTuple):
   """Structure for tracking an indexer parsed within the context of an array shape."""
-  index: Index  # type: ignore[assignment]  # seems to be a strange misfire by mypy.
+  # pyrefly: ignore [bad-override]
+  index: Index    # seems to be a strange misfire by mypy.
   typ: IndexType
   consumed_axes: tuple[int, ...]
 
@@ -153,7 +154,8 @@ def _parse_indices(
       dimensions_consumed.append(0)
       ellipses_indices.append(i)
     elif typ == IndexType.BOOLEAN:
-      dimensions_consumed.append(np.ndim(idx))  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      dimensions_consumed.append(np.ndim(idx))
     elif typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.SLICE, IndexType.DYNAMIC_SLICE]:
       dimensions_consumed.append(1)
     else:
@@ -290,11 +292,13 @@ class NDIndexer:
     new_indices = list(self.indices)
     current_dim = 0
     for i, idx in enumerate(self.indices):
-      if idx.typ == IndexType.BOOLEAN and np.ndim(idx.index) == 0:  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      if idx.typ == IndexType.BOOLEAN and np.ndim(idx.index) == 0:
         new_shape.insert(i, 1)
         new_sharding_spec.insert(i, None)
         new_indices[i] = ParsedIndex(
-          np.arange(int(idx.index)), typ=IndexType.ARRAY, consumed_axes=(current_dim,))  # type: ignore[arg-type]
+          # pyrefly: ignore [no-matching-overload]
+          np.arange(int(idx.index)), typ=IndexType.ARRAY, consumed_axes=(current_dim,))
         current_dim += 1
       else:
         n_consumed = len(idx.consumed_axes)
@@ -339,7 +343,8 @@ class NDIndexer:
         if isinstance(idx.index, np.unsignedinteger):
           normed_index: Index = idx.index
         else:
-          normed_index = idx.index + size if idx.index < 0 else idx.index  # type: ignore[assignment,operator]
+          # pyrefly: ignore [bad-assignment, unsupported-operation]
+          normed_index = idx.index + size if idx.index < 0 else idx.index
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
       elif idx.typ == IndexType.ARRAY:
         assert isinstance(idx.index, (Array, np.ndarray, literals.TypedNdArray))
@@ -494,7 +499,8 @@ class NDIndexer:
           raise TypeError("dynamic_slice: only unit steps supported in slice."
                           f" Got {pidx.index} at position {position}")
       elif pidx.typ == IndexType.ARRAY:
-        if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():  # type: ignore[arg-type]
+        # pyrefly: ignore [no-matching-overload]
+        if isinstance(pidx.index, Sequence) or np.shape(pidx.index) != ():
           raise TypeError("dynamic_slice: only scalar indices allowed."
                           f" Got index of type {type(pidx.index)} at position {position}")
       elif pidx.typ == IndexType.BOOLEAN:
@@ -574,7 +580,8 @@ class NDIndexer:
   def is_advanced_int_indexer(self):
     """Returns True if idx should trigger int array indexing, False otherwise."""
     # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-    return any(idx.typ in [IndexType.ARRAY, IndexType.BOOLEAN] and np.ndim(idx.index) > 0  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    return any(idx.typ in [IndexType.ARRAY, IndexType.BOOLEAN] and np.ndim(idx.index) > 0
                for idx in self.indices)
 
   def to_gather(self, x_sharding: NamedSharding | Any,
@@ -1132,7 +1139,7 @@ def rewriting_take(
   if out_sharding is not None:
     out_sharding = canonicalize_sharding(out_sharding, 'take')
     return auto_axes(internal_gather, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes,  # type: ignore
+                     axes=out_sharding.mesh.explicit_axes,
                      )(arr, dynamic_idx)
   return internal_gather(arr, dynamic_idx)
 
@@ -1385,12 +1392,14 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       gather_slice_shape.append(1)
       continue
 
-    if index.typ in [IndexType.INTEGER, IndexType.ARRAY] and np.ndim(index.index) == 0:  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    if index.typ in [IndexType.INTEGER, IndexType.ARRAY] and np.ndim(index.index) == 0:
       # Basic scalar int indices
       if core.definitely_equal(indexer.shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i_converted = lax.convert_element_type(index.index, index_dtype)  # type: ignore[arg-type]
+      # pyrefly: ignore [bad-argument-type]
+      i_converted = lax.convert_element_type(index.index, index_dtype)
       gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)

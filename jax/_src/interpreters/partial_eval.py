@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 if jaxlib_extension_version >= 406:
   TracebackScope = _jax.TracebackScope
 else:
-  TracebackScope = contextlib.nullcontext  # type: ignore
+  TracebackScope = contextlib.nullcontext
 
 
 class PartialVal(tuple):
@@ -264,7 +264,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     num_new_args = len(res_tracers) + len(env_tracers)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
     if isinstance(primitive, core.ClosedCallPrimitive):
-      new_jaxpr = close_jaxpr(new_jaxpr)  # type: ignore
+      new_jaxpr = close_jaxpr(new_jaxpr)
     staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -794,10 +794,11 @@ def tracers_to_jaxpr(
   env_vars, env_vals = unzip2(env.items())
   invars = [*env_vars, *map(get_atom, in_tracers)]
   const_vars, const_vals = unzip2(consts.items())
-  outvars = map(get_atom, out_tracers)  # type: ignore[arg-type]
+  outvars = map(get_atom, out_tracers)
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-  jaxpr = Jaxpr(const_vars, invars,  # type: ignore[arg-type]
+  # pyrefly: ignore [bad-argument-type]
+  jaxpr = Jaxpr(const_vars, invars,
                 outvars, eqns, jaxpr_effects, debug_info, is_high)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
@@ -992,7 +993,8 @@ def partial_eval_jaxpr_custom(
       jaxpr, in_unknowns, in_inst, ensure_out_unknowns, ensure_out_inst, saveable)
   if num_res_ref:
     raise ValueError("Cannot use `partial_eval_jaxpr_custom` with stateful jaxprs.")
-  return *outs,  # type: ignore
+  # pyrefly: ignore [bad-return]
+  return *outs,
 
 def partial_eval_jaxpr_stateful(
     jaxpr: Jaxpr,
@@ -1059,7 +1061,7 @@ def _partial_eval_jaxpr_custom_cached(
     rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
     if rule:
       eqn1, eqn2, unks_out, inst_out, res = rule(saveable, unks_in, inst_in, eqn)
-      eqn1 and known_eqns.append(eqn1); eqn2 and staged_eqns.append(eqn2)  # type: ignore
+      eqn1 and known_eqns.append(eqn1); eqn2 and staged_eqns.append(eqn2)
       for r in res:
         if isinstance(r.aval, AbstractRef):
           residual_refs.add(r)
@@ -1079,7 +1081,7 @@ def _partial_eval_jaxpr_custom_cached(
         foreach(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
-        from jax._src.dispatch import device_put_p, ArrayCopySemantics  # type: ignore
+        from jax._src.dispatch import device_put_p, ArrayCopySemantics
         resvars = [Var(v.aval.update(memory_space=core.mem_kind_to_space(policy.dst)))
                    for v in eqn.outvars]
         offload_eqn = core.JaxprEqn(
@@ -1094,7 +1096,8 @@ def _partial_eval_jaxpr_custom_cached(
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), resvars)
-        assert all(o.aval.memory_space == core.mem_kind_to_space(policy.src)  # type: ignore
+        # pyrefly: ignore [missing-attribute]
+        assert all(o.aval.memory_space == core.mem_kind_to_space(policy.src)
                    for o in eqn.outvars)
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
@@ -1355,14 +1358,16 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[int | None]:
   fwds: dict[Var, Atom] = dict(zip(jaxpr.invars, jaxpr.invars))
   for eqn in jaxpr.eqns:
     if eqn.primitive in forwarding_rules:
-      eqn = eqn.replace(invars=[a if type(a) is Literal else fwds.get(a, a)  # type: ignore
+      # pyrefly: ignore [no-matching-overload]
+      eqn = eqn.replace(invars=[a if type(a) is Literal else fwds.get(a, a)
                                 for a in eqn.invars])
       fwd_idx, _ = forwarding_rules[eqn.primitive](eqn)
       for v_orig, idx in zip(eqn.outvars, fwd_idx):
         if idx is not None:
           fwds[v_orig] = eqn.invars[idx]
   idxs: dict[Var, int] = {v: i for i, v in enumerate(jaxpr.invars)}
-  return [None if type(v) is Literal else idxs.get(fwds.get(v))  # type: ignore
+  # pyrefly: ignore [no-matching-overload]
+  return [None if type(v) is Literal else idxs.get(fwds.get(v))
           for v in jaxpr.outvars]
 
 
@@ -1623,7 +1628,8 @@ class DynamicJaxprTracer(core.Tracer):
     self._trace = trace
     self._line_info = line_info
     self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
-    self.aval = aval  # type: ignore[misc]
+    # pyrefly: ignore [read-only]
+    self.aval = aval
     self.val = val
     self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
     self.parent = parent
@@ -1710,7 +1716,8 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   for eqn in eqns:
     if eqn.primitive in core._ref_allocating_primitives:
       outvar, = eqn.outvars
-      all_vars[outvar] = None  # type: ignore
+      # pyrefly: ignore [unsupported-operation]
+      all_vars[outvar] = None
       mut_arrays.add(outvar)
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
@@ -1724,7 +1731,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               f"`JaxprInputEffect` {eff} is invalid."
               f"\n Equation: {eqn}\n"
               "\n Jaxpr: "
-              f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
+              f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")
         eqn_invar = eqn.invars[eff.input_index]
         if type(eqn_invar) is core.Literal or eqn_invar in mut_arrays:
           continue
@@ -1740,7 +1747,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
                 f"\n Equation: {eqn}\n"
                 f"\n Effects: {eqn.effects}\n"
                 "\n Jaxpr: "
-                f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
+                f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")
         eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
@@ -2000,7 +2007,8 @@ class DynamicJaxprTrace(core.Trace):
         aval = get_aval(c)
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace or core.eval_trace):
-          aval = core.AvalQDD(aval, core.cur_qdd(c))  # type: ignore
+          # pyrefly: ignore [bad-assignment]
+          aval = core.AvalQDD(aval, core.cur_qdd(c))
       tracer = self._new_const(aval, c, source_info)
     return tracer
 
@@ -2118,7 +2126,7 @@ class DynamicJaxprTrace(core.Trace):
 
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
     if isinstance(call_primitive, core.ClosedCallPrimitive):
-      new_jaxpr = close_jaxpr(new_jaxpr)  # type: ignore
+      new_jaxpr = close_jaxpr(new_jaxpr)
     new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
@@ -2238,7 +2246,8 @@ class DynamicJaxprTrace(core.Trace):
         fun_jaxpr.effects,
         source_info=source_info)
 
-  def process_custom_transpose(self, prim: core.Primitive,  # type: ignore[override]
+  # pyrefly: ignore [bad-override]
+  def process_custom_transpose(self, prim: core.Primitive,
                                call: lu.WrappedFun, tracers, *,
                                transpose: lu.WrappedFun,
                                out_types,
@@ -2644,7 +2653,8 @@ def apply_himut(jaxpr: Jaxpr | ClosedJaxpr, hi_args, out_mut):
     if v.final_qdd is not None:
       qdd = v.final_qdd
       lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[i], *lo_vals)  # type: ignore
+      # pyrefly: ignore [missing-attribute]
+      v.aval.update_from_loval(qdd, hi_args[i], *lo_vals)
   assert next(out_mut_, None) is None
 
 def raise_lo_outs(hi_avals, lo_outs):

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# type: ignore
+
 # ruff: noqa
 
 import datetime
@@ -190,6 +190,7 @@ module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_parti
 )  # End paste
 
 # Pasted from the test output (see export_back_compat_test_util.py module docstring)
+# pyrefly: ignore [unsupported-operation]
 data_2026_02_04["jacobi"]["c64"] = dict(
     testdata_version=1,
     platform='rocm',

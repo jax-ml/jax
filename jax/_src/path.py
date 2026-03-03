@@ -35,7 +35,8 @@ Path: PathProtocol
 # can read and write to, e.g., GCS buckets. Otherwise we use the builtin
 # pathlib and can only read/write to the local filesystem.
 try:
-  from etils import epath  # type: ignore
+  # pyrefly: ignore [missing-import]
+  from etils import epath
 except ImportError:
   logger.debug("etils.epath was not found. Using pathlib for file I/O.")
   Path = pathlib.Path
@@ -60,4 +61,4 @@ def make_jax_dump_dir(out_dir_path: str) -> pathlib.Path | None:
       )
   out_dir = Path(out_dir_path)
   out_dir.mkdir(parents=True, exist_ok=True)
-  return cast(pathlib.Path, out_dir)  # type: ignore[redundant-cast]
+  return cast(pathlib.Path, out_dir)

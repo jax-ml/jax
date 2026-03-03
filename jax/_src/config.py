@@ -220,7 +220,7 @@ class Config:
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
-register_trace_context_callback = []  # type: ignore
+register_trace_context_callback = []
 
 trace_context = config_ext.trace_context
 
@@ -906,7 +906,7 @@ class Flag(Generic[_T]):
     raise TypeError(
         "bool() not supported for instances of type '{0}' "
         "(did you mean to use '{0}.value' instead?)".format(
-            type(self).__name__))  # pyrefly: ignore[missing-attribute]  # pyrefly#2444
+            type(self).__name__))  # pyrefly#2444
 
   def _set(self, value: _T) -> None:
     self.value = value

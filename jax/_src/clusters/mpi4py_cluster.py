@@ -39,7 +39,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # Then broadcast the hostname and port.
 
 
-    from mpi4py import MPI #type: ignore
+    from mpi4py import MPI
     # Get the global communicator:
     COMM_WORLD = MPI.COMM_WORLD
 

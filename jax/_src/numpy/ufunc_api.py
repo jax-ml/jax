@@ -468,7 +468,8 @@ class ufunc:
       idx = tuple(ind if isinstance(ind, slice) else ind[i] for ind in indices)
       a = a.at[idx].set(self(a.at[idx].get(), *(arg[i] for arg in args)))
       return (i + 1, a), x
-    carry, _ = control_flow.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
+    # pyrefly: ignore [bad-argument-type]
+    carry, _ = control_flow.scan(scan_fun, (0, a), None, len(indices[0]))
     return carry[1]
 
   @api.jit(static_argnames=['self', 'axis', 'dtype'])

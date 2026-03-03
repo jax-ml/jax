@@ -97,7 +97,7 @@ def _dynamic_slice(
   output = slicing.dynamic_slice(value, start_idx, slice_sizes=block_shape)
   squeeze_dims = tuple(np.arange(len(is_squeeze))[np.array(is_squeeze,
                                                            dtype=np.bool_)])
-  return lax.squeeze(output, squeeze_dims)  # type: ignore[arg-type]
+  return lax.squeeze(output, squeeze_dims)
 
 
 def _dynamic_update_slice(start_idx, block_shape, value, update, is_squeeze):
@@ -412,7 +412,8 @@ def pallas_call_hlo_interpret(
   num_inout_blocks = len(block_args) + len(out)
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    num_iterations = reduce(jnp.multiply, grid)
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1

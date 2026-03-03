@@ -189,7 +189,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
-def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
+def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:
   if isinstance(dtype, int) and isinstance(shape, int):
     return (f"Cannot interpret '{dtype}' as a data type."
             f"\n\nDid you accidentally write "
@@ -450,7 +450,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
     return lax.full_like(a, fill_value, dtype, shape,
                          sharding=util.canonicalize_device_to_sharding(device))
   else:
-    shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
+    # pyrefly: ignore [no-matching-overload]
+    shape = np.shape(a) if shape is None else shape
     dtype = dtypes.result_type(a) if dtype is None else dtype
     return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
