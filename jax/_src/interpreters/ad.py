@@ -556,7 +556,7 @@ class JVPTrace(Trace):
       tangent_zero = p2tz(val)
       return (val, tangent_zero)
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
         primitive is not core.ref_p and primitive is not core.empty_ref_p and
@@ -579,7 +579,7 @@ class JVPTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       return core.cur_qdd(p)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params, /):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     which_nz = [     type(t) is not Zero           for t in tangents]
@@ -615,7 +615,7 @@ class JVPTrace(Trace):
   def process_map(self, map_primitive, f, tracers, params):
     return self.process_call(map_primitive, f, tracers, params)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, symbolic_zeros):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return primitive.bind_with_trace(self.parent_trace, (fun, jvp, *primals_in),
@@ -631,7 +631,7 @@ class JVPTrace(Trace):
     tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees,
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees,
                               symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
@@ -791,7 +791,7 @@ class LinearizeTrace(Trace):
       tangent_zero = p2tz(val)
       return (val, tangent_zero)
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
     if (all(type(t) is Zero for t in tangents_in) and
@@ -818,7 +818,7 @@ class LinearizeTrace(Trace):
       return core.cur_qdd(p)
 
   def process_custom_jvp_call(self, primitive, fun: lu.WrappedFun,
-                              jvp: lu.WrappedFun, tracers, *,
+                              jvp: lu.WrappedFun, tracers, /, *,
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
@@ -845,7 +845,7 @@ class LinearizeTrace(Trace):
             for x, nz, t in zip(primals_out, tangent_nzs_out, tangents_out)]
 
   def process_custom_vjp_call(self, primitive, fun, fwd,
-                              bwd: lu.WrappedFun, tracers,
+                              bwd: lu.WrappedFun, tracers, /, *,
                               out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -875,7 +875,7 @@ class LinearizeTrace(Trace):
     tangent_nzs_out = [type(t) is not Zero for t in tangents_out]
     return map(partial(maybe_linearize_tracer, self), primals_out, tangent_nzs_out, tangents_out)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params, /):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     nzs_in = tuple(type(t) is not Zero for t in tangents)

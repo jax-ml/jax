@@ -83,7 +83,7 @@ class RematTrace(core.Trace):
     else:
       raise NotImplementedError  # TODO(mattjj)
 
-  def process_primitive(self, prim, tracers, params):
+  def process_primitive(self, prim, tracers, params, /):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     if prim in rules:
       with core.set_current_trace(self.parent_trace):

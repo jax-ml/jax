@@ -234,7 +234,7 @@ class JetTrace(core.Trace):
     else:
       return val, zero_series
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     order = self.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
 
@@ -259,7 +259,7 @@ class JetTrace(core.Trace):
     else:
       return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params, /):
     primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
     primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
     f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
@@ -270,13 +270,13 @@ class JetTrace(core.Trace):
     primals_out, series_out = tree_unflatten(out_tree_def(), result)
     return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?
     del primitive, jvp  # Unused.
     return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees):
     del primitive, fwd, bwd, out_trees  # Unused.
     return fun.call_wrapped(*tracers)
 

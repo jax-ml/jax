@@ -1304,7 +1304,7 @@ class ShardMapTrace(core.Trace):
                            P(), val)
       return val_, frozenset()
 
-  def process_primitive(self, prim, tracers, params):
+  def process_primitive(self, prim, tracers, params, /):
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
     if self.check:
       out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
@@ -1361,20 +1361,20 @@ class ShardMapTrace(core.Trace):
     out_vmas = [v - _spec_to_vma(spec) for v, spec in zip(out_vmas_, out_specs)]
     return map(partial(ShardMapTracer, self), out_vmas, out_vals)
 
-  def process_call(self, call_primitive, fun, tracers, params):
+  def process_call(self, call_primitive, fun, tracers, params, /):
     raise NotImplementedError(
         f"Eager evaluation of `{call_primitive}` inside a `shard_map` isn't "
         "yet supported. Put a `jax.jit` around the `shard_map`-decorated "
         "function, and open a feature request at "
         "https://github.com/jax-ml/jax/issues !")
 
-  def process_map(self, map_primitive, fun, tracers, params):
+  def process_map(self, map_primitive, fun, tracers, params, /):
     raise NotImplementedError(
         "Eager evaluation of `pmap` inside a `shard_map` isn't yet supported."
         "Put a `jax.jit` around the `shard_map`-decorated function, and open "
         "a feature request at https://github.com/jax-ml/jax/issues !")
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
@@ -1382,7 +1382,7 @@ class ShardMapTrace(core.Trace):
                                    in_vma, self.check)
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, /, *, out_trees,
                               symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_vjp symbolic_zeros support with shard_map is not "

@@ -314,7 +314,7 @@ class SparseTrace(core.Trace):
         spvalue, = arrays_to_spvalues(self.spenv, [val])
       return SparseTracer(self, spvalue=spvalue)
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive, tracers, params, /):
     tracers = [self.to_sparse_tracer(t) for t in tracers]
     spvalues = [t._spvalue for t in tracers]
     if any(spvalue.is_sparse() for spvalue in spvalues):
@@ -328,7 +328,7 @@ class SparseTrace(core.Trace):
     out_tracers = tuple(SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues)
     return out_tracers if primitive.multiple_results else out_tracers[0]
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params, /):
     assert False
     spvalues = tuple(t._spvalue for t in tracers)
     in_bufs = self.spenv._buffers
@@ -339,7 +339,7 @@ class SparseTrace(core.Trace):
     _bufs_out = call_primitive.bind(fun, *in_bufs, **params)
     return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues()]
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     # TODO(jakevdp): handle the jvp here
     del primitive, jvp, symbolic_zeros
     with core.set_current_trace(self):
