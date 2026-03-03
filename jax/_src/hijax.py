@@ -414,6 +414,11 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for linearize support, subclass {type(self)} "
                               "must implement `lin` and `linearized`")
 
+  # optional transpose rule, for primitives that are linear in some inputs
+  def transpose(self, out_ct, *maybe_accums):
+    raise NotImplementedError(f"for transpose support, subclass {type(self)} "
+                              "must implement `transpose`")
+
   # vmap interface
   def batch(self, axis_data, args, dims):
     out_dim = self.batch_dim_rule(axis_data, dims)
@@ -613,6 +618,13 @@ def _call_hi_primitive_jvp(primals, tangents, *, _prim):
   out_tangents_flat = _prim.out_tree.flatten_up_to(out_tangents)
   return out_primals_flat, out_tangents_flat
 ad.primitive_jvps[call_hi_primitive_p] = _call_hi_primitive_jvp
+
+def _call_hi_primitive_transpose(cts_flat, *primals_flat, _prim):
+  cts = tree_unflatten(_prim.out_tree, cts_flat)
+  primals = tree_unflatten(_prim.in_tree, primals_flat)
+  none = _prim.transpose(cts, *primals)
+  assert none is None
+ad.fancy_transposes[call_hi_primitive_p] = _call_hi_primitive_transpose
 
 def _call_hi_primitive_dce(used_outs_flat, eqn):
   _prim = eqn.params['_prim']
