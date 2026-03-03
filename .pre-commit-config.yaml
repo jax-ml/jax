@@ -35,14 +35,22 @@ repos:
   hooks:
   - id: ruff
 
-- repo: https://github.com/pre-commit/mirrors-mypy
-  rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
+- repo: https://github.com/facebook/pyrefly-pre-commit
+  rev: 30778c6e83a71508a62b7297f8b22660ce4496fc  # frozen: v0.55.0
   hooks:
-  - id: mypy
-    files: (jax/|tests/typing_test\.py)
-    exclude: jax/_src/basearray.py|jax/numpy/__init__.py|jax/nn/__init__.py|jaxlib/_jax/.*  # Use pyi instead
-    additional_dependencies: [types-requests==2.31.0, numpy~=2.3.0, scipy-stubs]
-    args: [--config=pyproject.toml]
+    - id: pyrefly-check
+      name: Pyrefly (type checking)
+      pass_filenames: false
+      additional_dependencies:
+        - absl-py==2.4.0
+        - types-requests~=2.32.0
+        - numpy~=2.4.0
+        - ml_dtypes~=0.5.0
+        - scipy-stubs
+        - --pre
+        - --extra-index-url
+        - https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
+        - jaxlib
 
 - repo: https://github.com/mwouts/jupytext
   rev: 8ed836db64ad5d304f2315e6bfd9049c9142e190  # frozen: v1.16.4
@@ -50,17 +58,6 @@ repos:
   - id: jupytext
     files: docs/
     args: [--sync]
-
-# This is a manual-only pre-commit hook to run pyrefly type checks. To run it:
-# $ pre-commit run --hook-stage manual pyrefly-check --all-files
-- repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 30778c6e83a71508a62b7297f8b22660ce4496fc  # frozen: v0.55.0
-  hooks:
-    - id: pyrefly-check
-      name: Pyrefly (type checking)
-      pass_filenames: false
-      additional_dependencies: [absl-py==2.4.0, types-requests~=2.32.0, numpy~=2.4.0, ml_dtypes~=0.5.0, scipy-stubs]
-      stages: [manual]
 
 - repo: local
   hooks:

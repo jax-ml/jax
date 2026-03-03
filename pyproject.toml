@@ -2,63 +2,6 @@
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.mypy]
-show_error_codes = true
-disable_error_code = "attr-defined, name-defined, annotation-unchecked"
-no_implicit_optional = true
-warn_redundant_casts = true
-allow_redefinition = true
-
-[[tool.mypy.overrides]]
-module = [
-    "IPython.*",
-    "absl.*",
-    "compression.*",
-    "etils.*",
-    "filelock.*",
-    "flatbuffers.*",
-    "flax.*",
-    "google.colab.*",
-    "hypothesis.*",
-    "jax.experimental.jax2tf.tests.back_compat_testdata",
-    "jax.experimental.jax2tf.tests.flax_models",
-    "jax_cuda12_plugin.*",
-    "jax_cuda13_plugin.*",
-    "jaxlib.cpu_feature_guard",
-    "jaxlib.cuda.*",
-    "jaxlib.mlir.*",
-    "jaxlib.mosaic.dialect.gpu.*",
-    "jaxlib.mosaic.python._tpu_gen",
-    "jaxlib.triton.*",
-    "jaxlib.utils",
-    "jaxlib.version",
-    "jaxlib._jax.utils",
-    "jaxlib._pretty_printer",
-    "jraph.*",
-    "libtpu.*",
-    "matplotlib.*",
-    "mlir.*",
-    "ml_dtypes.*",
-    "nvidia.*",
-    "numpy.*",
-    "opt_einsum.*",
-    "optax.*",
-    "portpicker.*",
-    "pygments.*",
-    "pytest.*",
-    "rich.*",
-    "setuptools.*",
-    "xprof.convert.*",
-    "tensorflow.*",
-    "tensorflow.io.*",
-    "tensorflowjs.*",
-    "tensorstore.*",
-    "web_pdb.*",
-    "zstandard.*",
-    "kubernetes.*"
-]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 markers = [
     "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
@@ -96,6 +39,53 @@ doctest_optionflags = [
     "NORMALIZE_WHITESPACE"
 ]
 addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
+
+[tool.pyrefly]
+# TODO(slebedev): Use 3.11 here.
+python-version = "3.12"
+project-includes = [
+    "jax/**/*.py*",
+    # "tests/**/*.py",
+]
+project-excludes = [
+    "jax/example_libraries/**/*.py",
+    # TODO(slebedev): Opt in jax/experimental and remove this exclude.
+    "jax/experimental/**/*.py",
+]
+ignore-missing-imports = [
+    "absl.*",
+    "flatbuffers.*",
+    "flax.*",
+    "google.colab.*",
+    "hypothesis.*",
+    "IPython.*",
+    "jax_cuda12_plugin.*",
+    "jax_cuda13_plugin.*",
+    "jaxlib.*",
+    "jraph.*",
+    "kubernetes.*",
+    "libtpu.*",
+    "matplotlib.*",
+    "mpi4py.*",
+    "nvidia.*",
+    "optax.*",
+    "opt_einsum.*",
+    "portpicker.*",
+    "pygments.*",
+    "pytest.*",
+    "rich.*",
+    "setuptools.*",
+    "tensorflow.*",
+    "tensorflowjs.*",
+    "tensorflow_serving.*",
+    "tensorstore.*",
+    "web_pdb.*",
+    "xprof.*",
+    "zstandard.*",
+]
+permissive-ignores = true
+# TODO(slebedev): Change this to "check-and-infer-return-type".
+untyped-def-behavior = "check-and-infer-return-any"
 
 [tool.ruff]
 preview = true
