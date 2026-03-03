@@ -19,6 +19,7 @@ import math
 
 import jax
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
@@ -90,7 +91,10 @@ def build_kernel(
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
-    is_warp_leader = nvvm.elect_sync()
+    if jaxlib_extension_version >= 412:
+      is_warp_leader = nvvm.elect_sync()
+    else:
+      is_warp_leader = nvvm.elect_sync(i1)
     is_leader_of = lambda i: arith.andi(
         arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader
     )
