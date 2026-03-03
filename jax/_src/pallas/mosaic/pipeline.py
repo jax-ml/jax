@@ -1240,6 +1240,7 @@ class Scheduler:
       last_cycle: jax.Array | bool,
       init_accumulators=None,
       trace_scopes=True,
+      _explicit_indices: bool = False,
   ):
     """Initializes scheduler.
 
@@ -1254,6 +1255,7 @@ class Scheduler:
       init_accumulators: do we zero-initialize accumulator state for this
         invocation of the pipeline.
       trace_scopes: whether to use named_scope to trace blocks in the pipeline.
+      _explicit_indices: whether the pipeline uses explicit indices.
     """
     self.step = step
     self.grid = grid
@@ -1263,6 +1265,7 @@ class Scheduler:
     self.last_cycle = last_cycle
     self.init_accumulators = init_accumulators
     self.trace_scopes = trace_scopes
+    self._explicit_indices = _explicit_indices
 
     # Total number of linear steps.
     self.num_steps = _grid_size(grid)
@@ -1313,6 +1316,8 @@ class Scheduler:
       yield
 
   def grid_env(self):
+    if self._explicit_indices:
+      return contextlib.nullcontext()
     return pallas_core.grid_env(
         list(map(pallas_core.GridAxis, self.indices, self.grid)))  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
 
@@ -2059,16 +2064,13 @@ def emit_pipeline(
           last_cycle=last_cycle,
           init_accumulators=init_accumulators,
           trace_scopes=trace_scopes,
+          _explicit_indices=_explicit_indices,
       )
 
     def loop_body(step, carry):
       unaliased_brefs, indices = carry
       scheduler = make_scheduler(step, indices)
-      grid_env_ctx = (
-          contextlib.nullcontext() if _explicit_indices
-          else scheduler.grid_env()
-      )
-      with grid_env_ctx:
+      with scheduler.grid_env():
         # prepare any local VMEM aliases
         brefs = map_brefs(scheduler.alias_local_refs, unaliased_brefs, refs)
         # loop input handling phase
@@ -2128,11 +2130,7 @@ def emit_pipeline(
       def _loop_body(step, carry):
         brefs, indices = carry
         scheduler = make_scheduler(step, indices)
-        grid_env_ctx = (
-            contextlib.nullcontext() if _explicit_indices
-            else scheduler.grid_env()
-        )
-        with grid_env_ctx:
+        with scheduler.grid_env():
           # prepare any local VMEM aliases
           brefs = map_brefs(scheduler.alias_local_refs, brefs, refs)
           # loop input handling phase
