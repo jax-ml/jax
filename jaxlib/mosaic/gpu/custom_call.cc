@@ -822,17 +822,18 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
         factory) {
   auto& cache = GetKernelCache();
   {
-    absl::MutexLock lock(&cache.mutex);
+    absl::MutexLock lock(cache.mutex);
     auto it = cache.kernels.find(kernel_hash);
     if (it != cache.kernels.end()) {
       return it->second.get();
     }
   }
-  // Release the lock while compiling the kernel.
+  // Release the lock while compiling the kernel. It is possible that multiple
+  // threads compile the same kernel concurrently. In that case, we will discard
+  // all but the first result.
   TF_ASSIGN_OR_RETURN(auto kernel, factory());
-  absl::MutexLock lock(&cache.mutex);
-  auto [iter, inserted] =
-      cache.kernels.insert_or_assign(kernel_hash, std::move(kernel));
+  absl::MutexLock lock(cache.mutex);
+  auto [iter, _] = cache.kernels.try_emplace(kernel_hash, std::move(kernel));
   return iter->second.get();
 }
 
