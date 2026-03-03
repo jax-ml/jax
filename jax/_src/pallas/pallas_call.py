@@ -364,7 +364,7 @@ def _batch_block_mapping(
       unflat_indices = (unflat_indices,)
     unflat_indices = list(unflat_indices)
     if dim is not batching.not_mapped:
-      unflat_indices.insert(dim, new_idx)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+      unflat_indices.insert(dim, new_idx)
     return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
 
@@ -382,11 +382,11 @@ def _batch_block_mapping(
     new_block_shape = shape
     new_array_aval = block_mapping.array_aval
   else:
-    # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+
     new_block_shape = tuple_insert(shape, dim, pallas_core.squeezed)
 
     array_shape = block_mapping.array_aval.shape
-    # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+
     array_shape = tuple_insert(array_shape, dim, axis_size)
 
     new_array_aval = jax_core.ShapedArray(
@@ -425,7 +425,7 @@ def _broadcast_input_output_aliases(
           args_[input_index], axis_size, 0, None)
     elif dim != 0:
       # TODO(cjfj): Change output batching axis instead?
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+
       args_[input_index] = jnp.moveaxis(args[input_index], dim, 0)
 
   return tuple(args_), tuple(dims_)
@@ -462,7 +462,7 @@ def _batch_with_explicit_loop(
     raise NotImplementedError("vmapping pallas_call with no arguments.")
 
   (axis_size,) = {
-      arg.shape[dim]  # pyrefly: ignore[bad-index]  # pyrefly#2499
+      arg.shape[dim]
       for arg, dim in zip(args, dims)
       if dim is not batching.not_mapped
   }
@@ -498,7 +498,7 @@ def _batch_with_explicit_loop(
                     operand=arg,
                     start_index=batch_index,
                     slice_size=1,
-                    axis=dim,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+                    axis=dim,
                 ),
                 axis=dim,
             )

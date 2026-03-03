@@ -785,7 +785,7 @@ def _batch_indexer(
     else:
       batch_idx = indexing.Slice(0, axis_size)  # type: ignore
       new_integer_indexer_shape = ()
-    # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+
     new_indices.insert(ref_dim, batch_idx)
   return indexing.NDIndexer(
       tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
