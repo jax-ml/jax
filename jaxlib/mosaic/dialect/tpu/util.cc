@@ -380,4 +380,11 @@ bool hasVectorOperandsOrResults(Operation& op) {
   return false;
 }
 
+bool isMaskType(Type ty) {
+  if (auto vty = dyn_cast<VectorType>(ty)) {
+    return isMaskType(vty.getElementType());
+  }
+  return ty.isSignlessInteger(1);
+}
+
 }  // namespace mlir::tpu

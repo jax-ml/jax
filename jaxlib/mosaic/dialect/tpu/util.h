@@ -193,6 +193,10 @@ inline int8_t getElementTypeBitwidth(MemRefType ty) {
   return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
 }
 
+// Returns true if the given type represents a mask (jnp.bool). Works for both
+// scalar and vector types.
+bool isMaskType(Type ty);
+
 template <typename T>
 ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
