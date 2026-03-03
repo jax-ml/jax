@@ -83,8 +83,8 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
     const xla::ifrt::Sharding& sharding) {
   if (sharding.devices()->devices().size() != 1) {
     return xla::InvalidArgument(
-        "Can only convert SingleDeviceSharding to MemorySpace not %s",
-        sharding.DebugString());
+        "Can only convert SingleDeviceSharding to MemorySpace not %v",
+        sharding);
   }
   auto* device = sharding.devices()->devices()[0];
   if (sharding.memory_kind().memory_kind().has_value()) {

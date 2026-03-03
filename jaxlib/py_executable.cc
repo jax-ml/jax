@@ -549,7 +549,7 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
           << " with launch ID: " << launch_id << " key: " << launch_id_key_;
   VLOG(2) << "Executable devices for launch ID " << launch_id << ": "
           << (ifrt_loaded_executable_->devices().has_value()
-                  ? (*ifrt_loaded_executable_->devices())->DebugString()
+                  ? absl::StrCat(**ifrt_loaded_executable_->devices())
                   : "<nullopt>");
   return launch_id;
 }
