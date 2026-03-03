@@ -222,6 +222,11 @@ class RnnTest(jtu.JaxTestCase):
       self.assertIn(cuda_encoding, stablehlo)
     elif jtu.test_device_matches(["rocm"]):
       self.assertIn(rocm_encoding, stablehlo)
+    else:
+      self.fail(
+          "Running on an unsupported GPU backend for this test. "
+          "Please add the expected RnnDescriptor encoding."
+      )
 
   @jtu.run_on_devices("cuda")
   def test_no_workspace_overflow(self):
