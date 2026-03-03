@@ -20,6 +20,7 @@ from jax._src import test_util as jtu
 from jax._src.state.primitives import pin, unpin
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
 
@@ -348,11 +349,30 @@ class CoreMapTest(jtu.JaxTestCase):
     ):
       f(x)
 
-  def test_capture_scalar(self):
+  @parameterized.product(
+      core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]
+  )
+  def test_capture_scalar(self, core_type, use_tc_tiling_on_sc):
+    match core_type:
+      case pltpu.CoreType.TC:
+        mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+        use_tc_tiling_on_sc = None
+      case pltpu.CoreType.SC_SCALAR_SUBCORE:
+        if pltpu.get_tpu_info().sparse_core is None:
+          self.skipTest("Sparsecore not supported on this device.")
+        mesh = plsc.ScalarSubcoreMesh(axis_name="x", num_cores=1)
+      case pltpu.CoreType.SC_VECTOR_SUBCORE:
+        self.skipTest("Copies to SMEM on TEC not supported.")
     @jax.jit
     def f(x, i):
-      @pl.kernel(out_shape=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
-                 mesh=pltpu.create_tensorcore_mesh("x", num_cores=1))
+
+      @pl.kernel(
+          out_shape=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+          mesh=mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_tc_tiling_on_sc=use_tc_tiling_on_sc,
+          ),
+      )
       def kernel(x_ref, out_ref):
         idx = jax.lax.axis_index("x")  # this is always 0
         pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
@@ -366,7 +386,7 @@ class CoreMapTest(jtu.JaxTestCase):
     @jax.jit
     def g(x, i):
       @pl.kernel(out_shape=jax.ShapeDtypeStruct((2, *x.shape[1:]), jnp.int32),
-                 mesh=pltpu.create_tensorcore_mesh("x", num_cores=1))
+                 mesh=mesh)
       def kernel(x_ref, out_ref):
         pltpu.sync_copy(x_ref.at[pl.ds(i, 2)], out_ref)
       return kernel(x)

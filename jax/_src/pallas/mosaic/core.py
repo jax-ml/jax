@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Contains TPU-specific Pallas abstractions."""
+
 from __future__ import annotations
 
 import collections
@@ -53,6 +54,7 @@ class GridDimensionSemantics(enum.Enum):
   CORE_PARALLEL = "core_parallel"
   SUBCORE_PARALLEL = "subcore_parallel"
   ARBITRARY = "arbitrary"
+
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
@@ -212,11 +214,14 @@ class MemorySpace(enum.Enum):
     return super().__getattr__(name)  # type: ignore
 
 
-class dma_semaphore(pallas_core.semaphore_dtype): pass
+class dma_semaphore(pallas_core.semaphore_dtype):
+  pass
+
 
 class DMASemaphore(pallas_core.AbstractSemaphoreTy):
   type = dma_semaphore
   name = "dma_sem"
+
 
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
@@ -231,14 +236,16 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
-                                 MemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(
+        jax_core.ShapedArray(shape, dtype), MemorySpace.SEMAPHORE
+    )
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()
 
   def get_ref_aval(self) -> state.AbstractRef:
     return self(()).get_ref_aval()
+
 
 @dataclasses.dataclass(frozen=True)
 class AbstractSemaphore(jax_core.AbstractValue):
@@ -255,15 +262,16 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       grid: pallas_core.Grid = (),
       in_specs: pallas_core.BlockSpecTree = no_block_spec,
       out_specs: pallas_core.BlockSpecTree = no_block_spec,
-      scratch_shapes: pallas_core.ScratchShapeTree = ()
+      scratch_shapes: pallas_core.ScratchShapeTree = (),
   ):
     super().__init__(grid, in_specs, out_specs, scratch_shapes)
     self.num_scalar_prefetch = num_scalar_prefetch
     self.scratch_shapes = tuple(scratch_shapes)
 
   def _make_scalar_ref_aval(self, aval):
-    return state.AbstractRef(jax_core.ShapedArray(aval.shape, aval.dtype),
-                             MemorySpace.SMEM)
+    return state.AbstractRef(
+        jax_core.ShapedArray(aval.shape, aval.dtype), MemorySpace.SMEM
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -274,6 +282,7 @@ class TensorCore:
 @dataclasses.dataclass(frozen=True)
 class TensorCoreMesh:
   """A mesh of TensorCores."""
+
   devices: np.ndarray
   axis_names: Sequence[str]
 
@@ -315,7 +324,7 @@ def create_tensorcore_mesh(
     num_cores: int | None = None,
 ) -> TensorCoreMesh:
   if devices is not None and num_cores is not None:
-    raise ValueError('cannot specify both devices and num_cores')
+    raise ValueError("cannot specify both devices and num_cores")
   if num_cores is None:
     if devices is None:
       abstract_device = jax.sharding.get_abstract_mesh().abstract_device
@@ -328,6 +337,120 @@ def create_tensorcore_mesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
   )
+
+
+def pass_scalars_as_refs(
+    jaxpr: jax_core.Jaxpr,
+    args: Sequence[Any],
+    in_avals: Sequence[jax_core.AbstractValue],
+    out_avals: Sequence[jax_core.AbstractValue],
+    mesh,
+    copy_to_smem: bool = False,
+) -> tuple[
+    jax_core.Jaxpr,
+    tuple[Any, ...],
+    tuple[jax_core.AbstractValue, ...],
+    tuple[jax_core.AbstractValue, ...],
+    tuple[bool, ...],
+]:
+  """Rewrites a jaxpr to pass scalars as refs instead of values."""
+  def allowed_aval(aval):
+    if isinstance(aval, state.AbstractRef):
+      return True
+    if isinstance(aval, jax_core.ShapedArray):
+      # Only scalars are allowed.
+      return not aval.shape
+    return False
+
+  assert all(allowed_aval(v.aval) for v in jaxpr.constvars + jaxpr.invars)
+
+  is_scalar_const = [
+      isinstance(v.aval, jax_core.ShapedArray) and not v.aval.shape
+      for v in jaxpr.constvars
+  ]
+  if not any(is_scalar_const):
+    return (
+        jaxpr,
+        tuple(in_avals),
+        tuple(out_avals),
+        tuple(args),
+        tuple(is_scalar_const),
+    )
+  non_scalar_const_avals, scalar_const_avals = util.partition_list(
+      is_scalar_const,
+      [v.aval for v in jaxpr.constvars],
+  )
+  non_scalar_consts, scalar_consts = util.partition_list(
+      is_scalar_const, args
+  )
+  if copy_to_smem:
+    smem_alloc = [
+        state.AbstractRef(
+            jax_core.ShapedArray((1,), aval.dtype),
+            memory_space=MemorySpace.SMEM,
+        )
+        for aval in scalar_const_avals
+    ]
+  else:
+    smem_alloc = []
+
+  # Rewrite body jaxpr to take in scalar values as Refs.
+  def new_body(*args):
+    scalar_const_refs, non_scalar_const_refs, args = util.split_list(
+        args, [len(scalar_consts), len(non_scalar_consts)]
+    )
+    if copy_to_smem:
+      smem, args = util.split_list(args, [len(smem_alloc)])
+      assert len(smem) == len(scalar_const_refs)
+      from jax._src.pallas.mosaic.helpers import sync_copy
+
+      sync_copy(scalar_const_refs, smem)
+    else:
+      smem = scalar_const_refs
+    scalar_const_values = [s[0] for s in smem]
+    new_consts = util.merge_lists(
+        is_scalar_const, non_scalar_const_refs, scalar_const_values
+    )
+    return jax_core.eval_jaxpr(jaxpr, new_consts, *args)
+
+  # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
+  scalar_const_trace_avals = [
+      state.AbstractRef(
+          jax_core.ShapedArray((1,), aval.dtype),
+          memory_space=MemorySpace.HBM if copy_to_smem else MemorySpace.SMEM,
+      )
+      for aval in scalar_const_avals
+  ]
+  new_trace_avals = [
+      *scalar_const_trace_avals,
+      *non_scalar_const_avals,
+      *smem_alloc,
+      *[v.aval for v in jaxpr.invars],
+  ]
+  with (
+      pallas_core.tracing_grid_env(
+          tuple(mesh.shape.values()), mapped_dims=()
+      ),
+      jax_core.extend_axis_env_nd(mesh.shape.items()),
+  ):
+    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(
+            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
+        ),
+        new_trace_avals,
+    )
+  jaxpr = new_jaxpr.replace(
+      constvars=new_jaxpr.invars[: len(jaxpr.constvars)],
+      invars=new_jaxpr.invars[len(jaxpr.constvars) :],
+  )
+  args = [
+      *[a[None] for a in scalar_consts],
+      *non_scalar_consts,
+  ]
+  in_avals, out_avals, _ = util.split_list(
+      new_trace_avals, [len(in_avals), len(out_avals)]
+  )
+  return jaxpr, tuple(in_avals), tuple(out_avals), tuple(args), tuple(is_scalar_const)
 
 
 def _tensorcore_mesh_discharge_rule(
@@ -345,17 +468,13 @@ def _tensorcore_mesh_discharge_rule(
 ):
   assert isinstance(mesh, TensorCoreMesh)
   if compiler_params and not isinstance(compiler_params, CompilerParams):
-    raise ValueError(
-        "compiler_params must be a pltpu.CompilerParams"
-    )
+    raise ValueError("compiler_params must be a pltpu.CompilerParams")
   if not compiler_params:
     compiler_params = CompilerParams()
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
   if compiler_params.dimension_semantics is not None:
-    raise ValueError(
-        "dimension_semantics must be None for TensorCoreMesh"
-    )
+    raise ValueError("dimension_semantics must be None for TensorCoreMesh")
   num_cores = len(mesh.devices)
   if num_cores > 1:
     # Since each core will have its own VMEM, we currently disallow VMEM inputs
@@ -369,54 +488,10 @@ def _tensorcore_mesh_discharge_rule(
           "TensorCoreMesh does not support VMEM inputs/outputs when there are"
           " >1 cores. Use HBM or ANY instead."
       )
-  def allowed_aval(aval):
-    if isinstance(aval, state.AbstractRef):
-      return True
-    if isinstance(aval, jax_core.ShapedArray):
-      # Only scalars are allowed.
-      return not aval.shape
-    return False
-  assert all(allowed_aval(v.aval) for v in jaxpr.constvars + jaxpr.invars)
-
-  is_scalar_const = [
-      isinstance(v.aval, jax_core.ShapedArray) and not v.aval.shape
-      for v in jaxpr.constvars
-  ]
-  if any(is_scalar_const):
-    # Rewrite body jaxpr to take in scalar values as Refs.
-    def new_body(*args):
-      args = [
-          a[0] if is_scalar else a
-          for a, is_scalar in zip(args, is_scalar_const)
-      ]
-      return jax_core.eval_jaxpr(jaxpr, args)
-    # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
-    new_trace_avals = [
-        state.AbstractRef(  # pylint: disable=g-long-ternary
-            jax_core.ShapedArray((1,), v.aval.dtype),
-            memory_space=MemorySpace.SMEM,
-        )
-        if is_scalar
-        else v.aval
-        for v, is_scalar in zip(jaxpr.constvars, is_scalar_const)
-    ]
-    with (
-        pallas_core.tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
-        jax_core.extend_axis_env_nd(mesh.shape.items()),
-    ):
-      new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-          lu.wrap_init(
-              new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-          ),
-          new_trace_avals,
-      )
-    jaxpr = new_jaxpr.replace(invars=[], constvars=new_jaxpr.invars)
-    args = tuple(
-        a[None] if is_scalar else a
-        for a, is_scalar in zip(args, is_scalar_const)
-    )
-    in_avals, out_avals = util.split_list(new_trace_avals, [len(in_avals)])
-  return pallas_core.default_mesh_discharge_rule(
+  jaxpr, in_avals, out_avals, args, is_scalar_const = pass_scalars_as_refs(
+      jaxpr, args, in_avals, out_avals, mesh
+  )
+  refs_out, out = pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
       *args,
@@ -429,6 +504,11 @@ def _tensorcore_mesh_discharge_rule(
       name=name,
       metadata=metadata,
   )
+  refs_out = [
+      a if not is_scalar else None
+      for is_scalar, a in zip(is_scalar_const, refs_out)
+  ]
+  return refs_out, out
 
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
@@ -451,6 +531,7 @@ def get_device_kind() -> str:
   if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
     return abstract_device.device_kind
   return jex_backend.get_default_device().device_kind
+
 
 def get_num_device_cores() -> int:
   if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
