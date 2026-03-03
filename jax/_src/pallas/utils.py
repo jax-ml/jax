@@ -397,7 +397,6 @@ def nextafter_lowering_helper(x, y):
   x_magnitude_larger_than_y = x_abs > y_abs
   result_has_smaller_magnitude = x_magnitude_larger_than_y | signs_disagree
   minus_one = jnp.full_like(x_as_int, np_int(-1).view(np_uint))
-  # pyrefly: ignore[no-matching-overload]  # pyrefly#2498
   magnitude_adjustment = jnp.where(result_has_smaller_magnitude, minus_one, one)
   result = x_as_int + magnitude_adjustment
 
@@ -412,7 +411,6 @@ def nextafter_lowering_helper(x, y):
   result = jnp.where(x_and_y_are_equal, result_for_equal, result)
 
   # Handle isnan(x) || isnan(y).
-  # pyrefly: ignore[no-matching-overload]  # pyrefly#2498
   result = jnp.where(nan_input, result_for_nan, result)
 
   # Cast back to the original type.

@@ -154,12 +154,12 @@ def linearize_jaxpr(
 ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], Sequence[int | None], core.ClosedJaxpr]:
   if type(allow_fwds) is bool:
     allow_fwds = (allow_fwds,) * (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
-  assert len(allow_fwds) == (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+  assert len(allow_fwds) == (len(jaxpr.consts) + len(jaxpr.jaxpr.invars))
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.jaxpr.outvars)
-  assert len(instantiate) == len(jaxpr.jaxpr.outvars)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
-  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
-                          tuple(allow_fwds), is_vjp)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+  assert len(instantiate) == len(jaxpr.jaxpr.outvars)
+  return _linearize_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate),
+                          tuple(allow_fwds), is_vjp)
 
 @weakref_lru_cache
 @source_info_util.reset_name_stack()
@@ -1331,7 +1331,7 @@ def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
               ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.out_avals)
-  return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+  return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))
 
 @weakref_lru_cache
 def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,

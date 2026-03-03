@@ -1429,7 +1429,7 @@ def _pjit_batcher(axis_data, vals_in,
       if axis_in is not None else i
       for axis_in, i, aval in zip(dims_in, in_shardings, new_jaxpr.in_avals))
   out_shardings = tuple(
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+
       _pjit_batcher_for_sharding(o, axis_out, axis_data.spmd_name, ctx_mesh,
                                  aval.ndim)
       if axis_out is not None else o

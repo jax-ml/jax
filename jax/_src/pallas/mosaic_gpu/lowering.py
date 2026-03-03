@@ -2060,8 +2060,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   [out_aval] = ctx.avals_out
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     pred = _ensure_fa(pred, pred_aval.dtype)
-    # pyrefly: ignore[bad-argument-count]  # pyrefly#2487
-    cases = _bcast(*cases, *cases_avals, out_aval)
+    cases = _bcast(*cases, *cases_avals, out_aval=out_aval)
     # ``select`` expects the first case to be the true branch, but ``select_n``
     # orders the cases in reverse.
     return pred.select(*reversed(cases))
@@ -3119,8 +3118,9 @@ def _run_scoped_lowering_rule(
         dtype = mlir.dtype_to_ir_type(aval.dtype)
         if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
           input_refs.append(
-              # pyrefly: ignore[bad-argument-count]  # pyrefly#2487
-              mgpu.WGMMAAccumulator.zero(*aval.shape, dtype, is_signed=is_signed)
+              mgpu.WGMMAAccumulator.zero(
+                  *aval.shape, dtype=dtype, is_signed=is_signed
+              )
           )
         else:
           if isinstance(dtype, ir.IntegerType):

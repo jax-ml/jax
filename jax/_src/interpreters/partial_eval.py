@@ -1012,9 +1012,9 @@ def partial_eval_jaxpr_stateful(
     saveable = everything_saveable
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res, num_res_ref = \
       _partial_eval_jaxpr_custom_cached(
-          # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+
           jaxpr, tuple(in_unknowns), tuple(in_inst), tuple(ensure_out_unknowns),
-          # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+
           tuple(ensure_out_inst), saveable)
   return jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res, num_res_ref
 
@@ -1410,7 +1410,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   """
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
-  # pyrefly: ignore[bad-argument-type]  # pyrefly#2530
+
   return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
 
 
