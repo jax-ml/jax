@@ -826,7 +826,7 @@ class Compiled(Stage):
       _in_hi_tree, final_qdds = params.in_types
       # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
       args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                  else a.lower_val(x) for x in hi_args_flat]  # pyrefly: ignore[unbound-name]
+                  else a.lower_val(x) for x in hi_args_flat]
       args_flat, in_tree = \
           tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
     else:

@@ -2246,7 +2246,7 @@ def _emit_lowering_rule_as_fun(
     if sub_ctx.tokens_out:
       outs = [
           *(sub_ctx.tokens_out.get(eff) for eff in ordered_effects),
-          *outs  # pyrefly: ignore[not-iterable]
+          *outs
       ]
     outs = flatten_ir_values(outs)  # pyrefly: ignore[bad-argument-type]
     func_dialect.return_(outs)

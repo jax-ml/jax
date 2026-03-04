@@ -124,7 +124,6 @@ class BufferedRef:
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
-        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
@@ -136,7 +135,6 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
-        # pyrefly: ignore[bad-index]
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands

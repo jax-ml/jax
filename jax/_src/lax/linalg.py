@@ -2423,7 +2423,7 @@ def _triangular_solve_lowering(
   out = hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
                              ir.BoolAttr.get(lower),
                              ir.BoolAttr.get(unit_diagonal),
-                             hlo.TransposeAttr.get(transpose))  # pyrefly: ignore[missing-attribute]
+                             hlo.TransposeAttr.get(transpose))
   return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
 
 
@@ -2460,7 +2460,6 @@ def _triangular_solve_cpu_lower(
     return [hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
                                  ir.BoolAttr.get(lower),
                                  ir.BoolAttr.get(unit_diagonal),
-                                 # pyrefly: ignore[missing-attribute]
                                  hlo.TransposeAttr.get(transpose))]
 
 triangular_solve_p = linalg_primitive(

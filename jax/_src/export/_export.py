@@ -903,8 +903,8 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # Note that this does not verify any JAX custom calls, which are only
   # guaranteed 3w of forward compatibility, and only prevents use of new
   # StableHLO features from failing on older hardware.
-  target_version = hlo.get_version_from_compatibility_requirement(  # pyrefly: ignore[missing-attribute]
-    hlo.StablehloCompatibilityRequirement.WEEK_4)  # pyrefly: ignore[missing-attribute]
+  target_version = hlo.get_version_from_compatibility_requirement(
+    hlo.StablehloCompatibilityRequirement.WEEK_4)
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
@@ -1550,8 +1550,8 @@ call_exported_p.def_impl(_call_exported_impl)
 def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
-  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)  # pyrefly: ignore[missing-attribute]
-  axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]  # pyrefly: ignore[missing-attribute]
+  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
+  axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
     return mesh_lib.empty_abstract_mesh
   axes_sizes = tuple(a.size for a in axes)

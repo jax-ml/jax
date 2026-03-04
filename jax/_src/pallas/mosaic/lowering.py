@@ -651,7 +651,7 @@ class MosaicGridMapping:
         # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         map(
             ir.Attribute.parse,
-            map(_get_semantics, self._dimension_semantics),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+            map(_get_semantics, self._dimension_semantics),
         )
     )
 

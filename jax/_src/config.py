@@ -906,7 +906,7 @@ class Flag(Generic[_T]):
     raise TypeError(
         "bool() not supported for instances of type '{0}' "
         "(did you mean to use '{0}.value' instead?)".format(
-            type(self).__name__))  # pyrefly: ignore[missing-attribute]  # pyrefly#2444
+            type(self).__name__))
 
   def _set(self, value: _T) -> None:
     self.value = value

@@ -451,7 +451,7 @@ def _lower_mosaic_module_to_asm(
     *,
     ir_version: int | None = None,
 ) -> tuple[bytes, tuple[bool, bool]]:
-  has_communication, has_custom_barrier = tpu.private_has_communication(  # pyrefly: ignore[missing-attribute]
+  has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
   # We'll mutate the module, so clone it

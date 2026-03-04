@@ -129,7 +129,7 @@ def _get_cmdclass(pkg_source_path):
     def run(self):
       if _release_version is None:
         this_file_in_build_dir = os.path.join(
-          self.build_lib,  # pyrefly: ignore[missing-attribute]
+          self.build_lib,
           pkg_source_path,
           os.path.basename(__file__))
         # super().run() only copies files from source -> build if they are
