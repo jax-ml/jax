@@ -301,14 +301,25 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       except ValueError:
         e, *_ = prefix_errors(out_specs_, ans)
         raise e('shard_map out_specs') from None
+      ans_ft = FlatTree.flatten(ans)
 
-      return FlatTree.flatten(ans).with_aux(out_specs_flat)
+      def add_implicit_pvary_and_unreduced(val, spec):
+        if isinstance(spec, P):
+          val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).vma))
+          sharding = typeof(val).sharding
+          unreduced = spec.unreduced - sharding.spec.unreduced
+          if unreduced:
+            axes = order_wrt_mesh(sharding.mesh, unreduced)
+            return lax_parallel.vary_unreduced_cast(val, axes)
+          else:
+            return val
+        else:
+          return val
 
+      if check_vma:
+        ans_ft = ans_ft.map2(add_implicit_pvary_and_unreduced, out_specs_flat)
 
-#        if check_vma:
-#          fun = _implicit_pvary_on_output(fun, out_specs_thunk)
-#          fun = _implicit_unreduced_on_output(fun, out_specs_thunk)
-
+      return ans_ft.with_aux(out_specs_flat)
 
     # TODO(mattjj): replace nonlocal try/except business with logic in f_wrapped
     try:
@@ -689,27 +700,6 @@ class Tup:
   def __iter__(self): return iter(self.vals)
 
 # Primitive
-
-# @lu.transformation2
-# def _implicit_pvary_on_output(f, out_specs_thunk, *args, **kwargs):
-#   out_flat = f(*args, **kwargs)
-#   return [pvary(o, tuple(_spec_to_vma(sp) - typeof(o).vma))
-#           if isinstance(sp, P) else o for o, sp in zip(out_flat, out_specs_thunk())]
-
-
-# @lu.transformation2
-# def _implicit_unreduced_on_output(f, out_specs_thunk, *args, **kwargs):
-#   out_flat = f(*args, **kwargs)
-#   new_out_flat = []
-#   for o, sp in zip(out_flat, out_specs_thunk()):
-#     o_aval = typeof(o)
-#     if isinstance(sp, P) and (unreduced := sp.unreduced - o_aval.sharding.spec.unreduced):
-#       axes = order_wrt_mesh(o_aval.sharding.mesh, unreduced)
-#       new_out_flat.append(lax_parallel.vary_unreduced_cast(o, axes))
-#     else:
-#       new_out_flat.append(o)
-#   return new_out_flat
-
 
 JaxType = Any
 MaybeTracer = Union[JaxType, Tracer]
