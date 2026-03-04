@@ -26,7 +26,7 @@ import re
 import subprocess
 import tempfile
 
-from bazel_tools.tools.python.runfiles import runfiles
+from python.runfiles import runfiles
 from jaxlib.tools import build_utils
 
 parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
