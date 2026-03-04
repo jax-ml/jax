@@ -616,8 +616,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     elif side == "left":
       recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
     with self.subTest('Test reconstruction.'):
-      self.assertAllClose(
-        matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+      recon_atol = tol * jnp.linalg.norm(matrix)
+      if method == "svd" and not jtu.test_device_matches(["cpu"]):
+        # SVD-backed polar reconstruction can accumulate error on GPU (e.g. ROCm).
+        recon_atol = max(recon_atol, 6e-5)
+      self.assertAllClose(matrix, recon, atol=recon_atol)
 
   @jtu.sample_product(
     n_obs=[1, 3, 5],
