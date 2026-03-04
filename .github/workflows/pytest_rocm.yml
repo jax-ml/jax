@@ -157,6 +157,7 @@ jobs:
           set -euo pipefail
           tar -czf logs.tar.gz logs
       - name: Configure AWS Credentials
+        if: always()
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
