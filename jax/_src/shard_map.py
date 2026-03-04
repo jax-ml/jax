@@ -1669,6 +1669,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     if check_vma:
       res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
     else:
+      all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
       res_specs = [P(all_names)] * len(res_avals)
     new_out_specs = (*out_known_specs, *res_specs)
     ans_ft = FlatTree.flatten((out_consts, res))
