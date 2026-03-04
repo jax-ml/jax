@@ -1189,6 +1189,17 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
                   src_pspecs, dst_pspecs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
+def _run_shmap_lu(f, mesh, manual_axes, args, vmas, check_vma):
+  assert not mesh.manual_axes
+  trace = ShardMapTrace(mesh, manual_axes, check_vma)
+  in_tracers = map(partial(ShardMapTracer, trace), vmas, args)
+  inner_mesh = _as_manual_mesh(mesh, manual_axes)
+  with (core.set_current_trace(trace), _extend_axis_env(mesh, manual_axes),
+        use_abstract_mesh(inner_mesh), config._check_vma(check_vma)):
+    ans = f.call_wrapped(*in_tracers)
+    outs, out_vma = unzip2(map(trace.to_val_vma_pair, ans))
+  return outs, out_vma
+
 def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma):
   assert not mesh.manual_axes
   trace = ShardMapTrace(mesh, manual_axes, check_vma)
@@ -1385,7 +1396,7 @@ class ShardMapTrace(core.Trace):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
-    out_vals, out_vma = _run_shmap(fun, self.mesh, self.manual_axes, in_vals,
+    out_vals, out_vma = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
                                    in_vma, self.check)
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
@@ -1398,7 +1409,7 @@ class ShardMapTrace(core.Trace):
       raise NotImplementedError(msg)
     del prim, fwd, bwd, out_trees, symbolic_zeros
     in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
-    out_vals, out_vma = _run_shmap(fun, self.mesh, self.manual_axes, in_vals,
+    out_vals, out_vma = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
                                    in_vma, self.check)
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
