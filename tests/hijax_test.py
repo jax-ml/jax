@@ -41,7 +41,7 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
-    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HipSpec)
+    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec)
 from jax.experimental.hijax import VJPHiPrimitive
 
 jtu.request_cpu_devices(8)
@@ -236,7 +236,7 @@ class TupSpec(MappingSpec):
   val: tuple
 
 @dataclass(frozen=True)
-class TupP(HipSpec):
+class TupP(HiPspec):
   val: tuple
 
   def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
@@ -1291,7 +1291,7 @@ class HijaxTest(jtu.JaxTestCase):
         return MulH(ad.zeros_like_aval(self.out_aval.ty))
 
     @dataclass(frozen=True)
-    class MulSpec(HipSpec):
+    class MulSpec(HiPspec):
       val: Any
 
       def to_lo(self):
