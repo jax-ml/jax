@@ -664,7 +664,9 @@ class CompatTest(bctu.CompatTestBase):
           for dtype_name in ("f32", "f64", "c64", "c128")
           for algorithm_name in ("qr", "jacobi")
       ] + [
-          dict(testcase_name="_dtype=f32_algorithm=gesdd", dtype_name="f32", algorithm_name="gesdd"),
+          dict(testcase_name=f"_dtype={dtype_name}_algorithm=gesdd",
+               dtype_name=dtype_name, algorithm_name="gesdd")
+          for dtype_name in ("f32", "f64", "c64", "c128")
       ])
   @jax.default_matmul_precision("float32")
   def test_gpu_svd_solver_gesvd(self, dtype_name, algorithm_name):
@@ -698,6 +700,10 @@ class CompatTest(bctu.CompatTestBase):
       if jtu.test_device_matches([platform]):
         if algorithm_name not in data_module:
           continue  # e.g. CUDA has no "gesdd" data
+        if dtype_name not in data_module[algorithm_name]:
+          self.skipTest(
+              f"Test data for {algorithm_name} {dtype_name} not yet generated "
+              "(run on ROCm and paste into rocm_svd_hipsolver_gesvd.py)")
         platform_data = data_module[algorithm_name][dtype_name]
         break
 
