@@ -10563,6 +10563,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "RHS should be reduced along the same axes LHS is unreduced on"):
       jax.jit(lambda x: x * 2)(arr)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_undreduced_add(self, mesh):
+    arr = jax.reshard(np.ones((2, 2)), P(reduced={'x'}))
+    arr2 = jax.device_put(np.ones((2, 2)), P())
+
+    @jax.jit
+    def f(x):
+      return (x + x).sum()
+
+    out = jax.jit(jax.grad(f))(arr)
+    out2 = jax.jit(jax.grad(f))(arr2)
+    self.assertArraysEqual(reshard(out, P()), out2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
