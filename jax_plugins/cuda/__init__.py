@@ -336,6 +336,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
 
+
 def initialize():
   _load_nvidia_libraries()
   _import_extensions()
@@ -349,13 +350,11 @@ def initialize():
   should_validate = True
 
   if requested:
-    allowed_platforms = {
-        alias
-        for p in requested.split(",")
-        for alias in xb.expand_platform_alias(p.strip())
-    }
-    if "cuda" not in allowed_platforms:
-      should_validate = False
+    platforms = []
+    for platform in requested.split(","):
+      platforms.extend(xb.expand_platform_alias(platform.strip()))
+
+    should_validate = "cuda" in platform
 
   skip_env = os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK")
 
