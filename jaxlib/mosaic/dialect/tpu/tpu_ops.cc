@@ -1283,6 +1283,13 @@ LogicalResult EnqueueDMAOp::verify() {
         "Strict ordering is only supported on the SC scalar and vector "
         "subcores");
   }
+  if (isa<SemaphoreType>(target_sem_type.getElementType())) {
+    if (HasMemorySpace(source_ty, MemorySpace::kSmem) ||
+        HasMemorySpace(target_ty, MemorySpace::kSmem)) {
+      return emitOpError(
+          "Non-DMA semaphores are not supported for DMAs involving SMEM");
+    }
+  }
   return success();
 }
 
