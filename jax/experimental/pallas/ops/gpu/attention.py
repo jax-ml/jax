@@ -259,7 +259,7 @@ def mha(
                              block_q=block_q, block_k=block_k,
                              head_dim=head_dim, causal=causal)
 
-  in_specs = [
+  in_specs: list[pl.BlockSpec | None] = [
       pl.BlockSpec((None, block_q, None, head_dim_padded),
                    lambda i, j, k: (j, i, k, 0)),
       pl.BlockSpec((None, kv_seq_len, None, head_dim_padded),
@@ -268,7 +268,7 @@ def mha(
                    lambda _, j, k: (j, 0, k, 0)),
   ]
   in_specs.append(
-      None  # type: ignore[arg-type]
+      None
       if segment_ids is None
       else pl.BlockSpec((None, kv_seq_len), lambda _, j, k: (j, 0))
   )
@@ -567,7 +567,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_sizes: BlockSizes,
         jax.ShapeDtypeStruct(v.shape, v.dtype),
     ]
 
-    in_specs = [
+    in_specs: list[pl.BlockSpec | None] = [
         pl.BlockSpec((None, q_seq_len, None, head_dim_padded),
                      lambda i, j, _: (i, 0, j, 0)),
         pl.BlockSpec((None, kv_seq_len, None, head_dim_padded),
@@ -582,7 +582,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_sizes: BlockSizes,
         pl.BlockSpec((None, None, q_seq_len), lambda i, j, _: (i, j, 0)),
     ]
     if segment_ids is None:
-      in_specs.insert(3, None)  # type: ignore[arg-type]
+      in_specs.insert(3, None)
     else:
       in_specs.insert(3, pl.BlockSpec((None, kv_seq_len),
                                       lambda i, j, _: (i, 0)))

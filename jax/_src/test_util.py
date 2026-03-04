@@ -315,7 +315,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
   counts = collections.Counter()
   thread_local_state.lower_jaxpr_to_fun_counts = counts
   def get():
-    key, *others = {k for k in counts if fun_name in k}  # type: ignore
+    key, *others = {k for k in counts if fun_name in k}
     if others: raise Exception(f"ambiguous name: {fun_name}")
     return counts[key]
   try:
@@ -1540,7 +1540,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   local_devices = list(xla_bridge.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)
   with mesh_lib.Mesh(mesh_devices, axis_names):
     yield
 

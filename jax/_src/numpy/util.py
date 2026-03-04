@@ -91,7 +91,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
 
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
-  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)  # type: ignore[arg-type]
+  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
@@ -408,7 +408,7 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.shape if available.
-  return np.shape(a)  # type: ignore[arg-type]
+  return np.shape(a)
 
 
 @export

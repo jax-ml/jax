@@ -911,7 +911,7 @@ class _DimExpr:
       return quotient, remainder
     except InconclusiveDimensionOperation:
       return (_DimExpr._from_operation(_DimFactor.FLOORDIV, self, divisor,
-                                       scope=self.scope),  # type: ignore
+                                       scope=self.scope),
               _DimExpr._from_operation(_DimFactor.MOD, self, divisor,
                                        scope=self.scope))
 
@@ -1633,7 +1633,7 @@ class _Parser:
       t: Any
       t, tok = self.term(tok)
       t_sign = - t if next_t_negated else t
-      acc = acc + t_sign if acc is not None else t_sign  # type: ignore[operator]
+      acc = acc + t_sign if acc is not None else t_sign
       if tok.exact_type in self.FOLLOW_EXPR:
         return acc, tok
       next_t_negated = (tok.exact_type == tokenize.MINUS)
@@ -1655,7 +1655,7 @@ class _Parser:
         power, tok = self.integer(tok)
         f = f ** power
 
-      acc = acc * f if acc is not None else f  # type: ignore[operator]
+      acc = acc * f if acc is not None else f
       if tok.exact_type in self.FOLLOW_TERM:
         return acc, tok  # type: ignore[bad-return-type,unused-ignore]
       tok = self.consume_token(tok, tokenize.STAR)
@@ -2030,7 +2030,7 @@ def compute_dim_vars_from_arg_shapes(
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)
   shape_constraints.shape_assertions(synthetic_eval)
-  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)  # type: ignore[arg-type]
+  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)
 
 def _solve_dim_equations(
     eqns: list[_DimEquation],

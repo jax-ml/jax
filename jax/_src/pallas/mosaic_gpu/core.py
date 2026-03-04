@@ -1078,7 +1078,7 @@ class BlockSpec(pallas_core.BlockSpec):
     )
     block_inner_aval = bm.block_aval.inner_aval
     for t in self.transforms:
-      block_inner_aval = t.transform_type(block_inner_aval)  # type: ignore[arg-type]
+      block_inner_aval = t.transform_type(block_inner_aval)
     return bm.replace(
         transformed_block_aval=bm.block_aval.update(
             inner_aval=block_inner_aval

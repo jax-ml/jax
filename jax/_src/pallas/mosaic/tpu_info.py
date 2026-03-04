@@ -89,7 +89,7 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   @property
   def num_physical_tensor_cores_per_chip(self) -> int:
     # TODO(slebedev): Remove this wrapper once pyrefly#2080 is fixed.
-    return cast(int, self._num_physical_tensor_cores_per_chip)  # type: ignore[redundant-cast]
+    return cast(int, self._num_physical_tensor_cores_per_chip)
 
   @property
   def supports_megacore(self) -> bool:

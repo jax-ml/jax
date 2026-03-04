@@ -83,7 +83,7 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
       normalize_indices=normalize_indices)
   if out_sharding is not None:
     return auto_axes(internal_scatter, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes  # type: ignore
+                     axes=out_sharding.mesh.explicit_axes
                      )(x, y, dynamic_idx)
   return internal_scatter(x, y, tuple(dynamic_idx))
 

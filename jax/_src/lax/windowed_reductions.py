@@ -487,7 +487,7 @@ def _generic_reduce_window_lower(
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce_window`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, ctx.name_stack,
-        mlir.TokenSet(), consts, *reducer.arguments,  # type: ignore[misc]
+        mlir.TokenSet(), consts, *reducer.arguments,
         dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
         outer_traceback=ctx.traceback)
     return mlir.flatten_ir_values(out_nodes)
@@ -997,7 +997,7 @@ def _select_and_gather_add_lowering(
   def reducer_body(reducer: ir.Block) -> Sequence[ir.Value]:
     x: ir.Value
     y: ir.Value
-    x, y = reducer.arguments  # type: ignore
+    x, y = reducer.arguments
     assert select_prim is lax.ge_p or select_prim is lax.le_p
     cmp_op = "GE" if select_prim is lax.ge_p else "LE"
     out = hlo.SelectOp(mlir.compare_hlo(fst(x), fst(y), cmp_op), x, y)

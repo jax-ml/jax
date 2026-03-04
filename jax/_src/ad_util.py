@@ -32,7 +32,7 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   ty = typeof(x)
   if isinstance(ty, HiType):
     return ty.vspace_add(x, y)
@@ -53,9 +53,9 @@ def add_abstract(x, y):
   return x
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if isinstance(aval, HiType):
-    return aval.vspace_zero()  # type: ignore
+    return aval.vspace_zero()
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 

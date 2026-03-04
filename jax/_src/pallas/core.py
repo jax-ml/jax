@@ -1171,9 +1171,9 @@ def get_grid_mapping(
     debug: bool = False,
 ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
   if dynamic_shapes_export_enabled():
-    dim_check : Any = jax_core.is_dim
+    dim_check: Any = jax_core.is_dim
   else:
-    dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
+    dim_check: Any = jax_core.is_constant_dim
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid = tuple(
       dynamic_grid_dim if (
@@ -1235,7 +1235,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,  # type: ignore[arg-type]
+          grid=grid_mapping_grid,
           vmapped_dims=(),
           debug=debug,
       ),
@@ -1258,7 +1258,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,  # type: ignore[arg-type]
+          grid=grid_mapping_grid,
           vmapped_dims=(),
           debug=debug,
       ),
@@ -1295,9 +1295,9 @@ def get_grid_mapping(
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
   if dynamic_shapes_export_enabled():
-    new_grid : Any = grid_spec.grid
+    new_grid: Any = grid_spec.grid
   else:
-    new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
+    new_grid: Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.

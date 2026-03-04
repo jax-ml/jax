@@ -76,7 +76,6 @@ import numpy as np
 
 
 # TODO(slebedev): Enable type checking.
-# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -4148,7 +4147,7 @@ def _jaxpr_call_lowering_rule(
     ref_aval = treedef.unflatten(ref_aval)
     if isinstance(ref, tuple):
       ref, transforms = ref
-      ref_aval, transform_avals = ref_aval  # type: ignore
+      ref_aval, transform_avals = ref_aval
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
       assert isinstance(ref_aval, state_types.AbstractRef)

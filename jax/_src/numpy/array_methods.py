@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # pytype: skip-file
-# mypy: disable-error-code=has-type
 """Define methods which are dynamically added to JAX's Arrays and Tracers.
 
 This is done dynamically in order to avoid circular imports.

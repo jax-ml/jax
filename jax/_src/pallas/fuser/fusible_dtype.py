@@ -43,7 +43,6 @@ from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
 
 # TODO(sharadmv): Enable type checking.
-# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip

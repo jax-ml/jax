@@ -316,7 +316,7 @@ class PRNGKeyArray(Array):
 
   # Overwritten immediately below
   @property
-  def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
+  def at(self)                  -> _IndexUpdateHelper: assert False  # pyrefly: ignore[bad-override]
   @property
   def T(self)                   -> PRNGKeyArray: assert False
   def __getitem__(self, key)    -> PRNGKeyArray: assert False

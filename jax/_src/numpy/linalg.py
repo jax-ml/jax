@@ -403,7 +403,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
   z: Array | None = None
   result: Array | None = None
   while n > 0:
-    z = arr if z is None else (z @ z)  # type: ignore[operator]
+    z = arr if z is None else (z @ z)
     n, bit = divmod(n, 2)
     if bit:
       result = z if result is None else (result @ z)

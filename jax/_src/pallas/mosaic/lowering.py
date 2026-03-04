@@ -82,7 +82,6 @@ import jax.numpy as jnp
 import numpy as np
 
 # TODO(sharadmv): enable type checking
-# mypy: ignore-errors
 
 NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.MemorySpace

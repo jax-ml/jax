@@ -1840,7 +1840,7 @@ def _partition_grid(
     # TODO(sharadmv): take the product of many nondivisible dimensions to
     # potentially divide it more evenly
     largest_parallel_dimension = max(grid[i] for i in parallel_dimensions
-                                     if isinstance(grid[i], int))  # type: ignore
+                                     if isinstance(grid[i], int))
     partition_dimension, *_ = (
         i
         for i, d in enumerate(grid)
@@ -1894,9 +1894,9 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
   )
   if copy_in:
     tpu_helpers.sync_copy(hbm_ref.at[hbm_slice],
-                          bref.current_ref.at[bref_slice])  # type: ignore[union-attr]
+                          bref.current_ref.at[bref_slice])
   else:
-    tpu_helpers.sync_copy(bref.current_ref.at[bref_slice],  # type: ignore[union-attr]
+    tpu_helpers.sync_copy(bref.current_ref.at[bref_slice],
                           hbm_ref.at[hbm_slice])
 
 

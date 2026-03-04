@@ -3404,7 +3404,7 @@ def clip(
   if min is not None:
     arr = ufuncs.maximum(min, arr)
   if max is not None:
-    arr = ufuncs.minimum(max, arr) # type: ignore
+    arr = ufuncs.minimum(max, arr)
   return asarray(arr)
 
 
@@ -6422,13 +6422,13 @@ def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
     return auto_axes(partial(fun, repeats, axis=axis,
                              total_repeat_length=total_repeat_length),
                      out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes  # type: ignore
+                     axes=out_sharding.mesh.explicit_axes
                      )(a)
   else:
     return auto_axes(
         partial(fun, axis=axis, total_repeat_length=total_repeat_length),
         out_sharding=out_sharding,
-        axes=out_sharding.mesh.explicit_axes  # type: ignore
+        axes=out_sharding.mesh.explicit_axes
         )(repeats, a)
 
 def _repeat(repeats, arr, *, axis: int,
@@ -6454,7 +6454,7 @@ def _repeat(repeats, arr, *, axis: int,
       axis = _canonicalize_axis(axis, len(input_shape))
       aux_axis = axis + 1
       aux_shape: list[DimSize] = list(input_shape)
-      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)  # type: ignore
+      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)
       arr = lax.broadcast_in_dim(
         arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)

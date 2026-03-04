@@ -178,7 +178,7 @@ def lower_pipelined_jaxpr_into_module(
   if dimension_semantics is None:
     dimension_semantics = ("arbitrary",) * len(grid)  # type: ignore
   dimension_semantics: Sequence[tpu_core.LiteralDimensionSemantics] = tuple(  # pyrefly: ignore[redefinition]  # pytype: disable=annotation-type-mismatch
-      map(tc_lowering._canonicalize_dimension_semantic, dimension_semantics)  # type: ignore[arg-type]
+      map(tc_lowering._canonicalize_dimension_semantic, dimension_semantics)
   )
 
   is_semaphore = []
@@ -1117,7 +1117,7 @@ def _jaxpr_call_lowering_rule(
       program_ids[axis] = user_grid_indices[axis]
   new_lowering_ctx = dataclasses.replace(
       ctx.lowering_context,
-      block_shapes=tuple(ref_block_shapes),  # type: ignore
+      block_shapes=tuple(ref_block_shapes),
       user_grid_indices=program_ids,
   )
   return tc_lowering.jaxpr_subcomp(new_lowering_ctx, jaxpr, *args)

@@ -393,7 +393,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     fun, jvp, tracers = args[0], args[1], args[2:]
     return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
-  def impl(self, fun, _, *args):  # type: ignore[bad-override]
+  def impl(self, fun, _, *args):
     raise NotImplementedError
 
   def get_bind_params(self, params):
@@ -556,7 +556,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
     if config.custom_vjp3.value:
-      from jax._src.hijax import custom_vjp3  # type: ignore
+      from jax._src.hijax import custom_vjp3
       return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
     else:
       return super().__new__(cls)
@@ -1001,7 +1001,7 @@ class CustomVJPCallPrimitive(core.Primitive):
     fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
     return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
-  def impl(self, fun, fwd, bwd, *args):  # type: ignore[bad-override]
+  def impl(self, fun, fwd, bwd, *args):
     raise NotImplementedError
 
   def get_bind_params(self, params):

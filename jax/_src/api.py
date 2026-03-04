@@ -675,7 +675,7 @@ def fwd_and_bwd(
     f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
     f_partial, dyn_args = argnums_partial(
         f, argnums, args, require_static_args_hashable=False)
-    return _vjp(f_partial, *dyn_args, has_aux=has_aux)  # type: ignore
+    return _vjp(f_partial, *dyn_args, has_aux=has_aux)
   def bwd(f_vjp, outgrad):
     g = f_vjp(outgrad)
     g = g[0] if isinstance(argnums, int) else g
@@ -1160,7 +1160,7 @@ def vmap(fun: F,
     # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  from jax._src import hijax  # type: ignore
+  from jax._src import hijax
   if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}
           or isinstance(in_axes, hijax.MappingSpec)):
     raise TypeError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
@@ -2220,8 +2220,8 @@ def _vjp(fun, *primals, has_aux=False):
   out_known = [pval.is_known() for pval in out_pvals]
   id_map = {id(x): i for i, x in enumerate(primals_flat)}
   used, opaque_residuals = set(), []
-  spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else  # type: ignore
-          RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
+  spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else
+          RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)
           for r in residuals]
   args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
                          in_tree, primals_flat)
@@ -2352,7 +2352,7 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
-  jaxpr = property(lambda self: self.fun.args[2])  # type: ignore
+  jaxpr = property(lambda self: self.fun.args[2])
 
   def __call__(self, out_ct, *extra_args):
     if extra_args:

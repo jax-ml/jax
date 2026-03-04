@@ -59,34 +59,38 @@ class MemoryRef(pallas_core.MemoryRef):
   def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
-    return AbstractRef(self.inner_aval, self.memory_space, self.tiling)
+    return AbstractRef(self.inner_aval, self.memory_space, tiling=self.tiling)
 
 
 class AbstractRef(state.AbstractRef):
   """An AbstractRef for SparseCore."""
 
-  tiling: Tiling | None = None
+  tiling: Tiling | None
 
   def __init__(
       self,
       aval: jax_core.AbstractValue,
       memory_space: tpu_core.MemorySpace,
-      tiling: Tiling | None,
+      *,
+      kind: Any | None = None,
+      tiling: Tiling | None = None,
   ):
-    super().__init__(aval, memory_space)
+    super().__init__(aval, memory_space, kind)
 
     self.tiling = tiling
 
-  def update(  # type: ignore[override]
+  def update(
       self,
       inner_aval: Any | None = None,
       memory_space: Any | None = None,
+      kind: Any | None = None,
       tiling: Tiling | None = None,
   ) -> AbstractRef:
     return AbstractRef(
         inner_aval if inner_aval is not None else self.inner_aval,
         memory_space if memory_space is not None else self.memory_space,
-        tiling if tiling is not None else self.tiling,
+        kind=kind if kind is not None else self.kind,
+        tiling=tiling if tiling is not None else self.tiling,
     )
 
 

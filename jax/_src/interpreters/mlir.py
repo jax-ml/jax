@@ -66,7 +66,6 @@ from jax._src.util import foreach
 import numpy as np
 
 
-# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -191,10 +190,10 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
-  aval = core.physical_aval(aval)  # type: ignore
+  aval = core.physical_aval(aval)
   if not core.is_constant_shape(aval.shape):
-    return _dynamic_array_ir_types(aval)  # type: ignore
-  return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))  # type: ignore
+    return _dynamic_array_ir_types(aval)
+  return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> ir.Type:
   dyn_size = ir.ShapedType.get_dynamic_size()
@@ -315,7 +314,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic,
                               for ax in range(val.ndim))]
     out = hlo.broadcast_in_dim(
         ir.RankedTensorType.get(
-            val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
+            val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val),
         dense_int_array(other_axes))  # type: ignore
     return out
@@ -330,7 +329,7 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
-  register_constant_handler(_scalar_type, _ndarray_constant_handler)  # type: ignore
+  register_constant_handler(_scalar_type, _ndarray_constant_handler)
 
 def _python_scalar_handler(val, aval: core.AbstractValue | None):
   assert isinstance(aval, core.ShapedArray), aval
@@ -398,7 +397,7 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
-  register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)  # type: ignore
+  register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)
 
 def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:
   return ir.TypeAttr.get(dtype_to_ir_type(dtype))
@@ -980,7 +979,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, core.ShapedArray):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape), sharding=None)  # type: ignore
+  return aval.update(sharding.shard_shape(aval.shape), sharding=None)
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -1092,7 +1091,7 @@ def _to_physical_op_sharding(
       axis_ctx.manual_axes):
     sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
   if config.use_shardy_partitioner.value:
-    return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
+    return sharding._to_sdy_sharding(aval.ndim)
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
@@ -1602,7 +1601,7 @@ def lower_jaxpr_to_fun(
   token_types = [token_type() for _ in effects]
   token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, const_args, array inputs
-  input_avals = dim_var_avals + token_avals + list(in_avals)  # type: ignore
+  input_avals = dim_var_avals + token_avals + list(in_avals)
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
   output_types = [*token_types, *output_types]
@@ -2508,7 +2507,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun, ctx.avals_in, lower=True)
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
-      from jax._src.interpreters import pxla  # type: ignore
+      from jax._src.interpreters import pxla
       closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
       closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
       jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
@@ -2999,15 +2998,15 @@ def get_sharding_attr(
     sharding: xc.OpSharding | SdyArray | SdyArrayList
 ) -> ir.Attribute:
   if isinstance(sharding, (SdyArray, SdyArrayList)):
-    return sharding.build()  # type: ignore
+    return sharding.build()
   else:
     # If there are very large numbers of devices, use the proto representation.
     # The MHLO to HLO conversion supports both, and the proto representation is
     # more compact.
-    if len(sharding.tile_assignment_devices) > 100:  # type: ignore
-      return ir.StringAttr.get(sharding.SerializeToString())  # type: ignore
+    if len(sharding.tile_assignment_devices) > 100:
+      return ir.StringAttr.get(sharding.SerializeToString())
     else:
-      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))  # type: ignore[arg-type]
+      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))
 
 
 def wrap_with_layout_op(ctx: LoweringRuleContext,

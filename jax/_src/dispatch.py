@@ -343,7 +343,7 @@ def _different_device_order_reshard(
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
       _logical_device_ids=(None if permute_order is None else
                             tuple(permute_order.tolist())))
-  new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)  # type: ignore
+  new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
 

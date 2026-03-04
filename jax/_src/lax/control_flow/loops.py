@@ -214,7 +214,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   args_avals = args.map(core.get_aval)
   init_avals, xs_avals = args_avals.unpack()
 
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType
   if any(isinstance(a, HiType) for a in xs_avals):
     if length is None:
       raise ValueError("must provide `length` to `scan`")
@@ -2274,7 +2274,7 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(body_jaxpr)])
   pe.apply_himut(body_jaxpr, [*hi_bconsts, *hi_carry], out_mut)
   return pe.raise_lo_outs(body_jaxpr.out_avals, lo_outs)
-while_p.to_lojax = _while_to_lojax  # type: ignore
+while_p.to_lojax = _while_to_lojax
 
 def _insert_binders(jaxpr, n_after, vals):
   avals = _map(typeof, vals)
@@ -2463,9 +2463,9 @@ def fori_loop(lower, upper, body_fun, init_val,
                      "are statically known.")
 
   if lower_dtype != dtype:
-    lower = lax.convert_element_type(lower, dtype)  # type: ignore
+    lower = lax.convert_element_type(lower, dtype)
   if upper_dtype != dtype:
-    upper = lax.convert_element_type(upper, dtype)  # type: ignore
+    upper = lax.convert_element_type(upper, dtype)
   while_body_fun = _fori_body_fun(body_fun, body_fun_dbg)
   _, _, result = while_loop(_fori_cond_fun, while_body_fun,
                             (lower, upper, init_val))

@@ -502,7 +502,7 @@ def _trace_for_jit(
   assert None not in out_shardings_leaves
 
   in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,  # type: ignore
+    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
     args_ft)
   assert avals_ft is not None
 
@@ -754,7 +754,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                            "pjit arguments", allow_uneven_sharding=False)
   check_aval_layout_compatibility(
       in_layouts_flat, in_avals,
-      dbg.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
+      dbg.safe_arg_names(len(in_avals)), "jit arguments")
   return in_shardings_flat, in_layouts_flat
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -1090,7 +1090,7 @@ class MetaTy:
   committed: bool
   is_np_array: bool
 
-  replace = replace  # type: ignore
+  replace = replace
 
   @property
   def shape(self):
@@ -1370,9 +1370,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
   in_avals = (*const_arg_avals, *jaxpr.in_avals)
   ca_shardings = const_args_shardings(const_args)
-  in_shardings = ca_shardings + in_shardings  # type: ignore
+  in_shardings = ca_shardings + in_shardings
   ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
-  in_layouts = ca_layouts + in_layouts  # type: ignore
+  in_layouts = ca_layouts + in_layouts
 
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, len(const_args), in_avals,
@@ -1473,7 +1473,7 @@ def _pjit_batcher_for_sharding(
           s.mesh, pxla.batch_spec(s.spec, dim, PartitionSpec.UNCONSTRAINED))
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
-    tad.insert(dim, 1)  # type: ignore
+    tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(s._internal_device_list, new_op)
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
@@ -1773,7 +1773,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   if effects.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
-    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))  # type: ignore
+    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 
 pe.custom_partial_eval_rules[jit_p] = _pjit_partial_eval
@@ -1836,7 +1836,7 @@ def _pjit_transpose_fancy(
     compiler_options_kvs):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
+  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
               else a for x in in_flat]
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
@@ -2449,7 +2449,7 @@ def _layout_constraint_impl(x, *, layout):
     raise ValueError(
         'with_layout_constraint in eager mode can only be applied to'
         f' jax.Arrays. Got {type(x)}')
-  if x.format.layout == layout:  # type: ignore
+  if x.format.layout == layout:
     return x
   return api.jit(_identity_fn, out_shardings=Format(layout, x.sharding))(x)
 layout_constraint_p.def_impl(_layout_constraint_impl)

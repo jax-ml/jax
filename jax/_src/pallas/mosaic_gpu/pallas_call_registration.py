@@ -74,7 +74,7 @@ def pallas_call_lowering(
     gpu_params = gpu_core.CompilerParams()
   else:
     assert isinstance(compiler_params, gpu_core.CompilerParams)
-    gpu_params = compiler_params  # type: ignore[assignment]
+    gpu_params = compiler_params
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
