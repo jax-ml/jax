@@ -3675,14 +3675,10 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(primitives.reciprocal_p)
-def _reciprocal_lowering_rule(
-    ctx: LoweringRuleContext, x, *, approx, full_range
-):
+def _reciprocal_lowering_rule(ctx: LoweringRuleContext, x, *, approx):
   if not isinstance(x.type.element_type, ir.F32Type):
     raise ValueError("Only float32 is supported.")
-  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2026, 3, 7):
-    return tpu.reciprocal(x, approx=approx)
-  return tpu.reciprocal(x, approx=approx, full_range=full_range)
+  return tpu.reciprocal(x, approx=approx)
 
 
 @register_lowering_rule(tpu_primitives.stochastic_round_p)
