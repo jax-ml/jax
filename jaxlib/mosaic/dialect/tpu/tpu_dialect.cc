@@ -118,42 +118,6 @@ Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
   return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
 
-template <typename Op>
-struct PropagateTiledLayoutToConsumerPattern : public OpRewritePattern<Op> {
-  using OpRewritePattern<Op>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(Op op,
-                                PatternRewriter& rewriter) const override {
-    return propagateTiledLayoutToConsumer(op, rewriter);
-  }
-};
-
-struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
-  // Set the benefit to 0 to ensure that other patterns that fold in the cast
-  // are tried first.
-  MemRefCastEraseLayout(MLIRContext* context)
-      : OpRewritePattern<memref::CastOp>(context, /*benefit=*/0) {}
-  LogicalResult matchAndRewrite(memref::CastOp cast_op,
-                                PatternRewriter& rewriter) const final {
-    // Push tpu.erase_memref_layout through memref.cast
-    auto erase_layout_op = cast_op.getOperand().getDefiningOp<EraseLayoutOp>();
-    if (!erase_layout_op) {
-      return failure();
-    }
-    TypedValue<MemRefType> orig_value = erase_layout_op.getOperand();
-    const MemRefType orig_type = orig_value.getType();
-    const ArrayRef<int64_t> cast_shape = cast_op.getType().getShape();
-    MemRefType new_cast_type =
-        MemRefType::Builder(orig_type).setShape(cast_shape);
-    auto new_cast_op = memref::CastOp::create(rewriter, cast_op.getLoc(),
-                                              new_cast_type, orig_value);
-    auto new_erase_layout_op =
-        EraseLayoutOp::create(rewriter, erase_layout_op.getLoc(), new_cast_op);
-    rewriter.replaceOp(cast_op, new_erase_layout_op);
-    return success();
-  }
-};
-
 // Rewrites
 //
 //     memref.dim(tpu.memref_slice(..., dynamic_sizes), i)
@@ -236,10 +200,7 @@ struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
 
 void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
 /*override*/ {
-  results.add<PropagateTiledLayoutToConsumerPattern<memref::StoreOp>,
-              PropagateTiledLayoutToConsumerPattern<memref::LoadOp>,
-              MemRefCastEraseLayout, MemRefDimOfSlice, MemRefDimOfSqueeze>(
-      getContext());
+  results.add<MemRefDimOfSlice, MemRefDimOfSqueeze>(getContext());
 }
 
 CoreType GetCoreTypeOfParentOp(Operation& op) {

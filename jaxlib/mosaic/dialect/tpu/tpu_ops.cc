@@ -239,34 +239,9 @@ struct MemRefSliceFoldConstantDynamicDim
   }
 };
 
-struct MemRefSliceEraseLayout : public OpRewritePattern<MemRefSliceOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(MemRefSliceOp op,
-                                PatternRewriter& rewriter) const override {
-    auto erase_layout = op.getMemRef().getDefiningOp<tpu::EraseLayoutOp>();
-    if (!erase_layout) {
-      return failure();
-    }
-    // Push layout erasure through slicing. It is important we see the layout
-    // for lowering and don't make it hard for other ops to query it.
-    auto layout_ref = erase_layout.getOperand();
-    MemRefType layout_ty = layout_ref.getType();
-    auto new_result_type = MemRefType::get(
-        op.getResult().getType().getShape(), layout_ty.getElementType(),
-        layout_ty.getLayout(), layout_ty.getMemorySpace());
-    auto slice = MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type,
-                                       layout_ref, op.getBaseIdx(),
-                                       op.getDynamicSizes());
-    rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, slice);
-    return success();
-  }
-};
-
 void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
-  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceEraseLayout>(
-      context);
+  results.add<MemRefSliceFoldConstantDynamicDim>(context);
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
@@ -337,77 +312,6 @@ LogicalResult MemRefSqueezeOp::verify() {
   return success();
 }
 
-struct MemRefSqueezeEraseLayout : public OpRewritePattern<MemRefSqueezeOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(MemRefSqueezeOp op,
-                                PatternRewriter& rewriter) const override {
-    auto source_type = getMemRefType(op.getInput());
-    auto target_type = op.getType();
-    auto erase_layout = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
-    if (!erase_layout) {
-      return failure();
-    }
-
-    auto layout_ref = erase_layout.getOperand();
-    MemRefType layout_ty = getMemRefType(layout_ref);
-    auto layout_attr = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-    if (!layout_attr) {
-      return failure();
-    }
-
-    auto source_shape = source_type.getShape();
-    auto target_shape = target_type.getShape();
-    auto squeezed_or =
-        computeSqueezedDimsChecked(op, source_shape, target_shape);
-    if (failed(squeezed_or)) {
-      return failure();
-    }
-    auto& squeezed = squeezed_or.value();
-    if (squeezed.empty() && source_shape != target_shape) {
-      return failure();
-    }
-
-    SmallVector<int64_t> tile_strides =
-        llvm::to_vector(layout_attr.getTileStrides());
-    for (int i = squeezed.size() - 1; i >= 0; --i) {
-      tile_strides.erase(tile_strides.begin() + squeezed[i]);
-    }
-
-    tpu::TiledLayoutAttr new_layout;
-    bool target_is_1d = target_shape.size() == 1;
-    auto tiles = layout_attr.getTiles();
-    if (target_is_1d && tiles.size() == 1) {
-      auto tile_dims = llvm::to_vector(tiles.front().dimensions());
-      int first_tiled = source_shape.size() - tile_dims.size();
-      for (int i = squeezed.size() - 1; i >= 0; --i) {
-        int dim = squeezed[i];
-        if (dim >= first_tiled) {
-          int tile_idx = dim - first_tiled;
-          if (tile_idx < 0 || tile_idx >= static_cast<int>(tile_dims.size())) {
-            return op.emitError()
-                   << "Internal error: tile index out of bounds.";
-          }
-          tile_dims.erase(tile_dims.begin() + tile_idx);
-        }
-      }
-      new_layout = tpu::TiledLayoutAttr::get(
-          op.getContext(), {xla::Tile(tile_dims)}, tile_strides);
-    } else {
-      new_layout = tpu::TiledLayoutAttr::get(
-          op.getContext(), layout_attr.getTiles(), tile_strides);
-    }
-
-    auto new_ty = MemRefType::get(target_shape, layout_ty.getElementType(),
-                                  new_layout, layout_ty.getMemorySpace());
-
-    auto new_squeeze =
-        MemRefSqueezeOp::create(rewriter, op.getLoc(), new_ty, layout_ref);
-    rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, new_squeeze);
-    return success();
-  }
-};
-
 // Rewrites
 //
 //   tpu.memref_squeeze(memref.cast(x))
@@ -471,7 +375,7 @@ struct MemRefSqueezeFoldCast : public OpRewritePattern<MemRefSqueezeOp> {
 
 void MemRefSqueezeOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                   MLIRContext* context) {
-  results.add<MemRefSqueezeEraseLayout, MemRefSqueezeFoldCast>(context);
+  results.add<MemRefSqueezeFoldCast>(context);
 }
 
 LogicalResult RelayoutOp::verify() {
@@ -603,31 +507,6 @@ LogicalResult TransposeOp::verify() {
   return success();
 }
 
-LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
-                                            PatternRewriter &rewriter) {
-  auto src_ty = op.getInput().getType();
-  auto dst_ty = op.getType();
-  auto erase_layout_op = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
-  if (!erase_layout_op) {
-    return failure();
-  }
-  auto layout_ref = erase_layout_op.getOperand();
-  auto layout_ty = layout_ref.getType();
-  auto layout = cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-  CHECK(!layout.getTiles().empty());
-  auto tile = layout.getTiles().front().dimensions();
-  auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
-  auto new_layout = tpu::TiledLayoutAttr::get(
-      src_ty.getContext(), layout.getTiles(), new_tile_strides);
-  auto new_result_ty =
-      MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
-                      layout_ty.getMemorySpace());
-  auto reshape =
-      MemRefReshapeOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, reshape);
-  return success();
-}
-
 LogicalResult MemRefBitcastOp::verify() {
   auto src_ty = getMemRefType(getInput());
   auto tgt_ty = getType();
@@ -693,43 +572,9 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
     rewriter.replaceOp(op, op.getInput());
     return success();
   }
-  auto erase_layout_op = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
-  if (!erase_layout_op) {
-    return failure();
-  }
-  auto src_bitwidth = getElementTypeBitwidth(src_ty);
-  auto tgt_bitwidth = getElementTypeBitwidth(dst_ty);
-  auto layout_ref = erase_layout_op.getOperand();
-  auto layout_ty = layout_ref.getType();
-  auto layout = cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
-  CHECK(!layout.getTiles().empty());
-  auto tile = layout.getTiles().front().dimensions();
-  if (tile[0] * src_bitwidth % tgt_bitwidth != 0) {
-    return failure();
-  }
-  SmallVector<xla::Tile, 2> new_tiles = {
-      xla::Tile({tile[0] * src_bitwidth / tgt_bitwidth, 128})};
-  if (tgt_bitwidth < 32) {
-    new_tiles.push_back(xla::Tile({32 / tgt_bitwidth, 1}));
-  }
-  auto new_layout = tpu::TiledLayoutAttr::get(src_ty.getContext(), new_tiles,
-                                              layout.getTileStrides());
-  auto new_result_ty =
-      MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
-                      layout_ty.getMemorySpace());
-  auto bitcast =
-      MemRefBitcastOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, bitcast);
-  return success();
+  return failure();
 }
 
-LogicalResult LoadOp::canonicalize(LoadOp op, PatternRewriter &rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
-
-LogicalResult StoreOp::canonicalize(StoreOp op, PatternRewriter &rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 template <typename Op>
 LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
@@ -775,7 +620,7 @@ LogicalResult StridedStoreOp::verify() {
 template <typename Op>
 LogicalResult verifyStoreOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+  if (ref_ty.getMemorySpace() && !HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
     return op.emitOpError("Expected base memref to be in VMEM.");
   }
   VectorType value_ty = op.getValueToStore().getType();
@@ -807,15 +652,11 @@ LogicalResult VectorStoreOp::verify() {
   return verifyStoreOp(*this);
 }
 
-LogicalResult VectorStoreOp::canonicalize(VectorStoreOp op,
-                                          PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+  if (ref_ty.getMemorySpace() && !HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
     return op.emitOpError("Expected base memref to be in VMEM.");
   }
   VectorType value_ty = op.getResult().getType();
@@ -850,10 +691,6 @@ LogicalResult VectorLoadOp::verify() {
   return verifyLoadOp(*this);
 }
 
-LogicalResult VectorLoadOp::canonicalize(VectorLoadOp op,
-                                         PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 LogicalResult VectorLoadIdxOp::verify() {
   VectorType value_ty = getResult().getType();
@@ -875,10 +712,6 @@ LogicalResult VectorLoadIdxOp::verify() {
   return verifyLoadOp(*this);
 }
 
-LogicalResult VectorLoadIdxOp::canonicalize(VectorLoadIdxOp op,
-                                            PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 LogicalResult VectorStoreIdxOp::verify() {
   VectorType value_ty = getValueToStore().getType();
@@ -904,10 +737,6 @@ LogicalResult VectorStoreIdxOp::verify() {
   return verifyStoreOp(*this);
 }
 
-LogicalResult VectorStoreIdxOp::canonicalize(VectorStoreIdxOp op,
-                                             PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
@@ -918,17 +747,6 @@ LogicalResult ReinterpretCastOp::verify() {
            << target_type.getMemorySpace();
   }
   return success();
-}
-
-LogicalResult ReinterpretCastOp::canonicalize(ReinterpretCastOp op,
-                                              PatternRewriter& rewriter) {
-  if (auto erase_layout_op = op.getInput().getDefiningOp<EraseLayoutOp>()) {
-    rewriter.modifyOpInPlace(op, [&]() {
-      op.getInputMutable().assign(erase_layout_op.getOperand());
-    });
-    return success();
-  }
-  return failure();
 }
 
 LogicalResult EraseLayoutOp::inferReturnTypes(
@@ -1468,10 +1286,6 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-LogicalResult EnqueueDMAOp::canonicalize(EnqueueDMAOp op,
-                                         PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 LogicalResult EnqueueIndirectDMAOp::verifyGather(
     MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
@@ -1650,11 +1464,6 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
                        /*operand_ty=*/target_ty);
 }
 
-LogicalResult EnqueueIndirectDMAOp::canonicalize(EnqueueIndirectDMAOp op,
-                                                 PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
-
 // TODO(b/395630795): Remove after 2025-08-10.
 LogicalResult WaitDMAOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
@@ -1678,10 +1487,6 @@ LogicalResult WaitDMA2Op::verify() {
   return success();
 }
 
-LogicalResult WaitDMA2Op::canonicalize(WaitDMA2Op op,
-                                       PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 FailureOr<bool> WaitIndirectDMAOp::isGather() {
   const MemRefType source_ty = getMemRefType(getSrc());
@@ -1702,10 +1507,6 @@ LogicalResult WaitIndirectDMAOp::verify() {
   return isGather();
 }
 
-LogicalResult WaitIndirectDMAOp::canonicalize(WaitIndirectDMAOp op,
-                                              PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 LogicalResult RegionOp::verify() {
   for (auto result_type : getResultTypes()) {
@@ -1911,11 +1712,6 @@ LogicalResult LogBufferOp::verify() {
         "Shape must have the same length as the rank of the input");
   }
   return success();
-}
-
-LogicalResult LogBufferOp::canonicalize(LogBufferOp op,
-                                        PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
 }
 
 LogicalResult ReciprocalOp::verify() {
@@ -2382,10 +2178,6 @@ LogicalResult FetchAndAddSyncOp::verify() {
   return success();
 }
 
-LogicalResult FetchAndAddSyncOp::canonicalize(FetchAndAddSyncOp op,
-                                              PatternRewriter& rewriter) {
-  return propagateTiledLayoutToConsumer(op, rewriter);
-}
 
 }  // namespace tpu
 }  // namespace mlir
