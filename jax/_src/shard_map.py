@@ -779,7 +779,7 @@ def _shard_map_staging(
   else:
     hi_avals_out = None
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
-  in_tracers = map(to_jaxpr_tracer, args)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
+  in_tracers = map(to_jaxpr_tracer, args)
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(shard_aval, mesh, manual_axes, check_vma),
@@ -1209,7 +1209,7 @@ def _unmatch2(mesh, prev_manual, spec, x):
   src = P(order_wrt_mesh(mesh, prev_manual), *spec)
   newly_manual = _spec_to_vma(spec)
   dst = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst,  # pyrefly: ignore[no-matching-overload]
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
                    axis_names=prev_manual | newly_manual)(x)
 
 def _match_spec2(mesh, prev_manual, spec, x) -> JaxType:
@@ -1221,7 +1221,7 @@ def _match2(mesh, prev_manual, spec, x):
   newly_manual = _spec_to_vma(spec)
   src = P(order_wrt_mesh(mesh, prev_manual | newly_manual))
   dst = P(order_wrt_mesh(mesh, prev_manual), *spec)
-  return shard_map(lambda x: x, in_specs=src, out_specs=dst,  # pyrefly: ignore[no-matching-overload]
+  return shard_map(lambda x: x, in_specs=src, out_specs=dst,
                    axis_names=prev_manual | newly_manual)(x)
 
 
@@ -1436,9 +1436,9 @@ class ShardMapTracer(core.Tracer):
   def __str__(self) -> str:
     pb_names = set(self._trace.mesh.axis_names) - self.vma  # pyrefly: ignore[missing-attribute]
     self = pvary(self, tuple(pb_names))
-    with core.eval_context(), use_abstract_mesh(self._trace.amesh):  # pyrefly: ignore[missing-attribute]
+    with core.eval_context(), use_abstract_mesh(self._trace.amesh):
       blocks = list(self.val)
-    mesh = self._trace.mesh  # pyrefly: ignore[missing-attribute]
+    mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
     return '\n'.join(
         f"On {device} at mesh coordinates {axis_names} = {idx}:\n{block}\n"

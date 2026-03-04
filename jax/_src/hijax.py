@@ -302,18 +302,18 @@ effects.custom_derivatives_allowed_effects.add_type(BoxEffect)
 class NewBox(HiPrimitive):
   def is_high(self, *, treedef) -> bool: return True  # type: ignore
 
-  def abstract_eval(self, *, treedef):  # pyrefly: ignore[bad-override]
+  def abstract_eval(self, *, treedef):
     leaves, treedef = tree_flatten(None)
     qdd = BoxTypeState(tuple(leaves), treedef)
     return core.AvalQDD(BoxTy(), qdd), {box_effect}
 
-  def to_lojax(_, *, treedef):  # pyrefly: ignore[bad-override]
+  def to_lojax(_, *, treedef):
     return Box._new(None)
 
   def jvp(_, primals, tangents, *, treedef):  # pyrefly: ignore[bad-override]
     assert False  # TODO
 
-  def transpose(_, *args, treedef):  # pyrefly: ignore[bad-override]
+  def transpose(_, *args, treedef):
     assert False  # TODO
 new_box_p = NewBox('new_box')
 
@@ -322,11 +322,11 @@ class BoxSet(HiPrimitive):
 
   def is_high(self, *leaf_avals, treedef) -> bool: return True  # type: ignore
 
-  def abstract_eval(self, box_ty, *leaf_avals, treedef):  # pyrefly: ignore[bad-override]
+  def abstract_eval(self, box_ty, *leaf_avals, treedef):
     box_ty.mutable_qdd.update(BoxTypeState(leaf_avals, treedef))
     return [], {box_effect}  # TODO better typechecking...
 
-  def to_lojax(_, box, *leaves, treedef):  # pyrefly: ignore[bad-override]
+  def to_lojax(_, box, *leaves, treedef):
     box._val = tree_unflatten(treedef, leaves)
     return []
 
@@ -340,7 +340,7 @@ class BoxSet(HiPrimitive):
     box_set_p.bind(box_dot, *val_dots, treedef=treedef)
     return [], []
 
-  def transpose(_, *args, treedef):  # pyrefly: ignore[bad-override]
+  def transpose(_, *args, treedef):
     assert False  # TODO
 box_set_p = BoxSet('box_set')
 
@@ -348,10 +348,10 @@ box_set_p = BoxSet('box_set')
 class BoxGet(HiPrimitive):
   multiple_results = True
 
-  def abstract_eval(self, box_ty, *, avals):  # pyrefly: ignore[bad-override]
+  def abstract_eval(self, box_ty, *, avals):
     return avals, {box_effect}
 
-  def to_lojax(_, box, *, avals):  # pyrefly: ignore[bad-override]
+  def to_lojax(_, box, *, avals):
     return tree_leaves(box._val)
 
   def jvp(_, primals, tangents, *, avals):  # pyrefly: ignore[bad-override]
@@ -361,7 +361,7 @@ class BoxGet(HiPrimitive):
       box_get_p.bind(box_dot, avals=tuple(a.to_tangent_aval() for a in avals))
     )
 
-  def transpose(_, *args):  # pyrefly: ignore[bad-override]
+  def transpose(_, *args):
     assert False  # TODO
 box_get_p = BoxGet('box_get')
 

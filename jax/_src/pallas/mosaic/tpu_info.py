@@ -514,7 +514,7 @@ class Tiling(enum.Enum):
   @property
   def shape(self) -> tuple[int, ...]:
     # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+    match self:
       case Tiling.COMPACT:
         return (8, 128)
       case Tiling.SPARSE_CORE:
@@ -570,7 +570,7 @@ def infer_tiling(
     )
 
   leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
-  match tiling:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+  match tiling:
     case Tiling.COMPACT:
       second_minor, _ = final_dims
       factor = _get_tiling_factor(second_minor, tiling.shape[0], packing)

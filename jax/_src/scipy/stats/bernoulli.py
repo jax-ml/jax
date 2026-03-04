@@ -126,7 +126,7 @@ def cdf(k: ArrayLike, p: ArrayLike) -> Array:
     lax.ge(k, one)
     ]
   vals = [jnp.nan, zero, one - p, one]
-  return jnp.select(conds, vals)  # pyrefly: ignore[bad-argument-type]
+  return jnp.select(conds, vals)
 
 
 def ppf(q: ArrayLike, p: ArrayLike) -> Array:
@@ -152,7 +152,7 @@ def ppf(q: ArrayLike, p: ArrayLike) -> Array:
   """
   q, p = promote_args_inexact('bernoulli.ppf', q, p)
   zero, one = _lax_const(q, 0), _lax_const(q, 1)
-  return jnp.where(  # pyrefly: ignore[no-matching-overload]
+  return jnp.where(
     jnp.isnan(q) | jnp.isnan(p) | (p < zero) | (p > one) | (q < zero) | (q > one),
     jnp.nan,
     jnp.where(lax.le(q, one - p), zero, one)

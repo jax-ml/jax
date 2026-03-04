@@ -902,7 +902,7 @@ def lower_jaxpr_to_module(
   # We reverse the order because Pallas prefers row-major iteration while the
   # CUDA runtime prefers column-major iteration.
   parallel_grid = parallel_grid[::-1]
-  cluster = cluster[::-1]  # pyrefly: ignore[bad-assignment]
+  cluster = cluster[::-1]
   squashed_dims = squashed_dims[::-1]
   axis_names = axis_names.reverse()
 
@@ -1447,7 +1447,7 @@ def _extract_aliased_ref(
             ir.MemRefType(ref.type).element_type,
             mgpu_utils.dtype_to_ir_type(dtype),
         )
-        ref = mgpu.memref_reshape(ref, transformed_shape)  # pyrefly: ignore[bad-assignment]
+        ref = mgpu.memref_reshape(ref, transformed_shape)
       return (
           ref,
           ref_aval,
@@ -1676,7 +1676,7 @@ def _handle_transforms(
   if is_multicast:
     transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)  # pyrefly: ignore[bad-argument-type]
   assert isinstance(ref_aval, state_types.AbstractRef)
-  return transformed_ref, ref_aval, new_transforms  # pyrefly: ignore[bad-return]
+  return transformed_ref, ref_aval, new_transforms
 
 
 def _ndindexer_indices(

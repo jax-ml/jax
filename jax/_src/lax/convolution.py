@@ -791,7 +791,7 @@ def _conv_general_dilated_lower(
     return complex_conv(ctx, lhs, rhs)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  dnums = hlo.ConvDimensionNumbers.get(  # pyrefly: ignore[missing-attribute]
+  dnums = hlo.ConvDimensionNumbers.get(
     input_batch_dimension=lhs_spec[0],
     input_feature_dimension=lhs_spec[1],
     input_spatial_dimensions=list(lhs_spec[2:]),

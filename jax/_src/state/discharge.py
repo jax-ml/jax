@@ -693,7 +693,7 @@ def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
   pe.apply_himut(jaxpr, args, out_mut)
   return pe.raise_lo_outs(arg_avals, lo_outs)
-run_state_p.to_lojax = _run_state_to_lojax  # pyrefly: ignore[bad-assignment]
+run_state_p.to_lojax = _run_state_to_lojax
 
 
 def _default_initialization(x):

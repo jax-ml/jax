@@ -486,7 +486,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise BufferError(
           "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
+          f"{self.platform()}"
       )
 
   def __reduce__(self):
@@ -587,7 +587,7 @@ class ArrayImpl(basearray.Array):
     for buf in self._arrays:
       buf.delete()
     self._arrays = None  # pyrefly: ignore[bad-assignment]
-    self._npy_value = None  # pyrefly: ignore[bad-assignment]
+    self._npy_value = None
 
   @use_cpp_method()
   def is_deleted(self):
