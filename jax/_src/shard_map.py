@@ -327,17 +327,14 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
 
       return ans_ft.with_aux(out_specs_flat)
 
-    # TODO(mattjj): replace nonlocal try/except business with logic in f_wrapped
     try:
       out_ft = shard_map_p.bind(
           f_wrapped, *dyn_args, mesh=mesh, in_specs=in_specs_flat,
           check_vma=check_vma, manual_axes=axis_names, debug_info=
           api_util.debug_info("shard_map", f, args, {}))
-    # TODO: since we're keeping tree information around we can do this more directly
-    # rather than raise/catch in a context where we have tree info.
     except _SpecError as e:
       fails, out_tree = e.args
-      msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
+      msg = _spec_rank_error(SpecErrorType.out, f, out_tree, out_specs, fails)
       if any(fail is not no_fail and not fail.shape for fail in fails):
         msg += (" In particular, for rank 0 outputs which are not constant "
                 "over the mesh, add at least one (singleton) axis to them so "
@@ -1251,6 +1248,7 @@ def _check_names(specs, avals: Sequence[core.ShapedArray]) -> None:
   fail = [a if isinstance(sp, P) and sp and len(sp) > a.ndim else no_fail
           for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
+    breakpoint()
     raise _SpecError(fail, avals.tree)
 
 class _SpecError(Exception):
