@@ -113,6 +113,7 @@ jobs:
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
