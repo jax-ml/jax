@@ -742,6 +742,19 @@ def _extend_axis_env(mesh, manual_axes):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
                                   if k in manual_axes])
 
+def _shard_map_staging(
+    trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: Callable,
+    args: Sequence[Any], *, mesh: Mesh,
+    in_specs, check_vma: bool, manual_axes: frozenset, debug_info
+  ) -> Sequence[pe.DynamicJaxprTracer]:
+  source_info = source_info_util.current()
+  if trace.requires_low:
+    assert False
+    hi_avals_in = [typeof(x) for x in args]
+    in_specs = [lo_spec for hi_spec in in_specs for lo_spec in hi_spec.to_lo()]
+    args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
+    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()])(out_specs_thunk)
+    f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
   # @lu.transformation_with_aux2
   # def _lojax_traceable(_fun, _store, hi_avals_in, *lo_tracers):
   #   hi_args = pe.raise_lo_outs(hi_avals_in, lo_tracers)
@@ -752,21 +765,6 @@ def _extend_axis_env(mesh, manual_axes):
   #   _store.store(tuple(hi_avals_out))
   #   return lo_ans
 
-def _shard_map_staging(
-    trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: Callable,
-    args: Sequence[Any], *, mesh: Mesh,
-    in_specs, check_vma: bool, manual_axes: frozenset, debug_info
-  ) -> Sequence[pe.DynamicJaxprTracer]:
-  source_info = source_info_util.current()
-  if trace.requires_low:
-    hi_avals_in = [typeof(x) for x in args]
-    in_specs = [lo_spec for hi_spec in in_specs for lo_spec in hi_spec.to_lo()]
-    args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
-    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()]
-                       )(out_specs_thunk)
-    f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
-  else:
-    hi_avals_out = None
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
   in_tracers = map(to_jaxpr_tracer, args)
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
@@ -1592,41 +1590,6 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
   #               for p, t in zip(primal_out, tangent_out)]
   return primal_out.map2(lambda p, t: ad.JVPTracer(trace, p, t), tangent_out)
 
-
-
-#  f_jvp = ad.jvp_subtrace_2(f, trace.tag)
-#  f_jvp, which_nz_out = ad.nonzero_tangent_outputs(f_jvp)
-
-#  @as_hashable_function(closure=out_specs_thunk)
-#  def new_out_specs_thunk():
-#    out_ax = out_specs_thunk()
-#    return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
-#  params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
-#                out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-#                manual_axes=manual_axes)
-#  # f_jvp, out_tree = ad.traceable(f_jvp, in_zeros_tree)
-#  def f_jvp(*primals_and_nz_tangents_flat):
-#    primals, tangents = tree_unflatten(in_zeros_tree, primals_and_nz_tangents_flat)
-#    tangents = [p2tz(p) if t is None else t for p, t in zip(primals, tangents)]
-#    primals_out, tangents_out = jvp_subtrace_2(f, trace.tag, primals, tangents)
-#
-#    tangents_out = [None if type(t) is Zero else t for t in tangents_out]
-#    out_flat, out_zeros_tree = tree_flatten((primals_out, tangents_out))
-#    # new_out_specs = ???
-#    return FlatTree.flatten(out_flat).with_aux(out_zeros_tree).with_aux(new_out_specs)
-#
-#
-#
-#    # unflatten the inputs to add back zeros (as done in ad.traceable)
-#    ad.jvp_subtrace_2(f, trace.tag)
-#
-#  result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
-
-#  primal_out, tangent_out = tree_unflatten(out_tree(), result)
-#  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
-
-#                 for p, t in zip(primal_out, tangent_out)]
-#  return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp
 
 def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
@@ -2021,10 +1984,10 @@ def _shard_map_discharge(
                if isinstance(invar.aval, AbstractRef)]
   params = dict(jaxpr=discharged_jaxpr, out_specs=(*out_specs, *ref_specs))
   [f], params_ = shard_map_p.get_bind_params(params)
-  discharged_out_specs, = params_.values()
+  debug_info = params_['debug_info']
   out_and_ref_vals = shard_map_p.bind(
       f, *args, mesh=mesh, in_specs=in_specs, manual_axes=manual_axes,
-      out_specs_thunk=discharged_out_specs, check_vma=check_vma)
+      debug_info=debug_info, check_vma=check_vma)
   out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.outvars)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
