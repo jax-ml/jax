@@ -46,7 +46,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, sdy
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec,
                                      canonicalize_sharding)
-from jax._src.util import (HashableFunction, HashablePartial, unzip2,
+from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, partition_list, merge_lists,
                            split_list, subs_list2, fun_name as util_fun_name)
 from jax._src.state import discharge
@@ -267,18 +267,21 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       assert all(i is Infer for i in in_specs_flat), in_specs_flat
       in_specs_flat = [_manual_spec(axis_names, s.spec, mesh) for s in arg_s]
 
-    dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
-                                        if s is not None)
-#    fun, args_flat = api_util.argnums_partial(fun, dyn_argnums, args_flat, False)
-    _check_specs_vs_args(f, mesh, args_flat.tree, in_specs, dyn_argnums, in_specs_flat,
-                         list(args_flat))
+    in_tree = args_flat.tree
+    which_dyn = [s is not None for s in in_specs_flat]
+    static_args   = [x for x, dyn in zip(args_flat, which_dyn) if not dyn]
+    dyn_args      = [x for x, dyn in zip(args_flat, which_dyn) if dyn]
+    in_specs_flat = [s for s, dyn in zip(in_specs_flat,  which_dyn) if dyn]
+    dyn_argnums   = [i for i, dyn in enumerate(     which_dyn) if dyn]
+    _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums,
+                         in_specs_flat, dyn_args)
 
     # TODO(yashkatariya): Add support for partial manual
     mesh_axis_names_wo_vmap = (
         frozenset(mesh.axis_names) - core.get_axis_env().explicit_mesh_axis_names)
     if (mesh_axis_names_wo_vmap == axis_names and
         all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
-      for a, s in zip(args_flat, in_specs_flat):
+      for a, s in zip(dyn_args, in_specs_flat):
         if not isinstance(s, P): continue
         arg_aval = typeof(a)
         s = s._normalized_spec_for_aval(arg_aval.ndim)
@@ -294,7 +297,10 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
               " on the arguments and then pass those args to shard_map.")
 
     def f_wrapped(*dyn_args):
-      args = tree_unflatten(args_flat.tree, dyn_args)
+      dyn_args_iter = iter(dyn_args)
+      static_args_iter = iter(static_args)
+      all_args = [next(dyn_args_iter) if dyn else next(static_args_iter) for dyn in which_dyn]
+      args = tree_unflatten(in_tree, all_args)
       ans = f(*args)
       try:
         out_specs_flat = broadcast_prefix(out_specs, ans)
@@ -324,7 +330,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
     # TODO(mattjj): replace nonlocal try/except business with logic in f_wrapped
     try:
       out_ft = shard_map_p.bind(
-          f_wrapped, *args_flat, mesh=mesh, in_specs=in_specs_flat,
+          f_wrapped, *dyn_args, mesh=mesh, in_specs=in_specs_flat,
           check_vma=check_vma, manual_axes=axis_names, debug_info=
           api_util.debug_info("shard_map", f, args, {}))
     # TODO: since we're keeping tree information around we can do this more directly
@@ -1569,7 +1575,6 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
     primals_out_ft, out_ax = primals_out_aux.unpack_aux()
     which_nz_out = [type(r) is not ad.Zero for r in tangents_out]
     new_out_specs = (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out) if nz))
-    assert all(which_nz_out), breakpoint()
     tangents_out = [None if not nz else t for t, nz in zip(tangents_out, which_nz_out)]
     tangents_out_ft = FlatTree.flatten(list(tangents_out))
     out_primals_tangents = FlatTree.pack((primals_out_ft, tangents_out_ft))
