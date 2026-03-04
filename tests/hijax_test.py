@@ -1202,7 +1202,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(jax.linearize(f, 2.0)[1](1.0), 12.0)
 
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
-  def test_oh_hi_mat(self, mesh):
+  def test_grad_remat_hitype(self, mesh):
     x = jnp.ones(4)
     y = jnp.ones(2)
 
@@ -1215,6 +1215,109 @@ class HijaxTest(jtu.JaxTestCase):
 
     f(x, y)
     jax.jit(jax.grad(f))(x, y)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_grad_hitype(self, mesh):
+    class Mul(VJPHiPrimitive):
+      def __init__(self, aval):
+        self.in_avals = (aval, aval)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return MulH(x.val * y.val)
+
+      def vjp_fwd(self, nzs_in, x, y):
+        return my_mul(x, y), (x, y)
+
+      def vjp_bwd_retval(self, res, g):
+        x, y = res
+        return (my_mul(g, y), my_mul(g, x))
+
+    @dataclass
+    class MulH:
+      val: Any
+
+    @dataclass(frozen=True)
+    class MulTy(HiType):
+      ty: Ty
+
+      def __repr__(self):
+        return f"MulTy({self.ty})"
+
+      def __hash__(self):
+        return hash((self.ty,))
+
+      def __eq__(self, other):
+        if not isinstance(other, MulTy):
+          return False
+        return self.ty == other.ty
+
+      def lo_ty(self):
+        return [self.ty]
+
+      def lower_val(self, hi_val: MulH):
+        return [hi_val.val]
+
+      def raise_val(self, lo_val):
+        return MulH(lo_val)
+
+      def to_tangent_aval(self) -> HiType:
+        return MulTy(self.ty.to_tangent_aval())
+
+      def vspace_zero(self):
+        return MulHZero(self)()
+
+      def to_cotangent_aval(self) -> HiType:
+        return MulTy(self.ty.to_cotangent_aval())
+
+      def shard(self, mesh, manual_axes, check_vma, spec):
+        return MulTy(self.ty.shard(mesh, manual_axes, check_vma, spec.val))
+
+      def unshard(self, mesh, check_vma, spec):
+        return MulTy(self.ty.unshard(mesh, check_vma, spec.val))
+
+    register_hitype(MulH, lambda m: MulTy(jax.typeof(m.val)))
+
+    class MulHZero(VJPHiPrimitive):
+      def __init__(self, mul_ty):
+        self.in_avals = ()
+        self.out_aval = mul_ty
+        self.params = {}
+        super().__init__()
+
+      def expand(self):
+        return MulH(ad.zeros_like_aval(self.out_aval.ty))
+
+    @dataclass(frozen=True)
+    class MulSpec(HipSpec):
+      val: Any
+
+      def to_lo(self):
+        return [self.val]
+
+      def to_cotangent_spec(self):
+        return MulSpec(self.val)
+
+      def __repr__(self):
+        return f"MulSpec({self.val})"
+
+    def my_mul(x, y):
+      return Mul(jax.typeof(x))(x, y)
+
+    arr1 = jax.device_put(jnp.arange(8, dtype=jnp.float32), jax.P('x'))
+    arr2 = jax.device_put(jnp.arange(8, dtype=jnp.float32), jax.P('x'))
+
+    @jax.jit
+    @jax.shard_map(in_specs=(MulSpec(jax.P('x')), MulSpec(jax.P('x'))),
+                   out_specs=MulSpec(jax.P('x')))
+    def f(x, y):
+      return my_mul(x, y)
+
+    _, f_vjp = jax.vjp(f, MulH(arr1), MulH(arr2))
+    x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
+    f_vjp(MulH(x))  # doesn't crash
 
 
 class BoxTest(jtu.JaxTestCase):

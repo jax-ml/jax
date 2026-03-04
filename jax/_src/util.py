@@ -184,9 +184,7 @@ def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]
     lists[b].append(x)
   return lists
 
-def merge_lists(bs: Sequence[bool],
-                l0: Sequence[T1],
-                l1: Sequence[T2]
+def merge_lists(bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
                 ) -> list[T1 | T2]:
   """Merge the elements of two lists based on a mask."""
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)

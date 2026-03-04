@@ -103,8 +103,10 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
       del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
-  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
-  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info),    # type: ignore
+                     out_tangents)
+  jaxpr, consts = tangent_trace.to_jaxpr(
+      out_tangents, debug_info.with_unknown_names(), source_info)  # type: ignore
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is _tag) for c in consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))

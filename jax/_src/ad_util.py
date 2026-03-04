@@ -53,8 +53,9 @@ def add_abstract(x, y):
   return x
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
-  if hasattr(aval, 'vspace_zero'):  # TODO(mattjj,dougalm): revise away hasattr
-    return aval.vspace_zero()
+  from jax._src.hijax import HiType  # type: ignore
+  if isinstance(aval, HiType):
+    return aval.vspace_zero()  # type: ignore
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 

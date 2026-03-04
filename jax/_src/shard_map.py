@@ -773,7 +773,8 @@ def _shard_map_staging(
     hi_avals_in = [typeof(x) for x in args]
     in_specs = [lo_spec for hi_spec in in_specs for lo_spec in hi_spec.to_lo()]
     args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
-    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()])(out_specs_thunk)
+    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()]
+                       )(out_specs_thunk)
     f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
   else:
     hi_avals_out = None
@@ -781,10 +782,12 @@ def _shard_map_staging(
   in_tracers = map(to_jaxpr_tracer, args)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   in_avals = [t.aval for t in in_tracers]
-  in_avals_ = map(partial(shard_aval, mesh, manual_axes, check_vma), in_specs, in_avals)
+  in_avals_ = map(partial(shard_aval, mesh, manual_axes, check_vma),
+                  in_specs, in_avals)
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    jaxpr, out_avals_, consts = pe.trace_to_jaxpr_dynamic(f, in_avals_, lower=trace.requires_low)
+    jaxpr, out_avals_, consts = pe.trace_to_jaxpr_dynamic(
+        f, in_avals_, lower=trace.requires_low)
 
   _check_names(out_specs_thunk(), out_avals_)
   if check_vma:
@@ -1666,10 +1669,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
                  if f1 is None and f2 is None]
     out_specs = out_specs_thunk()
-    if check_vma:
-      res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
-    else:
-      res_specs = [P(all_names)] * len(res_avals)
+    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
     return (*res_specs, *out_specs)
 
   fwd_params = dict(
@@ -1700,15 +1700,11 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     elif f2 is not None:
       res_specs.append(out_specs[f2])
     else:
-      if check_vma:
-        res_vma = next(res_avals_iter).vma
-        res_specs.append(P(order_wrt_mesh(mesh, res_vma)))
-      else:
-        res_specs.append(P(all_names))
+      raval = next(res_avals_iter)
+      res_specs.append(raval.nospec(mesh, check_vma, all_names))
   new_in_specs = (*res_specs, *(P(),) * len(env),
                   *(ax for ax, nz in zip(in_specs, nzs_in) if nz))
-  tangent_out_specs = tuple(ax for ax, nz in zip(out_specs_thunk(), nzs_out)
-                            if nz)
+  tangent_out_specs = tuple(ax for ax, nz in zip(out_specs, nzs_out) if nz)
   @as_hashable_function(closure=tangent_out_specs)
   def tangent_out_specs_thunk():
     return tangent_out_specs

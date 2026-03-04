@@ -2348,6 +2348,10 @@ class ShapedArray(AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(weak_type=weak_type)
 
+  def nospec(self, mesh, check_vma, all_names) -> P:
+    # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
+    return P(order_wrt_mesh(mesh, self.vma)) if check_vma else P(all_names)
+
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
   _float   = concretization_function_error(float, True)
@@ -2415,6 +2419,9 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
     return primal_dtype
 
 def primal_spec_to_cotangent_spec(spec):
+  from jax._src.hijax import HipSpec  # type: ignore
+  if isinstance(spec, HipSpec):
+    return spec.to_cotangent_spec()
   return P(*spec, unreduced=spec.reduced, reduced=spec.unreduced)
 
 def primal_sharding_to_cotangent_sharding(sharding):

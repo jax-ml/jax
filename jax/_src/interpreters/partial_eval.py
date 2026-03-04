@@ -2456,13 +2456,9 @@ def trace_to_jaxpr(
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
-    fun: lu.WrappedFun,
-    in_avals: Sequence[AbstractValue | core.AvalQDD],
-    *,
-    keep_inputs: list[bool] | None = None,
-    lower: bool = False,
-    auto_dce: bool = False,
-) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
+    fun: lu.WrappedFun, in_avals: Sequence[AbstractValue | core.AvalQDD],
+    *, keep_inputs: list[bool] | None = None, lower: bool = False,
+    auto_dce: bool = False) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   config.enable_checks.value and fun.debug_info.assert_arg_names(len(in_avals))
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
   parent_trace = core.trace_ctx.trace
@@ -2472,15 +2468,11 @@ def trace_to_jaxpr_dynamic(
   # equations should be rooted at the enclosing jaxpr and not contain any
   # context from the callsite. Otherwise metadata from one caller would bleed
   # into metadata from a different caller if we, e.g., inline.
-  with (
-      core.ensure_no_leaks(trace),
-      source_info_util.reset_name_stack(),
-      TracebackScope(),
-  ):
+  with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
+        TracebackScope()):
     source_info = source_info_util.current()
     in_tracers = map(partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
-
     with core.set_current_trace(trace):
       ans = fun.call_wrapped(*in_tracers)
     _check_returned_jaxtypes(fun.debug_info, ans)
@@ -2489,7 +2481,6 @@ def trace_to_jaxpr_dynamic(
     jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
                                          source_info)
     del trace, fun, in_tracers, out_tracers, ans
-
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
 

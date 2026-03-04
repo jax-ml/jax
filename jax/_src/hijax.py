@@ -83,6 +83,7 @@ class HiPrimitive(core.Primitive):
   def transpose(self, *args, **params):
     assert False, "must override"
 
+AxisName = Any
 
 class HiType(core.AbstractValue):
   is_high = True
@@ -129,6 +130,10 @@ class HiType(core.AbstractValue):
     assert False, "must override"
   def unshard(self, mesh, check_vma: bool, spec: HipSpec) -> HiType:
     assert False, "must override"
+  def nospec(self, mesh, check_vma: bool, all_names: tuple[AxisName, ...]
+             ) -> HipSpec:
+    assert False, "must override"
+
 
 class MutableHiType(core.AbstractValue):
   is_high = True
@@ -857,4 +862,5 @@ class Static:
 
 class MappingSpec: pass
 class HipSpec:
-  def to_lo(self): assert False, "must override"
+  def to_lo(self) -> HipSpec: assert False, "must override"
+  def to_cotangent_spec(self) -> HipSpec: assert False, "must override"

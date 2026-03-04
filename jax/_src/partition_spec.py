@@ -154,7 +154,8 @@ class P:
              unreduced=kwargs.pop("unreduced", self.unreduced),
              reduced=kwargs.pop("reduced", self.reduced))
 
-  def to_lo(self): return [self]
+  def to_lo(self):
+    return [self]
 
   def _normalized_spec_for_aval(self, ndim: int) -> P:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
