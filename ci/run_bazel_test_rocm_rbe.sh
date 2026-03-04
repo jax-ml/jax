@@ -40,10 +40,25 @@ for arg in "$@"; do
     fi
 done
 
+# Set up the build environment which sets XLA_DIR if needed.
+# Useful for matching the XLA version to the JAX version and debugging/testing.
+source "ci/utilities/setup_build_environment.sh"
+
+export JAXCI_CLONE_MAIN_XLA=0
+OVERRIDE_XLA_REPO=""
+if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+fi
+
+echo "==============================================="
+echo $OVERRIDE_XLA_REPO
+echo "==============================================="
+
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --config=rocm_rbe \
     --config=rocm \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+    $OVERRIDE_XLA_REPO \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
