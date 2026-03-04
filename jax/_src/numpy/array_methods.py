@@ -25,7 +25,7 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import wraps
 import math
-from typing import Any
+from typing import Any, cast
 from collections.abc import Callable, Sequence
 
 import numpy as np
@@ -588,6 +588,11 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
+# TODO(jakevdp): make _accepted_binop_types match the ArrayLike union. Currently
+# ArrayLike includes np.number, while here we are more permissive and include
+# np.generic: this is required because as of v0.5.X, ml_dtypes types are subclasses
+# of np.generic rather than of np.number. Making these match will allow removal of
+# cast() calls in the operator definitions below.
 _accepted_binop_types = (
     int,
     float,
@@ -599,21 +604,345 @@ _accepted_binop_types = (
 )
 _rejected_binop_types = (list, tuple, set, dict)
 
-def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):
-  # Ensure that other array types have the chance to override arithmetic.
-  def deferring_binary_op(self, other):
-    if hasattr(other, '__jax_array__'):
-      other = other.__jax_array__()
-    args = (other, self) if swap else (self, other)
-    if isinstance(other, _accepted_binop_types):
-      return binary_op(*args)
-    # Note: don't use isinstance here, because we don't want to raise for
-    # subclasses, e.g. NamedTuple objects that may override operators.
-    if type(other) in _rejected_binop_types:
-      raise TypeError(f"unsupported operand type(s) for {opchar}: "
-                      f"{type(args[0]).__name__!r} and {type(args[1]).__name__!r}")
-    return NotImplemented
-  return deferring_binary_op
+def _operator_eq(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.equal(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for ==: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_ne(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.not_equal(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for !=: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_lt(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.less(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for <: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_le(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.less_equal(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for <=: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_gt(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.greater(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for >: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_ge(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.greater_equal(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for >=: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_add(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.add(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for +: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_radd(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.add(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for +: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_sub(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.subtract(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for -: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rsub(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.subtract(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for -: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_mul(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.multiply(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for *: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rmul(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.multiply(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for *: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_truediv(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.true_divide(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for /: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rtruediv(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.true_divide(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for /: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_floordiv(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.floor_divide(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for //: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rfloordiv(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.floor_divide(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for //: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_divmod(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.divmod(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for divmod: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rdivmod(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.divmod(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for divmod: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_mod(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.mod(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for %: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rmod(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.mod(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for %: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_pow(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.power(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for **: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rpow(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.power(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for **: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_matmul(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return tensor_contractions.matmul(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for @: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rmatmul(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return tensor_contractions.matmul(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for @: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_and(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_and(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for &: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rand(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_and(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for &: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_or(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_or(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for |: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_ror(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_or(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for |: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_xor(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_xor(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for ^: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rxor(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.bitwise_xor(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for ^: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_lshift(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.left_shift(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for <<: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rshift(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.right_shift(self, cast(ArrayLike, other))
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for >>: "
+                    f"{type(self).__name__!r} and {type(other).__name__!r}")
+  return NotImplemented
+
+def _operator_rlshift(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.left_shift(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for <<: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
+
+def _operator_rrshift(self, other):
+  if hasattr(other, '__jax_array__'):
+    other = other.__jax_array__()
+  if isinstance(other, _accepted_binop_types):
+    return ufuncs.right_shift(cast(ArrayLike, other), self)
+  if type(other) in _rejected_binop_types:
+    raise TypeError(f"unsupported operand type(s) for >>: "
+                    f"{type(other).__name__!r} and {type(self).__name__!r}")
+  return NotImplemented
 
 def _unimplemented_setitem(self, i, x):
   msg = ("JAX arrays are immutable and do not support in-place item assignment."
@@ -1021,44 +1350,44 @@ _array_operators: dict[str, Callable[..., Any]] = {
   "setitem": _unimplemented_setitem,
   "copy": _copy,
   "deepcopy": _deepcopy,
-  "neg": lambda self: ufuncs.negative(self),
-  "pos": lambda self: ufuncs.positive(self),
-  "eq": _defer_to_unrecognized_arg("==", ufuncs.equal),
-  "ne": _defer_to_unrecognized_arg("!=", ufuncs.not_equal),
-  "lt": _defer_to_unrecognized_arg("<", ufuncs.less),
-  "le": _defer_to_unrecognized_arg("<=", ufuncs.less_equal),
-  "gt": _defer_to_unrecognized_arg(">", ufuncs.greater),
-  "ge": _defer_to_unrecognized_arg(">=", ufuncs.greater_equal),
-  "abs": lambda self: ufuncs.abs(self),
-  "add": _defer_to_unrecognized_arg("+", ufuncs.add),
-  "radd": _defer_to_unrecognized_arg("+", ufuncs.add, swap=True),
-  "sub": _defer_to_unrecognized_arg("-", ufuncs.subtract),
-  "rsub": _defer_to_unrecognized_arg("-", ufuncs.subtract, swap=True),
-  "mul": _defer_to_unrecognized_arg("*", ufuncs.multiply),
-  "rmul": _defer_to_unrecognized_arg("*", ufuncs.multiply, swap=True),
-  "truediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide),
-  "rtruediv": _defer_to_unrecognized_arg("/", ufuncs.true_divide, swap=True),
-  "floordiv": _defer_to_unrecognized_arg("//", ufuncs.floor_divide),
-  "rfloordiv": _defer_to_unrecognized_arg("//", ufuncs.floor_divide, swap=True),
-  "divmod": _defer_to_unrecognized_arg("divmod", ufuncs.divmod),
-  "rdivmod": _defer_to_unrecognized_arg("divmod", ufuncs.divmod, swap=True),
-  "mod": _defer_to_unrecognized_arg("%", ufuncs.mod),
-  "rmod": _defer_to_unrecognized_arg("%", ufuncs.mod, swap=True),
-  "pow": _defer_to_unrecognized_arg("**", ufuncs.power),
-  "rpow": _defer_to_unrecognized_arg("**", ufuncs.power, swap=True),
-  "matmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul),
-  "rmatmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul, swap=True),
-  "and": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and),
-  "rand": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and, swap=True),
-  "or": _defer_to_unrecognized_arg("|", ufuncs.bitwise_or),
-  "ror": _defer_to_unrecognized_arg("|", ufuncs.bitwise_or, swap=True),
-  "xor": _defer_to_unrecognized_arg("^", ufuncs.bitwise_xor),
-  "rxor": _defer_to_unrecognized_arg("^", ufuncs.bitwise_xor, swap=True),
-  "invert": lambda self: ufuncs.bitwise_not(self),
-  "lshift": _defer_to_unrecognized_arg("<<", ufuncs.left_shift),
-  "rshift": _defer_to_unrecognized_arg(">>", ufuncs.right_shift),
-  "rlshift": _defer_to_unrecognized_arg("<<", ufuncs.left_shift, swap=True),
-  "rrshift": _defer_to_unrecognized_arg(">>", ufuncs.right_shift, swap=True),
+  "neg": ufuncs.negative._func,
+  "pos": ufuncs.positive,
+  "abs": ufuncs.abs,
+  "invert": ufuncs.invert,
+  "eq": _operator_eq,
+  "ne": _operator_ne,
+  "lt": _operator_lt,
+  "le": _operator_le,
+  "gt": _operator_gt,
+  "ge": _operator_ge,
+  "add": _operator_add,
+  "radd": _operator_radd,
+  "sub": _operator_sub,
+  "rsub": _operator_rsub,
+  "mul": _operator_mul,
+  "rmul": _operator_rmul,
+  "truediv": _operator_truediv,
+  "rtruediv": _operator_rtruediv,
+  "floordiv": _operator_floordiv,
+  "rfloordiv": _operator_rfloordiv,
+  "divmod": _operator_divmod,
+  "rdivmod": _operator_rdivmod,
+  "mod": _operator_mod,
+  "rmod": _operator_rmod,
+  "pow": _operator_pow,
+  "rpow": _operator_rpow,
+  "matmul": _operator_matmul,
+  "rmatmul": _operator_rmatmul,
+  "and": _operator_and,
+  "rand": _operator_rand,
+  "or": _operator_or,
+  "ror": _operator_ror,
+  "xor": _operator_xor,
+  "rxor": _operator_rxor,
+  "lshift": _operator_lshift,
+  "rshift": _operator_rshift,
+  "rlshift": _operator_rlshift,
+  "rrshift": _operator_rrshift,
   "round": _operator_round,
 }
 
