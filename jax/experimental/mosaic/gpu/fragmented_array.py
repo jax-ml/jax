@@ -3218,6 +3218,10 @@ class FragmentedArray:
         ptx_type = "f32"
       elif isinstance(element_type, ir.IntegerType) and element_bitwidth == 32:
         ptx_type = "s32" if self.is_signed else "u32"
+      elif isinstance(element_type, ir.F16Type):
+        ptx_type = "noftz.f16x2"
+      elif isinstance(element_type, ir.BF16Type):
+        ptx_type = "noftz.bf16x2"
       else:
         raise NotImplementedError(
             f"Unsupported element type for atomic stores: {element_type}"
@@ -3225,10 +3229,19 @@ class FragmentedArray:
       for get, _update, _idx, base_ptr in stores:
         vreg = get(self.registers)
         [vec_len] = vreg.type.shape
-        for i in range(vec_len):
-          assert element_bitwidth == 32  # Not implemented otherwise
+        if element_bitwidth == 16:
+          if vec_len % 2 != 0:
+            raise NotImplementedError(
+                f"f16/bf16 atomic stores require even vector length,"
+                f" got {vec_len}"
+            )
+        vreg = utils.bitcast(vreg, ir.VectorType.get(
+            (vec_len * element_bitwidth // 32,), i32,
+        ))
+        [i32_vec_len] = vreg.type.shape
+        for i in range(i32_vec_len):
           reg = llvm.extractelement(vreg, arith.constant(i32, i))
-          ptr = utils.getelementptr(base_ptr, [i], element_type)
+          ptr = utils.getelementptr(base_ptr, [i], i32)
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
               [ptr, reg],

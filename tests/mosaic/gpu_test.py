@@ -580,7 +580,7 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.product(dtype=[jnp.float32, jnp.uint32, jnp.int32])
+  @parameterized.product(dtype=[jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32, jnp.uint32])
   def test_atomic_store(self, dtype):
     m, n = 64, 64
     def kernel(ctx, out, smem):
