@@ -878,6 +878,7 @@ cc_library(
         "@xla//xla/pjrt:lru_cache",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:safe_static_init",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/tsl/concurrency:ref_count",

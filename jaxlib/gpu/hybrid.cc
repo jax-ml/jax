@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/base/call_once.h"
+#include <memory>
+
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/gpu/hybrid_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/ffi.h"
+#include "xla/python/safe_static_init.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -28,17 +30,17 @@ namespace ffi = xla::ffi;
 namespace nb = nanobind;
 
 void GetLapackKernelsFromScipy() {
-  static absl::once_flag initialized;
-  if (lapack_kernels_initialized) {
-    return;
-  }
-  // For reasons I'm not entirely sure of, if the import_ call is done inside
-  // the call_once scope, we sometimes observe deadlocks in the test suite.
-  // However it probably doesn't do much harm to just import them a second time,
-  // since that costs little more than a dictionary lookup or two.
-  nb::module_ cython_lapack =
-      nb::module_::import_("scipy.linalg.cython_lapack");
-  absl::call_once(initialized, [&]() {
+  static xla::SafeStatic<bool> initialized;
+  initialized.Get([]() {
+    if (lapack_kernels_initialized) {
+      return std::make_unique<bool>(true);
+    }
+    // Technically these are Cython-internal APIs. However, it seems highly
+    // likely they will remain stable because Cython itself needs API stability
+    // for cross-package imports to work in the first place.
+    nb::module_ cython_lapack =
+        nb::module_::import_("scipy.linalg.cython_lapack");
+
     nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
     auto lapack_ptr = [&](const char* name) {
       return nb::cast<nb::capsule>(lapack_capi[name]).data();
@@ -54,6 +56,8 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<PivotingQrFactorization<ffi::F64>>(lapack_ptr("dgeqp3"));
     AssignKernelFn<PivotingQrFactorization<ffi::C64>>(lapack_ptr("cgeqp3"));
     AssignKernelFn<PivotingQrFactorization<ffi::C128>>(lapack_ptr("zgeqp3"));
+    lapack_kernels_initialized = true;
+    return std::make_unique<bool>(true);
   });
 }
 

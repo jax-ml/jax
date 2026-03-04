@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -361,9 +362,12 @@ class PjitFunction {
               function_name_)
               .c_str());
     }
-    static const auto* inspect =
-        new nb::module_(nb::module_::import_("inspect"));
-    return inspect->attr("signature")(*fun_);
+    static xla::SafeStatic<nb::object> signature_fn_init;
+    const nb::object& signature_fn = signature_fn_init.Get([]() {
+      return std::make_unique<nb::object>(
+          nb::module_::import_("inspect").attr("signature"));
+    });
+    return signature_fn(*fun_);
   }
 
  private:

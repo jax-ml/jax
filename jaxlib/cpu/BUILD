@@ -76,9 +76,9 @@ nanobind_extension(
     deps = [
         ":lapack_kernels",
         "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/base",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/python:safe_static_init",
     ],
 )
 

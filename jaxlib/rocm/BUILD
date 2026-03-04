@@ -399,11 +399,11 @@ rocm_nanobind_extension(
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
-        "@com_google_absl//absl/base",
         "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/python:safe_static_init",
     ],
 )
 

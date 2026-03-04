@@ -13,10 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/base/call_once.h"
+#include <memory>
+
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#include "xla/python/safe_static_init.h"
 
 namespace jax {
 namespace {
@@ -26,21 +28,18 @@ namespace nb = nanobind;
 using ::xla::ffi::DataType;
 
 void GetLapackKernelsFromScipy() {
-  static absl::once_flag initialized;
-  if (lapack_kernels_initialized) {
-    return;
-  }
-  // For reasons I'm not entirely sure of, if the import_ call is done inside
-  // the call_once scope, we sometimes observe deadlocks in the test suite.
-  // However it probably doesn't do much harm to just import them a second time,
-  // since that costs little more than a dictionary lookup or two.
-  nb::module_ cython_blas = nb::module_::import_("scipy.linalg.cython_blas");
-  nb::module_ cython_lapack =
-      nb::module_::import_("scipy.linalg.cython_lapack");
-  absl::call_once(initialized, [&]() {
-    // Technically this is a Cython-internal API. However, it seems highly
-    // likely it will remain stable because Cython itself needs API stability
+  static xla::SafeStatic<bool> initialized;
+  initialized.Get([]() {
+    if (lapack_kernels_initialized) {
+      return std::make_unique<bool>(true);
+    }
+    // Technically these are Cython-internal APIs. However, it seems highly
+    // likely they will remain stable because Cython itself needs API stability
     // for cross-package imports to work in the first place.
+    nb::module_ cython_blas = nb::module_::import_("scipy.linalg.cython_blas");
+    nb::module_ cython_lapack =
+        nb::module_::import_("scipy.linalg.cython_lapack");
+
     nb::dict blas_capi = cython_blas.attr("__pyx_capi__");
     auto blas_ptr = [&](const char* name) {
       return nb::cast<nb::capsule>(blas_capi[name]).data();
@@ -134,6 +133,8 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<TridiagonalSolver<DataType::F64>>(lapack_ptr("dgtsv"));
     AssignKernelFn<TridiagonalSolver<DataType::C64>>(lapack_ptr("cgtsv"));
     AssignKernelFn<TridiagonalSolver<DataType::C128>>(lapack_ptr("zgtsv"));
+    lapack_kernels_initialized = true;
+    return std::make_unique<bool>(true);
   });
 }
 

@@ -424,10 +424,10 @@ nanobind_extension(
         ":cuda_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
-        "@com_google_absl//absl/base",
         "@local_config_cuda//cuda:cuda_headers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/python:safe_static_init",
         "@xla//xla/tsl/cuda:cudart",
     ],
 )
