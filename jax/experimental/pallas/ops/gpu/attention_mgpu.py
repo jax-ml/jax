@@ -135,13 +135,16 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
       plgpu.barrier_wait(q_barriers.at[wg_idx])
 
       m_i = plgpu.layout_cast(
-          jnp.full((block_q,), -jnp.inf, dtype=jnp.float32), plgpu.Layout.WGMMA_ROW,
+          jnp.full((block_q,), -jnp.inf, dtype=jnp.float32),
+          plgpu.Layout.WGMMA.reduce(1),
       )
       l_i = plgpu.layout_cast(
-          jnp.full((block_q,), 0, dtype=jnp.float32), plgpu.Layout.WGMMA_ROW,
+          jnp.full((block_q,), 0, dtype=jnp.float32),
+          plgpu.Layout.WGMMA.reduce(1),
       )
       acc = plgpu.layout_cast(
-          jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
+          jnp.full((block_q, head_dim), 0, dtype=jnp.float32),
+          plgpu.Layout.WGMMA,
       )
 
       @pl.when(kv_steps > 0)
@@ -407,8 +410,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       for buffer in buffer_barriers:
         plgpu.barrier_wait(buffer.at[wg_idx])
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA_ROW)
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA_ROW)
+      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
+      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
       dq_acc = plgpu.layout_cast(
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
@@ -527,7 +530,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       sT = pl.run_scoped(_compute_sT, plgpu.ACC((block_kv, block_q), jnp.float32))
       sT *= math.log2(math.e)
 
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA_COL)
+      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(lse_consumed_barrier)
       pT = jnp.exp2(sT - lax.broadcast_in_dim(lse, (block_kv, block_q), [1]))
 
@@ -544,7 +547,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dv_acc, dpT = pl.run_state(_compute)((plgpu.ACC.init(dv_acc), plgpu.ACC.init(zeros)))
       plgpu.barrier_arrive(do_consumed_barrier)
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA_COL)
+      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(delta_consumed_barrier)
 
       dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))  # pytype: disable=wrong-arg-types  # jax-operator-types

@@ -1549,14 +1549,6 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.TMA_GATHER_INDICES_LAYOUT
 
 
-# TODO(apaszke): Adjust the users and remove these backfills.
-Layout.WGMMA_ROW = Layout.WGMMA.reduce(1)
-Layout.WGMMA_COL = Layout.WGMMA.reduce(0)
-Layout.TCGEN05_ROW = Layout.TCGEN05.reduce(1)
-Layout.TCGEN05_COL = Layout.TCGEN05.reduce(0)
-Layout.TCGEN05_TMEM_NATIVE_ROW = Layout.TCGEN05_TMEM_NATIVE.reduce(1)
-
-
 class TMEMLayout(enum.Enum):
   """Layout for TMEM references."""
   # TODO(apaszke): Remove the layout suffix.

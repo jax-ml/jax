@@ -284,11 +284,11 @@ wrong results.
 There are a few useful layouts we have defined for you so far:
 * `plgpu.Layout.WGMMA`, which is the layout in which the Hopper-generation TensorCore
   expects the MMA accumulator or 16-bit input operands to have in registers.
-* `plgpu.Layout.WGMMA_ROW`, which is the layout obtained after the above after reducing
-  it along the rows. Re-broadcasting the rows is free and will produce a value with `WGMMA`
-  layout.
-* `plgpu.Layout.WGMMA_COL`, which is an analogue of the one above, only reduced along
-  columns instead of rows.
+  Calling `plgpu.Layout.WGMMA.reduce(axes)` gives a layout suitable for values
+  reduced along the specified axes, e.g. `reduce(1)` for a row result and
+  `reduce(0)` for a column result. Re-broadcasting the reduced dimensions is
+  free and produces a value with
+  `WGMMA` layout.
 * `plgpu.Layout.WG_STRIDED`, where the value is partitioned equally among the 128
   CUDA lanes making up a Pallas thread. The consecutive elements (after vectorization)
   are assigned to the lanes in a round-robin fashion. Very simple and effective when
