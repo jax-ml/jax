@@ -1719,16 +1719,17 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
     res, ans_aux, lin_data = ad.linearize_subtrace_2(
       f, trace.is_vjp, trace.tag, nzs_in, debug_info, primals)
     primals_out, out_specs = ans_aux.unpack_aux()
-    # TODO: handle scalar promotion
+
     res_avals, _, _, _, in_fwd, out_fwd = lin_data
     res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
                  if f1 is None and f2 is None]
     res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
     new_out_specs = (*res_specs, *out_specs)
+    res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+           for x in res]
     res_and_primal = FlatTree.pack((FlatTree.flatten(res), primals_out))
     return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
 
-  # f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   fwd_params = dict(
@@ -1775,16 +1776,6 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   return primals_out.map3(partial(ad.maybe_linearize_tracer, trace), nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 
-# @lu.transformation2
-# def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
-#   ans = f(*args, **kwargs)
-#   _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
-#   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-#   residuals = ans[:num_res_out]
-#   primals = ans[num_res_out:]
-#   residuals = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-#                for x in residuals]
-#   return *residuals, *primals
 
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   def fun(*res_and_args):
@@ -1919,9 +1910,10 @@ def _add_reshapes(which: Sequence[bool],
     out_known, res = split_list(out, [len(out) - sum(which)])
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
-  avals_in = [v.aval for v in jaxpr_known.invars]
-  jaxpr_known, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(known, debug_info=jaxpr_known.debug_info), avals_in)
+  avals_in = tuple(v.aval for v in jaxpr_known.invars)
+  avals_in = FlatTree.flatten((avals_in, {}))
+  jaxpr_known, _ = pe.trace_to_jaxpr(
+      known, avals_in, debug_info=jaxpr_known.debug_info)
 
   def staged(*args):
     res_, ins = split_list(args, [len(which)])
@@ -1929,11 +1921,12 @@ def _add_reshapes(which: Sequence[bool],
     return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
-  avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
-  jaxpr_staged, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info), avals_in)
+  avals_in = (*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]])
+  avals_in = FlatTree.flatten((avals_in, {}))
+  jaxpr_staged, _ = pe.trace_to_jaxpr(
+      staged, avals_in, debug_info=jaxpr_staged.debug_info)
 
-  return jaxpr_known, jaxpr_staged
+  return jaxpr_known.jaxpr, jaxpr_staged.jaxpr
 
 def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
                       in_fwd, out_fwd, out_res_specs_known, staged_in_res_specs,
