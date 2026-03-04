@@ -2211,13 +2211,14 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   column_major = True
   if use_jacobi:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
-    # The gesvdjbatched kernel doesn't support "econ" mode, but it also only
-    # supports matrices up to 32x32, so it's always worth using the batched
-    # version and then slicing afterwards when the matrix is small enough.
-    try:
-      econ = not full_matrices and m > 32 and n > 32
-    except core.InconclusiveDimensionOperation:
-      econ = False
+  elif algorithm == SvdAlgorithm.QR:
+    # Explicit QR (gesvd) path: use gesvd on both CUDA and ROCm for back-compat.
+    target_name = f"{target_name_prefix}solver_gesvd_ffi"
+    econ = not full_matrices
+    transposed = m < n
+    kwargs = {"transposed": transposed}
+    if transposed:
+      column_major = False
   elif use_polar:
     target_name = f"{target_name_prefix}solver_gesvdp_ffi"
     econ = not full_matrices
@@ -2235,6 +2236,15 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     kwargs = {"transposed": transposed}
     if transposed:
       column_major = False
+
+  if use_jacobi:
+    # The gesvdjbatched kernel doesn't support "econ" mode, but it also only
+    # supports matrices up to 32x32, so it's always worth using the batched
+    # version and then slicing afterwards when the matrix is small enough.
+    try:
+      econ = not full_matrices and m > 32 and n > 32
+    except core.InconclusiveDimensionOperation:
+      econ = False
 
   if use_jacobi or use_polar:
     # When using the Jacobi or polar algorithms, the U and V matrices must

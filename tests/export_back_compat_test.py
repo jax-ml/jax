@@ -185,7 +185,8 @@ class CompatTest(bctu.CompatTestBase):
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
-      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi", "hipsolver_gesdd_ffi",
+      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+      # hipsolver_gesdd_ffi is covered by rocm_svd_hipsolver_gesvd (gesdd f32).
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -657,14 +658,24 @@ class CompatTest(bctu.CompatTestBase):
                                             *data.inputs))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
-           dtype_name=dtype_name, algorithm_name=algorithm_name)
-      for dtype_name in ("f32", "f64", "c64", "c128")
-      for algorithm_name in ("qr", "jacobi"))
+      list(
+          dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
+               dtype_name=dtype_name, algorithm_name=algorithm_name)
+          for dtype_name in ("f32", "f64", "c64", "c128")
+          for algorithm_name in ("qr", "jacobi")
+      ) + [
+          dict(testcase_name="_dtype=f32_algorithm=gesdd", dtype_name="f32", algorithm_name="gesdd"),
+      ])
   @jax.default_matmul_precision("float32")
   def test_gpu_svd_solver_gesvd(self, dtype_name, algorithm_name):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
+
+    algorithm = dict(
+        qr=lax.linalg.SvdAlgorithm.QR,
+        jacobi=lax.linalg.SvdAlgorithm.JACOBI,
+        gesdd=lax.linalg.SvdAlgorithm.DEFAULT,  # ROCm uses gesdd by default
+    )[algorithm_name]
 
     def func(operand):
       return lax.linalg.svd(operand, full_matrices=True, compute_uv=True,
@@ -672,12 +683,11 @@ class CompatTest(bctu.CompatTestBase):
 
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
-    algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
-                     jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
 
     # The `platform_data_map` dictionary allows additional testdata modules
     # to be easily added to the unit test. If no acceptable testdata is found
-    # for the current platform, the test will be skipped.
+    # for the current platform, the test will be skipped. "gesdd" exists only
+    # for ROCm (CUDA uses gesvd/gesvdj).
     platform_data = None
     platform_data_map = {
         "cuda": cuda_svd_cusolver_gesvd.data_2024_10_08,
@@ -686,6 +696,8 @@ class CompatTest(bctu.CompatTestBase):
 
     for platform, data_module in platform_data_map.items():
       if jtu.test_device_matches([platform]):
+        if algorithm_name not in data_module:
+          continue  # e.g. CUDA has no "gesdd" data
         platform_data = data_module[algorithm_name][dtype_name]
         break
 
