@@ -580,6 +580,27 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
+  @parameterized.product(dtype=[jnp.float32, jnp.uint32, jnp.int32])
+  def test_atomic_store(self, dtype):
+    m, n = 64, 64
+    def kernel(ctx, out, smem):
+      del ctx
+      mlir_dtype = utils.dtype_to_ir_type(dtype)
+      mgpu.FragmentedArray.splat(
+          c(0, mlir_dtype), (m, n), is_signed=utils.is_signed(dtype)
+      ).store_untiled(smem)
+      gpu.barrier()
+      iota_tensor(m, n, dtype).store_untiled(
+          smem, optimized=False, atomic="add",
+      )
+      gpu.barrier()
+      copy(smem, out)
+    x = np.arange(m * n, dtype=dtype).reshape(m, n)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (256, 1, 1), (), x, x
+    )()
+    np.testing.assert_array_equal(result, 2 * x)
+
   @parameterized.product(
       dtype=[jnp.float8_e5m2fnuz, jnp.float8_e5m2, jnp.float8_e4m3b11fnuz,
              jnp.float8_e4m3fn, jnp.float8_e4m3fnuz],

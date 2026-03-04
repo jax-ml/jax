@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import itertools
 import math
-from typing import Any, Protocol, TypeAlias, TypeVar, cast, overload, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, overload, runtime_checkable
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
@@ -3021,7 +3021,12 @@ class FragmentedArray:
       utils.debug_print(fmt_str, *idx, val, uniform=False)
 
   def store_untiled(
-      self, ref: ir.Value | utils.MultimemRef, *, swizzle: int = 16, optimized: bool = True
+      self,
+      ref: ir.Value | utils.MultimemRef,
+      *,
+      swizzle: int = 16,
+      optimized: bool = True,
+      atomic: Literal["add"] | None = None,
   ) -> None:
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(ref)
@@ -3029,12 +3034,18 @@ class FragmentedArray:
       case WGSplatFragLayout():
         if isinstance(ref, utils.MultimemRef):
           raise NotImplementedError("Splat layout does not support multimem")
+        if atomic is not None:
+          raise NotImplementedError(
+              "Atomic stores not supported for splat layout"
+          )
         # All values are the same so swizzle does not affect anything here.
         self._store_untiled_splat(ref)
       case WGStridedFragLayout():
         if swizzle != 16:
           raise ValueError("Only TiledLayouts support swizzling")
         assert isinstance(self.layout, WGStridedFragLayout)
+        if atomic is not None:
+          raise NotImplementedError("Atomic stores not supported for warpgroup strided layouts")
         for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
           if isinstance(ref, utils.MultimemRef):
             ref.store(get(self.registers), idx)
@@ -3043,7 +3054,7 @@ class FragmentedArray:
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
-        self.store_tiled(ref, swizzle=swizzle, optimized=optimized)
+        self.store_tiled(ref, swizzle=swizzle, optimized=optimized, atomic=atomic)
       case _:
         raise NotImplementedError(self.layout)
 
@@ -3193,10 +3204,51 @@ class FragmentedArray:
       swizzle: int | None,
       optimized: bool = True,
       tiling_rank: int | None = None,
+      atomic: Literal["add"] | None = None,
   ):
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
+    if atomic is not None:
+      if isinstance(ref, utils.MultimemRef):
+        raise NotImplementedError("Multimem refs do not support atomic stores")
+      if any(isinstance(d, Replicated) for d in layout.warp_dims + layout.lane_dims):
+        raise NotImplementedError(
+            "Atomic stores not supported for layouts with replicated dims"
+        )
+      is_smem = utils.is_smem_ref(ref)
+      scope = "cta" if is_smem else "gpu"
+      space = ".shared::cta" if is_smem else ""
+      ptr_constraint = "r" if is_smem else "l"
+      stores = self.transfer_tiled(
+          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+      )
+      i32 = ir.IntegerType.get_signless(32)
+      element_type = self.mlir_dtype
+      element_bitwidth = utils.bitwidth(element_type)
+      if isinstance(element_type, ir.F32Type):
+        ptx_type = "f32"
+      elif isinstance(element_type, ir.IntegerType) and element_bitwidth == 32:
+        ptx_type = "s32" if self.is_signed else "u32"
+      else:
+        raise NotImplementedError(
+            f"Unsupported element type for atomic stores: {element_type}"
+        )
+      for get, _update, _idx, base_ptr in stores:
+        vreg = get(self.registers)
+        [vec_len] = vreg.type.shape
+        for i in range(vec_len):
+          assert element_bitwidth == 32  # Not implemented otherwise
+          reg = llvm.extractelement(vreg, arith.constant(i32, i))
+          ptr = utils.getelementptr(base_ptr, [i], element_type)
+          llvm.inline_asm(
+              ir.Type.parse("!llvm.void"),
+              [ptr, reg],
+              f"red{space}.relaxed.{scope}.{atomic}.{ptx_type} [$0], $1;",
+              f"{ptr_constraint},r",
+              has_side_effects=True,
+          )
+      return
     # Note that the loop below will "race" for layouts that replicate data.
     # However, in that case all of the racing writes store the same data, which
     # is ok in the CUDA memory model.
