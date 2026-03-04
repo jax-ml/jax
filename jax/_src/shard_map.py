@@ -1598,10 +1598,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   def known_out_specs():
     _, _, out_knowns, res_avals, _, _ = aux()
     _, out_known_specs = pe.partition_list(out_knowns, out_specs_thunk())
-    if check_vma:
-      res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
-    else:
-      res_specs = [P(all_names)] * len(res_avals)
+    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
     return (*out_known_specs, *res_specs)
 
   known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
@@ -1626,11 +1623,8 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     elif f2 is not None:
       res_specs.append(known_out_specs_[f2])
     else:
-      if check_vma:
-        res_vma = next(res_avals_iter).vma
-        res_specs.append(P(order_wrt_mesh(mesh, res_vma)))
-      else:
-        res_specs.append(P(all_names))
+      raval = next(res_avals_iter)
+      res_specs.append(raval.nospec(mesh, check_vma, all_names))
   unk_in_specs = (*res_specs,) + (P(),) * len(env) + (*unk_in_specs,)  # type: ignore[assignment]
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.to_jaxpr_tracer, env)
@@ -1878,20 +1872,14 @@ def _partial_eval_jaxpr_custom_rule(
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
-  newvar = core.gensym()
-  residuals, staged_in_res_specs = [], []
-  for var, w in zip(jaxpr_staged.invars[:num_res], which):
-    if w:
-      rn = (P(order_wrt_mesh(mesh, var.aval.vma))  # type: ignore
-            if check_vma else P(_all_newly_manual_mesh_names(mesh, manual_axes)))
-      residuals.append(newvar(unshard_aval(mesh, check_vma, rn, var.aval)))
-      staged_in_res_specs.append(rn)
-  if check_vma:
-    out_res_specs_known = [P(order_wrt_mesh(mesh, var.aval.vma))  # type: ignore
-                           for var, w in zip(res_vars, which) if w]
-  else:
-    out_res_specs_known = [
-        P(_all_newly_manual_mesh_names(mesh, manual_axes))] * sum(which)
+  nv = core.gensym()
+  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
+  lns = lambda a: a.nospec(mesh, check_vma, all_names)  # type: ignore
+  residuals, staged_in_res_specs = unzip2(
+      [(nv(unshard_aval(mesh, check_vma, (rn := lns(var.aval)), var.aval)), rn)
+       for var, w in zip(jaxpr_staged.invars[:num_res], which) if w])
+  out_res_specs_known = [var.aval.nospec(mesh, check_vma, all_names)  # type: ignore
+                         for var, w in zip(res_vars, which) if w]
   params_known, params_staged = _pe_custom_params(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, in_fwd, out_fwd,
       out_res_specs_known, staged_in_res_specs,
@@ -1907,7 +1895,7 @@ def _partial_eval_jaxpr_custom_rule(
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
   new_inst += [out_binders_known[f] for f in {i for i in out_fwd if i is not None}]
-  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + list(residuals)
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     _partial_eval_jaxpr_custom_rule
 
