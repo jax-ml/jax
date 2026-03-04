@@ -230,15 +230,6 @@ class Barrier(memory.Allocation):
 @dataclasses.dataclass
 class GPUSharedMemory(memory.SharedMemory):
 
-  logging_mode: interpret_utils.LoggingMode | None = None
-
-  def _log(self, message: str):
-    if (
-        self.logging_mode is not None
-        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
-    ):
-      logging.info(message)
-
   @property
   def num_threads_per_device(self) -> int:
     return self.num_cores_per_device

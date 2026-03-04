@@ -44,7 +44,9 @@ py_library(
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
         "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
+        "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src/pallas",
@@ -64,13 +66,17 @@ pytype_strict_library(
     srcs = ["shared_memory.py"],
     deps = [
         ":race_detection_state",
+        ":utils",
         ":vector_clock",
         "//jax",
         "//jax/_src:source_info_util",
         "//jax/_src:typing",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
-    ] + py_deps("numpy"),
+    ] + py_deps([
+        "absl/logging",
+        "numpy",
+    ]),
 )
 
 pytype_strict_library(
@@ -97,6 +103,7 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:source_info_util",
         "//jax/_src:util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),

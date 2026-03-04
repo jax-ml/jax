@@ -21,7 +21,9 @@ import gc
 import threading
 from typing import Any, Callable, Literal
 
+from absl import logging
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 import numpy as np
 
 
@@ -31,9 +33,11 @@ class Semaphore:
       self,
       shared_memory: SharedMemory,
       semaphore_id: int,
+      enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
     self.id: int = semaphore_id
+    self.enable_logging: bool = enable_logging
 
     # TODO(jburnim): Use one Condition variable per device.  (Which will be
     # easier to do when we're using single integer device IDs.)
@@ -66,10 +70,28 @@ class Semaphore:
   def dma_execution_mode(self) -> str:
     return self.shared_memory.dma_execution_mode
 
+  def _log(self, message: str):
+    """Logs a message to `absl.logging`. To be called while holding the lock on `self.cv`."""
+    # Log every line separately to make sure `absl.logging` adds the correct
+    # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
+    # `message`. This should not lead to mangled output within the logging for
+    # `self` since the lock on `self.cv` is expected to be held whenever this
+    # method is called. However, nothing keeps logged output from being
+    # interleaved with logging from other semaphores or from the global
+    # `SharedMemory` object.
+    for msg in message.split("\n"):
+      logging.info(msg)
+
   def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
     return self.shared_memory.get_global_core_id(device_id, local_core_id)
 
-  def signal(self, inc, global_core_id, clock):
+  def signal(
+      self,
+      inc,
+      global_core_id,
+      clock,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ):
     """Signal the semaphore on `(device_id, core_id)` by `inc`.
 
     Args:
@@ -77,10 +99,22 @@ class Semaphore:
         on the target device.
       global_core_id: The ID of the target core.
       clock: The vector clock of the signaling device at the time of the signal.
+      logging_info: Information about the source of the signal.
     """
     global_core_id = int(global_core_id)
     with self.cv:
       self.count_by_core[global_core_id] += inc
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"semaphore={self.id}, inc={inc},"
+                f" count_on_core={int(self.count_by_core[global_core_id])}.\n"
+                f" count_by_core={self.count_by_core.tolist()}.",
+                line_prefix="`signal`",
+            )
+        )
+
       if self.detect_races:
         if (global_clock := self.clocks[global_core_id]) is None:
           self.clocks[global_core_id] = vc.copy_vector_clock(clock)
@@ -92,7 +126,14 @@ class Semaphore:
     with self.cv:
       return self.count_by_core[global_core_id]
 
-  def wait(self, value, global_core_id, *, has_tasks=False):
+  def wait(
+      self,
+      value,
+      global_core_id,
+      *,
+      has_tasks=False,
+      logging_info: interpret_utils.LoggingInfo | None = None,
+  ):
     global_core_id = int(global_core_id)
 
     # TODO(jburnim):
@@ -106,8 +147,29 @@ class Semaphore:
     if not has_tasks:
       with self.cv:
         while self.count_by_core[global_core_id] < value:
+          if self.enable_logging and logging_info is not None:
+            self._log(
+                logging_info.format(
+                    f"semaphore={self.id} waiting,"
+                    f" {int(self.count_by_core[global_core_id])}(count_on_core)"
+                    f" < {value}(value).\n"
+                    f"count_by_core={self.count_by_core.tolist()}.",
+                    line_prefix="`wait`",
+                )
+            )
           self.cv.wait()
         self.count_by_core[global_core_id] -= value
+
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"semaphore={self.id} finished waiting for {value=}, "
+                  f"count_on_core={int(self.count_by_core[global_core_id])}.\n"
+                  f"count_by_core={self.count_by_core.tolist()}.",
+                  line_prefix="`wait`",
+              )
+          )
+
         if self.detect_races:
           assert self.clocks[global_core_id] is not None
           clock = vc.copy_vector_clock(self.clocks[global_core_id])
@@ -135,6 +197,7 @@ class Semaphore:
     # up separate threads to handle executing DMAs.
     while True:
       clock = None
+      done = False
       with self.cv:
         if self.count_by_core[global_core_id] >= value:
           self.count_by_core[global_core_id] -= value
@@ -142,11 +205,23 @@ class Semaphore:
             assert self.clocks[global_core_id] is not None
             clock = vc.copy_vector_clock(self.clocks[global_core_id])
           else:
-            return
+            done = True
       if clock is not None:
         with self.shared_memory.lock:
           vc.update_vector_clock(
               self.shared_memory.clocks[global_core_id], clock
+          )
+        done = True
+
+      if done:
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"semaphore={self.id} finished waiting for {value=}, "
+                  f"count_on_core={int(self.count_by_core[global_core_id])}.\n"
+                  f"count_by_core={self.count_by_core.tolist()}.",
+                  line_prefix="`wait`",
+              )
           )
         return
 
@@ -217,6 +292,8 @@ class SharedMemory:
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
+  logging_mode: interpret_utils.LoggingMode | None = None
+
   # (memory_space, buffer_id, device_id, local_core_id) -> Allocation
   mem: dict[tuple[str, int, int, int], Allocation] = dataclasses.field(
       default_factory=dict
@@ -270,6 +347,22 @@ class SharedMemory:
         self.get_global_core_id(device_id, core_id)
         for core_id in range(self.num_cores_per_device)
     )
+
+  @property
+  def enable_logging(self) -> bool:
+    return (
+        self.logging_mode is not None
+        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
+    )
+
+  def _log(self, message: str):
+    """Logs a message to `absl.logging`. To be called while holding `self.lock`."""
+    # Log every line separately to make sure `absl.logging` adds the correct
+    # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
+    # `message`. This should not lead to mangled output as `self.lock` is
+    # expected to be held whenever this method is called.
+    for msg in message.split("\n"):
+      logging.info(msg)
 
   def append_semaphore_task(
       self,
@@ -387,13 +480,23 @@ class SharedMemory:
       key: Any,
       ref_count: int,
       value: np.ndarray,
+      logging_info: interpret_utils.LoggingInfo | None = None,
   ):
     """Allocates a memory buffer with the given key unless it already exists."""
     with self.lock:
       if key not in self.mem:
         self.mem[key] = Buffer(value, ref_count=ref_count)
 
-  def deallocate_buffer(self, key: Any):
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"{key=}, {ref_count=}.", line_prefix="`allocate_buffer`"
+              )
+          )
+
+  def deallocate_buffer(
+      self, key: Any, logging_info: interpret_utils.LoggingInfo | None = None
+  ):
     """Decreases the ref count for the buffer with `key` and deallocates the buffer if the ref count is zero."""
     with self.lock:
       buff = self.mem[key]
@@ -408,6 +511,11 @@ class SharedMemory:
         self.mem.pop(key)
         self.deallocated_bytes += buff.size()
         del buff
+
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(f"{key=}.", line_prefix="`deallocate_buffer`")
+          )
 
       should_collect = self.deallocated_bytes > 100_000_000
       if should_collect:
@@ -426,7 +534,14 @@ class SharedMemory:
 
       for i in range(semaphore_id, semaphore_id + num_semaphores):
         if i not in self.sem:
-          self.sem[i] = Semaphore(shared_memory=self, semaphore_id=i)
+          self.sem[i] = Semaphore(
+              shared_memory=self,
+              semaphore_id=i,
+              enable_logging=(
+                  self.logging_mode is not None
+                  and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
+              ),
+          )
 
     return semaphore_id
 
@@ -449,11 +564,20 @@ class SharedMemory:
     with self.lock:
       if semaphore_id not in self.fixed_id_sem:
         self.fixed_id_sem[semaphore_id] = Semaphore(
-            semaphore_id=semaphore_id, shared_memory=self
+            semaphore_id=semaphore_id,
+            shared_memory=self,
+            enable_logging=(
+                self.logging_mode is not None
+                and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
+            ),
         )
 
   def get_buffer_content(
-      self, key: Any, rnge: tuple[slice | int, ...], global_core_id: int
+      self,
+      key: Any,
+      rnge: tuple[slice | int, ...],
+      global_core_id: int,
+      logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Reads contents of a memory buffer.
 
@@ -461,6 +585,7 @@ class SharedMemory:
       key: The key of the buffer to read.
       rnge: The range to read within the buffer.
       global_core_id: The global core ID of the core reading the buffer.
+      logging_info: Information about the source of the read.
 
     Returns:
       - The contents of the read range of the buffer, or None if reading out of
@@ -488,6 +613,16 @@ class SharedMemory:
       except:
         result = None
 
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\nbuffer_shape={array.shape},"
+                f" {f'{result.shape=}' if result is not None else ''}.",
+                line_prefix="`get_buffer_content`",
+            )
+        )
+
     shape_and_dtype = ShapeAndDtype(array.shape, array.dtype)
     return result, shape_and_dtype, clock
 
@@ -497,6 +632,7 @@ class SharedMemory:
       rnge: tuple[slice | int, ...],
       value: np.ndarray,
       global_core_id: int,
+      logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[bool, ShapeAndDtype, vc.VectorClock | None]:
     """Stores contents into a memory buffer.
 
@@ -505,6 +641,7 @@ class SharedMemory:
       rnge: The range within the buffer contents that `value` is written to.
       value: The array to store into the buffer.
       global_core_id: The global core ID of the core writing into the buffer.
+      logging_info: Information about the source of the store.
 
     Returns:
       - True of the store was in bounds, False otherwise.
@@ -536,6 +673,16 @@ class SharedMemory:
       else:
         is_in_bounds = False
 
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={is_in_bounds}.\nbuffer_shape={array.shape},"
+                f" {value.shape=}.",
+                line_prefix="`store_buffer_content`",
+            )
+        )
+
       return is_in_bounds, shape_and_dtype, clock
 
   def swap_buffer_content(
@@ -545,6 +692,7 @@ class SharedMemory:
       value: np.ndarray,
       mask: np.ndarray | None,
       global_core_id: int,
+      logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Swaps contents of a memory buffer.
 
@@ -554,6 +702,7 @@ class SharedMemory:
       value: The array to be written into the buffer.
       mask: The mask to apply to the swap operation.
       global_core_id: The global core ID of the core writing into the buffer.
+      logging_info: Information about the source of the swap.
 
     Returns:
       - The contents of the range of the buffer (prior to the swap), or None if
@@ -586,15 +735,15 @@ class SharedMemory:
       if mask is None:
         if in_bounds_shape == value.shape:
           array[rnge] = value
-          return raw_result.copy(), shape_and_dtype, clock
+          result = raw_result.copy()
         else:
-          return None, shape_and_dtype, clock
+          result = None
       else:
         in_bounds_mask = np.full(mask.shape, True)
         for i in range(len(in_bounds_shape)):
           in_bounds_mask[in_bounds_shape[i] :] = False
         if (~in_bounds_mask & mask).any():
-          return None, shape_and_dtype, clock
+          result = None
         else:
           in_bounds_idx = tuple(slice(i) for i in in_bounds_shape)
           result = value.copy()
@@ -604,7 +753,20 @@ class SharedMemory:
           array[rnge] = np.where(
               mask[in_bounds_idx], value[in_bounds_idx], raw_result
           )
-          return result.copy(), shape_and_dtype, clock
+          result = result.copy()
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"{key=}, {rnge=},"
+                f" in_bounds={result is not None}.\nbuffer_shape={array.shape},"
+                f" {f'{result.shape=}' if result is not None else ''}"
+                f" {value.shape=}.",
+                line_prefix="`swap_buffer_content`",
+            )
+        )
+
+      return result, shape_and_dtype, clock
 
   def update_clocks(self, low_global_core_id, high_global_core_id):
     """Synchronizes the vector clocks for the cores with ids in the range between the two arguments."""

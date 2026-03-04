@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import source_info_util
 from jax._src.pallas import primitives
 from jax._src.util import safe_map
 import jax.numpy as jnp
@@ -40,6 +41,65 @@ def get_uninitialized_value(
   if uninitialized_memory == "zero":
     return 0
   raise NotImplementedError(uninitialized_memory + " + " + str(dtype))
+
+
+class LoggingMode(enum.Flag):
+  """Logging mode for the kernel interpreter.
+
+  Attrs:
+    BARRIER: Enable logging inside GPU barrier objects.
+    SEMAPHORE: Enable logging inside (TPU) semaphore objects.
+    SHARED_MEMORY: Enable logging in the shared memory object.
+  """
+
+  BARRIER = enum.auto()
+  SEMAPHORE = enum.auto()
+  SHARED_MEMORY = enum.auto()
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class LoggingInfo:
+  """Holds information for logging."""
+
+  device_id: int
+  local_core_id: int
+  source_info: source_info_util.SourceInfo | None = None
+
+  def get_location_str(self) -> str:
+    return f"Device {self.device_id}, core {self.local_core_id}"
+
+  def get_source_info_str(self) -> str:
+    if self.source_info is None:
+      return "None"
+    return source_info_util.summarize(self.source_info)
+
+  def format(self, message: str, line_prefix: str | None = None) -> str:
+    """Formats a message for logging, across multiple lines.
+
+    Each lines is prefixed with location information (device/core/thread) and
+    with
+    the given `line_prefix`.
+
+    Args:
+      message: The message to format.
+      line_prefix: The prefix to add to each line, or None.
+
+    Returns:
+      The formatted message. Each line is prefixed with location information
+      (device/core/thread) and with the given `line_prefix`. A final lines with
+      a summary of `self.source_info`, if not `None`, is appended.
+    """
+
+    if line_prefix is None:
+      line_prefix = f"{self.get_location_str()}: "
+    else:
+      line_prefix = f"{self.get_location_str()}: {line_prefix.strip()} --"
+
+    lines = [f"{line_prefix} {l.strip()}" for l in message.split("\n")]
+    if self.source_info:
+      lines.append(f"{line_prefix} {self.get_source_info_str()}.")
+
+    return "\n".join(lines)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -82,6 +142,7 @@ class InterpretParams:
       size that is used in the interpreter will default to twice the total
       number of cores.
       Default: None.
+    logging_mode: Logging mode for the kernel interpreter.
   """
 
   detect_races: bool = False
@@ -90,6 +151,7 @@ class InterpretParams:
   uninitialized_memory: Literal["nan", "zero"] = "nan"
   num_cores_or_threads: int = 1
   vector_clock_size: int | None = None
+  logging_mode: LoggingMode | None = None
 
   def __post_init__(self):
     if self.num_cores_or_threads < 1:
@@ -141,18 +203,6 @@ class InterpretParams:
       pad_value = self.get_uninitialized_array((), value.dtype)
       value = jnp.pad(value, pad_width, constant_values=pad_value)
     return value
-
-
-class LoggingMode(enum.Flag):
-  """Logging mode for GPU interpret mode.
-
-  Attrs:
-    BARRIER: Enable logging inside barrier object.
-    SHARED_MEMORY: Enable logging in the shared memory object.
-  """
-
-  BARRIER = enum.auto()
-  SHARED_MEMORY = enum.auto()
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
