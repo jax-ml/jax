@@ -461,6 +461,20 @@ class TritonPallasTest(PallasBaseTest):
         softmax(x), jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
     )
 
+  def test_unsigned_integer_dot_raises(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+    x = jnp.ones((32, 128), dtype=jnp.uint8)
+    y = jnp.ones((128, 64), dtype=jnp.uint8)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsigned integer dtype.*not supported"):
+      dot_kernel(x, y)
+
 
 @functools.partial(
     jax.jit, static_argnames=["bm", "bn", "gm", "bk", "interpret", "debug"]

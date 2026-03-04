@@ -2246,6 +2246,14 @@ def _dot_general_lowering(
     precision,
     preferred_element_type,
 ):
+  for aval in ctx.avals_in:
+    if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
+      raise NotImplementedError(
+          f"Unsigned integer dtype {aval.dtype} is not supported for"
+          " dot_general (matmul) on the Pallas Triton GPU backend because"
+          " dot_general interprets all integer inputs as signed. Consider"
+          " casting to a signed type before the dot operation."
+      )
   del preferred_element_type, out_sharding  # Unused.
   ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
