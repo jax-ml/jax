@@ -19,7 +19,6 @@ import weakref
 from absl.testing import absltest
 import jax
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 
@@ -75,8 +74,6 @@ class GarbageCollectionGuardTest(jtu.JaxTestCase):
     self.assertIn(_GC_ERROR_MESSAGE, stderr())
 
   def test_array_reachable_from_cycle_is_logged(self):
-    if jaxlib_extension_version < 401:
-      self.skipTest("This functionality is not yet supported in jaxlib.")
     with config.array_garbage_collection_guard("log"):
       with jtu.capture_stderr() as stderr:
         b = _B()

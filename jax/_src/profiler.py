@@ -34,7 +34,6 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
-from jax._src.lib import jaxlib_extension_version
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
 
@@ -103,13 +102,13 @@ _profile_state = _ProfileState()
 
 def set_metadata(key: str, value: str) -> None:
   """Sets metadata for the current profiling session."""
-  if jaxlib_extension_version >= 402 and hasattr(_profiler, "set_metadata"):
+  if hasattr(_profiler, "set_metadata"):
     return _profiler.set_metadata(key, value)
 
 
 def clear_metadata() -> None:
   """Clears metadata for the current profiling session."""
-  if jaxlib_extension_version >= 402 and hasattr(_profiler, "clear_metadata"):
+  if hasattr(_profiler, "clear_metadata"):
     return _profiler.clear_metadata()
 
 

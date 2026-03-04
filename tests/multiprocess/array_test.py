@@ -23,7 +23,6 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -1018,8 +1017,7 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
   )
   @jtu.skip_on_devices("cpu")
   def test_cross_host_transfer_batched(self, arange_fn):
-    if jaxlib_extension_version < 400 and arange_fn == np.arange:
-      self.skipTest("This functionality is not yet supported in jaxlib.")
+
     num_arrays = 3
     xs = []
     for i in range(1, num_arrays + 1):
@@ -1093,8 +1091,7 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
 
   @jtu.skip_on_devices("cpu")
   def test_device_put_with_mixed_local_and_remote_transfers(self):
-    if jaxlib_extension_version < 398:
-      self.skipTest("This functionality is not yet supported in jaxlib.")
+
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 local devices for this test.")
 
@@ -1127,8 +1124,7 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
   )
   @jtu.skip_on_devices("cpu")
   def test_device_put_to_device(self, arange_fn):
-    if jaxlib_extension_version < 400:
-      self.skipTest("This functionality is not yet supported in jaxlib.")
+
     x = arange_fn(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1

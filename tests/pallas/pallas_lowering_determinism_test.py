@@ -15,12 +15,10 @@
 """Tests for Pallas lowering determinism."""
 
 import json
-import unittest
 
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax.experimental import pallas
 import jax.numpy as jnp
@@ -90,8 +88,6 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu")
   def testCallsiteAgnostic(self):
-    if jaxlib_extension_version < 399:
-      self.skipTest("TracebackScope requires jaxlib >= 399")
 
     def get_lowered():
       x = jnp.ones((8,), dtype=jnp.float32)
@@ -113,10 +109,6 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
     self.assertEqual(body0, body1)
 
   @jtu.run_on_devices("tpu")
-  @unittest.skipIf(
-      jaxlib_extension_version < 409,
-      "Order independence requires a recent jaxlib"
-  )
   def testOrderAgnostic(self):
     def get_pallas_body(f):
       x = jnp.ones((8,), dtype=jnp.float32)

@@ -17,10 +17,9 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-import jax.numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.experimental import buffer_callback
+import jax.numpy as jnp
 
 jax.config.parse_flags_with_absl()
 
@@ -98,8 +97,6 @@ class BufferCallbackTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_cuda_array_interface(self, dtype, command_buffer_compatible):
-    if command_buffer_compatible and jaxlib_extension_version < 337:
-      self.skipTest("Requires jaxlib extension version of at least 337.")
 
     def callback(ctx, out, arg):
       ctx.stream  # doesn't crash

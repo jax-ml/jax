@@ -32,7 +32,6 @@ from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
@@ -46,8 +45,6 @@ import numpy as np
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-# jaxlib extension version >= 400 supports _rewrap_with_aval_and_sharding
-_SUPPORTS_REWRAP = jaxlib_extension_version >= 400
 traceback_util.register_exclusion(__file__)
 
 
@@ -598,19 +595,9 @@ def host_local_array_to_global_array(
       # Fast path: rewrap without copy (shares buffers with original).
       # For donated args, jit's donation will invalidate the shared buffers,
       # which is the expected behavior - original arrays become invalid.
-      if _SUPPORTS_REWRAP:
-        dyn_args_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
-            global_aval, global_sharding
-        )
-      else:
-        # Fallback for older jaxlib: use batched_device_put with shard data.
-        arrays = [x.data for x in arr.addressable_shards]
-        dyn_args_flat[i] = pxla.batched_device_put(
-            global_aval,
-            global_sharding,
-            arrays,
-            list(local_sharding._device_assignment),
-        )  # pylint: disable=protected-access
+      dyn_args_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+          global_aval, global_sharding
+      )
     else:
       # Slow path: slice and device_put (creates new buffers).
       # For donated args, we must explicitly delete the original to free memory.
@@ -690,15 +677,9 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
     if typ == array.ArrayImpl:
       if not _is_sharding_equivalent(arr.sharding, global_sharding, len(shape)):
         arr = api.device_put(arr, global_sharding)
-      if _SUPPORTS_REWRAP:
-        out_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
-            local_aval, local_sharding
-        )
-      else:
-        # Fallback for older jaxlib: construct ArrayImpl directly.
-        out_flat[i] = array.ArrayImpl(
-            local_aval, local_sharding, arr._arrays, committed=True
-        )  # pylint: disable=protected-access
+      out_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+          local_aval, local_sharding
+      )
     else:
       arrays = [
           arr[idx] for idx in _local_device_indices(local_sharding, shape)

@@ -14,21 +14,18 @@
 
 import contextlib
 import traceback
-import unittest
 
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
 
 Traceback = _jax.Traceback
 Frame = _jax.Frame
-if jaxlib_extension_version >= 399:
-  TracebackScope = _jax.TracebackScope
+TracebackScope = _jax.TracebackScope
 
 
 @contextlib.contextmanager
@@ -117,7 +114,6 @@ class TracebackTest(absltest.TestCase):
     for frame, _ in traceback.walk_tb(python_tb):
       _ = frame.f_locals  # should not crash
 
-  @unittest.skipIf(jaxlib_extension_version < 409, reason="Needs newer jaxlib")
   def testAdd(self):
     def FooFn():
       return Traceback.get_traceback()
@@ -191,8 +187,6 @@ class TracebackTest(absltest.TestCase):
 class TracebackScopeTest(absltest.TestCase):
 
   def testTracebackScope(self):
-    if jaxlib_extension_version < 399:
-      self.skipTest("TracebackScope requires jaxlib >= 399")
 
     def Inner():
       return Traceback.get_traceback()
@@ -213,8 +207,6 @@ class TracebackScopeTest(absltest.TestCase):
       )
 
   def testTracebackScopeNesting(self):
-    if jaxlib_extension_version < 399:
-      self.skipTest("TracebackScope requires jaxlib >= 399")
 
     def Inner():
       return Traceback.get_traceback()

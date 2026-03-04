@@ -14,14 +14,12 @@
 
 import inspect
 import re
-import unittest
 
 from absl.testing import absltest
 import jax
 from jax import lax
 from jax._src import source_info_util
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 
 jax.config.parse_flags_with_absl()
@@ -121,7 +119,6 @@ class SourceInfoTest(jtu.JaxTestCase):
         self.assertLessEqual(fn_startline, frame.start_line)
         self.assertLessEqual(frame.end_line, fn_endline)
 
-  @unittest.skipIf(jaxlib_extension_version < 409, reason="Needs newer jaxlib")
   def test_jit_traceback_boundaries_in_mlir(self):
 
     @jax.jit

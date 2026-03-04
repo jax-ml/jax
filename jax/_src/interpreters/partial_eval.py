@@ -44,7 +44,6 @@ from jax._src.core import (
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
     mapped_aval, unmapped_aval, get_referent, JaxprEqnContext, typeof)
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import FlatTree, PyTreeDef, treedef_tuple
@@ -67,11 +66,7 @@ AttrKind = Any
 PyTree = Any
 logger = logging.getLogger(__name__)
 
-# TODO(phawkins): remove after jaxlib 0.9.1 is the minimum
-if jaxlib_extension_version >= 406:
-  TracebackScope = _jax.TracebackScope
-else:
-  TracebackScope = contextlib.nullcontext  # type: ignore
+TracebackScope = _jax.TracebackScope
 
 
 class PartialVal(tuple):

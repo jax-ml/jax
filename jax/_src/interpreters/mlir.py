@@ -2056,7 +2056,7 @@ def jaxpr_subcomp(
   foreach(write, jaxpr.constvars, consts_for_constvars)
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
-  if jaxlib_extension_version >= 409:
+  if jaxlib_extension_version >= 413:
     outer_traceback = outer_traceback or xc.Traceback()
   else:
     outer_traceback = None
@@ -2069,9 +2069,8 @@ def jaxpr_subcomp(
     tokens_in = tokens.subset(ordered_effects)
 
     eqn_name_stack = name_stack + eqn.source_info.name_stack
-    if jaxlib_extension_version >= 409:
-      assert outer_traceback is not None
-      traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback
+    if jaxlib_extension_version >= 413:
+      traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback  # pyrefly: ignore[unsupported-operation]
     else:
       traceback = eqn.source_info.traceback
     loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)

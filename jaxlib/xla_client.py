@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 412  # LLVM API change: nvvm.elect_sync signature update
+_version = 413  # Traceback.__add__ nb::sig return type fix
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -159,23 +159,14 @@ def make_c_api_client(
   """
   if options is None:
     options = {}
-  if _version >= 410:
-    return _xla.get_c_api_client(
-        plugin_name,
-        options,
-        distributed_client,
-        transfer_server_factory,
-        force_dcn_cross_host_transfers,
-        sort_devices_by_process_index,
-    )
-  else:
-    return _xla.get_c_api_client(
-        plugin_name,
-        options,
-        distributed_client,
-        transfer_server_factory,
-        force_dcn_cross_host_transfers,
-    )
+  return _xla.get_c_api_client(
+      plugin_name,
+      options,
+      distributed_client,
+      transfer_server_factory,
+      force_dcn_cross_host_transfers,
+      sort_devices_by_process_index,
+  )
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
