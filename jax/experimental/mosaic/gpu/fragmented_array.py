@@ -2768,52 +2768,15 @@ class FragmentedArray:
     )
 
   def broadcast(self, shape) -> FragmentedArray:
+    new_layout: FragmentedLayout
     if isinstance(self.layout, WGStridedFragLayout):
-      src_shape, dst_shape = self.layout.shape, shape
-      if len(src_shape) > len(dst_shape):
-        raise ValueError(
-            f"Shape length mismatch. Expected len({src_shape}) <= len({dst_shape})"
-        )
-      if not all(s == 1 or s == d for s, d in zip(src_shape[::-1], dst_shape[::-1])):
-        raise ValueError(
-            "Can broadcast if all source dimensions match trailing target"
-            " dimensions by being equal or set to 1. Broadcasting from"
-            f" {src_shape} to {dst_shape}"
-        )
-      rank_diff = len(dst_shape) - len(src_shape)
-      src_shape = tuple([1] * rank_diff + list(src_shape))
-
-      assert len(src_shape) == len(dst_shape), (src_shape, dst_shape)
-      len_suffix = next(
-          (i for i in range(len(src_shape)) if src_shape[~i] != dst_shape[~i]),
-          len(src_shape)
-      )
-      if len_suffix > 0 and all(x == 1 for x in src_shape[:-len_suffix]):
-        return FragmentedArray(
-            _registers=np.tile(self.registers, np.prod(dst_shape[:-len_suffix])),
-            _layout=WGStridedFragLayout(shape, self.layout.vec_size),
-            _is_signed=self.is_signed,
-        )
-
-      raise NotImplementedError(
-          "Only major-most broadcast for WGStridedFragLayout is implemented."
-          f" Broadcasting from: {src_shape}, to: {dst_shape}."
-      )
-
-    if not isinstance(self.layout, WGSplatFragLayout):
+      new_layout = WGStridedFragLayout(shape, self.layout.vec_size)
+    elif isinstance(self.layout, WGSplatFragLayout):
+      new_layout = WGSplatFragLayout(shape)
+    else:
       raise NotImplementedError(self.layout)
-
-    if self.shape == shape:
-      return self
-
-    if not self.layout.can_broadcast_to(shape):
-      raise ValueError(f"Can't broadcast {self.shape} to {shape}")
-
-    return FragmentedArray(
-        _registers=self.registers,
-        _layout=WGSplatFragLayout(shape),
-        _is_signed=self.is_signed,
-    )
+    dims = range(len(shape) - len(self.shape), len(shape))
+    return self.broadcast_in_dim(shape, dims, new_layout)
 
   def reshape(self, shape: tuple[int, ...]) -> FragmentedArray:
     if self.shape == shape:
@@ -2870,7 +2833,7 @@ class FragmentedArray:
       self, shape, source_dimensions, layout: FragmentedLayout
   ) -> FragmentedArray:
     for i, target_dim in enumerate(source_dimensions):
-      if self.shape[i] != shape[target_dim]:
+      if self.shape[i] != shape[target_dim] and self.shape[i] != 1:
         raise ValueError(
             f"Dimension {i} has size {self.shape[i]} in source shape and"
             f" {shape[target_dim]} in shape after broadcast"
@@ -2880,19 +2843,44 @@ class FragmentedArray:
         self.registers.item(), shape, layout, is_signed=self.is_signed
       )
     if isinstance(self.layout, WGStridedFragLayout) and isinstance(layout, WGStridedFragLayout):
-      new_dims = set(range(len(shape))) - set(source_dimensions)
-      vec_match = self.layout.vec_size == layout.vec_size
-      broadcast_dim_match = new_dims == set(range(len(new_dims)))
-      assert layout.shape == shape, (layout.shape, shape)
-      if vec_match and broadcast_dim_match:
-        return FragmentedArray(
-            _registers=np.tile(
-                self.registers,
-                np.prod(shape[:len(new_dims)]),
-            ),
-            _layout=layout,
-            _is_signed=self.is_signed,
+      if self.layout.vec_size != layout.vec_size:
+        raise NotImplementedError(
+            "vector size must match for broadcast of WGStridedFragLayout"
         )
+      # Check if input maps exactly to the end (prevents transpose & trailing
+      # dims).
+      if list(source_dimensions) != list(
+          range(len(shape) - len(self.shape), len(shape))
+      ):
+        raise NotImplementedError(
+            "Broadcast of trailing dimensions is not supported for"
+            " WGStridedFragLayout"
+        )
+      # Identify input indices that are expanded vs. those that are preserved
+      # Expansion: input is 1, output is > 1.
+      # Preserved: input is > 1.
+      exp_indices, pre_indices = [], []
+      for i, dim in enumerate(self.shape):
+        if dim == 1 and shape[source_dimensions[i]] > 1:
+          exp_indices.append(i)
+        if dim > 1:
+          pre_indices.append(i)
+      # If both exist, all expansions must happen before all preserved
+      # dimensions.
+      if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
+        raise NotImplementedError(
+            "Broadcast of trailing dimensions is not supported for"
+            " WGStridedFragLayout"
+        )
+      assert layout.shape == shape, (layout.shape, shape)
+      return FragmentedArray(
+          _registers=np.tile(
+              self.registers,
+              np.prod(shape) // np.prod(self.shape),
+          ),
+          _layout=layout,
+          _is_signed=self.is_signed,
+      )
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):

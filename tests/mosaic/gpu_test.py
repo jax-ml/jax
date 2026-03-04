@@ -4449,24 +4449,32 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(result, inp)
 
   @parameterized.parameters(
-      (128, 128), (64, 128), (64, 256)
+      ((1, 128), (4, 128)),
+      ((1, 1, 128), (2, 4, 128)),
+      ((128,), (4, 128)),
   )
-  def test_broadcast_in_dim_major_strided(self, m, n):
+  def test_broadcast_in_dim_major_strided(self, src_shape, dst_shape):
     dtype = jnp.float16
-    def kernel(ctx, gmem_input, gmem_output, _):
-      t = mgpu.FragmentedArray.load_strided(
-          gmem_input, vec_size=1
-      )
-      t.broadcast_in_dim((m, n), (1,),
-          mgpu.WGStridedFragLayout(shape=(m, n), vec_size=1),
-      ).store_untiled(gmem_output, optimized=False)
+    dims = range(len(dst_shape) - len(src_shape), len(dst_shape))
 
-    inp = self.prng.uniform(-1, 1, (n,)).astype(dtype)
-    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    def kernel(ctx, src, dst, scratch):
+      del ctx, scratch
+      t = mgpu.FragmentedArray.load_strided(src, vec_size=1)
+      layout = mgpu.WGStridedFragLayout(shape=dst_shape, vec_size=1)
+      t.broadcast_in_dim(dst_shape, dims, layout).store_untiled(
+          dst, optimized=False
+      )
+
+    inp = self.prng.uniform(-1, 1, src_shape).astype(dtype)
     result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, inp
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (inp,),
+        jax.ShapeDtypeStruct(dst_shape, dtype),
+        inp,
     )(inp)
-    out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
+    out_ref = jax.lax.broadcast_in_dim(inp, dst_shape, dims)
     np.testing.assert_array_equal(result, out_ref)
 
   @parameterized.parameters(
