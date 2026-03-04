@@ -86,7 +86,7 @@ class _ShardingCallbackInfo:
     )
 
 
-_sharding_callbacks = weakref.WeakValueDictionary()  # type: ignore
+_sharding_callbacks = weakref.WeakValueDictionary()
 
 _CUSTOM_PARTITIONING_CALL_NAME = "CustomSPMDPartitioning"
 

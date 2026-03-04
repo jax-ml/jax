@@ -1389,10 +1389,10 @@ def _get_vjp_fun(
     else:
       assert device_assignment is not None
       vjp_in_shardings = tuple(
-          _hlo_sharding_to_gspmd_sharding(s, device_assignment)  # type: ignore
+          _hlo_sharding_to_gspmd_sharding(s, device_assignment)
           for s in itertools.chain(in_shardings_hlo, out_shardings_hlo))
       vjp_out_shardings = tuple(
-          _hlo_sharding_to_gspmd_sharding(s, device_assignment)  # type: ignore
+          _hlo_sharding_to_gspmd_sharding(s, device_assignment)
           for s in in_shardings_hlo)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,

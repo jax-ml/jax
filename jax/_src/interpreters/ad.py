@@ -103,7 +103,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
       del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
-  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info),    # type: ignore
+  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info),
                      out_tangents)
   jaxpr, consts = tangent_trace.to_jaxpr(
       out_tangents, debug_info.with_unknown_names(), source_info)  # type: ignore
@@ -370,7 +370,7 @@ def backward_pass3(
       ans = ans if eqn.primitive.multiple_results else [ans]
       foreach(env.setdefault, eqn.outvars, ans)
 
-  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack  # type: ignore
+  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
   for acc, ct in zip(map(read, jaxpr.outvars), cotangents_in):
     if isinstance(acc, GradAccum):
@@ -1206,7 +1206,7 @@ def instantiate_zeros(tangent):
     if hasattr(tangent.aval, 'sharding'):
       # TODO(dougalm, yashkatariya): Delete this context manager once we figure
       # out how to ensure jaxpr arguments always have the context mesh.
-      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):
         return zeros_like_aval(tangent.aval)
     return zeros_like_aval(tangent.aval)
   return tangent

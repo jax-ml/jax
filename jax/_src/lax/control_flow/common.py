@@ -59,7 +59,7 @@ def _merge_common_consts(
   # De-duplicate shared constants.
   const_ids = tuple(id(c) for c in consts)
   seen = set()
-  dd_consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]  # type: ignore
+  dd_consts = [c for c in consts if id(c) not in seen and not seen.add(id(c))]
   jaxprs = [_dedup_consts(jaxpr, len(consts), const_ids) for jaxpr in jaxprs]
   return jaxprs, dd_consts
 

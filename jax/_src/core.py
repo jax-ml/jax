@@ -549,7 +549,7 @@ class Literal:
         except (TypeError, AttributeError, ValueError):
           return None
 
-  __hash__ = None  # type: ignore
+  __hash__ = None
 
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del context  # unused
@@ -587,13 +587,13 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
     return []
   consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
   for v in jaxpr.outvars:
-    if type(v) is Literal and np.shape(v.val):  # type: ignore
-      consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+    if type(v) is Literal and np.shape(v.val):
+      consts_by_id[id(v)] = (v.val, v.aval)
 
   for eqn in jaxpr.eqns:
     for v in eqn.invars:
-      if type(v) is Literal and np.shape(v.val):  # type: ignore
-        consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+      if type(v) is Literal and np.shape(v.val):
+        consts_by_id[id(v)] = (v.val, v.aval)
     consts_by_id.update({id(v_aval[0]): v_aval
                          for v_aval in eqn_params_const_args(eqn.params)})
   return list(consts_by_id.values())
@@ -912,7 +912,7 @@ else:
 class Tracer(TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
   __slots__ = ['__weakref__', '_trace', '_line_info']
-  __hash__ = None  # type: ignore
+  __hash__ = None
 
   _trace: Trace
   _line_info: source_info_util.SourceInfo | None
@@ -1753,7 +1753,7 @@ class AbstractValue:
     return unshard_aval(mesh, check_vma, spec, self)
 
   def vspace_add(self, x, y):
-    from jax._src.ad_util import add_jaxvals  # type: ignore
+    from jax._src.ad_util import add_jaxvals  # pytype: disable=import-error
     return add_jaxvals(x, y)
 
 InputType = tuple[AbstractValue, ...]
@@ -1942,7 +1942,7 @@ class AvalQDD:
 
   has_qdd = True
   def lo_ty(self):
-    return self.aval.lo_ty_qdd(self.qdd)  # type: ignore
+    return self.aval.lo_ty_qdd(self.qdd)
 
   def read_loval(self, val):
     return self.aval.read_loval(self.qdd, val)  # type: ignore
@@ -1998,7 +1998,7 @@ def physical_aval(aval):
   if (isinstance(aval, ShapedArray) and
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
-    from jax._src.sharding_impls import physical_sharding  # type: ignore
+    from jax._src.sharding_impls import physical_sharding  # pytype: disable=import-error
     return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
                        sharding=physical_sharding(aval, aval.sharding),
                        vma=aval.vma)
@@ -2009,7 +2009,7 @@ def physical_shape(logical_shape, dtype):
   return (*logical_shape, *elt_aval.shape)
 
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
-  duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
+  duck = edtype._rules.physical_element_aval(edtype)
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
 
 
@@ -2612,16 +2612,16 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
   """
   return ref_p.bind(init_val, memory_space=memory_space, kind=kind)
 ref_p = Primitive('new_ref')
-ref_p.is_effectful = lambda params: True  # type: ignore
+ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
 
-ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high  # type: ignore
+ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
 def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
-  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
+  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
   return Ref(AbstractRef(val_ty), hival_of_refs)
-ref_p.to_lojax = _ref_to_lojax  # type: ignore
+ref_p.to_lojax = _ref_to_lojax
 
 
 # TODO(mattjj,dougalm): merge with ref_p
@@ -2630,7 +2630,7 @@ def empty_ref(ty, memory_space=None):
   return empty_ref_p.bind(ty=aval, memory_space=memory_space)
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
-empty_ref_p.is_effectful = lambda _: True  # type: ignore
+empty_ref_p.is_effectful = lambda _: True
 
 
 @empty_ref_p.def_effectful_abstract_eval
@@ -2648,7 +2648,7 @@ def free_ref(ref: Ref):
 
 free_ref_p = Primitive('free_ref')
 free_ref_p.multiple_results = True
-free_ref_p.is_effectful = lambda _: True  # type: ignore
+free_ref_p.is_effectful = lambda _: True
 free_ref_p.ref_primitive = True
 
 
@@ -2712,7 +2712,7 @@ def freeze(ref: Ref) -> Array:
   """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
-freeze_p.is_effectful = lambda params: True  # type: ignore
+freeze_p.is_effectful = lambda params: True
 freeze_p.ref_primitive = True
 
 @freeze_p.def_effectful_abstract_eval
@@ -2727,10 +2727,10 @@ def accum_grad_in_ref(x):
   return accum_grad_in_ref_p.bind(x)
 
 accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
-accum_grad_in_ref_p.is_high = lambda *_: True  # type: ignore
-accum_grad_in_ref_p.to_lojax = lambda x: x  # type: ignore
-accum_grad_in_ref_p.def_abstract_eval(lambda x: x)  # type: ignore
-accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
+accum_grad_in_ref_p.is_high = lambda *_: True
+accum_grad_in_ref_p.to_lojax = lambda x: x
+accum_grad_in_ref_p.def_abstract_eval(lambda x: x)
+accum_grad_in_ref_p.def_impl(lambda x: x)
 
 
 class AbstractToken(AbstractValue):
@@ -3084,7 +3084,7 @@ class MapPrimitive(Primitive):
     return [subfun], new_params
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
     return aval.dec_rank(size, axis)  # type: ignore
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
@@ -3099,7 +3099,7 @@ def mapped_leading_aval(size, aval) -> AbstractValue:
 # TODO(yashkatariya): take axis data
 def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
     return aval.inc_rank(size, axis)  # type: ignore
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
@@ -3227,9 +3227,12 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
     return t1.dtype == t2.dtype and cmp_shape_shd_vma_memsp(t1, t2)
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    return (typematch(t1.inner_aval, t2.inner_aval, no_dtype_check) and  # type: ignore
-            (t1.memory_space is None or t2.memory_space is None or  # type: ignore
-             t1.memory_space == t2.memory_space))  # type: ignore
+    # TODO(slebedev): Remove these aliases once we migrate off pytype.
+    t1_any: Any = t1
+    t2_any: Any = t2
+    return (typematch(t1_any.inner_aval, t2_any.inner_aval, no_dtype_check) and
+            (t1_any.memory_space is None or t2_any.memory_space is None or
+             t1_any.memory_space == t2_any.memory_space))
   else:
     return False
 
@@ -3714,7 +3717,7 @@ def _sds_aval_mapping(x):
   aval = update_aval_with_sharding(
       aval, x.sharding, vma=(frozenset() if x.vma is None else x.vma))
   if x.is_ref:
-    from jax._src.state.types import AbstractRef  # type: ignore
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
     return AbstractRef(aval)
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
@@ -4021,12 +4024,12 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
       del env[v]
 
 # Used in shard_map for converting avals
-shard_aval_handlers = {}  # type: ignore
-unshard_aval_handlers = {}  # type: ignore
+shard_aval_handlers = {}
+unshard_aval_handlers = {}
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
     return aval.shard(mesh, manual_axes, check_vma, spec)
   if (handler := shard_aval_handlers.get(type(aval))):
@@ -4035,7 +4038,7 @@ def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
 
 def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
                  ) -> AbstractValue:
-  from jax._src.hijax import HiType  # type: ignore
+  from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
     return aval.unshard(mesh, check_vma, spec)
   if (handler := unshard_aval_handlers.get(type(aval))):

@@ -233,9 +233,9 @@ class _DimFactor:
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
       if self.operation == _DimFactor.FLOORDIV:
-        return divmod(*operand_values)[0]  # type: ignore
+        return divmod(*operand_values)[0]
       elif self.operation == _DimFactor.MOD:
-        return divmod(*operand_values)[1]  # type: ignore
+        return divmod(*operand_values)[1]
       elif self.operation == _DimFactor.MAX:
         op1, op2 = operand_values
         if core.is_constant_dim(op1) and core.is_constant_dim(op2):
@@ -1277,7 +1277,7 @@ def _einsum_contract_path(*operands, **kwargs):
 shape_assertion_p = core.Primitive("shape_assertion")
 shape_assertion_p.multiple_results = True
 shape_assertion_p.def_effectful_abstract_eval(
-  lambda *_, **__: ((), {shape_assertion_effect}))  # type: ignore
+  lambda *_, **__: ((), {shape_assertion_effect}))
 
 def _shape_assertion_lowering_rule(ctx: mlir.LoweringRuleContext,
                                    assert_what: mlir.ir.Value,

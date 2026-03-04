@@ -368,14 +368,14 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   x = np.ascontiguousarray(x)
   try:
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
   except ValueError:
     # Backwards compatibility fallback for old MLIR versions.
     # Delete once minimum supported jaxlib version is 0.9.1.
     if x.dtype != np.bool_:
       raise
     x = np.ascontiguousarray(np.packbits(x, bitorder='little'))
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -1092,7 +1092,7 @@ def _to_physical_op_sharding(
     sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
   if config.use_shardy_partitioner.value:
     return sharding._to_sdy_sharding(aval.ndim)
-  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
+  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
 
 
 def _to_xla_layout(layout: Layout | None | AutoLayout,
@@ -1693,7 +1693,7 @@ def lower_jaxpr_to_fun(
       if pom is not None and mk is None:
         res.append([pom] * len_ir_types(types))
       else:
-        res.append([mk] * len_ir_types(types))  # type: ignore
+        res.append([mk] * len_ir_types(types))
       # To add the custom call on the output to signal a transfer, only do it
       # if memory kind comes from out_shardings on `jit` and result_memory_kinds
       # comes from out_shardings on `jit`.
@@ -1805,7 +1805,7 @@ def lower_jaxpr_to_fun(
 
   if use_sharding_annotations and ir_result_shardings is not None:
     for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                   unconstrained_variants):  # type: ignore
+                                   unconstrained_variants):
       if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
@@ -1880,7 +1880,7 @@ def lower_jaxpr_to_fun(
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
           for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 arg_shardings)  # type: ignore
+                                 arg_shardings)
       ]
 
     _, token_args, _, unflattened_args = util.split_list(
@@ -1913,7 +1913,7 @@ def lower_jaxpr_to_fun(
     if ir_result_shardings is not None:
       temp_flat_outputs = []
       for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                  output_avals, unconstrained_variants):  # type: ignore
+                                  output_avals, unconstrained_variants):
         if (s is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
@@ -1945,7 +1945,7 @@ def lower_jaxpr_to_fun(
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 result_shardings)  # type: ignore
+                                 result_shardings)
       ]
 
     func_dialect.return_(flat_outputs)

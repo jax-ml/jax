@@ -577,7 +577,7 @@ def _remat_bind(*args, jaxpr, prevent_cse, differentiated, policy):
   assert isinstance(prevent_cse, bool) or len(prevent_cse) == len(args)
   return core.Primitive.bind(remat_p, *args, jaxpr=jaxpr, prevent_cse=prevent_cse,
                              differentiated=differentiated, policy=policy)
-remat_p.bind = _remat_bind  # type: ignore
+remat_p.bind = _remat_bind
 
 @remat_p.def_impl
 def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
@@ -892,7 +892,7 @@ def _remat_lowering(
         mlir.flatten_ir_values(barrier_args))
     barrier_results = mlir.unflatten_ir_values_like_types(
         barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-    args = merge_lists(prevent_cse, other_args, barrier_results)  # type: ignore
+    args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
       ctx.tokens_in, (), *args, dim_var_values=ctx.dim_var_values,
@@ -905,7 +905,7 @@ mlir.register_lowering(remat_p, _remat_lowering)
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.is_high
-remat_p.is_high = _remat_is_high  # type: ignore
+remat_p.is_high = _remat_is_high
 
 
 def _remat_to_lojax(*hi_args, jaxpr, **kwds):
@@ -1017,7 +1017,7 @@ class RematTraced(VJPHiPrimitive):
     super().__init__()
 
   def expand(self, *args):
-    return self.traced(*args)  # type: ignore
+    return self.traced(*args)
 
   def vjp_fwd(self, _nzs_in, *primals):
     primals_out, fwd2 = remat_transform(self.policy, self.traced, *primals)

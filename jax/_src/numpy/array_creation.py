@@ -189,7 +189,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
-def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
+def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:
   if isinstance(dtype, int) and isinstance(shape, int):
     return (f"Cannot interpret '{dtype}' as a data type."
             f"\n\nDid you accidentally write "

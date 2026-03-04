@@ -678,7 +678,7 @@ run_state_p.multiple_results = True
 
 def _run_state_is_high(*_, jaxpr, **__):
   return jaxpr.is_high
-run_state_p.is_high = _run_state_is_high  # type: ignore
+run_state_p.is_high = _run_state_is_high
 
 def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
   assert not jaxpr.constvars

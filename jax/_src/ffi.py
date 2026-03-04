@@ -338,7 +338,7 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
   avals: list[core.AbstractValue] = []
   for idx, result in enumerate(results):
     if result is core.abstract_token:
-      avals.append(result)  # type: ignore
+      avals.append(result)
     else:
       if not hasattr(result, "shape") or not hasattr(result, "dtype"):
         raise ValueError(

@@ -611,7 +611,7 @@ class ArrayImpl(basearray.Array):
     return self
 
   @use_cpp_method()
-  def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:  # type: ignore
+  def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
     ...  # pytype: disable=bad-return-type
 
   @use_cpp_method()

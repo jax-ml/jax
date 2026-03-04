@@ -380,7 +380,7 @@ class SdyArray:
 # parameter to it `_to_sdy_sharding(self, ndim, modify_wrt_axis_types=False)`
 def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
   if mesh._any_axis_auto:
-    dim_shardings, used_axes = [], []  # type: ignore
+    dim_shardings, used_axes = [], []
     for d in sdy_sharding.dim_shardings:
       dim_shardings.append(SdyDim(axes=d.axes, is_open=True))
       used_axes.extend(d.axes)
@@ -431,7 +431,7 @@ def named_sharding_to_xla_hlo_sharding(
   last_tile_dims = []
   if replicated_mesh_axes:
     axes_by_type: dict[Any, list[int]] = collections.defaultdict(list)
-    size_by_type = collections.defaultdict(lambda: 1)  # type: ignore
+    size_by_type = collections.defaultdict(lambda: 1)
     assert {x[0] for x in replicated_mesh_axes}.issuperset(set(special_axes.keys()))
     for i, size in replicated_mesh_axes:
       ty = special_axes.get(i, xc.OpSharding.Type.REPLICATED)

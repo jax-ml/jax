@@ -213,7 +213,7 @@ class BaseMesh:
 def _unpicke_mesh(devices, axis_names, axis_types):
   return Mesh(devices, axis_names, axis_types)
 
-_mesh_object_dict = {}  # type: ignore
+_mesh_object_dict = {}
 
 
 class Mesh(BaseMesh, contextlib.ContextDecorator):

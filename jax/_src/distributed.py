@@ -178,7 +178,7 @@ class State:
       jax_partition_index = os.environ.get('JAX_PARTITION_INDEX')
       jax_slice_index = os.environ.get('JAX_SLICE_INDEX')
       if jax_partition_index is not None:
-        partition_index = int(jax_partition_index)  # type: ignore
+        partition_index = int(jax_partition_index)
       elif jax_slice_index is not None:
         # Deprecation added 2025-08-05. Should be removed after 3 months.
         warnings.warn(
@@ -186,7 +186,7 @@ class State:
             ' JAX_PARTITION_INDEX instead.',
             DeprecationWarning,
         )
-        partition_index = int(jax_slice_index)  # type: ignore
+        partition_index = int(jax_slice_index)
     self.partition_index = partition_index
 
   def shutdown(self):

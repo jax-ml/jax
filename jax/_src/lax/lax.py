@@ -5081,7 +5081,7 @@ ad.defjvp(to_edtype_p,
           lambda t, x, edtype:
           convert_element_type(t, core.primal_dtype_to_tangent_dtype(edtype)))
 ad.primitive_transposes[to_edtype_p] = \
-    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]  # type: ignore
+    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
 mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
 

@@ -569,7 +569,7 @@ def _copy_gmem_to_smem_lowering(
     # Bytes is the destination size, which is only half of the total
     # size of the partitioned transfer so we need to double it.
     bytes *= 2
-    if len(collective) != 1:  # type: ignore
+    if len(collective) != 1:
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
@@ -598,7 +598,7 @@ def _copy_gmem_to_smem_lowering(
       if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),  # type: ignore
+            mgpu.utils.cluster_idx(collective[0]),
             mgpu.c(0, ir.IndexType.get()),
         )
         barrier.arrive_expect_tx(bytes, predicate=first_block)
@@ -614,7 +614,7 @@ def _copy_gmem_to_smem_lowering(
       if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),  # type: ignore
+            mgpu.utils.cluster_idx(collective[0]),
             mgpu.c(0, ir.IndexType.get()),
         )
         with mgpu.when(first_block):
@@ -1397,7 +1397,7 @@ def _wgmma_warpgroup_lowering(
     a_transforms_num_leaves = a_transforms_tree.num_leaves
   else:
     a_transforms_num_leaves = 0
-    b_transforms_leaves = transforms_leaves  # type: ignore
+    b_transforms_leaves = transforms_leaves
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
@@ -1883,7 +1883,7 @@ def _tcgen05_mma_lowering(
       ):
         lhs_transpose = True
       case () if isinstance(a_ref, tcgen05.TMEMRef):
-        lhs_tiling = None  # type: ignore
+        lhs_tiling = None
       case _:
         raise NotImplementedError(
             f"Unsupported transforms for LHS: {a_transforms}."
@@ -3761,7 +3761,7 @@ def try_cluster_cancel_lowering(
           f"Unimplemented transforms for result ref: {res_transforms}"
       )
   else:
-    barrier_transforms_leaves = transforms_leaves  # type: ignore
+    barrier_transforms_leaves = transforms_leaves
 
   if barrier_transforms_tree is not None:
     base_index = _extract_barrier_slice_base(

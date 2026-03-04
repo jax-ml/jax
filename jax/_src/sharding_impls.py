@@ -156,7 +156,7 @@ class SingleDeviceSharding(jsharding.Sharding):
   def with_memory_kind(self, kind: str) -> SingleDeviceSharding:
     return SingleDeviceSharding(self._device, memory_kind=kind)
 
-  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:  # type: ignore
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     return {self._device: (slice(None),) * len(global_shape)}
 
   @property
@@ -1042,7 +1042,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
       phys_spec = (*phys_sharding.spec,
                    *[None] * (len(phys_shape) - len(phys_sharding.spec)))
     else:
-      phys_spec = phys_sharding.spec  # type: ignore
+      phys_spec = phys_sharding.spec
     return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)

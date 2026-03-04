@@ -119,7 +119,7 @@ def _sharding_spec_repr(self):
 
 ShardingSpec.indices = _sharding_spec_indices
 # mypy raises: error: Cannot assign to a method  [assignment]
-ShardingSpec.__repr__ = _sharding_spec_repr  # type: ignore
+ShardingSpec.__repr__ = _sharding_spec_repr
 
 
 Index = Union[int, slice, tuple[Union[int, slice], ...]]

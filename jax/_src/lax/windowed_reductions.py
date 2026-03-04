@@ -922,7 +922,7 @@ def _select_and_gather_add_lowering(
     # 2k-bit unsigned integer using bit tricks.
     word_dtype = lax._UINT_DTYPES[nbits]
     double_word_dtype = lax._UINT_DTYPES[nbits * 2]
-    word_type = mlir.dtype_to_ir_type(word_dtype)  # type: ignore
+    word_type = mlir.dtype_to_ir_type(word_dtype)
     # Packs two values into a double_word_type.
     def pack(a, b, ab_aval):
       word_type_ab_aval = ab_aval.update(dtype=word_dtype)
