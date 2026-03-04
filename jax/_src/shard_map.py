@@ -1624,6 +1624,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
 
 #  primal_out, tangent_out = tree_unflatten(out_tree(), result)
 #  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
+
 #                 for p, t in zip(primal_out, tangent_out)]
 #  return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp
@@ -1645,57 +1646,34 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
     jaxpr, fwd_data = pe.trace_to_subjaxpr_nounits_fwd2(
           f, trace.tag, debug_info.with_unknown_names(), False, in_pvals)
-    (input_fwds, output_fwds, out_pvals, res, env) = fwd_data
+    (in_fwds, out_fwds, out_pvals, res, env) = fwd_data
     out_knowns, _, out_consts = pe.partition_pvals(out_pvals)
+    which = [f1 is None and f2 is None and not v.aval.shape
+             for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
+    jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
+    out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+                  for x in out_consts]
     res_avals = [typeof(r) for r in res]
-    aux = (input_fwds, output_fwds, out_knowns, res_avals, jaxpr, env)
-    breakpoint()
-#      return (*out_consts, *res)
+    _, out_specs = out_pvals.unpack_aux()
+    _, out_known_specs = pe.partition_list(out_knowns, out_specs)
+    if check_vma:
+      res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
+    else:
+      res_specs = [P(all_names)] * len(res_avals)
+    new_out_specs = (*out_known_specs, *res_specs)
+    ans_ft = FlatTree.flatten((out_consts, res))
+    aux = (in_fwds, out_fwds, out_knowns, res_avals, jaxpr, env, out_specs, new_out_specs)
+    return ans_ft.with_aux(aux).with_aux(new_out_specs)
 
-# def partial_eval_wrapper_nounits2(
-#     f: Callable,
-#     store: lu.Store,
-#     in_knowns: Sequence[bool],
-#     in_avals: Sequence[AbstractValue],
-#     *in_consts: Any):
-#   in_avals_, in_consts_ = iter(in_avals), iter(in_consts)
-#   in_pvals = [PartialVal.known(next(in_consts_)) if known else
-#               PartialVal.unknown(next(in_avals_)) for known in in_knowns]
-#   sentinel = object()
-#   assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
-#   jaxpr, (*maybe_fwds, out_pvals, res, env) = f(in_pvals)
-#   out_knowns, _, out_consts = partition_pvals(out_pvals)
-#   res_avals = [typeof(r) for r in res]
-#   store.store((*maybe_fwds, out_knowns, res_avals, jaxpr, env))
-#   return (*out_consts, *res)
-
-
-#   f = _promote_scalar_residuals(f)
-#   f_known, aux = pe.partial_eval_wrapper_nounits2(
-#       f, (*in_knowns,), (*in_avals_sharded,))
-#   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
-# 
-#   @as_hashable_function(closure=out_specs_thunk)
-#   def known_out_specs():
-#     _, _, out_knowns, res_avals, _, _ = aux()
-#     _, out_known_specs = pe.partition_list(out_knowns, out_specs_thunk())
-#     if check_vma:
-#       res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
-#     else:
-#       res_specs = [P(all_names)] * len(res_avals)
-#     return (*out_known_specs, *res_specs)
-# 
   known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
                       check_vma=check_vma, manual_axes=manual_axes,
                       debug_info=debug_info.with_unknown_names())
   out = shard_map_p.bind_with_trace(trace.parent_trace, (f_pe, *in_consts),
                                     known_params)
-  in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
-  num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-  out_consts, non_fwd_res = split_list(out, [len(out) - num_res])
+  outs, (in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env, out_specs, new_out_specs) = out.unpack_aux()
+  out_consts, non_fwd_res = outs.unflatten()
   assert not jaxpr.constvars
-  unk_out_specs, _ = pe.partition_list(out_knowns, out_specs_thunk())
-  known_out_specs_ = known_out_specs()
+  unk_out_specs, _ = pe.partition_list(out_knowns, out_specs)
   res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
   # TODO make res_avals be the full set, not just the non-fwd ones
   res_avals_iter = iter(res_avals)
@@ -1704,7 +1682,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     if f1 is not None:
       res_specs.append(known_in_specs[f1])
     elif f2 is not None:
-      res_specs.append(known_out_specs_[f2])
+      res_specs.append(new_out_specs[f2])
     else:
       raval = next(res_avals_iter)
       res_specs.append(raval.nospec(mesh, check_vma, all_names))
@@ -1808,16 +1786,6 @@ ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 #                for x in residuals]
 #   return *residuals, *primals
 
-# @lu.transformation2
-# def _promote_scalar_residuals(f: Callable, *args, **kwargs):
-#   jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
-#   which = [f1 is None and f2 is None and not v.aval.shape
-#             for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
-#    jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
-#    out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-#                  for x in out_consts]
-#    return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
-
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   def fun(*res_and_args):
     res, args = split_list(res_and_args, [len(jaxpr.constvars)])
@@ -1826,8 +1794,9 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
   in_avals = FlatTree.flatten(((*res_avals, *[v.aval for v in jaxpr.invars]), {}))
-  jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
-  return jaxpr
+  closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
+  jaxpr, _ = pe.separate_consts(closed_jaxpr)
+  return jaxpr.jaxpr
 
 
 def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]

@@ -653,7 +653,7 @@ def trace_to_subjaxpr_nounits_fwd2(
     trace = JaxprTrace(parent_trace, current_name_stack, tag)
     out_tracers, jaxpr, consts, env = _trace_to_subjaxpr_nounits_no_lu_2(
         f, trace, instantiate, in_pvals, debug_info)
-    out_pvals = [t.pval for t in out_tracers]
+    out_pvals = out_tracers.map(lambda t: t.pval)
 
   # Which consts (aka residuals) are just forwarded inputs? Check obj id.
   in_consts  = [pval.get_known()    for pval in  in_pvals if    pval.is_known()]
