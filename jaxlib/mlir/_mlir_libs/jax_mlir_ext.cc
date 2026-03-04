@@ -223,7 +223,7 @@ NB_MODULE(_jax_mlir_ext, m) {
     mlirRegisterAllSdyPassesAndPipelines();
     mlirRegisterAllXlaSdyPassesAndPipelines();
     // Transforms used by JAX.
-    mlirRegisterTransformsStripDebugInfo();
+    mlirRegisterTransformsStripDebugInfoPass();
   });
 
   m.def("enter_multi_threaded_execution", [](MlirContext context) {

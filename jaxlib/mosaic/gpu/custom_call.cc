@@ -208,9 +208,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
     mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
     EnsureNativeLLVMisInitialized();
-    mlir::registerCanonicalizer();
-    mlir::registerCSE();
-    mlir::registerStripDebugInfo();
+    mlir::registerCanonicalizerPass();
+    mlir::registerCSEPass();
+    mlir::registerStripDebugInfoPass();
     mlir::registerConvertNVGPUToNVVMPass();
     mlir::registerConvertVectorToSCF();
     mlir::registerSCFToControlFlowPass();
