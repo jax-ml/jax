@@ -39,9 +39,9 @@ _TS_CONTEXT = ts.Context({
   'cache_pool#remote': {'total_bytes_limit': 10_000_000_000},
   'data_copy_concurrency': {'limit': 128}
 })
-_TS_CHUNK_LAYOUT = ts.ChunkLayout({
-  "chunk": {"elements": 100_000_000},  # 100M (800MB for float64) file size
-})
+_TS_CHUNK_LAYOUT = ts.ChunkLayout(
+  chunk=ts.ChunkLayout.Grid(elements=100_000_000),  # 100M (800MB for float64) file size
+)
 
 _DEFAULT_BASE_DRIVER = 'file'
 _PROCESS_DIR_FORMAT = "process_{}"
