@@ -143,7 +143,7 @@ def spec_to_indices(shape: Sequence[int],
     int, a slice object with step=1, or a tuple thereof, to be treated as an
     index into the full logical array.
   """
-  return tuple(spec.indices(shape).flat)  # type: ignore
+  return tuple(spec.indices(shape).flat)  # pytype: disable=wrong-arg-types
 
 
 def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],

@@ -326,7 +326,7 @@ def ffi_lowering(
         **lowering_args,
     )(ctx, *operands, **params)
 
-    return result.results  # type: ignore
+    return result.results
 
   return _lowering
 

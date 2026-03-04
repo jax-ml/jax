@@ -240,5 +240,5 @@ try:
   repro_is_enabled = repro.is_enabled
 
 except ImportError:
-  repro = None  # type: ignore
-  def repro_is_enabled(): return False # type: ignore
+  repro = None
+  def repro_is_enabled(): return False

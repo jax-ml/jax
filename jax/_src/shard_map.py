@@ -404,7 +404,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
 
 
 def _manual_spec(manual_axes, spec: P, mesh) -> P:
-  out: list[str | tuple[str, ...] | None] = []  # type: ignore
+  out: list[str | tuple[str, ...] | None] = []
   s: str | None | tuple[str, ...]
   for s in spec:
     if s is None:
@@ -427,7 +427,7 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
 def _check_unreduced(error_type, mesh, manual_axes, specs):
-  from jax._src.hijax import HipSpec  # type: ignore
+  from jax._src.hijax import HipSpec
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   full_manual = frozenset(mesh.axis_names) == manual_axes
   specs_flat, _ = tree_flatten(specs)
@@ -455,7 +455,7 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
 
 
 def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
-  from jax._src.hijax import HipSpec  # type: ignore
+  from jax._src.hijax import HipSpec
   if error_type == SpecErrorType.input and specs is None:
     raise TypeError(
         "shard_map in_specs argument must be a pytree of "
@@ -794,7 +794,7 @@ def _shard_map_staging(
     _check_vmas(mesh, out_specs_thunk(), [v.aval for v in jaxpr.outvars])
   out_avals = [unshard_aval(mesh, check_vma, spec, aval)
                for spec, aval in zip(out_specs_thunk(), out_avals_)]
-  in_specs_staged = (P(),) * len(consts) + tuple(in_specs)  # type: ignore
+  in_specs_staged = (P(),) * len(consts) + tuple(in_specs)
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
@@ -1252,7 +1252,7 @@ class _SpecError(Exception):
   pass
 
 def _check_vmas(mesh, specs, avals):
-  fail = [a.vma if isinstance(sp, P) and not _valid_repeats(mesh, a.vma, sp)  # type: ignore
+  fail = [a.vma if isinstance(sp, P) and not _valid_repeats(mesh, a.vma, sp)  # pytype: disable=attribute-error
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
     raise _RepError(fail)
@@ -1874,7 +1874,7 @@ def _partial_eval_jaxpr_custom_rule(
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   nv = core.gensym()
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
-  lns = lambda a: a.nospec(mesh, check_vma, all_names)  # type: ignore
+  lns = lambda a: a.nospec(mesh, check_vma, all_names)  # pytype: disable=attribute-error
   residuals, staged_in_res_specs = unzip2(
       [(nv(unshard_aval(mesh, check_vma, (rn := lns(var.aval)), var.aval)), rn)
        for var, w in zip(jaxpr_staged.invars[:num_res], which) if w])

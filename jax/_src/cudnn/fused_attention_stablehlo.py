@@ -1817,7 +1817,7 @@ def combine_bias_and_mask(bias, mask, dtype):
       large_negative_number = get_large_negative_number(dtype)
       mask = jnp.where(mask, jnp.asarray(0, dtype), large_negative_number)
     # reshape mask to have 4D shape
-    mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)  # type: ignore[union-attr]
+    mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)
 
   # combine bias and mask
   if bias is None:
@@ -1905,7 +1905,7 @@ def paged_attention(
     page_table_k, page_table_v, layout)
   has_bias = bias is not None
   has_dbias = has_bias and \
-    should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
+    should_export_dbias(bias.shape, query.shape, layout)
   variadic_args = (has_bias, has_dbias)
 
   _not_used = jnp.zeros(0, dtype=query.dtype)
@@ -2042,7 +2042,7 @@ def dot_product_attention(
       None, None, layout)
     has_bias = bias is not None
     has_dbias = has_bias and \
-      should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
+      should_export_dbias(bias.shape, query.shape, layout)
     variadic_args = (has_bias, has_dbias)
 
     _not_used = jnp.zeros(0, dtype=query.dtype)

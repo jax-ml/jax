@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# mypy: ignore-errors
 # pyrefly: ignore-errors
 # pytype: disable=invalid-annotation
 # pytype: disable=wrong-arg-types

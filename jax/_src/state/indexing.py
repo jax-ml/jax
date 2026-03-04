@@ -232,7 +232,7 @@ class NDIndexer(state_types.Transform):
       # and this module.
       from jax._src.state import primitives as sp  # pytype: disable=import-error
       other_indexers = [
-          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # type: ignore[arg-type]
+          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # pyrefly: ignore[bad-argument-type]
       ]
       indices = tuple(
           merge_lists(is_slice_indexing, other_indexers, slice_indexers)

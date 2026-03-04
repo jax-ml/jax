@@ -392,7 +392,7 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
       if is_key(v) and np.any(consumed.get(v, False))),
     *(Source(i) for i, v in enumerate(jaxpr.outvars)
       if is_key(v) and resolve_forwards(v) not in all_inputs and not consumed.get(v, False)),
-    *(Forward(all_inputs.index(resolve_forwards(outvar)), idx_out)  # type: ignore[arg-type]
+    *(Forward(all_inputs.index(resolve_forwards(outvar)), idx_out)
       for idx_out, outvar in enumerate(jaxpr.outvars)
       if is_key(outvar) and resolve_forwards(outvar) in all_inputs)
   )

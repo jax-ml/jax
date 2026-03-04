@@ -125,7 +125,7 @@ def _remat_jaxpr(jaxpr, policy):
   src = source_info_util.current()
 
   def new_arg(a):
-    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # type: ignore  # noqa: F821
+    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821  # pytype: disable=name-error
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):

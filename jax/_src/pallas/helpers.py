@@ -256,9 +256,9 @@ def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),  # pylint: di
       name=name,
       metadata=metadata)
   if isinstance(body, api.NotSpecified):
-    return lambda fun: _make_kernel(fun, **kwds)  # type: ignore[arg-type]
+    return lambda fun: _make_kernel(fun, **kwds)
   else:
-    return _make_kernel(body, **kwds)  # type: ignore[arg-type]
+    return _make_kernel(body, **kwds)
 
 
 def with_scoped(

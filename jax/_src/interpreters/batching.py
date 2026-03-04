@@ -52,7 +52,7 @@ FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
 MakeIotaHandler = Callable[[AxisSize], Array]
 
 def to_elt(trace: BatchTrace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
-  from jax._src import hijax  # type: ignore
+  from jax._src import hijax  # pytype: disable=import-error
   handler = to_elt_handlers.get(type(x))
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
@@ -152,7 +152,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    from jax._src import hijax  # type: ignore
+    from jax._src import hijax  # pytype: disable=import-error
     aval = core.get_aval(self.val)
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:

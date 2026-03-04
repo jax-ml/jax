@@ -97,7 +97,7 @@ def _dynamic_slice(
   output = slicing.dynamic_slice(value, start_idx, slice_sizes=block_shape)
   squeeze_dims = tuple(np.arange(len(is_squeeze))[np.array(is_squeeze,
                                                            dtype=np.bool_)])
-  return lax.squeeze(output, squeeze_dims)  # type: ignore[arg-type]
+  return lax.squeeze(output, squeeze_dims)
 
 
 def _dynamic_update_slice(start_idx, block_shape, value, update, is_squeeze):

@@ -78,7 +78,7 @@ def pallas_call_lowering(
     triton_params = triton_core.CompilerParams()
   else:
     assert isinstance(compiler_params, triton_core.CompilerParams)
-    triton_params = compiler_params  # type: ignore[assignment]
+    triton_params = compiler_params
 
   num_warps = 4 if triton_params.num_warps is None else triton_params.num_warps
   num_stages = triton_params.num_stages

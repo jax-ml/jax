@@ -14,7 +14,6 @@
 
 """JAX bindings for Mosaic."""
 
-# mypy: ignore-errors
 from __future__ import annotations
 
 import base64

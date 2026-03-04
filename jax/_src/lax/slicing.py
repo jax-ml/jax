@@ -173,7 +173,7 @@ def dynamic_slice(
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
-  sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
+  sizes = core.canonicalize_shape(slice_sizes)
   operand, *start_indices = core.standard_insert_pvary(operand, *start_indices)
   return dynamic_slice_p.bind(operand, *start_indices, slice_sizes=tuple(sizes))
 

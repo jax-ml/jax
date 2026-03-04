@@ -82,7 +82,7 @@ def _get_to_lojax(ref, *idx, tree):
     idx = transforms[-1]
     return val_ty.ref_get_to_lojax(ref, idx)
   return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
-get_p.to_lojax = _get_to_lojax  # type: ignore
+get_p.to_lojax = _get_to_lojax
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
@@ -190,7 +190,7 @@ def _swap_to_lojax(ref, val, *idx, tree):
   outs = [ref_swap(lo_ref, idx, lo_val) for lo_ref, lo_val
           in zip(lo_refs, lo_vals)]
   return val_ty.raise_val(*outs)
-swap_p.to_lojax = _swap_to_lojax  # type: ignore
+swap_p.to_lojax = _swap_to_lojax
 
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
@@ -767,7 +767,7 @@ def _batch_indexer(
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
                                        bcast_dims)
           else:
-            idx = batching.moveaxis(idx, dim, 0)  # type: ignore[arg-type]
+            idx = batching.moveaxis(idx, dim, 0)
           new_indices.append(idx)
     else:
       if ref_dim is not batching.not_mapped:

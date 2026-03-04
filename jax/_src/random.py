@@ -692,7 +692,7 @@ def permutation(key: ArrayLike,
 def _permutation(key, x, axis, independent):
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
-  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
+  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # pytype: disable=attribute-error
   return jnp.take(x, ind, axis, unique_indices=True)
 
 

@@ -895,7 +895,7 @@ def emit_python_callback(
   ifrt_callback = _wrapped_callback
   ctx.module_context.add_host_callback(ifrt_callback)
   index = np.uint64(len(ctx.module_context.host_callbacks) - 1)
-  result = ffi.build_ffi_lowering_function(  # type: ignore
+  result = ffi.build_ffi_lowering_function(
       call_target_name,
       has_side_effect=has_side_effect,
   )(ctx, *operands, index=np.uint64(index))
@@ -903,9 +903,9 @@ def emit_python_callback(
   if sharding is not None:
     mlir.set_sharding(result, sharding)
 
-  results = result.results  # type: ignore
+  results = result.results
 
   if token:
-    token, *results = results  # type: ignore
+    token, *results = results
 
-  return results, token, ifrt_callback  # type: ignore
+  return results, token, ifrt_callback

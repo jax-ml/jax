@@ -64,9 +64,6 @@ from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src import random as jax_random
 
-# mypy generates a lot of false positive due to re-assigned variables.
-# mypy: disable-error-code="assignment, no-redef"
-
 # The code in this file relies on the values of some flags that are defined by
 # jtu. Note that the following can not always be moved to a test file since
 # then the test file has to import jtu first (to define the flags) which is not

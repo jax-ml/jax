@@ -365,7 +365,7 @@ def pallas_call_tpu_lowering_rule(
     mosaic_params = tpu_core.CompilerParams()
   else:
     assert isinstance(compiler_params, tpu_core.CompilerParams)
-    mosaic_params = compiler_params  # type: ignore[assignment]
+    mosaic_params = compiler_params
 
   del mesh
   jax_mesh = None
@@ -454,7 +454,7 @@ def mpmd_map_tpu_lowering_rule(
     mosaic_params = tpu_core.CompilerParams()
   else:
     assert isinstance(compiler_params, tpu_core.CompilerParams)
-    mosaic_params = compiler_params  # type: ignore[assignment]
+    mosaic_params = compiler_params
 
   # TODO(slebedev): Check kernel type and raise if it is set.
   if mosaic_params.dimension_semantics is not None:

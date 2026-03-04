@@ -39,7 +39,7 @@ def _addressable_devices_indices_map(
   if sharding.is_fully_addressable:
     return global_map
   return {d: global_map[d]
-          for d in sharding._internal_device_list.addressable_device_list}  # type: ignore
+          for d in sharding._internal_device_list.addressable_device_list}
 
 @cache(max_size=4096, trace_context_in_key=False)
 def common_devices_indices_map(
@@ -184,7 +184,7 @@ class Sharding:
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     if self.is_fully_addressable:
       return self._device_assignment
-    return tuple(self._internal_device_list.addressable_device_list)  # type: ignore
+    return tuple(self._internal_device_list.addressable_device_list)
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     """Returns the shape of the data on each device.
@@ -203,7 +203,7 @@ class Sharding:
     try:
       return (are_hlo_shardings_equal(self._to_xla_hlo_sharding(ndim),
                                      other._to_xla_hlo_sharding(ndim))
-              and self._internal_device_list == other._internal_device_list and  # type: ignore
+              and self._internal_device_list == other._internal_device_list and
               self.memory_kind == other.memory_kind)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict

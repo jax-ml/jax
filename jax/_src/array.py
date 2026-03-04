@@ -790,7 +790,7 @@ def make_array_from_callback(
     return r
 
   if sharding.is_fully_replicated:
-    devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
+    devices = list(sharding._internal_device_list.addressable_device_list)
     # Only compute data once.
     per_device_values = [get_data((slice(None),) * len(shape))] * len(devices)
   else:
@@ -831,7 +831,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]  # type: ignore
+    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
@@ -1334,5 +1334,5 @@ def _token_global_result_handler(global_aval, out_sharding, committed):
       core.get_token_aval(), out_sharding, committed)
   def wrapper(array):
     return core.Token(array)
-  return array_handler.wrap(wrapper)  # type: ignore
+  return array_handler.wrap(wrapper)
 pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler

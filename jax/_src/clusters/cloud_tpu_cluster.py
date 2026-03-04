@@ -154,7 +154,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     num_slices = get_tpu_env_value('MEGASCALE_NUM_SLICES')
     if not num_slices:
       return 1
-    return int(num_slices)  # type: ignore
+    return int(num_slices)
 
 
   @staticmethod
@@ -162,7 +162,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     slice_id = get_tpu_env_value('MEGASCALE_SLICE_ID')
     if not slice_id:
       return 0
-    return int(slice_id)  # type: ignore
+    return int(slice_id)
 
   @staticmethod
   def _get_process_id_in_slice() -> int:

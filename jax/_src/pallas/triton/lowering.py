@@ -56,7 +56,6 @@ import jax.numpy as jnp
 import numpy as np
 
 # TODO(sharadmv): Enable type checking.
-# mypy: ignore-errors
 # pytype: skip-file
 
 _T = TypeVar("_T")

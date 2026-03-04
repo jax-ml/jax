@@ -506,8 +506,8 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   # unhashable (e.g. custom objects with a dtype attribute). The following check is
   # fast and covers the majority of calls to this function within JAX library code.
   return _issubdtype_cached(
-    a if isinstance(a, _types_for_issubdtype) else np.dtype(a),  # type: ignore[arg-type]
-    b if isinstance(b, _types_for_issubdtype) else np.dtype(b),  # type: ignore[arg-type]
+      a if isinstance(a, _types_for_issubdtype) else np.dtype(a),
+      b if isinstance(b, _types_for_issubdtype) else np.dtype(b),
   )
 
 
@@ -1084,7 +1084,7 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   if weak_type:
     dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
   # TODO(jakevdp): fix return type annotation and remove this ignore.
-  return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
+  return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
   """Checks validity of a user-provided dtype, and returns its canonical form.
