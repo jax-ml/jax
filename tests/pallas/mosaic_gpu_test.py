@@ -143,8 +143,11 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
     super().setUp()
     self.enter_context(mgpu.core.artificial_shared_memory_limit(artificial_shared_memory_limit))
 
+  def is_wg_semantics(self):
+    return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
+
   def skip_if_wg_semantics(self):
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+    if self.is_wg_semantics():
       self.skipTest("Not supported under WG semantics")
 
   def kernel(self, *args, **kwargs):
@@ -175,7 +178,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   def default_transforms(
       self, *, swizzle: int = 128, dtype: jnp.dtype
   ) -> Sequence[plgpu.Transform]:
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+    if self.is_wg_semantics():
       return ()
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
     return (
@@ -598,7 +601,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.SwizzleTransform(128),
     )
 
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+    if self.is_wg_semantics():
       pallas_call_transforms = ()
     else:
       pallas_call_transforms = transforms
@@ -1863,7 +1866,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       )
       _ = jax.lax.while_loop(cond, body, strided_input)
 
-    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+    if self.is_wg_semantics():
       with self.assertRaisesRegex(
           ValueError, "Failed to infer a possible set of layouts",
       ):
