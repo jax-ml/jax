@@ -1351,8 +1351,7 @@ class ShardMapTrace(core.Trace):
     return ShardMapTracer(self, out_vma, out_vals)
 
   def process_shard_map(self, prim, fun, args, mesh, in_specs,
-                        out_specs_thunk, check_vma, manual_axes):
-    assert False
+                        check_vma, manual_axes, debug_info):
     # Check consistency between outer and inner shmaps on explicitly passed
     # mesh and check_vma.
     if isinstance(mesh, Mesh):
@@ -1371,13 +1370,13 @@ class ShardMapTrace(core.Trace):
     inner_mesh = _as_manual_mesh(self.mesh, manual_axes | self.manual_axes)
     with (core.set_current_trace(trace), _extend_axis_env(self.mesh, manual_axes),
           use_abstract_mesh(inner_mesh)):
-      ans = fun.call_wrapped(*in_tracers)
-      out_vals_, out_vmas_ = unzip2(map(trace.to_val_vma_pair, ans))
-    out_specs = out_specs_thunk()
-    out_vals = [_match_spec2(self.mesh, self.manual_axes, spec, x)
-                for x, spec in zip(out_vals_, out_specs)]
+      ans_aux = fun(*in_tracers)
+      ans, out_specs = ans_aux.unpack_aux()
+      out_vals_, out_vmas_ = ans.map(trace.to_val_vma_pair).unzip2()
+    out_vals = out_vals_.map2(
+        lambda x, spec: _match_spec2(self.mesh, self.manual_axes, spec, x), out_specs)
     out_vmas = [v - _spec_to_vma(spec) for v, spec in zip(out_vmas_, out_specs)]
-    return map(partial(ShardMapTracer, self), out_vmas, out_vals)
+    return out_vals.map2(lambda val, vma: ShardMapTracer(self, vma, val), out_vmas)
 
   def process_call(self, call_primitive, fun, tracers, params, /):
     raise NotImplementedError(
