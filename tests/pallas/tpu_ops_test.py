@@ -456,6 +456,42 @@ class OpsTest(ptu.PallasTPUTest):
     self.assertArraysEqual(out, expected)
 
   @parameterized.product(
+      msk_dtype=[jnp.int32, jnp.int16, jnp.int8],
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
+  )
+  def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
+
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 8):
+      self.skipTest("Requires Cloud TPU >= 2026.3.8")
+
+    if (
+        any(dtypes.itemsize_bits(ty) <= 16 for ty in (msk_dtype, dtype))
+        and jtu.get_tpu_version() < 5
+    ):
+      self.skipTest(
+          "Requires TPUv5+ for bitwidth <= 16 and TPUv6+ for bitwidth <= 8"
+      )
+
+    shape = (1024,)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      o_ref[...] = jnp.where(mask_ref[...], x_ref[...], zeros)
+
+    mask = jax.random.bernoulli(jax.random.key(1234), 0.5, shape).astype(
+        msk_dtype
+    )
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
+
+    out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
+
+  @parameterized.product(
       target=(jnp.int8,),  # TODO(apaszke): Add int4.
       round=(False, True),
   )
