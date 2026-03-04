@@ -346,24 +346,22 @@ def initialize():
 
   from jax._src import config
 
-  requested = config.jax_platforms.value
+  jax_platforms = config.jax_platforms.value
   should_validate = True
 
-  if requested:
+  if jax_platforms:
     platforms = []
-    for platform in requested.split(","):
+    for platform in jax_platforms.split(","):
       platforms.extend(xb.expand_platform_alias(platform.strip()))
 
-    should_validate = "cuda" in platform
-
-  skip_env = os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK")
+    should_validate = "cuda" in platforms
 
   if not should_validate:
     logger.debug(
-        "Skipping CUDA version check because CUDA backend is not requested "
-        "via JAX_PLATFORMS."
+        f"Platforms {jax_platforms} were explicitly requested and do not include CUDA. "
+        "Skipping CUDA version check."
     )
-  elif skip_env:
+  elif os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
     logger.debug(
         "Skipped CUDA versions constraints check due to the "
         "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
@@ -381,7 +379,7 @@ def initialize():
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
-      "cuda", priority=500, library_path=str(path), options=options
+      'cuda', priority=500, library_path=str(path), options=options
   )
 
   if cuda_plugin_extension:
@@ -399,11 +397,11 @@ def initialize():
     )
     for _name, _value in cuda_plugin_extension.ffi_types().items():
       xla_client.register_custom_type(
-          _name, _value, platform="CUDA"
+          _name, _value, platform='CUDA'
       )
     for _name, _value in cuda_plugin_extension.ffi_handlers().items():
       xla_client.register_custom_call_target(
-          _name, _value, platform="CUDA", api_version=1
+          _name, _value, platform='CUDA', api_version=1
       )
     triton.register_compilation_handler(
         "CUDA",
@@ -412,4 +410,4 @@ def initialize():
         ),
     )
   else:
-    logger.warning("cuda_plugin_extension is not found.")
+    logger.warning('cuda_plugin_extension is not found.')
