@@ -2209,6 +2209,9 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     use_polar = True
 
   column_major = True
+  econ = not full_matrices
+  transposed = False
+  kwargs = {}
   if use_jacobi:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
   elif algorithm == SvdAlgorithm.QR:

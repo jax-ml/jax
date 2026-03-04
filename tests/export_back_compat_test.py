@@ -658,12 +658,12 @@ class CompatTest(bctu.CompatTestBase):
                                             *data.inputs))
 
   @parameterized.named_parameters(
-      list(
+      [
           dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
                dtype_name=dtype_name, algorithm_name=algorithm_name)
           for dtype_name in ("f32", "f64", "c64", "c128")
           for algorithm_name in ("qr", "jacobi")
-      ) + [
+      ] + [
           dict(testcase_name="_dtype=f32_algorithm=gesdd", dtype_name="f32", algorithm_name="gesdd"),
       ])
   @jax.default_matmul_precision("float32")
