@@ -1962,7 +1962,7 @@ def is_valid_register_layout_assignment(
         return False
       return True
     case _:
-      assert False, f"Unreachable {shape}, {layout}"
+      assert_never(layout)
 
 
 def is_valid_smem_layout_assignment(
