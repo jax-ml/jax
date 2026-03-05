@@ -47,9 +47,19 @@ class PallasBaseTest(jtu.JaxTestCase):
       if not self.INTERPRET:
         self.skipTest("On CPU the test works only in interpret mode")
     elif jtu.test_device_matches(["gpu"]):
+      is_sm80_test = any(
+          getattr(self, "_testMethodName", "").startswith(prefix)
+          for prefix in (
+              "test_dot_f32_small_dimensions",
+              "test_dot_fp64_valid_dimensions",
+              "test_dot_fp64_invalid_dimensions",
+          )
+      )
+      min_compute = "8.0" if is_sm80_test else "9.0"
+
       if (jtu.test_device_matches(["cuda"]) and
-          not jtu.is_cuda_compute_capability_at_least("9.0")):
-        self.skipTest("Only works on GPU with capability >= sm90")
+          not jtu.is_cuda_compute_capability_at_least(min_compute)):
+        self.skipTest(f"Only works on GPU with capability >= sm{min_compute.replace('.', '')}")
       if plgpu is None:
         self.skipTest("plgpu not available on this platform")
     else:
@@ -484,6 +494,70 @@ class TritonPallasTest(PallasBaseTest):
     with self.assertRaisesRegex(NotImplementedError,
                                 "Unsigned integer dtype.*not supported"):
       dot_kernel(x, y)
+
+  def test_dot_f32_small_dimensions(self):
+    m, k, n = 8, 16, 8
+    dtype = jnp.float32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        compiler_params=plgpu.CompilerParams(num_warps=1),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+    x = jnp.ones((m, k), dtype=dtype)
+    y = jnp.ones((k, n), dtype=dtype)
+    out = dot_kernel(x, y)
+    np.testing.assert_allclose(out, jnp.full((m, n), k, dtype=dtype))
+
+  def test_dot_fp64_valid_dimensions(self):
+    if not jax.config.jax_enable_x64:
+      self.skipTest("x64 is disabled")
+
+    m, k, n = 16, 16, 8
+    dtype = jnp.float64
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype), compiler_params=plgpu.CompilerParams(num_warps=1),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+    x = jnp.arange(m * k).reshape(m, k).astype(dtype)
+    y = jnp.arange(k * n).reshape(k, n).astype(dtype)
+
+    out = dot_kernel(x, y)
+    expected = jnp.dot(x, y, precision=lax.Precision.HIGHEST)
+    np.testing.assert_allclose(out, expected, atol=1e-5, rtol=1e-5)
+
+  def test_dot_fp64_invalid_dimensions(self):
+    if not jax.config.jax_enable_x64:
+      self.skipTest("x64 is disabled")
+
+    for m, k, n, err_msg in [
+        (8, 16, 16, "M=8 < 16"),
+        (16, 16, 4, "N=4 < 8"),
+        (16, 8, 16, "K=8 < 16"),
+    ]:
+      with self.subTest(f"m={m},k={k},n={n}"):
+        dtype = jnp.float64
+
+        @functools.partial(
+            self.pallas_call,
+            out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+            compiler_params=plgpu.CompilerParams(num_warps=1),
+        )
+        def dot_kernel(x_ref, y_ref, o_ref):
+          o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+        x = jnp.arange(m * k).reshape(m, k).astype(dtype)
+        y = jnp.arange(k * n).reshape(k, n).astype(dtype)
+
+        with self.assertRaisesRegex(ValueError, err_msg):
+          dot_kernel(x, y)
 
 
 @functools.partial(
