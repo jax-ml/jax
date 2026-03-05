@@ -187,12 +187,12 @@ def _approx_tanh_rocm_lowering(
   if needs_cast:
     f32_type = mlir.dtype_to_ir_type(jnp.dtype(jnp.float32))
     if out_aval.shape:
-      f32_result_type = ir.RankedTensorType.get(out_aval.shape, f32_type)
+      result_type = ir.RankedTensorType.get(out_aval.shape, f32_type)
     else:
-      f32_result_type = f32_type
-    arg = arith_dialect.extf(f32_result_type, arg)
-
-  result_type = f32_result_type if needs_cast else mlir.aval_to_ir_type(out_aval)
+      result_type = f32_type
+    arg = arith_dialect.extf(result_type, arg)
+  else:
+    result_type = mlir.aval_to_ir_type(out_aval)
   result = tt_dialect.extern_elementwise(
       result_type,
       [arg],
