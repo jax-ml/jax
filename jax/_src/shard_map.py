@@ -1172,7 +1172,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
              in_specs, args)
   in_vma = map(_spec_to_vma, in_specs)
   outs, out_vma = _run_shmap(fun, mesh, manual_axes, args, in_vma, check_vma)
-  out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
+  out_avals = [core.mapped_aval(x.shape[0], 0, core.typeof(x)) for x in outs]
   _check_names(out_specs_thunk(), out_avals)  # type: ignore[arg-type]
   if check_vma:
     _check_vmas(mesh, out_specs_thunk(), out_avals)
@@ -1416,7 +1416,7 @@ class ShardMapTracer(core.Tracer):
 
   @property
   def aval(self):
-    aval = core.get_aval(self.val)
+    aval = core.typeof(self.val)
     vma = self.vma if self._trace.check else self._trace.manual_axes  # pyrefly: ignore[missing-attribute]
     size = prod(self._trace.mesh.shape[n] for n in vma)  # pyrefly: ignore[missing-attribute]
     out = core.mapped_aval(size, 0, aval)
@@ -1576,7 +1576,7 @@ def _shard_map_jvp(trace, shard_map_p, f: lu.WrappedFun, tracers, mesh, in_specs
   f_jvp, out_tree = ad.traceable(f_jvp, in_tree)
   result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
-  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
+  tangent_out = [ad.Zero(core.typeof(p).to_tangent_aval()) if t is None else t
                  for p, t in zip(primal_out, tangent_out)]
   return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp

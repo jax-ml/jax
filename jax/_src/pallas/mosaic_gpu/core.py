@@ -836,7 +836,7 @@ def remote_ref(
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
   if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(jax_core.get_aval(ref), state_types.AbstractRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   if any(isinstance(t, MulticastRef) for t in ref.transforms):
@@ -859,7 +859,7 @@ def multicast_ref(
   if not isinstance(collective_axes, tuple):
     collective_axes = (collective_axes,)
   if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(jax_core.get_aval(ref), state_types.AbstractRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   if any(isinstance(t, PeerMemRef) for t in ref.transforms):
@@ -874,7 +874,7 @@ def transform_ref(
     transform: state_types.Transform
 ) -> pallas_core.TransformedRef:
   if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(jax_core.get_aval(ref), state_types.AbstractRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   return pallas_core.TransformedRef(

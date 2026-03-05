@@ -92,7 +92,7 @@ def custom_root(f: Callable,
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
   guess_flat = FlatTree.flatten(initial_guess)
-  guess_avals = guess_flat.map(core.get_aval)
+  guess_avals = guess_flat.map(core.typeof)
   f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
   args_avals = FlatTree.pack(((guess_avals,),{}))
   f_jaxpr, out_avals = pe.trace_to_jaxpr(f, args_avals, f_debug)
@@ -254,7 +254,7 @@ def custom_linear_solve(
     transpose_solve = solve
 
   b_flat = FlatTree.flatten(b)
-  b_avals = b_flat.map(core.get_aval)
+  b_avals = b_flat.map(core.typeof)
   tree = b_flat.tree
 
   def _shape_checked(fun, name, has_aux):

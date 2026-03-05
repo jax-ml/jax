@@ -164,7 +164,7 @@ class custom_dce:
 
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
-    in_avals = [core.get_aval(x) for x in args_flat]
+    in_avals = [core.typeof(x) for x in args_flat]
 
     @pe._memoize
     def dce_jaxpr_thunk(
@@ -289,7 +289,7 @@ def flatten_dce_rule(
           f"output{tree_util.keystr(kp)}, the DCE rule returned None instead "
           f"of an output with shape/dtype {aval.str_short()}."
       )
-    if not core.typematch(aval, aval_ := core.get_aval(val)):
+    if not core.typematch(aval, aval_ := core.typeof(val)):
       raise ValueError(
           f"Custom DCE rule {rule_name} for function {fun_name} must produce "
           "an output with the same shapes/dtypes as the output of the function "

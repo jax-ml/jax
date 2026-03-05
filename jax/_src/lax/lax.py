@@ -1829,7 +1829,7 @@ def composite(
     debug_info = api_util.debug_info("composite", decomposition,
                                      args, {})
     flat_args, in_tree = tree_util.tree_flatten(args)
-    in_avals = tuple(core.get_aval(x) for x in flat_args)
+    in_avals = tuple(core.typeof(x) for x in flat_args)
     if any(isinstance(v, core.Tracer) for v in kwargs.values()):
       raise UnexpectedTracerError(
           "Found a JAX Tracer as an attribute in the decomposition for the "
@@ -2989,7 +2989,7 @@ def reduce(operands: Any,
     out = monoid_reducer(*flat_operands, dimensions, **out_sharding_dict)
     return _convert_element_type(out, weak_type=weak_type)
   else:
-    flat_init_avals = safe_map(core.get_aval, flat_init_values)
+    flat_init_avals = safe_map(core.typeof, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, comp_debug, tuple(flat_init_avals), init_value_tree)
     flat_operands = core.standard_insert_pvary(*flat_operands)
@@ -3041,7 +3041,7 @@ def _get_monoid_reducer(monoid_op: Callable,
   if len(xs) != 1:
     return None
   x, = xs
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   dtype = _dtype(x)
   if core.is_concrete(x) and aval.shape == ():
     val = core.to_concrete_value(x)
@@ -3463,7 +3463,7 @@ def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
                                      sharding=None)
 
 def _stop_gradient(x):
-  if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
+  if dtypes.issubdtype(core.typeof(x).dtype, dtypes.extended):
     return x
   elif isinstance(x, ad.JVPTracer):
     return _stop_gradient(x.primal)
@@ -3879,7 +3879,7 @@ def _iter(tracer):
 ShapedArray._iter = staticmethod(_iter)  # type: ignore[bad-assignment]
 
 def _add_arrays(x, y):
-  if (isinstance(a := core.get_aval(x), ShapedArray) and
+  if (isinstance(a := core.typeof(x), ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
     return a.dtype._rules.add(dtype, x, y)
   return add(x, y)
@@ -4674,8 +4674,8 @@ def _sub_transpose(t, x, y):
   # Morally the following assertion is true, but see the comment in add_p's
   # transpose rule.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -6741,12 +6741,12 @@ def _concatenate_transpose_rule(ct, *operands, dimension):
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
               if bdim is not None)
-  spec = next(core.get_aval(op).sharding.spec[bdim]
+  spec = next(core.typeof(op).sharding.spec[bdim]
               for op, bdim in zip(batched_args, batch_dims) if bdim is not None)
   operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(
-                  op, (size,), out_sharding=core.get_aval(op).sharding.update(spec=
-                      (spec, *core.get_aval(op).sharding.spec)))
+                  op, (size,), out_sharding=core.typeof(op).sharding.update(spec=
+                      (spec, *core.typeof(op).sharding.spec)))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
@@ -8792,7 +8792,7 @@ def _const(example, val):
 _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
-  x_aval = core.get_aval(x)
+  x_aval = core.typeof(x)
   out = full_like(x, shape=(), fill_value=0,
                   sharding=x_aval.sharding.update(spec=P()))
   return out
@@ -8800,13 +8800,13 @@ def _zero(x):
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
-  x_aval = core.get_aval(x)
+  x_aval = core.typeof(x)
   out = full_like(x, shape=(), fill_value=1,
                   sharding=x_aval.sharding.update(spec=P()))
   return out
 
 def _one_vjp(x):
-  x_aval = core.get_aval(x)
+  x_aval = core.typeof(x)
   ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
   ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
   return full_like(x, shape=(), fill_value=1, sharding=ct_s)

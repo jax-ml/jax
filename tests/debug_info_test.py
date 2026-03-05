@@ -1161,7 +1161,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       return functools.partial(
           _custom_transpose,
           jax.tree.map(
-              lambda x: core.get_aval(x).to_tangent_aval(), example_out))
+              lambda x: core.typeof(x).to_tangent_aval(), example_out))
 
     tracer_spy = TracerSpy()
     def my_f_with_cond(i, x):

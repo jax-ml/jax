@@ -159,7 +159,7 @@ class custom_vmap:
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
         lu.wrap_init(self.fun, debug_info=debug_fun),
         in_tree)
-    in_avals = [core.get_aval(x) for x in args_flat]
+    in_avals = [core.typeof(x) for x in args_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))

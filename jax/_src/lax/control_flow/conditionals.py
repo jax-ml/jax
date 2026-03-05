@@ -143,7 +143,7 @@ def _switch_internal(
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
   args = FlatTree.flatten((operands, {}))
-  avals = args.map(core.get_aval)
+  avals = args.map(core.typeof)
 
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbgs[0], list(avals), list(args))
@@ -270,7 +270,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   args = FlatTree.flatten((operands, {}))
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
-  avals = args.map(core.get_aval)
+  avals = args.map(core.typeof)
   avals = avals.map2(
       lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
       args)

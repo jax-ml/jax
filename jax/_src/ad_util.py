@@ -20,7 +20,7 @@ from typing import Any, TypeVar
 from jax._src import core
 from jax._src.core import typeof
 from jax._src import traceback_util
-from jax._src.core import Primitive, valid_jaxtype, get_aval
+from jax._src.core import Primitive, valid_jaxtype
 from jax._src.tree_util import register_pytree_node, tree_map
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
@@ -60,7 +60,7 @@ def zeros_like_aval(aval: core.AbstractValue) -> Array:
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def zeros_like_jaxval(val):
-  return zeros_like_aval(core.get_aval(val))
+  return zeros_like_aval(core.typeof(val))
 
 def instantiate(z: Zero | Array) -> Array:
   if isinstance(z, Zero):
@@ -126,11 +126,11 @@ class SymbolicZero:
 
   @staticmethod
   def from_primal_value(val: Any) -> SymbolicZero:
-    return SymbolicZero(get_aval(val).to_tangent_aval())
+    return SymbolicZero(typeof(val).to_tangent_aval())
 
 def zero_from_primal(val, symbolic_zeros=False):
   def f(x):
-    tangent_aval = get_aval(x).to_tangent_aval()
+    tangent_aval = typeof(x).to_tangent_aval()
     if symbolic_zeros:
       return SymbolicZero(tangent_aval)
     else:

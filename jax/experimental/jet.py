@@ -211,7 +211,7 @@ class JetTracer(core.Tracer):
 
   @property
   def aval(self):
-    return core.get_aval(self.primal)
+    return core.typeof(self.primal)
 
   def full_lower(self):
     if self.terms is zero_series or all(t is zero_term for t in self.terms):

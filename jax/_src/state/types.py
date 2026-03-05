@@ -566,7 +566,7 @@ _ref_type_aval_mappings: dict[
 
 def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Array]:
   # Default type mapping just creates an AbstractRef from the array's aval.
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   return AbstractRef(aval), x
 
 

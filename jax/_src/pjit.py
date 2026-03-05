@@ -2386,7 +2386,7 @@ def _auto_axes(fun, *, axes_, out_sharding):
       return fun(*args, **kwargs)
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          core.get_aval(a).sharding.spec, mesh_info.new), args)
+          core.typeof(a).sharding.spec, mesh_info.new), args)
       args = reshard(args, in_specs)
       out = fun(*args, **kwargs)
     return reshard(out, _out_sharding)
@@ -2419,7 +2419,7 @@ def _explicit_axes(fun, *, axes, in_sharding):
       args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
-        core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
+        core.typeof(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return reshard(out, out_specs)
   return decorator
 

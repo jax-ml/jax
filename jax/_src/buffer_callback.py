@@ -135,7 +135,7 @@ def buffer_callback(
   def wrapped_callback(*args, **kwargs):
     flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
 
-    in_avals = [core.get_aval(x) for x in flat_args]
+    in_avals = [core.typeof(x) for x in flat_args]
     static_input_output_aliases: tuple[tuple[int, int], ...] = ()
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):

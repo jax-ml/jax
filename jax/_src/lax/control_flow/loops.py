@@ -211,7 +211,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   check_no_transformed_refs_args(lambda: dbg_body, args.vals)
   del init, xs
 
-  args_avals = args.map(core.get_aval)
+  args_avals = args.map(core.typeof)
   init_avals, xs_avals = args_avals.unpack()
 
   from jax._src.hijax import HiType
@@ -268,7 +268,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
      init_avals, carry_out_avals).unzip2()
   num_carry, num_xs, num_ys = len(init_flat), len(xs_flat), len(ys_avals)
   if any(changed):
-    init_avals = init_flat.map(core.get_aval)
+    init_avals = init_flat.map(core.typeof)
     jaxpr, out_avals, consts = _create_jaxpr(init_avals)
     carry_out_avals, ys_avals = out_avals.unpack()
 
@@ -1012,8 +1012,8 @@ def _transpose_scan_jaxpr_fancy(
             for l, x in zip(lin_refs, args)]
     ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
-    immut_consts_dot = [ad.ValAccum(core.get_aval(x), x) for x in ct_immut_consts]
-    carry_dot = [ad.ValAccum(core.get_aval(x)) for x in ct_carry]
+    immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
+    carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
@@ -1498,7 +1498,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   init_val_flat = FlatTree.flatten(init_val)
   check_no_transformed_refs_args(lambda: body_dbg, init_val_flat.vals)
   del init_val
-  init_aval = init_val_flat.map(core.get_aval)
+  init_aval = init_val_flat.map(core.typeof)
 
   # The body input and output avals must match exactly. However, we want to account for
   # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
@@ -1514,7 +1514,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       _promote_weak_typed_input,
       init_aval, body_out_avals).unzip2()
   if any(changed):
-    init_aval = init_val_flat.map(core.get_aval)
+    init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
 
   cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
@@ -1724,7 +1724,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   newvar = core.gensym()
   invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
+      cond_jaxpr.jaxpr.invars + [newvar(core.typeof(x)) for x in init_dot])
   cond_debug = cond_jaxpr.jaxpr.debug_info
   augmented_debug = cond_debug and (
       cond_debug._replace(

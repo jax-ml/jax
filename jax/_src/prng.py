@@ -169,7 +169,7 @@ class PRNGKeyArray(Array):
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
     if isinstance(key_data, (np.ndarray, literals.TypedNdArray)):
-      aval = core.get_aval(key_data)
+      aval = core.typeof(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(
           aval, SingleDeviceSharding(device), [np.asarray(key_data)], [device],

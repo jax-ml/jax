@@ -547,7 +547,7 @@ def scatter_add(
     Array([1., 3., 4., 1., 5.], dtype=float32)
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.add,
-                                       core.get_aval(lax._const(operand, 0)))
+                                       core.typeof(lax._const(operand, 0)))
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_add_p.bind(
@@ -603,7 +603,7 @@ def scatter_sub(
     updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(
-      lax.sub, core.get_aval(lax._const(operand, 0))
+      lax.sub, core.typeof(lax._const(operand, 0))
   )
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
@@ -661,7 +661,7 @@ def scatter_mul(
     An array containing the product of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
-                                       core.get_aval(lax._const(operand, 1)))
+                                       core.typeof(lax._const(operand, 1)))
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_mul_p.bind(
@@ -711,7 +711,7 @@ def scatter_min(
     An array containing the min of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
-                                       core.get_aval(lax._const(operand, 0)))
+                                       core.typeof(lax._const(operand, 0)))
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_min_p.bind(
@@ -761,7 +761,7 @@ def scatter_max(
     An array containing the max of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
-                                       core.get_aval(lax._const(operand, 0)))
+                                       core.typeof(lax._const(operand, 0)))
   operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_max_p.bind(
@@ -826,7 +826,7 @@ def scatter_apply(
     _apply = _scatter_apply_cache.setdefault(func, _apply)
   except TypeError:  # func is not weak referenceable
     pass
-  jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
+  jaxpr, consts = lax._reduction_jaxpr(_apply, core.typeof(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
   operand, scatter_indices, unused = core.standard_insert_pvary(
       operand, scatter_indices, unused)

@@ -3443,12 +3443,12 @@ class _custom_transpose:
 # an option of inferring output types.
 def custom_transpose(example_out):
   if isinstance(example_out, Callable):
-    out_type = core.get_aval(0.).to_tangent_aval()
+    out_type = core.typeof(0.).to_tangent_aval()
     return _custom_transpose(out_type, example_out)
   return partial(
       _custom_transpose,
       jax.tree.map(
-          lambda x: core.get_aval(x).to_tangent_aval(), example_out))
+          lambda x: core.typeof(x).to_tangent_aval(), example_out))
 
 
 class CustomTransposeTest(jtu.JaxTestCase):

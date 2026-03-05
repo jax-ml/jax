@@ -943,7 +943,7 @@ def _partial_eval_jaxpr_nounits(
                 residuals.append(known_vals_in[f]) if not fwd_[f] else
                 f for f in fwds]
       fwds, residuals = _include_consts_in_fwds(jaxpr.consts, fwds, residuals)
-    res_avals = [core.get_aval(r) for r in residuals]
+    res_avals = [core.typeof(r) for r in residuals]
     cell.append((out_unknowns, jaxpr_unknown, res_avals, fwds))
     known_vals_out = [pval.get_known() for pval in out_pvals if pval.is_known()]
     return [*known_vals_out, *residuals]

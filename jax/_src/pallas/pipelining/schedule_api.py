@@ -287,7 +287,7 @@ def schedule_pipeline(
   def _get_aval(x):
     if hasattr(x, "get_ref_aval"):
       return x.get_ref_aval()
-    return jax_core.get_aval(x)
+    return jax_core.typeof(x)
   avals = jax.tree.map(_get_aval, args)
 
   # Make state avals.

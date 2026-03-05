@@ -1617,7 +1617,7 @@ def insert_collective_pvary(axis_name, x):
     return x
 
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   names_union = set(axis_name) | aval.vma
   x = pvary(x, tuple(n for n in names_union if n not in aval.vma))
   return x
@@ -2276,7 +2276,7 @@ def bind_psum_invariant(leaf, *, axes, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError
   axes_ = frozenset(axes)
-  in_vma = core.get_aval(leaf).vma
+  in_vma = core.typeof(leaf).vma
   arg = (pvary(leaf, tuple(pbroadcast_names))
          if (pbroadcast_names := axes_ - in_vma) else leaf)
   return psum_invariant_p.bind(arg, axes=axes)

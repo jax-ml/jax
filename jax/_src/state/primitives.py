@@ -96,7 +96,7 @@ def get_ref_and_transforms(
     ref, transforms = ref_or_view.ref, ref_or_view.transforms
   else:
     ref, transforms = ref_or_view, ()
-  ref_aval = core.get_aval(ref)
+  ref_aval = core.typeof(ref)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"Can only call `{function_name}` on a `Ref`: {ref}.")
   if (not isinstance(ref_aval.inner_aval, core.ShapedArray)

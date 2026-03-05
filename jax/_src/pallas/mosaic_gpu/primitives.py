@@ -2500,7 +2500,7 @@ def inline_mgpu(*, arg_types=(), return_type=None):
         if isinstance(a, state_types.TransformedRef) and isinstance(t, RefType):
           raw_flat_args.append(a.ref)
           ref_transforms.append(a.transforms)
-        elif isinstance(aval := jax_core.get_aval(a), jax_core.ShapedArray) and isinstance(t, SomeLayout):
+        elif isinstance(aval := jax_core.typeof(a), jax_core.ShapedArray) and isinstance(t, SomeLayout):
           raw_flat_args.append(a)
           ref_transforms.append(None)
         elif isinstance(aval, state.AbstractRef) and isinstance(t, RefType):

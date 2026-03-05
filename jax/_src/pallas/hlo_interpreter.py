@@ -439,7 +439,7 @@ def pallas_call_hlo_interpret(
     with pallas_core.grid_env(local_grid_env):
       for s in scalars:
         if isinstance(s.dtype, jax_core.bint):
-          aval = jax_core.get_aval(s)
+          aval = jax_core.typeof(s)
           s.aval = aval.update(dtype=jnp.int32)
       start_indices = [
           bm.compute_start_indices_interpret(loop_idx, *scalars)

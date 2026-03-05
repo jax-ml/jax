@@ -178,7 +178,7 @@ def _pallas_call_to_lojax(
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
-  if any(jax_core.get_aval(x).has_qdd for x in hi_args):
+  if any(jax_core.typeof(x).has_qdd for x in hi_args):
     raise NotImplementedError("pallas_call does not support QDD for inputs")
   if any(aval.has_qdd for aval in out_avals):
     raise NotImplementedError("pallas_call does not support QDD for outputs")
@@ -193,7 +193,7 @@ def _pallas_call_to_lojax(
       raise NotImplementedError(
           "pallas_call does not support hijax for index_map"
       )
-  avals = [jax_core.get_aval(a) for a in hi_args]
+  avals = [jax_core.typeof(a) for a in hi_args]
   lo_args = [lo_val for aval, x in zip(avals, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
@@ -802,7 +802,7 @@ def checkify_pallas_kernel_body_jaxpr(
     grid_mapping: GridMapping) -> tuple[
         jax_core.ClosedJaxpr, tree_util.PyTreeDef, set[checkify.ErrorEffect]]:
   err_vals, err_tree = tree_util.tree_flatten(error)
-  err_vals = map(jax_core.get_aval, err_vals)
+  err_vals = map(jax_core.typeof, err_vals)
   flat_err_and_in_vals = [*err_vals, *body_jaxpr.in_avals]
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
@@ -883,7 +883,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
                                                   f, (0,), {})),
       jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
-    avals_in = map(jax_core.get_aval, flat_args)
+    avals_in = map(jax_core.typeof, flat_args)
     traced_loop, _, consts = pe.trace_to_jaxpr_dynamic(
         wrapped_loop, list(avals_in))
     traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
@@ -927,7 +927,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
       closed_jaxpr, enabled_errors, error, grid_mapping)
   error = error._add_placeholder_effects(error_effects)
   err_vals, err_in_tree = tree_util.tree_flatten(error)
-  shaped_err_avals = map(jax_core.get_aval, err_vals)
+  shaped_err_avals = map(jax_core.typeof, err_vals)
 
   # Trace the kernel jaxpr to get a checkified jaxpr. This jaxpr will have
   # all enabled errors removed, but have the error as inputs and return values.
@@ -1076,7 +1076,7 @@ def _trace_kernel_to_jaxpr(
       consts_avals = [
           aval
           for c in consts
-          if not isinstance(aval := jax_core.get_aval(c), state.AbstractRef)
+          if not isinstance(aval := jax_core.typeof(c), state.AbstractRef)
       ]
       if consts_avals:
         ctx = jax_core.JaxprPpContext()
@@ -1490,7 +1490,7 @@ def _pallas_call(
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)
-    flat_in_avals = tuple(jax_core.get_aval(a) for a in flat_args)
+    flat_in_avals = tuple(jax_core.typeof(a) for a in flat_args)
 
     flat_out_avals = tuple(
         pallas_core._convert_out_shape_to_aval(v) for v in flat_out_shapes

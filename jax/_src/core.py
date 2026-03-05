@@ -734,7 +734,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 
   def write(v: Var, val: Any) -> None:
     if config.enable_checks.value:
-      assert typecheck(v.aval, val), (v.aval, get_aval(val), val)
+      assert typecheck(v.aval, val), (v.aval, typeof(val), val)
     env[v] = val
 
   env: dict[Var, Any] = {}
@@ -1804,8 +1804,8 @@ def update_aval_with_sharding(aval, sharding, vma=None):
 # following differences:
 #
 # - abstractify returns avals for non-traced array-like objects.
-# - get_aval is like abstractify, but also accepts tracers.
-# - shaped_abstractify is like get_aval, but also accepts duck-typed arrays.
+# - typeof is like abstractify, but also accepts tracers.
+# - shaped_abstractify is like typeof, but also accepts duck-typed arrays.
 #
 # TODO(jakevdp): can these be unified further?
 
@@ -1839,11 +1839,15 @@ def shaped_abstractify(x):
 def abstractify(x):
   if isinstance(x, Tracer):
     raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
-  return get_aval(x)
+  return typeof(x)
 
 
 # TODO(phawkins): the return type should be AbstractValue.
-def get_aval(x: Any) -> Any:
+def typeof(x: Any) -> Any:
+  """Return the JAX type (i.e. :class:`AbstractValue`) of the input.
+
+  Raises a ``TypeError`` if ``x`` is not a valid JAX type.
+  """
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1858,14 +1862,8 @@ def get_aval(x: Any) -> Any:
     )
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
-
-# TODO(phawkins): the return type should be AbstractValue.
-def typeof(x: Any, /) -> Any:
-  """Return the JAX type (i.e. :class:`AbstractValue`) of the input.
-
-  Raises a ``TypeError`` if ``x`` is not a valid JAX type.
-  """
-  return get_aval(x)
+# TODO(phawkins): remove this alias
+get_aval = typeof
 
 def is_concrete(x):
   return to_concrete_value(x) is not None
@@ -2061,7 +2059,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
          f"got {shape}.")
   if context:
     msg += f" {context}."
-  if any(isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
+  if any(isinstance(x, Tracer) and isinstance(typeof(x), ShapedArray)
          and not is_concrete(x) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
@@ -2080,7 +2078,7 @@ class ShardingTypeError(Exception):
 # passed to primitives are always have avals, etc i.e. they are canonical.
 def canonicalize_value(val):
   try:
-    aval = get_aval(val)
+    aval = typeof(val)
   except TypeError:
     return val
   if not isinstance(aval, ShapedArray):
@@ -2479,15 +2477,15 @@ def standard_insert_pvary(*args):
     return args
   if not args:
     return args
-  in_vma = [aval.vma if isinstance(aval := get_aval(a), ShapedArray)
+  in_vma = [aval.vma if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
   in_reduced = [aval.sharding.spec.reduced
-                if isinstance(aval := get_aval(a), ShapedArray) else frozenset()
+                if isinstance(aval := typeof(a), ShapedArray) else frozenset()
                 for a in args]
   out_vma = frozenset.union(*in_vma)
   out = []
   for arg, src_vma, src_reduced in zip(args, in_vma, in_reduced):
-    if (isinstance(get_aval(arg), ShapedArray) and
+    if (isinstance(typeof(arg), ShapedArray) and
         (rest_vma := out_vma - src_vma)):
       # TODO(yashkatariya): Handle partial reduced_vary_cast and partial pvary.
       # Will need more changes to pvary to allow such partialness.
@@ -3204,7 +3202,7 @@ def _replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: frozenset[Effect]):
 # ------------------- Jaxpr checking -------------------
 
 def typecheck(aval: AbstractValue, x) -> bool:
-  return typecompat(aval, get_aval(x))
+  return typecompat(aval, typeof(x))
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   """Determine whether `aval` conforms to `aval_ref`. Ignores weak_type."""

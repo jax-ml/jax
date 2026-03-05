@@ -558,7 +558,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
 def _check_scalar(x):
   msg = "Gradient only defined for scalar-output functions. Output {}.".format
   try:
-    aval = core.get_aval(x)
+    aval = core.typeof(x)
   except TypeError as e:
     raise TypeError(msg(f"was {x}")) from e
   else:
@@ -570,7 +570,7 @@ def _check_scalar(x):
 
 def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   dispatch.check_arg(x)
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
@@ -590,7 +590,7 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
 _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"{name} with output element type {aval.dtype.name}")
@@ -755,7 +755,7 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
   dispatch.check_arg(x)
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"jacfwd with input element type {aval.dtype.name}")
@@ -771,7 +771,7 @@ def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
                     "complex inputs or integer inputs, use jax.jvp directly.")
 
 def _check_output_dtype_jacfwd(holomorphic, x):
-  aval = core.get_aval(x)
+  aval = core.typeof(x)
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError("jacfwd with holomorphic=True requires outputs with complex dtype, "
@@ -2081,7 +2081,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   else:
     out_tree, aux_tree = out_tree(), None
   out_primal_py = tree_unflatten(out_tree, out_primals)
-  primal_avals = list(map(core.get_aval, primals_flat))
+  primal_avals = list(map(core.typeof, primals_flat))
   # Ensure that lifted_jvp is a PyTree
   lifted_jvp = Partial(partial(_lift_linearized, jaxpr, primal_avals,
                                (in_tree, out_tree), out_pvals), consts)
@@ -2095,7 +2095,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
 
 def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
   def fun(*tangents):
-    tangent_avals = list(map(core.get_aval, tangents))
+    tangent_avals = list(map(core.typeof, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
       expected_tangent_aval  = primal_aval.to_tangent_aval()
       if not core.typecompat(expected_tangent_aval, tangent_aval):
@@ -2794,7 +2794,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
                      f"len(devices) = {len(devices)}.")
 
   def _device_put_sharded(*xs):
-    avals = [core.get_aval(x) for x in xs]
+    avals = [core.typeof(x) for x in xs]
     if not all(a1 == a2 for a1, a2 in zip(avals[:-1], avals[1:])):
       a1, a2 = next((a1, a2) for a1, a2 in zip(avals[:-1], avals[1:])
                     if a1 != a2)
@@ -2856,7 +2856,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
   def _device_put_replicated(x):
-    aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
+    aval = core.unmapped_aval(len(devices), 0, core.typeof(x))
     assert isinstance(aval, ShapedArray)
     if isinstance(x, (np.ndarray, basearray.Array)):
       buf = device_put(x[None], devices[0])

@@ -75,7 +75,7 @@ _deprecations = {
   ),
   "get_aval": (
     "jax.core.get_aval is deprecated; use jax.typeof instead.",
-    _src_core.get_aval,
+    _src_core.typeof,
   ),
   "mapped_aval": (
     "jax.core.mapped_aval is deprecated. Use jax.extend.core.mapped_aval.",
@@ -114,7 +114,7 @@ _deprecations = {
 import typing as _typing
 if _typing.TYPE_CHECKING:
   call_impl = _src_core.call_impl
-  get_aval = _src_core.get_aval
+  get_aval = _src_core.typeof
   mapped_aval = _src_core.mapped_aval
   subjaxprs = _src_core.subjaxprs
   set_current_trace = _src_core.set_current_trace

@@ -509,7 +509,7 @@ def ffi_call(
         f"custom_call_api_version < 4; got {custom_call_api_version}.")
 
   def wrapped(*args: ArrayLike, **kwargs: Any):
-    in_avals = [core.get_aval(x) for x in args]
+    in_avals = [core.typeof(x) for x in args]
 
     if input_layouts is None:
       static_input_layouts = tuple(map(_convert_layout_for_lowering, in_avals))

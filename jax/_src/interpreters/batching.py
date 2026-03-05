@@ -140,7 +140,7 @@ class BatchTracer(Tracer):
     if config.enable_checks.value:
       # assert type(batch_dim) in (NotMapped, int)
       if type(batch_dim) is int:
-        aval = core.get_aval(val)
+        aval = core.typeof(val)
         assert 0 <= batch_dim < len(aval.shape)
     self._trace = trace
     self.val = val
@@ -153,7 +153,7 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     from jax._src import hijax  # pytype: disable=import-error
-    aval = core.get_aval(self.val)
+    aval = core.typeof(self.val)
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:
         aval = aval.update(
@@ -718,7 +718,7 @@ def broadcast(x, sz, axis, mesh_axis):
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
-  x_aval = core.get_aval(x)
+  x_aval = core.typeof(x)
   if x_aval.sharding.mesh.empty:
     mesh_axis = None
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
@@ -743,7 +743,7 @@ def matchaxis2(axis_data, src, dst, x, sum_match=False):
 # TODO(yashkatariya): remove this, inline into matchaxis2
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   try:
-    _ = core.get_aval(x)
+    _ = core.typeof(x)
   except TypeError as e:
     raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e

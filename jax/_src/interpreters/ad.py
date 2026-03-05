@@ -35,8 +35,7 @@ from jax._src.ad_util import (
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero,
     add_jaxvals_p, p2tz, p2cz)  # noqa: F401
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
-from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
-                           typeof)
+from jax._src.core import (Trace, Tracer, typeof, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.state.types import AbstractRef
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
@@ -93,7 +92,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
     tangent_trace.tag = _tag
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, _is_vjp)
     tracers = [LinearizeTracer(linearize_trace, p,
-                               tangent_trace.new_arg(get_aval(p).to_tangent_aval(),
+                               tangent_trace.new_arg(typeof(p).to_tangent_aval(),
                                                      source_info))
                if nz else p
                for p, nz in zip(primals, nzs_in)]
@@ -111,7 +110,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
                 getattr(c._trace, 'tag', None) is _tag) for c in consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
   res, env = partition_list(which_env, consts)
-  residual_avals = map(get_aval, res)
+  residual_avals = map(typeof, res)
   # Which residuals are just forwarded inputs? Check object id.
   id_map = {id(p): i for i, p in enumerate(primals)}
   in_fwd: list[int | None] = [id_map.get(id(r)) for r in res]
@@ -240,7 +239,7 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
   with core.take_current_trace() as parent_trace:
     source_info = source_info_util.current()
     tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
-    tangents = [tangent_trace.new_arg(get_aval(p).to_tangent_aval(), source_info) for p in primals]
+    tangents = [tangent_trace.new_arg(typeof(p).to_tangent_aval(), source_info) for p in primals]
     tangents = [p2tz(t) if not isinstance(t, Zero)
                 and isinstance(typeof(t), core.ShapedArray)
                 and dtype(t) == float0 else t for t in tangents]
@@ -270,7 +269,7 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
   consts = [c for c, used in zip(consts, used_consts) if used]
-  out_tangents_pvals = [pe.PartialVal.unknown(core.get_aval(t)) if nz else
+  out_tangents_pvals = [pe.PartialVal.unknown(core.typeof(t)) if nz else
                         pe.PartialVal.known(zeros_like_aval(t.aval))
                         for t, nz in zip(out_tangents, out_nzs)]
   if has_aux:
@@ -288,7 +287,7 @@ def linearize(traceable: lu.WrappedFun, *primals, has_aux=False, is_vjp=False):
     aux = None
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-              + tuple(pe.PartialVal.unknown(get_aval(p).to_tangent_aval())
+              + tuple(pe.PartialVal.unknown(typeof(p).to_tangent_aval())
                       for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
@@ -660,7 +659,7 @@ class JVPTrace(Trace):
     res = [next(res_out_) if f is None else primals_in[f] for f in input_fwds]
     assert next(res_out_, None) is None
 
-    avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
+    avals_out = [core.typeof(x).to_tangent_aval() for x in primals_out]
     in_zeros = [type(t) is Zero for t in tangents_in]
     nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
     with core.set_current_trace(self.parent_trace):
@@ -726,7 +725,7 @@ class JVPTracer(Tracer):
 
   @property
   def aval(self):
-    return get_aval(self.primal)
+    return typeof(self.primal)
 
   def cur_qdd(self):
     return core.cur_qdd(self.primal)
@@ -748,8 +747,8 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = get_aval(primal).strip_weak_type()
-    tangent_aval = get_aval(tangent).strip_weak_type()
+    primal_aval = typeof(primal).strip_weak_type()
+    tangent_aval = typeof(tangent).strip_weak_type()
     if not isinstance(primal_aval, core.ShapedArray):
       return  # TODO(mattjj,dougalm)
     assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape), (
@@ -874,7 +873,7 @@ class LinearizeTrace(Trace):
     res_out_ = iter(res_out)
     res = [next(res_out_) if f is None else primals_in[f] for f in input_fwds]
     assert next(res_out_, None) is None
-    avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
+    avals_out = [core.typeof(x).to_tangent_aval() for x in primals_out]
 
     in_zeros = [type(t) is Zero for t in tangents_in]
     nz_tangents_in = [t for z, t in zip(in_zeros, tangents_in) if not z]
@@ -914,7 +913,7 @@ class LinearizeTrace(Trace):
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
       out_axes = params['out_axes_thunk']()
-      residual_avals = map(get_aval, residuals)
+      residual_avals = map(typeof, residuals)
       residual_axes = [in_axes[f1] if f1 is not None else
                        out_axes[f2] if f2 is not None else
                        0 for f1, f2 in zip(in_fwd, out_fwd)]
@@ -1000,7 +999,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = pe.JaxprTrace(parent_trace, current_name_stack, core.TraceTag())
-    tangent_avals = [get_aval(p).to_tangent_aval() for p in primals]
+    tangent_avals = [typeof(p).to_tangent_aval() for p in primals]
 
     # map tangents with float0 dtype to symbolic zeros
     nonzeros = [nz and not (isinstance(a, core.ShapedArray) and a.dtype == float0)
@@ -1038,7 +1037,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
 
     out_nzs = [type(t) is not zero_type and not trace.to_jaxpr_tracer(t).is_known()
                for t in out_tangents]
-    out_tangent_avals = [get_aval(p).to_tangent_aval() for p in out_primals]
+    out_tangent_avals = [typeof(p).to_tangent_aval() for p in out_primals]
     out_nz_tracers = [trace.to_jaxpr_tracer(r)
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
@@ -1086,7 +1085,7 @@ class LinearizeTracer(Tracer):
 
   @property
   def aval(self):
-    return get_aval(self.primal)
+    return typeof(self.primal)
 
   def full_lower(self):
     if type(self.tangent) is Zero:

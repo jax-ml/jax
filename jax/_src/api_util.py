@@ -742,7 +742,7 @@ def check_no_aliased_ref_args(dbg_fn: Callable[[], core.DebugInfo],
 def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo, consts, args) -> None:
   assert config.mutable_array_checks.value
   refs: set[int] = {id(core.get_referent(c)) for c in consts
-                    if isinstance(core.get_aval(c), AbstractRef)}
+                    if isinstance(core.typeof(c), AbstractRef)}
   for i, x in enumerate(args):
     if id(core.get_referent(x)) in refs:
       a = core.shaped_abstractify(x)
