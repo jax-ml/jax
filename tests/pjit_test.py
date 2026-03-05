@@ -10576,6 +10576,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = jax.jit(jax.grad(f))(arr2)
     self.assertArraysEqual(reshard(out, P()), out2)
 
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_argsort(self, mesh):
+    x = jnp.array([4, 3, 2, 5, 6, 0])
+    x = reshard(x, P("x"))
+    np.testing.assert_array_equal(jnp.argsort(x), np.array([5, 2, 1, 0, 3, 4]))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
