@@ -2171,9 +2171,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(jax.vjp(g, 1.)[1])(1.)
     e, = jaxpr.jaxpr.eqns
-    e1, e2 = e.params['jaxpr'].eqns
-    self.assertEmpty(e1.outvars)
-    self.assertLen(e2.params['jaxpr'].eqns, 1)
+    e1, = e.params['jaxpr'].eqns
+    self.assertLen(e1.params['jaxpr'].eqns, 1)
 
   def test_fanout_specs_transpose_to_psum(self):
     mesh = jtu.create_mesh((4,), ('x',))
