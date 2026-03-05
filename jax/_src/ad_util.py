@@ -83,7 +83,7 @@ def p2tz(primal_value):
   return Zero(typeof(primal_value).to_tangent_aval())
 
 def p2cz(primal_value):
-  return Zero(typeof(primal_value).to_cotangent_aval())
+  return Zero(typeof(primal_value).to_ct_aval())
 
 
 def _stop_gradient_impl(x: T) -> T:

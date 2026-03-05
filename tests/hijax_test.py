@@ -1269,8 +1269,8 @@ class HijaxTest(jtu.JaxTestCase):
       def vspace_zero(self):
         return MulHZero(self)()
 
-      def to_cotangent_aval(self) -> HiType:
-        return MulTy(self.ty.to_cotangent_aval())
+      def to_ct_aval(self) -> HiType:
+        return MulTy(self.ty.to_ct_aval())
 
       def shard(self, mesh, manual_axes, check_vma, spec):
         return MulTy(self.ty.shard(mesh, manual_axes, check_vma, spec.val))

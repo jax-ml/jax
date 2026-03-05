@@ -455,7 +455,7 @@ class ValAccum(GradAccum):
 
   def __init__(self, aval, val=None):
     self.aval = aval
-    self.val = Zero(aval.to_cotangent_aval()) if val is None else val
+    self.val = Zero(aval.to_ct_aval()) if val is None else val
     ct_check(self, self.val)
 
   def __repr__(self):
@@ -473,7 +473,7 @@ def ct_check(primal, ct):
   if config.disable_bwd_checks.value:
     return
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
-  ct_aval_expected = primal.aval.to_cotangent_aval()  # type: ignore
+  ct_aval_expected = primal.aval.to_ct_aval()  # type: ignore
   if not core.typematch(ct_aval, ct_aval_expected, no_dtype_check=True):
     # TODO(yashkatariya, mattjj): Add primitive name here for
     # better error message?
@@ -1130,7 +1130,7 @@ def deflinear2(primitive, transpose_rule):
 
 def linear_transpose2(transpose_rule, cotangent, *args, **kwargs):
   if type(cotangent) is Zero:
-    return [Zero(x.aval.to_cotangent_aval()) if isinstance(x, UndefinedPrimal)
+    return [Zero(x.aval.to_ct_aval()) if isinstance(x, UndefinedPrimal)
             else None for x in args]
   else:
     return transpose_rule(cotangent, *args, **kwargs)
@@ -1179,13 +1179,13 @@ def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert is_undefined_primal(x) ^ is_undefined_primal(y)
   if is_undefined_primal(x):
     if type(cotangent) is Zero:
-      return Zero(x.aval.to_cotangent_aval()), None
+      return Zero(x.aval.to_ct_aval()), None
     else:
       out = lhs_rule(cotangent, x, y, **kwargs)
       return out, None
   else:
     if type(cotangent) is Zero:
-      return None, Zero(y.aval.to_cotangent_aval())
+      return None, Zero(y.aval.to_ct_aval())
     else:
       out = rhs_rule(cotangent, x, y, **kwargs)
       return None, out

@@ -510,8 +510,8 @@ class AbstractRef(core.AbstractValue):
     return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space,
                        kind=self.kind)
 
-  def to_cotangent_aval(self):
-    return AbstractRef(self.inner_aval.to_cotangent_aval(), self.memory_space,
+  def to_ct_aval(self):
+    return AbstractRef(self.inner_aval.to_ct_aval(), self.memory_space,
                        kind=self.kind)
 
   def __eq__(self, other):

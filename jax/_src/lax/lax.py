@@ -4619,9 +4619,9 @@ def _add_transpose(t, x, y):
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
   x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
-  x_aval = x_aval.to_cotangent_aval()
+  x_aval = x_aval.to_ct_aval()
   y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
-  y_aval = y_aval.to_cotangent_aval()
+  y_aval = y_aval.to_ct_aval()
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -4721,8 +4721,8 @@ ad.defjvp(mul_p,
           lambda ydot, x, y: mul(x, ydot))
 ad.defbilinear(
     mul_p,
-    lambda ct, x, y: _unbroadcast(x.aval.to_cotangent_aval(), mul(ct, y)),
-    lambda ct, x, y: _unbroadcast(y.aval.to_cotangent_aval(), mul(x, ct)))
+    lambda ct, x, y: _unbroadcast(x.aval.to_ct_aval(), mul(ct, y)),
+    lambda ct, x, y: _unbroadcast(y.aval.to_ct_aval(), mul(x, ct)))
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 
 def _div_transpose_rule(cotangent, x, y):
@@ -4896,7 +4896,7 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
-  operand_ct_aval = operand.aval.to_cotangent_aval()
+  operand_ct_aval = operand.aval.to_ct_aval()
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand_ct_aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
@@ -5448,7 +5448,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
   out_axes = np.argsort(unsorted_axes)
-  xs = x.aval.to_cotangent_aval().sharding
+  xs = x.aval.to_ct_aval().sharding
   inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
   ds = xs.update(spec=xs.spec.update(partitions=inverse_spec))
   dot_general_out = dot_general(g, y, dims, precision=precision,
@@ -6437,7 +6437,7 @@ def _broadcast_in_dim_typecheck_rule(
 
 def _broadcast_in_dim_transpose_rule(ct, operand,
                                      shape, broadcast_dimensions, sharding):
-  ct_aval = operand.aval.to_cotangent_aval()
+  ct_aval = operand.aval.to_ct_aval()
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(ct_aval)]
   if not isinstance(operand, ad.UndefinedPrimal):
@@ -6739,7 +6739,7 @@ def _concatenate_transpose_rule(ct, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(o.aval.to_cotangent_aval())
+    return [ad_util.Zero(o.aval.to_ct_aval())
             if ad.is_undefined_primal(o) else None for o in operands]
   else:
     return split(ct, tuple(shape[dimension] for shape in operand_shapes),
@@ -6798,7 +6798,7 @@ def _split_weak_type_rule(operand, *, sizes, axis):
 def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
-    return [ad_util.Zero(operand.aval.to_cotangent_aval())]
+    return [ad_util.Zero(operand.aval.to_ct_aval())]
   cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
                 for ct in cotangents]
   return [concatenate(cotangents, dimension=axis)]
@@ -7218,7 +7218,7 @@ def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
 
 def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
-  op_ct_aval = operand.aval.to_cotangent_aval()
+  op_ct_aval = operand.aval.to_ct_aval()
   if dimensions is None:
     return [reshape(ct, op_ct_aval.shape, out_sharding=op_ct_aval.sharding)]
   else:
@@ -7693,7 +7693,7 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
   result = broadcast_in_dim(
       cotangent, input_shape, broadcast_dimensions,
-      out_sharding=operand.aval.to_cotangent_aval().sharding)
+      out_sharding=operand.aval.to_ct_aval().sharding)
   assert result.shape == input_shape
   return [result]
 

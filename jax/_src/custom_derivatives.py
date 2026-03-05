@@ -952,7 +952,7 @@ def _flatten_bwd(f: Callable,
     if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
       results.append(Zero(a.to_tangent_aval()))
     elif type(ct) is SymbolicZero:
-      if not core.typecompat(a.to_cotangent_aval(), a_ := ct.aval):
+      if not core.typecompat(a.to_ct_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
                "that does not match the corresponding input tangent shape/dtype: "
                f"at output{keystr(kp)} the SymbolicZero had shape/dtype "
@@ -964,9 +964,9 @@ def _flatten_bwd(f: Callable,
       results.append(Zero(ct.aval))
     else:
       if (not config.disable_bwd_checks.value and
-          not core.typecompat(a.to_cotangent_aval(), a_ := core.typeof(ct))
-          and not _ref_typecompat(a.to_cotangent_aval(), a_)
-          and not _temporary_dtype_exception(a.to_cotangent_aval(), a_)):
+          not core.typecompat(a.to_ct_aval(), a_ := core.typeof(ct))
+          and not _ref_typecompat(a.to_ct_aval(), a_)
+          and not _temporary_dtype_exception(a.to_ct_aval(), a_)):
         msg = ("Custom VJP bwd rule must produce an output with the same "
                "type as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
@@ -979,7 +979,7 @@ def _flatten_bwd(f: Callable,
 
 def _ref_typecompat(a, a_):
   return (isinstance(a, AbstractRef) and
-          core.typecompat(a.to_cotangent_aval().inner_aval, a_))
+          core.typecompat(a.to_ct_aval().inner_aval, a_))
 
 # TODO(mattjj): remove both these exceptions to cotangent compatibility check
 def _temporary_dtype_exception(a, a_) -> bool:

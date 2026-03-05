@@ -10564,7 +10564,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       jax.jit(lambda x: x * 2)(arr)
 
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_undreduced_add(self, mesh):
+  def test_unreduced_add_jaxvals(self, mesh):
     arr = jax.reshard(np.ones((2, 2)), P(reduced={'x'}))
     arr2 = jax.device_put(np.ones((2, 2)), P())
 

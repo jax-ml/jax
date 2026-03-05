@@ -1702,8 +1702,8 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
   assert all(not ad.is_undefined_primal(x) for x in start_indices)
   update_shape = (update.aval.shape if ad.is_undefined_primal(update) else
                   update.shape)
-  operand_ct_aval = operand.aval.to_cotangent_aval()
-  update_ct_aval = update.aval.to_cotangent_aval()
+  operand_ct_aval = operand.aval.to_ct_aval()
+  update_ct_aval = update.aval.to_ct_aval()
   if type(t) is ad_util.Zero:
     operand_t = (ad_util.Zero(operand_ct_aval)
                  if ad.is_undefined_primal(operand) else None)

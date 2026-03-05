@@ -1699,7 +1699,7 @@ class AbstractValue:
   def to_tangent_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
 
-  def to_cotangent_aval(self) -> AbstractValue:
+  def to_ct_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
 
   # TODO(dougalm): deprecate this alias
@@ -2324,7 +2324,7 @@ class ShapedArray(AbstractValue):
         self.weak_type, sharding=self.sharding, vma=self.vma,
         memory_space=self.memory_space)
 
-  def to_cotangent_aval(self):
+  def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     return ShapedArray(
@@ -2736,7 +2736,7 @@ accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
   def to_tangent_aval(self): return self
-  def to_cotangent_aval(self): return self
+  def to_ct_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.

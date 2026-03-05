@@ -106,7 +106,7 @@ class HiType(core.AbstractValue):
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
     assert False, "must override"
-  def to_cotangent_aval(self) -> HiType:
+  def to_ct_aval(self) -> HiType:
     return self.to_tangent_aval()
   # the next two are required if this type is itself a tangent type
   def vspace_zero(self) -> HiVal:
@@ -166,7 +166,7 @@ class MutableHiType(core.AbstractValue):
 
   # Subclasses should override if the cotangent type is a function of primal
   # type. For example, CT unreduced = reduced and vice-versa.
-  def to_cotangent_aval(self) -> HiType:
+  def to_ct_aval(self) -> HiType:
     return self.to_tangent_aval()
 
 def register_hitype(val_cls, typeof_fn) -> None:
@@ -769,7 +769,7 @@ def _vjp_bwd_aval_mismatch_err(path, primal_aval, ct):
     return
   if isinstance(primal_aval, AbstractRef):
     primal_aval = primal_aval.inner_aval
-  expected = primal_aval.to_cotangent_aval()
+  expected = primal_aval.to_ct_aval()
   ct_aval = ct.aval if isinstance(ct, ad_util.SymbolicZero) else typeof(ct)
   if (not core.typematch(expected, ct_aval) and
       not _temporary_dtype_exception(expected, ct_aval) and
@@ -781,7 +781,7 @@ def _vjp_bwd_aval_mismatch_err(path, primal_aval, ct):
 
 def _replace_none(primal_in_aval, maybe_ct):
   if maybe_ct is None:
-    return ad_util.Zero(primal_in_aval.to_cotangent_aval())
+    return ad_util.Zero(primal_in_aval.to_ct_aval())
   else:
     return maybe_ct
 
