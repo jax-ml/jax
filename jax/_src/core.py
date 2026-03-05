@@ -1764,7 +1764,10 @@ Value = Any
 
 def valid_jaxtype(x) -> bool:
   try:
-    aval = abstractify(x)
+    # TODO(phawkins): is this check necessary?
+    if isinstance(x, Tracer):
+      return False
+    aval = typeof(x)
   except TypeError:
     return False
   else:
@@ -1799,11 +1802,10 @@ def update_aval_with_sharding(aval, sharding, vma=None):
   return aval if vma is None else aval.update(vma=vma)
 
 
-# We have three flavors of abstractification APIs here which each used to have
+# We have two flavors of abstractification APIs here which each used to have
 # their own separate implementation. Now they're effectively the same, with the
 # following differences:
 #
-# - abstractify returns avals for non-traced array-like objects.
 # - typeof is like abstractify, but also accepts tracers.
 # - shaped_abstractify is like typeof, but also accepts duck-typed arrays.
 #
@@ -1834,12 +1836,6 @@ def shaped_abstractify(x):
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
       "does not have a dtype attribute")
-
-
-def abstractify(x):
-  if isinstance(x, Tracer):
-    raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
-  return typeof(x)
 
 
 # TODO(phawkins): the return type should be AbstractValue.

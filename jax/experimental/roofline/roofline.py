@@ -154,14 +154,14 @@ def _roofline_interpreter(
 
   def read(v: core.Atom) -> RooflineShape:
     if type(v) is core.Literal:
-      return RooflineShape.from_aval(core.abstractify(v.val))
+      return RooflineShape.from_aval(core.typeof(v.val))
     else:
       assert isinstance(v, core.Var)
       return env[v]
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return core.abstractify(v.val)
+      return core.typeof(v.val)
     else:
       return v.aval
 
