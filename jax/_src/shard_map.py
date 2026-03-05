@@ -40,7 +40,7 @@ from jax._src.core import order_wrt_mesh
 from jax._src.core import pvary, Tracer, typeof, shard_aval, unshard_aval
 from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
                            use_abstract_mesh, get_abstract_mesh,
-                           get_concrete_mesh, empty_abstract_mesh)
+                           get_concrete_mesh)
 from jax._src.lax import lax, parallel as lax_parallel
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -427,12 +427,12 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
 def _check_unreduced(error_type, mesh, manual_axes, specs):
-  from jax._src.hijax import HiPspec
+  from jax._src.hijax import HipSpec
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   full_manual = frozenset(mesh.axis_names) == manual_axes
   specs_flat, _ = tree_flatten(specs)
   for s in specs_flat:
-    if isinstance(s, HiPspec):
+    if isinstance(s, HipSpec):
       continue  # TODO(mattjj,yashkatariya): add user validation method
     if not s.unreduced and not s.reduced:
       continue
@@ -455,7 +455,7 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
 
 
 def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
-  from jax._src.hijax import HiPspec
+  from jax._src.hijax import HipSpec
   if error_type == SpecErrorType.input and specs is None:
     raise TypeError(
         "shard_map in_specs argument must be a pytree of "
@@ -464,7 +464,7 @@ def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
         "where `P = jax.sharding.PartitionSpec`?")
 
   def check_spec(p):
-    if isinstance(p, HiPspec):
+    if isinstance(p, HipSpec):
       return True  # TODO(mattjj,yashkatariya): add user validation method
     if not isinstance(p, PartitionSpec):
       return False
@@ -794,7 +794,7 @@ def _shard_map_staging(
     _check_vmas(mesh, out_specs_thunk(), [v.aval for v in jaxpr.outvars])
   out_avals = [unshard_aval(mesh, check_vma, spec, aval)
                for spec, aval in zip(out_specs_thunk(), out_avals_)]
-  in_specs_staged = (*(_repspec(typeof(c)) for c in consts), *in_specs)
+  in_specs_staged = (P(),) * len(consts) + tuple(in_specs)
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
@@ -1562,14 +1562,12 @@ def _shard_map_jvp(trace, shard_map_p, f: lu.WrappedFun, tracers, mesh, in_specs
   args, in_tree = tree_flatten((primals, tangents))
   f_jvp = ad.jvp_subtrace(f, trace.tag)
   f_jvp, which_nz_out = ad.nonzero_tangent_outputs(f_jvp)
-  tangent_in_specs = [s.to_tangent_spec() for s, nz in zip(in_specs, which_nz) if nz]
+  tangent_in_specs = [sp for sp, nz in zip(in_specs, which_nz) if nz]
 
   @as_hashable_function(closure=out_specs_thunk)
   def new_out_specs_thunk():
-    out_specs = out_specs_thunk()
-    tangent_out_specs = [s.to_tangent_spec()
-                         for s, nz in zip(out_specs, which_nz_out()) if nz]
-    return (*out_specs, *tangent_out_specs)
+    out_ax = out_specs_thunk()
+    return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
   params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
                 out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
                 manual_axes=manual_axes)
@@ -1627,8 +1625,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     else:
       raval = next(res_avals_iter)
       res_specs.append(raval.nospec(mesh, check_vma, all_names))
-  env_specs = [_repspec(typeof(e)) for e in env]
-  unk_in_specs = (*res_specs, *env_specs, *unk_in_specs)  # type: ignore
+  unk_in_specs = (*res_specs,) + (P(),) * len(env) + (*unk_in_specs,)  # type: ignore[assignment]
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.to_jaxpr_tracer, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -1690,14 +1687,18 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   res_avals2 = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
                 if f1 is None and f2 is None]
   res_avals_iter = iter(res_avals2)
-  res_specs = [in_specs[f1] if f1 is not None else out_specs[f2] if f2 is not None
-               else next(res_avals_iter).nospec(mesh, check_vma, all_names)
-               for f1, f2 in zip(in_fwd, out_fwd)]
-  assert next(res_avals_iter, None) is None
-  new_in_specs = [*res_specs, *(_repspec(typeof(e)) for e in env),
-                  *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz)]
-  tangent_out_specs = tuple(s.to_tangent_spec() for s, nz in zip(out_specs, nzs_out) if nz)
-
+  res_specs = []
+  for f1, f2 in zip(in_fwd, out_fwd):
+    if f1 is not None:
+      res_specs.append(in_specs[f1])
+    elif f2 is not None:
+      res_specs.append(out_specs[f2])
+    else:
+      raval = next(res_avals_iter)
+      res_specs.append(raval.nospec(mesh, check_vma, all_names))
+  new_in_specs = (*res_specs, *(P(),) * len(env),
+                  *(ax for ax, nz in zip(in_specs, nzs_in) if nz))
+  tangent_out_specs = tuple(ax for ax, nz in zip(out_specs, nzs_out) if nz)
   @as_hashable_function(closure=tangent_out_specs)
   def tangent_out_specs_thunk():
     return tangent_out_specs
@@ -1801,11 +1802,13 @@ def _shard_map_transpose(out_cts, *args,
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
   new_in_specs = (
-      [s.to_ct_spec() for s, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
+      [core.primal_spec_to_cotangent_spec(s)
+       for s, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
       [s for s, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
 
   def new_out_specs_thunk():
-    return tuple(sp.to_ct_spec() for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
+    return tuple(core.primal_spec_to_cotangent_spec(sp)
+                 for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
 
   try:
     out_flat = shard_map_p.bind(
@@ -2028,9 +2031,6 @@ def _shard_map_discharge(
                 for a in in_avals]
   assert next(ref_vals_, None) is None
   return new_invals, out_vals
-
-def _repspec(aval):
-  return aval.nospec(empty_abstract_mesh, False, ())
 
 # ----------------------- top level collectives --------------------------------
 

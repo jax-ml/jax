@@ -34,7 +34,7 @@ from jax._src.effects import (
 )
 from jax._src.hijax import (
     HiPrimitive as HiPrimitive,
-    HiPspec as HiPspec,
+    HipSpec as HipSpec,
     HiType as HiType,
     MutableHiType as MutableHiType,
     VJPHiPrimitive as VJPHiPrimitive,
