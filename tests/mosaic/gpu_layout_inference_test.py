@@ -215,7 +215,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertNotIn("in_layouts", c.attributes)
     self.checkOutLayouts(c, [layout])
 
-  def test_infer_splat_layout_for_vector_splat(self):
+  def test_infer_splat_layout_for_vector_broadcast(self):
     shape = (16, 8)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
     with ir.InsertionPoint(self.module.body):
@@ -326,25 +326,22 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(bcast, [in_layout])
     self.checkOutLayouts(bcast, [out_layout])
 
-  # TODO(allanrenucci): Turn into a positive test. This is currently not
-  # implemented. The test checks we fail gracefully.
   @parameterized.parameters(True, False)
-  def test_cant_infer_reduced_strided_layout(self, hint_on_input):
+  def test_infer_reduced_strided_layout(self, hint_on_input):
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(ir.VectorType.get((128,), ir.F32Type.get()))
+      in_layout = mgpu.WGStridedFragLayout((128,), vec_size=1)
       if hint_on_input:
-        layout = mgpu.WGStridedFragLayout.from_shaped_type(x.type)
-        x = layout_cast(x, layout)
+        x = layout_cast(x, in_layout)
       out_type = ir.VectorType.get((128, 128), ir.F32Type.get())
-      out = mgpu.dialect.broadcast_in_dim(out_type, x, [0])
+      op = mgpu.dialect.BroadcastInDimOp(out_type, x, [1])
+      out_layout = mgpu.WGStridedFragLayout((128, 128), vec_size=1)
       if not hint_on_input:
-        layout = mgpu.WGStridedFragLayout.from_shaped_type(out.type)
-        layout_cast(out, layout)
+        layout_cast(op.result, out_layout)
 
-    with self.assertRaisesRegex(
-        ValueError, "Failed to infer a possible set of layouts"
-    ):
-      mgpu.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [in_layout])
+    self.checkOutLayouts(op, [out_layout])
 
   @parameterized.parameters(
       (1, mgpu.WGMMA_LAYOUT, None, None),
@@ -766,6 +763,25 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.assertNotIn("in_layouts", bcast.attributes)
     self.checkOutLayouts(bcast, [layout])
+
+  @parameterized.parameters(
+      ((1, 128), (4, 128)),
+      ((128,), (4, 128)),
+  )
+  def test_vector_broadcast_from_vector_infers_strided_layout(
+      self, src_shape, dst_shape
+  ):
+    f32 = ir.F32Type.get()
+    src_layout = mgpu.WGStridedFragLayout(src_shape, vec_size=1)
+    dst_layout = mgpu.WGStridedFragLayout(dst_shape, vec_size=1)
+    with ir.InsertionPoint(self.module.body):
+      (src,) = undefs(ir.VectorType.get(src_shape, f32))
+      src = layout_cast(src, src_layout)
+      op = vector.BroadcastOp(ir.VectorType.get(dst_shape, f32), src)
+
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [src_layout])
+    self.checkOutLayouts(op, [dst_layout])
 
   def test_vector_reduction_infers_reducible_producer_layout(self):
     shape = (128,)
