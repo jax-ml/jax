@@ -461,6 +461,20 @@ class DerivationContext:
       dataclasses.field(default_factory=dict, init=False)
   )
 
+  # A slice_smem op can optionally have an alias_id which is a string. This is
+  # used in cases where multiple slices alias the same memory. If two aliases
+  # have different IDs, that means that they come from different refs and
+  # their layouts are independent. Conversely, smem aliases that have the same
+  # ID are considered to be identical refs and therefore must have the same
+  # layout. The layout var is cached here so that it can be reused every time
+  # an existing alias ID is encountered.
+  #
+  # SMEM slices that do not have an alias ID cannot be aliases and therefore
+  # always have their own independent layout.
+  slice_smem_aliases: dict[str, cs.Variable] = dataclasses.field(
+      default_factory=dict, init=False
+  )
+
   def update(self, mapping: ValueSitesForVariable) -> None:
     for variable, value_sites in mapping.items():
       if variable in self.value_sites_for_variable:
@@ -1403,9 +1417,16 @@ def _slice_smem_constraint_system(
     ctx: DerivationContext,
     op: mgpu.SliceSMEMOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  del ctx
   res = ValueSite(op, VariableType.RESULT, 0)
-  res_var = cs.Variable(res)
+  if "alias_id" in op.attributes:
+    alias_id = ir.StringAttr(op.attributes["alias_id"]).value
+    if alias_id in ctx.slice_smem_aliases:
+      res_var = ctx.slice_smem_aliases[alias_id]
+    else:
+      res_var = cs.Variable(res)
+      ctx.slice_smem_aliases[alias_id] = res_var
+  else:
+    res_var = cs.Variable(res)
   return cs.ConstraintSystem(), {res_var: [res]}
 
 

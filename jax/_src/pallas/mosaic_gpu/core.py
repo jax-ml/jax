@@ -437,7 +437,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
   flat_refs = []
   if ref_union.memory_space == SMEM:
     union_bytes = 0
-    for ref_group in ref_union.refs:
+    for group_idx, ref_group in enumerate(ref_union.refs):
       byte_offset = 0
       def unflatten(ref):
         nonlocal byte_offset
@@ -447,7 +447,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         )
         if not isinstance(ref, pallas_core.TransformedRef):
           ref = pallas_core.TransformedRef(ref, transforms=())
-        transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset)
+        transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset, group_idx)
         result = pallas_core.TransformedRef(
             ref_union, transforms=(transform, *ref.transforms)
         )
@@ -470,7 +470,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
     assert union_bytes == ref_union.shape[0]
   elif ref_union.memory_space == TMEM:
     union_cols = 0
-    for ref_group in ref_union.refs:
+    for group_idx, ref_group in enumerate(ref_union.refs):
       col_offset = 0
       def unflatten(ref):
         nonlocal col_offset
@@ -480,7 +480,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
         ncols = ref.layout.cols_in_shape(ref.shape,
                                          dtypes.itemsize_bits(ref.dtype))
         transform = ExtractAliasedRef.from_transformed_ref(
-            ref, col_offset, layout=ref.layout)
+            ref, col_offset, group_idx, layout=ref.layout)
         result = pallas_core.TransformedRef(
             ref_union, transforms=(transform, *ref.transforms)
         )
@@ -904,6 +904,10 @@ class ExtractAliasedRef(state_types.Transform):
   dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
   shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
   offset: int = dataclasses.field(metadata=dict(static=True))
+
+  # The index of the group of this aliased ref within the input RefUnion.
+  alias_group_idx: int = dataclasses.field(metadata=dict(static=True))
+
   # TMEM-specific params
   layout: tcgen05.TMEMLayout | None = dataclasses.field(
       metadata=dict(static=True)
@@ -914,9 +918,10 @@ class ExtractAliasedRef(state_types.Transform):
       cls,
       ref: pallas_core.TransformedRef,
       byte_offset: int,
+      alias_group_idx: int,
       layout: tcgen05.TMEMLayout | None = None,
   ):
-    return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, layout)
+    return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, alias_group_idx, layout)
 
   def transform_type(self, x):
     match x:

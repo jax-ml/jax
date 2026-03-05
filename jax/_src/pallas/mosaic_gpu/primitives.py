@@ -3217,6 +3217,7 @@ def _wait_load_tmem_abstract_eval():
 
 
 @lowering.register_lowering_rule(wait_load_tmem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(wait_load_tmem_p, mgpu.LoweringSemantics.Warpgroup)
 def _wait_load_tmem_lowering(_):
   tcgen05.wait_load_tmem()
   return ()

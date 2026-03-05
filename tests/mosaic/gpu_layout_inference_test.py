@@ -1511,6 +1511,78 @@ class LayoutInferenceTest(parameterized.TestCase):
           inference_utils.out_transforms(slice_smem_op), [transforms]
       )
 
+  def test_slice_smem_constraint_system_with_alias_ids_works_correctly(self):
+    with ir.InsertionPoint(self.module.body):
+      shape = (64, 64)
+      elt_ty = ir.BF16Type.get()
+      i32 = ir.IntegerType.get_signless(32)
+      [offset] = undefs(i32)
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+
+      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, offset) for _ in range(6)]
+      ops[2].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[3].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[4].attributes["alias_id"] = ir.StringAttr.get("b")
+      ops[5].attributes["alias_id"] = ir.StringAttr.get("b")
+
+      transforms_0 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ops[0].result, transforms_0)
+
+      transforms_1 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((16, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ops[2].result, transforms_1)
+
+      transforms_2 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((32, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ops[5].result, transforms_2)
+
+    mgpu.infer_layout(self.module)
+
+    empty_transforms = ir.ArrayAttr.get([])
+
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[0]), [transforms_0])
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[1]), [empty_transforms])
+
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[2]), [transforms_1])
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[3]), [transforms_1])
+
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[4]), [transforms_2])
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[5]), [transforms_2])
+
+  def test_slice_smem_constraint_system_with_alias_ids_fails_on_conflict(self):
+    with ir.InsertionPoint(self.module.body):
+      shape = (64, 64)
+      elt_ty = ir.BF16Type.get()
+      i32 = ir.IntegerType.get_signless(32)
+      [offset] = undefs(i32)
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+
+      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, offset) for _ in range(2)]
+      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
+
+      transforms_0 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ops[0].result, transforms_0)
+
+      transforms_1 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((16, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ops[1].result, transforms_1)
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module)
+
   def test_infer_transforms_preserves_with_transforms_requirements(self):
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()

@@ -2088,9 +2088,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_smem_aliasing_works_basic(self):
-    self.skip_if_wg_semantics()
-
     in_shape = (2, 256)
+    if self.is_wg_semantics():
+      transforms = ()
+    else:
+      transforms = (plgpu.TilingTransform((64,)),)
 
     @functools.partial(
         self.pallas_call,
@@ -2114,12 +2116,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
                     plgpu.SMEM((256,), jnp.bfloat16),
                     # Add an arbitrary level of nesting to make sure that we
                     # support PyTrees.
-                    [
-                        plgpu.SMEM(
-                            (128,),
-                            jnp.float32,
-                            transforms=(plgpu.TilingTransform((64,)),)),
-                    ]
+                    [plgpu.SMEM((128,), jnp.float32, transforms=transforms)]
                 ],
             )
         ],
@@ -2132,11 +2129,17 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       self.assertIsInstance(smem_ref128_2, state_types.TransformedRef)
       self.assertIs(smem_ref128.ref, smem_ref128_2.ref)
       self.assertEqual(smem_ref128.transforms, smem_ref128_2.transforms)
-      extract_alias_transform, tile_transform = smem_ref128.transforms
+
       # Ensure that the transforms provided in the scratch shapes have been
       # passed correctly.
-      self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-      self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
+      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
+        [extract_alias_transform] = smem_ref128.transforms
+        self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
+      else:
+        extract_alias_transform, tile_transform = smem_ref128.transforms
+        self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
+        self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
+
       smem_ref256[...] = x_ref[...] + 1
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref128, o_ref128)
@@ -2146,9 +2149,59 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         kernel(x.reshape(in_shape)).reshape((128,)), x[256 : 256 + 128] + 1
     )
 
-  def test_smem_aliasing_works_with_subbyte_dtypes(self):
-    self.skip_if_wg_semantics()
+  def test_smem_aliasing_refunions_in_wg_semantics_can_have_distinct_transforms(self):
+    # A smoke test to ensure that we have different IDs for the two RefUnion
+    # allocations in WG semantics.
+    if not self.is_wg_semantics():
+      self.skipTest("This test is only for WG semantics.")
 
+    in_shape = (2, 256)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        in_specs=[pl.BlockSpec(in_shape)],
+        out_specs=pl.BlockSpec((128,), memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.RefUnion(
+                plgpu.SMEM(in_shape, jnp.float32),
+                [
+                    plgpu.SMEM((256,), jnp.bfloat16),
+                    [plgpu.SMEM((128,), jnp.float32)]
+                ],
+            ),
+            plgpu.RefUnion(
+                plgpu.SMEM(in_shape, jnp.float32),
+                [
+                    plgpu.SMEM((256,), jnp.bfloat16),
+                    [plgpu.SMEM((128,), jnp.float32)]
+                ],
+            ),
+        ],
+    )
+    def kernel(x_ref, o_ref128, aliased_ref_1, aliased_ref_2):
+      def _with_transform(ref, transforms):
+        @plgpu.inline_mgpu(arg_types=(plgpu.RefType(transforms),))
+        def f(ctx, smem_ref):
+          del ctx, smem_ref
+        f(ref)
+
+      ref_1, [_, [smem_ref128]] = aliased_ref_1
+      _with_transform(ref_1, ())
+      ref_2, [_, [_]] = aliased_ref_2
+      _with_transform(
+          ref_2, (plgpu.TilingTransform((1, 32)), plgpu.SwizzleTransform(128))
+      )
+
+      ref_1[...] = x_ref[...] + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref128, o_ref128)
+
+    x = jnp.arange(512).astype(jnp.float32)
+    np.testing.assert_array_equal(
+        kernel(x.reshape(in_shape)).reshape((128,)), x[256 : 256 + 128] + 1
+    )
+
+  def test_smem_aliasing_works_with_subbyte_dtypes(self):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.uint4),
@@ -2200,7 +2253,12 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(test_as_i8[:256], unpack_i4_as_i8(x))
 
   def test_smem_aliasing_works_for_quantization(self):
+    # This test currently fails under WG semantics, not because of aliasing, but
+    # because of some issue with int4 types. E.g. a version of this test that
+    # has no aliasing, but simply loads int4 -> converts to bf16 -> stores
+    # also fails.
     self.skip_if_wg_semantics()
+
     shape = (64, 256)
     large_ty, small_ty = jnp.bfloat16, jnp.uint4
     large_swizzle = plgpu.SwizzleTransform(64 * jnp.finfo(large_ty).bits // 8)
@@ -3151,7 +3209,6 @@ class PallasCallWGTest(
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_smem_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
-        mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,
@@ -4698,7 +4755,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   def test_matmul_with_smem_aliasing(self, swizzle, dtype):
     # Perform a 128x128 @ 128x128 matmul and a 128x64 @ 64x128 matmul
     # using aliased Refs pointing to the same SMEM address.
-    self.skip_if_wg_semantics()
     shape = (128, 128)
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
