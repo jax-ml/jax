@@ -367,15 +367,7 @@ def initialize():
         "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
     )
   else:
-    try:
-      _check_cuda_versions(raise_on_first_error=True)
-    except Exception as e:
-      logger.warning(
-          "CUDA version check failed during initialization. "
-          "CUDA backend will not be available. Error: %s",
-          e,
-      )
-      return
+    _check_cuda_versions(raise_on_first_error = True)
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
