@@ -1008,9 +1008,19 @@ def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
 }
 
 def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, ElementwiseMappable]> {
+  let summary = "Computes the reciprocal of the input.";
+  let description = [{
+    Computes the reciprocal of the input.
+    `approx` controls whether to use an approximate reciprocal.
+    `full_range` controls whether the input and result are handled correctly for
+    all possible values. Otherwise, edge cases may be handled non-IEEE compliant
+    ways. When `approx` is False, `full_range` has no effect as every
+    computation is exact.
+  }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$input,
-    DefaultValuedAttr<BoolAttr, "false">:$approx
+    DefaultValuedAttr<BoolAttr, "false">:$approx,
+    DefaultValuedAttr<BoolAttr, "true">:$full_range
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];

@@ -540,19 +540,38 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
 reciprocal_p = jax_core.Primitive("reciprocal")
 
 
-def reciprocal(x, *, approx=False):
-  return reciprocal_p.bind(x, approx=approx)
+def reciprocal(x, *, approx=False, full_range=True):
+  """Computes the reciprocal of an array.
+
+  Args:
+    x: The array to compute the reciprocal of.
+    approx: Whether to use an approximate reciprocal.
+    full_range: Whether to use the full range of the input. If False, compilers
+      may produce non-IEEE compliant results for edge cases, but may be faster.
+      On TPU, setting it to `False` may produce incorrect results when `x` or
+      output is ±inf or NaN; or when `x` is ±1/flt_min.
+
+  Returns:
+    The reciprocal of the array.
+  """
+  return reciprocal_p.bind(x, approx=approx, full_range=full_range)
 
 
 @reciprocal_p.def_abstract_eval
-def _reciprocal_abstract_eval(x, *, approx):
-  del approx
+def _reciprocal_abstract_eval(x, *, approx, full_range):
+  del approx, full_range
   return x
 
 
 def _reciprocal_lowering_rule(
-    ctx: mlir.LoweringRuleContext, x, *, approx=False
+    ctx: mlir.LoweringRuleContext,
+    x,
+    *,
+    approx=False,
+    full_range=True,
 ):
+  del full_range
+
   def _reciprocal(x, *, approx=False):
     if approx:
       return jnp.reciprocal(x.astype(jnp.bfloat16)).astype(jnp.float32)

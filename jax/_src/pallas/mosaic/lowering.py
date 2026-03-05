@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import string
-from typing import Any, Literal, Protocol, Self, TypeVar, cast
+from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, TypeVar, cast
 
 import jax
 from jax import api_util
@@ -51,6 +51,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -3675,10 +3676,20 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(primitives.reciprocal_p)
-def _reciprocal_lowering_rule(ctx: LoweringRuleContext, x, *, approx):
+def _reciprocal_lowering_rule(
+    ctx: LoweringRuleContext, x, *, approx, full_range
+):
   if not isinstance(x.type.element_type, ir.F32Type):
     raise ValueError("Only float32 is supported.")
-  return tpu.reciprocal(x, approx=approx)
+  if (
+      TYPE_CHECKING
+      or jaxlib_extension_version < 415
+      or ctx.forward_compatible
+      or ctx.is_cloud_tpu_older_than(2026, 3, 10)
+  ):
+    return tpu.reciprocal(x, approx=approx)
+  else:
+    return tpu.reciprocal(x, approx=approx, full_range=full_range)
 
 
 @register_lowering_rule(tpu_primitives.stochastic_round_p)
