@@ -366,6 +366,10 @@ bool is_nvshmem_used(mlir::ModuleOp module) {
   return false;
 }
 
+bool is_multimem_used(mlir::ModuleOp mod) {
+  return static_cast<bool>(mod->getAttr("mosaic_gpu.multimem_used"));
+}
+
 absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
   const char* nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_BC_PATH");
   if (!nvshmem_path_ptr)
@@ -479,12 +483,13 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
                  MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, std::string object_file,
+                 bool is_nvshmem_used, bool is_multimem_used, std::string object_file,
                  std::string host_func_name, std::string init_func_name)
       : lljit(std::move(lljit)),
         host_launch(host_launch),
         init(init),
         is_nvshmem_used(is_nvshmem_used),
+        is_multimem_used(is_multimem_used),
         object_file(std::move(object_file)),
         host_func_name(std::move(host_func_name)),
         init_func_name(std::move(init_func_name)) {}
@@ -498,6 +503,7 @@ struct CompiledKernel {
   MosaicHostFunc* host_launch = nullptr;
   MosaicInitFunc* init = nullptr;
   bool is_nvshmem_used = false;
+  bool is_multimem_used = false;
   // The following fields are used for de/serialization of CompiledKernel.
   std::string object_file;
   std::string host_func_name;
@@ -602,7 +608,7 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    std::string init_func_name, bool is_nvshmem_used) {
+    std::string init_func_name, bool is_nvshmem_used, bool is_multimem_used) {
   EnsureNativeLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -720,7 +726,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   return std::make_unique<CompiledKernel>(
       std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(),
-      init_sym->toPtr<MosaicInitFunc*>(), is_nvshmem_used,
+      init_sym->toPtr<MosaicInitFunc*>(), is_nvshmem_used, is_multimem_used,
       std::move(object_file_str), std::move(host_func_name),
       std::move(init_func_name));
 }
@@ -787,6 +793,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
   bool use_nvshmem = is_nvshmem_used(*module);
+  bool multimem_used = is_multimem_used(*module);
   mosaic::gpu::DumpOptions dump_opts =
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
   TF_RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
@@ -806,7 +813,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
 
   return CreateAndInitJIT(
       std::move(object_file), std::move(host_and_init_func_names.first),
-      std::move(host_and_init_func_names.second), use_nvshmem);
+      std::move(host_and_init_func_names.second), use_nvshmem, multimem_used);
 }
 
 struct KernelCache {
@@ -847,6 +854,25 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
     return absl::InternalError(
         "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
         "`pip install nvidia-nvshmem-cu12`).");
+  }
+  if (kernel.is_multimem_used) {
+    CUdevice device;
+    CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
+    int supports_multicast;
+    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(&supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
+    int nvshmem_world_size = NvshmemApi::Default().n_pes();
+    // multimem instructions require multicast memory; mgpu will emit device-side calls
+    // to nvshmemx_mc_ptr to translate unicast->multicast addresses, which will return
+    // nullptr and lead to memory errors if multicast is not supported on the device
+    // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
+    // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
+    if (supports_multicast == 0) {
+      return absl::FailedPreconditionError("System does not support multicast memory; multimem instructions cannot be used.");
+    } else if (nvshmem_world_size == 1) {
+      // There is only one device, so NVSHMEM will not configure multicast mappings and nvshmemx_mc_ptr will return nullptr.
+      return absl::FailedPreconditionError("Multicast memory mappings are not configured with only one device; multimem instructions cannot be used.");
+    }
   }
   void* module_ptr = nullptr;
   void* kernel_ptr = nullptr;
@@ -934,6 +960,7 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
   kernel_proto.set_version(1);
   kernel_proto.set_object_file(kernel->object_file);
   kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
+  kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
   kernel_proto.set_init_func_name(kernel->init_func_name);
@@ -970,7 +997,8 @@ CustomCallResources::Deserialize(absl::string_view data) {
                                         kernel_proto.object_file(), "kernel"),
                                     std::move(host_func_name),
                                     std::move(init_func_name),
-                                    kernel_proto.is_nvshmem_used());
+                                    kernel_proto.is_nvshmem_used(),
+                                    kernel_proto.is_multimem_used());
           }));
   return resources;
 }

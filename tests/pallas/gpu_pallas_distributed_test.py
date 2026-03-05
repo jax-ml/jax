@@ -25,6 +25,7 @@ from jax import lax
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax._src.config import config
+from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -66,6 +67,10 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
 
 
 class PallasCallRemoteDMATest(TestCase):
+  def setUp(self):
+    if jax.device_count() < 2:
+      self.skipTest("Needs at least two devices")
+    super().setUp()
 
   def test_remote_dma_basic(self):
     if jax.process_index() > 2:
@@ -582,6 +587,10 @@ class PallasCallMultimemTest(TestCase):
   def setUp(self):
     if jax.local_device_count() > 1:
       self.skipTest("Multimem not supported in multi-thread mode yet.")
+    if jax.device_count() < 2:
+      self.skipTest("Needs at least two devices")
+    if any(not cuda_versions.cuda_supports_multicast(d.local_hardware_id) for d in jax.local_devices()):
+      self.skipTest("Not all local devices support multicast")
     super().setUp()
 
   def _get_reduction_impl(self, reduction):

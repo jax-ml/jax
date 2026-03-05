@@ -118,6 +118,14 @@ int CudaComputeCapability(int device) {
   return major * 10 + minor;
 }
 
+bool CudaSupportsMulticast(int device) {
+  int supports_multicast;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
+      &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device)));
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&supports_multicast, sizeof supports_multicast);
+  return supports_multicast;
+}
+
 int CudaDeviceCount() {
   int device_count = 0;
   {

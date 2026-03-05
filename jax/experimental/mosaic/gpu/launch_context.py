@@ -67,6 +67,8 @@ ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
 # Attribute used to identify an operation used to load the current device id.
 # Needed for _recompute_peer_device_id in TMA descriptor construction.
 DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
+# Attribute used to mark that a kernel requires multicast support
+USES_MULTIMEM_ATTR = "mosaic_gpu.multimem_used"
 
 
 def uses_collective_metadata(module):
@@ -680,6 +682,9 @@ class LaunchContext:
         f"Unrecognized op can't be recomputed on the host: {op}"
     )
 
+  def _flag_multimem_usage(self):
+    self.module.operation.attributes[USES_MULTIMEM_ATTR] = ir.UnitAttr.get()
+
   def _get_tma_desc(
       self,
       gmem_ref: ir.Value,
@@ -724,6 +729,7 @@ class LaunchContext:
         if isinstance(gmem_peer_id, GlobalBroadcast):
           if self.host_collective_metadata is None:
             self._ensure_nvshmem_decls()
+            self._flag_multimem_usage()
             world_team = arith.constant(i32, 0)
             base_ptr = llvm.call(
                 base_ptr.type,
@@ -1775,6 +1781,7 @@ class LaunchContext:
       )
 
     self._ensure_nvshmem_decls()
+    self._flag_multimem_usage()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
       # We replace the offset in the ref type by 0, because memref_ptr always

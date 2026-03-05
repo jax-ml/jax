@@ -248,6 +248,7 @@ cc_library(
     linkopts = [
         "-Wl,--export-dynamic-symbol='mosaic_gpu_*'",
         "-Wl,--export-dynamic-symbol='nvshmem_my_pe'",
+        "-Wl,--export-dynamic-symbol='nvshmem_n_pes'",
         "-Wl,--export-dynamic-symbol='nvshmem_ptr'",
         "-Wl,--export-dynamic-symbol='nvshmemx_barrier_all_on_stream'",
         "-Wl,--export-dynamic-symbol='nvshmemx_cumodule_finalize'",

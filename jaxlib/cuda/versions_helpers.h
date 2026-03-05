@@ -30,6 +30,7 @@ int CublasGetVersion();
 int CusparseGetVersion();
 size_t CudnnGetVersion();
 int CudaComputeCapability(int);
+bool CudaSupportsMulticast(int);
 int CudaDeviceCount();
 
 }  // namespace jax::cuda

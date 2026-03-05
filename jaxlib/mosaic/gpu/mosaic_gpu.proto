@@ -12,4 +12,5 @@ message MosaicGpuKernelProto {
   bytes kernel_hash = 4;
   string host_func_name = 5;
   string init_func_name = 6;
+  bool is_multimem_used = 7;
 }
