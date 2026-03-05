@@ -116,8 +116,8 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     # the test example to force a different error.
     with self.assertRaisesRegex(
         error_handling.VerificationError,
-        "must be signless-integer-like or memref of signless-integer, "
-        "but got 'f32'"
+        "must be signless-.*integer-like or memref of signless-integer, "
+        "but got 'f32'",
     ):
       test_kernel(input_arr)
 
