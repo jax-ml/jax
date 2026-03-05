@@ -2763,9 +2763,7 @@ for dtype in jtu.dtypes.all_floating:
 
 for dtype in jtu.dtypes.all_integer:
   for shape in ((), (5, 4), (32,)):
-    maxval = {
-        np.uint8: 256,   # Borderline
-    }.get(dtype, 5)
+    maxval = 256 if dtype == np.uint8 else 5
     define(
         "random_randint",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",

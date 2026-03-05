@@ -20,7 +20,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
-from functools import partial
+from functools import cached_property, partial
 import inspect
 import logging
 import math
@@ -363,10 +363,11 @@ def jaxlib_version() -> tuple[int, ...]:
   return _jaxlib.version
 
 
-def device_under_test():
+def device_under_test() -> str:
   return _TEST_DUT.value or xla_bridge.get_backend().platform
 
-def supported_dtypes():
+def supported_dtypes() -> set[DTypeLike]:
+  types: set[DTypeLike]
   if device_under_test() == "tpu":
     types = {np.bool_, _dtypes.int4, np.int8, np.int16, np.int32,
              _dtypes.uint4, np.uint8, np.uint16, np.uint32,
@@ -388,34 +389,34 @@ def supported_dtypes():
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
-def is_device_rocm():
+def is_device_rocm() -> bool:
   return 'rocm' in xla_bridge.get_backend().platform_version
 
-def is_device_cuda():
+def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
 
-def is_cloud_tpu():
+def is_cloud_tpu() -> bool:
   return running_in_cloud_tpu_vm
 
-def is_optimized_build():
+def is_optimized_build() -> bool:
   return _jaxlib._jax.is_optimized_build()
 
-def is_asan():
+def is_asan() -> bool:
   return _jaxlib._jax.is_asan()
 
-def is_msan():
+def is_msan() -> bool:
   return _jaxlib._jax.is_msan()
 
-def is_tsan():
+def is_tsan() -> bool:
   return _jaxlib._jax.is_tsan()
 
-def is_sanitized():
+def is_sanitized() -> bool:
   return _jaxlib._jax.is_sanitized()
 
 def is_gil_disabled() -> bool:
   return not sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else False
 
-def is_test_rbe():
+def is_test_rbe() -> bool:
   """Check for a variable set by the RBE toolchain under testing."""
   return (
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
@@ -425,7 +426,7 @@ def is_test_rbe():
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
 # libtpu contains the XLA version, remove using built time to skip tests.
-def is_cloud_tpu_at_least(year: int, month: int, day: int):
+def is_cloud_tpu_at_least(year: int, month: int, day: int) -> bool:
   date = datetime.date(year, month, day)
   if not is_cloud_tpu():
     return True
@@ -440,13 +441,13 @@ def is_cloud_tpu_at_least(year: int, month: int, day: int):
   build_date = date.fromtimestamp(int(results[0][1:-1]))
   return build_date >= date
 
-def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
+def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
   if pjrt_c_api_versions is None:
     return True
   return pjrt_c_api_versions >= (major_version, minor_version)
 
-def stablehlo_version_at_least(required_version: str):
+def stablehlo_version_at_least(required_version: str) -> bool:
   plugin_version = xla_bridge.backend_stablehlo_version()
   if plugin_version is None:
     return True
@@ -486,7 +487,7 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "TPU7x" in device_kind
   return expected_version in device_kind
 
-def pattern_search(patterns: str | Sequence[str], string: str):
+def pattern_search(patterns: str | Sequence[str], string: str) -> str | None:
   if isinstance(patterns, str):
     patterns = (patterns,)
 
@@ -495,7 +496,7 @@ def pattern_search(patterns: str | Sequence[str], string: str):
       return pattern
   return None
 
-def device_kind_match(device_patterns: str | Sequence[str]):
+def device_kind_match(device_patterns: str | Sequence[str]) -> str | None:
   device_kind = xla_bridge.devices()[0].device_kind
   matching_pattern = pattern_search(device_patterns, device_kind)
   return matching_pattern
@@ -528,7 +529,7 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
 
-def is_cuda_version_at_least(major: int, minor: int):
+def is_cuda_version_at_least(major: int, minor: int) -> bool:
   assert 0 <= major
   assert 0 <= minor < 100
   return (
@@ -1572,18 +1573,6 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
       axis_types = (mesh_lib.AxisType.Auto,) * len(mesh_shape)
     return sharding_impls.make_mesh(mesh_shape, axis_names, axis_types)
 
-class _cached_property:
-  null = object()
-
-  def __init__(self, method):
-    self._method = method
-    self._value = self.null
-
-  def __get__(self, obj, cls):
-    if self._value is self.null:
-      self._value = self._method(obj)
-    return self._value
-
 
 class _LazyDtypes:
   """A class that unifies lists of supported dtypes.
@@ -1591,12 +1580,12 @@ class _LazyDtypes:
   These could be module-level constants, but device_under_test() is not always
   known at import time, so we need to define these lists lazily.
   """
-  def supported(self, dtypes):
+  def supported(self, dtypes: Sequence[DTypeLike]) -> list[DTypeLike]:
     supported = supported_dtypes()
-    return type(dtypes)(d for d in dtypes if d in supported)
+    return [d for d in dtypes if d in supported]
 
-  @_cached_property
-  def custom_floats(self):
+  @cached_property
+  def custom_floats(self) -> list[DTypeLike]:
     float_dtypes = [
       _dtypes.bfloat16,
       _dtypes.float8_e4m3b11fnuz,
@@ -1611,52 +1600,52 @@ class _LazyDtypes:
     ]
     return self.supported(float_dtypes)
 
-  @_cached_property
-  def floating(self):
+  @cached_property
+  def floating(self) -> list[DTypeLike]:
     return self.supported([np.float32, np.float64])
 
-  @_cached_property
-  def all_floating(self):
+  @cached_property
+  def all_floating(self) -> list[DTypeLike]:
     return self.supported([_dtypes.bfloat16, np.float16, np.float32, np.float64])
 
-  @_cached_property
-  def integer(self):
+  @cached_property
+  def integer(self) -> list[DTypeLike]:
     return self.supported([np.int32, np.int64])
 
-  @_cached_property
-  def all_integer(self):
+  @cached_property
+  def all_integer(self) -> list[DTypeLike]:
     return self.supported([np.int8, np.int16, np.int32, np.int64])
 
-  @_cached_property
-  def unsigned(self):
+  @cached_property
+  def unsigned(self) -> list[DTypeLike]:
     return self.supported([np.uint32, np.uint64])
 
-  @_cached_property
-  def all_unsigned(self):
+  @cached_property
+  def all_unsigned(self) -> list[DTypeLike]:
     return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
 
-  @_cached_property
-  def complex(self):
+  @cached_property
+  def complex(self) -> list[DTypeLike]:
     return self.supported([np.complex64, np.complex128])
 
-  @_cached_property
-  def boolean(self):
+  @cached_property
+  def boolean(self) -> list[DTypeLike]:
     return self.supported([np.bool_])
 
-  @_cached_property
-  def inexact(self):
+  @cached_property
+  def inexact(self) -> list[DTypeLike]:
     return self.floating + self.complex
 
-  @_cached_property
-  def all_inexact(self):
+  @cached_property
+  def all_inexact(self) -> list[DTypeLike]:
     return self.all_floating + self.complex
 
-  @_cached_property
-  def numeric(self):
+  @cached_property
+  def numeric(self) -> list[DTypeLike]:
     return self.floating + self.integer + self.unsigned + self.complex
 
-  @_cached_property
-  def all(self):
+  @cached_property
+  def all(self) -> list[DTypeLike]:
     return (self.all_floating + self.all_integer + self.all_unsigned +
             self.complex + self.boolean)
 
