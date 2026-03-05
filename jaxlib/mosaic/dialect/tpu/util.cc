@@ -380,4 +380,19 @@ bool hasVectorOperandsOrResults(Operation& op) {
   return false;
 }
 
+// TODO(apaszke): Unify this with mlir::tpu::canReinterpretToUntiledMemref.
+bool canReinterpretToUntiledContiguousMemref(MemRefType ty) {
+  if (ty.getRank() != 1 ||
+      mlir::tpu::getElementTypeBitwidth(ty.getElementType()) != 32) {
+    return false;
+  }
+  auto tiled_layout = cast<TiledLayoutAttr>(ty.getLayout());
+  if (tiled_layout.getTileStrides() != ArrayRef<int64_t>{1}) {
+    return false;
+  }
+  return tiled_layout.getTiles().empty() ||
+         (tiled_layout.getTiles().size() == 1 &&
+          tiled_layout.getTiles().front().dimensions().size() == 1);
+}
+
 }  // namespace mlir::tpu
