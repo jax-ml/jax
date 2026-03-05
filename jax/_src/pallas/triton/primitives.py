@@ -27,6 +27,7 @@ from jax._src import lax
 from jax._src import state
 from jax._src import tree_util
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
@@ -60,6 +61,11 @@ def approx_tanh(x: jax.Array) -> jax.Array:
   elif x.dtype == jnp.float32:
     asm = "tanh.approx.f32 $0, $1;"
     constraint = "f"
+  elif x.dtype == jnp.float64:
+    # f64 tanh.approx is only supported on ROCm (uses __ocml_tanh_f64)
+    # CUDA does not have a PTX instruction for f64 approximate tanh
+    asm = "tanh.approx.f64 $0, $1;"
+    constraint = "d"
   else:
     raise TypeError(f"approx_tanh does not accept {x.dtype} arrays")
 
@@ -131,6 +137,16 @@ def _elementwise_inline_asm_lowering(
     result_shape_dtypes,
 ):
   del result_shape_dtypes  # Unused.
+
+  if "tanh.approx" in asm:
+    if ctx.context.platform == "rocm":
+      return _approx_tanh_rocm_lowering(ctx, *args)
+    if ctx.avals_in[0].dtype == jnp.float64:
+      raise TypeError(
+          "approx_tanh does not support float64 on CUDA; it is only"
+          " supported on ROCm"
+      )
+
   return tt_dialect.ElementwiseInlineAsmOp(
       [*map(mlir.aval_to_ir_type, ctx.avals_out)],
       asm,
@@ -139,6 +155,58 @@ def _elementwise_inline_asm_lowering(
       packed_element=pack,
       args=args,
   ).result
+
+
+def _approx_tanh_rocm_lowering(
+    ctx: lowering.LoweringRuleContext,
+    *args,
+):
+  """Lower approx_tanh for ROCm.
+
+  AMD CDNA3 (MI300X/gfx942) does not have a hardware tanh instruction.
+  See: https://github.com/triton-lang/triton/pull/7780
+  """
+  [arg] = args
+  [out_aval] = ctx.avals_out
+  in_dtype = ctx.avals_in[0].dtype
+
+  if in_dtype == jnp.float64:
+    result_type = mlir.aval_to_ir_type(out_aval)
+    result = tt_dialect.extern_elementwise(
+        result_type,
+        list(args),
+        libname="",
+        libpath="",
+        symbol="__ocml_tanh_f64",
+        pure=True,
+    )
+    return [result]
+
+  needs_cast = in_dtype in (jnp.float16, jnp.bfloat16)
+
+  if needs_cast:
+    f32_type = mlir.dtype_to_ir_type(jnp.dtype(jnp.float32))
+    if out_aval.shape:
+      f32_result_type = ir.RankedTensorType.get(out_aval.shape, f32_type)
+    else:
+      f32_result_type = f32_type
+    arg = arith_dialect.extf(f32_result_type, arg)
+
+  result_type = f32_result_type if needs_cast else mlir.aval_to_ir_type(out_aval)
+  result = tt_dialect.extern_elementwise(
+      result_type,
+      [arg],
+      libname="libdevice",
+      libpath="",
+      symbol="__triton_hip_fast_tanhf",
+      pure=True,
+  )
+
+  if needs_cast:
+    out_type = mlir.aval_to_ir_type(out_aval)
+    result = arith_dialect.truncf(out_type, result)
+
+  return [result]
 
 
 def debug_barrier() -> None:
