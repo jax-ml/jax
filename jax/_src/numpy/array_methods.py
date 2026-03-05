@@ -602,14 +602,16 @@ _accepted_binop_types = (
     Array,
     literals.TypedNdArray,
 )
-_rejected_binop_types = (list, tuple, set, dict)
 
 def _operator_eq(self, other):
   if hasattr(other, '__jax_array__'):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.equal(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
+  # Explicitly reject non-array inputs to avoid Python returning scalar False.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  # TODO(jakevdp): raise for *all* non-array types.
+  if type(other) in (dict, list, set, tuple):
     raise TypeError(f"unsupported operand type(s) for ==: "
                     f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
@@ -619,8 +621,11 @@ def _operator_ne(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.not_equal(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for !=: "
+  # Explicitly reject non-array inputs to avoid Python returning scalar True.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  # TODO(jakevdp): raise for *all* non-array types.
+  if type(other) in (dict, list, set, tuple):
+    raise TypeError(f"unsupported operand type(s) for ==: "
                     f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
@@ -629,9 +634,6 @@ def _operator_lt(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.less(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for <: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_le(self, other):
@@ -639,9 +641,6 @@ def _operator_le(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.less_equal(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for <=: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_gt(self, other):
@@ -649,9 +648,6 @@ def _operator_gt(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.greater(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for >: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_ge(self, other):
@@ -659,9 +655,6 @@ def _operator_ge(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.greater_equal(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for >=: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_add(self, other):
@@ -669,7 +662,9 @@ def _operator_add(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.add(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
+  # Explicitly reject sequences where __add__ may indicate concatenation.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  if type(other) in (tuple, list):
     raise TypeError(f"unsupported operand type(s) for +: "
                     f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
@@ -679,7 +674,9 @@ def _operator_radd(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.add(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
+  # Explicitly reject sequences where __add__ may indicate concatenation.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  if type(other) in (tuple, list):
     raise TypeError(f"unsupported operand type(s) for +: "
                     f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
@@ -689,9 +686,6 @@ def _operator_sub(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.subtract(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for -: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rsub(self, other):
@@ -699,9 +693,6 @@ def _operator_rsub(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.subtract(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for -: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_mul(self, other):
@@ -709,7 +700,9 @@ def _operator_mul(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.multiply(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
+  # Explicitly reject sequences where __mul__ may indicate concatenation.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  if type(other) in (tuple, list):
     raise TypeError(f"unsupported operand type(s) for *: "
                     f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
@@ -719,7 +712,9 @@ def _operator_rmul(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.multiply(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
+  # Explicitly reject sequences where __mul__ may indicate concatenation.
+  # Avoid isinstance so as to not catch subclasses like NamedTuple.
+  if type(other) in (tuple, list):
     raise TypeError(f"unsupported operand type(s) for *: "
                     f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
@@ -729,9 +724,6 @@ def _operator_truediv(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.true_divide(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for /: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rtruediv(self, other):
@@ -739,9 +731,6 @@ def _operator_rtruediv(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.true_divide(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for /: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_floordiv(self, other):
@@ -749,9 +738,6 @@ def _operator_floordiv(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.floor_divide(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for //: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rfloordiv(self, other):
@@ -759,9 +745,6 @@ def _operator_rfloordiv(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.floor_divide(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for //: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_divmod(self, other):
@@ -769,9 +752,6 @@ def _operator_divmod(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.divmod(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for divmod: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rdivmod(self, other):
@@ -779,9 +759,6 @@ def _operator_rdivmod(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.divmod(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for divmod: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_mod(self, other):
@@ -789,9 +766,6 @@ def _operator_mod(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.mod(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for %: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rmod(self, other):
@@ -799,9 +773,6 @@ def _operator_rmod(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.mod(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for %: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_pow(self, other):
@@ -809,9 +780,6 @@ def _operator_pow(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.power(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for **: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rpow(self, other):
@@ -819,9 +787,6 @@ def _operator_rpow(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.power(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for **: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_matmul(self, other):
@@ -829,9 +794,6 @@ def _operator_matmul(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return tensor_contractions.matmul(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for @: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rmatmul(self, other):
@@ -839,9 +801,6 @@ def _operator_rmatmul(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return tensor_contractions.matmul(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for @: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_and(self, other):
@@ -849,9 +808,6 @@ def _operator_and(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_and(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for &: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rand(self, other):
@@ -859,9 +815,6 @@ def _operator_rand(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_and(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for &: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_or(self, other):
@@ -869,9 +822,6 @@ def _operator_or(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_or(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for |: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_ror(self, other):
@@ -879,9 +829,6 @@ def _operator_ror(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_or(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for |: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_xor(self, other):
@@ -889,9 +836,6 @@ def _operator_xor(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_xor(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for ^: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rxor(self, other):
@@ -899,9 +843,6 @@ def _operator_rxor(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_xor(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for ^: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_lshift(self, other):
@@ -909,9 +850,6 @@ def _operator_lshift(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.left_shift(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for <<: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rshift(self, other):
@@ -919,9 +857,6 @@ def _operator_rshift(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.right_shift(self, cast(ArrayLike, other))
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for >>: "
-                    f"{type(self).__name__!r} and {type(other).__name__!r}")
   return NotImplemented
 
 def _operator_rlshift(self, other):
@@ -929,9 +864,6 @@ def _operator_rlshift(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.left_shift(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for <<: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _operator_rrshift(self, other):
@@ -939,16 +871,13 @@ def _operator_rrshift(self, other):
     other = other.__jax_array__()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.right_shift(cast(ArrayLike, other), self)
-  if type(other) in _rejected_binop_types:
-    raise TypeError(f"unsupported operand type(s) for >>: "
-                    f"{type(other).__name__!r} and {type(self).__name__!r}")
   return NotImplemented
 
 def _unimplemented_setitem(self, i, x):
   msg = ("JAX arrays are immutable and do not support in-place item assignment."
          " Instead of x[idx] = y, use x = x.at[idx].set(y) or another .at[] method:"
          " https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html")
-  raise TypeError(msg.format(type(self)))
+  raise TypeError(msg)
 
 def _operator_round(number: ArrayLike, ndigits: int | None = None) -> Array:
   out = lax_numpy.round(number, decimals=ndigits or 0)

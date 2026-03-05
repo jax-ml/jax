@@ -537,10 +537,9 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     data = [(1, 2), (2, 3)]
     arr = jnp.array(data)
     other = othertype(data)
-
-    msg = f"unsupported operand type.* 'ArrayImpl' and '{othertype.__name__}'"
-    with self.assertRaisesRegex(TypeError, msg):
-      getattr(arr, name)(other)
+    op = getattr(operator, name.strip('_'))
+    with self.assertRaisesRegex(TypeError, f".* '.*ArrayImpl' and '{othertype.__name__}'"):
+      op(arr, other)
 
   @jtu.sample_product(
     name=[rec.name for rec in JAX_RIGHT_OPERATOR_OVERLOADS if rec.nargs == 2],
@@ -552,14 +551,13 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     data = [(1, 2), (2, 3)]
     arr = jnp.array(data)
     other = othertype(data)
-
-    msg = f"unsupported operand type.* '{othertype.__name__}' and 'ArrayImpl'"
-    with self.assertRaisesRegex(TypeError, msg):
-      getattr(arr, name)(other)
+    op = getattr(operator, name.strip('_').removeprefix('r'))
+    with self.assertRaisesRegex(TypeError, f".* '{othertype.__name__}' and '.*ArrayImpl'"):
+      op(other, arr)
 
   @jtu.sample_product(
     [dict(op_name=rec.name, rng_factory=rec.rng_factory, dtype=dtype)
-     for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
+     for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2 and rec.name not in ["__eq__", "__ne__"]
      for dtype in rec.dtypes],
   )
   def testBinaryOperatorDefers(self, op_name, rng_factory, dtype):
