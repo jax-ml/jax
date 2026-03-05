@@ -366,6 +366,50 @@ def unwrap_from_import(f):
     out, error_class = f(*args, **kwargs)
     new_error_code, error_list = error_class.error_code, error_class.error_list
 
+    # Validate and clamp new_error_code to valid range to prevent IndexError
+    # Convert JAX Array to Python int for validation
+    try:
+      new_error_code_val = int(np.asarray(new_error_code).item())
+      if new_error_code_val < 0 or new_error_code_val >= len(error_list):
+        if not error_list:
+          warnings.warn(
+            f"Invalid error_code {new_error_code_val} from imported function: "
+            f"error_list is empty. Suppressing error. "
+            "This may indicate data corruption during serialization/deserialization.",
+            RuntimeWarning,
+          )
+          new_error_code = np.uint32(_NO_ERROR)
+        else:
+          # Clamp to valid range to prevent crash and continue execution
+          clamped_code = max(0, min(new_error_code_val, len(error_list) - 1))
+          warnings.warn(
+            f"Invalid error_code {new_error_code_val} from imported function: "
+            f"must be in range [0, {len(error_list)}), got {new_error_code_val}. "
+            f"Clamped to {clamped_code} to prevent IndexError. "
+            "This may indicate data corruption during serialization/deserialization.",
+            RuntimeWarning,
+          )
+          new_error_code = np.uint32(clamped_code)
+    except (TypeError, AttributeError):
+      if not error_list:
+        warnings.warn(
+          f"Invalid error_code {new_error_code} from imported function: "
+          f"could not validate and error_list is empty. Suppressing error. "
+          "This may indicate data corruption during serialization/deserialization.",
+          RuntimeWarning,
+        )
+        new_error_code = np.uint32(_NO_ERROR)
+      else:
+        # If conversion fails, clamp to 0 and warn
+        warnings.warn(
+          f"Invalid error_code {new_error_code} from imported function: "
+          f"could not validate against error_list of length {len(error_list)}. "
+          "Clamped to 0 to prevent IndexError. "
+          "This may indicate data corruption during serialization/deserialization.",
+          RuntimeWarning,
+        )
+        new_error_code = np.uint32(0)
+
     # Update the global error list.
     with _error_list_lock:
       offset = len(_error_list)
