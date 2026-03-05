@@ -27,8 +27,9 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "jaxlib/mosaic/dialect/tpu/tpu.td"
 
-// TODO(b/369418606): Find out the way to verify vreg size.
 def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir::VectorType">;
+
+def TPU_Vmask : VectorOfRankAndType<[2, 3], [I1]>;
 
 def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
   I32EnumAttrCase<"kTc", 0, "tc">,
@@ -733,9 +734,6 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let builders = [
     OpBuilder<(ins "::mlir::VectorType":$output_type, "::mlir::ArrayRef<::mlir::Value>":$padded_sources, "::mlir::tpu::PackFormat":$pack_format)>,
   ];
-  let extraClassDeclaration = [{
-    static ::mlir::SmallVector<::mlir::Value> getPaddedSources(::mlir::ValueRange sources, ::mlir::ArrayRef<int32_t> positions, int packing_factor);
-  }];
   let hasVerifier = 1;
 }
 
@@ -791,12 +789,20 @@ def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
 }
 
 def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
+  let description = [{
+    Packs multiple vmasks into a single vmask with more elements in each word.
+  }];
+
   let arguments = (ins
-    VectorOfNonZeroRankOf<[I1]>: $low,
-    VectorOfNonZeroRankOf<[I1]>: $high
+    Variadic<TPU_Vmask>:$sources,
+    DenseI32ArrayAttr:$positions
   );
-  let results = (outs VectorOfNonZeroRankOf<[I1]>:$output);
-  let assemblyFormat = [{ $low `,` $high `,` attr-dict `:` type($low) `,` type($high) `->` type($output) }];
+  let results = (outs TPU_Vmask:$output);
+  let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
+  let builders = [
+    OpBuilder<(ins "::mlir::VectorType":$output_type, "::mlir::ArrayRef<::mlir::Value>":$padded_sources)>,
+  ];
+  let hasVerifier = 1;
 }
 
 def TPU_GatherOp : TPU_Op<"gather", [Pure]> {

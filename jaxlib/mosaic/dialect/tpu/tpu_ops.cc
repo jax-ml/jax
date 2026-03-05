@@ -82,6 +82,37 @@ static FailureOr<APFloat> convertFloatValue(
   return sourceValue;
 }
 
+template <typename OpTy>
+LogicalResult verifyPackOp(OpTy op, int32_t max_size) {
+  if (op.getSources().empty()) {
+    return op.emitOpError("At least one source is required");
+  }
+  if (!llvm::all_of(op.getSources(), [&](Value source) {
+        return source.getType() == op.getSources().front().getType();
+      })) {
+    return op.emitOpError("All sources must have the same type");
+  }
+  if (op.getPositions().size() != op.getSources().size()) {
+    return op.emitOpError("Size of sources and positions must match");
+  }
+  if (op.getSources().size() > max_size) {
+    return op.emitOpError("Number of sources must be less than max_size (")
+           << max_size << "), got " << op.getSources().size();
+  }
+  SmallVector<bool> seen_positions(max_size, false);
+  for (const int32_t position : op.getPositions()) {
+    if (position < 0 || max_size <= position) {
+      return op.emitOpError("Positions must be between 0 and max_size (")
+             << max_size << "), got " << position;
+    }
+    if (seen_positions[position]) {
+      return op.emitOpError("Positions must be unique");
+    }
+    seen_positions[position] = true;
+  }
+  return success();
+}
+
 }  // namespace
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
@@ -1755,7 +1786,7 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
     if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
         pack && pack.getPackFormat() == op.getPackFormat() &&
         pack.getSources().front().getType() == op.getType()) {
-      Value source = pack.getPaddedSources(
+      Value source = fillPositions(
           pack.getSources(), pack.getPositions(),
           getElementTypeBitwidth(op.getType()) /
               getElementTypeBitwidth(pack.getType()))[op.getIndex()];
@@ -1798,38 +1829,36 @@ void PackSubelementsOp::build(OpBuilder& builder, OperationState& state,
   build(builder, state, output_type, sources, positions, pack_format);
 }
 
-SmallVector<Value> PackSubelementsOp::getPaddedSources(
-    ValueRange sources, const ArrayRef<int32_t> positions,
-    const int packing_factor) {
-  SmallVector<Value> padded_sources(packing_factor);
-  for (const auto [source, position] : llvm::zip(sources, positions)) {
-    padded_sources[position] = source;
-  }
-  return padded_sources;
+LogicalResult PackSubelementsOp::verify() {
+  return verifyPackOp(*this,
+                      getElementTypeBitwidth(getSources().front().getType()) /
+                          getElementTypeBitwidth(getType()));
 }
 
-LogicalResult PackSubelementsOp::verify() {
-  if (getSources().empty()) {
-    return emitOpError("At least one source is required");
-  }
-  if (getPositions().size() != getSources().size()) {
-    return emitOpError("Size of sources and positions must match");
-  }
-  const int packing_factor =
-      getElementTypeBitwidth(cast<VectorType>(getSources().front().getType())) /
-      getElementTypeBitwidth(getType());
-  SmallVector<bool> seen_positions(packing_factor, false);
-  for (const int32_t position : getPositions()) {
-    if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor (")
-             << packing_factor << "), got " << position;
+void PackMaskOp::build(OpBuilder& builder, OperationState& state,
+                       const VectorType output_type,
+                       const ArrayRef<Value> padded_sources) {
+  SmallVector<Value> sources;
+  SmallVector<int32_t> positions;
+  for (size_t i = 0; i < padded_sources.size(); ++i) {
+    if (padded_sources[i] != nullptr) {
+      sources.push_back(padded_sources[i]);
+      positions.push_back(i);
     }
-    if (seen_positions[position]) {
-      return emitOpError("Positions must be unique");
-    }
-    seen_positions[position] = true;
   }
-  return success();
+  build(builder, state, output_type, sources, positions);
+}
+
+LogicalResult PackMaskOp::verify() {
+  auto getMaskPackingFactor = [](VectorType vty) -> int64_t {
+    if (vty.getRank() == 2) {
+      return 1;
+    }
+    return vty.getDimSize(2);
+  };
+  return verifyPackOp(*this, getMaskPackingFactor(getType()) /
+                                 getMaskPackingFactor(cast<VectorType>(
+                                     getSources().front().getType())));
 }
 
 namespace {

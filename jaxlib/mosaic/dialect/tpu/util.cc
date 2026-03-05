@@ -380,4 +380,13 @@ bool hasVectorOperandsOrResults(Operation& op) {
   return false;
 }
 
+SmallVector<Value> fillPositions(ValueRange values, ArrayRef<int32_t> positions,
+                                 int size, Value missing) {
+  SmallVector<Value> result(size, missing);
+  for (const auto [value, position] : llvm::zip(values, positions)) {
+    result[position] = value;
+  }
+  return result;
+}
+
 }  // namespace mlir::tpu

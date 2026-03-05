@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -312,6 +313,11 @@ auto positiveMod(U a, V b) {
   DCHECK_GT(b, 0);
   return (a - 1) % b + 1;
 }
+
+// Fills the output of `size` number of elements with the given values and their
+// positions, and fills the rest with `missing`.
+SmallVector<Value> fillPositions(ValueRange values, ArrayRef<int32_t> positions,
+                                 int size, Value missing = nullptr);
 
 }  // namespace mlir::tpu
 
