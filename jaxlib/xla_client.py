@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 415  # Added `full_range` to `tpu.reciprocal`.
+_version = 416  # safe_zip error messages include all argument lengths
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

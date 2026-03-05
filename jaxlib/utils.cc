@@ -16,6 +16,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,9 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/debugging/failure_signal_handler.h"
 #include "absl/log/globals.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -209,6 +213,69 @@ PyMethodDef foreach_def = {
     "ignoring the return values and returns None. The iterables must all have "
     "the same lengths."};
 
+// Maximum number of elements to drain from an iterator when computing lengths
+// for error messages. Prevents hanging on infinite iterators.
+constexpr int kMaxDrainCount = 10;
+
+// Sentinel value returned by DrainIterator when kMaxDrainCount is exceeded.
+constexpr int kDrainLimitExceeded = -1;
+
+// Drains remaining elements from an iterator and returns the count.
+// Stops after kMaxDrainCount to handle infinite iterators.
+// Returns kDrainLimitExceeded if kMaxDrainCount is exceeded.
+int DrainIterator(nb::object& it) {
+  int count = 0;
+  while (auto elem = nb::steal<nb::object>(PyIter_Next(it.ptr()))) {
+    if (PyErr_Occurred()) {
+      PyErr_Clear();
+      break;
+    }
+    ++count;
+    if (count >= kMaxDrainCount) {
+      return kDrainLimitExceeded;
+    }
+  }
+  if (PyErr_Occurred()) PyErr_Clear();
+  return count;
+}
+
+// Helper to format a safe_zip length mismatch error and set PyErr.
+// Drains all remaining iterators to compute true lengths.
+// n: number of fully completed tuples before the error
+// mismatch_idx: index of the mismatched iterator (0-indexed internally)
+// arg_is_longer: true if mismatch_idx is longer than arg1, false if shorter
+void SetSafeZipLengthError(absl::InlinedVector<nb::object, 4>& iterators,
+                           size_t n, size_t mismatch_idx, bool arg_is_longer) {
+  absl::InlinedVector<std::string, 4> lengths(iterators.size());
+  absl::InlinedVector<size_t, 4> capped_args;
+  for (size_t j = 0; j < iterators.size(); ++j) {
+    // Compute how many elements were consumed from this iterator.
+    // If arg_is_longer: arg0 exhausted, only mismatch_idx had one more fetched.
+    // If !arg_is_longer: mismatch_idx exhausted early, iterators before it had
+    // one more fetched.
+    size_t consumed = arg_is_longer
+                          ? (j == mismatch_idx ? n + 1 : n)
+                          : (j < mismatch_idx ? n + 1 : n);
+    int remaining = DrainIterator(iterators[j]);
+    if (remaining == kDrainLimitExceeded) {
+      lengths[j] = absl::StrCat(consumed + kMaxDrainCount, "+");
+      capped_args.push_back(j);  // 0-indexed for user display
+    } else {
+      lengths[j] = absl::StrCat(consumed + remaining);
+    }
+  }
+  std::string msg = absl::StrFormat(
+      "safe_zip() argument %zu has length %s but argument 0 has length %s. "
+      "All lengths: (%s)",
+      mismatch_idx, lengths[mismatch_idx], lengths[0],
+      absl::StrJoin(lengths, ", "));
+  if (!capped_args.empty()) {
+    absl::StrAppend(&msg, " (Note: length capped for argument(s) ",
+                    absl::StrJoin(capped_args, ", "), ")");
+  }
+  PyErr_SetString(PyExc_ValueError, msg.c_str());
+}
+
 // A variant of zip(...) that:
 // a) returns a list instead of an iterator, and
 // b) checks that the input iterables are of equal length.
@@ -254,9 +321,8 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (!v.ptr()) {
-          PyErr_Format(PyExc_ValueError,
-                       "safe_zip() argument %u is shorter than argument 1",
-                       i + 1);
+          // Arg i+1 is shorter than arg 1.
+          SetSafeZipLengthError(iterators, n, i, /*arg_is_longer=*/false);
           return nullptr;
         }
         PyTuple_SET_ITEM(tuple.ptr(), i, v.release().ptr());
@@ -268,9 +334,8 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (v.ptr()) {
-          PyErr_Format(PyExc_ValueError,
-                       "safe_zip() argument %u is longer than argument 1",
-                       i + 1);
+          // Arg i+1 is longer than arg 1.
+          SetSafeZipLengthError(iterators, n, i, /*arg_is_longer=*/true);
           return nullptr;
         }
       }

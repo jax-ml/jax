@@ -24,6 +24,7 @@ from jax import api_util
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import weakref_lru_cache
 jax.config.parse_flags_with_absl()
 
@@ -352,20 +353,85 @@ class SafeZipTest(jtu.JaxTestCase):
     ):
       util.safe_zip(lambda x: x)
 
-    with self.assertRaisesRegex(
-        ValueError, r"zip\(\) argument 2 is longer than argument 1"
-    ):
-      util.safe_zip(range(3), range(4))
+    if jaxlib_extension_version >= 416:
+      with self.assertRaisesRegex(
+          ValueError, r"safe_zip\(\) argument 1 has length 4 but argument 0 has length 3"
+      ):
+        util.safe_zip(range(3), range(4))
+
+      with self.assertRaisesRegex(
+          ValueError, r"safe_zip\(\) argument 1 has length 2 but argument 0 has length 7"
+      ):
+        util.safe_zip(range(7), range(2))
+
+      with self.assertRaisesRegex(
+          ValueError, r"safe_zip\(\) argument 1 has length 3 but argument 0 has length 0"
+      ):
+        util.safe_zip((), range(3))
+    else:
+      with self.assertRaises(ValueError):
+        util.safe_zip(range(3), range(4))
+
+      with self.assertRaises(ValueError):
+        util.safe_zip(range(7), range(2))
+
+      with self.assertRaises(ValueError):
+        util.safe_zip((), range(3))
+
+  def test_safe_zip_three_args(self):
+    # Success cases
+    self.assertEqual(
+        [(0, "a", 10), (1, "b", 11), (2, "c", 12)],
+        util.safe_zip(range(3), ["a", "b", "c"], range(10, 13)),
+    )
+    self.assertEqual([], util.safe_zip([], [], []))
+
+  def test_safe_zip_three_args_errors(self):
+    if jaxlib_extension_version >= 416:
+      # Third argument is shorter - error should show all lengths
+      with self.assertRaisesRegex(
+          ValueError,
+          r"safe_zip\(\) argument 2 has length 1.*All lengths: \(3, 3, 1\)"
+      ):
+        util.safe_zip(range(3), range(3), range(1))
+
+      # Second argument is longer - error should show all lengths
+      with self.assertRaisesRegex(
+          ValueError,
+          r"safe_zip\(\) argument 1 has length 5.*All lengths: \(3, 5, 3\)"
+      ):
+        util.safe_zip(range(3), range(5), range(3))
+    else:
+      with self.assertRaises(ValueError):
+        util.safe_zip(range(3), range(3), range(1))
+
+      with self.assertRaises(ValueError):
+        util.safe_zip(range(3), range(5), range(3))
+
+  def test_safe_zip_length_cap(self):
+    if jaxlib_extension_version < 416:
+      self.skipTest("Requires jaxlib_extension_version >= 416")
+
+    def infinite_iter():
+      i = 0
+      while True:
+        yield i
+        i += 1
 
     with self.assertRaisesRegex(
-        ValueError, r"zip\(\) argument 2 is shorter than argument 1"
+        ValueError,
+        r"safe_zip\(\) argument 1 has length 14\+.*"
+        r"Note: length capped for argument\(s\) 1"
     ):
-      util.safe_zip(range(7), range(2))
+      util.safe_zip(range(3), infinite_iter())
 
+    # When infinite iterator is first, arg1 (shorter) is the mismatch reported
     with self.assertRaisesRegex(
-        ValueError, r"zip\(\) argument 2 is longer than argument 1"
+        ValueError,
+        r"safe_zip\(\) argument 1 has length 3.*"
+        r"Note: length capped for argument\(s\) 0"
     ):
-      util.safe_zip((), range(3))
+      util.safe_zip(infinite_iter(), range(3))
 
 
 class Node:
