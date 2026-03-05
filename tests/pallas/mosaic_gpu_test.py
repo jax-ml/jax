@@ -3034,8 +3034,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.barrier_wait(barrier)
       @pl.when(wg_idx == 0)
       def _copy_out():
-        # TODO(b/492443090): layout hint required here.
-        out_ref[...] = plgpu.load(smem_ref, (), layout=layout, optimized=False)
+        out_ref[...] = smem_ref[...]
     x = jnp.arange(1, m * n + 1, dtype=dtype).reshape(m, n)
     y = jnp.arange(m * n, 0, -1, dtype=dtype).reshape(m, n)
     inp = jnp.concatenate([x, y], axis=0)

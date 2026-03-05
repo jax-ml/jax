@@ -984,7 +984,7 @@ def _kernel_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    layout_inference.infer_layout(module, arch=_infer_arch())  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   launch_ctx.scratch.finalize_size()
