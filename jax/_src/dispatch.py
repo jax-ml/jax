@@ -545,7 +545,9 @@ def _device_put_impl(
     src: Device | Sharding | Format | None, copy: ArrayCopySemantics, aval):
   if aval is None:
     try:
-      aval = core.abstractify(x)
+      if isinstance(x, core.Tracer):
+        raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
+      aval = core.typeof(x)
       aval = update_dp_aval(aval, device)
     except TypeError as err:
       raise TypeError(

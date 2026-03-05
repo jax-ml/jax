@@ -435,11 +435,11 @@ def bench_shaped_abstractify(state):
     _ = [core.shaped_abstractify(x) for x in args]
 
 
-def _run_benchmark_for_xla_abstractify(arg, state):
+def _run_benchmark_for_core_typeof(arg, state):
   while state:
-    core.abstractify(arg)
+    core.typeof(arg)
 
-def bench_xla_abstractify():
+def bench_core_typeof():
   _abstractify_args = [
       (3, 'scalar_int'),
       (3.5, 'scalar_float'),
@@ -453,10 +453,10 @@ def bench_xla_abstractify():
   for a, name in _abstractify_args:
     benchmarks.extend([
         google_benchmark.register(
-            partial(_run_benchmark_for_xla_abstractify, a),
-            name=f'bench_xla_abstractify_{name}'),
+            partial(_run_benchmark_for_core_typeof, a),
+            name=f'bench_core_typeof_{name}'),
     ])
-bench_xla_abstractify()
+bench_core_typeof()
 
 
 @google_benchmark.register

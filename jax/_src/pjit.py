@@ -1176,7 +1176,7 @@ def _pjit_call_impl_python(
                           ("out_shardings", out_shardings),
                           ("in_layouts", in_layouts),
                           ("out_layouts", out_layouts),
-                          ("abstract args", map(core.abstractify, args)),
+                          ("abstract args", map(core.typeof, args)),
                           ("fingerprint", fingerprint))
   return (compiled.unsafe_call(*computation.const_args, *args),
           compiled, pgle_profiler, computation.const_args)
