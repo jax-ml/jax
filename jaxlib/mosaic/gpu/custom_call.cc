@@ -381,7 +381,11 @@ GetAssemblyToBinaryCompilationProvider() {
         nvjitlink_mode =
             se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto;
     constexpr bool enable_llvm_module_compilation_parallelism = false;
+#ifdef PLATFORM_GOOGLE
     constexpr bool enable_driver_compilation = true;
+#else
+    constexpr bool enable_driver_compilation = false;
+#endif
     bool enable_libnvptxcompiler = se::IsLibNvPtxCompilerSupported();
 
     se::cuda::CompilationProviderOptions opts(
