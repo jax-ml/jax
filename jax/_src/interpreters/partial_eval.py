@@ -2327,7 +2327,7 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 
 callsites_with_tracing_cache_miss: set[str] = set()
 
-def explain(keys, fun, in_avals, debug_info, *context):
+def explain(keys, fun, in_avals, debug_info, *context, **_):
   func_filename = debug_info.func_filename
   if func_filename and not source_info_util.is_user_filename(func_filename):
    return

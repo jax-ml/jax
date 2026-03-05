@@ -1338,7 +1338,7 @@ class ShardMapTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
 
-    self.assertEqual(tracing_count(), 1)
+    self.assertEqual(tracing_count(), 2)  # 1 for jit, 1 for shmap
     self.assertEqual(lowering_count(), 1)
     self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 

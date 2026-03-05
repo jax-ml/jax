@@ -324,14 +324,15 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
 
       if check_vma:
         ans_ft = ans_ft.map2(add_implicit_pvary_and_unreduced, out_specs_flat)
-
       return ans_ft.with_aux(out_specs_flat)
+
+    if (dbg.arg_names is not None and len(dyn_args) != len(dbg.arg_names)):
+      dbg = dbg.with_unknown_names()
 
     try:
       out_ft = shard_map_p.bind(
           f_wrapped, *dyn_args, mesh=mesh, in_specs=in_specs_flat,
-          check_vma=check_vma, manual_axes=axis_names, debug_info=
-          api_util.debug_info("shard_map", f, args, {}))
+          check_vma=check_vma, manual_axes=axis_names, debug_info=dbg)
     except _SpecError as e:
       fails, out_tree = e.args
       msg = _spec_rank_error(SpecErrorType.out, f, out_tree, out_specs, fails)
@@ -1249,7 +1250,6 @@ def _check_names(specs, avals: Sequence[core.ShapedArray]) -> None:
   fail = [a if isinstance(sp, P) and sp and len(sp) > a.ndim else no_fail
           for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
-    breakpoint()
     raise _SpecError(fail, avals.tree)
 
 class _SpecError(Exception):
