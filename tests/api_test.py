@@ -5371,6 +5371,28 @@ class APITest(jtu.JaxTestCase):
     with jax.allow_f16_reductions(False):
       jax.lax.reduce_sum(x, [0])  # allowed on singleton axes
 
+  def test_vjp3_dont_want(self):
+    @jax.jit
+    def f(x, y):
+      return x + y
+
+    out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
+    out1, out2 = f_vjp.with_refs(api.DontWant(), api.DontWant())(jnp.ones((8,)))
+    self.assertIsInstance(out1, api.DidntWant)
+    self.assertIsInstance(out2, api.DidntWant)
+
+    out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
+    new_ref = jax.new_ref(jnp.zeros((8,)))
+    out1, out2 = f_vjp.with_refs(new_ref, api.DontWant())(jnp.ones((8,)))
+    self.assertIsInstance(out1, api.GradRef)
+    self.assertIsInstance(out2, api.DidntWant)
+    self.assertArraysEqual(new_ref[...], jnp.ones((8,)))
+
+    out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
+    out1, out2 = f_vjp.with_refs(api.GradValue(), api.DontWant())(jnp.ones((8,)))
+    self.assertArraysEqual(out1, jnp.ones((8,)))
+    self.assertIsInstance(out2, api.DidntWant)
+
 
 class RematTest(jtu.JaxTestCase):
 

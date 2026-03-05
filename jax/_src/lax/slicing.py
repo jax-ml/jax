@@ -1428,7 +1428,7 @@ def _slice_jvp_rule(primals, tangents, *, start_indices, limit_indices, strides)
 
 def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, strides):
   assert isinstance(operand, ad.GradAccum)
-  if type(out_ct) is ad_util.Zero:
+  if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
     return
   if isinstance(operand, ad.RefAccum):
     slices = map(_slice, start_indices, limit_indices, strides)
@@ -1543,7 +1543,8 @@ def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
 def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes):
   assert isinstance(operand, ad.GradAccum)
   assert all(not isinstance(s, ad.GradAccum) for s in start_indices)
-  if type(out_ct) is ad_util.Zero: return
+  if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
+    return
   if isinstance(operand, ad.RefAccum):
     assert operand.ref is not None
     operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))

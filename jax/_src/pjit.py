@@ -1841,10 +1841,12 @@ def _pjit_transpose_fancy(
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (
-      [s for x, s in zip(args, in_shardings) if not isinstance(x,ad.ValAccum)] +
+      [s for x, s in zip(args, in_shardings)
+       if not isinstance(x, (ad.ValAccum, ad.NullAccum))] +
       [s for x, s in zip(cts_in, out_shardings) if not isinstance(x, ad.Zero)])
   trans_in_layouts = (
-      [l for x, l in zip(args, in_layouts) if not isinstance(x, ad.ValAccum)] +
+      [l for x, l in zip(args, in_layouts)
+       if not isinstance(x, (ad.ValAccum, ad.NullAccum))] +
       [l for x, l in zip(cts_in, out_layouts) if not isinstance(x, ad.Zero)])
   cts_out_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
   trans_out_shardings = tuple(s for x, s in zip(cts_out_, in_shardings)
@@ -2273,7 +2275,7 @@ ad.primitive_jvps[reshard_p] = _reshard_jvp_rule
 
 def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
-  if type(ct) is ad.Zero:
+  if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
     return
   out_sharding = x.aval.to_ct_aval().sharding  # pyrefly: ignore[missing-attribute]
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):

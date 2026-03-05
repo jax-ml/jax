@@ -484,9 +484,13 @@ def ct_check(primal, ct):
         f" got {ct_aval.str_short()}")
 
 class NullAccum(GradAccum):
-  def __init__(self): pass
+  aval: core.AbstractValue
+
+  def __init__(self, aval): self.aval = aval
+  def __repr__(self): return f"NullAccum({self.aval})"
   def accum(self, x): return
   def freeze(self): assert False
+
 
 fancy_transposes: dict[core.Primitive, Callable] = {}
 
@@ -496,11 +500,13 @@ def project_accums(args):
     if isinstance(x, ValAccum):
       specs.append((ValAccum, x.aval))
     elif isinstance(x, RefAccum):
-      specs.append((RefAccum, x.aval))
       result.append(x.inst().ref)
+      specs.append((RefAccum, x.aval))
+    elif isinstance(x, NullAccum):
+      specs.append((NullAccum, x.aval))
     else:
-      specs.append((None, typeof(x)))
       result.append(x)
+      specs.append((None, typeof(x)))
   return result, tuple(specs)
 
 def unproject_accums(specs, result):
@@ -510,6 +516,8 @@ def unproject_accums(specs, result):
       args.append(ValAccum(aval))
     elif k is RefAccum:
       args.append(RefAccum(aval, next(result_)))
+    elif k is NullAccum:
+      args.append(NullAccum(aval))
     elif k is None:
       args.append(next(result_))
     else:
