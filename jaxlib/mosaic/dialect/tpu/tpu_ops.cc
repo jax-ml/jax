@@ -1735,6 +1735,11 @@ LogicalResult UnpackSubelementsOp::verify() {
     return emitOpError("Index must be between 0 and the packing factor (")
            << packing_factor << "), got " << index;
   }
+  if (getUnsignedIntegers() &&
+      !getSource().getType().getElementType().isSignlessInteger()) {
+    return emitOpError(
+        "unsigned_integers can only be set when the source type is an integer");
+  }
   return success();
 }
 
@@ -1745,7 +1750,7 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
   if (!src_elem_ty.isSignlessInteger() || !dst_elem_ty.isSignlessInteger()) {
     return failure();
   }
-  if (!op.getSignExtended()) {
+  if (!op.getIntegerExtended()) {
     // Unpack of pack with the same format is reversible if not sign extended.
     if (auto pack = op.getSource().getDefiningOp<PackSubelementsOp>();
         pack && pack.getPackFormat() == op.getPackFormat() &&
@@ -1774,11 +1779,11 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
       return failure();
     }
   }
-  rewriter.modifyOpInPlace(op, [&]() { op.setSignExtended(false); });
+  rewriter.modifyOpInPlace(op, [&]() { op.setIntegerExtended(false); });
   return success();
 }
 
-void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
+void PackSubelementsOp::build(OpBuilder& builder, OperationState& state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
                               const PackFormat pack_format) {

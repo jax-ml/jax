@@ -635,9 +635,12 @@ def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
   }];
 }
 
-// Integer unpacks are always signed at the moment.
+// `unsigned_integers` controls the signedness interpretation of the source
+// integer type. It applies both to integer-to-float conversions and to
+// integer-to-integer upcasts (selecting sign extension vs zero extension
+// when `integer_extended` is true).
 //
-// When unpacking integers to integers, setting `sign_extended` to false will
+// When unpacking integers to integers, setting `integer_extended` to false will
 // leave bits higher than source bitwidth as undefined.
 //
 // Take int4 to int16 interleaved unpacking and `index = 1` as an example:
@@ -650,12 +653,17 @@ def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
 // where "a" and "e" are the sign bits of the values to be unpacked, and "-" are
 // bits to be ignored.
 //
-// Unpacked, sign_extend = true:
+// Unpacked, integer_extended = true, unsigned_integers = false (sign extend):
 //
 // Bits    28  24  20  16  12   8   4   0
 //       aaaaaaaaaaaaabcdeeeeeeeeeeeeefgh
 //
-// Unpacked, sign_extend = false:
+// Unpacked, integer_extended = true, unsigned_integers = true (zero extend):
+//
+// Bits    28  24  20  16  12   8   4   0
+//       0000000000000bcd00000000000000gh
+//
+// Unpacked, integer_extended = false:
 //
 // Bits    28  24  20  16  12   8   4   0
 //       ------------abcd------------efgh
@@ -664,7 +672,8 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
     AnyVectorOfNonZeroRank:$source,
     I32Attr:$index,
     TPU_PackFormatEnum:$pack_format,
-    DefaultValuedAttr<BoolAttr, "true">:$sign_extended
+    DefaultValuedAttr<BoolAttr, "true">:$integer_extended,
+    DefaultValuedAttr<BoolAttr, "false">:$unsigned_integers
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
@@ -856,6 +865,14 @@ def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
 // Internal operation. All arith.sitofp operations that change the bitwidth
 // must be canonicalized to this operation.
 def TPU_SIToFPOp : TPU_Op<"sitofp", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$in, TPU_RoundingModeEnum:$rounding_mode);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
+}
+
+// Internal operation. All arith.uitofp operations that change the bitwidth
+// must be canonicalized to this operation.
+def TPU_UIToFPOp : TPU_Op<"uitofp", [Pure, ElementwiseMappable]> {
   let arguments = (ins AnyType:$in, TPU_RoundingModeEnum:$rounding_mode);
   let results = (outs AnyType:$output);
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
