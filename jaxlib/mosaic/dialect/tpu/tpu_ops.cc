@@ -1817,7 +1817,8 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
 void PackSubelementsOp::build(OpBuilder& builder, OperationState& state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
-                              const PackFormat pack_format) {
+                              const PackFormat pack_format,
+                              bool unsigned_integers) {
   SmallVector<Value> sources;
   SmallVector<int32_t> positions;
   for (size_t i = 0; i < padded_sources.size(); ++i) {
@@ -1826,7 +1827,16 @@ void PackSubelementsOp::build(OpBuilder& builder, OperationState& state,
       positions.push_back(i);
     }
   }
-  build(builder, state, output_type, sources, positions, pack_format);
+  build(builder, state, output_type, sources, positions, pack_format,
+        unsigned_integers);
+}
+
+void PackSubelementsOp::build(OpBuilder& builder, OperationState& state,
+                              const VectorType output_type,
+                              const ArrayRef<Value> padded_sources,
+                              const PackFormat pack_format) {
+  build(builder, state, output_type, padded_sources, pack_format,
+        /*unsigned_integers=*/false);
 }
 
 LogicalResult PackSubelementsOp::verify() {

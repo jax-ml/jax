@@ -682,7 +682,9 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
-// Integer packs are always signed at the moment.
+// unsigned_integers applies to the result type (for the source type the sign
+// doesn't matter: integer-to-integer conversions truncate the high bits, 
+// floats are always signed).
 // Float to integer packing rounds to nearest even.
 // WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
 // compressed packing!
@@ -727,12 +729,14 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let arguments = (ins
     Variadic<TPU_Vreg>:$sources,
     DenseI32ArrayAttr:$positions,
-    TPU_PackFormatEnum:$pack_format
+    TPU_PackFormatEnum:$pack_format,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$unsigned_integers
   );
   let results = (outs TPU_Vreg:$output);
   let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
   let builders = [
     OpBuilder<(ins "::mlir::VectorType":$output_type, "::mlir::ArrayRef<::mlir::Value>":$padded_sources, "::mlir::tpu::PackFormat":$pack_format)>,
+    OpBuilder<(ins "::mlir::VectorType":$output_type, "::mlir::ArrayRef<::mlir::Value>":$padded_sources, "::mlir::tpu::PackFormat":$pack_format, "bool":$unsigned_integers)>,
   ];
   let hasVerifier = 1;
 }
@@ -866,6 +870,14 @@ def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
   let results = (outs AnyVectorOfAnyRank:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
   let hasCanonicalizeMethod = 1;
+}
+
+// Internal operation. All arith.fptoui operations that change the bitwidth
+// must be canonicalized to this operation.
+def TPU_FPToUIOp : TPU_Op<"fptoui", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyVectorOfAnyRank:$input, TPU_RoundingModeEnum:$rounding_mode);
+  let results = (outs AnyVectorOfAnyRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
 }
 
 // Internal operation. All arith.sitofp operations that change the bitwidth
