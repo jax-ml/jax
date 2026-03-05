@@ -1151,7 +1151,12 @@ absl::Status MosaicGpuPrepare(
       std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
       GetCliqueDeviceGroups(*collective_params, attributes));
 
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
+  xla::gpu::CollectiveCliqueRequests::CliqueRequirements clique_reqs;
+  clique_reqs.barrier_reqs =
+      xla::gpu::CollectiveCliqueRequests::BarrierRequirements{
+          /*module_execution_barrier=*/true};
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups,
+                                                    clique_reqs));
 
   VLOG(6) << "Prepare is done for clique key: " << clique_key;
   return absl::OkStatus();
