@@ -2566,7 +2566,7 @@ def make_jaxpr(
     make_jaxpr_f.__name__ = f"make_jaxpr({fun.__name__})"
   return make_jaxpr_f
 
-def _infer_src_sharding(src, x) -> Sharding | None:
+def _infer_src_sharding(src, x, x_aval) -> Sharding | None:
   if src is not None:
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
@@ -2575,6 +2575,9 @@ def _infer_src_sharding(src, x) -> Sharding | None:
     val = x.to_concrete_value()
     if val is not None and isinstance(val, array.ArrayImpl):
       return val.sharding
+  if x_aval is not core.abstract_token and x_aval.sharding.mesh.are_all_axes_explicit:
+    return x_aval.sharding.update(
+        memory_kind=core.mem_space_to_kind(x_aval.memory_space))
   return None
 
 
@@ -2666,6 +2669,7 @@ def device_put(
   """
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
+    x_avals = [shaped_abstractify(x) for x in x_flat]
     if (device is None or
         isinstance(device, (xc.Device, Sharding, core.MemorySpace))):
       device_flat = [device] * len(x_flat)
@@ -2674,10 +2678,10 @@ def device_put(
 
     if (src is None or
         isinstance(src, (xc.Device, Sharding, core.MemorySpace))):
-      src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
+      src_flat = list(map(partial(_infer_src_sharding, src), x_flat, x_avals))
     else:
       src_flat = flatten_axes("device_put source", treedef, src)
-      src_flat = list(map(_infer_src_sharding, src_flat, x_flat))
+      src_flat = list(map(_infer_src_sharding, src_flat, x_flat, x_avals))
 
     device_flat = map(partial(pspec_to_sharding, 'device_put'), device_flat)
     src_flat = map(partial(pspec_to_sharding, 'device_put'), src_flat)
@@ -2707,9 +2711,8 @@ def device_put(
         copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
     dst_avals = []
-    for xf, d in zip(x_flat, device_flat):
-      aval = shaped_abstractify(xf)
-      aval = dispatch.update_dp_aval(aval, d)
+    for x_aval, d in zip(x_avals, device_flat):
+      aval = dispatch.update_dp_aval(x_aval, d)
       dst_avals.append(aval)
       _check_sharding(aval, d)
     if core.trace_state_clean():

@@ -742,6 +742,39 @@ class DevicePutTest(jtu.JaxTestCase):
       self.assertEqual(d.sharding.memory_kind, 'device')
       self.assertArraysEqual(d, orig)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_device_put_transpose_explicit_mode(self, mesh):
+    arr_host = jax.device_put(
+        np.arange(8.), NamedSharding(mesh, P('x'), memory_kind='pinned_host'))
+    device_s = arr_host.sharding.with_memory_kind('device')
+
+    @jax.jit
+    def f(x_host):
+      return jax.device_put(x_host, device_s)
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr_host)
+    self.assertEqual(out.sharding, arr_host.sharding)
+
+  @jtu.with_explicit_mesh((2,), 'x', axis_types=(jax.sharding.AxisType.Auto,))
+  def test_device_put_transpose_auto_mode(self, mesh):
+    arr_host = jax.device_put(
+        np.arange(8.), NamedSharding(mesh, P('x'), memory_kind='pinned_host'))
+    device_s = arr_host.sharding.with_memory_kind('device')
+
+    @jax.jit
+    def f(x_host):
+      return jax.device_put(x_host, device=device_s, src=arr_host.sharding)
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr_host)
+    self.assertEqual(out.sharding, arr_host.sharding)
+
+    @jax.jit
+    def g(x_host):
+      return jax.device_put(x_host, device_s)
+
+    out = jax.jit(jax.grad(lambda x: g(x).sum()))(arr_host)
+    self.assertEqual(out.sharding.memory_kind, arr_host.sharding.memory_kind)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 

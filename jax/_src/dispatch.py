@@ -675,14 +675,22 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   return [update_dp_aval(x, d) for x, d in zip(xs, devices)]
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
-def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
-  results = [None] * len(cts)
-  dp_args = []
-  for i, (ct, device, src, cp) in enumerate(zip(cts, devices, srcs, copy_semantics)):
-    if type(ct) is not ad.Zero:
-      dp_args.append((i, ct, device, src, cp))
-  if dp_args:
-    indices, args, devices, srcs, copy_semantics = list(zip(*dp_args))
+def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
+  results, dp_cts = [None] * len(cts), []
+  for i, (ct, arg, device, src, cp) in enumerate(zip(
+      cts, args, devices, srcs, copy_semantics)):
+    if ad.is_undefined_primal(arg):
+      if type(ct) is ad.Zero:
+        results[i] = ad.Zero(arg.aval.to_ct_aval())  # type: ignore
+      else:
+        dp_cts.append((i, ct, arg, device, src, cp))
+
+  if dp_cts:
+    indices, dp_ct, args, devices, srcs, copy_semantics = list(zip(*dp_cts))
+    # TODO(yashkatariya): Maybe remove the special carve out for Host?
+    srcs = tuple(a.aval.memory_space
+                 if s is None and a.aval.memory_space == core.MemorySpace.Host
+                 else s for s, a in zip(srcs, args))
     new_copy_semantics = []
     for cp in copy_semantics:
       if cp == ArrayCopySemantics.DONATE_INPUT:
@@ -694,7 +702,7 @@ def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
       else:
         assert cp == ArrayCopySemantics.ALWAYS_COPY
         new_copy_semantics.append(ArrayCopySemantics.ALWAYS_COPY)
-    ys = device_put_p.bind(*args, devices=srcs, srcs=devices,
+    ys = device_put_p.bind(*dp_ct, devices=srcs, srcs=devices,
                            copy_semantics=tuple(new_copy_semantics))
     for i, y in zip(indices, ys):
       results[i] = y
