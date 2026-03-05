@@ -752,12 +752,13 @@ def _shard_map_staging(
   ) -> Sequence[pe.DynamicJaxprTracer]:
   source_info = source_info_util.current()
   if trace.requires_low:
-    assert False
-    hi_avals_in = [typeof(x) for x in args]
-    in_specs = [lo_spec for hi_spec in in_specs for lo_spec in hi_spec.to_lo()]
-    args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
-    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()])(out_specs_thunk)
-    f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
+    pass
+#    assert False
+#    hi_avals_in = [typeof(x) for x in args]
+#    in_specs = [lo_spec for hi_spec in in_specs for lo_spec in hi_spec.to_lo()]
+#    args = [lo_val for x in args for lo_val in typeof(x).lower_val(x)]
+#    out_specs_thunk = (lambda t: lambda: [x for s in t() for x in s.to_lo()])(out_specs_thunk)
+#    f, hi_avals_out = _lojax_traceable(f, hi_avals_in, unk_names=True)
   # @lu.transformation_with_aux2
   # def _lojax_traceable(_fun, _store, hi_avals_in, *lo_tracers):
   #   hi_args = pe.raise_lo_outs(hi_avals_in, lo_tracers)
@@ -797,9 +798,9 @@ def _shard_map_staging(
   trace.frame.is_high |= jaxpr.is_high
   out = trace.emit_eqn([*const_tracers, *in_tracers], out_avals, prim, params,
                        effs, source_info)
-  if trace.requires_low:
-    assert hi_avals_out is not None
-    out = pe.raise_lo_outs(hi_avals_out(), out)
+#  if trace.requires_low:
+#    assert hi_avals_out is not None
+#    out = pe.raise_lo_outs(hi_avals_out(), out)
   return out_avals_ft.update(out)
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 
@@ -1248,6 +1249,7 @@ def _check_names(specs, avals: Sequence[core.ShapedArray]) -> None:
   fail = [a if isinstance(sp, P) and sp and len(sp) > a.ndim else no_fail
           for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
+    breakpoint()
     raise _SpecError(fail, avals.tree)
 
 class _SpecError(Exception):
@@ -1571,7 +1573,8 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
     primals_out_aux, tangents_out = ad.jvp_subtrace_2(f, trace.tag, primals, tangents)
     primals_out_ft, out_ax = primals_out_aux.unpack_aux()
     which_nz_out = [type(r) is not ad.Zero for r in tangents_out]
-    new_out_specs = (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out) if nz))
+    tangent_out_specs = [s.to_tangent_spec() for s, nz in zip(out_ax, which_nz_out) if nz]
+    new_out_specs = (*out_ax, *tangent_out_specs)
     tangents_out = [None if not nz else t for t, nz in zip(tangents_out, which_nz_out)]
     tangents_out_ft = FlatTree.flatten(list(tangents_out))
     out_primals_tangents = FlatTree.pack((primals_out_ft, tangents_out_ft))
@@ -1612,20 +1615,17 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     jaxpr, fwd_data = pe.trace_to_subjaxpr_nounits_fwd2(
           f, trace.tag, debug_info.with_unknown_names(), False, in_pvals)
     (in_fwds, out_fwds, out_pvals, res, env) = fwd_data
-    out_knowns, _, out_consts = pe.partition_pvals(out_pvals)
     which = [f1 is None and f2 is None and not v.aval.shape
              for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
     jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
-    out_consts = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-                  for x in out_consts]
+    res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+           for x in res]
+    out_pvals, out_specs = out_pvals.unpack_aux()
+    out_knowns, _, out_consts = pe.partition_pvals(out_pvals)
     res_avals = [typeof(r) for r in res]
-    _, out_specs = out_pvals.unpack_aux()
     _, out_known_specs = pe.partition_list(out_knowns, out_specs)
-    if check_vma:
-      res_specs = [P(order_wrt_mesh(mesh, a.vma)) for a in res_avals]
-    else:
-      all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
-      res_specs = [P(all_names)] * len(res_avals)
+    all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
+    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
     new_out_specs = (*out_known_specs, *res_specs)
     ans_ft = FlatTree.flatten((out_consts, res))
     aux = (in_fwds, out_fwds, out_knowns, res_avals, jaxpr, env, out_specs, new_out_specs)
@@ -1644,6 +1644,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   # TODO make res_avals be the full set, not just the non-fwd ones
   res_avals_iter = iter(res_avals)
   res_specs = []
+  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
   for f1, f2 in zip(in_fwd, out_fwd):
     if f1 is not None:
       res_specs.append(known_in_specs[f1])
@@ -1721,8 +1722,8 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
                for f1, f2 in zip(in_fwd, out_fwd)]
   assert next(res_avals_iter, None) is None
   new_in_specs = (*res_specs, *(P(),) * len(env),
-                  *(ax for ax, nz in zip(in_specs, nzs_in) if nz))
-  tangent_out_specs = tuple(ax for ax, nz in zip(out_specs, nzs_out) if nz)
+                  *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz))
+  tangent_out_specs = tuple(s.to_tangent_spec() for s, nz in zip(out_specs, nzs_out) if nz)
   tangent_params = dict(
       mesh=mesh, in_specs=new_in_specs,
       check_vma=check_vma, manual_axes=manual_axes, debug_info=lin_jaxpr.debug_info)
@@ -1786,7 +1787,7 @@ def _shard_map_transpose(out_cts, *args,
     left_cts = [x if type(x) is ad.Zero or check_vma
                 else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
                 for sp, x in zip(in_specs, left_cts)]
-    left_specs_nz = [core.primal_spec_to_cotangent_spec(s)
+    left_specs_nz = [s.to_ct_spec()
                      for ct, s in zip(left_cts, in_specs) if ct is not None
                      and type(ct) is not ad.Zero]
     return FlatTree.flatten(left_cts).with_aux(left_specs_nz)

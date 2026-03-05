@@ -91,7 +91,7 @@ def linearize_subtrace_2(f: Callable, is_vjp: bool,
   with core.take_current_trace() as parent_trace:
     tangent_trace = pe.DynamicJaxprTrace(debug_info, auto_dce=True)
     tangent_trace.tag = tag
-    linearize_trace = LinearizeTrace(parent_trace, tangent_trace, is_vjp, tag)
+    linearize_trace = LinearizeTrace(parent_trace, tangent_trace, is_vjp)
     tracers = [LinearizeTracer(linearize_trace, p,
                                tangent_trace.new_arg(get_aval(p).to_tangent_aval(),
                                                      source_info))
