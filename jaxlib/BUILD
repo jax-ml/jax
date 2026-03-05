@@ -282,6 +282,7 @@ nanobind_pywrap_extension(
     pytype_srcs = ["weakref_lru_cache.pyi"],
     deps = [
         ":nb_class_ptr",
+        ":pytree",
         ":reentrant_hash_map",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",

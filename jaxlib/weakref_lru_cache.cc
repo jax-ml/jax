@@ -40,6 +40,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/pytree.h"
 #include "jaxlib/reentrant_hash_map.h"
 
 namespace nb = nanobind;
@@ -74,7 +75,9 @@ namespace jax {
 //    the equality always mutates the map we would have an endless loop, but
 //    it is sufficient to defend against the case of the GIL being released,
 //    in which case we don't actually expect a mutation with high probability.
+class WeakrefLRUCacheBase;
 class WeakrefLRUCache;
+class MultiWeakrefLRUCache;
 
 namespace {
 
@@ -99,8 +102,28 @@ struct PointerWeakKey {
 
 // WeakKey is the key to the first level of the table.
 struct WeakKey {
-  WeakKey(absl::InlinedVector<nb::weakref, 1> refs, size_t cached_hash)
-      : refs(std::move(refs)), cached_hash(cached_hash) {}
+  static WeakKey Make(absl::Span<PyObject* const> weakref_args,
+                      nb::object weakref_callback) {
+    absl::InlinedVector<nb::weakref, 1> refs;
+    refs.reserve(weakref_args.size());
+    for (PyObject* arg : weakref_args) {
+      refs.push_back(
+          nb::weakref(nb::borrow<nb::object>(arg), weakref_callback));
+    }
+    return WeakKey(refs);
+  }
+  static WeakKey Make(absl::Span<nb::object const> weakref_args,
+                      nb::object weakref_callback) {
+    absl::InlinedVector<nb::weakref, 1> refs;
+    refs.reserve(weakref_args.size());
+    for (const nb::object& arg : weakref_args) {
+      refs.push_back(nb::weakref(arg, weakref_callback));
+    }
+    return WeakKey(refs);
+  }
+
+  WeakKey(absl::InlinedVector<nb::weakref, 1> refs)
+      : refs(std::move(refs)), cached_hash(absl::HashOf(*this)) {}
 
   absl::InlinedVector<nb::weakref, 1> refs;
 
@@ -124,7 +147,7 @@ struct WeakKey {
       }
       return true;
     }
-    bool operator()(WeakKey a, PointerWeakKey b) const {
+      bool operator()(WeakKey a, PointerWeakKey b) const {
       if (a.refs.size() != b.refs.size()) {
         return false;
       }
@@ -136,6 +159,14 @@ struct WeakKey {
       return true;
     }
   };
+
+  template <typename H>
+  friend H AbslHashValue(H h, const WeakKey& key) {
+    for (const auto& ref : key.refs) {
+      h = H::combine(std::move(h), nb::hash(ref));
+    }
+    return h;
+  }
 
   struct CachedHash {
     size_t operator()(WeakKey key) const { return key.cached_hash; }
@@ -152,8 +183,13 @@ struct WeakKey {
 struct PointerStrongKey;
 class StrongKey {
  public:
-  StrongKey(nb::object context, absl::Span<PyObject* const> args,
-            nb::tuple kwnames);
+  StrongKey(nb::object context, absl::InlinedVector<nb::object, 2> kwnames,
+            absl::InlinedVector<nb::object, 4> args)
+      : context_(std::move(context)),
+        kwnames_(std::move(kwnames)),
+        args_(std::move(args)) {
+    cached_hash_ = absl::HashOf(*this);
+  }
 
   bool operator==(const StrongKey& other) const;
 
@@ -205,42 +241,6 @@ class StrongKey {
   // The cached hash value. See the comment on WeakKey.
   size_t cached_hash_;
 };
-
-StrongKey::StrongKey(nb::object context, absl::Span<PyObject* const> args,
-                     nb::tuple kwnames)
-    : context_(std::move(context)) {
-  size_t num_kwargs = kwnames.is_valid() ? kwnames.size() : 0;
-  CHECK_GE(args.size(), num_kwargs);
-  size_t num_pos = args.size() - num_kwargs;
-  args_.reserve(args.size());
-  for (size_t i = 0; i < num_pos; ++i) {
-    args_.push_back(nb::borrow<nb::object>(args[i]));
-  }
-
-  if (num_kwargs > 0) {
-    // Intern the keyword argument names, then sort them by interned pointer
-    // order.
-    absl::InlinedVector<std::pair<PyObject*, PyObject*>, 4> sorted;
-    sorted.reserve(num_kwargs);
-    for (size_t i = 0; i < num_kwargs; ++i) {
-      PyObject* p = PyTuple_GET_ITEM(kwnames.ptr(), i);
-      Py_INCREF(p);
-      PyUnicode_InternInPlace(&p);
-      sorted.push_back({p, args[num_pos + i]});
-    }
-    absl::c_sort(sorted, [](const std::pair<PyObject*, PyObject*>& a,
-                            const std::pair<PyObject*, PyObject*>& b) {
-      return a.first < b.first;
-    });
-
-    kwnames_.reserve(num_kwargs);
-    for (auto& info : sorted) {
-      kwnames_.push_back(nb::steal<nb::object>(info.first));
-      args_.push_back(nb::borrow<nb::object>(info.second));
-    }
-  }
-  cached_hash_ = absl::HashOf(*this);
-}
 
 bool StrongKey::operator==(const StrongKey& other) const {
   if (!context_.equal(other.context_)) return false;
@@ -327,7 +327,7 @@ struct LRUNode {
 struct CacheEntry {
   // Pointer to the owning cache. Used primarily so we can adjust the lru_size_
   // during Unlink().
-  WeakrefLRUCache* parent;
+  WeakrefLRUCacheBase* parent;
 
   // Has the thread that was computing this entry finished its work?
   absl::Notification completed;
@@ -353,7 +353,7 @@ struct CacheEntry {
   WeakKey wr_key;
   StrongKey key;
 
-  CacheEntry(WeakrefLRUCache* p, WeakKey wr, StrongKey k)
+  CacheEntry(WeakrefLRUCacheBase* p, WeakKey wr, StrongKey k)
       : parent(p), wr_key(std::move(wr)), key(std::move(k)) {}
 
   ~CacheEntry();
@@ -367,21 +367,13 @@ struct CacheEntry {
 
 }  // namespace
 
-class WeakrefLRUCache {
+class WeakrefLRUCacheBase {
  public:
-  // num_weak_keys is the number of leading arguments to a call to the cache
-  // that should be treated as weak arguments.
-  static nb_class_ptr<WeakrefLRUCache> Create(
-      nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
-      std::optional<nb::callable> explain, int num_weak_keys);
+  WeakrefLRUCacheBase(nb::callable cache_context_fn, nb::callable fn,
+                      int64_t maxsize, std::optional<nb::callable> explain);
 
-  ~WeakrefLRUCache() { Clear(); }
+  virtual ~WeakrefLRUCacheBase() { Clear(); }
 
-  // Entry point used by the Python vectorcall protocol.
-  static PyObject* VectorCall(PyObject* self_obj, PyObject* const* args,
-                              Py_ssize_t nargsf, PyObject* kwnames);
-
-  // Evicts a particular weak key from the cache.
   void EvictWeakKey(const WeakKey& search_key);
 
   // Returns a list of the keys in the cache.
@@ -397,17 +389,9 @@ class WeakrefLRUCache {
 
   void Clear();
 
-  int num_weak_keys() const { return num_weak_keys_; }
-  WeakKey MakeWeakrefKey(absl::Span<PyObject* const> weakref_args);
+  nb::object weakref_callback() const { return weakref_callback_; }
 
-  static PyType_Slot slots_[];
-
-  // Do not call directly. Use Create() instead.
-  WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
-                  int64_t maxsize, std::optional<nb::callable> explain,
-                  int num_weak_keys);
-
- private:
+ protected:
   friend struct CacheEntry;
 
   // Python callable, called each time the cache is invoked, whose return value
@@ -419,8 +403,6 @@ class WeakrefLRUCache {
 
   std::optional<nb::callable> explain_;
 
-  const int num_weak_keys_;
-
   using Cache = ReentrantHashMap<StrongKey, std::shared_ptr<CacheEntry>,
                                  StrongKey::CachedHash, StrongKey::SafeEqual>;
   using WeakrefCacheValue = std::shared_ptr<Cache>;
@@ -430,7 +412,6 @@ class WeakrefLRUCache {
   ReentrantHashMap<WeakKey, WeakrefCacheValue, WeakKey::CachedHash,
                    WeakKey::SafeEqual>
       entries_;
-
   // Maps weakref objects to the strong CacheEntry objects that reference them.
   // Used to evict entries when a weak reference becomes dead.
   absl::flat_hash_map<PyObject*, absl::flat_hash_set<CacheEntry*>>
@@ -450,16 +431,11 @@ class WeakrefLRUCache {
 
   // Helper used by VectorCall.
   PyObject* Call(PyObject* self_obj, absl::Span<PyObject* const> args,
-                 Py_ssize_t nargsf, PyObject* kwnames);
+                 Py_ssize_t nargsf, PyObject* kwnames, WeakKey wrcache_key,
+                 const StrongKey& key);
 
   // Evict all references to `dying_weakref_ptr` from the cache.
   void EvictWeakref(PyObject* dying_weakref_ptr);
-
-  nb::object WeakrefKeyToPython(absl::Span<PyObject* const> weakref_args) const;
-  nb::object WeakrefKeyToPython(
-      absl::Span<const nb::weakref> weakref_args) const;
-
-  void RemoveEntryFromReverseIndex(CacheEntry* entry);
 
   // Moves 'node' to the front of the LRU list. Assumes `node` is already
   // linked in the LRU list.
@@ -472,42 +448,13 @@ class WeakrefLRUCache {
   // Removes the least recently used entry from the cache.
   void EvictLeastRecentlyUsed();
 
-  static int tp_traverse(PyObject* self, visitproc visit, void* arg);
-  static int tp_clear(PyObject* self);
+  void RemoveEntryFromReverseIndex(CacheEntry* entry,
+                                   PyObject* skip_weakref = nullptr);
+
+  // Helpers that implement GC traversal and clearing for subclasses.
+  int TpTraverse(visitproc visit, void* arg);
+  void TpClear();
 };
-
-/*static*/ nb_class_ptr<WeakrefLRUCache> WeakrefLRUCache::Create(
-    nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
-    std::optional<nb::callable> explain, int num_weak_keys) {
-  auto self = make_nb_class<WeakrefLRUCache>(cache_context_fn, fn, maxsize,
-                                             explain, num_weak_keys);
-
-  // weak_callback captures a weak reference to self otherwise we would have a
-  // reference count cycle.
-  self->weakref_callback_ = nb::cpp_function(
-      [this_weak = nb::weakref(self)](nb::handle dying_weakref) {
-        nb::object py_cache = this_weak();
-        if (py_cache.is_none()) {
-          return;
-        }
-        nb::ft_object_guard lock(py_cache);
-        nb::cast<WeakrefLRUCache*>(py_cache)->EvictWeakref(dying_weakref.ptr());
-      });
-  return self;
-}
-
-WeakrefLRUCache::WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
-                                 int64_t maxsize,
-                                 std::optional<nb::callable> explain,
-                                 int num_weak_keys)
-    : cache_context_fn_(cache_context_fn),
-      fn_(fn),
-      explain_(explain),
-      num_weak_keys_(num_weak_keys),
-      lru_maxsize_(maxsize) {
-  lru_head_.next = nullptr;
-  lru_head_.prev = &lru_head_;
-}
 
 CacheEntry::~CacheEntry() {
   if (IsLinked()) {
@@ -529,7 +476,19 @@ void CacheEntry::Unlink() {
   parent->lru_size_--;
 }
 
-void WeakrefLRUCache::RemoveEntryFromReverseIndex(CacheEntry* entry) {
+WeakrefLRUCacheBase::WeakrefLRUCacheBase(nb::callable cache_context_fn,
+                                         nb::callable fn, int64_t maxsize,
+                                         std::optional<nb::callable> explain)
+    : cache_context_fn_(cache_context_fn),
+      fn_(fn),
+      explain_(explain),
+      lru_maxsize_(maxsize) {
+  lru_head_.next = nullptr;
+  lru_head_.prev = &lru_head_;
+}
+
+void WeakrefLRUCacheBase::RemoveEntryFromReverseIndex(CacheEntry* entry,
+                                                      PyObject* skip_weakref) {
   for (const nb::weakref& wref : entry->wr_key.refs) {
     PyObject* weakref_ptr = wref.ptr();
     auto rev_it = reverse_index_.find(weakref_ptr);
@@ -542,14 +501,14 @@ void WeakrefLRUCache::RemoveEntryFromReverseIndex(CacheEntry* entry) {
   }
 }
 
-void WeakrefLRUCache::MoveToFront(CacheEntry* node) {
+void WeakrefLRUCacheBase::MoveToFront(CacheEntry* node) {
   if (node->IsLinked()) {
     node->Unlink();
   }
   PushFront(node);
 }
 
-void WeakrefLRUCache::PushFront(CacheEntry* node) {
+void WeakrefLRUCacheBase::PushFront(CacheEntry* node) {
   CHECK(!node->IsLinked());
   node->lru_node.next = lru_head_.next;
   node->lru_node.prev = &lru_head_;
@@ -562,7 +521,7 @@ void WeakrefLRUCache::PushFront(CacheEntry* node) {
   ++lru_size_;
 }
 
-void WeakrefLRUCache::EvictLeastRecentlyUsed() {
+void WeakrefLRUCacheBase::EvictLeastRecentlyUsed() {
   CacheEntry* tail = lru_head_.prev->prev->next;
   if (tail->IsLinked()) {
     tail->Unlink();
@@ -601,47 +560,32 @@ void WeakrefLRUCache::EvictLeastRecentlyUsed() {
   }
 }
 
-WeakKey WeakrefLRUCache::MakeWeakrefKey(
-    absl::Span<PyObject* const> weakref_args) {
-  size_t combined_hash = 0;
-  absl::InlinedVector<nb::weakref, 1> refs;
-  refs.reserve(num_weak_keys_);
-  for (int i = 0; i < num_weak_keys_; ++i) {
-    nb::object obj = nb::borrow<nb::object>(weakref_args[i]);
-    size_t h = StrongPythonHash(obj);
-    combined_hash = absl::HashOf(std::make_pair(combined_hash, h));
-    refs.push_back(nb::weakref(obj, weakref_callback_));
-  }
-  return WeakKey(std::move(refs), combined_hash);
-}
-
-nb::object WeakrefLRUCache::WeakrefKeyToPython(
-    absl::Span<PyObject* const> weakref_args) const {
-  if (num_weak_keys_ == 1) {
+static nb::object WeakrefKeyToPython(absl::Span<PyObject* const> weakref_args) {
+  if (weakref_args.size() == 1) {
     return nb::borrow<nb::object>(weakref_args[0]);
   }
-  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(num_weak_keys_));
-  for (int i = 0; i < num_weak_keys_; ++i) {
+  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(weakref_args.size()));
+  for (size_t i = 0; i < weakref_args.size(); ++i) {
     PyTuple_SET_ITEM(keys.ptr(), i, weakref_args[i]);
     Py_INCREF(weakref_args[i]);
   }
   return keys;
 }
 
-nb::object WeakrefLRUCache::WeakrefKeyToPython(
-    absl::Span<const nb::weakref> weakref_args) const {
-  if (num_weak_keys_ == 1) {
-    return nb::cast(weakref_args[0]);
+static nb::object WeakrefKeyToPython(
+    absl::Span<const nb::weakref> weakref_args) {
+  if (weakref_args.size() == 1) {
+    return weakref_args[0];
   }
-  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(num_weak_keys_));
-  for (int i = 0; i < num_weak_keys_; ++i) {
+  nb::tuple keys = nb::steal<nb::tuple>(PyTuple_New(weakref_args.size()));
+  for (size_t i = 0; i < weakref_args.size(); ++i) {
     nb::object obj = nb::cast(weakref_args[i]);
     PyTuple_SET_ITEM(keys.ptr(), i, obj.inc_ref().ptr());
   }
   return keys;
 }
 
-void WeakrefLRUCache::EvictWeakKey(const WeakKey& search_key) {
+void WeakrefLRUCacheBase::EvictWeakKey(const WeakKey& search_key) {
   auto it = entries_.find(search_key);
   if (it != entries_.end()) {
     auto& [wr_key, cache_ptr] = *it;
@@ -661,9 +605,11 @@ void WeakrefLRUCache::EvictWeakKey(const WeakKey& search_key) {
   }
 }
 
-void WeakrefLRUCache::EvictWeakref(PyObject* dying_weakref_ptr) {
+void WeakrefLRUCacheBase::EvictWeakref(PyObject* dying_weakref_ptr) {
   auto rev_it = reverse_index_.find(dying_weakref_ptr);
-  if (rev_it == reverse_index_.end()) return;
+  if (rev_it == reverse_index_.end()) {
+    return;
+  }
 
   // We need to move the set because Unlink and modifying reverse_index_
   // will change the collections.
@@ -700,45 +646,11 @@ void WeakrefLRUCache::EvictWeakref(PyObject* dying_weakref_ptr) {
   }
 }
 
-PyObject* WeakrefLRUCache::VectorCall(PyObject* self_obj, PyObject* const* args,
-                                      Py_ssize_t nargsf, PyObject* kwnames) {
-  WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
-  if (!self) {
-    PyErr_SetString(PyExc_TypeError, "Not a WeakrefLRUCache");
-    return nullptr;
-  }
-
-  size_t num_args =
-      PyVectorcall_NARGS(nargsf) + (kwnames ? PyTuple_GET_SIZE(kwnames) : 0);
-  try {
-    return self->Call(self_obj, absl::MakeConstSpan(args, num_args), nargsf,
-                      kwnames);
-  } catch (nb::python_error& e) {
-    e.restore();
-    return nullptr;
-  } catch (const std::exception& e) {
-    PyErr_SetString(PyExc_RuntimeError, e.what());
-    return nullptr;
-  }
-}
-
-PyObject* WeakrefLRUCache::Call(PyObject* self_obj,
-                                absl::Span<PyObject* const> args,
-                                Py_ssize_t nargsf, PyObject* kwnames) {
-  Py_ssize_t nargs_positional = PyVectorcall_NARGS(nargsf);
-  if (nargs_positional < num_weak_keys_) {
-    PyErr_SetString(PyExc_TypeError,
-                    absl::StrCat("Missing weakref_key argument(s). Expected ",
-                                 num_weak_keys_)
-                        .c_str());
-    return nullptr;
-  }
-
-  nb::object context = cache_context_fn_();
-
-  WeakKey wrcache_key = MakeWeakrefKey(args.subspan(0, num_weak_keys_));
-  StrongKey key(context, args.subspan(num_weak_keys_),
-                kwnames ? nb::borrow<nb::tuple>(kwnames) : nb::tuple());
+PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
+                                    absl::Span<PyObject* const> args,
+                                    Py_ssize_t nargsf, PyObject* kwnames,
+                                    WeakKey wrcache_key, const StrongKey& key) {
+  Py_ssize_t num_pos_args = PyVectorcall_NARGS(nargsf);
 
   bool inserted = false;
   std::shared_ptr<CacheEntry> entry;
@@ -832,7 +744,7 @@ PyObject* WeakrefLRUCache::Call(PyObject* self_obj,
 
         PyObject* exp =
             PyObject_Vectorcall(explainer.ptr(), explainer_call_args.data(),
-                                nargs_positional + 1, kwnames);
+                                num_pos_args + 1, kwnames);
         if (!exp) return nullptr;
         Py_DECREF(exp);
       }
@@ -847,8 +759,7 @@ PyObject* WeakrefLRUCache::Call(PyObject* self_obj,
       entry->has_result = true;
     } else {
       if (entry->thread_id == std::this_thread::get_id()) {
-        nb::object repr_obj =
-            WeakrefKeyToPython(args.subspan(0, num_weak_keys_));
+        nb::object repr_obj = WeakrefKeyToPython(wrcache_key.refs);
         auto error_string = absl::StrCat(
             "Recursively calling ", nb::cast<std::string>(nb::repr(repr_obj)));
         PyErr_SetString(PyExc_RecursionError, error_string.c_str());
@@ -868,7 +779,7 @@ PyObject* WeakrefLRUCache::Call(PyObject* self_obj,
   }
 }
 
-std::vector<nb::object> WeakrefLRUCache::GetKeys() {
+std::vector<nb::object> WeakrefLRUCacheBase::GetKeys() {
   std::vector<nb::object> results;
   for (const auto& kv : entries_) {
     const WeakKey& wr_key = kv.first;
@@ -889,7 +800,7 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
   return results;
 }
 
-WeakrefLRUCache::CacheInfo WeakrefLRUCache::GetCacheInfo() const {
+WeakrefLRUCacheBase::CacheInfo WeakrefLRUCacheBase::GetCacheInfo() const {
   CacheInfo result;
   result.hits = total_queries_ - misses_;
   result.misses = misses_;
@@ -898,7 +809,7 @@ WeakrefLRUCache::CacheInfo WeakrefLRUCache::GetCacheInfo() const {
   return result;
 }
 
-void WeakrefLRUCache::Clear() {
+void WeakrefLRUCacheBase::Clear() {
   std::vector<std::pair<StrongKey, std::shared_ptr<CacheEntry>>>
       deferred_deletes;
   deferred_deletes.reserve(entries_.size());
@@ -922,34 +833,21 @@ void WeakrefLRUCache::Clear() {
   total_queries_ = misses_ = 0;
 }
 
-/*static*/ int WeakrefLRUCache::tp_traverse(PyObject* self, visitproc visit,
-                                            void* arg) {
-  Py_VISIT(Py_TYPE(self));
-  if (!nb::inst_ready(self)) {
-    return 0;
+int WeakrefLRUCacheBase::TpTraverse(visitproc visit, void* arg) {
+  Py_VISIT(cache_context_fn_.ptr());
+  Py_VISIT(fn_.ptr());
+  if (explain_) {
+    Py_VISIT(explain_->ptr());
   }
-  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
-  Py_VISIT(cache->cache_context_fn_.ptr());
-  Py_VISIT(cache->fn_.ptr());
-  if (cache->explain_) {
-    Py_VISIT(cache->explain_->ptr());
-  }
-  Py_VISIT(cache->weakref_callback_.ptr());
+  Py_VISIT(weakref_callback_.ptr());
 
-  for (const auto& kv : cache->entries_) {
-    const WeakKey& wr_key = kv.first;
-    const WeakrefCacheValue& wr_value = kv.second;
-
+  for (auto& [wr_key, wr_value] : entries_) {
     for (const nb::weakref& wref : wr_key.refs) {
       Py_VISIT(wref.ptr());
     }
-
-    for (const auto& inner_kv : *wr_value) {
-      const StrongKey& key = inner_kv.first;
-      const std::shared_ptr<CacheEntry>& value = inner_kv.second;
-
-      int return_val = key.tp_traverse(visit, arg);
-      if (return_val != 0) return return_val;
+    for (auto& [strong_key, value] : *wr_value) {
+      int status = strong_key.tp_traverse(visit, arg);
+      if (status != 0) return status;
 
       // We only visit the value and do not visit the backreferences to the
       // keys, since we must have visited them above.
@@ -960,15 +858,151 @@ void WeakrefLRUCache::Clear() {
   return 0;
 }
 
-/*static*/ int WeakrefLRUCache::tp_clear(PyObject* self) {
-  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
-  cache->Clear();
-  cache->cache_context_fn_.reset();
-  cache->fn_.reset();
-  cache->explain_ = std::nullopt;
-  cache->weakref_callback_.reset();
+void WeakrefLRUCacheBase::TpClear() {
+  Clear();
+  cache_context_fn_.reset();
+  fn_.reset();
+  explain_ = std::nullopt;
+  weakref_callback_.reset();
+}
+
+// WeakrefLRUCache is a cache where the first `num_weak_keys` positional
+// arguments should be treated as weak, and the remaining positional and
+// keyword arguments should be treated as strong.
+class WeakrefLRUCache : public WeakrefLRUCacheBase {
+ public:
+  static nb_class_ptr<WeakrefLRUCache> Create(
+      nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
+      std::optional<nb::callable> explain, int num_weak_keys);
+
+  WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
+                  int64_t maxsize, std::optional<nb::callable> explain,
+                  int num_weak_keys)
+      : WeakrefLRUCacheBase(cache_context_fn, fn, maxsize, explain),
+        num_weak_keys_(num_weak_keys) {}
+
+  static PyObject* VectorCall(PyObject* self_obj, PyObject* const* args,
+                              Py_ssize_t nargsf, PyObject* kwnames);
+
+  int num_weak_keys() const { return num_weak_keys_; }
+
+  static PyType_Slot slots_[];
+
+ private:
+  // Number of positional arguments to treat as weak.
+  const int num_weak_keys_;
+
+  static int tp_traverse(PyObject* self, visitproc visit, void* arg);
+  static int tp_clear(PyObject* self);
+};
+
+/*static*/ nb_class_ptr<WeakrefLRUCache> WeakrefLRUCache::Create(
+    nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
+    std::optional<nb::callable> explain, int num_weak_keys) {
+  auto self = make_nb_class<WeakrefLRUCache>(cache_context_fn, fn, maxsize,
+                                             explain, num_weak_keys);
+  self->weakref_callback_ = nb::cpp_function(
+      [this_weak = nb::weakref(self)](nb::handle dying_weakref) {
+        nb::object py_cache = this_weak();
+        if (py_cache.is_none()) {
+          return;
+        }
+        nb::ft_object_guard lock(py_cache);
+        nb::cast<WeakrefLRUCache*>(py_cache)->EvictWeakref(dying_weakref.ptr());
+      });
+  return self;
+}
+
+PyObject* WeakrefLRUCache::VectorCall(PyObject* self_obj, PyObject* const* args,
+                                      Py_ssize_t nargsf, PyObject* kwnames) {
+  try {
+    WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
+    if (!self) {
+      PyErr_SetString(PyExc_TypeError, "Not a WeakrefLRUCache");
+      return nullptr;
+    }
+
+    Py_ssize_t num_pos_args = PyVectorcall_NARGS(nargsf);
+    if (num_pos_args < self->num_weak_keys()) {
+      PyErr_SetString(PyExc_TypeError,
+                      absl::StrCat("Missing weakref_key argument(s). Expected ",
+                                   self->num_weak_keys())
+                          .c_str());
+      return nullptr;
+    }
+
+    nb::object context = self->cache_context_fn_();
+
+    Py_ssize_t num_kwargs = kwnames ? PyTuple_GET_SIZE(kwnames) : 0;
+    size_t num_args = num_pos_args + num_kwargs;
+    absl::Span<PyObject* const> args_span = absl::MakeConstSpan(args, num_args);
+
+    WeakKey wrcache_key = WeakKey::Make(
+        args_span.subspan(0, self->num_weak_keys()), self->weakref_callback_);
+
+    absl::InlinedVector<nb::object, 2> sorted_kwnames;
+    absl::InlinedVector<nb::object, 4> strong_args;
+
+    strong_args.reserve(num_args);
+    for (Py_ssize_t i = self->num_weak_keys(); i < num_pos_args; ++i) {
+      strong_args.push_back(nb::borrow<nb::object>(args[i]));
+    }
+
+    if (num_kwargs > 0) {
+      // Intern the keyword argument names, then sort them by interned pointer
+      // order.
+      absl::InlinedVector<std::pair<PyObject*, PyObject*>, 4> sorted;
+      sorted.reserve(num_kwargs);
+      for (Py_ssize_t i = 0; i < num_kwargs; ++i) {
+        PyObject* p = PyTuple_GET_ITEM(kwnames, i);
+        Py_INCREF(p);
+        PyUnicode_InternInPlace(&p);
+        sorted.push_back({p, args[num_pos_args + i]});
+      }
+      absl::c_sort(sorted, [](const std::pair<PyObject*, PyObject*>& a,
+                              const std::pair<PyObject*, PyObject*>& b) {
+        return a.first < b.first;
+      });
+
+      sorted_kwnames.reserve(num_kwargs);
+      for (auto& info : sorted) {
+        sorted_kwnames.push_back(nb::steal<nb::object>(info.first));
+        strong_args.push_back(nb::borrow<nb::object>(info.second));
+      }
+    }
+
+    StrongKey key(std::move(context), std::move(sorted_kwnames),
+                  std::move(strong_args));
+    return self->Call(self_obj, args_span, nargsf, kwnames,
+                      std::move(wrcache_key), key);
+  } catch (nb::python_error& e) {
+    e.restore();
+    return nullptr;
+  } catch (const std::exception& e) {
+    PyErr_SetString(PyExc_RuntimeError, e.what());
+    return nullptr;
+  }
+}
+
+/*static*/ int WeakrefLRUCache::tp_traverse(PyObject* self_obj, visitproc visit,
+                                            void* arg) {
+  Py_VISIT(Py_TYPE(self_obj));
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
+  WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
+  return self->TpTraverse(visit, arg);
+}
+
+/*static*/ int WeakrefLRUCache::tp_clear(PyObject* self_obj) {
+  WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
+  self->TpClear();
   return 0;
 }
+
+static PyMethodDef call_def = {
+    "__call__", reinterpret_cast<PyCFunction>(WeakrefLRUCache::VectorCall),
+    METH_FASTCALL | METH_KEYWORDS, "Calls the cache."};
 
 /* static */ PyType_Slot WeakrefLRUCache::slots_[] = {
     {Py_tp_traverse, (void*)WeakrefLRUCache::tp_traverse},
@@ -976,9 +1010,170 @@ void WeakrefLRUCache::Clear() {
     {0, nullptr},
 };
 
-static PyMethodDef call_def = {
-    "__call__", reinterpret_cast<PyCFunction>(WeakrefLRUCache::VectorCall),
-    METH_FASTCALL | METH_KEYWORDS, "Calls the cache."};
+// A cache where arguments are treated as pytrees, and amongst the pytree
+// leaves arguments of a set of specified types are treated as weak.
+class MultiWeakrefLRUCache : public WeakrefLRUCacheBase {
+ public:
+  // `registry` is the pytree registry to use when flattening arguments.
+  // `weak_types` is an iterable of types to treat as weak.
+  static nb_class_ptr<MultiWeakrefLRUCache> Create(
+      nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
+      std::optional<nb::callable> explain, nb::object registry,
+      nb::set weak_types);
+
+  MultiWeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
+                       int64_t maxsize, std::optional<nb::callable> explain,
+                       nb::object registry, nb::set weak_types)
+      : WeakrefLRUCacheBase(cache_context_fn, fn, maxsize, explain),
+        registry_(std::move(registry)),
+        weak_types_(std::move(weak_types)) {}
+
+  static PyObject* VectorCall(PyObject* self_obj, PyObject* const* args,
+                              Py_ssize_t nargsf, PyObject* kwnames);
+
+  static PyType_Slot slots_[];
+
+ private:
+  nb::object registry_;
+  nb::set weak_types_;
+
+  static int tp_traverse(PyObject* self_obj, visitproc visit, void* arg);
+  static int tp_clear(PyObject* self_obj);
+};
+
+/*static*/ nb_class_ptr<MultiWeakrefLRUCache> MultiWeakrefLRUCache::Create(
+    nb::callable cache_context_fn, nb::callable fn, int64_t maxsize,
+    std::optional<nb::callable> explain, nb::object registry,
+    nb::set weak_types) {
+  auto self = make_nb_class<MultiWeakrefLRUCache>(
+      std::move(cache_context_fn), std::move(fn), maxsize, std::move(explain),
+      std::move(registry), std::move(weak_types));
+  self->weakref_callback_ = nb::cpp_function(
+      [this_weak = nb::weakref(self)](nb::handle dying_weakref) {
+        nb::object py_cache = this_weak();
+        if (py_cache.is_none()) {
+          return;
+        }
+        nb::ft_object_guard lock(py_cache);
+        nb::cast<MultiWeakrefLRUCache*>(py_cache)->EvictWeakref(
+            dying_weakref.ptr());
+      });
+  return self;
+}
+
+PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
+                                           PyObject* const* args,
+                                           Py_ssize_t nargsf,
+                                           PyObject* kwnames) {
+  try {
+    MultiWeakrefLRUCache* self = nb::inst_ptr<MultiWeakrefLRUCache>(self_obj);
+    if (!self) {
+      PyErr_SetString(PyExc_TypeError, "Not a MultiWeakrefLRUCache");
+      return nullptr;
+    }
+
+    Py_ssize_t num_pos_args = PyVectorcall_NARGS(nargsf);
+    size_t num_kwargs = kwnames ? PyTuple_GET_SIZE(kwnames) : 0;
+    size_t num_args = num_pos_args + num_kwargs;
+    absl::Span<PyObject* const> args_span = absl::MakeConstSpan(args, num_args);
+
+    nb::object context = self->cache_context_fn_();
+
+    absl::InlinedVector<nb::object, 4> weak_leaves;
+    absl::InlinedVector<nb::object, 2> sorted_kwnames;
+    absl::InlinedVector<nb::object, 4> strong_args;
+    strong_args.reserve(num_args);
+
+    nb_class_ptr<PyTreeRegistry> registry =
+        nb::borrow<nb_class_ptr<PyTreeRegistry>>(self->registry_);
+
+    auto process_leaf = [&](nb::object leaf) {
+      if (self->weak_types_.contains(leaf.type()) ||
+          PyCallable_Check(leaf.ptr())) {
+        weak_leaves.push_back(std::move(leaf));
+      } else {
+        strong_args.push_back(std::move(leaf));
+      }
+    };
+
+    for (size_t i = 0; i < num_pos_args; ++i) {
+      auto [leaves, treedef] =
+          PyTreeDef::Flatten(nb::handle(args[i]), registry);
+      strong_args.push_back(std::move(treedef));
+      for (auto& leaf : leaves) {
+        process_leaf(leaf);
+      }
+    }
+
+    if (num_kwargs > 0) {
+      // Intern the keyword argument names, then sort them by interned pointer
+      // order.
+      absl::InlinedVector<std::pair<nb::object, PyObject*>, 4> sorted_kwargs;
+      sorted_kwargs.reserve(num_kwargs);
+      for (size_t i = 0; i < num_kwargs; ++i) {
+        PyObject* name = PyTuple_GET_ITEM(kwnames, i);
+        Py_INCREF(name);
+        PyUnicode_InternInPlace(&name);
+        sorted_kwargs.push_back(
+            {nb::steal<nb::object>(name), args[num_pos_args + i]});
+      }
+      absl::c_sort(sorted_kwargs, [](const auto& a, const auto& b) {
+        return a.first < b.first;
+      });
+
+      sorted_kwnames.reserve(num_kwargs);
+      for (auto& [name, val] : sorted_kwargs) {
+        sorted_kwnames.push_back(std::move(name));
+        auto [leaves, treedef] = PyTreeDef::Flatten(nb::handle(val), registry);
+        strong_args.push_back(std::move(treedef));
+        for (auto& leaf : leaves) {
+          process_leaf(leaf);
+        }
+      }
+    }
+
+    WeakKey wrcache_key = WeakKey::Make(weak_leaves, self->weakref_callback_);
+    StrongKey key(context, std::move(sorted_kwnames), std::move(strong_args));
+
+    return self->Call(self_obj, args_span, nargsf, kwnames,
+                      std::move(wrcache_key), key);
+  } catch (nb::python_error& e) {
+    e.restore();
+    return nullptr;
+  } catch (const std::exception& e) {
+    PyErr_SetString(PyExc_RuntimeError, e.what());
+    return nullptr;
+  }
+}
+/*static*/ int MultiWeakrefLRUCache::tp_traverse(PyObject* self_obj,
+                                                 visitproc visit, void* arg) {
+  Py_VISIT(Py_TYPE(self_obj));
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
+  MultiWeakrefLRUCache* self = nb::inst_ptr<MultiWeakrefLRUCache>(self_obj);
+  Py_VISIT(self->registry_.ptr());
+  Py_VISIT(self->weak_types_.ptr());
+  return self->TpTraverse(visit, arg);
+}
+
+/*static*/ int MultiWeakrefLRUCache::tp_clear(PyObject* self_obj) {
+  MultiWeakrefLRUCache* self = nb::inst_ptr<MultiWeakrefLRUCache>(self_obj);
+  self->TpClear();
+  self->registry_.reset();
+  self->weak_types_.reset();
+  return 0;
+}
+
+/* static */ PyType_Slot MultiWeakrefLRUCache::slots_[] = {
+    {Py_tp_traverse, (void*)MultiWeakrefLRUCache::tp_traverse},
+    {Py_tp_clear, (void*)MultiWeakrefLRUCache::tp_clear},
+    {0, nullptr},
+};
+
+static PyMethodDef multi_call_def = {
+    "__call__", reinterpret_cast<PyCFunction>(MultiWeakrefLRUCache::VectorCall),
+    METH_FASTCALL | METH_KEYWORDS, "Calls the multi-weakref cache."};
 
 NB_MODULE(weakref_lru_cache, m) {
   auto weakref_lru_cache =
@@ -990,7 +1185,8 @@ NB_MODULE(weakref_lru_cache, m) {
               [](WeakrefLRUCache& cache, nb::object weakref_key) {
                 if (cache.num_weak_keys() == 1) {
                   PyObject* ptr = weakref_key.ptr();
-                  cache.EvictWeakKey(cache.MakeWeakrefKey({&ptr, 1}));
+                  cache.EvictWeakKey(
+                      WeakKey::Make({&ptr, 1}, cache.weakref_callback()));
                 } else {
                   if (!nb::isinstance<nb::tuple>(weakref_key)) {
                     PyErr_SetString(PyExc_TypeError,
@@ -1008,7 +1204,8 @@ NB_MODULE(weakref_lru_cache, m) {
                   for (auto item : t) {
                     ptrs.push_back(item.ptr());
                   }
-                  cache.EvictWeakKey(cache.MakeWeakrefKey(ptrs));
+                  cache.EvictWeakKey(
+                      WeakKey::Make(ptrs, cache.weakref_callback()));
                 }
               },
               nb::lock_self())
@@ -1036,13 +1233,42 @@ NB_MODULE(weakref_lru_cache, m) {
       [](nb::callable cache_context_fn, nb::callable fn,
          std::optional<int64_t> maxsize, std::optional<nb::callable> explain,
          int num_weakrefs) {
-        return WeakrefLRUCache::Create(
-            cache_context_fn, fn, maxsize.value_or(-1), explain, num_weakrefs);
+        return WeakrefLRUCache::Create(std::move(cache_context_fn),
+                                       std::move(fn), maxsize.value_or(-1),
+                                       std::move(explain), num_weakrefs);
       },
       nb::arg("cache_context_fn"), nb::arg("fn"),
       nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>(),
       nb::arg("num_weakrefs") = 1);
+
+  auto multi_weakref_lru_cache =
+      nb::class_<MultiWeakrefLRUCache>(
+          m, "MultiWeakrefLRUCache", nb::is_weak_referenceable(),
+          nb::type_slots(MultiWeakrefLRUCache::slots_))
+          .def("cache_keys", &MultiWeakrefLRUCache::GetKeys, nb::lock_self())
+          .def("cache_info", &MultiWeakrefLRUCache::GetCacheInfo,
+               nb::lock_self())
+          .def("cache_clear", &MultiWeakrefLRUCache::Clear, nb::lock_self());
+
+  multi_weakref_lru_cache.attr("__call__") =
+      nb::steal<nb::object>(PyDescr_NewMethod(
+          reinterpret_cast<PyTypeObject*>(multi_weakref_lru_cache.ptr()),
+          &multi_call_def));
+
+  m.def(
+      "multi_weakref_lru_cache",
+      [](nb::callable cache_context_fn, nb::callable fn,
+         std::optional<int64_t> maxsize, std::optional<nb::callable> explain,
+         nb::object registry, nb::set weak_types) {
+        return MultiWeakrefLRUCache::Create(
+            std::move(cache_context_fn), std::move(fn), maxsize.value_or(-1),
+            std::move(explain), std::move(registry), std::move(weak_types));
+      },
+      nb::arg("cache_context_fn"), nb::arg("fn"),
+      nb::arg("maxsize").none() = 2048,
+      nb::arg("explain") = std::optional<nb::callable>(), nb::arg("registry"),
+      nb::arg("weak_types"));
 }
 
 }  // namespace jax

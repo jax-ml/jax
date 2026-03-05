@@ -175,60 +175,46 @@ class UtilTest(jtu.JaxTestCase):
     def myfun(a, k1, *, k2, k3):
       return f"{a=}, {k1=}, {k2=}, {k3=}"
 
-    def check_invariant(expected_live_keys: int):
-      self.assertLen(myfun._multi_weakref_id_to_key, expected_live_keys if weakref_count > 1 else 0)
-      for key_id, key in myfun._multi_weakref_id_to_key.items():
-        for wr in key.weakrefs:
-          self.assertIn(wr, myfun._multi_weakref_to_key_ids)
-          self.assertIn(key_id, myfun._multi_weakref_to_key_ids[wr])
-
     k1 = Key(1)
     k3 = (k1, k1) if weakref_count > 1 else 4
     util.clear_all_caches()
     r1 = myfun(2, k1, k2=3, k3=k3)  # miss
     c1 = myfun.cache_info()
     self.assertEqual((0, 1, 1), (c1.hits, c1.misses, c1.currsize))
-    check_invariant(1)
 
     for i in range(10):
       r2 = myfun(2, k1, k2=3, k3=k3)  # all hits
       self.assertIs(r1, r2)
       c2 = myfun.cache_info()
       self.assertEqual((1 + i, 1, 1), (c2.hits, c2.misses, c2.currsize))
-      check_invariant(1)
 
     del k1, k3  # expect that the cache entries are removed (if weakref_count > 0)
     gc.collect()
     c3 = myfun.cache_info()
     self.assertEqual(c3.currsize, 0 if weakref_count > 0 else 1)
-    check_invariant(0)
 
     k1_2 = Key(2)
     k3_2 = (Key(3), Key(3)) if weakref_count > 1 else (3, 3)
     r4 = myfun(2, k1_2, k2=3, k3=k3_2)  # miss
     c4 = myfun.cache_info()
     self.assertEqual((10, 2, (1 if weakref_count > 0 else 2)), (c4.hits, c4.misses, c4.currsize))
-    check_invariant(1)
 
     if weakref_count > 1:
       del k3_2  # clear the cache entry
       gc.collect()
       c5 = myfun.cache_info()
       self.assertEqual((10, 2, 0), (c5.hits, c5.misses, c5.currsize))
-      check_invariant(0)
 
       k3_3 = (Key(3), Key(3))
       r6 = myfun(2, k1_2, k2=3, k3=k3_3)  # miss because Key hashed by it
       self.assertIsNot(r4, r6)
       c6 = myfun.cache_info()
       self.assertEqual((10, 3, 1), (c6.hits, c6.misses, c6.currsize))
-      check_invariant(1)
 
     del k1_2
     gc.collect()
     c7 = myfun.cache_info()
     self.assertEqual(0 if weakref_count > 0 else 2, c7.currsize )
-    check_invariant(0)
 
   def test_multi_weak_ref_cache_custom_tuple(self):
     class MyTuple(tuple):
@@ -247,7 +233,6 @@ class UtilTest(jtu.JaxTestCase):
 
     key = Key(1)
     my_fun(MyTuple([key, key]))
-    self.assertLen(my_fun._multi_weakref_id_to_key, 0)  # key was not picked up
 
     del key
     self.assertEqual(1, my_fun.cache_info().currsize)  # cache is not cleaned
