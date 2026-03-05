@@ -450,7 +450,7 @@ def cache(call: Callable, *,
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
-    cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
+    cache = fun_caches.setdefault(fun.f, new_cache := {})
     key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
@@ -469,8 +469,8 @@ def cache(call: Callable, *,
   def _evict_function(f):
     fun_caches.pop(f, None)
 
-  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
+  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   register_cache(memoized_fun, str(call))
   return memoized_fun
 

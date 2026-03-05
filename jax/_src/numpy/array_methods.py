@@ -1188,7 +1188,7 @@ class _IndexUpdateRef:
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, out_sharding=out_sharding,  # type: ignore
+        mode=mode, out_sharding=out_sharding,
         normalize_indices=wrap_negative_indices)
 
   def apply(self, func: Callable[[ArrayLike], Array], *,
@@ -1233,7 +1233,7 @@ class _IndexUpdateRef:
     return scatter._scatter_update(
         self.array, self.index, values, lax_slicing.scatter_add,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode, out_sharding=out_sharding,  # type: ignore
+        mode=mode, out_sharding=out_sharding,
         normalize_indices=wrap_negative_indices)
 
   def subtract(self, values: ArrayLike, *,

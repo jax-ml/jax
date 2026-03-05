@@ -1901,7 +1901,7 @@ def _cpp_mapped_lower(pmap_f, *args, **kwargs):
       lowering_parameters=pxla.mlir.LoweringParameters())
   args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
   return stages.Lowered(lowering, args_info, p.out_tree())
-_pmap_cache_clears = weakref.WeakSet()  # type: ignore
+_pmap_cache_clears = weakref.WeakSet()
 
 
 @partial(api_boundary, repro_api_name="jax.jvp")

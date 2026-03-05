@@ -1054,7 +1054,7 @@ def _partial_eval_jaxpr_custom_cached(
     rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
     if rule:
       eqn1, eqn2, unks_out, inst_out, res = rule(saveable, unks_in, inst_in, eqn)
-      eqn1 and known_eqns.append(eqn1); eqn2 and staged_eqns.append(eqn2)  # type: ignore
+      eqn1 and known_eqns.append(eqn1); eqn2 and staged_eqns.append(eqn2)
       for r in res:
         if isinstance(r.aval, AbstractRef):
           residual_refs.add(r)

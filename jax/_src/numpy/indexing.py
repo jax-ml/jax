@@ -1132,7 +1132,7 @@ def rewriting_take(
   if out_sharding is not None:
     out_sharding = canonicalize_sharding(out_sharding, 'take')
     return auto_axes(internal_gather, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes,  # type: ignore
+                     axes=out_sharding.mesh.explicit_axes,
                      )(arr, dynamic_idx)
   return internal_gather(arr, dynamic_idx)
 

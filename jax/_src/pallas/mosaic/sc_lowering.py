@@ -176,7 +176,7 @@ def lower_pipelined_jaxpr_into_module(
   block_mappings = grid_mapping.block_mappings
 
   if dimension_semantics is None:
-    dimension_semantics = ("arbitrary",) * len(grid)  # type: ignore
+    dimension_semantics = ("arbitrary",) * len(grid)
   dimension_semantics: Sequence[tpu_core.LiteralDimensionSemantics] = tuple(  # pyrefly: ignore[redefinition]  # pytype: disable=annotation-type-mismatch
       map(tc_lowering._canonicalize_dimension_semantic, dimension_semantics)
   )

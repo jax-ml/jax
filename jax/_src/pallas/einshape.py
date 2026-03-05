@@ -327,7 +327,7 @@ def _einshape_lo_abstract_eval(
 ):
   del assert_is_tile_preserving
   out_sds = api.eval_shape(
-      functools.partial(_einshape, equation, **dict(sizes)), x_aval  # type: ignore
+      functools.partial(_einshape, equation, **dict(sizes)), x_aval
   )
   return x_aval.update(shape=out_sds.shape, dtype=out_sds.dtype)
 
@@ -365,7 +365,7 @@ class Einshape(hijax.VJPHiPrimitive):
   ):
     self.in_avals = (x_aval,)
     out_type = api.eval_shape(
-        functools.partial(_einshape, equation, **sizes), x_aval  # type: ignore
+        functools.partial(_einshape, equation, **sizes), x_aval
     )
     self.out_aval = hijax.ShapedArray(out_type.shape, out_type.dtype)
     self.equation = equation
@@ -493,7 +493,7 @@ def _init_dims(shape: tuple[int, ...], t1: int, t2: int) -> list[list[Factor]]:
     if s // t_size > 1:
       current_dim.append(Factor(s // t_size, "outer"))
     if t_size > 1 or kind != "outer":
-      current_dim.append(Factor(t_size, kind))  # type: ignore
+      current_dim.append(Factor(t_size, kind))
     dims.append(_consolidate(current_dim))
   return dims
 

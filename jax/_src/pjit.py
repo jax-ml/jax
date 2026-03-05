@@ -788,7 +788,7 @@ def _check_and_canonicalize_out_shardings(
       "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
-_seen_qdds = weakref.WeakKeyDictionary()  # type: ignore
+_seen_qdds = weakref.WeakKeyDictionary()
 
 def _seen_qdds_get(fun, in_type) -> list:
   cache = _seen_qdds.setdefault(fun, defaultdict(list))
@@ -855,13 +855,13 @@ def check_aval_layout_compatibility(
 # -------------------- pjit rules --------------------
 
 jit_p = core.Primitive("jit")
-jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
+jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
 
 def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
-jit_p.is_high = _is_high  # type: ignore
+jit_p.is_high = _is_high
 
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
@@ -1079,7 +1079,7 @@ def _resolve_and_lower(
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
 
-_pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
+_pgle_profiler_dict = weakref.WeakKeyDictionary()
 
 
 @dataclass(frozen=True)

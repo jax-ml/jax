@@ -52,7 +52,7 @@ Ref: TypeAlias = state_types.AbstractRef | TransformedRef
 _T = TypeVar("_T")
 
 load_p = jax_core.Primitive("load")
-load_p.is_effectful = lambda params: True  # type: ignore
+load_p.is_effectful = lambda params: True
 
 
 @load_p.def_effectful_abstract_eval
@@ -112,7 +112,7 @@ def load_expanded(ref: Ref, *, mask: jax.Array) -> jax.Array:
 
 
 swap_p = jax_core.Primitive("swap")
-swap_p.is_effectful = lambda params: True  # type: ignore
+swap_p.is_effectful = lambda params: True
 
 
 @swap_p.def_effectful_abstract_eval
@@ -240,7 +240,7 @@ def _indexed_shape(ref: Ref, indices: Sequence[jax.Array]) -> tuple[int, ...]:
 
 
 gather_p = jax_core.Primitive("gather")
-gather_p.is_effectful = lambda params: True  # type: ignore
+gather_p.is_effectful = lambda params: True
 
 
 @gather_p.def_effectful_abstract_eval
@@ -305,7 +305,7 @@ def load_gather(
 
 
 scatter_p = jax_core.Primitive("scatter")
-scatter_p.is_effectful = lambda params: True  # type: ignore
+scatter_p.is_effectful = lambda params: True
 scatter_p.multiple_results = True
 
 
@@ -737,7 +737,7 @@ def sort_key_val(
 
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")
-parallel_loop_p.is_effectful = lambda params: bool(params["jaxpr"].effects)  # type: ignore
+parallel_loop_p.is_effectful = lambda params: bool(params["jaxpr"].effects)
 parallel_loop_p.multiple_results = True
 
 

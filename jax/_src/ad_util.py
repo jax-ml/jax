@@ -45,7 +45,7 @@ add_any_p = add_jaxvals_p
 @add_jaxvals_p.def_impl
 def add_impl(x, y):
   return raw_jaxval_adders[type(x)](x, y)
-raw_jaxval_adders = {}  # type: ignore
+raw_jaxval_adders = {}
 
 @add_jaxvals_p.def_abstract_eval
 def add_abstract(x, y):

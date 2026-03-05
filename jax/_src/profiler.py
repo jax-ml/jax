@@ -239,10 +239,10 @@ def stop_trace():
   :func:`start_trace` call. Raises a RuntimeError if a trace hasn't been started.
   """
   with _profile_state.lock:
-    if _profile_state.profile_session is None:
+    profile_session = _profile_state.profile_session
+    if profile_session is None:
       raise RuntimeError("No profile started")
-    sess = _profile_state.profile_session
-    sess.stop_and_export(str(_profile_state.log_dir))  # type: ignore
+    profile_session.stop_and_export(str(_profile_state.log_dir))  # pytype: disable=attribute-error
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)  # type: ignore[bad-argument-type]
       if _profile_state.create_perfetto_link:
@@ -258,9 +258,10 @@ def stop_and_get_fdo_profile() -> bytes | str:
   Raises a RuntimeError if a trace hasn't been started.
   """
   with _profile_state.lock:
-    if _profile_state.profile_session is None:
+    profile_session = _profile_state.profile_session
+    if profile_session is None:
       raise RuntimeError("No profile started")
-    xspace = _profile_state.profile_session.stop()
+    xspace = profile_session.stop()
     fdo_profile = _profiler.get_fdo_profile(xspace)
     _profile_state.reset()
     clear_metadata()

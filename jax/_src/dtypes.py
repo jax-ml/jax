@@ -599,7 +599,7 @@ _complex_types: list[JAXType] = [
 # StringDType to be used in there.
 _string_types: list[JAXType] = []
 if hasattr(np.dtypes, 'StringDType'):
-  _string_types: list[JAXType] = [np.dtypes.StringDType()]  # type: ignore
+  _string_types: list[JAXType] = [np.dtypes.StringDType()]
 
 _jax_dtype_set = {
     float0,

@@ -863,7 +863,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
   if aval.ndim == 0:
     out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced)
   else:
-    out_spec = []  # type: ignore
+    out_spec = []
     for name_s, aval_s in zip(names_spec, aval.sharding.spec):
       if name_s and not aval_s:
         out_spec.append(name_s)
@@ -1026,7 +1026,7 @@ def _shard_map_lowering_shardy(
 
   with (ir.InsertionPoint(block), _extend_axis_env(mesh, manual_axes),
         config._check_vma(check_vma)):
-    dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(  # type: ignore
+    dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(
         block.arguments, [num_dim_vars, num_tokens, num_const_args])
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,

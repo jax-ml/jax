@@ -187,7 +187,7 @@ def _make_transfer_server_factory(
   if CROSS_HOST_TRANSFER_TRANSFER_SIZE.value is not None:
     transfer_server_kwargs["transfer_size"] = (
         CROSS_HOST_TRANSFER_TRANSFER_SIZE.value)
-  return _jax.make_transfer_server_interface_factory(**transfer_server_kwargs)  # type: ignore
+  return _jax.make_transfer_server_interface_factory(**transfer_server_kwargs)
 
 
 def make_tpu_client(

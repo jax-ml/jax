@@ -592,6 +592,6 @@ class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None
 
-  shape = property(lambda self: self.inner_aval.shape)  # type: ignore
-  dtype = property(lambda self: self.inner_aval.dtype)  # type: ignore
-  ndim = property(lambda self: self.inner_aval.ndim)  # type: ignore
+  shape = property(lambda self: self.inner_aval.shape)  # pytype: disable=attribute-error
+  dtype = property(lambda self: self.inner_aval.dtype)  # pytype: disable=attribute-error
+  ndim = property(lambda self: self.inner_aval.ndim)  # pytype: disable=attribute-error

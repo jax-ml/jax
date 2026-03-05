@@ -336,9 +336,9 @@ def backend_compile_and_load(
       if host_callbacks:
         return backend.compile(  # type: ignore
             module,
-            executable_devices=executable_devices,  # type: ignore
+            executable_devices=executable_devices,
             compile_options=options,
-            host_callbacks=host_callbacks,  # type: ignore
+            host_callbacks=host_callbacks,
         )
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
@@ -724,7 +724,7 @@ def _compile_and_share_module(
         serialized_executable
     )
     executable = backend.deserialize_executable(
-        serialized_executable, executable_devices, compile_options)  # type: ignore
+        serialized_executable, executable_devices, compile_options)
 
   _compile_and_share_module.modules_cache[cache_key] = executable  # type: ignore[missing-attribute]
   return executable

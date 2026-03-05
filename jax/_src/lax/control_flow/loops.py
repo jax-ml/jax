@@ -1353,7 +1353,7 @@ def _scan_state_partial_discharge_rule(
   return refvals_out, [*carry, *ys]
 
 scan_p = core.Primitive("scan")
-scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignore
+scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 scan_p.multiple_results = True
 scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
@@ -1373,7 +1373,7 @@ state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_disc
 
 def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
-scan_p.is_high = _scan_is_high  # type: ignore
+scan_p.is_high = _scan_is_high
 
 def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   # move qdd binders and corresponding hi_args from consts slots to carry slots
@@ -1592,12 +1592,12 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
         f"while_loop {len(body_jaxpr.in_avals)=} but {len(body_consts_avals) + len(in_avals)=}")
   # TODO(mattjj): check body carry type
   # TODO(mattjj): make these typecompat checks work with bints
-  # if not all(_map(core.typecompat, [*cond_consts_avals, *in_avals], cond_jaxpr.in_avals)):  # type: ignore
+  # if not all(_map(core.typecompat, [*cond_consts_avals, *in_avals], cond_jaxpr.in_avals)):
   #   cond_avals = [*cond_consts_avals, *in_avals]
   #   a1, a2 = next((a1, a2) for a1, a2 in zip(cond_avals, cond_jaxpr.in_avals)
   #                 if not core.typecompat(a1, a2))
   #   raise core.JaxprTypeError(f"while_loop cond function input type error: {a1} != {a2}")
-  # if not all(_map(core.typecompat, [*body_consts_avals, *in_avals], body_jaxpr.in_avals)):  # type: ignore
+  # if not all(_map(core.typecompat, [*body_consts_avals, *in_avals], body_jaxpr.in_avals)):
   #   body_avals = [*body_consts_avals, *in_avals]
   #   a1, a2 = next((a1, a2) for a1, a2 in zip(body_avals, body_jaxpr.in_avals)
   #                 if not core.typecompat(a1, a2))
@@ -2237,7 +2237,7 @@ state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharg
 
 def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
   return cond_jaxpr.is_high or body_jaxpr.is_high
-while_p.is_high = _while_is_high  # type: ignore
+while_p.is_high = _while_is_high
 
 def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
   if any(a.has_qdd for a in cond_jaxpr.in_avals[:cond_nconsts]):
@@ -2512,7 +2512,7 @@ def _batch_and_remainder(x, batch_size: int):
     remainder_leaves = [_remainder_leaf(leaf, batch_elems) for leaf in leaves]
     return None, treedef.unflatten(remainder_leaves)
   elif remainder:
-    scan_leaves, remainder_leaves = unzip2(  # type: ignore
+    scan_leaves, remainder_leaves = unzip2(
         [(_scan_leaf(leaf, batch_elems, num_batches, batch_size),
           _remainder_leaf(leaf, batch_elems)) for leaf in leaves])
     return treedef.unflatten(scan_leaves), treedef.unflatten(remainder_leaves)

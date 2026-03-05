@@ -336,7 +336,7 @@ def _check_branch_outputs(
     component = lambda _: ''
   else:
     leaves_and_paths, _ = tree_flatten_with_path(outs1)
-    paths, _ = unzip2(leaves_and_paths)  # type: ignore
+    paths, _ = unzip2(leaves_and_paths)
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
   if out_avals1.tree != out_avals2.tree:
@@ -840,7 +840,7 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
+  in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
                    else a for x in in_flat)
   trans_branches, out_trees = unzip2(
       _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
@@ -955,7 +955,7 @@ pe.dce_rules[cond_p] = _cond_dce_rule
 
 def _cond_is_high(*_, branches, **__) -> bool:
   return any(j.jaxpr.is_high for j in branches)
-cond_p.is_high = _cond_is_high  # type: ignore
+cond_p.is_high = _cond_is_high
 
 def _cond_to_lojax(pred, *hi_args, branches, **kwds):
   jaxpr = branches[0]
@@ -1171,7 +1171,7 @@ def platform_dependent(*args: Any,
       raise TypeError("lax.platform_dependent: the 'default' branch must "
                       "be a callable.")
     branches = branches + (default,)
-    branches_platforms = branches_platforms + (None,)  # type: ignore
+    branches_platforms = branches_platforms + (None,)
   platform_index = platform_index_p.bind(platforms=branches_platforms)
 
   if core.is_concrete(platform_index):
