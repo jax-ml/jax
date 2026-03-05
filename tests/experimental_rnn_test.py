@@ -216,7 +216,7 @@ class RnnTest(jtu.JaxTestCase):
     # Platform-specific binary encodings for RnnDescriptor
     cuda_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"'
     rocm_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\008\\00\\00\\00\\00\\00\\00\\00\\1C\\00\\00\\00\\00\\00\\00\\00"'
-    
+
     # Check that one of the expected encodings is present
     if jtu.test_device_matches(["cuda"]):
       self.assertIn(cuda_encoding, stablehlo)
