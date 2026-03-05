@@ -824,7 +824,12 @@ class FragmentedArray:
 
   @classmethod
   def splat(
-      cls, value, shape, layout=None, *, is_signed: bool | None = None
+      cls,
+      value: ir.Value,
+      shape: tuple[int, ...],
+      layout: FragmentedLayout | None = None,
+      *,
+      is_signed: bool | None = None,
   ) -> FragmentedArray:
     layout = layout or WGSplatFragLayout(shape)
     match layout:
@@ -2767,7 +2772,7 @@ class FragmentedArray:
         _registers=out_regs, _layout=reduced_layout, _is_signed=self.is_signed
     )
 
-  def broadcast(self, shape) -> FragmentedArray:
+  def broadcast(self, shape: tuple[int, ...]) -> FragmentedArray:
     new_layout: FragmentedLayout
     if isinstance(self.layout, WGStridedFragLayout):
       new_layout = WGStridedFragLayout(shape, self.layout.vec_size)
@@ -2775,7 +2780,7 @@ class FragmentedArray:
       new_layout = WGSplatFragLayout(shape)
     else:
       raise NotImplementedError(self.layout)
-    dims = range(len(shape) - len(self.shape), len(shape))
+    dims = tuple(range(len(shape) - len(self.shape), len(shape)))
     return self.broadcast_in_dim(shape, dims, new_layout)
 
   def reshape(self, shape: tuple[int, ...]) -> FragmentedArray:
@@ -2816,7 +2821,7 @@ class FragmentedArray:
       case _:
         raise NotImplementedError(self.layout)
 
-  def broadcast_minor(self, n) -> FragmentedArray:
+  def broadcast_minor(self, n: int) -> FragmentedArray:
     if len(self.shape) != 1:
       raise ValueError("Broadcast minor is only supported for 1D arrays")
     if n % 8:
@@ -2830,7 +2835,10 @@ class FragmentedArray:
     return self.broadcast_in_dim((self.shape[0], n), (0,), new_layout)
 
   def broadcast_in_dim(
-      self, shape, source_dimensions, layout: FragmentedLayout
+      self,
+      shape: tuple[int, ...],
+      source_dimensions: tuple[int, ...],
+      layout: FragmentedLayout,
   ) -> FragmentedArray:
     for i, target_dim in enumerate(source_dimensions):
       if self.shape[i] != shape[target_dim] and self.shape[i] != 1:
@@ -2849,7 +2857,7 @@ class FragmentedArray:
         )
       # Check if input maps exactly to the end (prevents transpose & trailing
       # dims).
-      if list(source_dimensions) != list(
+      if source_dimensions != tuple(
           range(len(shape) - len(self.shape), len(shape))
       ):
         raise NotImplementedError(

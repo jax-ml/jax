@@ -4455,7 +4455,7 @@ class FragmentedArrayTest(TestCase):
   )
   def test_broadcast_in_dim_major_strided(self, src_shape, dst_shape):
     dtype = jnp.float16
-    dims = range(len(dst_shape) - len(src_shape), len(dst_shape))
+    dims = tuple(range(len(dst_shape) - len(src_shape), len(dst_shape)))
 
     def kernel(ctx, src, dst, scratch):
       del ctx, scratch
