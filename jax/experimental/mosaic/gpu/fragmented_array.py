@@ -532,6 +532,35 @@ class WGStridedFragLayout:
     for i in range(reg_num):
       yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
+  @staticmethod
+  def is_supported_broadcast(
+      src_shape: Sequence[int],
+      dst_shape: Sequence[int],
+      broadcast_dims: Sequence[int],
+  ) -> bool:
+    """We only support broadcasting of leading dimensions."""
+    # Check if input maps exactly to the end (prevents transpose & trailing
+    # dims).
+    if list(broadcast_dims) != list(
+        range(len(dst_shape) - len(src_shape), len(dst_shape))
+    ):
+      return False
+    # Identify input indices that are expanded vs. those that are preserved
+    # Expansion: input is 1, output is > 1.
+    # Preserved: input is > 1.
+    exp_indices, pre_indices = [], []
+    for i, dim in enumerate(src_shape):
+      if dim == 1 and dst_shape[broadcast_dims[i]] > 1:
+        exp_indices.append(i)
+      if dim > 1:
+        pre_indices.append(i)
+    # If both exist, all expansions must happen before all preserved
+    # dimensions.
+    if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
+      return False
+    return True
+
+
 FragmentedLayout: TypeAlias = (
     WGSplatFragLayout | WGStridedFragLayout | TiledLayout
 )
@@ -2847,30 +2876,11 @@ class FragmentedArray:
         raise NotImplementedError(
             "vector size must match for broadcast of WGStridedFragLayout"
         )
-      # Check if input maps exactly to the end (prevents transpose & trailing
-      # dims).
-      if list(source_dimensions) != list(
-          range(len(shape) - len(self.shape), len(shape))
+      if not WGStridedFragLayout.is_supported_broadcast(
+          self.shape, shape, source_dimensions
       ):
         raise NotImplementedError(
-            "Broadcast of trailing dimensions is not supported for"
-            " WGStridedFragLayout"
-        )
-      # Identify input indices that are expanded vs. those that are preserved
-      # Expansion: input is 1, output is > 1.
-      # Preserved: input is > 1.
-      exp_indices, pre_indices = [], []
-      for i, dim in enumerate(self.shape):
-        if dim == 1 and shape[source_dimensions[i]] > 1:
-          exp_indices.append(i)
-        if dim > 1:
-          pre_indices.append(i)
-      # If both exist, all expansions must happen before all preserved
-      # dimensions.
-      if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
-        raise NotImplementedError(
-            "Broadcast of trailing dimensions is not supported for"
-            " WGStridedFragLayout"
+            "Unsupported broadcast for WGStridedFragLayout"
         )
       assert layout.shape == shape, (layout.shape, shape)
       return FragmentedArray(
