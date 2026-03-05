@@ -6054,29 +6054,16 @@ def _ragged_dot_general_transpose_rule(
       f'{ragged_dot_mode.name}.'
   )
 
-  # This is a hack to ensure we continue to emit the `_matrix_transpose` for the
-  # grad_x case. This isn't strictly necessary since we have dot_dim_nums.
-  # TODO(pravnar): Remove this once we no longer care to emit the transpose.
-  _is_basic_ragged_dot = (
-      x_ndim == 2
-      and y_ndim == 3
-      and ragged_dot_dimension_numbers == _BASIC_RAGGED_DOT_DIMENSION_NUMBERS
-  )
-
   def grad_x_dims():
     match mode:
       case RaggedDotMode.RAGGED_NONCONTRACTING:
         ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
-        dims = (
-            ragged_dot_dimension_numbers
-            if _is_basic_ragged_dot
-            else RaggedDotDimensionNumbers(
-                dot_dimension_numbers=((ans_y, y_kept), (ans_batch, y_batch)),
-                lhs_ragged_dimensions=[
-                    len(x_batch) + x_kept.index(lhs_ragged_dim)
-                ],
-                rhs_group_dimensions=y_group,
-            )
+        dims = RaggedDotDimensionNumbers(
+            dot_dimension_numbers=((ans_y, y_kept), (ans_batch, y_batch)),
+            lhs_ragged_dimensions=[
+                len(x_batch) + x_kept.index(lhs_ragged_dim)
+            ],
+            rhs_group_dimensions=y_group,
         )
         x_contract_sorted_by_y = list(
             np.take(x_contract, np.argsort(y_contract))
@@ -6119,10 +6106,7 @@ def _ragged_dot_general_transpose_rule(
   x_bar = (
       None
       if ad.is_undefined_primal(y)
-      else _ragged_dot_grad(ct,
-                            _matrix_transpose(y) if _is_basic_ragged_dot else y,
-                            grad_x_dims,
-                            x.aval)
+      else _ragged_dot_grad(ct, y, grad_x_dims, x.aval)
   )
   y_bar = (
       None
@@ -6340,6 +6324,17 @@ def _ragged_dot_general_lower(
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = (
       ragged_dot_dimension_numbers.dot_dimension_numbers
   )
+  rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
+  if platform == 'tpu':
+    # TPU lowering uses a fusion which requires explicitly transposing the RHS.
+    # TODO(rdyro): Revert this once these changes are moved into the TPU
+    # lowering directly.
+    if rhs_contracting == (2,) and rhs_group_dims == (0,) and not rhs_batch:
+      _, rhs_aval, _ = ctx.avals_in
+      perm = list(range(rhs_aval.ndim))
+      perm[-2], perm[-1] = perm[-1], perm[-2]
+      rhs = hlo.transpose(rhs, mlir.dense_int_array(perm))
+      rhs_contracting = (1,)
   ragged_dot_dnums = chlo.RaggedDotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
       rhs_batching_dimensions=list(rhs_batch),
@@ -6348,9 +6343,7 @@ def _ragged_dot_general_lower(
       lhs_ragged_dimensions=list(
           ragged_dot_dimension_numbers.lhs_ragged_dimensions
       ),
-      rhs_group_dimensions=list(
-          ragged_dot_dimension_numbers.rhs_group_dimensions
-      ),
+      rhs_group_dimensions=list(rhs_group_dims),
   )
   result = chlo.ragged_dot(
       mlir.aval_to_ir_type(accumulation_aval),
