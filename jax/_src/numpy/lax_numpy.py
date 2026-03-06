@@ -6690,7 +6690,9 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
     raise ValueError("Argument to jax.numpy.tril must be at least 2D")
   N, M = m_shape[-2:]
   mask = tri(N, M, k=k, dtype=bool)
-  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, array_creation.zeros_like(m))
+  which = lax.broadcast(mask, m_shape[:-2], out_sharding=core.typeof(m).sharding)
+  assert which.shape == m_shape
+  return lax.select(which, m, array_creation.zeros_like(m))
 
 
 @export
@@ -6757,7 +6759,9 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
     raise ValueError("Argument to jax.numpy.triu must be at least 2D")
   N, M = m_shape[-2:]
   mask = tri(N, M, k=k - 1, dtype=bool)
-  return lax.select(lax.broadcast(mask, m_shape[:-2]), array_creation.zeros_like(m), m)
+  which = lax.broadcast(mask, m_shape[:-2], out_sharding=core.typeof(m).sharding)
+  assert which.shape == m_shape
+  return lax.select(which, array_creation.zeros_like(m), m)
 
 
 @export

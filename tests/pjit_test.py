@@ -10576,6 +10576,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = jax.jit(jax.grad(f))(arr2)
     self.assertArraysEqual(reshard(out, P()), out2)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_triu_tril(self, mesh):
+    one = jnp.ones((8, 8), out_sharding=P('x'))
+    w = 4
+    l = jnp.triu(one, -w + 1)
+    self.assertEqual(l.sharding, one.sharding)
+    r = jnp.tril(one, w - 1)
+    self.assertEqual(r.sharding, one.sharding)
+
+    one2 = jnp.ones((8, 8, 4), out_sharding=P(None, 'x', None))
+    l = jnp.triu(one2, -w + 1)
+    self.assertEqual(l.sharding, one2.sharding)
+
+    one3 = jnp.ones((8, 8, 4), out_sharding=P('x'))
+    l = jnp.triu(one3, -w + 1)
+    self.assertEqual(l.sharding, one3.sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
