@@ -2975,6 +2975,24 @@ class PallasScalarIOpsTest(ptu.PallasTPUTest):
     self._integer_ops_canonicalization_helper(kernel, 1 ^ 2, dtype)
 
 
+class PallasCallUnsignedIntegerTest(ptu.PallasTPUTest):
+
+  def test_pow_unsigned_exponent(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
+      self.skipTest("Needs a newer libTPU")
+
+    def kernel(x_ref, exp_ref, y_ref):
+      y_ref[...] = lax.pow_p.bind(x_ref[...], exp_ref[...])
+
+    x = jnp.full((8, 128), 2.0, dtype=jnp.float32)
+    exp = jnp.full((8, 128), np.uint32(0xFFFFFFFF), dtype=jnp.uint32)
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+    )(x, exp)
+    np.testing.assert_array_equal(y, jnp.inf)
+
+
 class PallasUXTest(ptu.PallasTPUTest):
 
   def test_mlir_location(self):
