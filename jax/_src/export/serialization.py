@@ -59,8 +59,11 @@ SerT = TypeVar("SerT")
 #   This version is backwards compatible with Version 2 to 4.
 # Version 6, January 15th, 2026, adds serialization for sharding as
 #   NamedSharding, including the abstract mesh, and the partition spec.
+#   Contains also HloSharding serialization, for forward compatibility.
 #   This version is backwards compatible with Version 2 to 5.
-_SERIALIZATION_VERSION = 6
+# Version 7, March 3rd, 2026, removes HloSharding serialization.
+#   This version is backwards compatible with Version 2 to 6.
+_SERIALIZATION_VERSION = 7
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -87,23 +90,19 @@ def deserialize(ser: bytearray) -> _export.Exported:
 def _serialize_exported(
     builder: flatbuffers.Builder, exp: _export.Exported, vjp_order: int
 ) -> int:
+  if not exp._has_named_shardings:
+    raise ValueError(
+      "Exported being serialized must have named shardings after 03/03/2026.")
   # Serialize bottom-up
   fun_name = builder.CreateString(exp.fun_name)
   in_tree = _serialize_pytreedef(builder, exp.in_tree)
   in_avals = _serialize_array(builder, _serialize_aval, exp.in_avals)
   out_tree = _serialize_pytreedef(builder, exp.out_tree)
   out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
-  # TODO(necula): For 30 days after 1/15/2026 we must serialize the HLO
-  # shardings. After that we can error out when serialized Exported with not
-  # _has_named_shardings.
   in_shardings = _serialize_array(
-      builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
-      zip(exp._in_named_shardings, exp.in_shardings_hlo)
-  )
+      builder, _serialize_sharding, exp._in_named_shardings)
   out_shardings = _serialize_array(
-      builder, partial(_serialize_sharding, has_named_sharding=exp._has_named_shardings),
-      zip(exp._out_named_shardings, exp.out_shardings_hlo)
-  )
+      builder, _serialize_sharding, exp._out_named_shardings)
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
   )
@@ -196,7 +195,8 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_shardings = _deserialize_tuple(
       exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
   )
-  # has_named_sharding will be True for all exports after 1/15/2026
+  # has_named_sharding will be True for all exports created after 1/15/2026
+  # TODO(b/489569164): remove has_named_sharding 6 months after 1/15/2026
   has_named_shardings = not any(isinstance(s, _export.HloSharding)
                                 for s in itertools.chain(in_shardings, out_shardings))
   if has_named_shardings:
@@ -593,33 +593,13 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: tuple[_export.NamedSharding | None, _export.HloSharding | None],
-    has_named_sharding: bool,
-) -> int:
-  named_s, hlo_s = s
-  is_unspecified = (named_s is None) if has_named_sharding else (hlo_s is None)
+    builder: flatbuffers.Builder, s: _export.NamedSharding | None) -> int:
   named_sharding = None
-  hlo_sharding = None
-  if is_unspecified:
-    kind = ser_flatbuf.ShardingKind.unspecified
-  else:
-    # TODO(necula): We must use the hlo_sharding kind for at least 30 days after
-    # 1/15/2026 because old deserializers check the kind and abort if they
-    # do not recognize it. After that date, we can stop using the kind.
-    kind = ser_flatbuf.ShardingKind.hlo_sharding
 
-  if has_named_sharding and named_s is not None:
-    named_sharding = _serialize_named_sharding(builder, named_s)
-
-  # TODO(necula): We must serialize the hlo_sharding for at least 30 days after
-  # 1/15/2026 because old deserializers can only deserialize this sharding.
-  if hlo_s is not None:
-    hlo_sharding = builder.CreateByteVector(hlo_s.to_proto().SerializeToString())
+  if s is not None:
+    named_sharding = _serialize_named_sharding(builder, s)
 
   ser_flatbuf.ShardingStart(builder)
-  ser_flatbuf.ShardingAddKind(builder, kind)
-  if hlo_sharding is not None:
-    ser_flatbuf.ShardingAddHloShardingProto(builder, hlo_sharding)
   if named_sharding is not None:
     ser_flatbuf.ShardingAddNamedSharding(builder, named_sharding)
   return ser_flatbuf.ShardingEnd(builder)
@@ -630,7 +610,7 @@ def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | name
     # After 1/15/26 all exports will have named shardings (or None)
     return _deserialize_named_sharding(named_sharding_off)
 
-  # TODO(necula): We must keep reading the HloSharding for 6 months after 1/15/2026.
+  # TODO(b/489569164): We must keep reading the HloSharding for 6 months after 1/15/2026.
   if not s.HloShardingProtoIsNone():
     proto = xla_client.OpSharding()
     proto.ParseFromString(s.HloShardingProtoAsNumpy().tobytes())
