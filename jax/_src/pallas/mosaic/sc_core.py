@@ -163,6 +163,14 @@ class ScalarSubcoreMesh:
   axis_name: str
   num_cores: int
 
+  def __post_init__(self):
+    sc_info = get_sparse_core_info()
+    if self.num_cores > sc_info.num_cores:
+      raise ValueError(
+          f"Mesh has {self.num_cores} cores, but the current TPU chip has only"
+          f" {sc_info.num_cores} SparseCores"
+      )
+
   @property
   def kernel_type(self) -> tpu_core.CoreType:
     return tpu_core.CoreType.SC_SCALAR_SUBCORE
@@ -200,12 +208,6 @@ def _scalar_subcore_mesh_discharge_rule(
   if not isinstance(mesh, ScalarSubcoreMesh):
     raise TypeError(f"Mesh must be a ScalarSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 1
-  sc_info = get_sparse_core_info()
-  if mesh.num_cores > (num_expected := sc_info.num_cores):
-    raise ValueError(
-        f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
-        f" {num_expected} SparseCores"
-    )
   if compiler_params is None:
     compiler_params = tpu_core.CompilerParams()
   if compiler_params.dimension_semantics is not None:
@@ -240,32 +242,24 @@ pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
     _scalar_subcore_mesh_discharge_rule
 )
 
-def _get_num_cores() -> int:
-  """Returns the number of cores for the current SparseCore."""
-  return get_sparse_core_info().num_cores
-
-def _get_num_subcores() -> int:
-  """Returns the number of subcores for the current SparseCore."""
-  return get_sparse_core_info().num_subcores
-
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class VectorSubcoreMesh:
   core_axis_name: str
   subcore_axis_name: str
-  num_cores: int = dataclasses.field(default_factory=_get_num_cores)
+  num_cores: int
   num_subcores: int = dataclasses.field(
-      default_factory=_get_num_subcores, init=False
+      default_factory=lambda: get_sparse_core_info().num_subcores
   )
 
   def __post_init__(self):
     sc_info = get_sparse_core_info()
-    if self.num_cores > (num_expected := sc_info.num_cores):
+    if self.num_cores > sc_info.num_cores:
       raise ValueError(
           f"Mesh has {self.num_cores} cores, but the current TPU chip has only"
-          f" {num_expected} SparseCores"
+          f" {sc_info.num_cores} SparseCores"
       )
-    if self.num_subcores != sc_info.num_subcores:
+    if self.num_subcores > sc_info.num_subcores:
       raise ValueError(
           f"Mesh has {self.num_subcores} subcores, but the current TPU chip has"
           f" only {sc_info.num_subcores} subcores"
@@ -311,12 +305,6 @@ def _vector_subcore_mesh_discharge_rule(
   if not isinstance(mesh, VectorSubcoreMesh):
     raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 2
-  sc_info = get_sparse_core_info().num_cores
-  if mesh.num_cores > (num_expected := sc_info):
-    raise ValueError(
-        f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
-        f" {num_expected} SparseCores"
-    )
   if compiler_params is None:
     compiler_params = tpu_core.CompilerParams()
   if compiler_params.dimension_semantics is not None:

@@ -58,13 +58,15 @@ class PallasSCMeshTest(jtu.JaxTestCase):
   def test_vector_subcore_mesh(self):
     sc_info = plsc.get_sparse_core_info()
     num_cores = sc_info.num_cores
-    num_subcores = sc_info.num_subcores
     mesh = sc_core.VectorSubcoreMesh(
-        core_axis_name="x", num_cores=num_cores, subcore_axis_name="y"
+        core_axis_name="x",
+        num_cores=num_cores,
+        num_subcores=1,
+        subcore_axis_name="y",
     )
     self.assertEqual(
         mesh.shape,
-        collections.OrderedDict({"x": num_cores, "y": num_subcores}),
+        collections.OrderedDict({"x": num_cores, "y": 1}),
     )
     self.assertEqual(
         mesh.dimension_semantics, ["core_parallel", "subcore_parallel"]
@@ -1253,16 +1255,22 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_subcore_parallel(self):
+  @parameterized.parameters(1, 2, None)
+  def test_subcore_parallel(self, num_subcores):
     self.skip_if_tc_tiling()
-    num_subcores = self.sc_info.num_subcores
+
+    if num_subcores is None:
+      num_subcores = self.sc_info.num_subcores
 
     @self.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(num_subcores, self.num_lanes), dtype=jnp.int32
         ),
         mesh=plsc.VectorSubcoreMesh(
-            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+            core_axis_name="core",
+            subcore_axis_name="subcore",
+            num_cores=1,
+            num_subcores=num_subcores,
         ),
     )
     def kernel(x_ref, o_ref):
