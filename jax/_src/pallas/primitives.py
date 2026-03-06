@@ -549,7 +549,7 @@ def reciprocal(x, *, approx=False, full_range=True):
     full_range: Whether to use the full range of the input. If False, compilers
       may produce non-IEEE compliant results for edge cases, but may be faster.
       On TPU, setting it to `False` may produce incorrect results when `x` or
-      output is ±inf or NaN; or when `x` is ±1/flt_min or 0.
+      output is ±inf or NaN; or when `x` is ±1/flt_min or ±0.
 
   Returns:
     The reciprocal of the array.
