@@ -44,6 +44,13 @@ try:
 except ImportError:
   FLAGS = {}
 
+_extra_dialect_loaders: list[Callable[[ir.Context], None]] = []
+
+# TODO(b/489398450): Remove this
+def register_extra_dialect(loader: Callable[[ir.Context], None]):
+  _extra_dialect_loaders.append(loader)
+
+
 _MOSAIC_ALLOW_HLO = config.bool_state(
     name="jax_mosaic_allow_hlo",
     default=False,
@@ -197,6 +204,9 @@ class CustomCallBackendConfig:
         or self.lowered_module_asm_version > version
     )
     ctx = mlir.make_ir_context()
+    tpu.register_dialect(ctx)
+    for loader in _extra_dialect_loaders:
+      loader(ctx)
     with ctx, ir.Location.unknown():
       ctx.allow_unregistered_dialects = True
       module = ir.Module.parse(self.lowered_module_asm)
