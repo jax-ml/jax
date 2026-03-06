@@ -18,6 +18,10 @@
 //  1.  Run flatc --python --gen-onefile serialization.fbs
 //  2.  Delete the trailing newlines at the end
 //  3.  Add back the licence comment at the start
+//  4.  Add back the following:
+//        # pyrefly: ignore-errors
+//        # pytype: skip-file
+//      before the "# automatically generated ..." comment
 //
 
 namespace jax_export.serialization;
@@ -96,10 +100,16 @@ enum AxisType: byte {
   Manual = 3,
 }
 
+table AbstractDevice {
+  device_kind: string;
+  num_cores: uint32 = null;
+}
+
 table AbstractMesh {
   axis_sizes: [uint32];
   axis_names: [string];
   axis_types: [AxisType];
+  abstract_device: AbstractDevice;  // Added 3/12/2026
 }
 
 table PartitionSpecOneAxis {
