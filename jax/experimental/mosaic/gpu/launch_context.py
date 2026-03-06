@@ -244,13 +244,6 @@ class TileTransform(MemRefTransform):
     return mgpu_dialect.TileTransformAttr.get(self.tiling)
 
 @dataclasses.dataclass(frozen=True)
-class SwizzleTransform(MemRefTransform):
-  swizzle: int
-
-  def to_attr(self) -> ir.Attribute:
-    return mgpu_dialect.SwizzleTransformAttr.get(self.swizzle)
-
-@dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemRefTransform):
   """Transposes memref dimensions."""
   permutation: tuple[int, ...]

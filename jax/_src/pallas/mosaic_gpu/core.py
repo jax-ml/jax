@@ -755,10 +755,18 @@ def to_gpu_transform(
       return mgpu.TransposeTransform(permutation)
     case TilingTransform(tiling):
       return mgpu.TileTransform(tiling)
-    case SwizzleTransform(swizzle):
-      return mgpu.SwizzleTransform(swizzle)
     case _:
       raise TypeError(f"Unsupported transform: {type(transform)}")
+
+
+def to_transform_attr(
+    transform: state_types.Transform,
+) -> ir.Attribute:
+  match transform:
+    case SwizzleTransform(swizzle):
+      return mgpu.dialect.SwizzleTransformAttr.get(swizzle)
+    case _:
+      return to_gpu_transform(transform).to_attr()
 
 
 # TODO(sharadmv): upstream into pallas core

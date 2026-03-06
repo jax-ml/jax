@@ -2711,7 +2711,7 @@ def _inline_mgpu_lowering_rule(
 
 def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttr:
   """Returns the Mosaic GPU transforms for the given ref type."""
-  transform_attrs = [gpu_core.to_gpu_transform(t).to_attr()
+  transform_attrs = [gpu_core.to_transform_attr(t)
                      for t in ref_type.transforms]
   return ir.ArrayAttr.get(transform_attrs)
 
