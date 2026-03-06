@@ -32,6 +32,7 @@ load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
     "compare_srcs_and_test_deps_test",
+    "deploy_wheel",
     "get_test_suite_list",
     "if_pypi_cuda_wheel_deps",
     "jax_wheel",
@@ -39,6 +40,7 @@ load(
     "pytype_test",
     "wheel_sources",
 )
+load("//jaxlib/rocm:rocm_version.bzl", "ROCM_MAJOR_VERSION")
 
 licenses(["notice"])  # Apache 2
 
@@ -285,21 +287,21 @@ jax_wheel(
     name = "jax_rocm_plugin_wheel",
     enable_rocm = True,
     no_abi = False,
-    platform_version = "7",
+    platform_version = ROCM_MAJOR_VERSION,
     reproducible = True,
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_rocm7_plugin",
+    wheel_name = "jax_rocm{}_plugin".format(ROCM_MAJOR_VERSION),
 )
 
 jax_wheel(
     name = "jax_rocm_plugin_wheel_editable",
     editable = True,
     enable_rocm = True,
-    platform_version = "7",
+    platform_version = ROCM_MAJOR_VERSION,
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_rocm7_plugin",
+    wheel_name = "jax_rocm{}_plugin".format(ROCM_MAJOR_VERSION),
 )
 
 # JAX PJRT wheel targets.
@@ -395,21 +397,33 @@ jax_wheel(
     name = "jax_rocm_pjrt_wheel",
     enable_rocm = True,
     no_abi = True,
-    platform_version = "7",
+    platform_version = ROCM_MAJOR_VERSION,
     reproducible = True,
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_rocm7_pjrt",
+    wheel_name = "jax_rocm{}_pjrt".format(ROCM_MAJOR_VERSION),
 )
 
 jax_wheel(
     name = "jax_rocm_pjrt_wheel_editable",
     editable = True,
     enable_rocm = True,
-    platform_version = "7",
+    platform_version = ROCM_MAJOR_VERSION,
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_rocm7_pjrt",
+    wheel_name = "jax_rocm{}_pjrt".format(ROCM_MAJOR_VERSION),
+)
+
+# ROCm wheel deploy targets.
+# Usage: bazel run //jaxlib/tools:deploy_rocm_plugin_wheel -- /output/dir
+deploy_wheel(
+    name = "deploy_rocm_plugin_wheel",
+    wheel = ":jax_rocm_plugin_wheel",
+)
+
+deploy_wheel(
+    name = "deploy_rocm_pjrt_wheel",
+    wheel = ":jax_rocm_pjrt_wheel",
 )
 
 # Py_import targets.
