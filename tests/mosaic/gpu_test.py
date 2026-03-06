@@ -580,21 +580,29 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.product(dtype=[jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32, jnp.uint32])
-  def test_atomic_store(self, dtype):
-    m, n = 64, 64
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.float16, jnp.bfloat16, jnp.int32, jnp.uint32],
+      gmem=[False, True],
+      vec_len=[2, 4, 8],
+  )
+  def test_atomic_store(self, dtype, gmem, vec_len):
+    m, n = 128, 64
     def kernel(ctx, out, smem):
       del ctx
       mlir_dtype = utils.dtype_to_ir_type(dtype)
+      layout = fa.tmem_native_layout(vec_len)
+      atomic_ref = out if gmem else smem
       mgpu.FragmentedArray.splat(
-          c(0, mlir_dtype), (m, n), is_signed=utils.is_signed(dtype)
-      ).store_untiled(smem)
+          c(0, mlir_dtype), (m, n), is_signed=utils.is_signed(dtype),
+          layout=layout,
+      ).store_untiled(atomic_ref, optimized=False)
       gpu.barrier()
-      iota_tensor(m, n, dtype).store_untiled(
-          smem, optimized=False, atomic="add",
+      iota_tensor(m, n, dtype, layout=layout).store_untiled(
+          atomic_ref, optimized=False, atomic="add",
       )
-      gpu.barrier()
-      copy(smem, out)
+      if atomic_ref is not out:
+        gpu.barrier()
+        copy(smem, out)
     x = np.arange(m * n, dtype=dtype).reshape(m, n)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (256, 1, 1), (), x, x
