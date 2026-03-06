@@ -715,7 +715,7 @@ class PallasCallMultimemTest(TestCase):
       return  # Only 2 processes needed.
     devices = jax.devices()[:2]
 
-    def kernel(x_ref, y_ref, _, sem_ref):
+    def kernel(x_ref, y_ref, sem_ref):
       if tiled_layout:
         layout = plgpu.Layout.TILED(
             plgpu.Tiling(
@@ -757,23 +757,15 @@ class PallasCallMultimemTest(TestCase):
         jax.random.key(1234), (128 + 64, 32), dtype=jnp.int32, minval=-bound, maxval=bound,
     ).astype(dtype)
     mesh = jax.sharding.Mesh(devices, ("x",))
-    x_shard = jax.ShapeDtypeStruct((64 + 32, 32), dtype)
     y_shape = jax.ShapeDtypeStruct((64, 32), dtype)
-    y, _ = jax.jit(
+    y = jax.jit(
         jax.shard_map(
             pl.pallas_call(
                 kernel,
                 in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
-                out_specs=[
-                    pl.BlockSpec(memory_space=plgpu.SMEM),
-                    pl.BlockSpec(memory_space=plgpu.GMEM),
-                ],
-                out_shape=(y_shape, x_shard),
+                out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
+                out_shape=y_shape,
                 scratch_shapes=[plgpu.SemaphoreType.REGULAR],
-                # TODO(b/448323639): Without aliasing XLA doesn't actually
-                # insert the copy that puts the operand in symmetric memory,
-                # which causes the kernel to crash.
-                input_output_aliases={0: 1},
                 compiler_params=plgpu.CompilerParams(),
             ),
             mesh=mesh,

@@ -164,12 +164,6 @@ def reduce_scatter(
     plgpu.semaphore_signal_multicast(done_barrier, collective_axes=axis_name)
     pl.semaphore_wait(done_barrier, num_devices, decrement=False)
 
-    # TODO(b/448323639): We fake modify the input to ensure that XLA:GPU copies
-    # the operand into symmetric memory.
-    @pl.when(dev_idx == -1)
-    def _never():
-      x_ref[(0,) * len(x_ref.shape)] = jnp.asarray(0, x_ref.dtype)
-
   return plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct(output_shape, dtype),

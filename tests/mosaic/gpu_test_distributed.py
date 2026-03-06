@@ -377,13 +377,10 @@ class ProfilerTest(TestCase):
       ).astype(dtype)
       x = jax.sharding.reshard(x_local, P("x"))
       x_shard = jax.ShapeDtypeStruct((64, 32), dtype)
-      # TODO(b/448323639): We don't need x to be inout here, but without aliasing
-      # XLA doesn't actually insert the copy that puts the operand in symmetric
-      # memory, which causes the kernel to crash.
-      y, _, out_sem = jax.jit(
+      y, out_sem = jax.jit(
           jax.shard_map(
               mgpu.as_gpu_kernel(
-                  kernel, (1, 1, 1), (128, 1, 1), (), x_shard, (), inout_shape=(x_shard, sem)
+                  kernel, (1, 1, 1), (128, 1, 1), x_shard, x_shard, (), inout_shape=sem
               ),
               out_specs=P("x"),
               check_vma=False,
