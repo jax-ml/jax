@@ -100,7 +100,7 @@ jobs:
     outputs:
       s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
     container:
-      image: "rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72"
+      image: "ghcr.io/rocm/jax-manylinux_2_28-rocm-7.2.0:latest"
       volumes:
         - /data:/data
       options: >-

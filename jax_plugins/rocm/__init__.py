@@ -15,9 +15,9 @@
 import functools
 import importlib
 import logging
-import os
 import pathlib
 
+from jax._src import hardware_utils
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
@@ -38,54 +38,53 @@ logger = logging.getLogger(__name__)
 
 def _get_library_path():
   base_path = pathlib.Path(__file__).resolve().parent
-  installed_path = (
-      base_path / 'xla_rocm_plugin.so'
-  )
-  if installed_path.exists():
-    return installed_path
-
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
-  )
-  if not local_path.exists():
-    runfiles_dir = os.getenv('RUNFILES_DIR', None)
-    if runfiles_dir:
-      local_path = pathlib.Path(
-          os.path.join(runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin.so')
-      )
-
-  if local_path.exists():
-    logger.debug(
-        'Native library %s does not exist. This most likely indicates an issue'
-        ' with how %s was built or installed. Fallback to local test'
-        ' library %s',
-        installed_path,
-        __package__,
-        local_path,
-    )
-    return local_path
-
+  library_path = base_path / 'xla_rocm_plugin.so'
+  if library_path.exists():
+    return library_path
   logger.debug(
-      'WARNING: Native library %s and local test library path %s do not'
-      ' exist. This most likely indicates an issue with how %s was built or'
-      ' installed or missing src files.',
-      installed_path,
-      local_path,
+      'Native library %s does not exist. This most likely indicates an issue'
+      ' with how %s was built or installed.',
+      library_path,
       __package__,
   )
   return None
 
 
 def initialize():
+  logger.info("ROCm plugin initialize() called")
   path = _get_library_path()
   if path is None:
+    logger.error("ROCm plugin is not detected")
     return
+  logger.info("ROCm plugin library path: %s", path)
+
+  # Count GPUs (stop at 2 since that's all we need to know)
+  gpu_count = hardware_utils.count_amd_gpus(stop_at=2)
+  logger.info("Detected %d AMD GPU(s)", gpu_count)
+  if gpu_count == 0:
+    logger.error("No AMD GPUs were found, skipping ROCm plugin initialization")
+    return
+  elif gpu_count > 1:
+    shm_size_mb = hardware_utils.get_shm_size()
+    if shm_size_mb and shm_size_mb <= 64:
+      logger.warning(
+          "Detected multiple GPUs but /dev/shm size is only %.1f MB. "
+          "RCCL may exhaust shared memory during multi-GPU operations, "
+          "causing runtime failures. Consider increasing /dev/shm size. "
+          "For example in Docker, use: --shm-size=64g",
+          shm_size_mb,
+      )
+
+  logger.info("Registering ROCm PJRT plugin")
   options = xla_client.generate_pjrt_gpu_plugin_options()
   options["platform_name"] = "ROCM"
   c_api = xb.register_plugin(
       'rocm', priority=500, library_path=str(path), options=options
   )
+  logger.info("PJRT plugin registered, c_api=%s", c_api)
+
   if rocm_plugin_extension:
+    logger.info("rocm_plugin_extension found, registering handlers")
     xla_client.register_custom_type_handler(
         "ROCM",
         functools.partial(
@@ -98,13 +97,18 @@ def initialize():
             rocm_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    for _name, _value in rocm_plugin_extension.ffi_types().items():
+    ffi_types = rocm_plugin_extension.ffi_types()
+    logger.info("Registering %d FFI types: %s", len(ffi_types), list(ffi_types.keys()))
+    for _name, _value in ffi_types.items():
       xla_client.register_custom_type(
           _name, _value, platform='ROCM'
       )
-    for _name, _value in rocm_plugin_extension.ffi_handlers().items():
+    ffi_handlers = rocm_plugin_extension.ffi_handlers()
+    logger.info("Registering %d FFI handlers: %s", len(ffi_handlers), list(ffi_handlers.keys()))
+    for _name, _value in ffi_handlers.items():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
       )
+    logger.info("ROCm plugin initialization complete")
   else:
     logger.warning('rocm_plugin_extension is not found.')

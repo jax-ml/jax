@@ -21,6 +21,7 @@ load(
     "py_deps",
     "pytype_test",
 )
+load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 
@@ -2306,6 +2307,17 @@ exports_files(
         "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
+)
+
+py_test(
+    name = "rocm_plugin_init_test",
+    srcs = ["rocm_plugin_init_test.py"],
+    main = "rocm_plugin_init_test.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
+    deps = [
+        "//jax/_src:hardware_utils",
+    ],
 )
 
 # This filegroup specifies the set of tests known to Bazel, used for a test that

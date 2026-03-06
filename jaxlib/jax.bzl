@@ -195,11 +195,10 @@ def _cpu_test_deps():
 def _gpu_test_deps():
     """Returns the additional dependencies needed for a GPU test."""
     return select({
-        "//jax:config_build_jaxlib_true": [
+        "//jax:config_build_jaxlib_true": if_cuda_is_configured([
             "//jaxlib/cuda:gpu_only_test_deps",
-            "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-        ],
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
