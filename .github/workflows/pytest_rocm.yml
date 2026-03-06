@@ -96,7 +96,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -152,7 +151,7 @@ jobs:
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
       - name: Archive test logs
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           tar -czf logs.tar.gz logs
@@ -166,7 +165,6 @@ jobs:
         if: always()
         env:
           S3_BUCKET_NAME: jax-ci-amd
-          GITHUB_TOKEN: ${{ github.token }}
           INPUT_PYTHON: ${{ inputs.python }}
           INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
           INPUT_RUNNER: ${{ inputs.runner }}

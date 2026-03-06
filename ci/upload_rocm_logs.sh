@@ -21,7 +21,7 @@
 #   - _SUCCESS: written last to indicate the upload set is complete
 #
 # S3 layout (deterministic + unique per run/attempt):
-#   <org>/<repo>/<branch>/<nightly|continuous>/<DATE>_<run_id>_<attempt>/<combo>/
+#   <org>/<repo>/<branch>/<nightly|continuous>/<run_id>_<attempt>/<combo>/
 set -euo pipefail
 
 : "${S3_BUCKET_NAME:?}"
@@ -35,22 +35,6 @@ TEST_LOGS_ROOT="jax-ci-test-logs"
 
 norm() { printf '%s' "$1" | tr '.-' '_' ; }
 
-# Timestamp: GitHub run_started_at; fall back to UTC date.
-RUN_STARTED_AT=""
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  RUN_STARTED_AT="$(
-    curl -fsSL \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-    | sed -n 's/.*"run_started_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -n1 || true
-  )"
-fi
-
-DATE="${RUN_STARTED_AT%%T*}"
-[[ -n "${DATE}" ]] || DATE="$(date -u +%F)"
-
 # GPU count from runner name (e.g. linux-x86-64-8gpu-amd -> 8).
 GPU_COUNT=""
 if [[ "${INPUT_RUNNER}" =~ ([0-9]+)gpu ]]; then
@@ -60,9 +44,9 @@ fi
 GPU_PART="${GPU_COUNT:+gpu_${GPU_COUNT}}"
 GPU_PART="${GPU_PART:-${INPUT_RUNNER}}"
 
-RUN_DIR="${DATE}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+RUN_KEY="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
 COMBO="py$(norm "${INPUT_PYTHON}")-rocm$(norm "${INPUT_ROCM_VERSION}")-${GPU_PART}"
-PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${RUN_DIR}/${COMBO}"
+PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${RUN_KEY}/${COMBO}"
 
 DEST="s3://${S3_BUCKET_NAME}/${TEST_LOGS_ROOT}/${PREFIX}"
 
@@ -115,7 +99,6 @@ echo "Uploading run-manifest.json"
 aws s3 cp --only-show-errors - "${DEST}/run-manifest.json" <<EOF
 {
   "schema_version": 1,
-  "run_started_at": "${RUN_STARTED_AT}",
   "run_completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "github_run_url": "${RUN_URL}",
   "github_repository": "${GITHUB_REPOSITORY}",

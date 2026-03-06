@@ -176,7 +176,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      actions: read
     uses: ./.github/workflows/pytest_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
