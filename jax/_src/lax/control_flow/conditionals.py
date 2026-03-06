@@ -788,10 +788,7 @@ def _join_cond_pe_staged_jaxpr_inputs(
 
     aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     aug_invars = aug_res_vars + non_res_vars
-    jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
-                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
-                           jaxpr.jaxpr.effects,
-                           jaxpr.jaxpr.debug_info)
+    jaxpr_aug = jaxpr.jaxpr.replace(invars=aug_invars)
     return core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))

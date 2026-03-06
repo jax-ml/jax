@@ -2505,6 +2505,7 @@ def _check_no_returned_refs(
     a = t.aval
     if isinstance(a, AbstractRef):
       result_paths = dbg.resolve_result_paths().safe_result_paths(len(out_tracers))
+      if list(result_paths) == ["result"]: result_paths = [""]  # TODO(mattjj): fix in callee
       loc = result_paths[i] and f' at output tree path {result_paths[i]}'
       frame = t._trace.frame
       v = t.val

@@ -20,7 +20,7 @@ def register_custom_decorator_type(cls):
   return cls
 
 def forward_attr(self_, name):
-  if name.startswith('def') and type(self_.fun) in _custom_wrapper_types:
+  if name.startswith('def'):
     return getattr(self_.fun, name)
   else:
     raise AttributeError

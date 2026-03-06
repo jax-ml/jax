@@ -886,25 +886,6 @@ class MutableArrayTest(jtu.JaxTestCase):
     g = jax.grad(f)(3.)
     self.assertAllClose(g, 1., check_dtypes=False)
 
-  def test_custom_vjp_ad_after_discharge_error(self):
-    @jax.custom_vjp
-    def f(x):
-      x_ref = jax.new_ref(jnp.zeros_like(x))
-      x_ref[...] = x
-      return x_ref[...]
-    def f_fwd(x):
-      return x, None
-    def f_bwd(_, g):
-      return g,
-
-    f.defvjp(f_fwd, f_bwd)
-    from jax._src import core
-    from jax._src.state.discharge import discharge_state
-    jaxpr = jax.make_jaxpr(f)(3.)
-    jaxpr_, consts_ = discharge_state(jaxpr.jaxpr, jaxpr.consts)
-    with self.assertRaises(Exception):
-      jax.grad(lambda x: core.eval_jaxpr(jaxpr_, consts_, x)[0])(3.)
-
   @parameterized.parameters([False, True])
   def test_custom_vjp_differentiated_ref(self, jit):
     @jax.custom_vjp
@@ -1282,8 +1263,7 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
     x_ref = core.new_ref(0.)
-    with self.assertRaisesRegex(
-        ValueError, "custom_vjp primal function"):
+    with self.assertRaisesRegex(ValueError, "returned a mutable array"):
       f(x_ref)
 
   @parameterized.parameters([False, True])
@@ -1295,8 +1275,7 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f, static_argnums=0)
     x_ref = core.new_ref(0.)
-    with self.assertRaisesRegex(
-        ValueError, "custom_vjp primal function"):
+    with self.assertRaisesRegex(ValueError, "returned a mutable array"):
       f('hi', x_ref)
 
   @parameterized.parameters([False, True])

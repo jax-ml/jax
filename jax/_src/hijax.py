@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, update_wrapper
 import inspect
 import itertools as it
 from typing import Any, Hashable, Callable
@@ -31,7 +31,8 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
-from jax._src.custom_derivatives import CustomVJPPrimal, _temporary_dtype_exception
+from jax._src.custom_derivatives import (
+    CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
@@ -387,6 +388,7 @@ class VJPHiPrimitive:
     self.in_avals_flat, self.in_tree = tree_flatten(self.in_avals)
     self.out_avals_flat, self.out_tree = tree_flatten(self.out_aval)
     self.__dict__.update(self.params)
+    self.check(*self.in_avals)
 
   # Operation implementation in terms of lojax primitives
   def expand(self, *args):
@@ -399,7 +401,8 @@ class VJPHiPrimitive:
 
   def vjp_bwd(self, res, outgrad, *arg_accums):
     args_grad = self.vjp_bwd_retval(res, outgrad)
-    tree_map(lambda acc, leaf_grad: acc.accum(leaf_grad), arg_accums, args_grad)
+    maybe_accum = lambda acc, v: isinstance(acc, ad.GradAccum) and acc.accum(v)
+    tree_map(maybe_accum, arg_accums, args_grad)
 
   def vjp_bwd_retval(self, res, outgrad, /):
     # Classic API: returns values instead of using accumulators
@@ -544,6 +547,14 @@ call_hi_primitive_p.is_high = lambda *args, _prim: True
 def _call_hi_primitive_abstract_eval(*_args, _prim):
   return _prim.out_avals_flat
 
+def _call_hi_primitive_typecheck(_ctx_factory, *in_atoms_flat, _prim):
+  in_avals = [x.aval for x in in_atoms_flat]
+  if not all(map(core.typematch, in_avals, _prim.in_avals_flat)):
+    raise TypeError(f"input type mismatch for {_prim}")
+  _prim.check()
+  return _prim.out_avals_flat, set()
+core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
+
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
   trace.frame.is_high = True
   args = tree_unflatten(_prim.in_tree, args_flat)
@@ -682,10 +693,13 @@ class CustomVJPTraced(VJPHiPrimitive):
 
   def vjp_fwd(self, in_nzs, *args):
     in_nzs = tuple(x.val if isinstance(x, Static) else x for x in in_nzs)
-    args = tuple(x.val if isinstance(x, Static) else x for x in args)
+    args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     if self.symbolic_zeros:
-      args = tree_map(CustomVJPPrimal, args, in_nzs)
-    out, res = self.fwd(*args)
+      args_ = tree_map(CustomVJPPrimal, args_, in_nzs)
+    out, res = self.fwd(*args_)  # type: ignore
+    if config.mutable_array_checks.value:
+      _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
+                               self.out_tree.num_leaves)
     if ((tree := tree_structure(out)) != self.out_tree):
       raise TypeError(_vjp_primal_fwd_tree_mismatch_err(self, tree))
     tree_map_with_path(_vjp_fwd_aval_mismatch_err, self.out_aval, out)
@@ -743,6 +757,12 @@ class CustomVJPTraced(VJPHiPrimitive):
     _, out_dims = batching.batch_jaxpr2(self.traced.jaxpr, axis_data, tuple(in_dims_flat))
     return tree_unflatten(self.out_tree, out_dims)
 
+  def check(self, *_):
+    effs = self.traced.jaxpr.effects
+    disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(effs)
+    if disallowed:
+      raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
+
 def _vjp_primal_fwd_tree_mismatch_err(self, tree):
   return (f"Custom VJP fwd rule {self.fwd.__name__} for function {self.traced.fun_name} "
           "must produce a pair (list or tuple of length two) where the first "
@@ -795,6 +815,7 @@ class custom_vjp3:
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
+    update_wrapper(self, f)
 
   def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
     self.fwd = fwd
@@ -825,6 +846,9 @@ class custom_vjp3:
     prim = CustomVJPTraced(traced, self.fwd, self.bwd, in_avals, self.symz,
                            self.static_argnums, self.opt_remat)
     return prim(*args)
+
+  def def_vmap(self, rule, /): return self.f.def_vmap(rule)
+  def def_transpose(self, rule, /): return self.f.def_transpose(rule)
 
 class OptRemat(VJPHiPrimitive):
   orig: CustomVJPTraced
