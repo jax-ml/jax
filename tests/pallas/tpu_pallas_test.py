@@ -2799,6 +2799,32 @@ class PallasCallTest(ptu.PallasTPUTest):
     )(condlist, choicelist)
     np.testing.assert_array_equal(z, jnp.where(condlist, choicelist, 0))
 
+  @parameterized.parameters([
+      ((128, 128),),
+      ((3, 4, 256),),
+      ((8, 5, 8, 10),),
+  ])
+  def test_bool_transpose_last_two_dims(self, input_shape):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
+      self.skipTest('Test requires a newer libTPU.')
+
+    rank = len(input_shape)
+    transpose_axes = tuple(range(rank - 2)) + (rank - 1, rank - 2)
+    output_shape = input_shape[:-2] + (input_shape[-1], input_shape[-2])
+
+    def transpose_kernel(x_ref, y_ref):
+      x = x_ref[...]
+      y = jnp.transpose(x, transpose_axes)
+      y_ref[...] = y
+
+    x = jax.random.bernoulli(key=jax.random.key(42), p=0.5, shape=input_shape)
+    pallas_output = self.pallas_call(
+        transpose_kernel,
+        out_shape=jax.ShapeDtypeStruct(output_shape, jnp.bool_),
+    )(x)
+    expected_output = jnp.transpose(x, transpose_axes)
+    np.testing.assert_array_equal(pallas_output, expected_output)
+
   def test_shard_map_check_vma(self):
     shape = (128, 128)
 
