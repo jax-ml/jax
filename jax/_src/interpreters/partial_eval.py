@@ -73,8 +73,8 @@ class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
 
   Represented as a pair `(aval_opt, const)` of one of two kinds:
-  * `(None, <Constant>)` indicates a known value, where the constant is either a
-    Tracer or satisfies `core.valid_jaxtype(const)`;
+  * `(None, <Constant>)` indicates a known value, where the constant satisfies
+    `core.valid_jaxtype(const)`;
   * `(<AbstractValue>, None)` indicates an unknown value characterized by an
     abstract value.
   """
@@ -83,8 +83,7 @@ class PartialVal(tuple):
     if config.enable_checks.value:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
-      assert (const is None or isinstance(const, core.Tracer) or
-              core.valid_jaxtype(const)), const
+      assert (const is None or core.valid_jaxtype(const)), const
       # invariant checks
       assert (pv is None) ^ (const is None)
     return tuple.__new__(cls, xs)
@@ -588,7 +587,7 @@ def _trace_to_subjaxpr_nounits(f: Callable, trace: JaxprTrace,
     ans = f(*in_args)
   assert isinstance(ans, (list, tuple)), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
-  assert all(isinstance(x, core.Tracer) or core.valid_jaxtype(x) for x in ans), (
+  assert all(core.valid_jaxtype(x) for x in ans), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
   if isinstance(instantiate, bool):
     instantiate = [instantiate] * len(ans)

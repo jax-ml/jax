@@ -172,7 +172,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jn
     shape/structure as `y0` except with a new leading axis of length `len(t)`.
   """
   for arg in tree_leaves(args):
-    if not isinstance(arg, core.Tracer) and not core.valid_jaxtype(arg):
+    if not core.valid_jaxtype(arg):
       raise TypeError(
         f"The contents of odeint *args must be arrays or scalars, but got {arg}.")
   if not jnp.issubdtype(t.dtype, jnp.floating):

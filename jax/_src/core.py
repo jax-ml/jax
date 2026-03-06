@@ -641,7 +641,7 @@ class Primitive:
         raise escaped_tracer_error(arg)
     # TODO: figure out how to handle function arguments for this assert
     # assert (not config.enable_checks.value or
-    #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
+    #         all(valid_jaxtype(arg) for arg in args)), args
 
     # This is equivalent to "with take_current_trace()", but the bind() code
     # is called frequently and it's slightly faster to avoid using a context
@@ -1764,9 +1764,6 @@ Value = Any
 
 def valid_jaxtype(x) -> bool:
   try:
-    # TODO(phawkins): is this check necessary?
-    if isinstance(x, Tracer):
-      return False
     aval = typeof(x)
   except TypeError:
     return False

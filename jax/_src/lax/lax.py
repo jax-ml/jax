@@ -3003,7 +3003,7 @@ def _reduction_jaxpr(computation: Callable,
                      aval: core.AbstractValue):
   def comp(x, y):
     result = computation(x, y)
-    if not (isinstance(result, core.Tracer) or core.valid_jaxtype(result)):
+    if not core.valid_jaxtype(result):
       raise ValueError(
           f"Invalid return type from reduction function: {type(result)}\n"
           f"Reduction functions should only return an array.\n"
