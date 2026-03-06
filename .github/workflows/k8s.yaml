@@ -41,7 +41,7 @@ jobs:
           persist-credentials: false
           
       - name: Start Minikube cluster
-        uses: medyagh/setup-minikube@cea33675329b799adccc9526aa5daccc26cd5052 # ratchet:medyagh/setup-minikube@v0.0.19
+        uses: medyagh/setup-minikube@e9e035a86bbc3caea26a450bd4dbf9d0c453682e # ratchet:medyagh/setup-minikube@v0.0.21
 
       - name: Install K8s Jobset
         if: matrix.controller == 'jobset'
