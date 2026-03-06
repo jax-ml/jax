@@ -1563,84 +1563,71 @@ def _gen_associated_legendre(l_max: int,
   Args:
     l_max: The maximum degree of the associated Legendre function. Both the
       degrees and orders are `[0, 1, 2, ..., l_max]`.
-    x: A vector of type `float32`, `float64` containing the sampled points in
-      spherical coordinates, at which the ALFs are computed; `x` is essentially
-      `cos(θ)`. For the numerical integration used by the spherical harmonics
-      transforms, `x` contains the quadrature points in the interval of
-      `[-1, 1]`. There are several approaches to provide the quadrature points:
-      Gauss-Legendre method (`scipy.special.roots_legendre`), Gauss-Chebyshev
-      method (`scipy.special.roots_chebyu`), and Driscoll & Healy
-      method (Driscoll, James R., and Dennis M. Healy. "Computing Fourier
-      transforms and convolutions on the 2-sphere." Advances in applied
-      mathematics 15, no. 2 (1994): 202-250.). The Gauss-Legendre quadrature
-      points are nearly equal-spaced along θ and provide exact discrete
-      orthogonality, (P^m)^T W P_m = I, where `T` represents the transpose
-      operation, `W` is a diagonal matrix containing the quadrature weights,
-      and `I` is the identity matrix. The Gauss-Chebyshev points are equally
-      spaced, which only provide approximate discrete orthogonality. The
-      Driscoll & Healy quadrature points are equally spaced and provide the
-      exact discrete orthogonality. The number of sampling points is required to
-      be twice as the number of frequency points (modes) in the Driscoll & Healy
-      approach, which enables FFT and achieves a fast spherical harmonics
-      transform.
-    is_normalized: True if the associated Legendre functions are normalized.
-      With normalization, `N_l^m` is applied such that the spherical harmonics
-      form a set of orthonormal basis functions of L^2(S^2).
+    x: A vector containing the evaluation points in `[-1, 1]`.
+    is_normalized: Whether to apply spherical-harmonic normalization.
 
   Returns:
-    The 3D array of shape `(l_max + 1, l_max + 1, len(x))` containing the values
-    of the ALFs at `x`; the dimensions in the sequence of order, degree, and
-    evaluation points.
+    A 3D array of shape `(l_max + 1, l_max + 1, len(x))` containing the ALFs.
   """
+
   p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
-  a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
-  b_idx = jnp.arange(l_max, dtype=x.dtype)
+  sqrt1mx = jnp.sqrt(jnp.clip(1.0 - x * x, 0.0))
+
+  # Always start unnormalized
+  p00 = 1.0
+  p = p.at[(0, 0)].set(p00)
+
+  if l_max >= 1:
+    m_vals = jnp.arange(1, l_max + 1, dtype=jnp.int32)
+    coef = -(2.0 * m_vals - 1.0)
+    coef_cum = jnp.cumprod(coef)                          
+
+    sqrt_term = jnp.cumprod(
+        jnp.broadcast_to(sqrt1mx, (l_max, x.shape[0])),
+        axis=0
+    )
+
+    Pmm = coef_cum[:, None] * sqrt_term * p00
+    p = p.at[m_vals, m_vals].set(Pmm)
+
+  def outer_body(m, p):
+    Pmm = p[m, m]
+    Pm1m = (2 * m + 1) * x * Pmm
+    p = p.at[(m + 1, m)].set(Pm1m)
+
+    def inner_body(k, carry):
+      p, prev1, prev2 = carry
+      n = m + 2 + k
+
+      a = 2 * n - 1
+      b = n + m - 1
+      denom = n - m
+
+      Pnm = (a * x * prev1 - b * prev2) / denom
+      p = p.at[(n, m)].set(Pnm)
+
+      return p, Pnm, prev1
+
+    num_inner = l_max - (m + 1)
+    p, _, _ = lax.fori_loop(0, num_inner, inner_body, (p, Pm1m, Pmm))
+    return p
+
+  if l_max > 0:
+    p = lax.fori_loop(0, l_max, outer_body, p)
+
+  # Apply normalization once, if requested
   if is_normalized:
-    initial_value: ArrayLike = 0.5 / jnp.sqrt(np.pi)  # The initial value p(0,0).
-    f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
-    f_b = jnp.sqrt(2.0 * b_idx + 3.0)
-  else:
-    initial_value = 1.0  # The initial value p(0,0).
-    f_a = jnp.cumprod(1.0 - 2.0 * a_idx)
-    f_b = 2.0 * b_idx + 1.0
+    l = jnp.arange(0, l_max + 1)[:, None]
+    m = jnp.arange(0, l_max + 1)[None, :]
 
-  p = p.at[(0, 0)].set(initial_value)
+    log_norm = (
+        0.5 * (jnp.log(2 * l + 1) - jnp.log(4 * np.pi))
+        + 0.5 * (gammaln(l - m + 1) - gammaln(l + m + 1))
+    )
+    norm = jnp.exp(log_norm)
 
-  # Compute the diagonal entries p(l,l) with recurrence.
-  y = jnp.cumprod(
-      jnp.broadcast_to(jnp.sqrt(1.0 - x * x), (l_max, x.shape[0])),
-      axis=0)
-  p_diag = initial_value * jnp_einsum.einsum('i,ij->ij', f_a, y)
-  diag_indices = jnp.diag_indices(l_max + 1)
-  p = p.at[(diag_indices[0][1:], diag_indices[1][1:])].set(p_diag)
-
-  # Compute the off-diagonal entries with recurrence.
-  p_offdiag = jnp_einsum.einsum('ij,ij->ij',
-                         jnp_einsum.einsum('i,j->ij', f_b, x),
-                         p[jnp.diag_indices(l_max)])
-  offdiag_indices = (diag_indices[0][:l_max], diag_indices[1][:l_max] + 1)
-  p = p.at[offdiag_indices].set(p_offdiag)
-
-  # Compute the remaining entries with recurrence.
-  d0_mask_3d, d1_mask_3d = _gen_recurrence_mask(
-      l_max, is_normalized=is_normalized, dtype=x.dtype)
-
-  def body_fun(i, p_val):
-    coeff_0 = d0_mask_3d[i]
-    coeff_1 = d1_mask_3d[i]
-    h = (jnp_einsum.einsum('ij,ijk->ijk',
-                    coeff_0,
-                    jnp_einsum.einsum(
-                        'ijk,k->ijk', jnp.roll(p_val, shift=1, axis=1), x)) -
-         jnp_einsum.einsum('ij,ijk->ijk', coeff_1, jnp.roll(p_val, shift=2, axis=1)))
-    p_val = p_val + h
-    return p_val
-
-  # TODO(jakevdp): use some sort of fixed-point procedure here instead?
-  p = p.astype(dtypes.result_type(p, x, d0_mask_3d))
-  if l_max > 1:
-    p = lax.fori_loop(lower=2, upper=l_max+1, body_fun=body_fun, init_val=p)
+    p = p * norm[:, :, None]
 
   return p
 
