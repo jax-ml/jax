@@ -257,9 +257,8 @@ def _eval_jaxpr_discharge_state(
         # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
         # we assume any higher-order primitives inside of the jaxpr are *not*
         # stateful.
-        subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-        ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
-                                **bind_params)
+        bind_params = eqn.primitive.get_bind_params(eqn.params)
+        ans = eqn.primitive.bind(*map(env.read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       foreach(env.write, eqn.outvars, ans)
     else:
@@ -636,7 +635,7 @@ def _closed_call_discharge_rule(
     in_avals: Sequence[core.AbstractValue], _,*args,
     call_jaxpr: core.ClosedJaxpr):
   discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(call_jaxpr)
-  out_and_ref_vals = core.closed_call_p.bind(fun, *args,
+  out_and_ref_vals = core.closed_call_p.bind(*args, subfuns=(fun,),
                                              call_jaxpr=discharged_closed_jaxpr)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)

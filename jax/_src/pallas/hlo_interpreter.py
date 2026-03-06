@@ -217,8 +217,8 @@ def eval_jaxpr_recursive(
         ans = _eval_jaxpr_hop_rules[eqn.primitive](
             recurse_hop_rule, *in_vals, **eqn.params)
       else:
-        subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-        ans = eqn.primitive.bind(*subfuns, *in_vals, **bind_params)
+        bind_params = eqn.primitive.get_bind_params(eqn.params)
+        ans = eqn.primitive.bind(*in_vals, **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
     else:

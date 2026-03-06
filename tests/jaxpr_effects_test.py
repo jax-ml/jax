@@ -168,7 +168,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         return [x]
       dbg = api_util.debug_info("test", f_, (2.,), {})
       return core.call(
-          lu.wrap_init(f_, debug_info=dbg), x)[0]
+          x, subfuns=(lu.wrap_init(f_, debug_info=dbg),))[0]
     jaxpr = jax.make_jaxpr(f)(2.)
     self.assertIn(foo_effect, jaxpr.jaxpr.effects)
     self.assertIn(bar_effect, jaxpr.jaxpr.effects)

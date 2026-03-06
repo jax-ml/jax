@@ -1403,9 +1403,8 @@ class StateControlFlowTest(jtu.JaxTestCase):
     def f(x):
       y_ref = jax.new_ref(jnp.zeros_like(x))
       g_ = partial(g, y_ref)
-      return prim.bind(
-          lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {})), x
-      )[0]
+      sub = lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {}))
+      return prim.bind(x, subfuns=(sub,))[0]
     out = f(4.)
     np.testing.assert_array_equal(out, jnp.exp(4.))
 

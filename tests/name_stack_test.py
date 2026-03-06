@@ -88,9 +88,9 @@ class NameStackTest(jtu.JaxTestCase):
       @jax.named_scope('bar')
       def _f(x):
         return [x + 1]
-      return core.call(lu.wrap_init(
-          _f,
-          debug_info=api_util.debug_info("test", _f, (0,), {})), x)[0]
+      sub = lu.wrap_init(
+        _f, debug_info=api_util.debug_info("test", _f, (0,), {}))
+      return core.call(x, subfuns=(sub,))[0]
 
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')

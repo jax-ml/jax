@@ -1992,11 +1992,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_rewrite_process_call(self):
     def f(x):
-      return core.call_p.bind(
-          lu.wrap_init(lambda x: [2. * x],
-                       debug_info=api_util.debug_info("test", lambda x: [2. * x],
-                                                      (x,), {})),
-          x)[0] * x
+      sub = lu.wrap_init(
+        lambda x: [2. * x],
+        debug_info=api_util.debug_info("test", lambda x: [2. * x], (x,), {}))
+      return core.call_p.bind(x, subfuns=(sub,))[0] * x
 
     mesh = jtu.create_mesh((4,), ('x',))
     g = shard_map(f, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
@@ -2012,10 +2011,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @partial(shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
     def f(x):
-      return core.call_p.bind(
-          lu.wrap_init(lambda: [2. * x],
-                       debug_info=api_util.debug_info("test", lambda: [2. * x],
-                                                      (), {})))[0] * x
+      sub = lu.wrap_init(
+        lambda: [2. * x],
+        debug_info=api_util.debug_info("test", lambda: [2. * x], (), {}))
+      return core.call_p.bind(subfuns=(sub,))[0] * x
 
     x = jnp.arange(4.)
     y = f(x)

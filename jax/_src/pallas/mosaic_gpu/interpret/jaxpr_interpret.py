@@ -389,8 +389,8 @@ class JaxprInterpreter:
         out = out[0]
       return out
     else:
-      subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-      return eqn.primitive.bind(*subfuns, *get_invals(), **bind_params)
+      bind_params = eqn.primitive.get_bind_params(eqn.params)
+      return eqn.primitive.bind(*get_invals(), **bind_params)
 
   def interpret(self, jaxpr, *args):
     sentinel_for_floating_point_values = (
