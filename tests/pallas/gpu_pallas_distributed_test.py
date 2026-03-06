@@ -18,6 +18,7 @@ import functools
 import os
 import tempfile
 
+import absl.flags
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -38,6 +39,8 @@ import numpy as np
 
 P = jax.sharding.PartitionSpec
 partial = functools.partial
+
+IS_OSS = absl.flags.DEFINE_bool("is_oss", False, "Is test running in OSS.")
 
 
 def is_nvshmem_used():
@@ -70,6 +73,9 @@ class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
+    if jax.local_device_count() > 1 and IS_OSS.value:
+      # TODO(b/490026390): Remove this once the bug is fixed.
+      self.skipTest("Test hangs in OSS in a single-process mode.")
     super().setUp()
 
   def test_remote_dma_basic(self):
