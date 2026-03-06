@@ -57,7 +57,7 @@ UNDOCUMENTED_APIS = {
   'jax.custom_batching': ['custom_vmap', 'sequential_vmap'],
   'jax.custom_derivatives': ['CustomVJPPrimal', 'SymbolicZero', 'closure_convert', 'custom_gradient', 'custom_jvp', 'custom_jvp_call_p', 'custom_vjp', 'custom_vjp_call_p', 'custom_vjp_primal_tree_values', 'linear_call', 'remat_opt_p', 'zero_from_primal'],
   'jax.custom_transpose': ['custom_transpose'],
-  'jax.debug': ['DebugEffect', 'log'],
+  'jax.debug': ['DebugEffect', 'OrderedDebugEffect', 'log'],
   'jax.distributed': ['is_initialized'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],
   'jax.ffi': ['build_ffi_lowering_function', 'include_dir', 'register_ffi_target_as_batch_partitionable', 'register_ffi_type_id'],
