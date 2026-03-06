@@ -2409,6 +2409,10 @@ def _convert_element_type_lowering_rule(
   unsigned = jnp.unsignedinteger
   old_bitwidth = dtypes.itemsize_bits(old_dtype)
   new_bitwidth = dtypes.itemsize_bits(new_dtype)
+  # TODO(apaszke): Remove a month after the date.
+  fwd_compat = ctx.forward_compatible or ctx.is_cloud_tpu_older_than(
+      2026, 3, 10
+  )
   if _from(floating) and _to(floating):
     if old_bitwidth < new_bitwidth:
       return arith.extf(out_type, x)
@@ -2429,6 +2433,10 @@ def _convert_element_type_lowering_rule(
     return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating):
     return arith.sitofp(out_type, x)
+  elif _from(floating) and _to(unsigned) and not fwd_compat:
+    return arith.fptoui(out_type, x)
+  elif _from(unsigned) and _to(floating) and not fwd_compat:
+    return arith.uitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer):
     # bool is either 0 or 1 in integer representation hence unsigned.
     return arith.extui(out_type, x)
