@@ -400,3 +400,17 @@ rediraffe_redirects = {
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",
 }
+
+# Monkey-patch jupyter_client to avoid cross-process ZMQ port collisions during
+# Sphinx build. See: https://github.com/jupyter/jupyter_client/issues/487
+import jupyter_client.manager
+from filelock import FileLock
+_original_start_kernel = jupyter_client.manager.KernelManager.start_kernel
+def _start_kernel_with_lock(self, **kwargs):
+    # Prevent Sphinx multiprocessing workers from executing port discovery
+    # simultaneously
+    lock_dir = os.path.join(os.path.dirname(__file__), "build")
+    os.makedirs(lock_dir, exist_ok=True)
+    with FileLock(os.path.join(lock_dir, "jupyter_client_port_lock.lock")):
+        return _original_start_kernel(self, **kwargs)
+jupyter_client.manager.KernelManager.start_kernel = _start_kernel_with_lock
