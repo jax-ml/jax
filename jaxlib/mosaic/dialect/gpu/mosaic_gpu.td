@@ -609,6 +609,12 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
 
       accumulator += (a * a_scale) * (b * b_scale)
 
+    `a_sparse_metadata` is an optional sparse metadata matrix that resides in
+    TMEM. When set, `a` is treated as a sparse matrix and the metadata encodes
+    the sparsity pattern. With sparse MMA, `a`'s contracting dimension is halved
+    relative to `b`'s contracting dimension. `a_sparse_metadata` must have the same
+    shape as `a`.
+
     `accumulate` is a boolean that indicates whether to perform the accumulate
     step.
   }];
@@ -621,6 +627,7 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
     Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
     Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
+    Optional<MemRefRankOf<[I<2>], [2]>>:$a_sparse_metadata,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
 

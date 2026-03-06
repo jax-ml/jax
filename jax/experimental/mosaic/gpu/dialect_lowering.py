@@ -21,6 +21,7 @@
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
+import inspect
 import itertools
 import math
 import operator
@@ -2013,10 +2014,17 @@ def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
   return conversion_cast.result
 
 
+# TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
+_sparse_metadata_available = "a_sparse_metadata" in inspect.signature(mgpu.tcgen05_mma).parameters
+
+
 @_register_lowering(mgpu.TcGen05MMAOp)
 def _tcgen05_mma_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TcGen05MMAOp
 ) -> Sequence[ir.Value]:
+  if _sparse_metadata_available and op.a_sparse_metadata is not None:
+    raise NotImplementedError("Sparse metadata not yet implemented.")
+
   ctx.check_collective(op)
 
   in_tmem_layouts = inference_utils.in_tmem_layouts(op)

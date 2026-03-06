@@ -15,6 +15,7 @@
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
 from collections.abc import Callable
+import inspect
 
 from absl.testing import parameterized
 import jax
@@ -120,6 +121,12 @@ class MosaicGpuTest(parameterized.TestCase):
     # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
     if not hasattr(mgpu.dialect, "tile_shape"):
       self.skipTest("mgpu.dialect.tile_shape not available")
+
+  def skip_if_no_sparse_metadata(self):
+    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
+    sig = inspect.signature(mgpu.dialect.tcgen05_mma)
+    if "a_sparse_metadata" not in sig.parameters:
+      self.skipTest("tcgen05_mma does not support a_sparse_metadata")
 
 
 class DialectTest(MosaicGpuTest):
@@ -741,6 +748,74 @@ ir.MLIRError,
     with self.assertRaisesRegex(
         ir.MLIRError,
         r"The `b_scale` input must be in TMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_sparse_metadata_mem_space_is_tmem(self):
+    self.skip_if_no_sparse_metadata()
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    i2 = ir.IntegerType.get_signless(2)
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b, accumulate, a_sparse_metadata = undefs(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 64], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 64], i2, memory_space=smem),
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_sparse_metadata=a_sparse_metadata
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `a_sparse_metadata` input must be in TMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_sparse_a_k_dim_is_half_b_k_dim(self):
+    self.skip_if_no_sparse_metadata()
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    i2 = ir.IntegerType.get_signless(2)
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b, accumulate, a_sparse_metadata = undefs(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 64], i2, memory_space=tmem),
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_sparse_metadata=a_sparse_metadata
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"For sparse MMA, `a`'s contracting dimension 128 must be half the"
+        r" first dimension of `b`: 128",
+    ):
+      self.module.operation.verify()
+
+  def test_tcgen05_mma_a_sparse_metadata_shape_must_match_a(self):
+    self.skip_if_no_sparse_metadata()
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    i2 = ir.IntegerType.get_signless(2)
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b, accumulate, a_sparse_metadata = undefs(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 64], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 32], i2, memory_space=tmem),
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_sparse_metadata=a_sparse_metadata
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `a_sparse_metadata` shape \[128, 32\] must match the shape"
+        r" of `a` \[128, 64\]",
     ):
       self.module.operation.verify()
 
