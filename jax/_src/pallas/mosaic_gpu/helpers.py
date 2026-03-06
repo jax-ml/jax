@@ -28,6 +28,8 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import llvm
 import numpy as np
 
 _T = TypeVar("_T")
@@ -356,6 +358,7 @@ def dynamic_scheduling_loop(
         @pallas_helpers.when(wave_step >= num_slots)
         def wait_until_slot_available():
           gpu_primitives.barrier_wait(cancel_used_barrier.at[slot])
+          inline_ptx(_FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SHARED_CLUSTER)
 
         gpu_primitives.try_cluster_cancel(
             try_cancel_buffer.at[slot], try_cancel_barrier.at[slot]
@@ -370,6 +373,7 @@ def dynamic_scheduling_loop(
         grid_idx, success = gpu_primitives.query_cluster_cancel(
             try_cancel_buffer.at[slot], grid_names=grid_names
         )
+        inline_ptx(_FENCE_PROXY_ASYNC_GENERIC_RELEASE_SHARED_CTA)
         gpu_primitives.barrier_arrive(cancel_used_barrier.at[slot])
         return (grid_idx, success, wave_step + jnp.int32(1), user_carry)
 
@@ -394,3 +398,22 @@ def dynamic_scheduling_loop(
         collective_axes=thread_axis,
     )
   return decorator
+
+
+_FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SHARED_CLUSTER = (
+    "fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;"
+)
+_FENCE_PROXY_ASYNC_GENERIC_RELEASE_SHARED_CTA = (
+    "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;"
+)
+
+
+def inline_ptx(asm: str):
+  """Inserts inline PTX assembly."""
+
+  @gpu_primitives.inline_mgpu()
+  def ptx(_):
+    void = ir.Type.parse("!llvm.void")
+    llvm.inline_asm(void, [], asm, "", has_side_effects=True)
+
+  ptx()

@@ -160,6 +160,8 @@ pytype_strict_library(
         "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jax/experimental:mosaic_gpu",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:llvm_dialect",
     ] + py_deps("numpy"),
 )
 
