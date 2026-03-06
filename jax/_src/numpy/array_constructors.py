@@ -86,7 +86,7 @@ def _make_string_array(
         f" arrays. Got:  {type(object)}."
     )
   if dtype is not None and (
-      dtypes.is_string_dtype(object.dtype) != dtypes.is_string_dtype(dtype)
+      (object.dtype == dtypes.string_dtype) != (dtype == dtypes.string_dtype)
   ):
     raise TypeError(
         f"Cannot make an array with dtype {dtype} from an object with dtype"
@@ -209,8 +209,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
 
   # String arrays need separate handling because XLA does not support string
   # as a data type.
-  if dtypes.is_string_dtype(dtype) or (
-      hasattr(object, "dtype") and dtypes.is_string_dtype(object.dtype)
+  if dtype == dtypes.string_dtype or (
+      hasattr(object, "dtype") and object.dtype == dtypes.string_dtype
   ):
     return _make_string_array(
         object=object, dtype=dtype, ndmin=ndmin, device=device

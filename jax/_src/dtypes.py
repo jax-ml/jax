@@ -597,17 +597,15 @@ _complex_types: list[JAXType] = [
 # does not participate in promotions at the moment. Similarly, `_dtype_kinds` is
 # only meant for the `jnp.isdtype` and we want to be conservative and not allow
 # StringDType to be used in there.
-_string_types: list[JAXType] = []
-if hasattr(np.dtypes, 'StringDType'):
-  _string_types: list[JAXType] = [np.dtypes.StringDType()]
+string_dtype = np.dtypes.StringDType()  # pytype: disable=module-attr
 
 _jax_dtype_set = {
     float0,
+    string_dtype,
     *_bool_types,
     *_int_types,
     *_float_types,
     *_complex_types,
-    *_string_types,
 }
 
 _jax_types = (_bool_types + _int_types + _float_types + _complex_types)
@@ -1177,7 +1175,3 @@ def short_dtype_name(dtype) -> str:
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
-
-
-def is_string_dtype(dtype: DTypeLike | None) -> bool:
-  return dtype in _string_types

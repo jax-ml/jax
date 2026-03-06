@@ -2613,7 +2613,7 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
         f" values. Received invalid value: {s}")
-  if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
+  if isinstance(aval, core.ShapedArray) and aval.dtype == dtypes.string_dtype:
     _check_string_compatible_sharding(s)
 
   if isinstance(s, Sharding):

@@ -1768,7 +1768,7 @@ def valid_jaxtype(x) -> bool:
   except TypeError:
     return False
   else:
-    if hasattr(aval, "dtype") and dtypes.is_string_dtype(aval.dtype):
+    if hasattr(aval, "dtype") and aval.dtype == dtypes.string_dtype:
       return False
     else:
       return True
