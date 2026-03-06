@@ -266,6 +266,32 @@ def MosaicGPU_TileShapeOp : Op<MosaicGPU_Dialect, "tile_shape",
   let results = (outs AnyMemRef);
 }
 
+def MosaicGPU_UntileShapeOp : Op<MosaicGPU_Dialect, "untile_shape",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Untiles the shape of a strided memref.";
+  let description = [{
+    Untiles the shape of a strided `memref`.
+
+    Note that this is different from untiling the `memref` itself, since this
+    operation does not perform any data movement.
+
+    This allows inverting `tile_shape`, and it is only valid to apply this
+    operation to a `source` ref for which it is possible to construct a ref
+    `r` and a tiling `t` such that `source = tile_shape(r, t)`, where `t` has
+    rank `tiling_rank`.
+
+    E.g., for a contiguous `memref` of shape `(5, 2, 4, 64, 32)` and a tiling
+    rank of `2`, the result will be a contiguous `memref` of shape
+    `(5, 128, 128)`.
+  }];
+  let arguments = (ins
+    AnyMemRef:$source,
+    ConfinedAttr<I32Attr, [IntPositive]>:$tiling_rank
+  );
+  let results = (outs AnyMemRef);
+  let hasCanonicalizeMethod = 1;
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
