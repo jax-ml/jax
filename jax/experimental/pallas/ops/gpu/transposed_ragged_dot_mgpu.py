@@ -268,6 +268,8 @@ def main(unused_argv):
           " ".join(f"{k}={v}" for k, v in kwargs.items()),
           f"{int(runtime * 1000):.1f} us",
       )
+    assert runtime is not None
+    assert best_runtime is not None
     if runtime < best_runtime:  # pytype: disable=unsupported-operands
       best_runtime = runtime
       best_kwargs = kwargs
@@ -281,6 +283,7 @@ def main(unused_argv):
       lhs, rhs, group_sizes=group_sizes, **best_kwargs
   )
 
+  assert ref_runtime is not None
   tflops = float(2 * k * m * n) / (best_runtime / 1e3) / 1e12
   ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
   print(

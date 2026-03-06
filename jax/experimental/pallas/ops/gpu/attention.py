@@ -138,6 +138,7 @@ def mha_forward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
+        assert q_segment_ids is not None
         kv_segment_ids = segment_ids_ref[curr_k_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
       if causal:
@@ -148,6 +149,7 @@ def mha_forward_kernel(
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
         )
       # Apply mask to qk.
+      assert mask is not None
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
     m_curr = jnp.max(qk, axis=-1)
@@ -420,6 +422,7 @@ def mha_backward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
+        assert kv_segment_ids is not None
         q_segment_ids = segment_ids_ref[curr_q_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
@@ -429,6 +432,7 @@ def mha_backward_kernel(
         mask = (
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
         )
+      assert mask is not None
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
     lse = lse_ref[curr_q_slice]
@@ -490,6 +494,7 @@ def mha_backward_kernel(
     if causal or segment_ids_ref is not None:
       mask = None
       if segment_ids_ref is not None:
+        assert q_segment_ids is not None
         kv_segment_ids = segment_ids_ref[curr_k_slice]
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
@@ -499,6 +504,7 @@ def mha_backward_kernel(
         mask = (
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
         )
+      assert mask is not None
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
     p = jnp.exp2(qk - lse[:, None])
@@ -544,6 +550,11 @@ def _mha_backward(sm_scale: float, causal: bool, block_sizes: BlockSizes,
   elif backward_pass_impl == "triton":
     if not block_sizes.has_backward_blocks:
       raise ValueError("Backward block sizes must all be set.")
+
+    assert block_sizes.block_q_dkv is not None
+    assert block_sizes.block_kv_dkv is not None
+    assert block_sizes.block_q_dq is not None
+    assert block_sizes.block_kv_dq is not None
 
     batch_size, q_seq_len, num_heads, head_dim = q.shape
     kv_seq_len = k.shape[1]

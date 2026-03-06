@@ -118,8 +118,8 @@ def _attention_reference(
     v: jax.Array,
     segment_ids: SegmentIds | None,
     sinks: jax.Array | None,
-    save_residuals: Literal[False],
     mask_value: float,
+    save_residuals: Literal[False],
     custom_type: str,
     attn_logits_soft_cap: float | None,
 ) -> jax.Array:
@@ -134,8 +134,8 @@ def _attention_reference(
     v: jax.Array,
     segment_ids: SegmentIds | None,
     sinks: jax.Array | None,
-    save_residuals: Literal[True],
     mask_value: float,
+    save_residuals: Literal[True],
     custom_type: str,
     attn_logits_soft_cap: float | None,
 ) -> tuple[jax.Array, tuple[jax.Array]]:
@@ -603,13 +603,13 @@ def _apply_mask_and_soft_cap(
     q_segment_ids_ref,
     kv_segment_ids_ref,
     *,
-    attn_logits_soft_cap: float,
+    attn_logits_soft_cap: float | None,
     k_slice: pl.Slice,
     k_offset: int | jax.Array,
     bq: int,
     k_in_lanes=True,
     mask_function=None,
-) -> jax.Array | tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> jax.Array:
   assert mask_ref is None or q_sequence_ref is None
   assert (q_sequence_ref is None) == (mask_function is None)
 
@@ -624,6 +624,7 @@ def _apply_mask_and_soft_cap(
         jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
     )
   if mask_function is not None:
+    assert q_sequence_ref is not None
     # Compute the mask using the given q_sequence indices.
     # KV indices are computed on the fly. This works because we only support Q
     # sequence sharding. If we wanted to compute Q indices too, then we would
@@ -768,6 +769,7 @@ def flash_attention_kernel(
     qk = lax.dot_general(q, k, qk_dims, preferred_element_type=float32)
 
     assert qk.shape == (bq, bkv_compute)
+    assert isinstance(slice_k, pl.Slice)
     apply_mask_and_soft_cap = functools.partial(
         _apply_mask_and_soft_cap,
         qk,
@@ -789,6 +791,7 @@ def flash_attention_kernel(
     )
 
     qk = apply_mask_and_soft_cap()
+    assert not isinstance(qk, tuple)
 
     m_curr = qk.max(axis=-1)[:, None]  # pytype: disable=attribute-error
     assert m_curr.shape == (bq, 1)
@@ -855,13 +858,15 @@ def _splash_attention_forward(
     k: jax.Array,
     v: jax.Array,
     segment_ids: SegmentIds | None,
+    sinks: jax.Array | None,
     mask_value: float,
     is_mqa: bool,
     block_sizes: BlockSizes,
     residual_checkpoint_name: str | None,
+    save_residuals: Literal[False],
     mask_function: MaskFunctionType | None,
-    save_residuals: Literal[False] = False,
     attn_logits_soft_cap: float | None = None,
+    interpret: bool = False,
 ) -> jax.Array:
   ...
 
@@ -878,9 +883,10 @@ def _splash_attention_forward(
     is_mqa: bool,
     block_sizes: BlockSizes,
     residual_checkpoint_name: str | None,
-    mask_function: MaskFunctionType | None,
     save_residuals: Literal[True],
+    mask_function: MaskFunctionType | None,
     attn_logits_soft_cap: float | None = None,
+    interpret: bool = False,
 ) -> SplashCustomReturnType:
   ...
 
@@ -958,6 +964,7 @@ def _splash_attention_forward(
         "leading dimensions."
     )
 
+  assert bkv_compute is not None
   if bkv % bkv_compute:
     raise ValueError(f"{bkv=} must be a multiple of {bkv_compute=}.")
   if bkv_compute % NUM_LANES:
@@ -1022,7 +1029,7 @@ def _splash_attention_forward(
     return 0, next_j
 
   # Convert the logical shape from head-minor to sequence-minor.
-  in_specs = [
+  in_specs: list[pl.BlockSpec | None] = [
       pl.BlockSpec(
           from_head_minor((None, bq, head_dim_qk), q_layout),
           q_index_map
@@ -1269,7 +1276,7 @@ def _splash_attention_fwd(
     attn_logits_soft_cap: float | None = None,
     interpret: bool = False,
 ) -> tuple[
-    tuple[jax.Array],
+    jax.Array,
     SplashResidualsType,
 ]:
   if save_residuals:
@@ -1360,6 +1367,8 @@ def _flash_attention_dq_kernel(
     qk_dims = NT_DIM_NUMBERS if k_layout == HEAD_DIM_MINOR else NN_DIM_NUMBERS
     qk_uncapped = lax.dot_general(q, k, qk_dims, preferred_element_type=float32)
 
+    k_slice = pl.ds(0, bkv)
+    assert isinstance(k_slice, pl.Slice)
     qk = _apply_mask_and_soft_cap(
         qk_uncapped,
         mask_value,
@@ -1369,7 +1378,7 @@ def _flash_attention_dq_kernel(
         q_segment_ids_ref,
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
-        k_slice=pl.ds(0, bkv),
+        k_slice=k_slice,
         # When the iteration space is shrunk (for local attention for example),
         # the kv_index program_id does not correspond to the actual coordinates
         # of the KV data. Make sure to use the 'unshrunk' index (coming from the
@@ -1562,10 +1571,12 @@ def _splash_attention_bwd_dq(
 
   logsumexp = jnp.expand_dims(logsumexp, axis=-2)
   logsumexp_spec = pl.BlockSpec((None, 1, bq), logsumexp_index_map)
+  assert logsumexp_spec.block_shape is not None
   assert logsumexp.ndim == len(logsumexp_spec.block_shape)
 
   di = jnp.expand_dims(di, axis=-2)
   di_spec = pl.BlockSpec((None, 1, bq), logsumexp_index_map)
+  assert di_spec.block_shape is not None
   assert di.ndim == len(di_spec.block_shape)
 
   in_specs = [
@@ -1769,6 +1780,7 @@ def _flash_attention_dkv_kernel(
         k, q, qk_dims, preferred_element_type=jnp.float32
     )
 
+    assert isinstance(slice_k, pl.Slice)
     qk = _apply_mask_and_soft_cap(
         qk_uncapped,
         mask_value,
@@ -1839,6 +1851,7 @@ def _flash_attention_dkv_kernel(
         should_write, q_head_index == num_q_heads - 1
     )
   elif num_kv_heads < num_q_heads:
+    assert q_heads_per_kv_heads is not None
     should_write = jnp.logical_and(
         should_write, q_head_index_per_kv_head == q_heads_per_kv_heads - 1
     )
@@ -2111,11 +2124,13 @@ def _splash_attention_bwd_dkv(
   logsumexp_shape = (num_q_heads, NUM_SUBLANES, q_seq_len)
   logsumexp = jnp.broadcast_to(jnp.expand_dims(logsumexp, -2), logsumexp_shape)
   logsumexp_spec = pl.BlockSpec((None, NUM_SUBLANES, bq), logsumexp_index_map)
+  assert logsumexp_spec.block_shape is not None
   assert logsumexp.ndim == len(logsumexp_spec.block_shape)
 
   # TODO(apaszke): Remove the sublane expansion once Mosaic has all retilings
   di = jnp.broadcast_to(jnp.expand_dims(di, -2), logsumexp_shape)
   di_spec = pl.BlockSpec((None, NUM_SUBLANES, bq), logsumexp_index_map)
+  assert di_spec.block_shape is not None
   assert di.ndim == len(di_spec.block_shape)
 
   in_specs = [
@@ -2283,6 +2298,10 @@ def _splash_attention_bwd(
 
   # di: [num_heads, q_seq_len]
   di = jnp.einsum("hsd,hsd->hs", o.astype(jnp.float32), do.astype(jnp.float32))  # pytype: disable=attribute-error
+  assert bq_dkv is not None
+  assert bkv_dkv_memory is not None
+  assert bkv_dkv_compute is not None
+  assert dkv_mask_info is not None
   dq, dk, dv = _splash_attention_bwd_dkv(
       q,
       k,
@@ -2308,6 +2327,9 @@ def _splash_attention_bwd(
   )
   if not use_fused_bwd_kernel:
     assert dq is None
+    assert bq_dq is not None
+    assert bkv_dq is not None
+    assert dq_mask_info is not None
     dq = _splash_attention_bwd_dq(
         q,
         k,
@@ -2469,13 +2491,13 @@ class SplashAttentionKernel:
     # Shard q_sequence over the sequence dimension only.
     q_sequence_spec = jax.sharding.PartitionSpec(spec[1])
     mask_info_specs = mask_info_lib.MaskInfo(  # pytype: disable=wrong-arg-types
-        data_next=spec if self.fwd_mask_info.data_next is not None else None,
-        mask_next=spec if self.fwd_mask_info.mask_next is not None else None,
-        block_mask=spec if self.fwd_mask_info.block_mask is not None else None,
-        partial_mask_blocks=partial_mask_blocks_spec
+        data_next=spec if self.fwd_mask_info.data_next is not None else None,  # pyrefly: ignore[bad-argument-type]
+        mask_next=spec if self.fwd_mask_info.mask_next is not None else None,  # pyrefly: ignore[bad-argument-type]
+        block_mask=spec if self.fwd_mask_info.block_mask is not None else None,  # pyrefly: ignore[bad-argument-type]
+        partial_mask_blocks=partial_mask_blocks_spec  # pyrefly: ignore[bad-argument-type]
         if self.fwd_mask_info.partial_mask_blocks is not None
         else None,
-        q_sequence=q_sequence_spec
+        q_sequence=q_sequence_spec  # pyrefly: ignore[bad-argument-type]
         if self.fwd_mask_info.q_sequence is not None
         else None,
     )

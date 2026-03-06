@@ -78,7 +78,7 @@ class MaskInfo(NamedTuple):
   block_mask: np.ndarray | jax.Array | None
   partial_mask_blocks: np.ndarray | jax.Array | None
   q_sequence: np.ndarray | None
-  is_dynamic_mask: bool = None
+  is_dynamic_mask: bool | None = None
 
 
 def _downcast_to_small_type(array: np.ndarray) -> np.ndarray:
@@ -787,7 +787,7 @@ def _process_mask(
           has_mask_next=has_mask_next,
           mask=current_mask,
           block_shape=block_shape,
-          coords_to_partial_mask_block_index=coords_to_partial_mask_block_index,
+          coords_to_partial_mask_block_index=coords_to_partial_mask_block_index,  # pyrefly: ignore[bad-argument-type]
           head_start=head_start,
           masks_per_head_shard=masks_per_head_shard,
           num_heads=1 if masks_per_head_shard == 1 else heads_per_shard,
@@ -966,7 +966,7 @@ def _shrink_mask_info(
     *,
     block_mask: np.ndarray,
     data_next: np.ndarray,
-    mask_next: np.ndarray,
+    mask_next: np.ndarray | None,
     head_shards: int,
 ):
   assert block_mask.ndim == 3
@@ -985,10 +985,10 @@ def _shrink_mask_info(
   # Pad each row in the non-zero indices to match the width of the longest
   # row. This avoids having jagged rows.
   max_non_zero_cols = max(len(x) for x in grouped_non_zero_cols)
-  padded_non_zero_cols = []
+  padded_non_zero_cols_list = []
   padding = -1
   for row in grouped_non_zero_cols:
-    padded_non_zero_cols.append(
+    padded_non_zero_cols_list.append(
         np.pad(
             row,
             pad_width=(0, max_non_zero_cols - row.shape[0]),
@@ -996,7 +996,7 @@ def _shrink_mask_info(
         )
     )
 
-  padded_non_zero_cols = np.stack(padded_non_zero_cols, axis=0)
+  padded_non_zero_cols = np.stack(padded_non_zero_cols_list, axis=0)
 
   assert padded_non_zero_cols.shape[0] == block_mask.shape[1], (
       padded_non_zero_cols.shape,
@@ -1032,7 +1032,7 @@ def _shrink_mask_info_dkv(
     *,
     block_mask: np.ndarray,
     data_next: np.ndarray,
-    mask_next: np.ndarray,
+    mask_next: np.ndarray | None,
     head_shards: int,
 ):
   assert block_mask.ndim == 3
@@ -1050,10 +1050,10 @@ def _shrink_mask_info_dkv(
   # Pad each col in the non-zero indices to match the height of the longest
   # col. This avoids having jagged cols.
   max_non_zero_rows = max(len(x) for x in grouped_non_zero_rows)
-  padded_non_zero_rows = []
+  padded_non_zero_rows_list = []
   padding = -1
   for col in grouped_non_zero_rows:
-    padded_non_zero_rows.append(
+    padded_non_zero_rows_list.append(
         np.pad(
             col,
             pad_width=(max_non_zero_rows - col.shape[0], 0),
@@ -1061,7 +1061,7 @@ def _shrink_mask_info_dkv(
         )
     )
 
-  padded_non_zero_rows = np.stack(padded_non_zero_rows, axis=1)
+  padded_non_zero_rows = np.stack(padded_non_zero_rows_list, axis=1)
 
   assert padded_non_zero_rows.shape[1] == block_mask.shape[2], (
       padded_non_zero_rows.shape,
@@ -1097,7 +1097,7 @@ def _slice_mask_info(
     *,
     block_mask: np.ndarray,
     data_next: np.ndarray,
-    mask_next: np.ndarray,
+    mask_next: np.ndarray | None,
     head_shards: int,
     slice_function: Callable[[np.ndarray], np.ndarray],
 ):

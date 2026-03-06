@@ -81,7 +81,7 @@ def all_gather(
       raise ValueError("Integer types only support vec_size=1")
   elif vec_size is None:  # vec_size inference for floating point types
     dtype_bits = jnp.finfo(dtype).bits
-    max_vec_size = min(128 // dtype_bits, output_size // 128)
+    max_vec_size = min(128 // dtype_bits, output_size // 128)  # pyrefly: ignore[unbound-name]  # pyrefly#2382
     if tile_size is not None:
       max_vec_size_for_tile = tile_size // 128
       max_vec_size = min(max_vec_size, max_vec_size_for_tile)
@@ -183,6 +183,7 @@ def _run_example():
     return lax.all_gather(x, "x", axis=0, tiled=True)
   ref_fn(a).block_until_ready()  # Warmup.
   _, ref_kernels_ms = profiler.measure(ref_fn, aggregate=False)(a)
+  assert ref_kernels_ms is not None
   ref_time_us = sum(t * 1e3 for _, t in ref_kernels_ms)
   # We choose the minimum across processes to choose the runtime that didn't
   # include devices waiting for other devices.
@@ -208,6 +209,7 @@ def _run_example():
       if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
         continue
       raise
+    assert kernels_ms is not None
     runtime_us = sum(t * 1e3 for _, t in kernels_ms)
     runtime_us = min(multihost_utils.process_allgather(runtime_us).tolist())
     achieved_bw = total_bytes / (runtime_us * 1e-6) / 1e9  # GB/s
