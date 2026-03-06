@@ -17,6 +17,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from jax._src import api
+from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
@@ -164,7 +165,7 @@ def argsort(
     # match NumPy type semantics if x64 mode is enabled for now.
     if idx_dtype == np.dtype(np.int32):
       idx_dtype = dtypes.default_int_dtype()
-  iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension)
+  iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension, out_sharding=core.typeof(arr).sharding)
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
   # For non-stable descending sort, we can avoid these extra operations.
