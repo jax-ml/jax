@@ -415,8 +415,15 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
          reduce_axes: Sequence[AxisName] = ()) -> Callable:
-  """Creates a function that evaluates the gradient of ``fun``.
+  """A JAX transformation that creates a function that evaluates the gradient of ``fun``.
 
+  Learn more in the Automatic differentiation `[1]`_ and Advanced automatic differentiation `[2]`_
+  tutorials, and the Quickstart `[3]`_ documentation.
+  
+  .. _[1] https://jax.readthedocs.io/en/latest/automatic-differentiation.html
+  .. _[2] https://jax.readthedocs.io/en/latest/advanced-autodiff.html
+  .. _[3] https://jax.readthedocs.io/en/latest/quickstart.html#taking-derivatives-with-jax-grad
+  
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
       ``argnums`` should be arrays, scalars, or standard Python containers.
@@ -428,12 +435,12 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
       positional argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
       first element is considered the output of the mathematical function to be
-      differentiated and the second element is auxiliary data. Default False.
+      differentiated and the second element is auxiliary data. Default ``False``.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
-      holomorphic. If True, inputs and outputs must be complex. Default False.
+      holomorphic. If ``True``, inputs and outputs must be complex. Default ``False``.
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
-      have a trivial vector-space dtype (float0). Default False.
+      have a trivial vector-space dtype (float0). Default ``False``.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
