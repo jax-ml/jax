@@ -10778,6 +10778,14 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 
   @jtu.with_mesh([('x', 2)])
+  def testOutShardingsMismatchShowsAllDetails(self):
+    x = jnp.ones([])
+    with self.assertRaisesRegex(ValueError, r'Mismatch details \(2 found\)'):
+      jax.jit(
+          lambda x: x, out_shardings={'a': [None, None], 'b': (None, None)}
+      )({'a': x, 'b': x})
+
+  @jtu.with_mesh([('x', 2)])
   def testNestedDifferentResources(self):
     @partial(pjit, in_shardings=P('x'), out_shardings=None)
     def f(x):
