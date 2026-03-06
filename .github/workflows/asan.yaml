@@ -16,6 +16,10 @@ on:
 permissions: {}
 
 env:
+  PYTHON_VERSION: "3.13"
+  CPYTHON_URL: "https://storage.googleapis.com/ml-sysroot-testing/python/cpython-3.13.x-asan-shared-linux-x86_64-llvm-18.1.8.tar.gz"
+  CPYTHON_SHA256: "cc7354abad5ab5b87aae3c870e510860c9ffefcd3d8f6c3e02129aaf9d30a5bb"
+  CPYTHON_PREFIX: "cpython-3.13.x-asan-shared-linux-x86_64-llvm-18.1.8"
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
   PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
@@ -25,64 +29,28 @@ jobs:
     if: github.repository == 'jax-ml/jax'
     runs-on: linux-x86-n4-64
     container:
-      image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       fail-fast: false
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      # Install git before actions/checkout as otherwise it will download the code with the GitHub
-      # REST API and therefore any subsequent git commands will fail.
-      - name: Install clang 18
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt update
-          apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
-            zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
-            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
-            libffi-dev liblzma-dev
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: jax
           persist-credentials: false
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: python/cpython
-          path: cpython
-          ref: v3.13.0
-          persist-credentials: false
-      - name: Build CPython with ASAN enabled
-        env:
-          ASAN_OPTIONS: detect_leaks=0
+      - name: Build JAX
         run: |
-          cd cpython
-          mkdir ${GITHUB_WORKSPACE}/cpythonasan
-          CC=clang-18 CXX=clang++-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpythonasan --with-address-sanitizer --without-pymalloc
-          make -j64
-          make install
-          ${GITHUB_WORKSPACE}/cpythonasan/bin/python3 -m venv ${GITHUB_WORKSPACE}/venv
-      - name: Install JAX test requirements
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          apt install -y xxd
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
-          cd jax
-          pip install uv~=0.5.30
-          uv pip install -r build/test-requirements.txt
-      - name: Build and install JAX
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-        run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
           python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
-            --bazel_options=--config=asan
-          uv pip install dist/jaxlib-*.whl \
-            -e .
+            --bazel_options=--config=asan_shared \
+            --python_version=${PYTHON_VERSION} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}" \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${CPYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
+
       - name: Run tests
         env:
           ASAN_OPTIONS: detect_leaks=0
@@ -91,10 +59,22 @@ jobs:
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
+          echo "Download CPython with ASAN support"
+          cd ${GITHUB_WORKSPACE}
+          wget ${CPYTHON_URL}
+          tar -xzf ${CPYTHON_PREFIX}.tar.gz
+
+          echo "Install python requirements and JAX"
+          ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3 -m venv \
+            ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv
+          source ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate
+          pip install uv~=0.5.30
           cd jax
+          uv pip install -r build/test-requirements.txt
+          uv pip install dist/jaxlib-*.whl -e .
+
+          echo "Run tests"
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          # The LD_PRELOAD works around https://github.com/google/sanitizers/issues/934#issuecomment-649516500
-          LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n 32 --tb=short --maxfail=20 tests
+          python -m pytest -n 32 --tb=short --maxfail=20 tests

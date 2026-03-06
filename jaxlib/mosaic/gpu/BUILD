@@ -167,7 +167,6 @@ cc_library(
         "launch_lowering.h",
         "passes.h",
     ],
-    features = ["asan_runtime_closure"],  # Details: https://github.com/google-ml-infra/rules_ml_toolchain/tree/main/cc/sanitizers#troubleshooting
     deps = [
         ":dump",
         "//jaxlib/mosaic:pass_boilerplate",

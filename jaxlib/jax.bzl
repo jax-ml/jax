@@ -409,6 +409,10 @@ def _jax_wheel_impl(ctx):
     if not WHEEL_VERSION_SUFFIX:
         env["JAX_RELEASE"] = "1"
 
+    asan_options = ctx.attr.asan_options[BuildSettingInfo].value
+    if asan_options:
+        env["ASAN_OPTIONS"] = asan_options
+
     cpu = ctx.attr.cpu
     no_abi = ctx.attr.no_abi
     platform_independent = ctx.attr.platform_independent
@@ -518,6 +522,7 @@ _jax_wheel = rule(
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
         "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
         "py_freethreaded": attr.label(default = Label("@rules_python//python/config_settings:py_freethreaded")),
+        "asan_options": attr.label(default = Label("@rules_ml_toolchain//common:asan_options")),
     },
     implementation = _jax_wheel_impl,
     executable = False,

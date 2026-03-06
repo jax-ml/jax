@@ -235,13 +235,25 @@ common:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-
 common:win_clang --extra_execution_platforms=//jax/tools/toolchains:x64_windows-clang-cl
 common:win_clang --compiler=clang-cl
 
-# ASan works only for Linux x86_64
-common:asan --platforms=@rules_ml_toolchain//common:linux_x86_64_with_sanitizers
+# Sanitizers (work only for Linux x86_64)
+# ASan common config
 common:asan --features=asan
+common:asan --host_features=-asan
 common:asan --strip=never
+common:asan --copt=-fno-omit-frame-pointer
 common:asan --copt -DADDRESS_SANITIZER
 common:asan --copt -O1
 common:asan --copt -g
+# Disables LeakSanitizer (LSan). The core of AddressSanitizer
+# remains active and will still catch memory errors
+common:asan --action_env=ASAN_OPTIONS=detect_leaks=0
+common:asan --host_action_env=ASAN_OPTIONS=detect_leaks=0
+common:asan --@rules_ml_toolchain//common:asan_options=detect_leaks=0
+
+# ASan with shared library config
+common:asan_shared --config=asan
+common:asan_shared --copt=-shared-libasan
+common:asan_shared --linkopt=-shared-libasan
 
 # #############################################################################
 # Cache options below.
