@@ -267,6 +267,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
+    "--xla_gpu_per_fusion_autotune_cache_dir",
 ]
 
 env_override_flags_to_exclude_from_cache_key = {
@@ -314,6 +315,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   # path changes across runs despite being the same version, so we clear it
   # here.
   debug_options.xla_gpu_cuda_data_dir = ""
+  debug_options.xla_gpu_per_fusion_autotune_cache_dir = ""
   # LINT.ThenChange(:xla_flags)
 
   compile_options_copy.env_option_overrides = [
