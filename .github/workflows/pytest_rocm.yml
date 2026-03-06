@@ -93,7 +93,9 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
-permissions: {}
+permissions:
+  id-token: write
+  contents: read
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -148,3 +150,25 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
+      - name: Archive test logs
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          tar -czf logs.tar.gz logs
+      - name: Configure AWS Credentials
+        if: always()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      - name: Upload test-artifacts to AMD S3
+        if: always()
+        env:
+          S3_BUCKET_NAME: jax-ci-amd
+          INPUT_PYTHON: ${{ inputs.python }}
+          INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+          INPUT_ROCM_TAG: ${{ inputs.rocm-tag }}
+          IS_NIGHTLY: ${{ contains(github.workflow, 'Nightly/Release') && 'nightly' || 'continuous' }}
+        run: |
+          ./ci/upload_rocm_logs.sh

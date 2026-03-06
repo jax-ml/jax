@@ -173,6 +173,9 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-rocm:
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/pytest_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
