@@ -3321,16 +3321,12 @@ class APITest(jtu.JaxTestCase):
           lambda: jnp.arange(1.0).astype(int))
 
   def test_error_for_invalid_dtype(self):
-    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
-               r"value is of type .* and was passed to the function at path args\[1\].")
-    with jax.enable_checks(False):
-      with self.assertRaisesRegex(TypeError, err_str):
-        lax.add(jnp.array(7), np.array("hello"))
-    # TODO(dougalm): re-enable checks at the beginning of `bind`. We just
-    # need to know which arguments to a generic primitive are ordinary operands vs functions.
-    # with jax.enable_checks(True):
-    #   with self.assertRaises(AssertionError):
-    #     lax.add(jnp.array(7), np.array("hello"))
+    err_str = (
+        "Error interpreting argument to .* as a JAX value. The problematic "
+        "value is of type .* and was passed to the primitive at position 1."
+    )
+    with self.assertRaisesRegex(TypeError, err_str):
+      lax.add(jnp.array(7), np.array("hello"))
 
   def test_vmap_preserves_docstr(self):
     def superfun(a):

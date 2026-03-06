@@ -3441,13 +3441,6 @@ class LaxTest(jtu.JaxTestCase):
                                        np.zeros((2, 2), dtype=np.float32),
                                        (np.int32(1), np.int16(2))))
 
-  def test_primitive_jaxtype_error(self):
-    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
-               r"value is of type .* and was passed to the function at path args\[1\].")
-    with jax.enable_checks(False):
-      with self.assertRaisesRegex(TypeError, err_str):
-        lax.add(1, 'hi')
-
   def test_reduction_with_repeated_axes_error(self):
     with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
       lax.reduce(np.arange(3), 0, lax.add, (0, 0))
