@@ -75,6 +75,7 @@ jobs:
       - name: Build ml_dtypes with NumPy nightly
         run: |
           pushd ml_dtypes
+          "$JAXCI_PYTHON" -m uv pip install scikit-build-core cmake
           git submodule init
           git submodule update
           "$JAXCI_PYTHON" -m uv pip install . --no-build-isolation
