@@ -633,9 +633,6 @@ class Primitive:
 
   def bind(self, *args, **params):
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
-    return self._true_bind(*args, **params)
-
-  def _true_bind(self, *args, **params):
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
@@ -3009,9 +3006,7 @@ def dim_value_aval() -> AbstractValue:
 class CallPrimitive(Primitive):
   multiple_results = True
   call_primitive = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, fun_and_args, params, /):
     fun = fun_and_args[0]
@@ -3052,9 +3047,7 @@ closed_call_p.def_effectful_abstract_eval(
 class MapPrimitive(Primitive):
   multiple_results = True
   map_primitive = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, fun_and_args, params, /):
     fun: lu.WrappedFun = fun_and_args[0]

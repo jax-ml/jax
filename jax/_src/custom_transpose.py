@@ -171,9 +171,7 @@ class CustomTransposePrimitive(core.Primitive):
   call_primitive = False
   map_primitive = False
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, call_args, params, /):
     call, tracers = call_args[0], call_args[1:]

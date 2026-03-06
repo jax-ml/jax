@@ -385,9 +385,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
 
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params, /):
     fun, jvp, tracers = args[0], args[1], args[2:]
@@ -993,9 +991,7 @@ def _temporary_dtype_exception(a, a_) -> bool:
 
 class CustomVJPCallPrimitive(core.Primitive):
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params, /):
     fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
