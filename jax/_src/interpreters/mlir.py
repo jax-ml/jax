@@ -1043,7 +1043,7 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron"]
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
   mesh = axis_ctx.mesh.abstract_mesh
-  sharding_mesh = sharding.mesh.abstract_mesh
+  sharding_mesh = sharding.mesh.abstract_mesh  # pytype: disable=attribute-error
   if (isinstance(sharding, sharding_impls.NamedSharding) and
       sharding_mesh.shape == mesh.shape):
     out_mesh, spec = sharding_mesh, sharding.spec
