@@ -3022,7 +3022,7 @@ class FragmentedArray:
       *,
       swizzle: int = 16,
       optimized: bool = True,
-      atomic: Literal["add"] | None = None,
+      atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ) -> None:
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(ref)
@@ -3200,7 +3200,7 @@ class FragmentedArray:
       swizzle: int | None,
       optimized: bool = True,
       tiling_rank: int | None = None,
-      atomic: Literal["add"] | None = None,
+      atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ):
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
@@ -3224,10 +3224,23 @@ class FragmentedArray:
       element_bitwidth = utils.bitwidth(element_type)
       noftz = ""
       if isinstance(element_type, ir.F32Type):
+        if atomic != "add":
+          raise NotImplementedError(f"f32 only supports add atomics, got {atomic}")
         ptx_type = "f32"
       elif isinstance(element_type, ir.IntegerType) and element_bitwidth == 32:
-        ptx_type = "s32" if self.is_signed else "u32"
+        if atomic in ("and", "or", "xor"):
+          ptx_type = "b32"
+        else:
+          ptx_type = "s32" if self.is_signed else "u32"
       elif isinstance(element_type, (ir.F16Type, ir.BF16Type)):
+        if atomic not in ("add", "min", "max"):
+          raise NotImplementedError(
+              f"f16/bf16 only supports add, min, max atomics, got {atomic}"
+          )
+        if is_smem and atomic != "add":
+          raise NotImplementedError(
+              f"f16/bf16 SMEM atomics only support add, got {atomic}"
+          )
         ptx_type = f"{element_type}x2"
         noftz = ".noftz"
       else:
@@ -3276,21 +3289,47 @@ class FragmentedArray:
             if i32_vec_len % vec_width == 0:
               width = vec_width
               break
-        vec = f".v{width}" if width > 1 else ""
-        if width > 1:
-          operands = "{" + ", ".join(f"${i + 1}" for i in range(width)) + "}"
-        else:
-          operands = "$1"
         for start in range(0, i32_vec_len, width):
-          reg_slice = regs[start:start + width]
+          regs_slice = regs[start:start + width]
           ptr = utils.getelementptr(base_ptr, [start], i32)
-          llvm.inline_asm(
-              ir.Type.parse("!llvm.void"),
-              [ptr, *reg_slice],
-              f"red{space}.relaxed.{scope}.{atomic}{noftz}{vec}.{ptx_type} [$0], {operands};",
-              f"{ptr_constraint}" + ",r" * len(reg_slice),
-              has_side_effects=True,
-          )
+          if element_bitwidth == 16 and not is_smem:
+            # Annoyingly, the global atomics don't support v1, so we have to
+            # use unpacked registers with .v2 and hope that ptxas optimizes it.
+            if width == 1:
+              i16 = ir.IntegerType.get_signless(16)
+              vec2xi16 = ir.VectorType.get((2,), i16)
+              [reg] = regs_slice
+              pair = llvm.bitcast(vec2xi16, reg)
+              llvm.inline_asm(
+                  ir.Type.parse("!llvm.void"),
+                  [
+                      ptr,
+                      llvm.extractelement(pair, arith.constant(i32, 0)),
+                      llvm.extractelement(pair, arith.constant(i32, 1)),
+                  ],
+                  f"red.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
+                  f"{ptr_constraint},h,h",
+                  has_side_effects=True,
+              )
+            else:
+              operands = "{" + ", ".join(f"${i + 1}" for i in range(width)) + "}"
+              llvm.inline_asm(
+                  ir.Type.parse("!llvm.void"),
+                  [ptr, *regs_slice],
+                  f"red.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
+                  f"{ptr_constraint}" + ",r" * width,
+                  has_side_effects=True,
+              )
+          else:
+            ptx_t = f"{element_type}x2" if element_bitwidth == 16 else ptx_type
+            [reg] = regs_slice
+            llvm.inline_asm(
+                ir.Type.parse("!llvm.void"),
+                [ptr, reg],
+                f"red{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
+                f"{ptr_constraint},r",
+                has_side_effects=True,
+            )
       return
     # Note that the loop below will "race" for layouts that replicate data.
     # However, in that case all of the racing writes store the same data, which
