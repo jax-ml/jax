@@ -1226,11 +1226,6 @@ absl::Status MosaicGpuInitialize(
   // operation initialization. During reruns we can reuse the same buffers for
   // the same operation since multi-device barrier can be called multiple times
   // on the same buffers.
-  // It's important to zero the buffer synchronously to avoid the situation
-  // when peer barrier buffer is not zeroed before the first execution.
-  // We can guarantee a zeroed buffers in all participating devices since
-  // below we are running rendezvous to exchange peer parameters in the
-  // CollectParamToPeers call.
   if (device_state.barrier_signal_buffer_handle.address().is_null()) {
     device_state.barrier_signal_buffer_handle = se::DeviceAddressHandle{
         collective_params->executor,
@@ -1239,7 +1234,7 @@ absl::Status MosaicGpuInitialize(
 
     se::DeviceAddressBase barrier_signal_buffer_address =
         device_state.barrier_signal_buffer_handle.address();
-    TF_RETURN_IF_ERROR(collective_params->executor->SynchronousMemZero(
+    TF_RETURN_IF_ERROR(stream->MemZero(
         &barrier_signal_buffer_address, barrier_signal_buffer_address.size()));
   }
 
@@ -1250,10 +1245,17 @@ absl::Status MosaicGpuInitialize(
             xla::gpu::GetMultiGpuBarrierSignalValueSize())};
     se::DeviceAddressBase barrier_signal_value_buffer_address =
         device_state.barrier_signal_value_buffer_handle.address();
-    TF_RETURN_IF_ERROR(collective_params->executor->SynchronousMemZero(
+    TF_RETURN_IF_ERROR(stream->MemZero(
         &barrier_signal_value_buffer_address,
         barrier_signal_value_buffer_address.size()));
   }
+
+  // It's important to zero the buffer synchronously to avoid the situation
+  // when peer barrier buffer is not zeroed before the first execution.
+  // We can guarantee a zeroed buffers in all participating devices since
+  // below we are running rendezvous to exchange peer parameters in the
+  // CollectParamToPeers call.
+  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
   // Exchange the adresses of the buffer barriers.
   parameters.push_back(device_state.barrier_signal_buffer_handle.address());
