@@ -669,12 +669,20 @@ llvm::LogicalResult TcGen05MMAOp::verify() {
         "dimensions of `a`: {1}.",
         M, a_shape[0]);
   }
-  int K = a_shape[1];  // groups_k * k
-  if (K != b_shape[0]) {
+  int a_K = a_shape[1];  // groups_k * k
+  mlir::TypedValue<mlir::MemRefType> a_sparse_metadata = getASparseMetadata();
+  bool is_sparse = static_cast<bool>(a_sparse_metadata);
+  if (is_sparse && a_K * 2 != b_shape[0]) {
+    return error(
+        "For sparse MMA, `a`'s contracting dimension {0} must be half the "
+        "first dimension of `b`: {1}.",
+        a_K, b_shape[0]);
+  }
+  if (!is_sparse && a_K != b_shape[0]) {
     return error(
         "`a`'s contracting dimension {0} must be equal to the first dimension "
         "of `b`: {1}.",
-        K, b_shape[0]);
+        a_K, b_shape[0]);
   }
   int N = b_shape[1];  // groups_n * k
   if (N != acc_shape[1] && !getCollective()) {
@@ -735,6 +743,24 @@ llvm::LogicalResult TcGen05MMAOp::verify() {
     if (b_scale_mem_space != tmem) {
       return error("The `b_scale` input must be in TMEM, but got {0}.",
                    b_scale_mem_space);
+    }
+  }
+
+  if (a_sparse_metadata) {
+    mlir::Attribute a_sparse_metadata_mem_space =
+        a_sparse_metadata.getType().getMemorySpace();
+    if (a_sparse_metadata_mem_space != tmem) {
+      return error(
+          "The `a_sparse_metadata` input must be in TMEM, but got {0}.",
+          a_sparse_metadata_mem_space);
+    }
+    auto a_sparse_metadata_shape = a_sparse_metadata.getType().getShape();
+    if (a_sparse_metadata_shape != a_shape) {
+      return error(
+          "The `a_sparse_metadata` shape [{0}, {1}] must match the shape "
+          "of `a` [{2}, {3}].",
+          a_sparse_metadata_shape[0], a_sparse_metadata_shape[1], a_shape[0],
+          a_shape[1]);
     }
   }
 
