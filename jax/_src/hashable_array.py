@@ -32,6 +32,8 @@ class HashableArray:
     return hash((self.val.shape, self.val.dtype, self.val.tobytes()))
 
   def __eq__(self, other):
-    return isinstance(other, HashableArray) and np.array_equal(
-        self.val, other.val
-    )
+    if not isinstance(other, HashableArray):
+      return False
+    if self.val.shape != other.val.shape or self.val.dtype != other.val.dtype:
+      return False
+    return np.array_equal(self.val, other.val)
