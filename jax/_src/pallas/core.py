@@ -1103,7 +1103,7 @@ class ScratchShape(Protocol):
 
 
 ScratchShapeTree = (
-    Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+    Sequence[Union[ScratchShape, "ScratchShapeTree", None]]
     | Mapping[str, Union[ScratchShape, "ScratchShapeTree"]]
 )
 

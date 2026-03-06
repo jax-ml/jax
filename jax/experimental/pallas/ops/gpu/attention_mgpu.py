@@ -27,6 +27,15 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 from functools import partial
+from typing import Protocol, TypeVar
+
+
+T = TypeVar('T')
+
+class PipelineCallback(Protocol):
+  """A callback that returns the same type as the input."""
+  def __call__(self, arg: T, /) -> T: ...
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -391,7 +400,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
     q_smem2, do_smem2, lse_smem2, delta_smem2 = smem_buffers
     q_barriers, do_barriers, lse_barriers, delta_barriers = buffer_barriers
-    def _compute_thread(pipeline_callback):
+    def _compute_thread(pipeline_callback: PipelineCallback, /) -> None:
       q_smem, do_smem, lse_smem, delta_smem = q_smem2.at[wg_idx], do_smem2.at[wg_idx], lse_smem2.at[wg_idx], delta_smem2.at[wg_idx]
       q_seq_base = lax.axis_index("q_seq") * (compute_wgs * block_q) + wg_idx * block_q
       q_slice = (batch, pl.ds(q_seq_base, block_q), q_head)
@@ -412,7 +421,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
 
       delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
       lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
-      dq_acc = plgpu.layout_cast(
+      dq_acc: jax.Array = plgpu.layout_cast(
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
       dq, _, _ = pipeline_callback((dq_acc, lse, delta))
@@ -683,7 +692,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
         plgpu.barrier_arrive(schedule_barrier)
         plgpu.barrier_wait(schedule_barrier)
 
-    def _compute_thread(pipeline_callback):
+    def _compute_thread(pipeline_callback: PipelineCallback, /) -> None:
       qo_smem = qo_smem2.at[wg_idx]
       lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
       m_i = jnp.full((block_q,), -jnp.inf, dtype=jnp.float32)
@@ -874,6 +883,7 @@ def main(unused_argv):
         if "exceeds available shared memory" in e.args[0]:
           continue
         raise
+      assert runtime_ms is not None
       runtime_us = runtime_ms * 1e3
       matmul_flops = (
           4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size

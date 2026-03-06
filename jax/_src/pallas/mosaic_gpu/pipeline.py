@@ -43,6 +43,9 @@ map = util.safe_map
 zip = util.safe_zip
 T = TypeVar('T')
 
+class PipelineCallback(Protocol):
+  """A callback that returns the same type as the input."""
+  def __call__(self, arg: T, /) -> T: ...
 
 BlockSpecPytree: TypeAlias = Sequence[Union[pl.BlockSpec, "BlockSpecPytree"]]
 AbstractRefPytree: TypeAlias = Sequence[
@@ -494,7 +497,7 @@ class ComputeContext(Protocol):
   ```
 
   """
-  def __call__(self, pipeline: Callable[[T], T]) -> None:
+  def __call__(self, pipeline: PipelineCallback, /) -> None:
     ...
 
 

@@ -18,6 +18,7 @@ import dataclasses
 import functools
 import itertools
 import math
+
 import jax
 from jax import lax
 from jax import numpy as jnp
@@ -274,7 +275,7 @@ def main(unused_argv):
         "block_m", "block_n", "block_k", "max_concurrent_steps", "grid_block_n"
     )
     best_runtime = float("inf")
-    best_kwargs = {}
+    best_kwargs: dict[str, int] = {}
     for config in configs:
       kwargs = dict(zip(names, config))
       if n % (kwargs["grid_block_n"] * kwargs["block_n"]):
@@ -291,6 +292,7 @@ def main(unused_argv):
         runtime = float("inf")
       # Enable this to get more detailed information.
       else:
+        assert runtime is not None
         print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
       if runtime < best_runtime:  # pytype: disable=unsupported-operands
         best_runtime = runtime
@@ -306,8 +308,10 @@ def main(unused_argv):
     ref, ref_runtime = profiler.measure(ref_ragged_dot)(
         lhs, rhs, group_sizes=group_sizes
     )
+    assert ref_runtime is not None
     result = ragged_dot(
         lhs, rhs, group_sizes=group_sizes, transpose_rhs=transpose_rhs,
+        load_group_sizes_to_register=True,
         **best_kwargs
     )
     np.testing.assert_allclose(result, ref, atol=1e-3, rtol=1e-3)

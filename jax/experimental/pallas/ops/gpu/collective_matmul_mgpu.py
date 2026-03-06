@@ -221,6 +221,7 @@ def _run_example():
       )
   ), aggregate=False)(a, b)
 
+  assert ref_kernels_ms is not None
   ref_time_us = _min_results_across_devices(ref_kernels_ms)
   ref_util = optimal_time / ref_time_us * 100
 
