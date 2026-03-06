@@ -2840,6 +2840,21 @@ class FragmentedArray:
       source_dimensions: tuple[int, ...],
       layout: FragmentedLayout,
   ) -> FragmentedArray:
+    if len(source_dimensions) != len(self.shape):
+      raise ValueError(
+          f"The number of source dimensions ({len(source_dimensions)}) must"
+          f" match the rank of the array ({len(self.shape)})"
+      )
+    if not all(0 <= d < len(shape) for d in source_dimensions):
+      raise ValueError(
+          f"{source_dimensions=} must be within the range [0, {len(shape)})"
+      )
+    if any(
+        d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])
+    ):
+      raise ValueError(
+          f"{source_dimensions=} must be strictly increasing and unique"
+      )
     for i, target_dim in enumerate(source_dimensions):
       if self.shape[i] != shape[target_dim] and self.shape[i] != 1:
         raise ValueError(
@@ -2855,8 +2870,7 @@ class FragmentedArray:
         raise NotImplementedError(
             "vector size must match for broadcast of WGStridedFragLayout"
         )
-      # Check if input maps exactly to the end (prevents transpose & trailing
-      # dims).
+      # Check if input maps exactly to the end (prevents trailing dims).
       if source_dimensions != tuple(
           range(len(shape) - len(self.shape), len(shape))
       ):
@@ -2891,8 +2905,6 @@ class FragmentedArray:
       )
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
-    if any(d1 >= d2 for d1, d2 in zip(source_dimensions, source_dimensions[1:])):
-      raise NotImplementedError("source_dimensions must be strictly increasing")
     if len(layout.base_tile_shape) != len(shape):
       raise NotImplementedError("Tiling rank different than broadcast result rank")
     new_dimensions = sorted(set(range(len(shape))) - set(source_dimensions))
