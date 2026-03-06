@@ -7203,6 +7203,16 @@ class Remat3Test(jtu.JaxTestCase):
     res = saved_residuals(f1, jnp.arange(3.))
     self.assertLen(res, 1)  # just the input is saveable
 
+  def test_remat_of_jit_input_to_output_forwarding(self):
+    @partial(remat3, policy={'yash'})
+    def f(x):
+      y = checkpoint_name3('yash', jnp.ones(2, 'float32'))
+      x = jax.jit(lambda: x * y)()
+      x = jax.jit(lambda: x * y)()
+      return x
+    res = saved_residuals(f, jnp.float32(3.))
+    self.assertLen(res, 1)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
