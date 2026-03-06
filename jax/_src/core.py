@@ -2344,8 +2344,7 @@ class ShapedArray(AbstractValue):
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
-    all_names = order_wrt_mesh(mesh, self.vma) if check_vma else all_names
-    return P(all_names) if all_names else P()
+    return P(order_wrt_mesh(mesh, self.vma)) if check_vma else P(all_names)
 
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
@@ -2413,8 +2412,14 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
   else:
     return primal_dtype
 
+def primal_spec_to_cotangent_spec(spec):
+  from jax._src.hijax import HipSpec  # type: ignore
+  if isinstance(spec, HipSpec):
+    return spec.to_cotangent_spec()
+  return P(*spec, unreduced=spec.reduced, reduced=spec.unreduced)
+
 def primal_sharding_to_cotangent_sharding(sharding):
-  return sharding.update(spec=sharding.spec.to_ct_spec())
+  return sharding.update(spec=primal_spec_to_cotangent_spec(sharding.spec))
 
 ############################## pvary #################################
 

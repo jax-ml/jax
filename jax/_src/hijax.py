@@ -126,13 +126,13 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
   # shard_map interface
-  def shard(self, mesh, manual_axes: frozenset, check_vma: bool, spec: HiPspec
+  def shard(self, mesh, manual_axes: frozenset, check_vma: bool, spec: HipSpec
             ) -> HiType:
     assert False, "must override"
-  def unshard(self, mesh, check_vma: bool, spec: HiPspec) -> HiType:
+  def unshard(self, mesh, check_vma: bool, spec: HipSpec) -> HiType:
     assert False, "must override"
   def nospec(self, mesh, check_vma: bool, all_names: tuple[AxisName, ...]
-             ) -> HiPspec:
+             ) -> HipSpec:
     assert False, "must override"
 
 
@@ -888,7 +888,6 @@ class Static:
   val: Any
 
 class MappingSpec: pass
-class HiPspec:
-  def to_lo(self) -> HiPspec: assert False, "must override"
-  def to_tangent_spec(self) -> HiPspec: assert False, "must override"
-  def to_ct_spec(self) -> HiPspec: assert False, "must override"
+class HipSpec:
+  def to_lo(self) -> HipSpec: assert False, "must override"
+  def to_cotangent_spec(self) -> HipSpec: assert False, "must override"
