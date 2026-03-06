@@ -294,7 +294,7 @@ def TPU_SortOp : TPU_Op<"sort", [Pure]> {
 def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
-    AnyType:$base,
+    AnyMemRef:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
     Optional<AnyType>:$mask,
@@ -308,7 +308,7 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
 
 def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let arguments = (ins
-    AnyType:$base,
+    AnyMemRef:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
     DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
