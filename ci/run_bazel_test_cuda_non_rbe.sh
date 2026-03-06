@@ -88,16 +88,6 @@ else
     TEST_STRATEGY=""
 fi
 
-# Enable hermetic UMD 13.0 for NVIDIA drivers older than 580.
-driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)
-driver_major_version=${driver_version%%.*}
-if [[ "$driver_major_version" -lt "580" ]]; then
-  echo "NVIDIA driver version ($driver_version) is older than 580."
-  echo "Enabling hermetic UMD 13.0."
-  TEST_CONFIG="$TEST_CONFIG --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.0"
-fi
-
-
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
 set +e
@@ -111,6 +101,7 @@ bazel test --config=$TEST_CONFIG \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       $OVERRIDE_XLA_REPO \
+      --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -141,6 +132,7 @@ bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
       $OVERRIDE_XLA_REPO \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
