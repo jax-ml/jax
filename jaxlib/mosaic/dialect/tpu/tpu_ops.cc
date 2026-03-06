@@ -270,6 +270,23 @@ struct MemRefSliceFoldConstantDynamicDim
   }
 };
 
+OpFoldResult MemRefSliceOp::fold(FoldAdaptor adaptor) {
+  if (!getDynamicSizes().empty()) {
+    return nullptr;
+  }
+  if (getMemRef().getType() != getType()) {
+    return nullptr;
+  }
+  for (Value idx : getBaseIdx()) {
+    APInt constant_value;
+    if (!matchPattern(idx, m_ConstantInt(&constant_value)) ||
+        constant_value != 0) {
+      return nullptr;
+    }
+  }
+  return getMemRef();
+}
+
 void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
   results.add<MemRefSliceFoldConstantDynamicDim>(context);

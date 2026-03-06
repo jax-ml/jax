@@ -1150,6 +1150,7 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]>
   }];
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
 
 def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
