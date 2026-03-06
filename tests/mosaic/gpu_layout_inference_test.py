@@ -382,6 +382,17 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(red, [in_layout, out_layout])
     self.checkOutLayouts(red, [out_layout])
 
+  def test_reduce_of_untiled_dimension_does_not_reduce_layout(self):
+    layout = mgpu.WGMMA_LAYOUT
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      x, acc = undefs(ir.VectorType.get((128, 128, 128), f32), ir.VectorType.get((128, 128), f32))
+      x = layout_cast(x, layout)
+      red = vector.MultiDimReductionOp(vector.CombiningKind.ADD, x, acc, [0])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(red, [layout, layout])
+    self.checkOutLayouts(red, [layout])
+
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()

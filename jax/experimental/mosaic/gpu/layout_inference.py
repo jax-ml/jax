@@ -1018,7 +1018,7 @@ def _reduction_constraints(
     reduction_dims: tuple[int, ...],
 ) -> list[cs.Constraint]:
   return [
-      cs.Equals(lhs=smaller, rhs=cs.Reduce(larger, reduction_dims)),
+      cs.Equals(lhs=smaller, rhs=cs.Reduce(larger, reduction_dims, len(larger.key.shape))),
       # TODO(allanrenucci): Remove once we support reduction of strided layouts.
       cs.NotOfType(larger, fa.WGStridedFragLayout),
   ]

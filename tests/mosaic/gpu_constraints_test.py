@@ -169,13 +169,20 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_reduce_reduce_expression_reduces_layout(self, axes, expected_layout):
     tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
-        cs.reduce_expression(cs.Reduce(tiled_layout, axes=axes), {}),
+        cs.reduce_expression(cs.Reduce(tiled_layout, axes=axes, rank=2), {}),
         RL(expected_layout),
+    )
+
+  def test_reduce_reduce_expression_does_not_reduce_tiled_layout_if_axes_are_not_tiled(self):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        cs.reduce_expression(cs.Reduce(layout, axes=(0,), rank=3), {}),
+        layout,
     )
 
   def test_reduce_reduce_expression_with_unsupported_layout_is_irreducible(self):
     layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
-    expr = cs.Reduce(layout, axes=(0,))
+    expr = cs.Reduce(layout, axes=(0,), rank=2)
     self.assertEqual(cs.reduce_expression(expr, {}), expr)
 
   def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):

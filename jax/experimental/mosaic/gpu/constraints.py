@@ -90,9 +90,12 @@ class SMEMTiling(Constant):
 class Reduce:
   expression: Expression
   axes: tuple[int, ...]
+  # The rank of the shape of the input to the reduction. It is necessary to
+  # know this in order to reduce `TiledLayout`s correctly.
+  rank: int
 
   def __str__(self):
-    return f"Reduce([{self.axes}], {self.expression})"
+    return f"Reduce([{self.axes}], {self.expression}, rank={self.rank})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -201,15 +204,21 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case Reduce(expression=expr, axes=axes):
+    case Reduce(expression=expr, axes=axes, rank=rank):
       reduced_expr = reduce_expression(expr, assignments)
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
         case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
-          return RegisterLayout(layout.reduce(axes))
+          num_untiled_dims = rank - len(layout.base_tile_shape)
+          reduced_tiling_axes = [
+              a - num_untiled_dims for a in axes if a >= num_untiled_dims
+          ]
+          if reduced_tiling_axes:
+            return RegisterLayout(layout.reduce(reduced_tiling_axes))
+          return RegisterLayout(layout)
         case _:
-          return Reduce(expression=reduced_expr, axes=axes)
+          return Reduce(expression=reduced_expr, axes=axes, rank=rank)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
