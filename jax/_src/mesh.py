@@ -460,7 +460,7 @@ thread_resources = _ThreadResourcesLocalState()
 @dataclasses.dataclass(frozen=True)
 class AbstractDevice:
   device_kind: str
-  num_cores: int | None
+  num_cores: int | None  # An int on TPU and GPU
 
   def __repr__(self):
     return (f"AbstractDevice({self._repr()})")
@@ -492,7 +492,7 @@ class AbstractMesh(BaseMesh):
 
   def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
                axis_types: AxisType | tuple[AxisType, ...] | None = None,
-               *, abstract_device=None):
+               *, abstract_device: AbstractDevice | None = None):
     self.axis_sizes = axis_sizes
     self.axis_names = axis_names
     self.axis_types = _normalize_axis_types(
