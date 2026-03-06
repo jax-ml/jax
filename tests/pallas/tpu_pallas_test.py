@@ -2687,7 +2687,7 @@ class PallasCallTest(ptu.PallasTPUTest):
     else:
       with self.assertRaisesRegex(
           error_handling.MosaicError,
-          'Not implemented: Only i32 addition is supported.',
+          r'Not implemented: Only i32 (addition|arith.addi) is supported',
       ):
         _ = pl.pallas_call(
             kernel,
@@ -2893,7 +2893,8 @@ class PallasScalarIOpsTest(ptu.PallasTPUTest):
     else:
       with self.assertRaisesRegex(
           error_handling.MosaicError,
-          'Not implemented: Only i1 and i32 scalars are supported.',
+          r'Not implemented: (Only i1 and i32 scalars are supported|Only i32'
+          r' arith\..* is supported)',
       ):
         _ = pl.pallas_call(
             kernel,
