@@ -1,0 +1,390 @@
+name: CI - FFI GPU Before/After
+
+on:
+  workflow_call:
+    inputs:
+      base-ref:
+        description: "Base git ref/sha to test (before)"
+        type: string
+        default: "origin/main~1"
+      head-ref:
+        description: "Head git ref/sha to test (after)"
+        type: string
+        default: "HEAD"
+      base-xla-commit:
+        description: "Optional XLA commit override for base run"
+        type: string
+        default: ""
+      head-xla-commit:
+        description: "Optional XLA commit override for head run"
+        type: string
+        default: ""
+      runner:
+        description: "Runner to use"
+        type: string
+        default: "linux-x86-g2-48-l4-4gpu"
+      python:
+        description: "Hermetic Python version"
+        type: string
+        default: "3.11"
+      cuda-version:
+        description: "CUDA version"
+        type: string
+        default: "13"
+      enable-x64:
+        description: "Enable x64 mode"
+        type: string
+        default: "0"
+      build-jax:
+        description: "Value for --//jax:build_jax"
+        type: string
+        default: "wheel"
+      build-jaxlib:
+        description: "Value for --//jax:build_jaxlib"
+        type: string
+        default: "wheel"
+      clone-main-xla:
+        description: "Clone XLA at HEAD when XLA commit override is not set"
+        type: string
+        default: "0"
+      expected-base:
+        description: "Expected base status"
+        type: string
+        default: "any"
+      expected-head:
+        description: "Expected head status"
+        type: string
+        default: "any"
+      halt-for-connection:
+        description: "Pause job for remote debugging"
+        type: string
+        default: "no"
+  workflow_dispatch:
+    inputs:
+      base-ref:
+        description: "Base git ref/sha to test (before)"
+        type: string
+        default: "origin/main~1"
+      head-ref:
+        description: "Head git ref/sha to test (after)"
+        type: string
+        default: "HEAD"
+      base-xla-commit:
+        description: "Optional XLA commit override for base run"
+        type: string
+        default: ""
+      head-xla-commit:
+        description: "Optional XLA commit override for head run"
+        type: string
+        default: ""
+      runner:
+        description: "Runner to use"
+        type: choice
+        default: "linux-x86-g2-48-l4-4gpu"
+        options:
+        - "linux-x86-g2-48-l4-4gpu"
+        - "linux-x86-a3-8g-h100-8gpu"
+        - "linux-x86-a4-224-b200-1gpu"
+      python:
+        description: "Hermetic Python version"
+        type: choice
+        default: "3.11"
+        options:
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.13-nogil"
+        - "3.14"
+        - "3.14-nogil"
+      cuda-version:
+        description: "CUDA version"
+        type: choice
+        default: "13"
+        options:
+        - "12"
+        - "13"
+      enable-x64:
+        description: "Enable x64 mode"
+        type: choice
+        default: "0"
+        options:
+        - "0"
+        - "1"
+      build-jax:
+        description: "Value for --//jax:build_jax"
+        type: choice
+        default: "wheel"
+        options:
+        - "true"
+        - "wheel"
+      build-jaxlib:
+        description: "Value for --//jax:build_jaxlib"
+        type: choice
+        default: "wheel"
+        options:
+        - "true"
+        - "wheel"
+      clone-main-xla:
+        description: "Clone XLA at HEAD when XLA commit override is not set"
+        type: choice
+        default: "0"
+        options:
+        - "0"
+        - "1"
+      expected-base:
+        description: "Expected base status"
+        type: choice
+        default: "any"
+        options:
+        - "any"
+        - "pass"
+        - "fail"
+      expected-head:
+        description: "Expected head status"
+        type: choice
+        default: "any"
+        options:
+        - "any"
+        - "pass"
+        - "fail"
+      halt-for-connection:
+        description: "Pause job for remote debugging"
+        type: choice
+        default: "no"
+        options:
+        - "yes"
+        - "no"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  before-after:
+    if: github.event.repository.fork == false
+    runs-on: ${{ github.event_name == 'pull_request' && 'linux-x86-g2-48-l4-4gpu' || inputs.runner }}
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event_name == 'pull_request' && '3.11' || inputs.python }}
+      JAXCI_CUDA_VERSION: ${{ github.event_name == 'pull_request' && '13' || inputs.cuda-version }}
+      JAXCI_ENABLE_X64: ${{ github.event_name == 'pull_request' && '0' || inputs.enable-x64 }}
+      JAXCI_BUILD_JAX: ${{ github.event_name == 'pull_request' && 'wheel' || inputs.build-jax }}
+      JAXCI_BUILD_JAXLIB: ${{ github.event_name == 'pull_request' && 'wheel' || inputs.build-jaxlib }}
+      JAXCI_CLONE_MAIN_XLA: ${{ github.event_name == 'pull_request' && '0' || inputs.clone-main-xla }}
+      EXPECTED_BASE: ${{ github.event_name == 'pull_request' && 'any' || inputs.expected-base }}
+      EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && 'any' || inputs.expected-head }}
+      HALT_FOR_CONNECTION: ${{ github.event_name == 'pull_request' && 'no' || inputs.halt-for-connection }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Configure git identity and safe directories
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ env.HALT_FOR_CONNECTION }}
+
+      - name: Resolve refs
+        id: refs
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="${{ github.event.pull_request.base.sha }}"
+            head_ref="${{ github.event.pull_request.head.sha }}"
+            base_xla=""
+            head_xla=""
+          else
+            base_ref="${{ inputs.base-ref }}"
+            head_ref="${{ inputs.head-ref }}"
+            base_xla="${{ inputs.base-xla-commit }}"
+            head_xla="${{ inputs.head-xla-commit }}"
+          fi
+
+          resolve_ref() {
+            local ref="$1"
+            if git rev-parse --verify "${ref}^{commit}" >/dev/null 2>&1; then
+              git rev-parse "${ref}^{commit}"
+              return 0
+            fi
+            if git rev-parse --verify "origin/${ref}^{commit}" >/dev/null 2>&1; then
+              git rev-parse "origin/${ref}^{commit}"
+              return 0
+            fi
+            echo "Could not resolve ref: ${ref}" >&2
+            return 1
+          }
+
+          base_sha="$(resolve_ref "${base_ref}")"
+          head_sha="$(resolve_ref "${head_ref}")"
+
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          echo "base_xla=${base_xla}" >> "$GITHUB_OUTPUT"
+          echo "head_xla=${head_xla}" >> "$GITHUB_OUTPUT"
+
+      - name: Run //tests:ffi_test_gpu for before/after
+        id: run
+        timeout-minutes: 240
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local label="$1"
+            local sha="$2"
+            local xla_commit="$3"
+            local workdir="$RUNNER_TEMP/${label}-${sha:0:12}"
+
+            rm -rf "$workdir"
+            git worktree add --detach "$workdir" "$sha"
+            git config --global --add safe.directory "$workdir"
+            git -C "$workdir" config user.name "github-actions[bot]"
+            git -C "$workdir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            pushd "$workdir" >/dev/null
+
+            source ci/envs/default.env
+
+            export JAXCI_HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION}"
+            export JAXCI_CUDA_VERSION="${JAXCI_CUDA_VERSION}"
+            export JAXCI_ENABLE_X64="${JAXCI_ENABLE_X64}"
+            export JAXCI_BUILD_JAX="${JAXCI_BUILD_JAX}"
+            export JAXCI_BUILD_JAXLIB="${JAXCI_BUILD_JAXLIB}"
+            export JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=0
+
+            if [[ -n "${xla_commit}" ]]; then
+              export JAXCI_XLA_COMMIT="${xla_commit}"
+              export JAXCI_CLONE_MAIN_XLA=1
+            fi
+
+            source ci/utilities/setup_build_environment.sh
+
+            if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+              JAXCI_HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft"
+              FREETHREADED_FLAG_VALUE="yes"
+            else
+              FREETHREADED_FLAG_VALUE="no"
+            fi
+
+            OVERRIDE_XLA_REPO=""
+            if [[ "${JAXCI_CLONE_MAIN_XLA}" == "1" || -n "${JAXCI_XLA_COMMIT:-}" ]]; then
+              OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+            fi
+
+            cuda_major_version="${JAXCI_CUDA_VERSION%%.*}"
+            if [[ "${JAXCI_BUILD_JAXLIB}" == "wheel" ]]; then
+              TEST_CONFIG="rbe_linux_x86_64_cuda${cuda_major_version}"
+              TEST_STRATEGY="--strategy=TestRunner=local"
+              CACHE_OPTION=""
+            else
+              TEST_CONFIG="ci_linux_x86_64_cuda${cuda_major_version}"
+              TEST_STRATEGY=""
+              CACHE_OPTION="--config=ci_rbe_cache"
+            fi
+
+            if command -v nvidia-smi >/dev/null 2>&1; then
+              driver_version="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)"
+              driver_major_version="${driver_version%%.*}"
+              if [[ "$driver_major_version" -lt "580" ]]; then
+                TEST_CONFIG="${TEST_CONFIG} --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.0"
+              fi
+            fi
+
+            gpu_count="$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)"
+
+            set +e
+            bazel test --config=${TEST_CONFIG} \
+              ${CACHE_OPTION} \
+              --repo_env=HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION}" \
+              --@rules_python//python/config_settings:py_freethreaded="${FREETHREADED_FLAG_VALUE}" \
+              ${OVERRIDE_XLA_REPO} \
+              --//jax:build_jaxlib=${JAXCI_BUILD_JAXLIB} \
+              --//jax:build_jax=${JAXCI_BUILD_JAX} \
+              --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+              --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+              --test_output=errors \
+              --test_env=JAX_ACCELERATOR_COUNT="${gpu_count}" \
+              --test_env=JAX_TESTS_PER_ACCELERATOR=1 \
+              --local_test_jobs=1 \
+              --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+              --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+              --test_env=JAX_SKIP_SLOW_TESTS=true \
+              --action_env=JAX_ENABLE_X64="${JAXCI_ENABLE_X64}" \
+              --action_env=NCCL_DEBUG=WARN \
+              --color=yes \
+              --config=cuda_libraries_from_stubs \
+              --config=hermetic_cuda_umd \
+              ${TEST_STRATEGY} \
+              //tests:ffi_test_gpu
+            rc=$?
+            set -e
+
+            if [[ $rc -eq 0 ]]; then
+              status="pass"
+            else
+              status="fail"
+            fi
+
+            echo "${label}_status=${status}" >> "$GITHUB_OUTPUT"
+            echo "${label}_exit_code=${rc}" >> "$GITHUB_OUTPUT"
+
+            popd >/dev/null
+            git worktree remove --force "$workdir"
+          }
+
+          run_case "base" "${{ steps.refs.outputs.base_sha }}" "${{ steps.refs.outputs.base_xla }}"
+          run_case "head" "${{ steps.refs.outputs.head_sha }}" "${{ steps.refs.outputs.head_xla }}"
+
+      - name: Summarize result
+        run: |
+          {
+            echo "## FFI GPU Before/After"
+            echo ""
+            echo "- Base SHA: \`${{ steps.refs.outputs.base_sha }}\`"
+            echo "- Head SHA: \`${{ steps.refs.outputs.head_sha }}\`"
+            echo "- Base XLA commit override: \`${{ steps.refs.outputs.base_xla || 'none' }}\`"
+            echo "- Head XLA commit override: \`${{ steps.refs.outputs.head_xla || 'none' }}\`"
+            echo "- Python: \`${{ env.JAXCI_HERMETIC_PYTHON_VERSION }}\`"
+            echo "- CUDA: \`${{ env.JAXCI_CUDA_VERSION }}\`"
+            echo "- build_jax: \`${{ env.JAXCI_BUILD_JAX }}\`"
+            echo "- build_jaxlib: \`${{ env.JAXCI_BUILD_JAXLIB }}\`"
+            echo ""
+            echo "| Case | Status | Exit code |"
+            echo "| --- | --- | --- |"
+            echo "| before (base) | \`${{ steps.run.outputs.base_status }}\` | \`${{ steps.run.outputs.base_exit_code }}\` |"
+            echo "| after (head) | \`${{ steps.run.outputs.head_status }}\` | \`${{ steps.run.outputs.head_exit_code }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check expected statuses
+        run: |
+          set -euo pipefail
+          base_status="${{ steps.run.outputs.base_status }}"
+          head_status="${{ steps.run.outputs.head_status }}"
+          expected_base="${EXPECTED_BASE}"
+          expected_head="${EXPECTED_HEAD}"
+
+          if [[ "${expected_base}" != "any" && "${base_status}" != "${expected_base}" ]]; then
+            echo "Base status mismatch: expected ${expected_base}, got ${base_status}" >&2
+            exit 1
+          fi
+          if [[ "${expected_head}" != "any" && "${head_status}" != "${expected_head}" ]]; then
+            echo "Head status mismatch: expected ${expected_head}, got ${head_status}" >&2
+            exit 1
+          fi
