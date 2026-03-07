@@ -1352,6 +1352,143 @@ def _scan_state_partial_discharge_rule(
   assert next(refvals_iter, None) is None
   return refvals_out, [*carry, *ys]
 
+
+def _scan_chlo_lowering(
+    ctx,
+    *args,
+    reverse,
+    length,
+    num_consts,
+    num_carry,
+    jaxpr,
+    linear,
+    unroll,
+    _split_transpose,
+):
+  num_xs = len(args) - num_consts - num_carry
+  if (
+      unroll > 1
+      or any(linear)
+      or _split_transpose
+      or (num_consts == 0 and num_xs == 0)
+  ):
+    return mlir.lower_fun(_scan_impl, multiple_results=True)(
+        ctx.replace(const_lowering=None),
+        *args,
+        reverse=reverse,
+        length=length,
+        num_consts=num_consts,
+        num_carry=num_carry,
+        jaxpr=jaxpr,
+        linear=linear,
+        unroll=unroll,
+        _split_transpose=_split_transpose,
+    )
+
+  consts, inits, xs = util.split_list(args, [num_consts, num_carry])
+
+  # We must also broadcast any dimension variables (for dynamic shapes) into the
+  # loop, because the loop body is an isolated region.
+  dim_vars = list(ctx.dim_var_values)
+  num_dim_vars = len(dim_vars)
+
+  broadcasted_consts = []
+  for const in consts + dim_vars:
+    c_type = const.type
+    dims = list(range(1, c_type.rank + 1))
+    new_shape = [length] + list(c_type.shape)
+    new_type = ir.RankedTensorType.get(new_shape, c_type.element_type)
+    bcast = hlo.BroadcastInDimOp(
+        new_type, const, ir.DenseI64ArrayAttr.get(dims)
+    ).result
+    broadcasted_consts.append(bcast)
+
+  inputs = broadcasted_consts + xs
+
+  carry_out_avals, y_out_avals = util.split_list(jaxpr.out_avals, [num_carry])
+
+  # Scan output types:
+  scan_output_types = []
+  for aval in y_out_avals:
+    elem_type = mlir.aval_to_ir_type(aval)
+    new_shape = [length] + list(elem_type.shape)
+    new_type = ir.RankedTensorType.get(new_shape, elem_type.element_type)
+    scan_output_types.append(new_type)
+
+  const_avals, init_avals, _ = util.split_list(
+      ctx.avals_in, [num_consts, num_carry]
+  )
+  carry_out_types = [mlir.aval_to_ir_type(aval) for aval in carry_out_avals]
+  new_inits = []
+  for init, init_aval, target_aval, target_type in zip(
+      inits, init_avals, carry_out_avals, carry_out_types
+  ):
+    if init.type != target_type:
+      init = mlir.convert_hlo(ctx, init, init_aval, target_aval)
+    new_inits.append(init)
+  inits = new_inits
+
+  scan_op = chlo.ScanOp(
+      scan_output_types,
+      carry_out_types,
+      inputs,
+      inits,
+      dimension=ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 0),
+      is_reverse=ir.BoolAttr.get(reverse),
+  )
+
+  scan_input_element_types = []
+  for v in inputs:
+    v_type = v.type
+    new_shape = list(v_type.shape)[1:]
+    new_type = ir.RankedTensorType.get(new_shape, v_type.element_type)
+    scan_input_element_types.append(new_type)
+
+  # CHLO Body args: inputs..., inits...
+  body_block = scan_op.body.blocks.append(
+      *scan_input_element_types, *carry_out_types
+  )
+
+  with ir.InsertionPoint(body_block):
+    input_args = body_block.arguments[: len(inputs)]
+    carry_args = body_block.arguments[len(inputs) :]
+
+    const_args = input_args[:num_consts]
+    dim_var_args = input_args[num_consts : num_consts + num_dim_vars]
+    x_args = input_args[num_consts + num_dim_vars :]
+
+    res, _ = mlir.call_lowering(
+        "scan_body",
+        jaxpr,
+        None,
+        ctx.module_context,
+        jaxpr.in_avals,
+        jaxpr.out_avals,
+        mlir.TokenSet(),
+        *const_args,
+        *carry_args,
+        *x_args,
+        dim_var_values=dim_var_args,
+        const_lowering=None
+    )
+
+    new_carries = res[:num_carry]
+    new_ys = res[num_carry:]
+
+    # chlo.scan body returns [outputs..., new_carries...]
+    hlo.return_(new_ys + new_carries)
+
+  # Extract results
+  scan_outputs = scan_op.results
+  num_ys = len(y_out_avals)
+
+  # Results are [stacked_ys..., final_carries...]
+  stacked_ys = scan_outputs[:num_ys]
+  final_carries = scan_outputs[num_ys:]
+
+  return list(final_carries) + list(stacked_ys)
+
+
 scan_p = core.Primitive("scan")
 scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 scan_p.multiple_results = True
@@ -1365,6 +1502,7 @@ pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 pxla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
+mlir.register_lowering(scan_p, _scan_chlo_lowering, platform='gpu')
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
