@@ -26,7 +26,6 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -885,9 +884,17 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
 // kernel.
 absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
+
+  struct CacheEntry {
+    absl::once_flag called_init;
+    absl::StatusOr<void*> maybe_context =
+        absl::InternalError("Not initialized");
+  };
+
   struct Cache {
     absl::Mutex mutex;
-    absl::flat_hash_map<CacheKey, void*> contexts ABSL_GUARDED_BY(mutex);
+    absl::flat_hash_map<CacheKey, std::unique_ptr<CacheEntry>> contexts
+        ABSL_GUARDED_BY(mutex);
   };
   static absl::NoDestructor<Cache> cache;
 
@@ -895,15 +902,25 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   CUDA_RETURN_IF_ERROR(cuCtxGetCurrent(&ctx));
   CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
 
-  absl::MutexLock lock(cache->mutex);
-  auto it = cache->contexts.find(key);
-  if (it != cache->contexts.end()) {
-    VLOG(5) << "Found Mosaic GPU kernel in cache";
-    return it->second;
+  CacheEntry* entry;
+  {
+    absl::MutexLock lock(cache->mutex);
+    // Reuse the entry if exists, otherwise create a new empty one.
+    entry = cache->contexts.try_emplace(key, std::make_unique<CacheEntry>())
+                .first->second.get();
   }
-  TF_ASSIGN_OR_RETURN(void* context, InitKernel(*kernel));
-  cache->contexts.insert_or_assign(key, context);
-  return context;
+
+  bool did_initialize = false;
+  absl::call_once(entry->called_init, [&] {
+    entry->maybe_context = InitKernel(*kernel);
+    did_initialize = true;
+  });
+
+  if (!did_initialize && entry->maybe_context.ok()) {
+    VLOG(5) << "Found Mosaic GPU kernel in cache";
+  }
+
+  return entry->maybe_context;
 }
 
 // Structure stores data needed during the execution and filled during the
