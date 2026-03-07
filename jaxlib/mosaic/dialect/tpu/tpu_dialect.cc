@@ -165,7 +165,7 @@ struct MemRefDimOfSqueeze : public OpRewritePattern<memref::DimOp> {
     if (result_type.getDimSize(dim) != ShapedType::kDynamic) {
       return failure();
     }
-    MemRefType source_type = getMemRefType(squeeze_op.getInput());
+    MemRefType source_type = squeeze_op.getInput().getType();
     FAILUREOR_ASSIGN_OR_RETURN(
         SmallVector<int> squeezed,
         computeSqueezedDimsChecked(squeeze_op, source_type.getShape(),

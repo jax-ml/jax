@@ -293,8 +293,8 @@ void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
-  auto source_type = getMemRefType(getInput());
-  auto target_type = getType();
+  MemRefType source_type = getInput().getType();
+  MemRefType target_type = getType();
 
   if (target_type.getMemorySpace() != nullptr &&
       target_type.getMemorySpace() != source_type.getMemorySpace()) {
@@ -655,12 +655,12 @@ LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
 }
 
 LogicalResult StridedLoadOp::verify() {
-  return verifyStridedOp<StridedLoadOp>(*this, getMemRefType(getBase()),
-                                        getType(), /*min_stride=*/0);
+  return verifyStridedOp<StridedLoadOp>(*this, getBase().getType(), getType(),
+                                        /*min_stride=*/0);
 }
 
 LogicalResult StridedStoreOp::verify() {
-  return verifyStridedOp<StridedStoreOp>(*this, getMemRefType(getBase()),
+  return verifyStridedOp<StridedStoreOp>(*this, getBase().getType(),
                                          getValueToStore().getType(),
                                          /*min_stride=*/1);
 }
@@ -1208,7 +1208,7 @@ LogicalResult SortOp::verify() {
 }
 
 LogicalResult GetBarrierSemaphoreOp::verify() {
-  auto sem_type = getMemRefType(getResult());
+  MemRefType sem_type = getResult().getType();
   if (sem_type.getRank() != 0) {
     emitOpError("Barrier semaphore reference must be rank 0");
     return failure();
@@ -1224,7 +1224,7 @@ void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
 }
 
 LogicalResult SemaphoreSignalOp::verify() {
-  auto sem_type = getMemRefType(getSemaphore());
+  MemRefType sem_type = getSemaphore().getType();
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
   }
@@ -1250,7 +1250,7 @@ LogicalResult SemaphoreSignalOp::verify() {
 }
 
 LogicalResult SemaphoreWaitOp::verify() {
-  auto sem_type = getMemRefType(getSemaphore());
+  MemRefType sem_type = getSemaphore().getType();
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
   }
@@ -1535,7 +1535,7 @@ void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
 }
 
 LogicalResult WaitDMA2Op::verify() {
-  auto sem_type = getMemRefType(getSemaphore());
+  MemRefType sem_type = getSemaphore().getType();
   if (sem_type.getRank() != 0) {
     return emitOpError("DMA wait semaphore must be rank 0");
   }
