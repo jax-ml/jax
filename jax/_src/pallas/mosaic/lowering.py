@@ -3785,7 +3785,9 @@ def _bitcast_convert_type_lowering_rule(
   new_bitwidth = dtypes.itemsize_bits(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
-  return tpu.bitcast(ctx.aval_to_ir_type(out_aval), x)
+  if in_aval.shape:
+    return tpu.bitcast(ctx.aval_to_ir_type(out_aval), x)
+  return arith.bitcast(ctx.aval_to_ir_type(out_aval), x)
 
 
 def _alloc_value(
