@@ -1981,10 +1981,8 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(\(NamedSharding\(.*\), "
-        r"NamedSharding\(.*\)\), NamedSharding\(.*\)\) for value tree "
-        r"PyTreeDef\(\(\*, \(\*, \*\)\)\)."
+        r"(?s)device_put device specification must be a tree prefix of the "
+        r"corresponding value;.*Mismatch details"
     ):
       jax.device_put((x, (y, z)), device=((s1, s2), s2))
 
@@ -2002,11 +2000,26 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(NamedSharding\(.*\), "
-        r"NamedSharding\(.*\)\) for value tree PyTreeDef\(\(\*, \*, \*\)\)."
+        r"(?s)device_put device specification must be a tree prefix of the "
+        r"corresponding value;.*Mismatch details"
     ):
       jax.device_put((x, y, z), device=(s1, s2))
+
+  def test_device_put_mismatched_tree_shows_mismatch_detail(self):
+    x = {"a": jnp.arange(2), "b": jnp.arange(3)}
+    with self.assertRaisesRegex(
+        ValueError,
+        r"(?s)device_put device specification must be a tree prefix.*"
+        r"Mismatch details.*different types",
+    ):
+      jax.device_put(x, device={"a": None, "b": (None, None)})
+
+  def test_device_put_mismatched_tree_shows_all_mismatches(self):
+    x = {"a": jnp.arange(2), "b": jnp.arange(3)}
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)Mismatch details \(2 found\)"
+    ):
+      jax.device_put(x, device={"a": [None, None], "b": (None, None)})
 
   def test_internal_device_put_with_device(self):
     # Hitting the cache for a single-device jitted execution while using a numpy
@@ -3378,9 +3391,8 @@ class APITest(jtu.JaxTestCase):
     value_tree = jnp.ones(3)
     self.assertRaisesRegex(
         ValueError,
-        "vmap in_axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(\[0\],\) for value tree "
-        + re.escape(f"{jax.tree.structure((value_tree,))}."),
+        r"(?s)vmap in_axes specification must be a tree prefix of the "
+        r"corresponding value;.*Mismatch details.*different types",
         lambda: api.vmap(lambda x: x, in_axes=([0],))(value_tree)
     )
 

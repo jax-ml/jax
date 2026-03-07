@@ -367,9 +367,17 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
           hint += (f" In particular, you're passing in a single argument which "
                    f"means that {name} might need to be wrapped in "
                    f"a singleton tuple.")
-    raise ValueError(f"{name} specification must be a tree prefix of the "
-                     f"corresponding value, got specification {axis_tree} "
-                     f"for value tree {treedef}.{hint}") from None
+    dummy_tree = tree_unflatten(treedef, [PytreeLeaf()] * treedef.num_leaves)
+    errors = prefix_errors(axis_tree, dummy_tree)
+    if errors:
+      details = "\n  ".join(e(name).args[0] for e in errors)
+      prefix_err_msg = (
+          f"\n  Mismatch details ({len(errors)} found):\n  {details}")
+      raise ValueError(
+          f"{name} specification must be a tree prefix of the "
+          f"corresponding value; {hint}{prefix_err_msg}") from None
+    # At this point we've failed to find a tree prefix error.
+    assert False, "unreachable code"
   assert len(axes) == treedef.num_leaves
   return axes
 
