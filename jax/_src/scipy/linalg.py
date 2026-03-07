@@ -29,7 +29,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes, promote_dtypes_inexact,
+    check_arraylike, ensure_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike
@@ -2254,6 +2254,77 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+@jit
+def companion(a: ArrayLike) -> Array:
+  r"""Create a companion matrix.
+
+  JAX implementation of :func:`scipy.linalg.companion`.
+
+  The companion matrix is associated with a polynomial whose coefficients
+  are given in ``a``. The eigenvalues of the companion matrix are the roots
+  of the polynomial.
+
+  Args:
+    a: array of shape ``(..., n)`` containing polynomial coefficients in descending
+      order. The length of ``a`` along the last axis must be at least 2.
+
+  Returns:
+    A companion matrix of shape ``(..., n-1, n-1)``. For batch input, each slice
+    of shape ``(n-1, n-1)`` along the last two dimensions of the output
+    corresponds with a slice of shape ``(n,)`` along the last dimension of the input.
+
+  Note:
+    If ``a[..., 0] == 0``, the result will contain inf values.
+
+  Raises:
+    ValueError: if ``a`` has fewer than 2 elements along the last axis.
+
+  Examples:
+    Create a companion matrix for the polynomial ``x^3 - 10x^2 + 31x - 30``:
+
+    >>> a = jnp.array([1., -10., 31., -30.])
+    >>> C = jax.scipy.linalg.companion(a)
+    >>> C
+    Array([[ 10., -31.,  30.],
+           [  1.,   0.,   0.],
+           [  0.,   1.,   0.]], dtype=float32)
+
+    The eigenvalues of the companion matrix are the roots of the polynomial:
+
+    >>> jnp.linalg.eigvals(C)
+    Array([5.+0.j, 3.+0.j, 2.+0.j], dtype=complex64)
+
+    Batch processing is supported:
+
+    >>> a_batch = jnp.array([[1., 2., 3.], [2., 5., -10.]])
+    >>> C_batch = jax.scipy.linalg.companion(a_batch)
+    >>> C_batch.shape
+    (2, 2, 2)
+  """
+  a = ensure_arraylike("companion", a)
+  a = jnp.atleast_1d(a)
+  
+  n = a.shape[-1]
+  if n < 2:
+    raise ValueError(
+        "The length of `a` along the last axis must be at least 2."
+    )
+  
+  # Division by zero will naturally produce inf, which is appropriate
+  # for polynomial roots computation
+  first_row = -a[..., 1:] / a[..., 0:1]
+  
+  # Create the full matrix
+  c = jnp.zeros((*a.shape[:-1], n - 1, n - 1), dtype=first_row.dtype)
+  c = c.at[..., 0, :].set(first_row)
+  
+  # Set the subdiagonal to 1
+  if n > 2:
+    c = c.at[..., jnp.arange(1, n - 1), jnp.arange(0, n - 2)].set(1)
+  
+  return c
 
 
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
