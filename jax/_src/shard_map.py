@@ -1790,7 +1790,7 @@ def _shard_map_transpose(out_cts, *args,
     in_cts = [ad.Zero(x.aval) if type(x) is ad.Zero else x if check_vma
               else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
               for sp, x in zip(in_ct_specs, in_cts)]
-    res_zeros = [ad_util.zero_from_primal(r) for r in res]
+    res_zeros = [ad_util.ct_zero_from_primal(r) for r in res]
     return merge_lists(in_undef, res_zeros, in_cts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
   fun_trans_callable.__name__ = f"transpose({jaxpr.debug_info.func_name})"

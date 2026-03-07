@@ -130,11 +130,14 @@ class SymbolicZero:
 
 def zero_from_primal(val, symbolic_zeros=False):
   def f(x):
-    tangent_aval = typeof(x).to_tangent_aval()
-    if symbolic_zeros:
-      return SymbolicZero(tangent_aval)
-    else:
-      return zeros_like_aval(tangent_aval)
+    t_aval = typeof(x).to_tangent_aval()
+    return SymbolicZero(t_aval) if symbolic_zeros else zeros_like_aval(t_aval)
+  return tree_map(f, val)
+
+def ct_zero_from_primal(val, symbolic_zeros=False):
+  def f(x):
+    ct_aval = typeof(x).to_ct_aval()
+    return SymbolicZero(ct_aval) if symbolic_zeros else zeros_like_aval(ct_aval)
   return tree_map(f, val)
 
 JaxTypeOrTracer = Any
