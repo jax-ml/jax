@@ -2256,6 +2256,217 @@ def _binom(n, k):
   return lax.exp(a - b - c)
 
 
+@jit
+def companion(a: ArrayLike) -> Array:
+  r"""Create a companion matrix from polynomial coefficients.
+
+  JAX implementation of :func:`scipy.linalg.companion`.
+
+  The companion matrix of the polynomial
+
+  .. math::
+
+     p(x) = a_0 x^{n-1} + a_1 x^{n-2} + \cdots + a_{n-1}
+
+  is the :math:`(n-1) \times (n-1)` matrix:
+
+  .. math::
+
+     C = \begin{pmatrix}
+       -a_1/a_0 & -a_2/a_0 & \cdots & -a_{n-1}/a_0 \\
+       1 & 0 & \cdots & 0 \\
+       0 & 1 & \cdots & 0 \\
+       \vdots & \vdots & \ddots & \vdots \\
+       0 & 0 & \cdots & 0
+     \end{pmatrix}
+
+  Args:
+    a: 1-D array of polynomial coefficients of length at least 2.
+
+  Returns:
+    The companion matrix of shape ``(n-1, n-1)``.
+
+  Examples:
+    >>> jax.scipy.linalg.companion(jnp.array([1, -10, 31, -30]))
+    Array([[ 10., -31.,  30.],
+           [  1.,   0.,   0.],
+           [  0.,   1.,   0.]], dtype=float32)
+  """
+  check_arraylike("companion", a)
+  a, = promote_dtypes_inexact(a)
+  if a.ndim != 1:
+    raise ValueError(f"Expected 1-D array, got shape {a.shape}")
+  if a.shape[0] < 2:
+    raise ValueError(f"Expected array of length >= 2, got length {a.shape[0]}")
+  n = a.shape[0] - 1
+  first_row = -a[1:] / a[0]
+  result = jnp.zeros((n, n), dtype=a.dtype)
+  result = result.at[0, :].set(first_row)
+  result = result.at[jnp.arange(1, n), jnp.arange(0, n - 1)].set(1)
+  return result
+
+
+@jit(static_argnames=("n", "scale",))
+def dft(n: int, scale: str | None = None) -> Array:
+  r"""Create a discrete Fourier transform matrix.
+
+  JAX implementation of :func:`scipy.linalg.dft`.
+
+  The DFT matrix of order :math:`n` is defined by:
+
+  .. math::
+
+     D_{ij} = \exp\left(-\frac{2 \pi \mathrm{i} \cdot ij}{n}\right)
+
+  for :math:`0 \le i, j < n`.
+
+  Args:
+    n: the size of the matrix to create.
+    scale: optional scaling. ``None`` for no scaling, ``'sqrtn'`` to divide
+      by :math:`\sqrt{n}`, ``'n'`` to divide by :math:`n`.
+
+  Returns:
+    A complex DFT matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.dft(2)
+    Array([[ 1.+0.j,  1.+0.j],
+           [ 1.+0.j, -1.+0.j]], dtype=complex64)
+    >>> jax.scipy.linalg.dft(2, scale='n')
+    Array([[ 0.5+0.j,  0.5+0.j],
+           [ 0.5+0.j, -0.5+0.j]], dtype=complex64)
+  """
+  if scale is not None and scale not in ('sqrtn', 'n'):
+    raise ValueError(f"Expected scale to be None, 'sqrtn', or 'n'; got {scale!r}")
+  i = lax.broadcasted_iota(float, (n, 1), 0)
+  j = lax.broadcasted_iota(float, (1, n), 1)
+  phase = -2 * np.pi * i * j / n
+  result = lax.exp(lax.complex(jnp.zeros_like(phase), phase))
+  if scale == 'sqrtn':
+    result = lax.div(result, lax.convert_element_type(np.sqrt(n), result.dtype))
+  elif scale == 'n':
+    result = lax.div(result, lax.convert_element_type(n, result.dtype))
+  return result
+
+
+@jit
+def fiedler(a: ArrayLike) -> Array:
+  r"""Create a symmetric Fiedler matrix.
+
+  JAX implementation of :func:`scipy.linalg.fiedler`.
+
+  The Fiedler matrix is defined by:
+
+  .. math::
+
+     F_{ij} = |a_i - a_j|
+
+  Args:
+    a: 1-D array of elements to use.
+
+  Returns:
+    A symmetric Fiedler matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.fiedler(jnp.array([1, 4, 12]))
+    Array([[ 0.,  3., 11.],
+           [ 3.,  0.,  8.],
+           [11.,  8.,  0.]], dtype=float32)
+  """
+  check_arraylike("fiedler", a)
+  a, = promote_dtypes_inexact(a)
+  if a.ndim != 1:
+    raise ValueError(f"Expected 1-D array, got shape {a.shape}")
+  return lax.abs(a[:, None] - a[None, :])
+
+
+@jit(static_argnames=("n", "dtype",))
+def hadamard(n: int, dtype: Any = int) -> Array:
+  r"""Create a Hadamard matrix of order n.
+
+  JAX implementation of :func:`scipy.linalg.hadamard`.
+
+  The Hadamard matrix is constructed using Sylvester's method:
+
+  .. math::
+
+     H_1 = \begin{pmatrix} 1 \end{pmatrix}, \quad
+     H_{2k} = \begin{pmatrix} H_k & H_k \\ H_k & -H_k \end{pmatrix}
+
+  Args:
+    n: the size of the matrix to create. Must be a positive power of 2.
+    dtype: the dtype of the output array (default ``int``).
+
+  Returns:
+    A Hadamard matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.hadamard(4)
+    Array([[ 1,  1,  1,  1],
+           [ 1, -1,  1, -1],
+           [ 1,  1, -1, -1],
+           [ 1, -1, -1,  1]], dtype=int32)
+  """
+  if n < 1 or (n & (n - 1)) != 0:
+    raise ValueError(f"n must be a positive power of 2, got {n}")
+  h = jnp.array([[1]], dtype=dtype)
+  while h.shape[0] < n:
+    h = jnp.block([[h, h], [h, -h]])
+  return h
+
+
+@jit
+def leslie(f: ArrayLike, s: ArrayLike) -> Array:
+  r"""Create a Leslie matrix for population dynamics.
+
+  JAX implementation of :func:`scipy.linalg.leslie`.
+
+  The Leslie matrix is defined as:
+
+  .. math::
+
+     L = \begin{pmatrix}
+       f_0 & f_1 & f_2 & \cdots & f_{n-1} \\
+       s_0 & 0 & 0 & \cdots & 0 \\
+       0 & s_1 & 0 & \cdots & 0 \\
+       \vdots & \vdots & \ddots & \ddots & \vdots \\
+       0 & 0 & \cdots & s_{n-2} & 0
+     \end{pmatrix}
+
+  Args:
+    f: 1-D array of fecundity coefficients of length N.
+    s: 1-D array of survival coefficients of length N-1.
+
+  Returns:
+    A Leslie matrix of shape ``(N, N)``.
+
+  Examples:
+    >>> jax.scipy.linalg.leslie(jnp.array([0.1, 2.0, 1.0, 0.1]),
+    ...                         jnp.array([0.2, 0.8, 0.7]))
+    Array([[0.1, 2. , 1. , 0.1],
+           [0.2, 0. , 0. , 0. ],
+           [0. , 0.8, 0. , 0. ],
+           [0. , 0. , 0.7, 0. ]], dtype=float32)
+  """
+  check_arraylike("leslie", f, s)
+  f, s = promote_dtypes(f, s)
+  if f.ndim != 1:
+    raise ValueError(f"Expected 1-D array for f, got shape {f.shape}")
+  if s.ndim != 1:
+    raise ValueError(f"Expected 1-D array for s, got shape {s.shape}")
+  if f.shape[0] < 1:
+    raise ValueError(f"Expected f to have length >= 1, got length {f.shape[0]}")
+  if s.shape[0] != f.shape[0] - 1:
+    raise ValueError(
+      f"Expected s to have length {f.shape[0] - 1} (len(f) - 1), "
+      f"got length {s.shape[0]}")
+  n = f.shape[0]
+  result = jnp.zeros((n, n), dtype=f.dtype)
+  result = result.at[0, :].set(f)
+  result = result.at[jnp.arange(1, n), jnp.arange(0, n - 1)].set(s)
+  return result
+
+
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
   """
   Solves the Sylvester equation using Bartels-Stewart algorithm

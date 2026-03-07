@@ -2526,6 +2526,62 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker)
 
+  @jtu.sample_product(
+    a=[[1, -10, 31, -30], [1, 2], [1, 0, 0, 1], [2, 4, -6]],
+  )
+  def testCompanion(self, a):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.companion, a=np.array(a, dtype=np.float32))
+    jsp_fun = partial(jsp.linalg.companion, a=jnp.array(a, dtype=jnp.float32))
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    n=[1, 2, 4, 8],
+    scale=[None, 'sqrtn', 'n'],
+  )
+  def testDft(self, n, scale):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.dft, n=n, scale=scale)
+    jsp_fun = partial(jsp.linalg.dft, n=n, scale=scale)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, atol=1e-5, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    a=[[1, 4, 12], [0], [1, 2, 3, 4, 5], [3.0, 1.0, 5.0]],
+  )
+  def testFiedler(self, a):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.fiedler, a=np.array(a, dtype=np.float32))
+    jsp_fun = partial(jsp.linalg.fiedler, a=jnp.array(a, dtype=jnp.float32))
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    n=[1, 2, 4, 8, 16],
+  )
+  def testHadamard(self, n):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.hadamard, n=n)
+    jsp_fun = partial(jsp.linalg.hadamard, n=n)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    fs=[([0.1, 2.0, 1.0, 0.1], [0.2, 0.8, 0.7]),
+        ([1.0, 1.0], [0.5]),
+        ([0.5, 1.5, 2.5], [0.3, 0.9])],
+  )
+  def testLeslie(self, fs):
+    f, s = fs
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.leslie, f=np.array(f, dtype=np.float32),
+                      s=np.array(s, dtype=np.float32))
+    jsp_fun = partial(jsp.linalg.leslie, f=jnp.array(f, dtype=jnp.float32),
+                      s=jnp.array(s, dtype=jnp.float32))
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
