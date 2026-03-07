@@ -93,4 +93,11 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CPU tests
         timeout-minutes: 60
-        run: ./ci/run_pytest_cpu.sh
+        run: |
+          # To resolve the OOM issue on arm64 runners with free-threaded python, run pytest with
+          # fewer workers.
+          if [[ "${{ inputs.runner }}" == "linux-arm64-t2a-48" ]]; then
+            if [[ "${{ inputs.python }}" == "3.13-nogil" || "${{ inputs.python }}" == "3.14-nogil" ]]; then
+            export MAX_PROCESSES=16
+          fi
+          ./ci/run_pytest_cpu.sh
