@@ -224,6 +224,32 @@ non-device-accessing functionality is ok.) {func}`jax.distributed.initialize`
 will raise an error if you accidentally call it after accessing any devices.
 ```
 
+### CPU resource allocation
+
+When running multi-process JAX on GPU clusters, the number of **host CPUs
+available per task** can have a significant impact on performance, particularly
+for communication-heavy workloads such as all-to-all and ragged all-to-all
+collectives.
+
+This is because GPU communication collectives (e.g. NCCL operations) often
+require CPU involvement for coordination. If too few CPUs are allocated per
+task, the host becomes a bottleneck that can **severely** degrade communication
+throughput — in some cases by as much as **50x**.
+
+```{tip}
+When deploying multi-GPU JAX workloads, allocate as many CPUs per task as are
+available on the compute node. For example, when using Slurm:
+
+    # Good: allocate all available CPUs per GPU task
+    srun --ntasks-per-node=8 --cpus-per-task=16 python my_script.py
+
+    # Bad: only 1 CPU per task — may bottleneck GPU communication
+    srun --ntasks-per-node=8 --cpus-per-task=1 python my_script.py
+
+A general rule of thumb is to divide the total number of CPUs on a node by the
+number of GPUs (tasks) on that node and set ``--cpus-per-task`` accordingly.
+```
+
 ### GPU Example
 
 We can run multi-controller JAX on a cluster of [GPU machines][gpu_machines].
