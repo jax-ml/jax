@@ -846,22 +846,22 @@ def lower_jaxpr_into_module(
       kernel_type,
   )
   mosaic_grid_mapping.maybe_compress_grid()
-  attrs = module.operation.attributes
-  module_name = name
-  attrs["sym_name"] = ir.StringAttr.get(module_name)
   sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
       jaxpr,
       mosaic_grid_mapping=mosaic_grid_mapping,
-      name="main",
+      name=name,
       kernel_type=kernel_type,
       forward_compatible=lowering_context.is_forward_compat(),
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       backend=backend,
   )
+  func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
+      f"#tpu.core_type<{kernel_type.name.lower()}>"
+  )
   module.body.append(func_op)
-  assert "main" not in sym_tab
+  assert name not in sym_tab
   sym_tab.insert(func_op)
   window_params = []
   static_grid = None
