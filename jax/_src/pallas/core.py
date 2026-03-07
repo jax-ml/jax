@@ -295,7 +295,7 @@ class PallasTracingEnv(threading.local):
   grid_context: PallasGridContext | None = None
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
   is_interpret_mode: bool = False
-  dynamic_shapes: bool = False
+  dynamic_shapes: bool = True  # HERE
   module_export_fn: Callable[[mlir.ir.Module], None] | None = None
 
 _pallas_tracing_env = PallasTracingEnv()
