@@ -300,6 +300,12 @@ class PRNGKeyArray(Array):
     out._consumed = self._consumed  # TODO(jakevdp): is this correct?
     return out
 
+  def __getstate__(self):
+    return self.__dict__
+
+  def __setstate__(self, state):
+    self.__dict__.update(state)
+
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
 
