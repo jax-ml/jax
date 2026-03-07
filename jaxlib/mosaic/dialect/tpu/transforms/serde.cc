@@ -42,6 +42,28 @@ constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
+LogicalResult store_upgrade(Operation* op, int version, bool&) {
+  if (version < 11) {
+    op->setAttr("add", mlir::BoolAttr::get(op->getContext(), false));
+  }
+  return success();
+}
+
+LogicalResult store_downgrade(Operation* op, int version, bool&) {
+  if (version < 11) {
+    auto add_attr = op->getAttrOfType<BoolAttr>("add");
+    if (!add_attr) {
+      return op->emitError("Missing or invalid add attribute");
+    }
+    if (add_attr.getValue()) {
+      return op->emitError(
+          "Can only downgrade below version 11 when add is not set");
+    }
+    op->removeAttr("add");
+  }
+  return success();
+}
+
 LogicalResult dynamic_gather_upgrade(Operation* op, int version, bool&) {
   if (version < 5) {
     auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
@@ -306,6 +328,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_upgrade},
+      {StoreOp::getOperationName(), store_upgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_upgrade},
   };
   return *rules;
@@ -318,6 +341,7 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
+      {StoreOp::getOperationName(), store_downgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_downgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_downgrade},

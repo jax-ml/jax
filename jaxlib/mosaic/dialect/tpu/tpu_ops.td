@@ -298,7 +298,8 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
     Optional<AnyType>:$mask,
-    DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
+    DefaultValuedAttr<I32Attr, "1">:$sublane_stride,  // In sublane-sized units
+    DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let results = (outs);
   let assemblyFormat = [{
