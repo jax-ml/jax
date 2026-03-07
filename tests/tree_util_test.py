@@ -1656,13 +1656,9 @@ class RegistrationTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       tree_util.register_dataclass(Foo)
 
-    msg = ("register_dataclass: data_fields and meta_fields must both be specified"\
-           r" when either is specified. Got data_fields=\['x'\] meta_fields=None.")
     with self.assertRaisesRegex(TypeError, msg):
       tree_util.register_dataclass(Foo, data_fields=['x'])
 
-    msg = ("register_dataclass: data_fields and meta_fields must both be specified"\
-           r" when either is specified. Got data_fields=None meta_fields=\['y'\].")
     with self.assertRaisesRegex(TypeError, msg):
       tree_util.register_dataclass(Foo, meta_fields=['y'])
 
@@ -1735,6 +1731,69 @@ class RegistrationTest(jtu.JaxTestCase):
 
     # ``y`` is missing, but no validation is done for plain classes.
     tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=[])
+
+  def test_register_dataclass_only_meta_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      op: str
+
+    tree_util.register_dataclass(Foo, meta_fields=["op"])
+    f = Foo(1, 2, "add")
+    leaves = jax.tree.leaves(f)
+    self.assertEqual(leaves, [1, 2])
+
+  def test_register_dataclass_only_data_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      op: str
+
+    tree_util.register_dataclass(Foo, data_fields=["x", "y"])
+    f = Foo(1, 2, "add")
+    leaves = jax.tree.leaves(f)
+    self.assertEqual(leaves, [1, 2])
+
+  def test_register_dataclass_only_meta_fields_with_drop(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      z: int = 0
+      op: str = "add"
+
+    tree_util.register_dataclass(Foo, meta_fields=["op"], drop_fields=["z"])
+    f = Foo(1, 2, 0, "add")
+    leaves = jax.tree.leaves(f)
+    self.assertEqual(leaves, [1, 2])
+
+  def test_register_dataclass_only_data_fields_with_drop(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      z: int = 0
+      op: str = "add"
+
+    tree_util.register_dataclass(Foo, data_fields=["x", "y"], drop_fields=["z"])
+    f = Foo(1, 2, 0, "add")
+    leaves = jax.tree.leaves(f)
+    self.assertEqual(leaves, [1, 2])
+
+  def test_register_dataclass_meta_fields_with_static_annotation(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      op: str
+      mode: str = dataclasses.field(default="fast", metadata={"static": True})
+
+    tree_util.register_dataclass(Foo, meta_fields=["op"])
+    f = Foo(1, 2, "add", "fast")
+    leaves = jax.tree.leaves(f)
+    self.assertEqual(leaves, [1, 2])
 
   def test_static(self):
     with self.subTest("simple static"):
