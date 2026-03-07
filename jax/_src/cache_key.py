@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import copy
 import enum
 import hashlib
 import io
+import json
 import logging
 import os
 import sys
@@ -100,6 +102,7 @@ def get(
   """
   entries = [
       (
+
           "computation",
           lambda hash_obj: _hash_computation(
               hash_obj, module, ignore_callbacks
@@ -190,6 +193,45 @@ def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
   return m
 
 
+def _strip_mosaic_debug_info(m: ir.Module) -> None:
+  """Strips debug info from Mosaic kernel bytecode in tpu_custom_call ops.
+
+  The top-level strip-debuginfo pass does not reach into the serialized kernel
+  MLIR embedded in backend_config, so source file paths leak into the cache key.
+  """
+  try:
+    from jax._src.lib import tpu  # pylint: disable=g-import-not-at-top
+  except ImportError:
+    return
+
+  def _strip_kernel(op: ir.Operation) -> ir.WalkResult:
+    if (op.name != "stablehlo.custom_call"
+        or op.attributes["call_target_name"].value != "tpu_custom_call"):
+      return ir.WalkResult.ADVANCE
+    try:
+      bc = json.loads(op.attributes["backend_config"].value)
+      body = bc.get("custom_call_config", {}).get("body")
+      if not body:
+        return ir.WalkResult.ADVANCE
+      with ir.Context() as ctx:
+        tpu.register_dialect(ctx)
+        ctx.allow_unregistered_dialects = True
+        kernel = ir.Module.parse(base64.b64decode(body), context=ctx)
+        pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
+            kernel.operation)
+        out = io.BytesIO()
+        kernel.operation.write_bytecode(out)
+      bc["custom_call_config"]["body"] = base64.b64encode(
+          out.getvalue()).decode()
+      op.attributes["backend_config"] = ir.StringAttr.get(
+          json.dumps(bc, separators=(",", ":")))
+    except Exception as e:  # pylint: disable=broad-except
+      logger.debug("Failed to strip Mosaic debug info: %s", e)
+    return ir.WalkResult.ADVANCE
+
+  m.operation.walk(_strip_kernel)
+
+
 def _serialize_ir(m: ir.Module, ignore_callbacks: IgnoreCallbacks) -> bytes:
   output = io.BytesIO()
   if ignore_callbacks != IgnoreCallbacks.NO:
@@ -209,6 +251,7 @@ def _canonicalize_ir(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
+    _strip_mosaic_debug_info(m)
     return _serialize_ir(m, ignore_callbacks)
 
 
