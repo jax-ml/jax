@@ -38,15 +38,11 @@ logger = logging.getLogger(__name__)
 
 def _get_library_path():
   base_path = pathlib.Path(__file__).resolve().parent
-  installed_path = (
-      base_path / 'xla_rocm_plugin.so'
-  )
+  installed_path = base_path / 'xla_rocm_plugin.so'
   if installed_path.exists():
     return installed_path
 
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
-  )
+  local_path = base_path / 'pjrt_c_api_gpu_plugin.so'
   if not local_path.exists():
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:

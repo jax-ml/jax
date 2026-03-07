@@ -165,10 +165,12 @@ def prepare_rocm_plugin_wheel(
   )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
   write_setup_cfg(wheel_sources_path, cpu)
+  plugin_dir.mkdir(parents=True, exist_ok=True)
+  # Write an empty __init__.py - jaxlib loads the plugin modules explicitly
+  (plugin_dir / "__init__.py").write_text("")
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
-          f"{source_file_prefix}jax_plugins/rocm/__init__.py",
           f"{source_file_prefix}jaxlib/version.py",
       ],
   )
