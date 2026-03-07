@@ -252,7 +252,7 @@ def get_tensorstore_spec(
   # replace a the double '//' with a single '/' and we need to restore the
   # filesystem type:// prefix for GCS (gs://) and S3 paths (s3://)
   ckpt_path = os.path.normpath(str(ckpt_path))
-  ckpt_path = re.sub(r"^([a-z]+):/", r"\1://", ckpt_path)
+  ckpt_path = re.sub(r"^(gs|s3):/", r"\1://", ckpt_path)
 
   # in cases of multi-process writes, we need to write to a different location
   # for each process and finally created a combined symlink to the final
