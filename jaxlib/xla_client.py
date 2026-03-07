@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 416  # safe_zip error messages include all argument lengths
+_version = 417  # hlo sharding v3 to named sharding conversion for XLA returned shardings
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -337,7 +337,9 @@ DeviceList = _xla.DeviceList
 OpSharding = _xla.OpSharding
 HloSharding = _xla.HloSharding
 Sharding = _xla.Sharding
+HloShardingV3Mesh = _xla.HloShardingV3Mesh
 NamedSharding = _xla.NamedSharding
+HloShardingV3 = _xla.HloShardingV3
 SingleDeviceSharding = _xla.SingleDeviceSharding
 PmapSharding = _xla.PmapSharding
 GSPMDSharding = _xla.GSPMDSharding
