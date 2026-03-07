@@ -653,7 +653,8 @@ def undo_transforms(
   transforms: list[state_types.Transform] = []
   avals = [aval]
   for t in memory_transforms[:-1]:
-    avals.append(t.transform_type(aval))
+    aval = t.transform_type(aval)
+    avals.append(aval)
   for t, a in reversed(list(zip(memory_transforms, avals))):
     transforms.append(t.undo(a))
   return transforms
@@ -710,8 +711,12 @@ class BlockMapping:
     """Returns the abstract value of the Ref after transformations."""
     if not self.transforms:
       return self.transformed_block_aval
+    ref_block_shape = _get_ref_block_shape(self.block_shape)
+    logical_ref_aval = state.AbstractRef(
+        self.array_aval.update(shape=ref_block_shape),
+        self.transformed_block_aval.memory_space)
     reverse_transforms = tuple(undo_transforms(
-        self.transformed_block_aval, self.transforms
+        logical_ref_aval, self.transforms
     ))
     return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
