@@ -34,6 +34,7 @@ from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy import array_constructors
 from jax._src.numpy import error as jnp_error
+from jax._src.numpy import hijax
 from jax._src.numpy import reductions
 from jax._src.numpy.ufunc_api import ufunc
 from jax._src.numpy.util import (
@@ -1233,9 +1234,7 @@ def add(x: ArrayLike, y: ArrayLike, /) -> Array:
     Array([10, 11, 12, 13], dtype=int32)
   """
   x, y = promote_args("add", x, y)
-  if x.dtype == bool:
-    return lax.bitwise_or(x, y)
-  out = lax.add(x, y)
+  out = hijax.add(x, y)
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -1278,7 +1277,7 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
     Array([ 0, 10, 20, 30], dtype=int32)
   """
   x, y = promote_args("multiply", x, y)
-  return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
+  return hijax.multiply(x, y)
 
 
 @binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and)
@@ -1566,7 +1565,7 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x - 10
     Array([-10,  -9,  -8,  -7], dtype=int32)
   """
-  out = lax.sub(*promote_args("subtract", x, y))
+  out = hijax.subtract(*promote_args("subtract", x, y))
   jnp_error._set_error_if_nan(out)
   return out
 
