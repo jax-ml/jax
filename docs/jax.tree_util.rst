@@ -14,6 +14,7 @@ List of Functions
    Partial
    all_leaves
    register_dataclass
+   register_object
    register_pytree_node
    register_pytree_node_class
    register_pytree_with_keys
@@ -46,4 +47,3 @@ These APIs are now accessed via :mod:`jax.tree`.
    tree_structure
    tree_transpose
    tree_unflatten
-
