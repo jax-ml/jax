@@ -24,7 +24,6 @@ from typing import Any, TypeVar, Union, cast, overload
 
 import numpy as np
 
-from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import config
@@ -37,6 +36,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import order_wrt_mesh
+from jax._src.ad_util import p2cz
 from jax._src.core import pvary, Tracer, typeof, shard_aval, unshard_aval
 from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
                            use_abstract_mesh, get_abstract_mesh,
@@ -1774,28 +1774,27 @@ def _shard_map_transpose(out_cts, *args,
   args = [x if type(x) is not ad.UndefinedPrimal else
           ad.UndefinedPrimal(shard_aval(mesh, manual_axes, check_vma, sp, x.aval))
           for sp, x in zip(in_specs, args)]
+  in_undef = map(ad.is_undefined_primal, args)
   all_args, in_tree = tree_flatten((out_cts, tuple(args)))
 
   def fun_trans_callable(out_cts, args):
     # TODO(mattjj): when #26811 lands, delete this and just run backward_pass
-    in_undef = map(ad.is_undefined_primal, args)
-    res, undefs = partition_list(in_undef, args)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    res, undefs = partition_list(in_undef, args)  # type: ignore
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
-        pe.close_jaxpr(jaxpr), in_undef, False)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+        pe.close_jaxpr(jaxpr), in_undef, False)  # type: ignore
     res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
     in_cts = ad.backward_pass(
         jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
     )[len(res_reshaped):]
-    _, in_ct_specs = partition_list(in_undef, in_specs)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    _, in_ct_specs = partition_list(in_undef, in_specs)  # type: ignore
     in_cts = [ad.Zero(x.aval) if type(x) is ad.Zero else x if check_vma
               else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp, manual_axes)))
               for sp, x in zip(in_ct_specs, in_cts)]
-    res_zeros = [ad_util.ct_zero_from_primal(r) for r in res]
-    return merge_lists(in_undef, res_zeros, in_cts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    return in_cts
 
   fun_trans_callable.__name__ = f"transpose({jaxpr.debug_info.func_name})"
   fun_trans = lu.wrap_init(fun_trans_callable, debug_info=jaxpr.debug_info)
-  fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
+  fun_trans, nz_in_cts = ad.nonzero_outputs(fun_trans)
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
   new_in_specs = (
@@ -1803,10 +1802,11 @@ def _shard_map_transpose(out_cts, *args,
       [s for s, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
 
   def new_out_specs_thunk():
-    return tuple(sp.to_ct_spec() for sp, nz in zip(in_specs, nz_arg_cts()) if nz)
+    out_sp = [sp.to_ct_spec() for sp, und in zip(in_specs, in_undef) if und]
+    return tuple(o for o, nz in zip(out_sp, nz_in_cts()) if nz)
 
   try:
-    out_flat = shard_map_p.bind(
+    in_cts_flat = shard_map_p.bind(
         fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
         out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
         manual_axes=manual_axes)
@@ -1831,9 +1831,13 @@ def _shard_map_transpose(out_cts, *args,
     msg = _inout_vma_error(
         fun_trans, mesh, out_tree(), list(new_out_specs_thunk()), fails)
     raise ValueError(msg) from None
-  in_cts = tree_unflatten(out_tree(), out_flat)
-  return [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
-          if type(x) is ad.Zero else x for sp, x in zip(in_specs, in_cts)]
+  in_cts = tree_unflatten(out_tree(), in_cts_flat)
+  in_cts_iter = iter(in_cts)
+  in_cts = [(ad.Zero(unshard_aval(mesh, check_vma, sp, ic.aval))
+             if type((ic := next(in_cts_iter))) is ad.Zero else ic)
+            if und else p2cz(a) for a, und, sp in zip(args, in_undef, in_specs)]
+  assert next(in_cts_iter, None) is None
+  return in_cts
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
 # Remat
