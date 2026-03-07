@@ -19,9 +19,8 @@ from collections.abc import Sequence
 import itertools
 from typing import Union
 
-import numpy as np
-
 from jax._src.lib import xla_client as xc
+import numpy as np
 
 
 def get_num_ways_dim_sharded(
@@ -60,7 +59,10 @@ def get_num_ways_dim_sharded(
     return list(partitions), 1
 
 
+# TODO: Not sure why is num_devices comparison required.
 def is_hlo_sharding_replicated(hc: xc.HloSharding) -> bool:
+  # logging.info("JAX:DBG is_hlo_sharding_replicated: num_devices")
+  # traceback.print_stack()
   return True if hc.num_devices() == 1 else hc.is_replicated()
 
 
@@ -87,6 +89,7 @@ def op_sharding_to_numpy_indices(
     indices.fill((slice(None),) * len(shape))
     return indices
 
+  # logging.info("JAX:DBG op_sharding_to_numpy_indices: num_devices")
   assert num_devices == hlo_sharding.num_devices()
 
   partitions, num_replicas = get_num_ways_dim_sharded(hlo_sharding)
