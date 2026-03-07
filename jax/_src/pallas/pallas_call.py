@@ -1552,27 +1552,23 @@ def _pallas_call(
             f"a different abstract value {out_aval}.")
 
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
-    ctx = (
-        api.named_scope(name) if name is not None else contextlib.nullcontext()
+    out_flat = pallas_call_p.bind(
+        *consts,
+        *dynamic_grid_bounds,
+        *index_args,
+        *rest_args,
+        out_avals=flat_out_avals,
+        jaxpr=jaxpr,
+        debug=debug,
+        interpret=interpret,
+        grid_mapping=grid_mapping,
+        mesh=mesh,
+        input_output_aliases=tuple(input_output_aliases.items()),
+        compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
+        metadata=FrozenDict(metadata) if metadata is not None else None,
+        name=name,
     )
-    with ctx:
-      out_flat = pallas_call_p.bind(
-          *consts,
-          *dynamic_grid_bounds,
-          *index_args,
-          *rest_args,
-          out_avals=flat_out_avals,
-          jaxpr=jaxpr,
-          debug=debug,
-          interpret=interpret,
-          grid_mapping=grid_mapping,
-          mesh=mesh,
-          input_output_aliases=tuple(input_output_aliases.items()),
-          compiler_params=compiler_params,
-          cost_estimate=cost_estimate,
-          metadata=FrozenDict(metadata) if metadata is not None else None,
-          name=name,
-      )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped
