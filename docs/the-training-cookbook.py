@@ -18,9 +18,10 @@ import time
 from dataclasses import dataclass
 from typing import Iterator
 
+import numpy as np
+
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax.sharding import AxisType
 
 ode = """
@@ -65,12 +66,8 @@ class Config:
   att_out: jax.P = jax.P("fsdp", None, None)
   mlp_in: jax.P = jax.P("fsdp", None)
   mlp_out: jax.P = jax.P(None, "fsdp")
-  in_kernel: jax.P = jax.P(None, None)
-  in_bias: jax.P = jax.P(None)
   out_kernel: jax.P = jax.P("fsdp", None)
-  out_bias: jax.P = jax.P(None)
 
-  act_ids: jax.P = jax.P("fsdp")
   act_seq: jax.P = jax.P("fsdp", None, None)
   act_att: jax.P = jax.P("fsdp", None, None, None)
   act_hidden: jax.P = jax.P("fsdp", None, None)
@@ -108,10 +105,6 @@ def init_param_state(config: Config) -> dot_dict:
     layers=dot_dict(),
   )
   params.embedding = he_init(next(key), (config.vocab_size, config.embed_dim), dtype, config.embed)
-  params.linear_in = dot_dict(
-    kernel=he_init(next(key), (1, config.embed_dim), dtype, config.in_kernel),
-    bias=zero_init(next(key), (config.embed_dim,), dtype, config.in_bias),
-  )
   params.linear_out = dot_dict(
     kernel=he_init(next(key), (config.embed_dim, config.vocab_size), dtype, config.out_kernel),
   )
@@ -144,14 +137,14 @@ def model_apply(config: Config, params: dot_dict, tokens: jax.Array) -> jax.Arra
     out = jax.nn.dot_product_attention(qkv[:, :, 0, :], qkv[:, :, 1, :], qkv[:, :, 2, :], is_causal=True)
     out = jnp.einsum("bskh,khd->bsd", out, block.attention.out, out_sharding=config.act_seq)
     out += att_skip
-    out *= jax.lax.rsqrt(jnp.linalg.norm(out, axis=-1, keepdims=True) + 1e-6)
+    out *= jax.lax.rsqrt(jnp.mean(out**2, axis=-1, keepdims=True) + 1e-6)
 
     mlp_skip = out  # machine learning circa 1986
     out = jnp.einsum("bsd,dh->bsh", out, block.mlp.in_kernel, out_sharding=config.act_hidden)
     out = jax.nn.gelu(out)
     out = jnp.einsum("bsh,hd->bsd", out, block.mlp.out_kernel, out_sharding=config.act_seq)
     out += mlp_skip
-    out *= jax.lax.rsqrt(jnp.linalg.norm(out, axis=-1, keepdims=True) + 1e-6)
+    out *= jax.lax.rsqrt(jnp.mean(out**2, axis=-1, keepdims=True) + 1e-6)
 
   logits = jnp.einsum("bsd,dl->bsl", out, params.linear_out.kernel, out_sharding=config.act_seq)
   return logits  # tag: model-apply
@@ -165,8 +158,8 @@ def init_adam_state(param: jax.Array) -> dot_dict:
 
 # tag: adam-apply
 def adam_update(config: Config, param: jax.Ref, grad: jax.Array, adam_state: dot_dict):
-  adam_state.mu[...] = (1 - config.beta_1) * adam_state.mu[...] + config.beta_1 * grad
-  adam_state.nu[...] = (1 - config.beta_2) * adam_state.nu[...] + config.beta_2 * grad**2
+  adam_state.mu[...] = config.beta_1 * adam_state.mu[...] + (1 - config.beta_1) * grad
+  adam_state.nu[...] = config.beta_2 * adam_state.nu[...] + (1 - config.beta_2) * grad**2
   adam_state.count[...] += 1
 
   mu_hat = adam_state.mu[...] / (1 - config.beta_1 ** adam_state.count[...])
@@ -190,7 +183,7 @@ def train_step(config: Config, train_state: dot_dict, batch: dict) -> dict:
   def loss_fn(params):
     logits = model_apply(config, params, batch["observed_ids"])
     labels = jax.nn.one_hot(batch["target_ids"], config.vocab_size)
-    return -(labels * jax.nn.log_softmax(logits)).mean()
+    return -(labels * jax.nn.log_softmax(logits)).sum(axis=-1).mean()
 
   params = jax.tree.map(jax.ref.get, train_state.params)
   loss, grad = jax.value_and_grad(loss_fn)(params)
@@ -226,9 +219,9 @@ def get_dataset(config: Config, single_batch=ode) -> Iterator[dict[str, np.ndarr
 
 # tag: get-dataset-on-device
 def get_dataset_on_device(config: Config) -> Iterator[dict[str, jax.Array]]:
-  datset = get_dataset(config)
+  dataset = get_dataset(config)
   sharding = jax.P(config.mesh_axis_names)
-  return map(ft.partial(jax.make_array_from_process_local_data, sharding), datset)
+  return map(ft.partial(jax.make_array_from_process_local_data, sharding), dataset)
   # tag: get-dataset-on-device
 
 
