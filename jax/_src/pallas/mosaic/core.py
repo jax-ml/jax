@@ -329,12 +329,10 @@ def create_tensorcore_mesh(
     if devices is None:
       abstract_device = jax.sharding.get_abstract_mesh().abstract_device
       if abstract_device is None:
-        num_cores = jax.devices()[0].num_cores
+        devices = [jax.devices()[0]]
       else:
-        assert abstract_device.num_cores is not None
-        num_cores = abstract_device.num_cores
-    else:
-      num_cores = devices[0].num_cores
+        devices = [abstract_device]
+    num_cores = devices[0].num_cores
   return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
@@ -537,6 +535,5 @@ def get_device_kind() -> str:
 
 def get_num_device_cores() -> int:
   if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
-    assert abstract_device.num_cores is not None
     return abstract_device.num_cores
   return jex_backend.get_default_device().num_cores

@@ -63,9 +63,7 @@ SerT = TypeVar("SerT")
 #   This version is backwards compatible with Version 2 to 5.
 # Version 7, March 3rd, 2026, removes HloSharding serialization.
 #   This version is backwards compatible with Version 2 to 6.
-# Version 8, March 8th, 2026, add serializatoon for AbstractMesh.abstract_device.
-#   This version is backwards compatible with Version 2 to 7.
-_SERIALIZATION_VERSION = 8
+_SERIALIZATION_VERSION = 7
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -441,29 +439,6 @@ _axis_type_to_enum = {
 _axis_type_from_enum = {v: k for k, v in _axis_type_to_enum.items()}
 
 
-def _serialize_abstract_device(builder: flatbuffers.Builder,
-                               device: mesh.AbstractDevice | None) -> int:
-  if device is None:
-    return 0
-  device_kind = builder.CreateString(device.device_kind)
-
-  ser_flatbuf.AbstractDeviceStart(builder)
-  ser_flatbuf.AbstractDeviceAddDeviceKind(builder, device_kind)
-  if device.num_cores is not None:
-    ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
-  return ser_flatbuf.AbstractDeviceEnd(builder)
-
-
-def _deserialize_abstract_device(
-    ser_abs_device: ser_flatbuf.AbstractDevice | None
-    ) -> mesh.AbstractDevice | None:
-  if ser_abs_device is None:
-    return None
-  device_kind = ser_abs_device.DeviceKind().decode("utf-8")
-  num_cores: int | None = ser_abs_device.NumCores()
-  return mesh.AbstractDevice(device_kind, num_cores)
-
-
 def _serialize_abstract_mesh(builder: flatbuffers.Builder,
                              mesh: mesh.AbstractMesh) -> int:
   ser_flatbuf.AbstractMeshStartAxisSizesVector(builder, len(mesh.axis_sizes))
@@ -481,28 +456,22 @@ def _serialize_abstract_mesh(builder: flatbuffers.Builder,
     builder.PrependByte(_axis_type_to_enum[axis_type])
   axis_types = builder.EndVector()
 
-  abstract_device = _serialize_abstract_device(builder, mesh.abstract_device)
-
   ser_flatbuf.AbstractMeshStart(builder)
   ser_flatbuf.AbstractMeshAddAxisSizes(builder, axis_sizes)
   ser_flatbuf.AbstractMeshAddAxisNames(builder, axis_names)
   ser_flatbuf.AbstractMeshAddAxisTypes(builder, axis_types)
-  if mesh.abstract_device is not None:
-    ser_flatbuf.AbstractMeshAddAbstractDevice(builder, abstract_device)
   return ser_flatbuf.AbstractMeshEnd(builder)
 
 
-def _deserialize_abstract_mesh(
-  ser_mesh: ser_flatbuf.AbstractMesh) -> mesh.AbstractMesh:
+def _deserialize_abstract_mesh(ser_mesh: ser_flatbuf.AbstractMesh
+) -> mesh.AbstractMesh:
   axis_sizes = tuple(ser_mesh.AxisSizes(i)
                      for i in range(ser_mesh.AxisSizesLength()))
   axis_names = tuple(ser_mesh.AxisNames(i).decode("utf-8")
                      for i in range(ser_mesh.AxisNamesLength()))
   axis_types = tuple(_axis_type_from_enum[ser_mesh.AxisTypes(i)]
                      for i in range(ser_mesh.AxisTypesLength()))
-  abstract_device = _deserialize_abstract_device(ser_mesh.AbstractDevice())
-  return mesh.AbstractMesh(axis_sizes, axis_names, axis_types,
-                           abstract_device=abstract_device)
+  return mesh.AbstractMesh(axis_sizes, axis_names, axis_types)
 
 
 def _serialize_partition_spec_one_axis(builder: flatbuffers.Builder,
@@ -551,9 +520,9 @@ def _deserialize_partition_spec(spec: ser_flatbuf.PartitionSpec
                                 ) -> partition_spec.PartitionSpec:
   partitions = tuple(_deserialize_partition_spec_one_axis(spec.Partitions(i))
                      for i in range(spec.PartitionsLength()))
-  reduced = frozenset(spec.Reduced(i).decode("utf-8")  # type: ignore
+  reduced = frozenset(spec.Reduced(i).decode("utf-8")
                       for i in range(spec.ReducedLength()))
-  unreduced = frozenset(spec.Unreduced(i).decode("utf-8")  # type: ignore
+  unreduced = frozenset(spec.Unreduced(i).decode("utf-8")
                         for i in range(spec.UnreducedLength()))
   return partition_spec.PartitionSpec(*partitions,
                                       reduced=reduced,
@@ -580,7 +549,7 @@ def _deserialize_named_sharding(
 ) -> named_sharding.NamedSharding:
   amesh = _deserialize_abstract_mesh(s.Mesh())
   spec = _deserialize_partition_spec(s.Spec())
-  memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None  # type: ignore
+  memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None
   return named_sharding.NamedSharding(amesh, spec, memory_kind=memory_kind)
 
 
@@ -609,7 +578,7 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
   dtype = _dtype_kind_to_dtype[aval.Dtype()]
   shape = shape_poly.symbolic_shape(
       ",".join(
-            aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())  # type: ignore
+            aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())
         ),
         scope=scope
     )
@@ -677,7 +646,7 @@ def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
 
 
 def _deserialize_effect(eff: ser_flatbuf.Effect) -> core.Effect:
-  effect_type_name = eff.TypeName().decode("utf-8")  # type: ignore
+  effect_type_name = eff.TypeName().decode("utf-8")
   for existing_effect_type in effects.lowerable_effects._effect_types:
     if str(existing_effect_type) == effect_type_name:
       try:

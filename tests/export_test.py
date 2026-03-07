@@ -1621,12 +1621,8 @@ class JaxExportTest(jtu.JaxTestCase):
       return out
 
     exported = get_exported(jax.jit(f))(arr1, arr2)
-    amesh = jax.sharding.AbstractMesh(
-      mesh.axis_sizes,
-      mesh.axis_names,
-      axis_types=mesh.axis_types,
-      abstract_device=mesh.abstract_mesh.abstract_device
-    )
+    amesh = jax.sharding.AbstractMesh(mesh.axis_sizes, mesh.axis_names,
+                                      axis_types=mesh.axis_types)
     self.assertEqual(exported.in_avals[0].sharding,
                      NamedSharding(amesh, spec1))
     self.assertEqual(exported.in_avals[1].sharding,
