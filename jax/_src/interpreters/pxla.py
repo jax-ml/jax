@@ -2150,7 +2150,7 @@ def hoist_constants_as_args(
     kept_var_idx = set(range(num_const_args)).union(
         {kv + num_const_args for kv in kept_var_idx})
     if inout_aliases is not None:
-      inout_aliases = (None,) * num_const_args + inout_aliases
+      inout_aliases = (None,) * num_const_args + inout_aliases  # pytype: disable=unsupported-operands
     if mut is not None:
       mut = MutationData(
           in_mut=mut.in_mut,

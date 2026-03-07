@@ -1895,7 +1895,7 @@ def _reshape_pull_rule(
           'reshape with non-matching block size on lanes not supported yet:'
           f' {block_shape}'
       )
-    new_block_shape = block_shape[:-2] + (total_block_size,)
+    new_block_shape = tuple(*block_shape[:-2], total_block_size)
 
     def new_block_index_transform(*idxs):  # pylint: disable=function-redefined
       *idx, second_to_last, last = block_transform.block_index_transform(*idxs)
@@ -1907,7 +1907,7 @@ def _reshape_pull_rule(
       return *idx, second_to_last
 
     return [block_transform.replace(
-                block_shape=tuple(new_block_shape),
+                block_shape=new_block_shape,
                 block_index_transform=new_block_index_transform,)]
 
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
@@ -2316,7 +2316,7 @@ def _binop_push_rule(
     left_block_spec: pallas_core.BlockSpec,
     right_block_spec: pallas_core.BlockSpec,
     **params: Any,
-) -> Sequence[pallas_core.BlockSpec]:
+) -> pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...]:
   del prim, params
   left_aval, right_aval = ctx.avals_in
   assert isinstance(left_aval, core.ShapedArray)
