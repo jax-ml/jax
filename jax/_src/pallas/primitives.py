@@ -528,7 +528,12 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
 
   dtype = jnp.promote_types(_handle_small(a.dtype), _handle_small(b.dtype))
-  out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
+  if jnp.issubdtype(dtype, jnp.integer):
+    out_dtype = jnp.int32
+  elif dtype == jnp.float64:
+    out_dtype = jnp.float64
+  else:
+    out_dtype = jnp.float32
   return lax.dot_general(
       a,
       b,
