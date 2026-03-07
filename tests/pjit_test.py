@@ -10593,6 +10593,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     l = jnp.triu(one3, -w + 1)
     self.assertEqual(l.sharding, one3.sharding)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_argsort_error(self, mesh):
+    x = jax.device_put(np.array([4, 3, 2, 5, 6, 0]), P("x"))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "Arguments to sort must be unsharded"):
+      jnp.argsort(x)
+
+    x = jax.device_put(np.array([4, 3, 2, 5, 6, 0]).reshape(3, 2), P(None, "x"))
+    out = jnp.argsort(x, axis=0)
+    self.assertEqual(out.sharding, x.sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

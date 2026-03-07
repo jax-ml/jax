@@ -3296,13 +3296,13 @@ def sort(operand: Array | Sequence[Array], dimension: int = -1,
     dimension = canonicalize_axis(dimension, len(operand[0].shape))
     operand = core.standard_insert_pvary(*operand)
     return tuple(sort_p.bind(*operand, dimension=dimension,
-                             is_stable=is_stable,
-                             num_keys=num_keys))
+                             is_stable=is_stable, num_keys=num_keys))
   else:
     if num_keys != 1:
       raise ValueError(f"{num_keys=} must equal 1 for a single operand.")
     dimension = canonicalize_axis(dimension, len(operand.shape))
-    return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
+    return sort_p.bind(operand, dimension=dimension, is_stable=is_stable,
+                       num_keys=1)[0]
 
 def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
                  is_stable: bool = True) -> tuple[Array, Array]:
@@ -7987,7 +7987,7 @@ _INT_DTYPES = {
 }
 
 
-def _sort_abstract_eval(*avals, **kwargs):
+def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
   avals = tuple(avals)
   if any(arg.shape != avals[0].shape for arg in avals[1:]):
     shapes = " ".join(str(a.shape) for a in avals)
@@ -7995,10 +7995,15 @@ def _sort_abstract_eval(*avals, **kwargs):
   non_empty_s = [
       a.sharding for a in avals
       if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
-  if any(s != non_empty_s[0] for s in non_empty_s[1:]):
-    shardings = " ".join(str(s) for s in non_empty_s)
-    raise core.ShardingTypeError(
-        f'Arguments to sort must have equal shardings, got: {shardings}')
+  for s in non_empty_s:
+    if s.spec[dimension] is not None:
+      raise core.ShardingTypeError(
+          "Arguments to sort must be unsharded over the sorting dimension. "
+          f"Got arg sharding={s} and sorting dimension={dimension}")
+    if s != non_empty_s[0]:
+      shardings = " ".join(str(s) for s in non_empty_s)
+      raise core.ShardingTypeError(
+          f'Arguments to sort must have equal shardings, got: {shardings}')
   return avals
 
 
@@ -8009,11 +8014,9 @@ def _canonicalize_float_for_sort(x):
   # the beginning and end of the ordering. This causes issues for stable
   # sorts, so we avoid this by standardizing the representation of zeros
   # and NaNs in the output.
-
   result = select(eq(x, _zero(x)), _zeros(x), x)
   with config.debug_nans(False):
     result = select(_isnan(x), full_like(result, np.nan), result)
-
   return result
 
 
