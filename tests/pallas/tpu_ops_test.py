@@ -126,6 +126,32 @@ class OpsTest(ptu.PallasTPUTest):
       )(inp)
       self.assertAllClose(out, out_interpret)
 
+  @parameterized.product(
+      from_dtype=_JAX_DTYPES,
+      to_dtype=_JAX_DTYPES,
+  )
+  def test_bitcast_scalar(self, from_dtype, to_dtype):
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+    if dtypes.itemsize_bits(from_dtype) != dtypes.itemsize_bits(to_dtype):
+      self.skipTest("Bitwidths must match for scalar bitcast")
+    if from_dtype == jnp.bool_ or to_dtype == jnp.bool_:
+      self.skipTest("Bitcasting with bool is not supported")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), to_dtype),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+    )
+    def _kernel(x_ref, o_ref):
+      o_ref[0] = jax.lax.bitcast_convert_type(x_ref[0], to_dtype)
+
+    x = jnp.array([1], dtype=from_dtype)
+    out = _kernel(x)
+    expected = jax.lax.bitcast_convert_type(x, to_dtype)
+    self.assertAllClose(out, expected)
+
   def test_stop_gradient(self):
     def kernel(x_ref, y_ref):
       y_ref[...] = jax.lax.stop_gradient(x_ref[...] + 1)
