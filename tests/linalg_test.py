@@ -1832,6 +1832,75 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4), (3, 6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+      pivoting=[False, True],
+  )
+  def testQrMultiply(self, shape, dtype, mode, pivoting):
+    if pivoting and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+    a = rng(shape, dtype)
+    k = min(m, n)
+    if mode == 'left':
+      c_shape = shape[:-2] + (k, 2)  # [..., k, 2] — scipy: K-row input
+    else:
+      c_shape = shape[:-2] + (2, m)  # [..., 2, m]
+    c = rng(c_shape, dtype)
+
+    if pivoting:
+      result, r, p = jax.scipy.linalg.qr_multiply(a, c, mode=mode,
+                                                    pivoting=True)
+    else:
+      result, r = jax.scipy.linalg.qr_multiply(a, c, mode=mode,
+                                                 pivoting=False)
+
+    # Compute reference using full QR
+    if pivoting:
+      q_full, r_full, p_ref = jax.scipy.linalg.qr(a, pivoting=True)
+    else:
+      q_full, r_full = jax.scipy.linalg.qr(a)
+    r_ref = r_full[..., :k, :]
+
+    if mode == 'left':
+      expected = q_full[..., :k] @ c  # Q_eco @ c: (M,K) @ (K,2) = (M,2)
+    else:
+      expected = c @ q_full[..., :k]  # c @ Q_eco: (2,M) @ (M,K) = (2,K)
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
+    # R should match
+    self.assertAllClose(r, r_ref, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+  )
+  def testQrMultiply1D(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+    k = min(m, n)
+    a = rng(shape, dtype)
+    # 1-D c: length K for mode='left' (column), length M for mode='right' (row)
+    c = rng((k,), dtype) if mode == 'left' else rng((m,), dtype)
+    result, r = jax.scipy.linalg.qr_multiply(a, c, mode=mode)
+    self.assertEqual(result.ndim, 1)
+
+    q_full, _ = jax.scipy.linalg.qr(a)
+    if mode == 'left':
+      expected = (q_full[..., :k] @ c[:, None]).ravel()  # Q_eco @ c: (M,)
+    else:
+      expected = (c[None, :] @ q_full[..., :k]).ravel()  # c @ Q_eco: (K,)
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
       [dict(shape=shape, k=k)
        for shape in [(1, 1), (3, 4, 4), (10, 5)]
        # TODO(phawkins): there are some test failures on GPU for k=0
@@ -1862,6 +1931,45 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(reference_fn, lax.linalg.householder_product,
                             args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(lax.linalg.householder_product, args_maker)
+
+  @jtu.sample_product(
+      [dict(a_shape=a_shape, c_shape=c_shape, left=left)
+       for a_shape, c_shape, left in [
+           ((4, 3), (4, 2), True),    # Q @ C, tall A
+           ((4, 4), (4, 3), True),    # Q @ C, square A
+           ((6, 4), (6, 5), True),    # Q @ C, tall A
+           ((4, 3), (2, 4), False),   # C @ Q, tall A
+           ((4, 4), (3, 4), False),   # C @ Q, square A
+           ((3, 6, 4), (3, 6, 5), True),  # batched Q @ C
+       ]],
+      dtype=float_types + complex_types,
+      transpose=[False, True],
+  )
+  def testOrmqr(self, a_shape, c_shape, dtype, left, transpose):
+    rng = jtu.rand_default(self.rng())
+    a = rng(a_shape, dtype)
+    c = rng(c_shape, dtype)
+
+    qr_result, taus = lax_linalg.geqrf(a)
+    result = lax_linalg.ormqr(qr_result, taus, c,
+                               left=left, transpose=transpose)
+
+    # Reference: build full Q from householder_product, then matmul.
+    m, n = a_shape[-2:]
+    if m > n:
+      padded = jnp.pad(qr_result,
+                        [(0, 0)] * (qr_result.ndim - 1) + [(0, m - n)])
+      q = lax.linalg.householder_product(padded, taus)
+    elif m < n:
+      q = lax.linalg.householder_product(qr_result[..., :m, :m], taus)
+    else:
+      q = lax.linalg.householder_product(qr_result, taus)
+    q_op = jnp.conj(jnp.swapaxes(q, -1, -2)) if transpose else q
+    expected = q_op @ c if left else c @ q_op
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
 
   @jtu.sample_product(
       shape=[(1, 1), (2, 4, 4), (0, 100, 100), (10, 10)],

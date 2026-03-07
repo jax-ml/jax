@@ -131,6 +131,36 @@ JAX_GPU_DEFINE_ORGQR(gpuComplex, gpusolverDnCungqr);
 JAX_GPU_DEFINE_ORGQR(gpuDoubleComplex, gpusolverDnZungqr);
 #undef JAX_GPU_DEFINE_ORGQR
 
+// Householder multiply: ormqr/unmqr
+
+#define JAX_GPU_DEFINE_ORMQR(Type, Name)                                       \
+  template <>                                                                  \
+  absl::StatusOr<int> OrmqrBufferSize<Type>(                                   \
+      gpusolverDnHandle_t handle, gpublasSideMode_t side,                      \
+      gpublasOperation_t trans, int m, int n, int k) {                         \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(Name##_bufferSize(                       \
+        handle, side, trans, m, n, k, /*A=*/nullptr, /*lda=*/m,                \
+        /*tau=*/nullptr, &lwork)));                                            \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Ormqr<Type>(                                                    \
+      gpusolverDnHandle_t handle, gpublasSideMode_t side,                      \
+      gpublasOperation_t trans, int m, int n, int k, Type *a, int lda,         \
+      Type *tau, Type *c, int ldc, Type *workspace, int lwork, int *info) {    \
+    return JAX_AS_STATUS(                                                      \
+        Name(handle, side, trans, m, n, k, a, lda, tau, c, ldc,                \
+             workspace, lwork, info));                                          \
+  }
+
+JAX_GPU_DEFINE_ORMQR(float, gpusolverDnSormqr);
+JAX_GPU_DEFINE_ORMQR(double, gpusolverDnDormqr);
+JAX_GPU_DEFINE_ORMQR(gpuComplex, gpusolverDnCunmqr);
+JAX_GPU_DEFINE_ORMQR(gpuDoubleComplex, gpusolverDnZunmqr);
+#undef JAX_GPU_DEFINE_ORMQR
+
 // Cholesky decomposition: potrf
 
 #define JAX_GPU_DEFINE_POTRF(Type, Name)                                       \
