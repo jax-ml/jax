@@ -1425,6 +1425,8 @@ def get_tpu_version() -> int:
   kind = jax.devices()[0].device_kind
   if 'TPU' not in kind:
     return -1
+  if kind == 'TPU7x':
+    return 7
   if kind.endswith(' lite'):
     kind = kind[: -len(' lite')]
   assert kind[:-1] == 'TPU v', kind
