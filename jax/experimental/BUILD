@@ -406,7 +406,9 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
+    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops",
+            "//jax/experimental/pallas/ops/gpu/splash_attention:splash_attention",
+    ],
     visibility = [
         ":mosaic_gpu_users",
     ],
