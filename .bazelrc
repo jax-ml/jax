@@ -474,6 +474,12 @@ common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows
 common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
+# Test configs for ROCm (pytest run_under wrapper)
+build:rocm_single_gpu --run_under=//build/rocm:parallel_gpu_pytest
+build:rocm_multi_gpu --run_under=//build/rocm:parallel_gpu_pytest
+
+build:rocm_pytest --run_under=//build/rocm:parallel_gpu_pytest
+
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for
 # Linux Aarch64 and Mac x86. So, we use a cross-compile toolchain to build

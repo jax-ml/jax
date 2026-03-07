@@ -13,8 +13,89 @@
 # limitations under the License.
 """pytest configuration"""
 
+import inspect
 import os
+
 import pytest
+
+from jax._src.internal_test_util import mosaic_gpu_test_filter as _mosaic_filter
+
+
+def _is_mosaic_gpu_item(
+    item: pytest.Item,
+    cache: dict[object, bool],
+    *,
+    running_on_rocm: bool,
+    pallas_defaults_to_mosaic: bool,
+) -> bool:
+  """Returns True if this test item uses Mosaic GPU."""
+  path_obj = getattr(item, "path", None) or getattr(item, "fspath", None)
+  path_str = str(path_obj) if path_obj is not None else ""
+
+  if _mosaic_filter.looks_like_mosaic_gpu_path(path_str):
+    return True
+
+  obj = getattr(item, "obj", None)
+  if obj is None:
+    return False
+  if obj in cache:
+    return cache[obj]
+  try:
+    src = inspect.getsource(obj)
+  except (TypeError, OSError):
+    cache[obj] = False
+    return False
+
+  cls_src = None
+  cls_obj = getattr(item, "cls", None)
+  if cls_obj is not None:
+    try:
+      cls_src = inspect.getsource(cls_obj)
+    except (TypeError, OSError):
+      cls_src = None
+
+  is_mosaic = _mosaic_filter.is_mosaic_gpu_test_source(
+      path_str=path_str,
+      test_src=src,
+      cls_src=cls_src,
+      running_on_rocm=running_on_rocm,
+      pallas_defaults_to_mosaic=pallas_defaults_to_mosaic,
+  )
+  cache[obj] = is_mosaic
+  return is_mosaic
+
+
+def pytest_configure(config: pytest.Config) -> None:
+  """Register custom pytest markers."""
+  config.addinivalue_line(
+      "markers",
+      "mosaic_gpu: tests that use Mosaic GPU (skipped on ROCm)",
+  )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+  """Mark Mosaic GPU tests and skip them on ROCm."""
+  running_on_rocm = _mosaic_filter.running_on_rocm()
+  pallas_defaults_to_mosaic = (
+      _mosaic_filter.pallas_defaults_to_mosaic_gpu() if running_on_rocm else False
+  )
+  cache: dict[object, bool] = {}
+  for item in items:
+    is_mosaic_gpu = _is_mosaic_gpu_item(
+        item,
+        cache,
+        running_on_rocm=running_on_rocm,
+        pallas_defaults_to_mosaic=pallas_defaults_to_mosaic,
+    )
+    if not is_mosaic_gpu:
+      continue
+    item.add_marker(pytest.mark.mosaic_gpu)
+    if running_on_rocm:
+      item.add_marker(pytest.mark.skip(
+          reason="Mosaic GPU tests are not supported on ROCm"
+      ))
 
 
 @pytest.fixture(autouse=True)

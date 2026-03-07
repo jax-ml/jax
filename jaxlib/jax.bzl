@@ -278,6 +278,12 @@ def jax_multiplatform_test(
     env = dict(env)
     env.setdefault("PYTHONWARNINGS", "error")
 
+    internal_test_util = "//jax/_src:internal_test_util"
+    if type(deps) == type([]) or type(deps) == type(()):
+        deps = list(deps)
+        if internal_test_util not in deps:
+            deps.append(internal_test_util)
+
     for backend in ALL_BACKENDS:
         test_shard_count = minimal_shard_count if USE_MINIMAL_SHARD_COUNT else shard_count
         if test_shard_count == None or type(test_shard_count) == type(0):
@@ -654,7 +660,14 @@ def jax_py_test(
         **kwargs):
     env = dict(env)
     env.setdefault("PYTHONWARNINGS", "error")
+
     deps = kwargs.get("deps", [])
+    internal_test_util = "//jax/_src:internal_test_util"
+    if type(deps) == type([]) or type(deps) == type(()):
+        deps = list(deps)
+        if internal_test_util not in deps:
+            deps.append(internal_test_util)
+        kwargs["deps"] = deps
     test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
     py_test(name = name, env = env, **kwargs)

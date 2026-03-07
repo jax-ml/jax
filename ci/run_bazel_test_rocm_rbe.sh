@@ -29,16 +29,28 @@ source ci/envs/default.env
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
-TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
+source build/rocm/rocm_tag_filters.sh "$@"
+TAG_FILTERS="${ROCM_TAG_FILTERS}"
 
-for arg in "$@"; do
-    if [[ "$arg" == "--config=multi_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
-    fi
-    if [[ "$arg" == "--config=single_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
-    fi
-done
+BAZEL_ARGS=(
+    --config=rocm_rbe
+    --config=rocm
+    --config=rocm_pytest
+    --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION"
+    --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+    --test_output=errors
+    --test_env=TF_CPP_MIN_LOG_LEVEL=0
+    --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow
+    --build_tag_filters="${TAG_FILTERS}"
+    --test_tag_filters="${TAG_FILTERS}"
+    --remote_download_outputs=minimal
+    --test_env=JAX_SKIP_SLOW_TESTS=true
+    --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+    --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950"
+    --color=yes
+    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB
+    --//jax:build_jax=$JAXCI_BUILD_JAX
+)
 
 # Set up the build environment which sets XLA_DIR if needed.
 # Useful for matching the XLA version to the JAX version and debugging/testing.
@@ -49,26 +61,15 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
+if [[ -n "${ROCM_LOCAL_TEST_JOBS:-}" ]]; then
+  BAZEL_ARGS+=(--jobs="${ROCM_LOCAL_TEST_JOBS}")
+  BAZEL_ARGS+=(--local_test_jobs="${ROCM_LOCAL_TEST_JOBS}")
+fi
 
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
-    --config=rocm_rbe \
-    --config=rocm \
-    --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+    "${BAZEL_ARGS[@]}" \
     $OVERRIDE_XLA_REPO \
-    --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-    --test_output=errors \
-    --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-    --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-    --build_tag_filters=${TAG_FILTERS} \
-    --test_tag_filters=${TAG_FILTERS} \
-    --remote_download_outputs=minimal \
-    --test_env=JAX_SKIP_SLOW_TESTS=true \
-    --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-    --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
-    --color=yes \
-    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAX \
-    $@ \
+    "$@" \
     -- \
     //tests:gpu_tests \
     //tests:backend_independent_tests \
