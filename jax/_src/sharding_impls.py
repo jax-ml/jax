@@ -690,7 +690,7 @@ def parse_flatten_op_sharding(
     return out
   elif hlo_sharding.is_replicated():
     return [PartitionSpec()]
-  elif hlo_sharding.is_maximal() and mesh.size == 1:
+  elif hlo_sharding.is_maximal():
     return [PartitionSpec()]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
