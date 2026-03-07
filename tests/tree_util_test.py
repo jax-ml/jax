@@ -26,7 +26,8 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
-    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
+    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef,
+    default_registry, dispatch_registry)
 import jax.numpy as jnp
 
 # Easier to read.
@@ -1754,6 +1755,27 @@ class RegistrationTest(jtu.JaxTestCase):
     with self.subTest("with static False"):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
+
+  def test_pytreedef_equality_with_custom_node_across_registries(self):
+
+    class CustomTypeForRegistryTest:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    tree_util.register_pytree_with_keys(
+        CustomTypeForRegistryTest,
+        lambda c: (((tree_util.GetAttrKey("x"), c.x),
+                    (tree_util.GetAttrKey("y"), c.y)), None),
+        lambda aux, children: CustomTypeForRegistryTest(*children),
+        lambda c: ((c.x, c.y), None),
+    )
+
+    obj = CustomTypeForRegistryTest(1, 2)
+    tree = {"a": [obj, 3]}
+    _, treedef_default = default_registry.flatten(tree)
+    _, treedef_dispatch = dispatch_registry.flatten(tree)
+    self.assertEqual(treedef_default, treedef_dispatch)
 
 
 if __name__ == "__main__":

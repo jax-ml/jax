@@ -279,7 +279,9 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
     if (a.kind != b.kind || a.arity != b.arity ||
         (a.node_data.ptr() == nullptr) != (b.node_data.ptr() == nullptr) ||
         (a.sorted_dict_keys.size() != b.sorted_dict_keys.size()) ||
-        a.custom != b.custom) {
+        (a.custom != b.custom &&
+         (a.custom == nullptr || b.custom == nullptr ||
+          !a.custom->type.is(b.custom->type)))) {
       return false;
     }
     try {
