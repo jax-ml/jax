@@ -48,7 +48,7 @@ jobs:
           $JAXCI_PYTHON -m uv pip install numpy==2.0.0 scipy==1.13.0
 
           # Install JAX using the changes in the PR
-          $JAXCI_PYTHON -m uv pip install -e .[minimum-jaxlib]
+          $JAXCI_PYTHON -m uv pip install -e '.[minimum-jaxlib]'
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c

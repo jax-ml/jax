@@ -1,35 +1,29 @@
 # Composite action to download the jax, jaxlib, and the CUDA plugin wheels
 name: Download JAX CUDA wheels
+description: "Downloads JAX, jaxlib, and CUDA plugin wheels from Google Cloud Storage based on the runner, Python, and CUDA version."
 
 inputs:
   python:
     description: "Which python version should the artifact be downloaded for?"
-    type: string
     required: true
   cuda-version:
     description: "Which cuda version should the artifact be downloaded for?"
-    type: string
     default: "12"
   use-nvidia-pip-wheels:
     description: "Whether to download Nvidia CUDA packages from PyPI?"
-    type: boolean
-    default: false
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"
-    type: string
     default: "head"
   download-jax-from-gcs:
     description: "Whether to download the jax wheel from GCS"
     default: '1'
-    type: string
   skip-download-jaxlib-and-plugins-from-gcs:
     description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
     default: '0'
-    type: string
   gcs_download_uri:
     description: "GCS location prefix from where the artifacts should be downloaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
-    type: string
+
 permissions: {}
 runs:
   using: "composite"

@@ -91,7 +91,7 @@ jobs:
 
       - name: Get year & week number
         id: get-date
-        run: echo "date=$(/bin/date "+%Y-%U")" >> $GITHUB_OUTPUT
+        run: echo "date=$(/bin/date "+%Y-%U")" >> "$GITHUB_OUTPUT"
         shell: bash -l {0}
 
       - name: Restore cached TSAN CPython ${{ matrix.python-version }}
@@ -115,15 +115,15 @@ jobs:
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         run: |
           cd cpython
-          mkdir ${GITHUB_WORKSPACE}/cpython-tsan
-          CC=clang-18 CXX=clang++-18 CFLAGS=" -O0 -g" CXXFLAGS="-stdlib=libc++" ./configure --prefix ${GITHUB_WORKSPACE}/cpython-tsan --disable-gil --with-thread-sanitizer --with-mimalloc
+          mkdir "${GITHUB_WORKSPACE}/cpython-tsan"
+          CC=clang-18 CXX=clang++-18 CFLAGS=" -O0 -g" CXXFLAGS="-stdlib=libc++" ./configure --prefix "${GITHUB_WORKSPACE}/cpython-tsan" --disable-gil --with-thread-sanitizer --with-mimalloc
           make -j64
           make install -j64
           # Check whether free-threading mode is enabled
-          PYTHON_GIL=0 ${GITHUB_WORKSPACE}/cpython-tsan/bin/python3 -c "import sys; assert not sys._is_gil_enabled()"
+          PYTHON_GIL=0 "${GITHUB_WORKSPACE}/cpython-tsan/bin/python3" -c "import sys; assert not sys._is_gil_enabled()"
 
           # Create archive to be used with bazel as hermetic python:
-          cd ${GITHUB_WORKSPACE} && tar -czpf python-tsan.tgz cpython-tsan
+          cd "${GITHUB_WORKSPACE}" && tar -czpf python-tsan.tgz cpython-tsan
 
       - name: Save TSAN CPython ${{ matrix.python-version }}
         id: cache-cpython-tsan-save
@@ -145,7 +145,7 @@ jobs:
           BASE_URL="https://storage.googleapis.com/general-ml-ci-transient/jax-github-actions/jax/${GITHUB_WORKFLOW}/${{ github.run_number }}/${{ github.run_attempt }}/python-tsan.tgz"
           # URL-encode the path (handles spaces in workflow name)
           PUBLIC_URL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${BASE_URL}', safe=':/'))")
-          echo "HERMETIC_PYTHON_URL=$PUBLIC_URL" >> $GITHUB_ENV
+          echo "HERMETIC_PYTHON_URL=$PUBLIC_URL" >> "$GITHUB_ENV"
 
       # --- Condtional NumPy steps for pre-release Python ---
 
@@ -165,39 +165,41 @@ jobs:
           cd numpy
 
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
-          if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
+          if [ ! -d "${GITHUB_WORKSPACE}/cpython-tsan/bin/" ]; then
             echo "Extract cpython from python-tsan.tgz"
             pushd .
-            ls ${GITHUB_WORKSPACE}/python-tsan.tgz
-            cd ${GITHUB_WORKSPACE} && tar -xzf python-tsan.tgz
-            ls ${GITHUB_WORKSPACE}/cpython-tsan/bin/
+            ls "${GITHUB_WORKSPACE}/python-tsan.tgz"
+            cd "${GITHUB_WORKSPACE}" && tar -xzf python-tsan.tgz
+            ls "${GITHUB_WORKSPACE}/cpython-tsan/bin/"
             popd
           fi
 
-          export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
+          export PATH="${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH"
 
-          python3 -m pip install uv~=0.5.30
+          python3 -m pip install 'uv~=0.5.30'
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
 
           # Create simple index and copy the wheel
-          mkdir -p ${GITHUB_WORKSPACE}/wheelhouse/numpy
+          mkdir -p "${GITHUB_WORKSPACE}/wheelhouse/numpy"
 
+          # shellcheck disable=SC2207
           numpy_whl_name=($(cd dist && ls numpy*.whl))
+          # shellcheck disable=SC2128
           if [ -z "${numpy_whl_name}" ]; then exit 1; fi
-
+          
           echo "Built TSAN Numpy wheel: ${numpy_whl_name}"
+          
+          cp "dist/${numpy_whl_name}" "${GITHUB_WORKSPACE}/wheelhouse/numpy"
 
-          cp dist/${numpy_whl_name} ${GITHUB_WORKSPACE}/wheelhouse/numpy
-
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/index.html
+          cat << EOF > "${GITHUB_WORKSPACE}/wheelhouse/index.html"
           <!DOCTYPE html><html><body>
           <a href="numpy">numpy></a></br>
           </body></html>
           EOF
 
-          cat << EOF > ${GITHUB_WORKSPACE}/wheelhouse/numpy/index.html
+          cat << EOF > "${GITHUB_WORKSPACE}/wheelhouse/numpy/index.html"
           <!DOCTYPE html><html><body>
           <a href="${numpy_whl_name}">${numpy_whl_name}</a></br>
           </body></html>
@@ -227,15 +229,18 @@ jobs:
           cd jax
 
           # Calculate SHA256 of the Python tarball
-          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz | awk '{ print $1 }'))
+          # shellcheck disable=SC2128,SC2207
+          export PYTHON_SHA256=($(sha256sum "${GITHUB_WORKSPACE}/python-tsan.tgz" | awk '{ print $1 }'))
+          # shellcheck disable=SC2128
           echo "Python sha256: ${PYTHON_SHA256}"
           echo "Python URL: $HERMETIC_PYTHON_URL"
 
           # Configure Bazel
+          # shellcheck disable=SC2128
           python3 build/build.py build --configure_only \
             --python_version=${{ matrix.python-version }}-ft \
             --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${HERMETIC_PYTHON_URL}" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256="${PYTHON_SHA256}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=thread \
@@ -246,8 +251,8 @@ jobs:
 
           # Copy custom Numpy wheel only if using 3.15 (and if it exists)
           if [ "${{ matrix.python-version }}" == "3.15" ]; then
-            ls ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl || exit 1
-            cp -v ${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl dist/
+            ls "${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl" || exit 1
+            cp -v "${GITHUB_WORKSPACE}/wheelhouse/numpy/*.whl" dist/
 
             # Patch requirements lock to use TSAN-instrumented NumPy
             sed -i "s|--extra-index-url.*|--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" build/${{ matrix.requirements_lock_name }}.txt
@@ -260,16 +265,16 @@ jobs:
 
           # Check python version
           python_version="${{ matrix.python-version }}"
-          bazel run --config=rbe_linux_x86_64 --@rules_python//python/config_settings:py_freethreaded="yes" @python_${python_version//./_}_host//:python -- -VV
+          bazel run --config=rbe_linux_x86_64 --@rules_python//python/config_settings:py_freethreaded="yes" "@python_${python_version//./_}_host//:python" -- -VV
 
           # Check numpy version
           bazel cquery @pypi_numpy//:* | grep whl
 
           # Build JAX and run tests
           bazel test \
-              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
-              --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
-              --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+              --test_env=JAX_NUM_GENERATED_CASES="$JAX_NUM_GENERATED_CASES" \
+              --test_env=JAX_ENABLE_X64="$JAX_ENABLE_X64" \
+              --test_env=JAX_SKIP_SLOW_TESTS="$JAX_SKIP_SLOW_TESTS" \
               --test_env=PYTHON_GIL=0 \
               --test_env=TSAN_OPTIONS="halt_on_error=1,suppressions=tests/config/tsan-suppressions_${{ matrix.python-version }}.txt" \
               --test_env=JAX_TEST_NUM_THREADS=8 \

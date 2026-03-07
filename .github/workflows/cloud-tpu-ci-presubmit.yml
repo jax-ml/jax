@@ -42,7 +42,7 @@ jobs:
       python: "3.14-nogil"
       libtpu-version-type: "nightly"
       halt-for-connection: ${{ inputs.halt-for-connection }}
-      build_jaxlib: "true"
-      build_jax: "true"
+      build_jaxlib: ${{ 'true' }}
+      build_jax: ${{ 'true' }}
       clone_main_xla: 1
     # End Presubmit Naming Check github-tpu-presubmits
