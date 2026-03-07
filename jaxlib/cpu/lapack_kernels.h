@@ -76,6 +76,11 @@ enum class ComputationMode : char {
   kComputeSchurVectors = 'V',
 };
 
+enum class ComputationModeHessenberg : char {
+  kNoComputeSchurVectors = 'N',
+  kComputeSchurVectors = 'I',
+};
+
 enum class Sort : char { kNoSortEigenvalues = 'N', kSortEigenvalues = 'S' };
 
 }  // namespace schur
@@ -559,6 +564,147 @@ struct HessenbergDecomposition {
                                   lapack_int low, lapack_int high);
 };
 
+//== Schur Decomposition of Hessenberg matrix ==//
+
+template <::xla::ffi::DataType dtype>
+struct SchurHessenbergDecomposition {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+                "There exists a separate implementation for Complex types");
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(char* job, char* compz,
+                      lapack_int* n, lapack_int* ilo, lapack_int* ihi,
+                      ValueType* h, lapack_int* ldh,
+                      ValueType* wr, ValueType* wi, ValueType* z, lapack_int* ldz,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, schur::ComputationModeHessenberg mode,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> schur_vectors,
+      ::xla::ffi::ResultBuffer<dtype> eigvals_real,
+      ::xla::ffi::ResultBuffer<dtype> eigvals_imag,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+
+  static int64_t GetWorkspaceSize(lapack_int x_cols,
+                                  schur::ComputationModeHessenberg mode);
+};
+
+template <::xla::ffi::DataType dtype>
+struct SchurHessenbergDecompositionComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(char* job, char* compz,
+                      lapack_int* n, lapack_int* ilo, lapack_int* ihi,
+                      ValueType* h, lapack_int* ldh,
+                      ValueType* wr, ValueType* z, lapack_int* ldz,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, schur::ComputationModeHessenberg mode,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> schur_vectors,
+      ::xla::ffi::ResultBuffer<dtype> eigvals,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+
+  static int64_t GetWorkspaceSize(lapack_int x_cols,
+                                  schur::ComputationModeHessenberg mode);
+};
+
+//== Eigenvectors of Schur decomposition ==//
+
+template <::xla::ffi::DataType dtype>
+struct SchurEigenvectors {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+                "There exists a separate implementation for Complex types");
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using ComplexType = ::xla::ffi::NativeType<::xla::ffi::ToComplex(dtype)>;
+  using FnType = void(char* side, char* howmny, bool* select,
+                      lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* vl, lapack_int* ldvl, ValueType* vr, lapack_int* ldvr,
+                      lapack_int* mm, lapack_int* m, ValueType* work, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<dtype> eigen_vals_imag,
+      ::xla::ffi::ResultBuffer<::xla::ffi::ToComplex(dtype)> eigen_vectors,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
+template <::xla::ffi::DataType dtype>
+struct SchurEigenvectorsComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(char* side, char* howmny, bool* select,
+                      lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* vl, lapack_int* ldvl, ValueType* vr, lapack_int* ldvr,
+                      lapack_int* mm, lapack_int* m,
+                      ValueType* work, RealType* rwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> eigen_vectors,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
+//== Reorder Schur decomposition ==//
+
+template <::xla::ffi::DataType dtype>
+struct SchurReorder {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+                "There exists a separate implementation for Complex types");
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using ComplexType = ::xla::ffi::NativeType<::xla::ffi::ToComplex(dtype)>;
+  using FnType = void(char* compq, lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* q, lapack_int* ldq, lapack_int* ifst,
+                      lapack_int* ilst, ValueType* work, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<dtype> schur_vectors,
+      ::xla::ffi::Buffer<::xla::ffi::DataType::U32> order,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> schur_vectors_out,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
+template <::xla::ffi::DataType dtype>
+struct SchurReorderComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(char* compq, lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* q, lapack_int* ldq, lapack_int* ifst,
+                      lapack_int* ilst, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<dtype> schur_vectors,
+      ::xla::ffi::Buffer<::xla::ffi::DataType::U32> order,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> schur_vectors_out,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
 //== Tridiagonal Reduction                                           ==//
 //== Reduces a Symmetric/Hermitian square matrix to tridiagonal form ==//
 
@@ -656,6 +802,18 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_shseqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dhseqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_chseqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zhseqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ctrevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ztrevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strexc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrexc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ctrexc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ztrexc_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgtsv_ffi);
