@@ -102,7 +102,6 @@ def get(
   """
   entries = [
       (
-
           "computation",
           lambda hash_obj: _hash_computation(
               hash_obj, module, ignore_callbacks
@@ -213,9 +212,10 @@ def _strip_mosaic_debug_info(m: ir.Module) -> None:
       body = bc.get("custom_call_config", {}).get("body")
       if not body:
         return ir.WalkResult.ADVANCE
-      with ir.Context() as ctx:
-        tpu.register_dialect(ctx)
-        ctx.allow_unregistered_dialects = True
+      ctx = ir.Context()
+      tpu.register_dialect(ctx)
+      ctx.allow_unregistered_dialects = True
+      with ctx:
         kernel = ir.Module.parse(base64.b64decode(body), context=ctx)
         pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
             kernel.operation)
