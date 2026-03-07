@@ -19,9 +19,10 @@
 
 
 # pylint: disable=g-bad-import-order
-from . import _tpu_gen
-from ._tpu_gen import *  # pylint: disable=wildcard-import
-from ._tpu_gen import _Dialect
+from ._tpu_enum_gen import *  # pylint: disable=wildcard-import
+from . import _tpu_ops_gen
+from ._tpu_ops_gen import *  # pylint: disable=wildcard-import
+from ._tpu_ops_gen import _Dialect
 from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import
 try:
   from jaxlib.mlir.dialects._ods_common import _cext
@@ -33,7 +34,7 @@ _cext.globals.append_dialect_search_prefix("jax.jaxlib.mosaic.python")
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class TraceOp(_tpu_gen.TraceOp):  # noqa: F405
+class TraceOp(_tpu_ops_gen.TraceOp):  # noqa: F405
   """An extension to the automatically generated TraceOp bindings."""
 
   def __init__(self, results, message, level, *, loc=None, ip=None):
@@ -46,7 +47,7 @@ class TraceOp(_tpu_gen.TraceOp):  # noqa: F405
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class RegionOp(_tpu_gen.RegionOp):  # noqa: F405
+class RegionOp(_tpu_ops_gen.RegionOp):  # noqa: F405
   """An extension to the automatically generated RegionOp bindings."""
 
   def __init__(self, results, *, loc=None, ip=None):
