@@ -639,13 +639,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # See b/255511660.
   kept_in_shardings = []
   for i in exported.module_kept_var_idx:
-    if exported._has_named_shardings:
-      in_sharding_hlo = _export.named_to_hlo_sharding(
-        exported._in_named_shardings[i],
-        exported.in_avals[i])
-    else:
-      in_sharding_hlo = exported.in_shardings_hlo[i]
-    kept_in_shardings.append(in_sharding_hlo)
+    kept_in_shardings.append(exported.in_shardings_hlo[i])
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),
@@ -660,15 +654,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn._inference_function
       )
 
-  if exported._has_named_shardings:
-    out_shardings_hlo = tuple(
-      _export.named_to_hlo_sharding(s, a)
-      for s, a in zip(exported._out_named_shardings, exported.out_avals))
-  else:
-    out_shardings_hlo = exported.out_shardings_hlo
   res = list(map(partial(_shard_value,
                          skip_replicated_sharding=tf.executing_eagerly()),
-                 res, out_shardings_hlo))
+                 res, exported.out_shardings_hlo))
   res = tuple(map(_convert_value, res, exported.out_avals))
   return res
 

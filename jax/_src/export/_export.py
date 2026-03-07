@@ -147,15 +147,13 @@ class Exported:
         sharding.
         See https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html#concrete-array-shardings-can-mention-auto-mesh-axis
         for more details.
-    in_shardings_hlo: (Not used for exports created after 3/3/2026.) the
-        flattened input shardings, a sequence as long
+    in_shardings_hlo: the flattened input shardings, a sequence as long
         as ``in_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
         the mesh, and in general you should avoid using this field directly.
         See ``in_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
-    out_shardings_hlo: (Not used for exports created after 3/3/2026.) the
-        flattened output shardings, a sequence as long
+    out_shardings_hlo: the flattened output shardings, a sequence as long
         as ``out_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
         the mesh, and in general you should avoid using this field directly.
@@ -212,8 +210,8 @@ class Exported:
   _has_named_shardings: bool
   _in_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
   _out_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
-  in_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/3/2026
-  out_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/3/2026
+  in_shardings_hlo: tuple[HloSharding | None, ...]
+  out_shardings_hlo: tuple[HloSharding | None, ...]
 
   nr_devices: int
   platforms: tuple[str, ...]
@@ -256,8 +254,8 @@ class Exported:
       >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
       ...                             in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
       ...     )(np.arange(jax.device_count()))
-      >>> exp.in_shardings_jax(exp_mesh)
-      (NamedSharding(mesh=Mesh('a': 8, axis_types=(Auto,)), spec=P('a',), memory_kind=device),)
+      >>> exp.in_shardings_hlo
+      ({devices=[8]<=[8]},)
       >>> # Create a mesh for running the exported object
       >>> run_mesh = sharding.Mesh(jax.devices()[::-1], ("a",))
       >>> # Put the args and kwargs on the appropriate devices
@@ -719,9 +717,6 @@ def to_named_sharding_with_abstract_mesh(
 
   assert False, f"Unsupported sharding: {s}"
 
-
-# TODO(b/489569164): move to jax2tf 6 months after 1/15/2026,
-# when we don't need to support HloSharding in the serialized exports.
 def named_to_hlo_sharding(s: NamedSharding | None,
                           aval: core.ShapedArray) -> HloSharding | None:
   if s is None: return None
@@ -844,14 +839,14 @@ def _export_lowered(
     # the VJP. Note that jaxpr_as_fun produces a function with flat arguments
     assert(jaxpr is not None)  # None only when the lowered was created outside JAX
     fun_jax = core.jaxpr_as_fun(jaxpr)
-    assert exp_primal._has_named_shardings
+
     fun_vjp_jax, vjp_in_avals = _get_vjp_fun(
         fun_jax,
         in_tree=exp_primal.in_tree,
         in_avals=exp_primal.in_avals,
-        has_named_shardings=True,
-        in_shardings_hlo=(None,) * len(exp_primal._in_named_shardings),
-        out_shardings_hlo=(None,) * len(exp_primal._out_named_shardings),
+        has_named_shardings=exp_primal._has_named_shardings,
+        in_shardings_hlo=exp_primal.in_shardings_hlo,
+        out_shardings_hlo=exp_primal.out_shardings_hlo,
         in_named_shardings=exp_primal._in_named_shardings,
         out_named_shardings=exp_primal._out_named_shardings,
         out_avals=exp_primal.out_avals,
@@ -872,8 +867,10 @@ def _export_lowered(
       _has_named_shardings=True,
       _in_named_shardings=in_named_shardings,
       _out_named_shardings=out_named_shardings,
-      in_shardings_hlo=(None,) * len(in_named_shardings),
-      out_shardings_hlo=(None,) * len(out_named_shardings),
+      in_shardings_hlo=tuple(named_to_hlo_sharding(s, aval)
+                             for s, aval in zip(in_named_shardings, args_avals_flat)),
+      out_shardings_hlo=tuple(named_to_hlo_sharding(s, aval)
+                              for s, aval in zip(out_named_shardings, out_avals_flat)),
 
       nr_devices=nr_devices,
       platforms=lowering._platforms,  # type: ignore
