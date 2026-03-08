@@ -268,7 +268,7 @@ module @jit__lambda attributes {jax.uses_shape_polymorphism = false, mhlo.num_pa
 
 
 # c64 data
-data_2026_02_16["c64"] = dict(
+data_2026_02_16["c64"] = dict(  # pyrefly: ignore[unsupported-operation]  # pyrefly#2449
   testdata_version=1,
   platform="rocm",
   custom_call_targets=["hipsolver_syevd_ffi"],
