@@ -1289,6 +1289,10 @@ def _tcgen05_mma_constraint_system(
   assignments: dict[cs.Variable, cs.Constant] = {}
   operands_for_variable: ValueSitesForVariable = {}
 
+  is_scaled = op.a_scale is not None
+  if is_scaled:
+    raise NotImplementedError("Layout inference for block-scaled matmuls.")
+
   # TMEM
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
@@ -1353,6 +1357,17 @@ def _tcgen05_mma_constraint_system(
       constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var), element_type_bitwidth))
     else:
       constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
+
+  # TODO(bchetioui): remove hasattr once minimum jaxlib version is 0.9.1.
+  if hasattr(op, "a_sparse_metadata") and op.a_sparse_metadata is not None:
+    sparse_meta_operand_idx = 4 + 2 * is_scaled
+    sparse_meta = ValueSite(op, VariableType.OPERAND, sparse_meta_operand_idx)
+    sparse_meta_var = ctx.producer_ref(sparse_meta)
+    sparse_meta_layout = tcgen05.sparse_meta_layout()
+    assignments[sparse_meta_var] = cs.TMEMLayout(sparse_meta_layout)
+    if not is_valid_tmem_layout_assignment(sparse_meta.shape, sparse_meta_layout):
+      return cs.Unsatisfiable()
+    operands_for_variable[sparse_meta_var] = [sparse_meta]
 
   return cs.ConstraintSystem(assignments=assignments, constraints=constraints), operands_for_variable
 
