@@ -363,9 +363,9 @@ def backward_pass3(
         env[v] = ValAccum(v.aval)
       lin_eqns.append(eqn)
     else:
-      subfuns, params = eqn.primitive.get_bind_params(eqn.params)
+      params = eqn.primitive.get_bind_params(eqn.params)
       with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
-        ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **params)
+        ans = eqn.primitive.bind(*map(read, eqn.invars), **params)
       ans = ans if eqn.primitive.multiple_results else [ans]
       foreach(env.setdefault, eqn.outvars, ans)
 
@@ -611,8 +611,9 @@ class JVPTrace(Trace):
     f_jvp, out_tree = traceable(f_jvp, in_tree)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, which_nz) if update_params else params
-    fun_and_args = (_update_annotation(f_jvp.with_unknown_names(), f.in_type, which_nz),) + tuple(args)
-    result = call_primitive.bind_with_trace(self.parent_trace, fun_and_args, new_params)
+    fun_and_args = _update_annotation(f_jvp.with_unknown_names(), f.in_type, which_nz)
+    new_params = dict(new_params, subfuns=(fun_and_args,))
+    result = call_primitive.bind_with_trace(self.parent_trace, args, new_params)
     primal_out, tangent_out = tree_unflatten(out_tree(), result)
     tangent_out = [p2tz(p) if t is None else t
                    for p, t in zip(primal_out, tangent_out)]
@@ -627,8 +628,9 @@ class JVPTrace(Trace):
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
-      return primitive.bind_with_trace(self.parent_trace, (fun, jvp, *primals_in),
-                                       dict(symbolic_zeros=symbolic_zeros))
+      return primitive.bind_with_trace(
+        self.parent_trace, tuple(primals_in),
+        dict(subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros))
     with core.set_current_trace(self.parent_trace):
       if not symbolic_zeros:
         tangents_in = map(instantiate_zeros, tangents_in)
@@ -644,9 +646,10 @@ class JVPTrace(Trace):
                               symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
-      return primitive.bind_with_trace(self.parent_trace,
-                                       (fun, fwd, bwd, *primals_in),
-                                       dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+      return primitive.bind_with_trace(
+        self.parent_trace, tuple(primals_in),
+        dict(subfuns=(fun, fwd, bwd), out_trees=out_trees,
+             symbolic_zeros=symbolic_zeros))
     fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
     fwd_in = [x for pair in fwd_in for x in pair]   # flatten
     with core.set_current_trace(self.parent_trace):
@@ -694,9 +697,9 @@ class JVPTrace(Trace):
         'JVP of custom transpose with respect to non-symbolic-zero residuals')
 
     with core.set_current_trace(self.parent_trace):
-      ps_out = prim.bind(call, *ps_in, **params)
+      ps_out = prim.bind(*ps_in, subfuns=(call,), **params)
       lin_ts_in = map(instantiate_zeros, lin_ts_in)
-      ts_out = prim.bind(call, *res_ps_in, *lin_ts_in, **params)
+      ts_out = prim.bind(*res_ps_in, *lin_ts_in, subfuns=(call,), **params)
 
     return map(partial(maybe_jvp_tracer, self), ps_out, ts_out)
 
@@ -831,8 +834,9 @@ class LinearizeTrace(Trace):
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
-      return primitive.bind_with_trace(self.parent_trace, (fun, jvp, *primals_in),
-                                       dict(symbolic_zeros=symbolic_zeros))
+      return primitive.bind_with_trace(
+        self.parent_trace, tuple(primals_in),
+        dict(subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros))
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     def _f_jvp(primals, tangents):
@@ -859,9 +863,10 @@ class LinearizeTrace(Trace):
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
-      return primitive.bind_with_trace(self.parent_trace,
-                                      (fun, fwd, bwd, *primals_in),
-                                      dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+      return primitive.bind_with_trace(
+        self.parent_trace, tuple(primals_in),
+        dict(subfuns=(fun, fwd, bwd), out_trees=out_trees,
+             symbolic_zeros=symbolic_zeros))
     fwd_in = [(p, type(t) is not Zero) for p, t in zip(primals_in, tangents_in)]
     fwd_in_flat = [x for pair in fwd_in for x in pair]   # flatten
     with core.set_current_trace(self.parent_trace):
@@ -903,7 +908,7 @@ class LinearizeTrace(Trace):
       primal_params = params
 
     all_primal_results = call_primitive.bind_with_trace(
-        self.parent_trace, (f_primal, *primals), primal_params)
+        self.parent_trace, primals, dict(primal_params, subfuns=(f_primal,)))
     residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
     non_fwd_res = all_primal_results[:num_res_out]
@@ -947,10 +952,10 @@ class LinearizeTrace(Trace):
       f_tangent = _get_f_tangent(lin_jaxpr, num_residuals)
 
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
+    new_params = dict(new_params, subfuns=(lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),))
     nz_tangents_out = call_primitive.bind_with_trace(
         self.tangent_trace,
-        (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
-         *residuals, *env, *nz_tangents_in), new_params)
+        (*residuals, *env, *nz_tangents_in), new_params)
     nz_tangents_out_iter = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_iter) if nz else p2tz(primal)
                     for nz, primal in zip(nzs_out, primals_out)]
@@ -1249,7 +1254,7 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
     params = update_params(params, [isinstance(x, GradAccum) for x in args],
                            [type(x) is not Zero for x in cts])
 
-  out_flat = primitive.bind(transposed, *flat_args, **params)
+  out_flat = primitive.bind(*flat_args, subfuns=(transposed,), **params)
   for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # type: ignore
     if isinstance(x, ValAccum): x.accum(ct)
 fancy_transposes[core.call_p] = partial(call_transpose_fancy, call_p)

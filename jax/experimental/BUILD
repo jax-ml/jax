@@ -671,6 +671,7 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src:sharding_impls",
         "//jax/_src:traceback_util",
+        "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src/lib",

@@ -374,8 +374,9 @@ def custom_dce_jvp(primals, tangents, *, fun_jaxpr: core.ClosedJaxpr, **_):
   # that most users of this API would compose this with a custom_jvp or
   # custom_vjp, which makes this less urgent.
   out = core.call_p.bind(
-      lu.wrap_init(core.jaxpr_as_fun(jvp_jaxpr),
-                   debug_info=jvp_jaxpr.jaxpr.debug_info), *primals, *tangents
+      *primals, *tangents,
+      subfuns=(lu.wrap_init(core.jaxpr_as_fun(jvp_jaxpr),
+                            debug_info=jvp_jaxpr.jaxpr.debug_info),)
   )
 
   out_primals, out_tangents = util.split_list(out, [len(out_nz)])

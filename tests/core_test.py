@@ -46,7 +46,7 @@ def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.call_p.bind(f, *args)
+  out = core.call_p.bind(*args, subfuns=(f,))
   return jax.tree.unflatten(out_tree(), out)
 # call = core_call
 core_call = util.curry(core_call)
@@ -56,7 +56,7 @@ def core_closed_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_closed_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.closed_call_p.bind(f, *args)
+  out = core.closed_call_p.bind(*args, subfuns=(f,))
   return jax.tree.unflatten(out_tree(), out)
 
 def simple_fun(x, y):

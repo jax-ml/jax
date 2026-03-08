@@ -381,7 +381,8 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
                   in_axes=(*(None,)*num_error_vals, *params['in_axes']),
                   out_axes_thunk=out_axes_thunk)
 
-  all_vals = primitive.bind(partial_checkify, *err_vals, *invals, **params)
+  all_vals = primitive.bind(*err_vals, *invals, subfuns=(partial_checkify,),
+                            **params)
 
   out_tree, _ = metadata()
   error, out_vals = tree_unflatten(out_tree, all_vals)
@@ -1017,9 +1018,11 @@ def shard_map_error_check(
       out_specs=new_out_specs,
       **kwargs,
   )
-  _, new_params = jshmap.shard_map_p.get_bind_params(new_params)
+  new_params = jshmap.shard_map_p.get_bind_params(new_params)
+  new_params['subfuns'] = (subfun,)
 
-  err_and_out = jshmap.shard_map_p.bind(subfun, *new_vals_in, **new_params)
+  err_and_out = jshmap.shard_map_p.bind(
+    *new_vals_in, **new_params)
   return tree_unflatten(out_tree, err_and_out)
 error_checks[jshmap.shard_map_p] = shard_map_error_check
 
@@ -1046,7 +1049,7 @@ def custom_jvp_call_rule(in_err: Error,
   jvp = lift_jvp(err_tree.num_leaves, num_consts, jvp_jaxpr_fun)
   jvp, jvp_out_tree = flatten_fun_output(jvp)
   all_outs = custom_derivatives.custom_jvp_call_p.bind(
-      partial_checkify, jvp, *err_vals, *in_vals, **params)
+      *err_vals, *in_vals, subfuns=(partial_checkify, jvp), **params)
   fst, out_metadata = lu.merge_linear_aux(f_metadata, jvp_out_tree)
   if fst:
     err_and_out_tree, _ = out_metadata
@@ -1113,9 +1116,8 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
                       debug_info=bwd.debug_info)
   checkified_fwd_wrapped, fwd_out_tree = flatten_fun_output(checkified_fwd_wrapped)
   all_outs = custom_derivatives.custom_vjp_call_p.bind(
-      checkified_fun, checkified_fwd_wrapped,
-      bwd_, *err_vals, *in_vals, out_trees=out_trees,
-      symbolic_zeros=symbolic_zeros)
+      *err_vals, *in_vals, out_trees=out_trees, symbolic_zeros=symbolic_zeros,
+      subfuns=(checkified_fun, checkified_fwd_wrapped, bwd_))
   fst, out_metadata = lu.merge_linear_aux(fun_metadata, fwd_out_tree)
   if fst:
     err_and_out_tree, _ = out_metadata

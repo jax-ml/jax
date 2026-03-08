@@ -306,7 +306,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
 
     try:
       out_flat = shard_map_p.bind(
-          fun, *args_flat, mesh=mesh, in_specs=in_specs_flat,
+          *args_flat, subfuns=(fun,), mesh=mesh, in_specs=in_specs_flat,
           out_specs_thunk=out_specs_thunk, check_vma=check_vma,
           manual_axes=axis_names)
     except _SpecError as e:
@@ -723,9 +723,9 @@ class ShardMapPrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, fun_and_args, params, /):
-    fun: lu.WrappedFun
-    fun, *args = fun_and_args
+  def bind_with_trace(self, trace, args, params, /):
+    params = dict(params)
+    fun, = params.pop('subfuns')
     return trace.process_shard_map(shard_map_p, fun, args, **params)
 
   def get_bind_params(self, params):
@@ -734,9 +734,10 @@ class ShardMapPrimitive(core.Primitive):
     assert isinstance(jaxpr, core.Jaxpr)
     subfun = lu.hashable_partial(
         lu.wrap_init(core.eval_jaxpr, debug_info=jaxpr.debug_info), jaxpr, ())
+    new_params['subfuns'] = (subfun,)
     axes = new_params.pop('out_specs')
     new_params['out_specs_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return [subfun], new_params
+    return new_params
 
 shard_map_p = ShardMapPrimitive('shard_map')
 
@@ -1524,7 +1525,7 @@ def _shard_map_batch(
   # mesh ctx is correctly set.
   with (core.set_current_trace(trace.parent_trace),
         core.remove_explicit_mesh_axis_names(trace.axis_data.explicit_mesh_axis)):
-    out_vals = prim.bind(fun, *in_vals, **new_params)
+    out_vals = prim.bind(*in_vals, subfuns=(fun,), **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
                         source_info=source_info_util.current())
   return map(make_tracer, out_vals, out_dims())  # pyrefly: ignore[bad-return]  # pyrefly#2385
@@ -1572,7 +1573,8 @@ def _shard_map_jvp(trace, shard_map_p, f: lu.WrappedFun, tracers, mesh, in_specs
                 out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
                 manual_axes=manual_axes)
   f_jvp, out_tree = ad.traceable(f_jvp, in_tree)
-  result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
+  result = shard_map_p.bind_with_trace(
+    trace.parent_trace, tuple(args), dict(params, subfuns=(f_jvp,)))
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
   tangent_out = [ad.Zero(core.typeof(p).to_tangent_aval()) if t is None else t
                  for p, t in zip(primal_out, tangent_out)]
@@ -1604,9 +1606,9 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
                       out_specs_thunk=known_out_specs, check_vma=check_vma,
                       manual_axes=manual_axes)
-  out = shard_map_p.bind_with_trace(trace.parent_trace,
-                                    (f_known.with_unknown_names(), *in_consts),
-                                    known_params)
+  out = shard_map_p.bind_with_trace(
+    trace.parent_trace, tuple(in_consts),
+    dict(known_params, subfuns=(f_known.with_unknown_names(),)))
   in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
   num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
   out_consts, non_fwd_res = split_list(out, [len(out) - num_res])
@@ -1672,7 +1674,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
       out_specs_thunk=fwd_out_specs_thunk, check_vma=check_vma,
       manual_axes=manual_axes)
   all_fwd_results = shard_map_p.bind_with_trace(
-      trace.parent_trace, (f_primal, *primals), fwd_params)
+      trace.parent_trace, tuple(primals), dict(fwd_params, subfuns=(f_primal,)))
   res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
   non_fwd_res = all_fwd_results[:num_res_out]
@@ -1709,9 +1711,9 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
   nz_tangents_out = shard_map_p.bind_with_trace(
-      trace.tangent_trace,
-      (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
-       *residuals, *env, *nz_tangents_in), tangent_params)
+      trace.tangent_trace, (*residuals, *env, *nz_tangents_in),
+      dict(tangent_params,
+           subfuns=(lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),)))
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
                   for nz, primal in zip(nzs_out, primals_out)]
@@ -1807,9 +1809,9 @@ def _shard_map_transpose(out_cts, *args,
 
   try:
     out_flat = shard_map_p.bind(
-        fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
-        out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-        manual_axes=manual_axes)
+        *all_args, subfuns=(fun_trans_flat,), mesh=mesh,
+        in_specs=tuple(new_in_specs), out_specs_thunk=new_out_specs_thunk,
+        check_vma=check_vma, manual_axes=manual_axes)
   except (FloatingPointError, ZeroDivisionError) as e:
     print("Invalid nan value encountered in the backward pass of a shard_map "
           "function. Calling the de-optimized backward pass.")
@@ -1818,9 +1820,9 @@ def _shard_map_transpose(out_cts, *args,
       # in eager mode so that output of shmap are not manual.
       with api.disable_jit(True):
         _ = shard_map_p.bind(
-            fun_trans_flat, *all_args, mesh=mesh, in_specs=tuple(new_in_specs),
-            out_specs_thunk=new_out_specs_thunk, check_vma=check_vma,
-            manual_axes=manual_axes)
+            *all_args, subfuns=(fun_trans_flat,), mesh=mesh,
+            in_specs=tuple(new_in_specs), out_specs_thunk=new_out_specs_thunk,
+            check_vma=check_vma, manual_axes=manual_axes)
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None
     else:
@@ -2015,10 +2017,11 @@ def _shard_map_discharge(
   ref_specs = [spec for spec, invar in zip(in_specs, jaxpr.invars)
                if isinstance(invar.aval, AbstractRef)]
   params = dict(jaxpr=discharged_jaxpr, out_specs=(*out_specs, *ref_specs))
-  [f], params_ = shard_map_p.get_bind_params(params)
+  params_ = shard_map_p.get_bind_params(params)
+  f, = params_.pop('subfuns')  # pytype: disable=attribute-error
   discharged_out_specs, = params_.values()
   out_and_ref_vals = shard_map_p.bind(
-      f, *args, mesh=mesh, in_specs=in_specs, manual_axes=manual_axes,
+      *args, subfuns=(f,), mesh=mesh, in_specs=in_specs, manual_axes=manual_axes,
       out_specs_thunk=discharged_out_specs, check_vma=check_vma)
   out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.outvars)])
   ref_vals_ = iter(ref_vals)
