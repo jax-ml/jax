@@ -15,6 +15,7 @@
 # ruff: noqa
 
 import datetime
+from typing import Any
 import numpy as np
 
 array = np.array
@@ -23,7 +24,7 @@ float64 = np.float64
 complex64 = np.complex64
 complex128 = np.complex128
 
-data_2026_02_16 = {}
+data_2026_02_16: dict[str, dict[str, Any]] = {}
 
 # f32 data
 data_2026_02_16["f32"] = dict(
