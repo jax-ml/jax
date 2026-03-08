@@ -52,6 +52,12 @@ from jax._src.pallas.mosaic_gpu.helpers import dynamic_scheduling_loop as dynami
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline
+from jax._src.pallas.mosaic_gpu.primitives import atomic_add as atomic_add
+from jax._src.pallas.mosaic_gpu.primitives import atomic_and as atomic_and
+from jax._src.pallas.mosaic_gpu.primitives import atomic_max as atomic_max
+from jax._src.pallas.mosaic_gpu.primitives import atomic_min as atomic_min
+from jax._src.pallas.mosaic_gpu.primitives import atomic_or as atomic_or
+from jax._src.pallas.mosaic_gpu.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_scales_to_tmem as async_copy_scales_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_smem_to_tmem as async_copy_smem_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_sparse_metadata_to_tmem as async_copy_sparse_metadata_to_tmem

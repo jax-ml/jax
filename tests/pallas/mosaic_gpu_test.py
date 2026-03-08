@@ -2929,6 +2929,46 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     src = jnp.arange(shape[0], dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(src), src)
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32],
+  )
+  def test_atomic_add(self, dtype):
+    self.skip_if_wg_semantics()
+    m, n = 128, 64
+    transforms = self.default_transforms(swizzle=64, dtype=dtype)
+    def body(inp_ref, out_ref, smem_ref, barrier):
+      wg_idx = lax.axis_index("wg")
+      @pl.when(wg_idx == 0)
+      def _zero():
+        smem_ref[...] = plgpu.layout_cast(
+            jnp.zeros_like(smem_ref), plgpu.Layout.WGMMA
+        )
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.atomic_add(
+          smem_ref,
+          plgpu.load(inp_ref, pl.ds(wg_idx * m, m), layout=plgpu.Layout.WGMMA, optimized=False),
+      )
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      @pl.when(wg_idx == 0)
+      def _copy_out():
+        out_ref[...] = smem_ref[...]
+    x = jnp.arange(1, m * n + 1, dtype=dtype).reshape(m, n)
+    y = jnp.arange(m * n, 0, -1, dtype=dtype).reshape(m, n)
+    inp = jnp.concatenate([x, y], axis=0)
+    result = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct([m, n], dtype),
+        num_threads=2,
+        thread_name="wg",
+        scratch_shapes=[
+            plgpu.SMEM((m, n), dtype, transforms=transforms),
+            plgpu.Barrier(num_arrivals=2),
+        ],
+    )(inp)
+    np.testing.assert_array_equal(result, x + y)
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
@@ -3206,6 +3246,7 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
+        mgpu_primitives.atomic_store_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_smem_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
