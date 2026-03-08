@@ -124,5 +124,103 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(hlo_sharding, deserialized_hlo_sharding)
 
 
+class CustomPrimitiveTest(jtu.JaxTestCase):
+  def test_jvp(self):
+    @jex.custom_primitive
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_jvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      x_dot, y_dot = tangents
+      primal_out = f(x, y)
+      tangent_out = jnp.cos(x) * x_dot * y + jnp.sin(x) * y_dot
+      return primal_out, tangent_out
+
+    x = 3.
+    y = 0.5
+
+    expected = f.fun(x, y)
+    self.assertAllClose(f(x, y), expected)
+    self.assertAllClose(jax.jit(f)(x, y), expected)
+
+    expected = jax.jvp(f.fun, (x, y), (1., 1.))
+    self.assertAllClose(jax.jvp(f, (x, y), (1., 1.)), expected)
+    self.assertAllClose(jax.jvp(jax.jit(f), (x, y), (1., 1.)), expected)
+
+    expected = jax.grad(f.fun, argnums=(0, 1))(x, y)
+    self.assertAllClose(jax.grad(f, argnums=(0, 1))(x, y), expected)
+    self.assertAllClose(jax.grad(jax.jit(f), argnums=(0, 1))(x, y), expected)
+
+  def test_jvp_symbolic_zeros(self):
+    @jex.custom_primitive
+    def f(x, y):
+      return x * y
+
+    @f.def_jvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      _, y_dot = tangents
+      self.assertIsInstance(y_dot, jex.ad.SymbolicZero)
+      return f(x, y), y_dot
+
+    jax.grad(lambda x, y: f(x, y))(1., 1.)
+
+  def test_vmap(self):
+    @jex.custom_primitive
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap(axis_size, in_batched, xs, ys):
+      assert jax.tree.structure(in_batched) == jax.tree.structure((xs, ys))
+      assert all(jax.tree.leaves(jax.tree.map(
+          lambda b, arg: not b or arg.shape[0] == axis_size,
+          in_batched, (xs, ys))))
+      return jnp.cos(xs) / ys, True
+
+    xs = jnp.linspace(-1, 1, 4)
+    ys = jnp.linspace(1, 2, 4)
+
+    expected = f_vmap(len(xs), (True, True), xs, ys)[0]
+    self.assertAllClose(jax.vmap(f)(xs, ys), expected)
+    self.assertAllClose(jax.vmap(jax.jit(f))(xs, ys), expected)
+    self.assertAllClose(jax.jit(jax.vmap(jax.jit(f)))(xs, ys), expected)
+
+    expected = f_vmap(len(xs), (False, True), xs[0], ys)[0]
+    self.assertAllClose(jax.vmap(f, in_axes=(None, 0))(xs[0], ys), expected)
+    expected = f_vmap(len(xs), (True, False), xs, ys[0])[0]
+    self.assertAllClose(jax.vmap(f, in_axes=(0, None))(xs, ys[0]), expected)
+
+  def test_jvp_and_vmap(self):
+    @jex.custom_primitive
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_jvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      x_dot, y_dot = tangents
+      primal_out = f(x, y)
+      # incorrect; for testing
+      tangent_out = jnp.sin(x) * x_dot * y + jnp.cos(x) * y_dot
+      return primal_out, tangent_out
+
+    @f.def_vmap
+    def f_vmap(axis_size, in_batched, xs, ys):
+      del axis_size, in_batched  # unused
+      return f(xs, ys), True
+
+    xs = jnp.linspace(-1, 1, 4)
+    ys = jnp.linspace(1, 2, 4)
+
+    args = (xs, ys), (jnp.ones_like(xs), jnp.ones_like(ys))
+    expected = jax.jvp(f, *args)
+    self.assertAllClose(jax.jvp(jax.vmap(f), *args), expected)
+    self.assertAllClose(jax.jvp(jax.vmap(jax.jit(f)), *args), expected)
+    self.assertAllClose(jax.jvp(jax.jit(jax.vmap(f)), *args), expected)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
