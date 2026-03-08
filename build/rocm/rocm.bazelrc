@@ -16,6 +16,7 @@ common:rocm --action_env=TF_ROCM_CLANG="1"
 common:rocm --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 common:rocm --copt=-Wno-gnu-offsetof-extensions
 common:rocm --copt=-Qunused-arguments
+common:rocm --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201"
 
 # Used for @xla//build_tools/rocm:parallel_gpu_execute
 common:rocm --legacy_external_runfiles=true
