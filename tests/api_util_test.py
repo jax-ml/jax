@@ -104,6 +104,26 @@ class ApiUtilTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axes("test_spec", treedef, spec)
 
+  def test_flatten_axis_resources_valid_prefix(self):
+    tree = jax.tree.structure({"a": [1, 2], "b": 3})
+    shardings = {"a": None, "b": None}
+    result = api_util.flatten_axis_resources("test", tree, shardings, False)
+    self.assertEqual(result, (None, None, None))
+
+  def test_flatten_axis_resources_error_shows_mismatch_detail(self):
+    tree = jax.tree.structure({"a": 1, "b": 2})
+    shardings = {"a": None, "b": (None, None)}
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)Mismatch details.*different types"
+    ):
+      api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+
+  def test_flatten_axis_resources_error_shows_all_mismatches(self):
+    tree = jax.tree.structure({"a": 1, "b": 2})
+    shardings = {"a": [None, None], "b": (None, None)}
+    with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
+      api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
