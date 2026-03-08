@@ -64,6 +64,7 @@ jax.scipy.linalg
    expm_frechet
    funm
    hessenberg
+   hankel
    hilbert
    inv
    lu
