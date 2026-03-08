@@ -737,7 +737,7 @@ class NonUniformShardingError(ValueError):
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def get_process_index_and_count(
-    tensor_sharding: jsharding.Sharding, dim: int, ndims: int) -> tuple[int, int]:
+    tensor_sharding: jsharding.Sharding, dim: int, ndims: int, process_id: int | None = None) -> tuple[int, int]:
   """Get current process index and number of unique processes for given dimension.
 
   This function facilitates mapping of process-level data to individual
@@ -829,7 +829,7 @@ def get_process_index_and_count(
 
   # Get the set of slices for the current process which we will use to compute
   # the index of the current process.
-  current_pid = next(iter(tensor_sharding.addressable_devices)).process_index
+  current_pid = next(iter(tensor_sharding.addressable_devices)).process_index if process_id is None else process_id
   addressable_slices = frozenset(process_to_slice[current_pid])
 
   # Verify that all processes have the same number of slices.
