@@ -227,6 +227,37 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBatchedBufferSize);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, GesvdjBatched);
 #undef JAX_GPU_SOLVER_GesvdjBatched_ARGS
 
+// Singular Value Decomposition (divide-and-conquer): gesdd (ROCm only, via
+// rocsolver; CUDA cusolver does not expose gesdd).
+#define JAX_GPU_SOLVER_Gesdd_ARGS(Type, Real)                                  \
+  gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,      \
+      int n, Type *a, int lda, Real *s, Type *u, int ldu, Type *v, int ldv,   \
+      int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesdd);
+#undef JAX_GPU_SOLVER_Gesdd_ARGS
+
+#ifdef JAX_GPU_HIP
+// Query workspace size required by rocsolver gesdd (two-phase memory model).
+// Returns the size in bytes to pass to SetWorkspace before calling Gesdd.
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
+                                         signed char jobu, signed char jobvt,
+                                         int m, int n);
+// Run workspace size query on the given handle (no cache). Used by the kernel
+// with a dedicated query handle so the cache lives in the kernel translation
+// unit and is shared across warmup and timed runs.
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSizeQuery(gpusolverDnHandle_t handle,
+                                              signed char jobu, signed char jobvt,
+                                              int m, int n);
+// Handle used only for workspace size queries (no stream set). Kernel uses
+// this so query work is not on the execution stream.
+gpusolverDnHandle_t GetGesddQueryHandle();
+// Set user-owned workspace for rocsolver/rocblas (HIP only). Call with
+// (handle, ptr, size) before Gesdd; call with (handle, nullptr, 0) to clear.
+absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size);
+#endif  // JAX_GPU_HIP
+
 #ifdef JAX_GPU_CUDA
 
 #define JAX_GPU_SOLVER_Csrlsvqr_ARGS(Type, ...)                          \

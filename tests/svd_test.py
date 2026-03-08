@@ -309,6 +309,55 @@ class SvdTest(jtu.JaxTestCase):
     s_slice = full_s[start:end]
     self.assertAllClose(s_slice, s, atol=tol, rtol=tol)
 
+  @jtu.sample_product(
+      shape=[(8, 8), (16, 12), (32, 32), (64, 48)],
+      full_matrices=[True, False],
+  )
+  @jtu.run_on_devices('rocm')
+  def testGesddRocm(self, shape, full_matrices):
+    """Unit test for ROCm gesdd (divide-and-conquer SVD) backend."""
+    m, n = shape
+    dtype = np.float32
+    rng = jtu.rand_default(self.rng())
+    tol = 50 * np.finfo(dtype).eps
+    # Reconstruction and orthogonality can accumulate error in float32 on GPU.
+    # ROCm gesdd numerics can vary across drivers/hardware (CI vs local).
+    recon_tol = max(tol, 2e-2)
+    recon_rtol = max(tol, 1e-2)
+    # Orthogonality (u.T@u, vt@vt.T): relaxed for ROCm float32 (~2.5e-3).
+    _orth = 2.5e-3
+
+    def args_maker():
+      return [rng((m, n), dtype)]
+
+    a, = args_maker()
+    u, s, vt = jnp.linalg.svd(a, full_matrices=full_matrices)
+    k = min(m, n)
+    self.assertEqual(u.shape, (m, m if full_matrices else k))
+    self.assertEqual(s.shape, (k,))
+    self.assertEqual(vt.shape, (n if full_matrices else k, n))
+
+    # Reconstruct using first k components (u[:, :k], s, vt[:k, :]) so shapes
+    # broadcast correctly for both full_matrices=True and False.
+    a_recon = (u[:, :k] * s) @ vt[:k, :]
+    self.assertAllClose(a, a_recon, atol=recon_tol, rtol=recon_rtol)
+
+    # Compare singular values to NumPy
+    expected_s = np.linalg.svd(np.asarray(a), compute_uv=False)
+    self.assertAllClose(s, expected_s, atol=tol, rtol=tol)
+
+    # U and Vt are orthogonal (up to tolerance). Use _orth for ROCm float32.
+    with jax.numpy_rank_promotion('allow'):
+      self.assertAllClose(
+          u.T @ u, np.eye(u.shape[1], dtype=dtype), atol=_orth, rtol=_orth)
+      self.assertAllClose(
+          vt @ vt.T, np.eye(vt.shape[0], dtype=dtype), atol=_orth, rtol=_orth)
+
+    # JIT compatibility
+    def svd_fn(x):
+      return jnp.linalg.svd(x, full_matrices=full_matrices)
+    self._CompileAndCheck(svd_fn, args_maker, rtol=_SVD_RTOL, atol=1e-5)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

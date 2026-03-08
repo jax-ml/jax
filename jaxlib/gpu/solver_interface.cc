@@ -15,8 +15,13 @@ limitations under the License.
 
 #include "jaxlib/gpu/solver_interface.h"
 
+#include <map>
+#include <tuple>
+
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
@@ -356,6 +361,238 @@ JAX_GPU_DEFINE_GESVDJ_BATCHED(double, gpusolverDnDgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
 #undef JAX_GPU_DEFINE_GESVDJ_BATCHED
+
+#ifdef JAX_GPU_HIP
+// GESDD (divide-and-conquer SVD) is provided by rocsolver; hipSOLVER does not
+// expose it. rocsolver uses rocblas_handle; on ROCm the solver handle is
+// compatible with rocblas_handle.
+#include "rocm/include/rocsolver/rocsolver.h"
+
+namespace {
+rocblas_svect JobToRocblasSvect(signed char job) {
+  switch (job) {
+    case 'A':
+      return rocblas_svect_all;
+    case 'S':
+      return rocblas_svect_singular;
+    case 'N':
+    default:
+      return rocblas_svect_none;
+  }
+}
+
+absl::Status RocblasStatusToStatus(rocblas_status status, const char* file,
+                                  int line, const char* expr) {
+  if (ABSL_PREDICT_FALSE(status != rocblas_status_success)) {
+    return absl::InternalError(
+        absl::StrFormat("%s:%d: %s failed: rocblas_status %d", file, line, expr,
+                        static_cast<int>(status)));
+  }
+  return absl::OkStatus();
+}
+}  // namespace
+
+#define JAX_GPU_DEFINE_GESDD_REAL(Type, Name)                                  \
+  template <>                                                                  \
+  absl::Status Gesdd<Type>(                                                    \
+      gpusolverDnHandle_t handle, signed char jobu, signed char jobvt,        \
+      int m, int n, Type *a, int lda, RealType<Type>::value *s, Type *u,      \
+      int ldu, Type *v, int ldv, int *info) {                                  \
+    auto h = reinterpret_cast<rocblas_handle>(handle);                        \
+    rocblas_status st = Name(h, JobToRocblasSvect(jobu),                       \
+                             JobToRocblasSvect(jobvt), m, n, a, lda, s, u,    \
+                             ldu, v, ldv, info);                               \
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, #Name);               \
+  }
+
+JAX_GPU_DEFINE_GESDD_REAL(float, rocsolver_sgesdd);
+JAX_GPU_DEFINE_GESDD_REAL(double, rocsolver_dgesdd);
+#undef JAX_GPU_DEFINE_GESDD_REAL
+
+template <>
+absl::Status Gesdd<gpuComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuComplex *a, int lda, float *s, gpuComplex *u, int ldu,
+    gpuComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_cgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_float_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_float_complex*>(u), ldu,
+      reinterpret_cast<rocblas_float_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_cgesdd");
+}
+
+template <>
+absl::Status Gesdd<gpuDoubleComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuDoubleComplex *a, int lda, double *s, gpuDoubleComplex *u,
+    int ldu, gpuDoubleComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_zgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_double_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_double_complex*>(u), ldu,
+      reinterpret_cast<rocblas_double_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_zgesdd");
+}
+
+// Workspace size query and set for rocsolver (two-phase memory model).
+absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocblas_set_workspace(h, ptr, size);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocblas_set_workspace");
+}
+
+namespace {
+template <typename T>
+rocblas_status GesddQueryImpl(gpusolverDnHandle_t handle, signed char jobu,
+                              signed char jobvt, int m, int n);
+template <>
+rocblas_status GesddQueryImpl<float>(gpusolverDnHandle_t handle, signed char jobu,
+                                     signed char jobvt, int m, int n) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  return rocsolver_sgesdd(h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt),
+                          m, n, nullptr, m, nullptr, nullptr, m, nullptr, n,
+                          nullptr);
+}
+template <>
+rocblas_status GesddQueryImpl<double>(gpusolverDnHandle_t handle, signed char jobu,
+                                      signed char jobvt, int m, int n) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  return rocsolver_dgesdd(h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt),
+                          m, n, nullptr, m, nullptr, nullptr, m, nullptr, n,
+                          nullptr);
+}
+template <>
+rocblas_status GesddQueryImpl<gpuComplex>(gpusolverDnHandle_t handle,
+                                          signed char jobu, signed char jobvt,
+                                          int m, int n) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  return rocsolver_cgesdd(h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt),
+                          m, n, nullptr, m, nullptr, nullptr, m, nullptr, n,
+                          nullptr);
+}
+template <>
+rocblas_status GesddQueryImpl<gpuDoubleComplex>(gpusolverDnHandle_t handle,
+                                                 signed char jobu,
+                                                 signed char jobvt, int m,
+                                                 int n) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  return rocsolver_zgesdd(h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt),
+                          m, n, nullptr, m, nullptr, nullptr, m, nullptr, n,
+                          nullptr);
+}
+}  // namespace
+
+// Cache workspace size per (m, n, job) to avoid the expensive query (which
+// runs the full rocsolver path with nullptr) on every call. Same shape =>
+// same size; query once per (m, n, job) and dtype.
+namespace {
+absl::Mutex& GesddWorkspaceCacheMutex() {
+  static absl::Mutex mu;
+  return mu;
+}
+
+// Dedicated handle for workspace size queries (no stream set → default stream).
+gpusolverDnHandle_t GetGesddQueryHandleImpl() {
+  thread_local gpusolverDnHandle_t h = nullptr;
+  if (h == nullptr) {
+    if (gpusolverDnCreate(&h) != GPUSOLVER_STATUS_SUCCESS) return nullptr;
+  }
+  return h;
+}
+}  // namespace
+
+gpusolverDnHandle_t GetGesddQueryHandle() {
+  return GetGesddQueryHandleImpl();
+}
+
+// Query only (no cache). Kernel uses this with GetGesddQueryHandle so the
+// cache lives in the kernel .cc and is shared across all invocations.
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSizeQuery(gpusolverDnHandle_t handle,
+                                               signed char jobu,
+                                               signed char jobvt, int m,
+                                               int n) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocblas_start_device_memory_size_query(h);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_start_device_memory_size_query"));
+  st = GesddQueryImpl<T>(handle, jobu, jobvt, m, n);
+  if (st != rocblas_status_success) {
+    (void)rocblas_stop_device_memory_size_query(h, nullptr);
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_*gesdd (query)");
+  }
+  size_t size = 0;
+  st = rocblas_stop_device_memory_size_query(h, &size);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_stop_device_memory_size_query"));
+  return size;
+}
+
+template <typename T>
+absl::StatusOr<size_t> GesddWorkspaceSize(gpusolverDnHandle_t handle,
+                                         signed char jobu, signed char jobvt,
+                                         int m, int n) {
+  using Key = std::tuple<int, int, signed char>;
+  static std::map<Key, size_t> cache;
+
+  Key key(m, n, jobu);
+  {
+    absl::MutexLock lock(&GesddWorkspaceCacheMutex());
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+  }
+
+  gpusolverDnHandle_t query_handle = GetGesddQueryHandleImpl();
+  if (query_handle == nullptr) {
+    return absl::InternalError("Failed to create gesdd query handle");
+  }
+  auto h = reinterpret_cast<rocblas_handle>(query_handle);
+  rocblas_status st = rocblas_start_device_memory_size_query(h);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_start_device_memory_size_query"));
+  st = GesddQueryImpl<T>(query_handle, jobu, jobvt, m, n);
+  if (st != rocblas_status_success) {
+    (void)rocblas_stop_device_memory_size_query(h, nullptr);
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_*gesdd (query)");
+  }
+  size_t size = 0;
+  st = rocblas_stop_device_memory_size_query(h, &size);
+  JAX_RETURN_IF_ERROR(RocblasStatusToStatus(st, __FILE__, __LINE__,
+                                            "rocblas_stop_device_memory_size_query"));
+  {
+    absl::MutexLock lock(&GesddWorkspaceCacheMutex());
+    cache[key] = size;
+  }
+  return size;
+}
+
+template absl::StatusOr<size_t> GesddWorkspaceSize<float>(gpusolverDnHandle_t,
+                                                          signed char, signed char,
+                                                          int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSize<double>(gpusolverDnHandle_t,
+                                                           signed char, signed char,
+                                                           int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSize<gpuComplex>(gpusolverDnHandle_t,
+                                                               signed char, signed char,
+                                                               int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSize<gpuDoubleComplex>(
+    gpusolverDnHandle_t, signed char, signed char, int, int);
+
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<float>(gpusolverDnHandle_t,
+                                                                signed char, signed char,
+                                                                int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<double>(gpusolverDnHandle_t,
+                                                                 signed char, signed char,
+                                                                 int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<gpuComplex>(gpusolverDnHandle_t,
+                                                                    signed char, signed char,
+                                                                    int, int);
+template absl::StatusOr<size_t> GesddWorkspaceSizeQuery<gpuDoubleComplex>(
+    gpusolverDnHandle_t, signed char, signed char, int, int);
+#endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA
 

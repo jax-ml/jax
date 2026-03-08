@@ -2182,27 +2182,25 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   transposed = False
   kwargs = {}
 
-  # The Jacobi algorithm appears to outperform the default QR algorithm for
-  # small to medium sized matrices. See:
+  # The Jacobi algorithm (gesvdj) appears to outperform the default QR
+  # algorithm (gesvd) on CUDA for small to medium matrices. See:
   # https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s9226-fast-singular-value-decomposition-on-gpus-v2.pdf
-  # slide 5. With this in mind, we default to using the Jacobi algorithm for
-  # matrices smaller than 1024x1024.
+  # slide 5. So on CUDA we default to Jacobi for matrices with m, n <= 1024.
+  #
+  # On ROCm, rocsolver benchmarks show gesdd (divide-and-conquer) is faster
+  # than gesvdj for all tested sizes (e.g. ~3x faster at m=256,512). We
+  # therefore use gesdd by default on ROCm for all dimensions and do not
+  # default to Jacobi there.
   #
   # Note that the Jacobi algorithm is only used by default for matrices with
-  # concrete matrix dimensions. When using dynamic shapes, we always use the
-  # default QR algorithm, but users can (in principle) override this behavior
-  # by passing `use_jacobi=True`.
-  #
-  # TODO(danfm): Since this was originally implemented, hipSolver appears to
-  # have added support for the Jacobi algorithm, so we should investigate
-  # removing this condition.
-  # TODO(phawkins): Consider making polar decomposition the default.
+  # concrete dimensions. When using dynamic shapes we use the default path.
+  # Users can override via algorithm=SvdAlgorithm.JACOBI or .DEFAULT.
   use_jacobi = False
   use_polar = False
   if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
     try:
-      use_jacobi = target_name_prefix in ["cu", "hip"] and \
-                   m <= 1024 and n <= 1024
+      # Only CUDA: use Jacobi for small/medium; ROCm uses gesdd for all sizes.
+      use_jacobi = (target_name_prefix == "cu") and m <= 1024 and n <= 1024
     except core.InconclusiveDimensionOperation:
       use_jacobi = False
   elif algorithm == SvdAlgorithm.JACOBI:
@@ -2211,8 +2209,38 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     use_polar = True
 
   column_major = True
+  econ = not full_matrices
+  transposed = False
+  kwargs = {}
   if use_jacobi:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
+  elif algorithm == SvdAlgorithm.QR:
+    # Explicit QR (gesvd) path: use gesvd on both CUDA and ROCm for back-compat.
+    target_name = f"{target_name_prefix}solver_gesvd_ffi"
+    econ = not full_matrices
+    transposed = m < n
+    kwargs = {"transposed": transposed}
+    if transposed:
+      column_major = False
+  elif use_polar:
+    target_name = f"{target_name_prefix}solver_gesvdp_ffi"
+    econ = not full_matrices
+  else:
+    # On ROCm, use gesdd (divide-and-conquer) for better performance when
+    # rocsolver is available; on CUDA use gesvd (QR-based).
+    if target_name_prefix == "hip":
+      target_name = f"{target_name_prefix}solver_gesdd_ffi"
+    else:
+      target_name = f"{target_name_prefix}solver_gesvd_ffi"
+    econ = not full_matrices
+    # Because the base gesvd kernel only supports matrices where m >= n, we
+    # conceptually transpose the matrix if m < n. gesdd supports any shape.
+    transposed = m < n and target_name_prefix != "hip"
+    kwargs = {"transposed": transposed}
+    if transposed:
+      column_major = False
+
+  if use_jacobi:
     # The gesvdjbatched kernel doesn't support "econ" mode, but it also only
     # supports matrices up to 32x32, so it's always worth using the batched
     # version and then slicing afterwards when the matrix is small enough.
@@ -2220,18 +2248,6 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
       econ = not full_matrices and m > 32 and n > 32
     except core.InconclusiveDimensionOperation:
       econ = False
-  elif use_polar:
-    target_name = f"{target_name_prefix}solver_gesvdp_ffi"
-    econ = not full_matrices
-  else:
-    target_name = f"{target_name_prefix}solver_gesvd_ffi"
-    econ = not full_matrices
-    # Because the base gesvd kernel only supports matrices where m >= n, we
-    # conceptually transpose the matrix if m < n.
-    transposed = m < n
-    kwargs = {"transposed": transposed}
-    if transposed:
-      column_major = False
 
   if use_jacobi or use_polar:
     # When using the Jacobi or polar algorithms, the U and V matrices must
