@@ -962,6 +962,110 @@ class OpsTest(ptu.PallasTPUTest):
     ):
       self.pallas_call(kernel, out_shape=out_shape)(lhs, rhs)
 
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
+      shapes_and_axis=[
+          ((11, 300), (9, 300), 0),
+          ((20, 400), (17, 400), 0),
+          ((35, 200), (41, 200), 0),
+          ((35, 200), (35, 300), 1),
+      ],
+  )
+  def test_2d_concatenate(self, dtype, shapes_and_axis):
+    packing = 32 // jnp.iinfo(dtype).bits
+    if packing > 1 and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    if packing > 2 and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+
+    x_shape, y_shape, axis = shapes_and_axis
+    if axis == 0:
+      out_shape = (x_shape[0] + y_shape[0], x_shape[1])
+    else:
+      out_shape = (x_shape[0], x_shape[1] + y_shape[1])
+
+    min_val = dtype(jnp.iinfo(dtype).min)
+    max_val = dtype(jnp.iinfo(dtype).max)
+    x = jax.random.randint(
+        jax.random.key(42), x_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+    y = jax.random.randint(
+        jax.random.key(0), y_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.concatenate([x_ref[...], y_ref[...]], axis=axis)
+
+    np.testing.assert_array_equal(
+        kernel(x, y),
+        jnp.concatenate([x, y], axis=axis),
+    )
+
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
+      shapes=[
+          # cases for 32-bit
+          ((200,), (300,)),
+          ((1153,), (1200,)),
+          # cases for 16-bit
+          ((256,), (1024,)),
+          ((2176,), (2100,)),
+          ((2304,), (2560,)),
+          # cases for 8-bit
+          ((512,), (2048,)),
+          ((4225,), (5000,)),
+          ((4608,), (5120,)),
+      ],
+  )
+  def test_1d_concatenate(self, dtype, shapes):
+    if not jtu.is_cloud_tpu_at_least(2025, 3, 14):
+      self.skipTest("Requires a new libtpu")
+
+    packing = 32 // jnp.iinfo(dtype).bits
+    x_shape, y_shape = shapes
+    data_is_aligned = (
+        x_shape[0] % (packing * 128) == 0 and y_shape[0] % (packing * 128) == 0
+    )
+    out_shape = (x_shape[0] + y_shape[0],)
+
+    if packing >= 4:
+      if not data_is_aligned:
+        self.skipTest("Requires 8-bit iota, see b/356344569")
+      if not jtu.is_device_tpu_at_least(version=5):
+        self.skipTest("Requires TPU v5+")
+    if packing >= 2:
+      if not data_is_aligned and not jtu.is_device_tpu_at_least(version=6):
+        self.skipTest(
+            "Requires 16-bit iota, supported on TPU v6+, see b/356344569"
+        )
+      if not jtu.is_device_tpu_at_least(version=4):
+        self.skipTest("Requires TPU v4+")
+
+    min_val = dtype(jnp.iinfo(dtype).min)
+    max_val = dtype(jnp.iinfo(dtype).max)
+    x = jax.random.randint(
+        jax.random.key(42), x_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+    y = jax.random.randint(
+        jax.random.key(0), y_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.concatenate([x_ref[...], y_ref[...]], axis=0)
+
+    np.testing.assert_array_equal(
+        kernel(x, y),
+        jnp.concatenate([x, y], axis=0),
+    )
+
 
 if __name__ == "__main__":
   absltest.main()
