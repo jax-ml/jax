@@ -4832,6 +4832,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jax.device_put(jnp.arange(8.), jax.P('x'))
     jax.grad(lambda x: f(x).sum())(x)  # don't crash
+    jax.jit(jax.grad(lambda x: f(x).sum()))(x)  # don't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_vmap_shmap_psum(self, mesh):
