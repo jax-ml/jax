@@ -16,6 +16,8 @@
 
 # pylint: disable=g-complex-comprehension
 
+import inspect
+
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -1375,6 +1377,33 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(
         inference_utils.in_transforms(op), [lhs_transforms, rhs_transforms]
     )
+
+  def test_infer_tmem_layout_for_tcgen05_mma_sparse_metadata(self):
+    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
+    sig = inspect.signature(mgpu.dialect.tcgen05_mma)
+    if "a_sparse_metadata" not in sig.parameters:
+      self.skipTest("tcgen05_mma does not support a_sparse_metadata")
+
+    m, k, n = 128, 64, 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      f32 = ir.F32Type.get()
+      i2 = ir.IntegerType.get_signless(2)
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_ty = ir.MemRefType.get((m, k), bf16, memory_space=smem)
+      b_ty = ir.MemRefType.get((2 * k, n), bf16, memory_space=smem)
+      sparse_meta_ty = ir.MemRefType.get((m, k), i2, memory_space=tmem)
+      acc, a, b, sparse_meta = undefs(acc_ty, a_ty, b_ty, sparse_meta_ty)
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc, a, b, accumulate, a_sparse_metadata=sparse_meta
+      )
+
+    mgpu.infer_layout(self.module)
+
+    acc_layout = tcgen05._infer_tmem_layout((m, n), collective=False, packing=1)
+    self.checkInTmemLayouts(mma, [acc_layout, tcgen05.sparse_meta_layout()])
 
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
   def test_infer_transforms_for_async_load_store_works_on_ok_input(self, op_type):
