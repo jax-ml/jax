@@ -344,16 +344,36 @@ def initialize():
   if path is None:
     return
 
-  if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
-    _check_cuda_versions(raise_on_first_error=True)
+  from jax._src import config
+
+  jax_platforms = config.jax_platforms.value
+  should_validate = True
+
+  if jax_platforms:
+    platforms = []
+    for platform in jax_platforms.split(","):
+      platforms.extend(xb.expand_platform_alias(platform.strip()))
+
+    should_validate = "cuda" in platforms
+
+  if not should_validate:
+    logger.debug(
+        f"Platforms {jax_platforms} were explicitly requested and do not include CUDA. "
+        "Skipping CUDA version check."
+    )
+  elif os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
+    logger.debug(
+        "Skipped CUDA versions constraints check due to the "
+        "JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set."
+    )
   else:
-    logger.debug('Skipped CUDA versions constraints check due to the '
-                'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
+    _check_cuda_versions(raise_on_first_error = True)
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
       'cuda', priority=500, library_path=str(path), options=options
   )
+
   if cuda_plugin_extension:
     xla_client.register_custom_type_handler(
         "CUDA",
