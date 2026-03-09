@@ -1054,9 +1054,9 @@ nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
     #   nvidia-cufft-cu12
     #   nvidia-cusolver-cu12
     #   nvidia-cusparse-cu12
-nvidia-nvshmem-cu12==3.5.19 ; sys_platform == "linux" \
-    --hash=sha256:333d91f68038539f20a591ef4d5cee25a85d440537b31809c4e42ae1700fccce \
-    --hash=sha256:f29a23c5ee75461ec4342e17757f9e010369ada8eb0d441070049db787d9e51b
+nvidia-nvshmem-cu12==3.5.21 ; sys_platform == "linux" \
+    --hash=sha256:0e51b52bbd78f8896a7667701ac40e3e7a4f0f80703ccce75b304c18f359d73f \
+    --hash=sha256:f9c815745f8a10567fbf25d5a1d5079f778d67e94276e585a3706fbda9b490bb
     # via -r build/nvidia-requirements.txt
 nvidia-nvshmem-cu13==3.5.19 ; sys_platform == "linux" \
     --hash=sha256:0f734285d3a04824c13e9e2c1169dbb818be9cb0819de69389aaa067b8d18c93 \
