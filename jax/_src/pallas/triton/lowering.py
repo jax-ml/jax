@@ -2305,26 +2305,46 @@ def _dot_general_lowering(
       input_precision = None
 
     acc_dtype = out_aval.dtype
-    if acc_dtype != jnp.int32 and acc_dtype != jnp.float16:
+    if acc_dtype not in (jnp.int32, jnp.float16, jnp.float64):
       acc_dtype = jnp.float32
   else:
     raise NotImplementedError(f"Unsupported dot precision: {precision}.")
 
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
-  if len(a_type.shape) != len(b_type.shape) != 2:
+  if len(a_type.shape) != 2 or len(b_type.shape) != 2:
     raise ValueError("a and b must be 2D, but got:"
                      f" {a_type.shape} and {b_type.shape}")
-  if min(*b_type.shape) < 16:
-    raise ValueError("all dimensions of b must be >= 16 ")
+
+  m, k = a_type.shape
+  _, n = b_type.shape
+  if a_type.element_type == ir.F64Type.get():
+    # Triton's MMAv2 fp64 path uses the m8n8k4 PTX instruction but aggregates
+    # it with NumRegisters={m:2, n:1, k:4}, producing an effective m16n8k16
+    # per-warp tile.  Blocks smaller than these minimums cause repM/repN/repK
+    # to round to zero, corrupting the ValueTable and segfaulting the compiler.
+    #   M >= 16  (2 × instrM=8)
+    #   N >=  8  (1 × instrN=8)
+    #   K >= 16  (4 × instrK=4)
+    errors = []
+    if m < 16:
+      errors.append(f"M={m} < 16")
+    if n < 8:
+      errors.append(f"N={n} < 8")
+    if k < 16:
+      errors.append(f"K={k} < 16")
+    if errors:
+      raise ValueError(
+          f"float64 dot requires M>=16, N>=8, K>=16 per warp tile "
+          f"(Triton MMAv2 m8n8k4 layout); got {', '.join(errors)}"
+      )
+
   if a_type.element_type != b_type.element_type:
     raise ValueError(
         "a and b must have the same element type, but got:"
         f" {a_type.element_type} and {b_type.element_type}"
     )
 
-  m, _ = a_type.shape
-  _, n = b_type.shape
   assert acc_dtype is not None
   acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
 
