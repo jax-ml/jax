@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
+import enum
 import functools
 import itertools
 import math
@@ -28,6 +29,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
+from jax._src import lax
 from jax._src import literals
 from jax._src import pretty_printer as pp
 from jax._src import state
@@ -3943,6 +3945,212 @@ def query_cluster_cancel(
       grid_names=grid_names,
       transforms_tree=result_transforms_tree)
   return tuple(result[:-1]), result[-1]
+
+
+class AtomicOpType(enum.Enum):
+  ADD = "add"
+  MAX = "max"
+  MIN = "min"
+  AND = "and"
+  OR = "or"
+  XOR = "xor"
+
+
+atomic_store_p = jax_core.Primitive("mgpu_atomic_store")
+atomic_store_p.multiple_results = True
+
+
+@atomic_store_p.def_effectful_abstract_eval
+def _atomic_store_abstract_eval(*avals_flat, args_tree, atomic_type):
+  del atomic_type
+  ref, transforms, val = args_tree.unflatten(avals_flat)
+  if transforms is not None:
+    ref = pallas_core.TransformedRef(ref, transforms)
+  if ref.shape != val.shape:
+    raise ValueError(
+        f"Invalid shape for `swap`. Ref shape: {ref.shape}. "
+        f"Value shape: {val.shape}."
+    )
+  if ref.dtype != val.dtype:
+    raise ValueError(
+        f"Invalid dtype for `swap`. Ref dtype: {ref.dtype}. "
+        f"Value dtype: {val.dtype}."
+    )
+  return (), {state.WriteEffect(0)}
+
+
+@discharge.register_discharge_rule(atomic_store_p)
+def _atomic_store_discharge_rule(
+    in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
+):
+  del out_avals
+  ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  *prev_transforms, idx = transforms
+  ref = discharge.transform_array(ref, prev_transforms)
+
+  if mask is not None:
+    raise NotImplementedError
+
+  if atomic_type == AtomicOpType.ADD:
+    monoid = lambda x, y: x + y
+  elif atomic_type == AtomicOpType.MAX:
+    monoid = jnp.maximum
+  elif atomic_type == AtomicOpType.MIN:
+    monoid = jnp.minimum
+  else:
+    raise NotImplementedError(atomic_type)
+
+  if all(
+      (isinstance(s, indexing.Slice) or not s.shape) for s in idx.indices
+  ):
+    indices = idx.indices
+    scalar_dims = [
+        not isinstance(s, indexing.Slice) and not s.shape for s in indices
+    ]
+    slice_starts = [
+        s.start if isinstance(s, indexing.Slice) else s for s in indices
+    ]
+    slice_sizes = tuple(
+        s.size if isinstance(s, indexing.Slice) else 1 for s in indices
+    )
+    out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
+    val_indexer = tuple(
+        None if scalar else slice(None) for scalar in scalar_dims
+    )
+    val = val[val_indexer]
+    val = monoid(val, out_ones)
+    x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
+  elif all(not isinstance(s, indexing.Slice) for s in idx.indices):
+    out = ref[idx.indices]
+    x_new = ref.at[idx.indices].set(monoid(out, val))
+  else:
+    raise NotImplementedError
+  return (x_new,) + (None,) * (len(in_avals) - 1), ()
+
+
+def _atomic_store(
+    x_ref_or_view,
+    val,
+    *,
+    atomic_type: AtomicOpType,
+):
+  x_ref, transforms = state_primitives.get_ref_and_transforms(
+      x_ref_or_view, None, "atomic_store"
+  )
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val))
+  atomic_store_p.bind(
+      *args_flat, args_tree=args_tree, atomic_type=atomic_type
+  )
+
+
+@lowering.register_lowering_rule(atomic_store_p, mgpu.LoweringSemantics.Lane)
+def _atomic_store_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *args_flat,
+    args_tree,
+    atomic_type: AtomicOpType,
+):
+  ref, transforms, value = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
+  value = lowering._ensure_fa(value, value_aval.dtype)  # pylint: disable=protected-access
+  assert isinstance(ref_aval, state_types.AbstractRef)
+  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+      ctx, ref_aval, ref, list(transforms_avals), list(transforms)
+  )
+  match remaining_transforms:
+    case (
+        gpu_core.UnswizzleRef(swizzle),
+        gpu_core.UntilingTransform(tiling),
+    ):
+      if len(tiling) != 2:
+        raise NotImplementedError(
+            f"Only 2D tiling is supported, got: {tiling}"
+        )
+      value.store_tiled(
+          ref, swizzle=swizzle, tiling_rank=len(tiling),
+          atomic=atomic_type.value,  # type: ignore
+      )
+    case ():
+      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # type: ignore
+    case _:
+      raise NotImplementedError(
+          f"Unsupported transforms for atomic_store: {remaining_transforms}"
+      )
+  return ()
+
+
+def atomic_add(ref: _Ref, val) -> None:
+  """Performs an atomic store-add of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level
+  and that floating-point addition is not associative, so this op
+  can introduce non-determinism into the kernels.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.ADD)
+
+
+def atomic_max(ref: _Ref, val) -> None:
+  """Performs an atomic store-max of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.MAX)
+
+
+def atomic_min(ref: _Ref, val) -> None:
+  """Performs an atomic store-min of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.MIN)
+
+
+def atomic_and(ref: _Ref, val) -> None:
+  """Performs an atomic store-and of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.AND)
+
+
+def atomic_or(ref: _Ref, val) -> None:
+  """Performs an atomic store-or of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.OR)
+
+
+def atomic_xor(ref: _Ref, val) -> None:
+  """Performs an atomic store-xor of the value to the reference.
+
+  Note that atomicity is only guaranteed on the element-level.
+
+  Args:
+    ref: The reference to store the value to.
+    val: The value to store.
+  """
+  _atomic_store(ref, val, atomic_type=AtomicOpType.XOR)
 
 
 multimem_store_p = jax_core.Primitive("multimem_store")
