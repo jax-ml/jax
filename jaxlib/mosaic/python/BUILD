@@ -17,6 +17,10 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 load("@rules_python//python:defs.bzl", "py_library")
 
+package(
+    default_applicable_licenses = [],
+)
+
 py_library(
     name = "gpu_dialect",
     srcs = [
