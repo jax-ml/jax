@@ -37,7 +37,6 @@ from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
     TMAReductionOp as TMAReductionOp,
-    Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
 )
@@ -76,6 +75,7 @@ from .fragmented_array import (
     WGStridedFragLayout as WGStridedFragLayout,
     copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
+    Rounding as Rounding,
 )
 from .utils import (
     BarrierRef as BarrierRef,

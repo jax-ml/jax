@@ -3523,7 +3523,7 @@ class AsyncCopyTest(TestCase):
           swizzle=swizzle,
           barrier=barrier,
           gmem_transform=mgpu.TileTransform(
-              tiling, rounding=mgpu.Rounding.DOWN
+              tiling, rounding=launch_context.Rounding.DOWN
           ),
       )
       barrier.wait_parity(c(0, i1))
@@ -3971,6 +3971,40 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
     )(values)
     self.assertTrue(np.array_equal(res, expected, equal_nan=True))
+
+  def test_rounding_f8e8m0fnu(self):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
+    layout = fa.tmem_native_layout(2)
+    m = 128
+    n = 256
+    def kernel(rounding, ctx, inp, out, smem):
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(inp, layout=layout, optimized=False)
+      t = t.astype(ir.Float8E8M0FNUType.get(), rounding=rounding)
+      t.store_untiled(out, optimized=False)
+
+    ints = self.prng.integers(
+        low=0, high=100000, size=(m, n), dtype=np.int32
+    )
+    values = ints.astype(jnp.float32)
+    next_pow2 = jnp.astype(np.exp2(np.ceil(np.log2(ints))), jnp.float8_e8m0fnu)
+    prev_pow2 = jnp.astype(np.exp2(np.floor(np.log2(ints))), jnp.float8_e8m0fnu)
+
+    supported_rounding = (
+        mgpu.Rounding.TO_ZERO, mgpu.Rounding.TO_POSITIVE_INFINITY
+    )
+    for rounding, expected in zip(supported_rounding, (prev_pow2, next_pow2)):
+      res = mgpu.as_gpu_kernel(
+          functools.partial(kernel, rounding),
+          (1, 1, 1), (128, 1, 1), values, expected, ()
+      )(values)
+      np.testing.assert_array_equal(res, expected)
+    with self.assertRaises(ValueError):
+      mgpu.as_gpu_kernel(
+          functools.partial(kernel, mgpu.Rounding.TO_NEAREST_EVEN),
+          (1, 1, 1), (128, 1, 1), values, prev_pow2, ()
+      )(values)
 
   def test_foreach_wgmma_row_array(self):
     def kernel(ctx, out, smem):
