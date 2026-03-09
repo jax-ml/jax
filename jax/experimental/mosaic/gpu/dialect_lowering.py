@@ -2044,7 +2044,7 @@ def _tcgen05_mma_op_lowering_rule(
     a_swizzle = b_swizzle
     b_ref = unwrap_transformed_memref(op.b, b_transforms)
 
-  with utils.when(ctx.single_thread_per_block_predicate):
+  with utils.when(ctx.single_thread_per_warpgroup_predicate):
     tcgen05.mma(
         acc_ref,
         a_ref,
