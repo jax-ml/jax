@@ -30,7 +30,7 @@ from jax import tree_util
 from jax._src import state
 from jax._src import util as jax_util
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import primitives as primitives
+from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
 from jax._src.pallas.mosaic import primitives as tpu_primitives
@@ -379,6 +379,13 @@ class BufferedRefBase:
         )
     )
 
+  def _to_window_slice(self, dma_slice):
+    return tuple(
+        pl.ds(0, s.size)
+        for s, bd in zip(dma_slice, self.block_shape)  # pyrefly: ignore[no-matching-overload]
+        if not (bd is None or isinstance(bd, pl.Squeezed))
+    )
+
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
     del window_ref, indices
@@ -390,6 +397,7 @@ class BufferedRefBase:
   def with_spec(self, spec: pl.BlockSpec) -> BufferedRefBase:
     """Returns a new BufferedRefBase with the given block spec."""
     raise NotImplementedError()
+
 
 def _ref_to_value_aval(ref):
   """Return the inner of a ref, or a ShapedArray for TransformedRefs."""
@@ -672,30 +680,29 @@ class BufferedRef(BufferedRefBase):
 
   @property
   def current_ref(self):
-    buffer_slice = tuple(
-        slice(None)
-        for x in self.block_shape
-        if not (x is None or isinstance(x, pl.Squeezed))
+    assert not (
+        self.window_ref is None
+        or isinstance(self.window_ref, state.AbstractRef)
     )
-    assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     if not self.is_buffered:
-      return self.window_ref.at[buffer_slice]
+      return self.window_ref
     else:
       if self.is_output:
         slot = self.current_copy_out_slot
       else:
         slot = self.current_wait_in_slot
-      return self.window_ref.at[(slot, *buffer_slice)]
+      return self.window_ref.at[slot]
+
+  def _cumulative(self, smem_slot, reg_slot):
+    if reg_slot is not None:
+      return reg_slot
+    assert smem_slot is not None
+    return smem_slot[0]
 
   @property
   def cumulative_copy_in(self):
     """The cumulative number of copy_ins issued on this buffer."""
-    if self._copy_in_slot_reg is not None:
-      val = self._copy_in_slot_reg
-    else:
-      assert self.copy_in_slot is not None
-      val = self.copy_in_slot[0]
-    return val
+    return self._cumulative(self.copy_in_slot, self._copy_in_slot_reg)
 
   @property
   def current_copy_in_slot(self):
@@ -705,12 +712,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def cumulative_copy_out(self):
     """The cumulative number of copy_outs issued on this buffer."""
-    if self._copy_out_slot_reg is not None:
-      val = self._copy_out_slot_reg
-    else:
-      assert self.copy_out_slot is not None
-      val = self.copy_out_slot[0]
-    return val
+    return self._cumulative(self.copy_out_slot, self._copy_out_slot_reg)
 
   @property
   def current_copy_out_slot(self):
@@ -720,12 +722,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def cumulative_wait_in(self):
     """The cumulative number of wait_ins issued on this buffer."""
-    if self._wait_in_slot_reg is not None:
-      val = self._wait_in_slot_reg
-    else:
-      assert self.wait_in_slot is not None
-      val = self.wait_in_slot[0]
-    return val
+    return self._cumulative(self.wait_in_slot, self._wait_in_slot_reg)
 
   @property
   def current_wait_in_slot(self):
@@ -735,12 +732,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def cumulative_wait_out(self):
     """The cumulative number of wait_outs issued on this buffer."""
-    if self._wait_out_slot_reg is not None:
-      val = self._wait_out_slot_reg
-    else:
-      assert self.wait_out_slot is not None
-      val = self.wait_out_slot[0]
-    return val
+    return self._cumulative(self.wait_out_slot, self._wait_out_slot_reg)
 
   @property
   def current_wait_out_slot(self):
@@ -816,61 +808,52 @@ class BufferedRef(BufferedRefBase):
     if self.swap is not None:
       self.swap[0] = False
 
-  def advance_copy_in_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
-    """Switch to the next copy slot."""
-    if not self.is_buffered: return self
-    if not self.is_input:
-      return self
-    current_slot = (self.copy_in_slot[0] if  # type: ignore[index]
-                    self._copy_in_slot_reg is None else self._copy_in_slot_reg)
+  def _advance_slot(
+      self, smem_slot, reg_slot, slot_kwarg, predicate
+  ) -> "BufferedRef":
+    current_slot = (
+        smem_slot[0] if reg_slot is None else reg_slot  # type: ignore[index]
+    )
     new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
-    if self._copy_in_slot_reg is not None:
-      return self.with_slot_index(copy_in_slot=new_current_slot)
-    assert isinstance(self.copy_in_slot, jax.Array)
-    self.copy_in_slot[0] = new_current_slot
+    if reg_slot is not None:
+      return self.with_slot_index(**{slot_kwarg: new_current_slot})
+    assert isinstance(smem_slot, jax.Array)
+    smem_slot[0] = new_current_slot
     return self
+
+  def advance_copy_in_slot(
+      self, predicate: bool | jax.Array = True
+  ) -> "BufferedRef":
+    """Switch to the next copy slot."""
+    if not self.is_buffered or not self.is_input:
+      return self
+    return self._advance_slot(
+        self.copy_in_slot, self._copy_in_slot_reg, "copy_in_slot", predicate
+    )
 
   def advance_wait_in_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next wait slot."""
-    if not self.is_buffered: return self
-    if not self.is_input:
+    if not self.is_buffered or not self.is_input:
       return self
-    current_slot = (self.wait_in_slot[0] if  # type: ignore[index]
-                    self._wait_in_slot_reg is None else self._wait_in_slot_reg)
-    new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
-    if self._wait_in_slot_reg is not None:
-      return self.with_slot_index(wait_in_slot=new_current_slot)
-    assert isinstance(self.wait_in_slot, jax.Array)
-    self.wait_in_slot[0] = new_current_slot
-    return self
+    return self._advance_slot(
+        self.wait_in_slot, self._wait_in_slot_reg, "wait_in_slot", predicate
+    )
 
   def advance_copy_out_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next copy slot."""
-    if not self.is_buffered: return self
-    if not self.is_output:
+    if not self.is_buffered or not self.is_output:
       return self
-    current_slot = (self.copy_out_slot[0] if self._copy_out_slot_reg  # type: ignore[index]
-                    is None else self._copy_out_slot_reg)
-    new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
-    if self._copy_out_slot_reg is not None:
-      return self.with_slot_index(copy_out_slot=new_current_slot)
-    assert isinstance(self.copy_out_slot, jax.Array)
-    self.copy_out_slot[0] = new_current_slot
-    return self
+    return self._advance_slot(
+        self.copy_out_slot, self._copy_out_slot_reg, "copy_out_slot", predicate
+    )
 
   def advance_wait_out_slot(self, predicate: bool | jax.Array = True) -> "BufferedRef":
     """Switch to the next wait slot."""
-    if not self.is_buffered: return self
-    if not self.is_output:
+    if not self.is_buffered or not self.is_output:
       return self
-    current_slot = (self.wait_out_slot[0] if self._wait_out_slot_reg  # type: ignore[index]
-                    is None else self._wait_out_slot_reg)
-    new_current_slot = lax.select(predicate, current_slot + 1, current_slot)
-    if self._wait_out_slot_reg is not None:
-      return self.with_slot_index(wait_out_slot=new_current_slot)
-    assert isinstance(self.wait_out_slot, jax.Array)
-    self.wait_out_slot[0] = new_current_slot
-    return self
+    return self._advance_slot(
+        self.wait_out_slot, self._wait_out_slot_reg, "wait_out_slot", predicate
+    )
 
   def load_slots(self, predicate: bool | jax.Array = True) -> BufferedRef:
     """Load slot information into registers."""
@@ -964,11 +947,7 @@ class BufferedRef(BufferedRefBase):
       self.swap[0] = True
     slot = self.current_copy_in_slot
     src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
-    dst_slice = tuple(
-        pl.ds(0, s.size)
-        for s, bd in zip(src_slice, self.block_shape)
-        if not (bd is None or isinstance(bd, pl.Squeezed))
-    )
+    dst_slice = self._to_window_slice(src_slice)
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],
         self.window_ref.at[(slot, *dst_slice)],
@@ -985,11 +964,7 @@ class BufferedRef(BufferedRefBase):
       self.swap[0] = True
     slot = self.current_copy_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = tuple(
-        pl.ds(0, s.size)
-        for s, bd in zip(dst_slice, self.block_shape)
-        if not (bd is None or isinstance(bd, pl.Squeezed))
-    )
+    src_slice = self._to_window_slice(dst_slice)
     tpu_primitives.make_async_copy(
         self.window_ref.at[(slot, *src_slice)],
         dst_ref.at[dst_slice],
@@ -1003,11 +978,7 @@ class BufferedRef(BufferedRefBase):
     assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     assert self.sem_recvs is not None
     src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
-    dst_slice = tuple(
-        pl.ds(0, s.size)
-        for s, bd in zip(src_slice, self.block_shape)
-        if not (bd is None or isinstance(bd, pl.Squeezed))
-    )
+    dst_slice = self._to_window_slice(src_slice)
     wait_slot = self.current_wait_in_slot
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],  # nb: doesn't matter
@@ -1025,11 +996,7 @@ class BufferedRef(BufferedRefBase):
     assert self.sem_sends is not None
     wait_slot = self.current_wait_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
-    src_slice = tuple(
-        pl.ds(0, s.size)
-        for s, bd in zip(dst_slice, self.block_shape)
-        if not (bd is None or isinstance(bd, pl.Squeezed))
-    )
+    src_slice = self._to_window_slice(dst_slice)
     tpu_primitives.make_async_copy(
         self.window_ref.at[(wait_slot, *src_slice)],  # nb: doesn't matter
         dst_ref.at[dst_slice],  # only dst shape is important
@@ -1683,6 +1650,14 @@ def get_pipeline_schedule(schedule) -> Any:
 # Main pipeline methods
 
 
+def _normalize_specs(specs: Any) -> tuple[pl.BlockSpec, ...]:
+  if not isinstance(specs, (list, tuple)):
+    specs = (specs,)
+  if isinstance(specs, list):
+    specs = tuple(specs)
+  return specs
+
+
 def make_pipeline_allocations(
     *refs,
     in_specs=(),
@@ -1712,14 +1687,8 @@ def make_pipeline_allocations(
   """
   # TODO(levskaya): generalize argument tree handling here and in emit_pipeline.
   num_in_specs = len(in_specs)
-  if not isinstance(in_specs, (list, tuple)):
-    in_specs = (in_specs,)
-  if not isinstance(out_specs, (list, tuple)):
-    out_specs = (out_specs,)
-  if isinstance(in_specs, list):
-    in_specs = tuple(in_specs)
-  if isinstance(out_specs, list):
-    out_specs = tuple(out_specs)
+  in_specs = _normalize_specs(in_specs)
+  out_specs = _normalize_specs(out_specs)
   in_refs = refs[:num_in_specs]
   out_refs = refs[num_in_specs:]
   def make_input_bref(in_spec, in_ref):
@@ -1887,11 +1856,7 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     hbm_ref = src
     copy_in = True
   hbm_slice = bref.get_dma_slice(_ref_to_value_aval(hbm_ref), indices)
-  bref_slice = tuple(
-      pl.ds(0, s.size)
-      for s, bd in zip(hbm_slice, bref.block_shape)
-      if not (bd is None or isinstance(bd, pl.Squeezed))
-  )
+  bref_slice = bref._to_window_slice(hbm_slice)
   if copy_in:
     tpu_helpers.sync_copy(hbm_ref.at[hbm_slice],
                           bref.current_ref.at[bref_slice])
@@ -1957,14 +1922,8 @@ def emit_pipeline(
   grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
 
   num_steps = _grid_size(grid)
-  if not isinstance(in_specs, (list, tuple)):
-    in_specs = (in_specs,)
-  if not isinstance(out_specs, (list, tuple)):
-    out_specs = (out_specs,)
-  if isinstance(in_specs, list):
-    in_specs = tuple(in_specs)
-  if isinstance(out_specs, list):
-    out_specs = tuple(out_specs)
+  in_specs = _normalize_specs(in_specs)
+  out_specs = _normalize_specs(out_specs)
   should_accumulate_out = _broadcast_pytree_to(should_accumulate_out, out_specs)
   get_buffer_count = lambda spec: (spec.pipeline_mode.buffer_count if
     (spec is not None and spec.pipeline_mode is not None) else 2)
