@@ -922,7 +922,6 @@ def ndtr(x: ArrayLike) -> Array:
         .format(dtype))
   return _ndtr(x)
 
-
 def _ndtr(x: ArrayLike) -> Array:
   """Implements ndtr core logic."""
   dtype = lax.dtype(x).type
@@ -1163,11 +1162,16 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
+  x_arr_gt_upper_segment = lax.gt(x_arr, upper_segment)
+  ndtr_arg = jnp.where(x_arr_gt_upper_segment, -x_arr,
+                       lax.max(x_arr, lower_segment))
+  # We combine both ndtr calls to minimize program size
+  ndtr_res = _ndtr(ndtr_arg)
   return jnp.where(
-      lax.gt(x_arr, upper_segment),
-      -_ndtr(-x_arr),  # log(1-x) ~= -x, x << 1
+      x_arr_gt_upper_segment,
+      -ndtr_res,  # log(1-x) ~= -x, x << 1
       jnp.where(lax.gt(x_arr, lower_segment),
-                       lax.log(_ndtr(lax.max(x_arr, lower_segment))),
+                       lax.log(ndtr_res),
                        _log_ndtr_lower(lax.min(x_arr, lower_segment),
                                        series_order)))
 

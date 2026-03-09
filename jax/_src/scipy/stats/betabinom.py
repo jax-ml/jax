@@ -14,6 +14,7 @@
 
 import numpy as np
 
+from jax._src import api
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
@@ -22,6 +23,7 @@ from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
 
+@api.jit
 def logpmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
            loc: ArrayLike = 0) -> Array:
   r"""Beta-binomial log probability mass function.
