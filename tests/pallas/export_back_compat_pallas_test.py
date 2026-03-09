@@ -70,6 +70,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_mosaic_gpu_add_one(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on GPUs with capability >= sm90")
 
@@ -86,6 +88,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(add_one, data, expect_current_custom_calls=["mosaic_gpu_v2"])
 
   def test_mosaic_gpu_kernel_add_one(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on GPUs with capability >= sm90")
 

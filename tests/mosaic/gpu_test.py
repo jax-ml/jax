@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import tempfile
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -54,7 +55,6 @@ from jax.experimental.mosaic.gpu import utils
 from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
 import jax.numpy as jnp
 import numpy as np
-
 
 try:
   import jax._src.lib.mosaic_gpu as mosaic_gpu_lib  # noqa: F401
@@ -210,6 +210,10 @@ def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
   return ret.astype(mlir_dtype, is_signed=utils.is_signed(dtype))
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
@@ -7115,6 +7119,10 @@ class EndToEndTest(TestCase):
     self.assertEqual(ptx().count("\t.param"), 2)
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class SerializationTest(absltest.TestCase):
 
   def test_pass_is_registered(self):

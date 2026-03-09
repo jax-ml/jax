@@ -15,6 +15,7 @@
 """Test different parameterizations of matrix multiplication."""
 
 import os
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,7 +30,6 @@ from jax.experimental.pallas.ops.gpu import hopper_mixed_type_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
 
-
 config.parse_flags_with_absl()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
@@ -41,6 +41,10 @@ def exceeds_h100_smem(alloc_bytes: int) -> bool:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
@@ -80,6 +84,10 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
 
   def setUp(self):

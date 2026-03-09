@@ -14,6 +14,7 @@
 
 import functools
 from typing import Any
+import unittest
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
@@ -22,7 +23,6 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
-
 
 jax.config.parse_flags_with_absl()
 
@@ -37,6 +37,10 @@ def _maybe_reverse(arg: tuple[Any], reverse: bool) -> tuple[Any]:
 # TODO(nrink): Figure out how to safely run different instance of GPU
 # interpret mode in parallel, and then remove this decorator.
 @jtu.thread_unsafe_test_class()
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):

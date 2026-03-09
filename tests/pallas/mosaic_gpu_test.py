@@ -24,6 +24,7 @@ import re
 import sys
 import tempfile
 import traceback
+import unittest
 from typing import ClassVar
 
 from absl.testing import absltest
@@ -57,7 +58,6 @@ try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
   mosaic_gpu_lib = None
-
 
 jax.config.parse_flags_with_absl()
 
@@ -133,6 +133,10 @@ class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
     return cls
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 

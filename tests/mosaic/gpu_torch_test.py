@@ -41,6 +41,10 @@ except ImportError:
 config.parse_flags_with_absl()
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class TorchTest(parameterized.TestCase):
 
   def setUp(self):

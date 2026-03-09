@@ -108,6 +108,8 @@ class PallasCallTest(ptu.PallasTest):
   def test_pallas_call_infers_backend_from_compiler_params(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU.")
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 

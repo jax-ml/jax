@@ -15,6 +15,7 @@
 """Test different parameterizations of FlashAttention."""
 
 import os
+import unittest
 
 from absl.testing import absltest, parameterized
 from jax._src import config
@@ -36,6 +37,10 @@ os.environ["XLA_FLAGS"] = (
 
 
 @jtu.with_config(jax_traceback_filtering="off")
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class FlashAttentionTestCase(jtu.JaxTestCase):
 
   def setUp(self):

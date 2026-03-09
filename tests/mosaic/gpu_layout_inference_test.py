@@ -17,6 +17,7 @@
 # pylint: disable=g-complex-comprehension
 
 import inspect
+import unittest
 
 from absl.testing import parameterized
 import jax
@@ -87,6 +88,10 @@ def _undef_constraint_system(
   return cs.ConstraintSystem(), {cs.Variable(result): [result]}
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class LayoutInferenceTest(parameterized.TestCase):
   @classmethod
   def setUpClass(cls):

@@ -17,6 +17,7 @@ from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import unittest
 try:
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
@@ -25,11 +26,14 @@ except ImportError:
 else:
   from jax.experimental.mosaic.gpu import profiler
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class ProfilerCuptiTest(parameterized.TestCase):
 
   def setUp(self):

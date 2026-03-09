@@ -15,6 +15,7 @@
 """Test different parameterizations of our Mosaic GPU ragged dot kernel."""
 
 import os
+import unittest
 
 from absl.testing import absltest, parameterized  # pylint: disable=g-multiple-import
 import jax
@@ -26,7 +27,6 @@ from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 from jax.experimental.pallas.ops.gpu import transposed_ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
-
 
 config.parse_flags_with_absl()
 
@@ -59,6 +59,10 @@ def sample_inputs(
 
 
 @jtu.with_config(jax_traceback_filtering="off")
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class RaggedDotTestCase(jtu.JaxTestCase):
 
   def setUp(self):

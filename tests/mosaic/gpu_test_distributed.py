@@ -14,6 +14,7 @@
 # ==============================================================================
 
 import os
+import unittest
 
 from absl.testing import parameterized
 import jax
@@ -32,12 +33,15 @@ import numpy as np
 import jax.experimental.mosaic.gpu as mgpu
 import jax.experimental.mosaic.gpu.fragmented_array as fa
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 P = jax.sharding.PartitionSpec
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class TestCase(parameterized.TestCase):
 
   def setUp(self):

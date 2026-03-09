@@ -18,6 +18,7 @@ import dataclasses
 import functools
 import itertools
 import statistics
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -31,7 +32,6 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
-
 
 config.parse_flags_with_absl()
 
@@ -853,6 +853,10 @@ def matmul6(a, b, config: TuningConfig):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
   BENCHMARK = False
 

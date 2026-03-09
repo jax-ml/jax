@@ -15,6 +15,7 @@
 """Test different parameterizations of a matmul."""
 
 import os
+import unittest
 
 from absl.testing import absltest, parameterized
 from jax._src import config
@@ -52,6 +53,10 @@ def seed_hypothesis(f):
 
 @jtu.with_config(jax_traceback_filtering="off")
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):

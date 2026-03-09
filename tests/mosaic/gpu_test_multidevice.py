@@ -22,6 +22,7 @@ from jax._src.lib.mlir import ir
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 import jax.numpy as jnp
 import numpy as np
+import unittest
 try:
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
@@ -30,12 +31,15 @@ except ImportError:
 else:
   import jax.experimental.mosaic.gpu as mgpu
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class TestCase(parameterized.TestCase):
 
   def setUp(self):

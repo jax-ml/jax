@@ -36,11 +36,14 @@ try:
 except ImportError:
   torch = None
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 
 
+@unittest.skipIf(
+    jtu.test_device_matches(["rocm"]),
+    "Mosaic GPU is not supported on ROCm.",
+)
 class TorchTest(parameterized.TestCase):
 
   def setUpClass():
