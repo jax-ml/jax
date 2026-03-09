@@ -58,7 +58,9 @@ from jax._src.lax.control_flow.common import (
 from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import discharge as state_discharge, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -2899,6 +2901,68 @@ def _interleave(a, b, axis):
 
 ### Cumulative reductions.
 
+def _cumred_chlo_lowering(ctx, x, *, axis, reverse, reducer, identity):
+  dtype = ctx.avals_in[0].dtype
+  init_shape = x.type.shape[:axis] + x.type.shape[axis + 1 :]
+  init_type = ir.RankedTensorType.get(init_shape, x.type.element_type)
+
+  init = mlir.ir_constant(identity(dtype))
+  if init_shape:
+    dims = ir.DenseI64ArrayAttr.get([])
+    init = hlo.BroadcastInDimOp(init_type, init, dims).result
+
+  scan_op = chlo.ScanOp(
+      [x.type],
+      [init_type],
+      [x],
+      [init],
+      dimension=ir.IntegerAttr.get(ir.IntegerType.get_signless(64), axis),
+      is_reverse=ir.BoolAttr.get(reverse),
+      is_associative=ir.BoolAttr.get(True),
+  )
+  body_block = scan_op.body.blocks.append(init_type, init_type)
+  with ir.InsertionPoint(body_block):
+    x_arg, carry_arg = body_block.arguments
+    res = reducer(x_arg, carry_arg)
+    hlo.return_([res, res])
+  return scan_op.results[:1]
+
+
+def _is_supported_cumred(input, reverse, axis):
+  return (
+      jaxlib_extension_version >= 439
+      and not config.jax_export_calling_convention_version.value < 16
+      and not reverse
+      and axis == 0
+      and isinstance(input, ShapedArray)
+      and input.shape[axis] > 0
+      and core.is_constant_dim(input.shape[axis])
+      and input.sharding.spec[axis] is None
+      and input.dtype != np.bool_
+      and not np.issubdtype(input.dtype, np.complexfloating)
+  )
+
+
+def _cumred_gpu_lowering(
+    reduce_window_fn: Callable,
+    reducer: Callable,
+    identity: Callable,
+    ctx,
+    x,
+    *,
+    axis,
+    reverse,
+):
+  if not _is_supported_cumred(ctx.avals_in[0], reverse, axis):
+    fun = partial(cumred_reduce_window_impl, reduce_window_fn)
+    return mlir.lower_fun(fun, multiple_results=False)(
+        ctx, x, axis=axis, reverse=reverse
+    )
+  return _cumred_chlo_lowering(
+      ctx, x, axis=axis, reverse=reverse, reducer=reducer, identity=identity
+  )
+
+
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
   return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
@@ -3014,3 +3078,19 @@ ad.primitive_jvps[cumlogsumexp_p] = partial(_cumulative_jvp_rule, combine_fn=log
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
 ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
 ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
+
+# TODO(csigg): Register lowering for cumprod etc as well. Although those don't
+# have a corresponding custom kernel implementation in XLA (like cumsum does
+# with CUB), XLA's TryOptimizeAssociativeScan pass will intercept these scans
+# and expand them to the same reduce-window tree as if we emitted a
+# reduce-window series directly here.
+mlir.register_lowering(
+    cumsum_p,
+    partial(
+        _cumred_gpu_lowering,
+        windowed_reductions._reduce_window_sum,
+        hlo.add,
+        lax._get_sum_identity,
+    ),
+    platform='gpu',
+)
