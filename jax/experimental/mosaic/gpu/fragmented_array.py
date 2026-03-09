@@ -2675,11 +2675,9 @@ class FragmentedArray:
           out_reg = part if out_reg is None else op(out_reg, part)
       return out_reg
 
-    if reduced_shape:
-      vec_len = layout.reduce(tiled_axes).vector_length
-    else:
-      vec_len = 1
-
+    # Note that we will infer a splat layout if we reduce all dimensions, but in
+    # that case the .vector_length we get here will be 1 anyway.
+    vec_len = layout.reduce(tiled_axes).vector_length
     thread_idx = utils.thread_idx()
     lane_idx = arith.remui(thread_idx, c(WARP_SIZE, i32))
 
