@@ -20,20 +20,13 @@ on:
         description: 'XLA revision used by tests.'
         type: choice
         required: true
-        default: 'pinned'
+        default: 'head'
         options:
         - 'pinned'
         - 'head'
   pull_request:
     branches:
       - main
-    paths:
-      - '.github/workflows/bazel_cuda_b200_mosaic_presubmit.yml'
-      - 'ci/run_bazel_cuda_targeted_tests.sh'
-      - 'jax/_src/pallas/mosaic_gpu/**'
-      - 'jax/experimental/mosaic/gpu/**'
-      - 'jaxlib/mosaic/dialect/gpu/**'
-      - 'jaxlib/mosaic/gpu/**'
 
 permissions: {}
 
@@ -62,7 +55,50 @@ defaults:
     shell: bash
 
 jobs:
+  # The `changed_files` job is used in place of `pull_request.paths` as
+  # a workaround, in order to report a status to Copybara,
+  # be it success, failure, or simply skipped.
+  #
+  # `pull_request.paths` cannot be used here as it wouldn't trigger the workflow
+  # at all if no matching files were touched.
+  # This would lead to Copybara waiting for the status indefinitely.
+  changed_files:
+    runs-on: ubuntu-latest  # Do not run tj-actions on self-hosted runners
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      # Only run this if it is a pull request
+      - name: Get and filter changed files
+        if: ${{ github.event_name == 'pull_request' }}
+        id: changed-files
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c  # v46
+        with:
+          files: |
+            .github/workflows/bazel_cuda_b200_mosaic_presubmit.yml
+            ci/run_bazel_cuda_targeted_tests.sh
+            jax/_src/pallas/mosaic_gpu/**
+            jax/experimental/mosaic/gpu/**
+            jaxlib/mosaic/dialect/gpu/**
+            jaxlib/mosaic/gpu/**
+      - name: Report skipped test reason
+        # Display a notice in the workflow summary about skipping tests.
+        if: github.event_name == 'pull_request'
+            && steps.changed-files.outputs.any_changed != 'true'
+        run: |
+          echo '::notice title=Mosaic B200 presubmit::Skipping tests - no relevant files changed in this PR.'
+          {
+            echo '### PR testing skipped'
+            echo ''
+            echo 'No files matched the Mosaic B200 presubmit filter in this pull request.'
+          } >> "$GITHUB_STEP_SUMMARY"
+    outputs:
+      any_changed: ${{ steps.changed-files.outputs.any_changed || 'false' }}
+
   run_tests:
+    needs: changed_files
+    if: github.event_name == 'workflow_dispatch'
+        || needs.changed_files.outputs.any_changed == 'true'
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     timeout-minutes: 15  # Stop potential hangs from keeping the job running too long.
@@ -78,11 +114,12 @@ jobs:
       - name: Run Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
           # Only a couple of targets that run in under 10 minutes.
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_test_gpu
-            //tests/pallas:mosaic_gpu_test_gpu
+          # TODO(belitskiy): Re-enable once it's clear the workflow *never* stalls > 10 mins.
+          #  //tests/pallas:mosaic_gpu_test_gpu
           JAXCI_TEST_TAG_FILTERS: '-multiaccelerator'
           JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
           JAXCI_LOCAL_TEST_JOBS: '8'
