@@ -434,8 +434,10 @@ def flatten_axis_resources(what, tree, shardings, tupled_args):
   dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
   errors = prefix_errors(axis_tree, dummy_tree)
   if errors:
-    e = errors[0]  # Only show information about the first disagreement found.
-    raise e(what)
+    details = "\n".join(e(what).args[0] for e in errors)
+    raise ValueError(
+        f"Mismatch details ({len(errors)} found):\n{details}"
+    )
 
   # At this point we've failed to find a tree prefix error.
   assert False, "Please open a bug report!"  # This should be unreachable.
