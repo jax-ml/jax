@@ -151,6 +151,10 @@ def extract_assignment_candidates_from_reduce_equation(
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
   large_shape = large.key.value.type.shape  # pytype: disable=attribute-error
+  if not isinstance(small.value, fa.TiledLayout):
+    # TODO(bchetioui): handle non-tiled layouts.
+    return
+
   candidates = [
       fa.WGMMA_LAYOUT,
       fa.WGMMA_TRANSPOSED_LAYOUT,
@@ -161,10 +165,21 @@ def extract_assignment_candidates_from_reduce_equation(
   if large_shape[-1] % 16 == 0:
     candidates.append(tcgen05.fa_m64_collective_layout(large_shape[-1]))
 
+  # In the case where we are not actually reducing any of the tiled dimensions,
+  # we should consider the "small" layout as a candidate. We consider it last,
+  # since it is always a valid assignment when reducing a leading tiled
+  # dimension. Using it as a candidate early makes no theoretical difference,
+  # but it practice could lead to longer-winded backtracking.
+  candidates.append(small.value)
+
   for candidate in candidates:
     if len(candidate.base_tile_shape) > len(large_shape):
       continue
-    if candidate.reduce(reduction_dims) == small.value:
+    num_untiled_dims = len(large_shape) - len(candidate.base_tile_shape)
+    reduced_tiling_axes = tuple(
+        a - num_untiled_dims for a in reduction_dims if a >= num_untiled_dims
+    )
+    if candidate.reduce(reduced_tiling_axes) == small.value:
       yield cs.RegisterLayout(candidate)
 
 

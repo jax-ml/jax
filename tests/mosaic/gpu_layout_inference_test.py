@@ -395,6 +395,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(red, [layout, layout])
     self.checkOutLayouts(red, [layout])
 
+  def test_reduce_of_untiled_dimension_conjures_reduced_layout_for_input(self):
+    # This is a regression test for a bug where we would mistakenly reduce the
+    # layout when only untiled dimensions were being reduced.
+    reduced_layout = mgpu.WGMMA_COL_LAYOUT
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      x, acc = undefs(ir.VectorType.get((128, 128, 128), f32), ir.VectorType.get((128, 128), f32))
+      red = vector.MultiDimReductionOp(vector.CombiningKind.ADD, x, acc, [0])
+      layout_cast(red.result, reduced_layout)
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(red, [reduced_layout, reduced_layout])
+    self.checkOutLayouts(red, [reduced_layout])
+
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
