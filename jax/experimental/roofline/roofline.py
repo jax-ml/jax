@@ -137,7 +137,7 @@ _rooflines: dict[core.Primitive, _RooflineRule] = {}
 def _roofline_interpreter(
   f_name: str,
   jaxpr: core.Jaxpr,
-  mesh: Mesh | AbstractMesh,
+  mesh: Mesh | AbstractMesh | None,
   *,
   pin_lhs_in_vmem: bool = False,
   pin_rhs_in_vmem: bool = False,
@@ -218,8 +218,8 @@ def _roofline_interpreter(
           RooflineRuleContext(
             name_stack=source_info.name_stack,
             primitive=eqn.primitive,
-            avals_in=map(aval, eqn.invars),
-            avals_out=map(aval, eqn.outvars),
+            avals_in=map(aval, eqn.invars),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+            avals_out=map(aval, eqn.outvars),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
             jaxpr_eqn_ctx=eqn.ctx,
             mesh=mesh,
             pin_lhs_in_vmem=pin_lhs_in_vmem,
@@ -231,7 +231,7 @@ def _roofline_interpreter(
 
       # Add bytes for the newly-created output variables.
       outvar_shapes = map(make_roofline_shape, eqn.outvars)
-      current_hbm_bytes += sum_bytes(outvar_shapes)
+      current_hbm_bytes += sum_bytes(outvar_shapes)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       foreach(write, eqn.outvars, outvar_shapes)
 
       # Remove bytes for the no-longer-needed input variables.
