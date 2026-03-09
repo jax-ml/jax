@@ -632,13 +632,11 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    args = args if self.skip_canonicalization else map(canonicalize_value, args)
+    args = (args if self.skip_canonicalization else
+      tuple(canonicalize_value(self, i, a) for i, a in enumerate(args)))
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
-    # TODO: figure out how to handle function arguments for this assert
-    # assert (not config.enable_checks.value or
-    #         all(valid_jaxtype(arg) for arg in args)), args
 
     # This is equivalent to "with take_current_trace()", but the bind() code
     # is called frequently and it's slightly faster to avoid using a context
@@ -2066,11 +2064,15 @@ class ShardingTypeError(Exception):
 
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
-def canonicalize_value(val):
+def canonicalize_value(primitive, i, val):
   try:
     aval = typeof(val)
-  except TypeError:
-    return val
+  except TypeError as e:
+    raise TypeError(
+      f"Error interpreting argument to {primitive} as a JAX value."
+      f" The problematic value is of type {type(val)} and was passed to"
+      f" the primitive at position {i}.\n"
+    ) from e
   if not isinstance(aval, ShapedArray):
     return val
   if aval.sharding.mesh.empty:
