@@ -48,12 +48,7 @@ SMEM_BANK_BYTES = 4
 c = utils.c
 
 
-# TODO(bchetioui): Clean this up once minimum jaxlib version is at least 0.9.1.
-if hasattr(nvvm, "ReductionKind"):
-  ReductionKind = nvvm.ReductionKind
-else:
-  assert hasattr(nvvm, "ReduxKind")
-  ReductionKind = nvvm.ReduxKind
+ReductionKind = nvvm.ReductionKind
 
 Tiling: Any = mgpu.dialect.Tiling
 
@@ -397,21 +392,7 @@ class TiledLayoutImpl:
         _check_canonical=False,
     )
 
-# TODO(olechwierowicz): Clean this up once C++ TiledLayout and init_cc_mlir are always available in JAX build (min ver 0.9.1).
-TiledLayout: Any
-if (
-    hasattr(mgpu.dialect, "TiledLayout")
-    and (
-        all_attrs_implemented := all(
-            hasattr(mgpu.dialect.TiledLayout, attr)
-            for attr in dir(TiledLayoutImpl)
-            if not attr.startswith("_")
-        )
-    )
-):
-  TiledLayout = mgpu.dialect.TiledLayout
-else:
-  TiledLayout = TiledLayoutImpl
+TiledLayout = mgpu.dialect.TiledLayout
 
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):

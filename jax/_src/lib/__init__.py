@@ -146,13 +146,11 @@ import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
 
-# TODO(olechwierowicz): Remove this once init_cc_mlir is always available in jaxlib (min ver 0.9.1).
-if hasattr(mosaic_gpu_dialect, 'init_cc_mlir'):
-  try:
-    from jaxlib.mlir import ir  # type: ignore[import-not-found]
-  except ImportError:
-    from mlir import ir  # type: ignore[import-not-found]
-  mosaic_gpu_dialect.init_cc_mlir(ir)
+try:
+  from jaxlib.mlir import ir  # type: ignore[import-not-found]
+except ImportError:
+  from mlir import ir  # type: ignore[import-not-found]
+mosaic_gpu_dialect.init_cc_mlir(ir)
 
 import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
 

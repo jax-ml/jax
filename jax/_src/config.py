@@ -2068,42 +2068,40 @@ thread_guard = bool_state(
         lambda val: guard_lib.update_thread_guard_global_state(val or False)),
 )
 
-# TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
-if hasattr(_jax, 'RuntimeTracebackMode'):
-  class RuntimeTracebackMode(enum.StrEnum):
-    OFF = 'off'
-    ON = 'on'
-    FULL = 'full'
+class RuntimeTracebackMode(enum.StrEnum):
+  OFF = 'off'
+  ON = 'on'
+  FULL = 'full'
 
-    @classmethod
-    def _missing_(cls, value):
-      if isinstance(value, str):
-        try:
-          return cls[value.upper()]
-        except KeyError:
-          pass
-      return None
+  @classmethod
+  def _missing_(cls, value):
+    if isinstance(value, str):
+      try:
+        return cls[value.upper()]
+      except KeyError:
+        pass
+    return None
 
-    def as_cpp_enum(self):
-      return getattr(_jax.RuntimeTracebackMode, self.name)
+  def as_cpp_enum(self):
+    return getattr(_jax.RuntimeTracebackMode, self.name)
 
-  send_traceback_to_runtime = enum_class_state(
-      name='jax_send_traceback_to_runtime',
-      enum_class=RuntimeTracebackMode,
-      default=RuntimeTracebackMode.OFF,
-      help=(
-          'Controls the level of Python traceback information sent to the'
-          ' runtime at dispatch time:\n- "OFF": (default) No Python traceback'
-          ' information is sent.\n- "ON": Only the most recent user frame call'
-          ' location is sent.\n- "FULL": The full Python traceback of the call'
-          ' location is sent. This has a high fixed cost on the dispatch path'
-          ' and should be used only for debugging.'
-      ),
-      update_global_hook=lambda val: _jax.set_send_traceback_to_runtime_global(
-          val.as_cpp_enum() if val is not None else _jax.RuntimeTracebackMode.OFF),
-      update_thread_local_hook=lambda val: _jax.set_send_traceback_to_runtime_thread_local(
-          val.as_cpp_enum() if val is not None else None),
-  )
+send_traceback_to_runtime = enum_class_state(
+    name='jax_send_traceback_to_runtime',
+    enum_class=RuntimeTracebackMode,
+    default=RuntimeTracebackMode.OFF,
+    help=(
+        'Controls the level of Python traceback information sent to the'
+        ' runtime at dispatch time:\n- "OFF": (default) No Python traceback'
+        ' information is sent.\n- "ON": Only the most recent user frame call'
+        ' location is sent.\n- "FULL": The full Python traceback of the call'
+        ' location is sent. This has a high fixed cost on the dispatch path'
+        ' and should be used only for debugging.'
+    ),
+    update_global_hook=lambda val: _jax.set_send_traceback_to_runtime_global(
+        val.as_cpp_enum() if val is not None else _jax.RuntimeTracebackMode.OFF),
+    update_thread_local_hook=lambda val: _jax.set_send_traceback_to_runtime_thread_local(
+        val.as_cpp_enum() if val is not None else None),
+)
 
 # Don't define a context manager since this isn't threadsafe.
 string_state(

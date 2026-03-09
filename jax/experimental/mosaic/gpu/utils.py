@@ -1776,12 +1776,7 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   return bitcast(y, result_type)
 
 
-# TODO(bchetioui): Clean this up once minimum jaxlib version is at least 0.9.1.
-if hasattr(nvvm, "ReductionKind"):
-  ReductionKind = nvvm.ReductionKind
-else:
-  assert hasattr(nvvm, "ReduxKind")
-  ReductionKind = nvvm.ReduxKind
+ReductionKind = nvvm.ReductionKind
 
 
 def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore

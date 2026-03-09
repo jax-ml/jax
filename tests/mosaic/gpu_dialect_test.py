@@ -117,10 +117,6 @@ class MosaicGpuTest(parameterized.TestCase):
         ir.IntegerAttr.get(i32, 0)
     )
 
-  def skip_if_not_tile_shape(self):
-    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
-    if not hasattr(mgpu.dialect, "tile_shape"):
-      self.skipTest("mgpu.dialect.tile_shape not available")
 
   def skip_if_no_sparse_metadata(self):
     # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
@@ -1683,7 +1679,6 @@ class DialectLoweringTest(MosaicGpuTest):
     )
 
   def _tile_shape_type_inference_test_base(self, shape, tiling, layout=None):
-    self.skip_if_not_tile_shape()
     i32 = ir.IntegerType.get_signless(32)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(
@@ -1711,7 +1706,6 @@ class DialectLoweringTest(MosaicGpuTest):
       self._tile_shape_type_inference_test_base((128,), (16, 32))
 
   def test_tile_shape_infers_tiled_shape_type(self):
-    self.skip_if_not_tile_shape()
     i32 = ir.IntegerType.get_signless(32)
     shape, tiling = (256, 128, 128), (16, 32)
     with ir.InsertionPoint(self.module.body):
@@ -1780,7 +1774,6 @@ if hp is not None:
       run()
 
     def test_transform_type_matches_tile_shape_inference(self):
-      self.skip_if_not_tile_shape()
       @hp.given(shape_permutation_and_tiling())
       def run(args):
         shape, permutation, tiling = args

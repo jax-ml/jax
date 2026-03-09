@@ -182,7 +182,7 @@ class MemorySpace(enum.Enum):
         raise ValueError("packed, collective and layout arguments are only supported for TMEM.")
       mgpu_layout = None
     return GPUMemoryRef(jax_core.ShapedArray(shape, dtype), memory_space=self,
-                        transforms=transforms, layout=mgpu_layout,
+                        transforms=transforms, layout=mgpu_layout,  # pyrefly: ignore[bad-argument-type]
                         collective=collective)
 
 
@@ -1580,6 +1580,7 @@ class TMEMLayout(enum.Enum):
         return tcgen05.sparse_meta_layout(*args, **kwargs)
       case TMEMLayout.M64_COLLECTIVE_LAYOUT:
         return tcgen05.tmem_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+    raise ValueError(f"Invalid TMEMLayout: {self}")
 
 
 def TryClusterCancelResult(

@@ -32,9 +32,7 @@ _exclude_paths: list[str] = []
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)
-  # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
-  if hasattr(_jax, "add_exclude_path"):
-    _jax.add_exclude_path(path)
+  _jax.add_exclude_path(path)
 
 register_exclusion(__file__)
 register_exclusion(util.__file__)
