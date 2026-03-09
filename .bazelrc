@@ -255,6 +255,16 @@ common:asan_shared --config=asan
 common:asan_shared --copt=-shared-libasan
 common:asan_shared --linkopt=-shared-libasan
 
+# TSan common config
+common:tsan --features=tsan
+common:tsan --strip=never
+common:tsan --copt=-g
+
+# TSan with shared library config
+common:tsan_shared --config=tsan
+common:tsan_shared --copt=-shared-libsan
+common:tsan_shared --linkopt=-shared-libsan
+
 # #############################################################################
 # Cache options below.
 # #############################################################################
