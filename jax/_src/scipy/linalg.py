@@ -2162,6 +2162,73 @@ def _toeplitz(c: Array, r: Array) -> Array:
       precision=lax.Precision.HIGHEST)[0]
   return jnp.flip(patches, axis=0)
 
+def hankel(c: ArrayLike, r: ArrayLike | None = None) -> Array:
+  r"""Construct a Hankel matrix.
+
+  JAX implementation of :func:`scipy.linalg.hankel`.
+
+  A Hankel matrix has constant anti-diagonals: ``H[i, j] = v[i + j]``, where
+  ``v = concatenate([c, r[1:]])``. Notice this implies that ``r[0]`` is ignored.
+
+  Args:
+    c: array of shape ``(..., N)`` specifying the first column.
+    r: (optional) array of shape ``(..., M)`` specifying the last row. Leading
+      dimensions must be broadcast-compatible with those of ``c``. If not
+      specified, ``r`` defaults to ``zeros_like(c)``.
+
+  Returns:
+    A Hankel matrix of shape ``(..., N, M)``.
+
+  Examples:
+    >>> c = jnp.array([1, 2, 3])
+    >>> jax.scipy.linalg.hankel(c)
+    Array([[1, 2, 3],
+           [2, 3, 0],
+           [3, 0, 0]], dtype=int32)
+
+    >>> r = jnp.array([999, 4, 5, 6]) # Note r[0] is ignored
+    >>> jax.scipy.linalg.hankel(c, r)
+    Array([[1, 2, 3, 4],
+           [2, 3, 4, 5],
+           [3, 4, 5, 6]], dtype=int32)
+
+    For N-dimensional ``c`` and/or ``r``, the result is a batch of Hankel matrices.
+  """
+  if r is None:
+    check_arraylike("hankel", c)
+    c = jnp.asarray(c)
+    r = jnp.zeros_like(c)
+  else:
+    check_arraylike("hankel", c, r)
+    c = jnp.asarray(c)
+    r = jnp.asarray(r)
+  if c.ndim == 0:
+    raise ValueError("hankel: c must be at least 1-dimensional, got a scalar.")
+  if r.ndim == 0:
+    raise ValueError("hankel: r must be at least 1-dimensional, got a scalar.")
+
+  # Align batch ranks so jnp.vectorize doesn't need implicit rank promotion.
+  if c.ndim < r.ndim:
+    c = lax.expand_dims(c, range(r.ndim - c.ndim))
+  elif r.ndim < c.ndim:
+    r = lax.expand_dims(r, range(c.ndim - r.ndim))
+
+  return _hankel(c, r)
+
+@partial(jnp_vectorize.vectorize, signature="(m),(n)->(m,n)")
+def _hankel(c: Array, r: Array) -> Array:
+  ncols, = c.shape
+  nrows, = r.shape
+  if ncols == 0 or nrows == 0:
+    return jnp.empty((ncols, nrows), dtype=jnp.result_type(c, r))
+  v = jnp.concatenate((c, r[1:]))
+  return lax.conv_general_dilated_patches(
+      v.reshape((1, ncols + nrows - 1, 1)),
+      (nrows,), (1,), 'VALID',
+      dimension_numbers=('NTC', 'IOT', 'NTC'),
+      precision=lax.Precision.HIGHEST)[0]
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.
