@@ -54,13 +54,10 @@ project-excludes = [
     "jax/experimental/*.py",
     "jax/experimental/array_serialization/**/*.py",
     "jax/experimental/colocated_python/**/*.py",
-    "jax/experimental/compilation_cache/**/*.py",
     "jax/experimental/jax2tf/**/*.py",
     "jax/experimental/key_reuse/**/*.py",
     "jax/experimental/mosaic/**/*.py",
-    "jax/experimental/roofline/**/*.py",
     "jax/experimental/slab/**/*.py",
-    "jax/experimental/souce_mapper/**/*.py",
     "jax/experimental/sparse/**/*.py",
 ]
 ignore-missing-imports = [
