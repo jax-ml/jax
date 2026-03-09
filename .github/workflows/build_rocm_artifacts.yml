@@ -100,7 +100,7 @@ jobs:
     outputs:
       s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
     container:
-      image: "rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72"
+      image: "ghcr.io/rocm/jax-manylinux_2_28-rocm-7.2.0:latest"
       volumes:
         - /data:/data
       options: >-
@@ -145,7 +145,7 @@ jobs:
           DEPLOY_TARGET: ${{ inputs.artifact == 'jax-rocm-plugin' && '//jaxlib/tools:deploy_rocm_plugin_wheel' || '//jaxlib/tools:deploy_rocm_pjrt_wheel' }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # ratchet:aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1
