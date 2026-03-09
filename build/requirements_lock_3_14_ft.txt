@@ -726,9 +726,9 @@ opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
     # via -r build/requirements.in
-optype[numpy]==0.15.0 \
-    --hash=sha256:457d6ca9e7da19967ec16d42bdf94e240b33b5d70a56fbbf5b427e5ea39cf41e \
-    --hash=sha256:caba40ece9ea39b499fa76c036a82e0d452a432dd4dd3e8e0d30892be2e8c76c
+optype[numpy]==0.17.0 \
+    --hash=sha256:31351a1e64d9eba7bf67e14deefb286e85c66458db63c67dd5e26dd72e4664e5 \
+    --hash=sha256:8c2d88ff13149454bcf6eb47502f80d288bc542e7238fcc412ac4d222c439397
     # via scipy-stubs
 packaging==26.0 \
     --hash=sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4 \
