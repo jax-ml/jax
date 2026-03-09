@@ -10908,6 +10908,28 @@ class UtilTest(jtu.JaxTestCase):
       roundtrip(P(*spec))
 
   @parameterized.named_parameters(
+      ('replicated', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4], []}", P()),
+      ('1d_mesh1', (4,), ('x',), "{mesh['x'=4], [{'x'}]}", P('x')),
+      ('1d_mesh2', (4,), ('x',), "{mesh['x'=4], [{}, {'x'}]}", P(None, 'x')),
+      ('1d_sharded1', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4] [{'a', 'b'}, {}]}", P(('a', 'b'), None)),
+      ('1d_sharded2', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4] [{}, {'a', 'b'}]}", P(None, ('a', 'b'))),
+      ('1d_sharded3', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4], [{}, {'a', 'b'}, {}]}", P(None, ('a', 'b'), None)),
+      ('multi_dim_sharded1', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'a', 'd'}, {}, {'b', 'c'}]}", P(('a', 'd'), None, ('b', 'c'))),
+      ('multi_dim_sharded2', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'a'}, {}, {}, {'b', 'c'}, {}]}", P('a', None, None, ('b', 'c'), None)),
+      ('multi_dim_sharded3', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'b'}, {'c', 'a'}, {'d'}]}", P('b', ('c', 'b'), 'd')),
+  )
+  def testHloShardingV3ToPartitionSpec(
+      self, mesh_shape, mesh_names, hlo_sharding_str, expected_pspec):
+    if jaxlib_extension_version < 417:
+      self.skipTest(
+          'HloSharding v3 to PartitionSpec conversion requires jaxlib extension'
+          ' version 417 or higher.')
+    mesh = jtu.create_mesh(mesh_shape, mesh_names)
+    parsed_hlo_sharding = xc.HloSharding.from_string(hlo_sharding_str)
+    recovered_spec = parse_flatten_op_sharding(parsed_hlo_sharding, mesh)[0]
+    self.assertEqual(recovered_spec, expected_pspec)
+
+  @parameterized.named_parameters(
       ("linear", {'x': 0, 'y': 1, 'z': 2}, P('x', 'y', 'z')),
       ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), 'z')),
       ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, 'z')),

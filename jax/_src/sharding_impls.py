@@ -32,6 +32,7 @@ from jax._src import util
 from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
@@ -678,6 +679,27 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
+
+def _hlo_sharding_v3_to_pspec(
+    hlo_sharding: xc.HloSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+) -> PartitionSpec:
+  hlo_sharding_v3 = hlo_sharding.hlo_sharding_v3()
+  v3_mesh = hlo_sharding_v3.mesh()
+
+  if tuple(v3_mesh.axis_names) != tuple(mesh.axis_names):
+    raise ValueError(
+        f'The axis names of the HloShardingV3 mesh ({v3_mesh.axis_names}) '
+        f'do not match the axis names of the JAX mesh ({mesh.axis_names}).')
+
+  if tuple(v3_mesh.axis_sizes) != tuple(mesh.axis_sizes):
+    raise ValueError(
+        'The axis sizes of the HloShardingV3 mesh'
+        f' ({tuple(v3_mesh.axis_sizes)}) do not match the axis sizes of the'
+        f' JAX mesh ({tuple(mesh.axis_sizes)}).')
+
+  return PartitionSpec(*hlo_sharding_v3.partitions())
+
+
 def parse_flatten_op_sharding(
     hlo_sharding: xc.OpSharding | xc.HloSharding,
     mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh) -> Sequence[PartitionSpec]:
@@ -692,6 +714,8 @@ def parse_flatten_op_sharding(
     return [PartitionSpec()]
   elif hlo_sharding.is_maximal() and mesh.size == 1:
     return [PartitionSpec()]
+  elif jaxlib_extension_version >= 417 and hlo_sharding.is_hlo_sharding_v3():
+    return [_hlo_sharding_v3_to_pspec(hlo_sharding, mesh)]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(

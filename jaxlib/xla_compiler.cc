@@ -53,6 +53,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -1274,6 +1276,24 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
   DefRepeatedEnumProperty(op_sharding, "last_tile_dims",
                           &xla::OpSharding::mutable_last_tile_dims);
 
+  nb::class_<xla::Mesh>(m, "HloShardingV3Mesh")
+      .def_prop_ro("axis_names",
+                   [](const xla::Mesh& self) {
+                     return std::vector<std::string>(self.axis_names().begin(),
+                                                     self.axis_names().end());
+                   })
+      .def_prop_ro("axis_sizes", [](const xla::Mesh& self) {
+        return std::vector<int64_t>(self.axis_sizes().begin(),
+                                    self.axis_sizes().end());
+      });
+
+  nb::class_<xla::NamedSharding>(m, "HloShardingV3")
+      .def("mesh", &xla::NamedSharding::mesh)
+      .def("partitions",
+           [](const xla::NamedSharding& self) { return self.JaxPartitions(); })
+      .def("__repr__",
+           [](const xla::NamedSharding& self) { return self.ToString(); });
+
   nb::class_<HloSharding> hlo_sharding(m, "HloSharding");
   hlo_sharding
       .def_static("from_proto",
@@ -1323,6 +1343,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("is_unknown", &xla::HloSharding::IsUnknown)
       .def("is_tiled", &xla::HloSharding::IsTiled)
       .def("is_maximal", &xla::HloSharding::IsTileMaximal)
+      .def("is_hlo_sharding_v3", &xla::HloSharding::UseNamedShardingLeaf)
+      .def("hlo_sharding_v3",
+           [](const xla::HloSharding& self) { return self.named_sharding(); })
       .def("tile", [](const xla::HloSharding& self,
                       xla::Shape shape) { return self.TileShape(shape); })
       // tile_assignment.array() is computed using an internal cache,
