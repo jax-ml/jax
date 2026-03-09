@@ -937,10 +937,10 @@ nvidia-cublas-cu12==12.9.1.4 ; sys_platform == "linux" \
     #   -r build/nvidia-requirements.txt
     #   nvidia-cudnn-cu12
     #   nvidia-cusolver-cu12
-nvidia-cuda-cccl==13.1.115 \
-    --hash=sha256:5ae329be60577aabdfe1d9324a7cf42e06d31dd1aaafdb1c748158c54a053cc7 \
-    --hash=sha256:5d5d26df9e56af547a3699048b466d55dbab7557af030161de96abd67834512a \
-    --hash=sha256:d4a9e0590cd34290cda27f402a67fbf42e3ed043bdd927c6dd52419c860f2f92
+nvidia-cuda-cccl==13.2.27 \
+    --hash=sha256:8e5c228bf1990eecd8d770d58f850b15923f78d3df1299e71c0c45054afc56c3 \
+    --hash=sha256:9d35d5dc2772d36b989b9c570e7c44bcf87fee9050e1403f94bcd92786a3e277 \
+    --hash=sha256:f71b5dbc838867d1281715f34e642263098ea2ce59d85e9192f140ee24744f49
     # via nvidia-nvshmem-cu13
 nvidia-cuda-cccl-cu12==12.9.27 \
     --hash=sha256:37869e17ce2e1ecec6eddf1927cca0f8c34e64fd848d40453df559091e2d7117 \
