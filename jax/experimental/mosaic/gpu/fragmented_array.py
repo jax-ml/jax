@@ -1277,24 +1277,52 @@ class FragmentedArray:
     else:
       return NotImplemented
 
+  def _e8m0_reciprocal(self):
+    def e8m0_inv(x):
+      if not isinstance(x.type, ir.VectorType):
+        raise NotImplementedError(x.type)
+      [vec_len] = ir.VectorType(x.type).shape
+      i8 = ir.IntegerType.get_signless(8)
+      i8_vec = ir.VectorType.get((vec_len,), i8)
+      c254 = vector.broadcast(i8_vec, arith.constant(i8, 254))
+      return utils.bitcast(arith.subi(c254, utils.bitcast(x, i8_vec)), x.type)
+    return self._pointwise(e8m0_inv, restrict_bitwidth=False)
+
+  @staticmethod
+  def _is_e8m0_constant_one(val):
+    if isinstance(val, (int, float)):
+      return val == 1
+    if not isinstance(val, FragmentedArray):
+      return False
+    if not isinstance(val.layout, WGSplatFragLayout):
+      return False
+    if not isinstance(val.mlir_dtype, ir.Float8E8M0FNUType):
+      return False
+    [reg] = val.registers.flat
+    return (
+        isinstance(reg, ir.OpResult)
+        and isinstance(reg.owner.opview, arith.ConstantOp)
+        and float(ir.FloatAttr(reg.owner.opview.value)) == 1.0
+    )
+
   def __truediv__(self, other):
     if not isinstance(self.mlir_dtype, ir.FloatType):
       return NotImplemented
+    if (
+        isinstance(other, FragmentedArray)
+        and isinstance(other.mlir_dtype, ir.Float8E8M0FNUType)
+        and FragmentedArray._is_e8m0_constant_one(self)
+    ):
+      return other._e8m0_reciprocal()
     return self._pointwise(arith.divf, other)
 
   def __rtruediv__(self, other):
     if not isinstance(self.mlir_dtype, ir.FloatType):
       return NotImplemented
-    if isinstance(self.mlir_dtype, ir.Float8E8M0FNUType) and other == 1:
-      def e8m0_inv(x, _):
-        if not isinstance(x.type, ir.VectorType):
-          raise NotImplementedError(x.type)
-        [vec_len] = ir.VectorType(x.type).shape
-        i8 = ir.IntegerType.get_signless(8)
-        i8_vec = ir.VectorType.get((vec_len,), i8)
-        c254 = vector.broadcast(i8_vec, arith.constant(i8, 254))
-        return utils.bitcast(arith.subi(c254, utils.bitcast(x, i8_vec)), x.type)
-      return self._pointwise(e8m0_inv, other, restrict_bitwidth=False)
+    if isinstance(
+        self.mlir_dtype, ir.Float8E8M0FNUType
+    ) and FragmentedArray._is_e8m0_constant_one(other):
+      return self._e8m0_reciprocal()
     return self._pointwise(lambda s, o: arith.divf(o, s), other)
 
   def __floordiv__(self, other):

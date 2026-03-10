@@ -2895,6 +2895,34 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     [path] = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
     self.assertEndsWith(__file__, path)
 
+  @jtu.thread_unsafe_test()
+  @jtu.skip_under_pytest("Test fails under pytest in CI")
+  def test_e8m0_reciprocal_ptx(self):
+    shape = (64, 128)
+    transforms = self.default_transforms(swizzle=128, dtype=jnp.dtype(jnp.float8_e8m0fnu))
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float8_e8m0fnu),
+        in_specs=[plgpu.BlockSpec(transforms=transforms)],
+        out_specs=plgpu.BlockSpec(transforms=transforms),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = 1 / x_ref[...]
+
+    x_uint8 = (np.arange(np.prod(shape), dtype=np.uint8).reshape(shape) % 253) + 1
+    x = jax.lax.bitcast_convert_type(
+        jnp.array(x_uint8), jnp.float8_e8m0fnu
+    )
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      result = jax.block_until_ready(kernel(x))
+    ptx_str = ptx()
+    self.assertRegex(ptx_str, r"sub\b")
+    self.assertNotRegex(ptx_str, r"div\.f")
+    result_uint8 = np.asarray(
+        jax.lax.bitcast_convert_type(result, jnp.uint8)
+    )
+    np.testing.assert_array_equal(result_uint8, 254 - x_uint8)
+
   def test_collective_arrival_count(self):
     def kernel(dst, collective_barrier):
       plgpu.barrier_arrive(collective_barrier)
