@@ -4154,6 +4154,7 @@ def _iota_lowering_wg(
 
 
 @register_lowering_rule(primitives.delay_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.delay_p, mgpu.LoweringSemantics.Warpgroup)
 def _delay_lowering(ctx: LoweringRuleContext, nanos):
   del ctx  # Unused.
   if not isinstance(nanos, ir.Value):
