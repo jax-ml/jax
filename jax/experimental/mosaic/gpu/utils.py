@@ -1025,13 +1025,7 @@ class BarrierRef:
     parity = arith.extui(i32, parity)
     nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
     if orders_tensor_core:
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [],
-          "tcgen05.fence::after_thread_sync;",
-          "",
-          has_side_effects=True,
-      )
+      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
 
   def wait(self, orders_tensor_core: bool = False):
     parities = memref.load(self.phases, [])
@@ -1056,13 +1050,7 @@ class BarrierRef:
   ):
     i64 = ir.IntegerType.get_signless(64)
     if orders_tensor_core:
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [],
-          "tcgen05.fence::before_thread_sync;",
-          "",
-          has_side_effects=True,
-      )
+      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
     if can_complete:
       pred_ptx = pred_constraint = ""
       if predicate is not None:
@@ -1264,13 +1252,7 @@ class CollectiveBarrierRef:
     Note that unlike in arrive, each warpgroup arrives once.
     """
     if orders_tensor_core:
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [],
-          "tcgen05.fence::before_thread_sync;",
-          "",
-          has_side_effects=True,
-      )
+      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
     if self.barrier.num_barriers != 1:
       raise ValueError("Can only arrive on a single barrier")
     if self.cluster_mask is None:
