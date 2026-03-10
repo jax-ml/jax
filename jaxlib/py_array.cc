@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 
 #include <Python.h>
+#include <structmember.h>
 
 #include <cstddef>
 #include <cstdint>

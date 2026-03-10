@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/pmap_lib.h"
 
 #include <Python.h>
+#include <structmember.h>
 
 #include <algorithm>
 #include <cstddef>

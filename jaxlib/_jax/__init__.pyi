@@ -21,7 +21,7 @@ from typing import Annotated, Any, Self, TypeAlias, overload
 
 import numpy
 from numpy.typing import NDArray
-import typing_extensions
+from typing_extensions import CapsuleType
 
 from . import (
     config as config,
@@ -886,7 +886,7 @@ class Client:
       computation: object,
       executable_devices: DeviceList,
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[CapsuleType] = ...,
   ) -> LoadedExecutable: ...
   @overload
   def compile_and_load(
@@ -1272,7 +1272,7 @@ def buffer_to_dlpack_managed_tensor(
     buffer: object, stream: int | None = ...
 ) -> typing_extensions.CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
-    dlpack: typing_extensions.CapsuleType,
+    dlpack: CapsuleType,
     device: Device,
     stream: int | None,
     copy: bool | None = ...,
@@ -1574,7 +1574,7 @@ class CompileOnlyPyClient(Client):
       computation: object,
       executable_devices: DeviceList,
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[CapsuleType] = ...,
   ) -> Executable: ...
 
 class DeviceTopology:
