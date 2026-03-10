@@ -311,7 +311,7 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
             "def make_xla_compile_options("
             "options: _CompileOptions, "
             "executable_devices: Sequence[_Device], "
-            "host_callbacks: Sequence[typing_extensions.CapsuleType]"
+            "host_callbacks: Sequence[types.CapsuleType]"
             ") -> CompileOptions"
             // clang-format on
           ))

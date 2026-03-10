@@ -916,7 +916,7 @@ PyType_Slot PyClient::slots_[] = {
               "computation: object, "
               "executable_devices: DeviceList, "
               "compile_options: CompileOptions = ..., "
-              "host_callbacks: Sequence[typing_extensions.CapsuleType] = ..."
+              "host_callbacks: Sequence[types.CapsuleType] = ..."
               ") -> LoadedExecutable"
               // clang-format on
               ))

@@ -15,9 +15,8 @@
 """Python bindings for the XLA FFI."""
 
 import enum
-
 import numpy
-import typing_extensions
+from typing_extensions import CapsuleType
 
 class Buffer:
   @property
@@ -39,7 +38,7 @@ class Buffer:
       max_version: object | None = ...,
       dl_device: object | None = ...,
       copy: object | None = ...,
-  ) -> typing_extensions.CapsuleType: ...
+  ) -> CapsuleType: ...
   def __dlpack_device__(self) -> tuple: ...
 
 class ExecutionStage(enum.Enum):

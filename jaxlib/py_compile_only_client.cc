@@ -126,7 +126,7 @@ void CompileOnlyPyClient::Register(nb::module_& m) {
               "computation: object, "
               "executable_devices: DeviceList, "
               "compile_options: CompileOptions = ..., "
-              "host_callbacks: Sequence[typing_extensions.CapsuleType] = ..."
+              "host_callbacks: Sequence[types.CapsuleType] = ..."
               ") -> Executable"
               // clang-format on
               ));

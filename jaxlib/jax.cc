@@ -558,7 +558,7 @@ NB_MODULE(_jax, m) {
       nb::sig(
           // clang-format off
       "def dlpack_managed_tensor_to_buffer("
-      "dlpack: typing_extensions.CapsuleType, "
+      "dlpack: types.CapsuleType, "
       "device: Device, "
       "stream: int | None, "
       "copy: bool | None = ..."
