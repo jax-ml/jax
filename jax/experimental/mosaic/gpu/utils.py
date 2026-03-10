@@ -1051,6 +1051,11 @@ class BarrierRef:
     i64 = ir.IntegerType.get_signless(64)
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
+      if predicate is not None:
+        # We need to synchronize the threads after `::before_thread_sync`, as
+        # not all threads arrive on the barrier.
+        warpgroup_barrier()
+
     if can_complete:
       pred_ptx = pred_constraint = ""
       if predicate is not None:
@@ -1251,14 +1256,21 @@ class CollectiveBarrierRef:
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
-    if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
     if self.barrier.num_barriers != 1:
       raise ValueError("Can only arrive on a single barrier")
+
     if self.cluster_mask is None:
-      with single_thread(scope=ThreadSubset.WARPGROUP):
-        self.barrier.arrive()
-      return
+      return self.barrier.arrive(
+          predicate=single_thread_predicate(ThreadSubset.WARPGROUP),
+          orders_tensor_core=orders_tensor_core,
+      )
+
+    if orders_tensor_core:
+      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
+      # We need to synchronize the threads after `::before_thread_sync`, as not
+      # all threads arrive on the barrier.
+      warpgroup_barrier()
+
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
     signaled_block = arith.divui(
