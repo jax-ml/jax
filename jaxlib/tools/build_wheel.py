@@ -246,7 +246,13 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   )
   # TODO (sharadmv,skyewm): can we avoid patching this file?
   patch_copy_mlir_import(
-      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_gen.py",
+      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_enum_gen.py",
+      dst_dir=mosaic_python_dir,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+  patch_copy_mlir_import(
+      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_ops_gen.py",
       dst_dir=mosaic_python_dir,
       runfiles=r,
       wheel_sources_map=wheel_sources_map,
