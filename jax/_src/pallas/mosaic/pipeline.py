@@ -1745,7 +1745,7 @@ def make_pipeline_allocations(
 
 def _partition_grid(
     grid: tuple[int | jax.Array, ...],
-    core_axis: int | str | None,
+    core_axis: tuple[int | str, ...] | int | str | None,
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None,
 ) -> tuple[tuple[int | jax.Array, ...], tuple[int | jax.Array, ...]]:
   if core_axis is None:
@@ -1873,8 +1873,8 @@ def emit_pipeline(
     out_specs=(),
     tiling: tpu_info.Tiling | None = None,
     should_accumulate_out: bool = False,
-    core_axis: int | None = None,
-    core_axis_name: str | None = None,
+    core_axis: tuple[int, ...] | int | None = None,
+    core_axis_name: tuple[str, ...] | str | None = None,
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
@@ -1898,10 +1898,10 @@ def emit_pipeline(
     tiling: optional tiling to assume for the refs.
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
-    core_axis: optional int, indicates whether or not to partition the grid
-      along the core axis.
-    core_axis_name: optional str, indicates whether or not to partition the grid
-      along the core axis.
+    core_axis: optional int or tuple of int, indicates whether or not to
+      partition the grid along the core axis.
+    core_axis_name: optional str or tuple of str, indicates whether or not to
+      partition the grid along the core axis.
     dimension_semantics: optional tuple of GridDimensionSemantics (e.g. PARALLEL
       or ARBITRARY).
     trace_scopes: optional bool, indicates whether to annotate each region in
