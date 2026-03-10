@@ -953,12 +953,6 @@ class OpsTest(PallasBaseTest):
         self.skipTest("f16 load not supported on TPU")
       if dtype in (jnp.int16, jnp.uint16) and jtu.get_tpu_version() < 6:
         self.skipTest("requires TPU v6+")
-      if (
-          dtype == jnp.bfloat16
-          and jtu.get_tpu_version() == 5
-          and not jtu.is_cloud_tpu_at_least(2026, 3, 1)
-      ):
-        self.skipTest("requires a newer libTPU")
 
     @functools.partial(
         self.pallas_call,
@@ -1109,7 +1103,7 @@ class OpsTest(PallasBaseTest):
 
   ELEMENTWISE_OPS = [
       (
-          [jnp.abs, jnp.negative],
+          [jnp.abs, jnp.negative, jnp.sign],
           [
               "int16",
               "int32",
