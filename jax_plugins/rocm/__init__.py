@@ -15,11 +15,14 @@
 import functools
 import importlib
 import logging
-import os
 import pathlib
 
+from jax._src import hardware_utils
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
+
+_MIN_SHM_SIZE_MB = 64
+logger = logging.getLogger(__name__)
 
 # rocm_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax rocm plugin packages.
@@ -33,44 +36,16 @@ for pkg_name in ['jax_rocm7_plugin', 'jax_rocm60_plugin', 'jaxlib.rocm']:
   else:
     break
 
-logger = logging.getLogger(__name__)
-
 
 def _get_library_path():
   base_path = pathlib.Path(__file__).resolve().parent
-  installed_path = (
-      base_path / 'xla_rocm_plugin.so'
-  )
-  if installed_path.exists():
-    return installed_path
-
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
-  )
-  if not local_path.exists():
-    runfiles_dir = os.getenv('RUNFILES_DIR', None)
-    if runfiles_dir:
-      local_path = pathlib.Path(
-          os.path.join(runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin.so')
-      )
-
-  if local_path.exists():
-    logger.debug(
-        'Native library %s does not exist. This most likely indicates an issue'
-        ' with how %s was built or installed. Fallback to local test'
-        ' library %s',
-        installed_path,
-        __package__,
-        local_path,
-    )
-    return local_path
-
+  library_path = base_path / 'xla_rocm_plugin.so'
+  if library_path.exists():
+    return library_path
   logger.debug(
-      'WARNING: Native library %s and local test library path %s do not'
-      ' exist. This most likely indicates an issue with how %s was built or'
-      ' installed or missing src files.',
-      installed_path,
-      local_path,
+      'Native library %s does not exist. This most likely indicates an issue'
+      ' with how %s was built or installed.',
+      library_path,
       __package__,
   )
   return None
@@ -80,6 +55,22 @@ def initialize():
   path = _get_library_path()
   if path is None:
     return
+
+  # Count GPUs (stop at 2 since that's all we need to know)
+  gpu_count = hardware_utils.num_available_amd_gpus(stop_at=2)
+  if gpu_count <= 0:
+    raise ValueError("No AMD GPUs were found, skipping ROCm plugin initialization")
+  elif gpu_count > 1:
+    shm_size_mb = hardware_utils.get_shm_size_in_mb()
+    if shm_size_mb <= _MIN_SHM_SIZE_MB:
+      logger.warning(
+          "Detected multiple GPUs but /dev/shm size is only %.1f MB. "
+          "RCCL may exhaust shared memory during multi-GPU operations, "
+          "causing runtime failures. Consider increasing /dev/shm size. "
+          "For example in Docker, use: --shm-size=64g",
+          shm_size_mb,
+      )
+
   options = xla_client.generate_pjrt_gpu_plugin_options()
   options["platform_name"] = "ROCM"
   c_api = xb.register_plugin(
