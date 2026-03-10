@@ -7109,6 +7109,9 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling(self, grid, cluster):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
+    # query_cluster_cancel_p and try_cluster_cancel_p are not yet supported
+    # with WG semantics.
+    self.skip_if_wg_semantics()
     grid_names = tuple(str(i) for i in range(len(grid)))
     cluster_names = tuple("c"+str(i) for i in range(len(cluster)))
     def body(out_gmem, _):
@@ -7150,6 +7153,9 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling_with_carry(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
+    # query_cluster_cancel_p and try_cluster_cancel_p are not yet supported
+    # with WG semantics.
+    self.skip_if_wg_semantics()
     # In this test we make SM 0 run a the dynamic scheduling loop while all
     # other SMs spin. This means SM 0 should steal all of the work and we
     # keep track of the number of stolen blocks in the carry.
@@ -7191,6 +7197,12 @@ class HelpersTest(PallasTest):
     self.assertEqual(result[0], blocks_to_steal + 1)
 
 
+class HelpersWGTest(
+    HelpersTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+):
+  ...
+
+
 class DistributedTest(PallasTest):
   def test_lowering_with_explicit_sharding(self):
     mesh = jax.make_mesh(
@@ -7226,6 +7238,12 @@ class DistributedTest(PallasTest):
           return shmap(x)
       result = sharded_relu(x)
     np.testing.assert_array_equal(result, jnp.maximum(x, 0))
+
+
+class DistributedWGTest(
+    DistributedTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+):
+  ...
 
 
 if __name__ == "__main__":
