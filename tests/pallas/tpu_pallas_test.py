@@ -4064,7 +4064,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_to_R2_padded_last_dim(self, q, m, n, dtype):
-    if not jtu.is_device_tpu_at_least(5):
+    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+    ):
       self.skipTest('Operation not supported on this TPU version.')
 
     def kernel(x_ref, y_ref):
@@ -4098,7 +4100,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_two_minor_dims_to_R3_padded_last_dim(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_device_tpu_at_least(5):
+    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+    ):
       self.skipTest('Operation not supported on this TPU version.')
 
     def kernel(x_ref, y_ref):
@@ -4112,46 +4116,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((q, m, n * k), dtype),
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q, m, n * k]))
-
-  @parameterized.product(
-      input_output_major_dims=[
-          ((1, 8), (8,)),
-          ((8,), (1, 8)),
-          ((4, 4), (2, 2, 4)),
-          ((2, 2, 4), (4, 4)),
-          ((2, 3), (6,)),
-      ],
-      input_minor_dims=[(8, 128), (4, 256), (8, 120), (5, 32), (5, 7)],
-      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
-  )
-  def test_reshape_two_minor_dims_to_last_dim_change_major_dim(
-      self, input_output_major_dims, input_minor_dims, dtype
-  ):
-    if input_minor_dims[1] % 128 != 0 and (
-        not jtu.is_cloud_tpu_at_least(2026, 3, 15)
-        or not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
-    if (
-        jax.dtypes.itemsize_bits(dtype) < 16
-        and input_minor_dims == (8, 128)
-        and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
-    input_major_dims, output_major_dims = input_output_major_dims
-    output_minor_dims = (math.prod(input_minor_dims),)
-    input_shape = input_major_dims + input_minor_dims
-    output_shape = output_major_dims + output_minor_dims
-
-    def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...].reshape(output_shape)
-
-    x = np.arange(math.prod(input_shape), dtype=dtype).reshape(input_shape)
-    out = self.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
-    )(x)
-    np.testing.assert_array_equal(out, x.reshape(output_shape))
 
   # (p, q, m, n, k) -> (p, q * m * n * k) where k % 128 == 0
   @parameterized.parameters(

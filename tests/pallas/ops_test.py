@@ -1954,7 +1954,7 @@ class OpsTest(PallasBaseTest):
             "The Pallas TPU lowering currently supports only blocks of rank"
             " >= 1"
         )
-      if in_shape in [(1, 2, 1, 4, 1), (2, 4, 1)] and jtu.get_tpu_version() < 5:
+      if in_shape == (1, 2, 1, 4, 1) and jtu.get_tpu_version() < 5:
         self.skipTest("Requires sublane gather support")
 
     @functools.partial(
