@@ -933,6 +933,17 @@ def tile_strides(
   )
 
 
+def delinearize_offset(
+    linear_offset: int, strides: tuple[int, ...]
+) -> tuple[int, ...]:
+  """Delinearizes an offset into a given number of dimensions."""
+  delinearized_offset = [0] * len(strides)
+  for i, stride in sorted(enumerate(strides), key=lambda es: es[1], reverse=True):
+    delinearized_offset[i] = linear_offset // stride
+    linear_offset %= stride
+  return tuple(delinearized_offset)
+
+
 def transform_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[lc.MemRefTransform, ...],
@@ -947,20 +958,20 @@ def transform_type(
   if len(transforms) > 1 or not isinstance(transforms[0], lc.TileTransform):
     raise NotImplementedError(f"Unsupported transforms: {transforms}")
   tile_transform: lc.TileTransform = transforms[0]  # pytype: disable=attribute-error
+  return tile_type(ref_ty, tile_transform.tiling)
 
+
+def tile_type(ref_ty: ir.MemRefType, tiling: tuple[int, ...]) -> ir.MemRefType:
+  """Tiles the given `memref` type according to `tiling`."""
   strides, offset = ref_ty.get_strides_and_offset()
-  tiled_shape = tile_transform.transform_shape(ref_ty.shape)
-  tiled_strides = tile_strides(strides, tile_transform.tiling)
+  tiled_shape = lc.TileTransform(tiling).transform_shape(ref_ty.shape)
+  tiled_strides = tile_strides(strides, tiling)
 
   if offset == ir.ShapedType.get_dynamic_stride_or_offset():
     tiled_offset = offset
   else:
-    delinearized_offset = [0] * len(strides)
-    for i, stride in sorted(enumerate(strides), key=lambda es: es[1], reverse=True):
-      delinearized_offset[i] = offset // stride
-      offset %= stride
     tiled_delinearized_offset = tile_offset(
-        tuple(delinearized_offset), tile_transform.tiling
+        delinearize_offset(offset, strides), tiling
     )
     tiled_offset = sum(o * s for o, s in zip(tiled_delinearized_offset, tiled_strides, strict=True))
 
@@ -974,6 +985,118 @@ def transform_type(
       ref_ty.element_type,
       memory_space=ref_ty.memory_space,
       layout=layout
+  )
+
+
+def untile_strides(
+    tiled_strides: tuple[int, ...], tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  tiling_rank = len(tiling)
+  if len(tiled_strides) < 2 * tiling_rank:
+    raise ValueError(
+        f"Tiled strides {tiled_strides} have lower rank than twice the"
+        f" tiling rank {tiling_rank}"
+    )
+  num_untiled_dims = len(tiled_strides) - 2 * tiling_rank
+  tiled_tile_strides = tiled_strides[num_untiled_dims:-tiling_rank]
+  tiled_tiling_strides = tiled_strides[num_untiled_dims + tiling_rank :]
+
+  tiled_tiling_stride_index = sorted(
+      enumerate(tiled_tiling_strides), key=lambda x: x[1], reverse=True
+  )
+  to_ordered_inv = [i for i, _ in tiled_tiling_stride_index]
+
+  to_ordered = [0] * tiling_rank
+  for j in range(tiling_rank):
+    to_ordered[to_ordered_inv[j]] = j
+
+  ordered_tiled_tile_strides = [
+      tiled_tile_strides[to_ordered_inv[j]] for j in range(tiling_rank)
+  ]
+  ordered_tiling = [tiling[to_ordered_inv[j]] for j in range(tiling_rank)]
+
+  ordered_original_strides = [0] * tiling_rank
+  ordered_original_strides[tiling_rank - 1] = 1
+  for j in range(tiling_rank - 2, -1, -1):
+    ordered_original_strides[j] = (
+        ordered_original_strides[j + 1]
+        * (ordered_tiled_tile_strides[j] // ordered_tiled_tile_strides[j + 1])
+        * ordered_tiling[j + 1]
+    )
+
+  return (
+      *tiled_strides[:num_untiled_dims],
+      *[ordered_original_strides[to_ordered[i]] for i in range(tiling_rank)],
+  )
+
+
+def untile_offset(
+    offsets: tuple[int, ...], tiling: tuple[int, ...]
+) -> tuple[int, ...]:
+  """Untiles the trailing `len(tiling)` offsets in `offsets` according."""
+  tiling_rank = len(tiling)
+  if len(offsets) < 2 * tiling_rank:
+    raise ValueError(
+        f"Offsets {offsets} have lower rank than twice the"
+        f" tiling rank {tiling_rank}"
+    )
+
+  for tiling_offset in offsets[-tiling_rank:]:
+    if tiling_offset != 0:
+      raise NotImplementedError(
+          "Can not untile offset when offset is not tile-aligned."
+      )
+
+  num_untiled_dims = len(offsets) - 2 * tiling_rank
+  return (
+      *offsets[:num_untiled_dims],
+      *[offsets[num_untiled_dims + i] * tiling[i] for i in range(tiling_rank)],
+  )
+
+
+def untile_type(ref_ty: ir.MemRefType, tiling: tuple[int, ...]) -> ir.MemRefType:
+  """Untiles a `memref`."""
+  tiling_rank = len(tiling)
+  tiled_shape = ref_ty.shape
+  if len(tiled_shape) < 2 * tiling_rank:
+    raise ValueError(
+        "The tiled shape must have at least twice as many dimensions as the"
+        f" tiling, but got {len(tiled_shape)} < {tiling_rank * 2}"
+    )
+
+  tiled_strides, offset = ref_ty.get_strides_and_offset()
+  num_untiled_dims = len(tiled_shape) - 2 * tiling_rank
+
+  result_shape = [
+      *tiled_shape[:num_untiled_dims],
+      *[
+          tiled_shape[num_untiled_dims + i]
+          * tiled_shape[num_untiled_dims + tiling_rank + i]
+          for i in range(tiling_rank)
+      ],
+  ]
+
+  result_strides = untile_strides(tuple(tiled_strides), tiling)
+
+  if offset == ir.ShapedType.get_dynamic_stride_or_offset():
+    untiled_offset = offset
+  elif offset == 0:
+    untiled_offset = 0
+  else:
+    delinearized_offset = delinearize_offset(offset, tiled_strides)
+    untiled_delinearized_offset = untile_offset(delinearized_offset, tiling)
+    untiled_offset = sum(o * s for o, s in zip(untiled_delinearized_offset, result_strides, strict=True))
+
+  if isinstance(ref_ty.layout, ir.StridedLayoutAttr):
+    layout = ir.StridedLayoutAttr.get(untiled_offset, result_strides)
+  else:
+    layout = None
+
+  return ir.MemRefType.get(
+      result_shape,
+      ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout,
   )
 
 

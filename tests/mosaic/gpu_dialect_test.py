@@ -1705,6 +1705,23 @@ class DialectLoweringTest(MosaicGpuTest):
     ):
       self._tile_shape_type_inference_test_base((128,), (16, 32))
 
+  def test_untile_tile_sliced_transposed_memref_type_is_identity(self):
+    strides = mgpu_utils.get_contiguous_strides((512, 256))
+    offset = 128 * 256 + 32
+    tiling = (8, 16)
+    # This type is equivalent to the type of `y` in
+    #   y = x[128:256, 32:96].T
+    # given `x` a contiguous ref of shape (512, 256).
+    ref_ty = ir.MemRefType.get(
+        (64, 128),
+        ir.BF16Type.get(),
+        memory_space=mgpu_utils.smem(),
+        layout=ir.StridedLayoutAttr.get(offset, strides[::-1]),
+    )
+    tiled_type = lowering.tile_type(ref_ty, tiling)
+    untiled_type = lowering.untile_type(tiled_type, tiling)
+    self.assertEqual(untiled_type, ref_ty)
+
   def test_tile_shape_infers_tiled_shape_type(self):
     i32 = ir.IntegerType.get_signless(32)
     shape, tiling = (256, 128, 128), (16, 32)
@@ -1771,6 +1788,20 @@ if hp is not None:
         self.assertEqual(tuple(tiled_type.shape), expected_shape)
         self.assertEqual(offset, 0)
         self.assertEqual(tuple(strides), tuple(expected_strides))
+      run()
+
+    def test_untile_tile_type_is_identity(self):
+      @hp.given(shape_permutation_and_tiling())
+      def run(args):
+        shape, permutation, tiling = args
+        i32 = ir.IntegerType.get_signless(32)
+        with ir.InsertionPoint(self.module.body):
+          ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
+          [smem] = undefs(ref_ty)
+          transposed_smem = mgpu_utils.memref_transpose(smem, permutation)
+        tiled_type = lowering.tile_type(transposed_smem.type, tiling)
+        untiled_type = lowering.untile_type(tiled_type, tiling)
+        self.assertEqual(untiled_type, transposed_smem.type)
       run()
 
     def test_transform_type_matches_tile_shape_inference(self):
