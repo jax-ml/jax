@@ -2095,6 +2095,21 @@ _reduce_sum_lowering_rule = reduce_lowering_rule(
 register_lowering_rule(lax.reduce_sum_p)(_reduce_sum_lowering_rule)
 
 
+REDUCE_PROD_KINDS = {
+    jnp.floating: vector.CombiningKind.MUL,
+    jnp.signedinteger: vector.CombiningKind.MUL,
+    jnp.unsignedinteger: vector.CombiningKind.MUL,
+}
+REDUCE_PROD_IDENTITY = {
+    jnp.floating: 1.0,
+    jnp.signedinteger: 1,
+}
+_reduce_prod_lowering_rule = reduce_lowering_rule(
+    jnp.prod, REDUCE_PROD_KINDS, REDUCE_PROD_IDENTITY
+)
+register_lowering_rule(lax.reduce_prod_p)(_reduce_prod_lowering_rule)
+
+
 @register_lowering_rule(lax.reduce_and_p, kernel_types=[*tpu_core.CoreType])
 def _reduce_and_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   def _proxy_reduce(arg, *, axes):

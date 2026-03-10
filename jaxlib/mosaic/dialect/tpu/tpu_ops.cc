@@ -2215,11 +2215,12 @@ LogicalResult AllReduceOp::verify() {
 
   switch (kind) {
     case ReductionKind::kSum:
+    case ReductionKind::kProd:
     case ReductionKind::kMax:
     case ReductionKind::kMin:
       if (in_ty != out_ty) {
         return emitOpError(
-            "Sum, max, and min reductions must have the same "
+            "Sum, prod, max, and min reductions must have the same "
             "input and output type");
       }
       break;

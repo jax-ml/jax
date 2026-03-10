@@ -354,9 +354,9 @@ class OpsTest(ptu.PallasTPUTest):
     self.assertArraysEqual(out, expected)
 
   @parameterized.product(
-      dtype = [jnp.float32, jnp.bfloat16, jnp.int32],
-      axis = [0, 1, 2],
-      reduce_func = [jnp.sum, jnp.max, jnp.min]
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int32],
+      axis=[0, 1, 2],
+      reduce_func=[jnp.sum, jnp.max, jnp.min, jnp.prod],
   )
   def test_reduction(self, dtype, axis, reduce_func):
     in_shape = (2, 16, 128)
@@ -366,13 +366,44 @@ class OpsTest(ptu.PallasTPUTest):
     def kernel(x, out):
       out[:] = reduce_func(x[:], axis, keepdims=True)
 
-    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    if reduce_func == jnp.prod:
+      # Avoid massive overflow which causes 0 * inf = nan in parallel tree reduction
+      x = (jnp.arange(np.prod(in_shape), dtype=dtype) % 5 + 1).reshape(in_shape)
+    else:
+      x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
     result = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
     )(x)
     expected = reduce_func(x, axis, keepdims=True)
     np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      axis=[0, 1, 2],
+  )
+  def test_prod_reduction_edge_cases(self, axis):
+    in_shape = (2, 16, 128)
+    out_shape = list(in_shape)
+    out_shape[axis] = 1
+    dtype = jnp.float32
+
+    def kernel(x, out):
+      out[:] = jnp.prod(x[:], axis, keepdims=True)
+
+    # Edge cases: zeros and negatives
+    x = jnp.ones(in_shape, dtype=dtype)
+    x = x.at[...].set(1.0)
+    # Inject zeros and negatives
+    x = x.at[0, 0, 0].set(0.0)
+    x = x.at[1, 0, 0].set(-1.0)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )(x)
+    expected = jnp.prod(x, axis, keepdims=True)
+    # Use close for floating point comparison
+    self.assertAllClose(result, expected)
 
   @parameterized.product(
       axis=[0, 1, 2],
