@@ -386,6 +386,10 @@ class AbstractRef(core.AbstractValue):
   def update_vma(self, vma):
     return self.update(inner_aval=self.inner_aval.update_vma(vma))
 
+  def update_unreduced_reduced(self, unreduced, reduced):
+    return self.update(inner_aval=self.inner_aval.update_unreduced_reduced(
+        unreduced, reduced))
+
   def update(self, inner_aval=None, memory_space=None, kind=None):  # pyrefly: ignore[bad-override]
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
     memory_space = self.memory_space if memory_space is None else memory_space

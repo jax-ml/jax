@@ -1742,9 +1742,12 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
               " output should be varying across mesh axes using the `vma`"
               " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
               " `jax.shard_map`.")
+        # TODO(yashkatariya): Remove this once we have `aval.mt`
+        spec = (out_shape.sharding.spec
+                if isinstance(out_shape.sharding, jax_core.NamedSharding) else None)
         return jax_core.ShapedArray(
             shape=out_shape.shape, dtype=out_shape.dtype,
-            sharding=jax_core.get_cur_mesh_sharding(), vma=out_shape.vma)
+            sharding=jax_core.get_cur_mesh_sharding(spec), vma=out_shape.vma)
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
                                   sharding=jax_core.get_cur_mesh_sharding())
     case MemoryRef():

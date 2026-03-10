@@ -1714,6 +1714,10 @@ class AbstractValue:
   def update_vma(self, vma):
     return self
 
+  # TODO(yashkatariya): Remove after we have `update_mt`
+  def update_unreduced_reduced(self, unreduced, reduced):
+    return self
+
   def strip_weak_type(self) -> AbstractValue:
     return self.update_weak_type(False)
 
@@ -2335,13 +2339,22 @@ class ShapedArray(AbstractValue):
   def update_vma(self, vma):
     return self.update(vma=vma)
 
+  # TODO(yashkatariya): Remove after we have `update_mt`
+  def update_unreduced_reduced(self, unreduced, reduced):
+    new_s = self.sharding.update(spec=self.sharding.spec.update(
+        unreduced=unreduced, reduced=reduced))
+    return self.update(sharding=new_s)
+
   def update_weak_type(self, weak_type):
     return self.update(weak_type=weak_type)
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
     all_names = order_wrt_mesh(mesh, self.vma) if check_vma else all_names
-    return P(all_names) if all_names else P()
+    sp = self.sharding.spec
+    # TODO(yashkatariya): Do P(all_names) directly after above self.vma is
+    # updated to `self.mt`
+    return sp.update(partitions=(all_names,)) if all_names else P()
 
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)

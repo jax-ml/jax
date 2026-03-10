@@ -1515,8 +1515,9 @@ def _pallas_call(
         for x in flat_kernel_args
     )
     if config._check_vma.value:
-      flat_kernel_avals = tuple(a.update_vma(frozenset())
-                                for a in flat_kernel_avals)
+      flat_kernel_avals = tuple(
+          a.update_vma(frozenset()).update_unreduced_reduced(frozenset(), frozenset())
+          for a in flat_kernel_avals)
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(
