@@ -24,8 +24,8 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import ffi
 from jax._src.interpreters import mlir
+from jax._src.lib import cpu_sparse
 from jax._src.lib import gpu_sparse
-from jax._src.lib import has_cpu_sparse
 import numpy as np
 
 if hasattr(gpu_sparse, "registrations"):
@@ -35,15 +35,11 @@ if hasattr(gpu_sparse, "registrations"):
           name, value, platform=platform, api_version=api_version
       )
 
-if has_cpu_sparse:
-  from jax._src.lib import cpu_sparse
-
-  if hasattr(cpu_sparse, "registrations"):
-    for platform, targets in cpu_sparse.registrations().items():
-      for name, value, api_version in targets:
-        ffi.register_ffi_target(
-            name, value, platform=platform, api_version=api_version
-        )
+for platform, targets in cpu_sparse.registrations().items():
+  for name, value, api_version in targets:
+    ffi.register_ffi_target(
+        name, value, platform=platform, api_version=api_version
+    )
 
 def _get_module(target_name_prefix: str) -> Any:
   if target_name_prefix == "cu":
@@ -276,24 +272,23 @@ mlir.register_lowering(
   platform='rocm')
 
 
-if has_cpu_sparse:
-  def _csr_spmm_cpu_lowering(ctx, data, outer_indices, inner_indices, rhs):
-    rule = ffi.ffi_lowering("cpu_csr_sparse_dense_ffi")
-    return rule(ctx, data, outer_indices, inner_indices, rhs)
+def _csr_spmm_cpu_lowering(ctx, data, outer_indices, inner_indices, rhs):
+  rule = ffi.ffi_lowering("cpu_csr_sparse_dense_ffi")
+  return rule(ctx, data, outer_indices, inner_indices, rhs)
 
 
-  # _csr_spmm_cpu_lowering can handle both matrix-matrix and matrix-vector
-  # multiplication.
-  mlir.register_lowering(
-      csr_spmv_p,
-      _csr_spmm_cpu_lowering,
-      platform="cpu",
-  )
-  mlir.register_lowering(
-      csr_spmm_p,
-      _csr_spmm_cpu_lowering,
-      platform="cpu",
-  )
+# _csr_spmm_cpu_lowering can handle both matrix-matrix and matrix-vector
+# multiplication.
+mlir.register_lowering(
+    csr_spmv_p,
+    _csr_spmm_cpu_lowering,
+    platform="cpu",
+)
+mlir.register_lowering(
+    csr_spmm_p,
+    _csr_spmm_cpu_lowering,
+    platform="cpu",
+)
 
 def coo_todense_gpu_lowering(ctx, data, row, col, *, shape, target_name_prefix):
   data_aval, row_aval, _ = ctx.avals_in

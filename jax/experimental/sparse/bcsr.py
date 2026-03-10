@@ -799,10 +799,9 @@ mlir.register_lowering(bcsr_dot_general_p,
                         platform='rocm')
 
 
-if _lowerings.has_cpu_sparse:
-  mlir.register_lowering(
-      bcsr_dot_general_p, _bcsr_dot_general_cpu_lowering, platform="cpu"
-  )
+mlir.register_lowering(
+    bcsr_dot_general_p, _bcsr_dot_general_cpu_lowering, platform="cpu"
+)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
