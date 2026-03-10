@@ -2028,6 +2028,7 @@ def emit_pipeline(
 
     def loop_body(step, carry):
       unaliased_brefs, indices = carry
+      indices = _filter_indices(indices, grid)
       scheduler = make_scheduler(step, indices)
       with scheduler.grid_env():
         # prepare any local VMEM aliases
@@ -2088,6 +2089,7 @@ def emit_pipeline(
                          init_val=(allocations, initial_indices))
       def _loop_body(step, carry):
         brefs, indices = carry
+        indices = _filter_indices(indices, grid)
         scheduler = make_scheduler(step, indices)
         with scheduler.grid_env():
           # prepare any local VMEM aliases
