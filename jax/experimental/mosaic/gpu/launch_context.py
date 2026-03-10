@@ -87,6 +87,24 @@ class GlobalBroadcast:
 GLOBAL_BROADCAST = GlobalBroadcast()
 
 
+class CopyPartition:
+  pass
+
+
+@dataclasses.dataclass(frozen=True)
+class _Partitioned(CopyPartition):
+  axis: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _Replicated(CopyPartition):
+  pass
+
+
+CopyPartition.PARTITIONED = _Partitioned
+CopyPartition.REPLICATED = _Replicated()
+
+
 @dataclasses.dataclass(frozen=True)
 class MemRefTransform:
   def apply(self, ref: ir.Value) -> ir.Value:
@@ -802,7 +820,7 @@ class LaunchContext:
       gmem_slice: Any,
       gmem_transform: tuple[MemRefTransform, ...],
       collective: Sequence[gpu.Dimension] | None,
-      partitioned: int | None,
+      leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
@@ -860,7 +878,8 @@ class LaunchContext:
         raise ValueError("Only the TMA implementation supports collective copies")
       if gather_indices is not None:
         raise NotImplementedError("Collective copies with gather/scatter unsupported")
-    if partitioned is not None:
+    if isinstance(leader_tracked, _Partitioned):
+      partitioned = leader_tracked.axis
       # Increment partitioned by the number of preceding squeezed dimensions.
       partitioned = np.where(
           np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
@@ -929,7 +948,7 @@ class LaunchContext:
       squeezed_dims: tuple[int, ...],
       gmem_transform: tuple[MemRefTransform, ...],
       collective: Sequence[gpu.Dimension],
-      partitioned: int | None,
+      leader_tracked: CopyPartition | None = None,
   ):
     """Finalizes setup specific to the TMA implementation of async_copy."""
     index = ir.IndexType.get()
@@ -971,7 +990,7 @@ class LaunchContext:
     # untransformed slice shape, we might have ended up with a non-contiguous
     # SMEM window, which would no longer be realizable in a single TMA transfer.
     collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
-    if collective_size > 1 and partitioned is None:
+    if collective_size > 1 and not isinstance(leader_tracked, _Partitioned):
       assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         # No need to partition squeezed dims. They don't even exist in smem_ref.
@@ -1053,6 +1072,7 @@ class LaunchContext:
       arrive: bool | None = None,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
+      leader_tracked: CopyPartition | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
@@ -1070,20 +1090,31 @@ class LaunchContext:
     identical async_copy must be scheduled by all blocks that share the same
     coordinates along collective dimensions within a cluster. The behavior is
     undefined otherwise. The semantics of collective loads depend further on the
-    `partitioned` argument:
+    `leader_tracked` argument:
 
-    - If `partitioned` is not specified, all blocks load the same data into
+    - If `leader_tracked` is not specified, all blocks load the same data into
       their shared memory and all receive the update in their barriers, unless
       `arrive` is False. If `arrive` is False, you should expect the barrier to
       have expect_tx incremented by the same amount of bytes as if `collective`
       was not specified.
-    - If `partitioned` is specified, each block only loads a separate slice of
-      the data into SMEM, partitioned into equal tiles along the `partitioned`
-      dimension. In this case only the barrier of the first block in the
-      collective will have its expect_tx incremented by the total size of the
-      transfer across all blocks involved in the collective. Barriers supplied
-      by other blocks will be ignored (even if `arrive` is True).
+    - If `leader_tracked` is ``CopyPartition.PARTITIONED(axis)``, each block only loads a
+      separate slice of the data into SMEM, partitioned into equal tiles along
+      the given axis. Only the barrier of the first block in the collective
+      will have its expect_tx incremented by the total size of the transfer
+      across all blocks involved in the collective. Barriers supplied by other
+      blocks will be ignored (even if `arrive` is True).
+    - If `leader_tracked` is ``CopyPartition.REPLICATED``, all blocks load the same data
+      into their SMEM but only the first block in the collective tracks
+      progress via barrier arrivals. This uses the `cta_group::2` mode.
     """
+    if partitioned is not None and leader_tracked is not None:
+      raise ValueError(
+          "Cannot specify both `partitioned` and `leader_tracked`"
+      )
+    if partitioned is not None:
+      leader_tracked = CopyPartition.PARTITIONED(partitioned)
+    del partitioned
+
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
@@ -1153,7 +1184,7 @@ class LaunchContext:
         gmem_slice,
         gmem_transform,
         collective,
-        partitioned,
+        leader_tracked,
         implementation,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
@@ -1176,7 +1207,7 @@ class LaunchContext:
 
     if implementation == AsyncCopyImplementation.CP_ASYNC:
       assert not collective
-      assert partitioned is None
+      assert leader_tracked is None
       if not isinstance(predicate, _DefaultPredicate):
         raise NotImplementedError(
             "CP_ASYNC needs to be performed by the whole warpgroup and does not"
@@ -1288,7 +1319,7 @@ class LaunchContext:
             squeezed_dims,
             gmem_transform,
             collective,
-            partitioned,
+            leader_tracked,
         )
     )
     assert smem_ref is not None  # For type checkers.
@@ -1309,9 +1340,22 @@ class LaunchContext:
 
     collective_size = math.prod(self.cluster_size[d] for d in collective)
     assert math.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
-    transfer_bytes = c(
-        math.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
+    transfer_bytes_val = (
+        math.prod(slice_shape) * element_bitwidth * collective_size // 8
     )
+    # If a copy is multicast, then slice_shape is 1/collective_size of the
+    # local SMEM slice, so each CTA awaits all the bytes that arrive locally.
+    # If leader_tracked is partitioned, then slice_shape corresponds to the
+    # local SMEM slice. We multiply by collective_size to get the total number
+    # of bytes the leader will await.
+    # If leader_tracked is replicated, slice_shape corresponds to 1/collective_size
+    # of the local slice (we use multicast from both blocks). This means that
+    # each CTA will get prod(slice_shape) * collective_size updates, just like
+    # in the multicast case. However, multicast + .cta_group::2 routes all updates
+    # to CTA0, so we need to multiply by collective_size again to get the total.
+    if isinstance(leader_tracked, _Replicated):
+      transfer_bytes_val *= collective_size
+    transfer_bytes = c(transfer_bytes_val, i32)
 
     if gather_indices is not None:
       import builtins
@@ -1472,7 +1516,7 @@ class LaunchContext:
       assert barrier is not None  # for pytype
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
-      if collective_size > 1 and partitioned is not None:
+      if collective_size > 1 and leader_tracked is not None:
         assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
@@ -1484,18 +1528,30 @@ class LaunchContext:
           )
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
+        if isinstance(leader_tracked, _Replicated):
+          multicast_mask = (arith.trunci(
+              i16, utils.cluster_collective_mask(self.cluster_size, collective)
+          ),)
+          smem_space = "shared::cluster"
+          multicast_mod = ".multicast::cluster"
+          multicast_operand = f", ${4 + rank}"
+        else:
+          multicast_mask = ()
+          smem_space = "shared::cta"
+          multicast_mod = ""
+          multicast_operand = ""
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices],
+            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
             f"""
             {{
             .reg .b32 mapped_addr;
             @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
-            @$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::2
-                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr];
+            @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2
+                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
             }}
             """,
-            "b,r,l,r" + ",r" * rank,
+            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
             has_side_effects=True,
         )
       else:
@@ -1543,9 +1599,18 @@ class LaunchContext:
     swizzle: int | None = None,
     collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
     partitioned: int | None = None,
+    leader_tracked: CopyPartition | None = None,
     # Should select 0 or 1 threads from the WG.
     predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
   ):
+    if partitioned is not None and leader_tracked is not None:
+      raise ValueError(
+          "Cannot specify both `partitioned` and `leader_tracked`"
+      )
+    if partitioned is not None:
+      leader_tracked = CopyPartition.PARTITIONED(partitioned)
+    del partitioned
+
     i32 = ir.IntegerType.get_signless(32)
 
     if isinstance(collective, gpu.Dimension):
@@ -1565,7 +1630,7 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, partitioned, impl
+        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
@@ -1580,7 +1645,7 @@ class LaunchContext:
             squeezed_dims,
             gmem_transform,
             collective,
-            partitioned,
+            leader_tracked,
         )
     )
 

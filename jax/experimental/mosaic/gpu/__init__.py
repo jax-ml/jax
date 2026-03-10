@@ -36,6 +36,7 @@ from .launch_context import (
     GLOBAL_BROADCAST as GLOBAL_BROADCAST,
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    CopyPartition as CopyPartition,
     TMAReductionOp as TMAReductionOp,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
