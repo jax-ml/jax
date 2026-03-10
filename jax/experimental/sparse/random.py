@@ -12,20 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import math
 import operator
+from typing import Any, Callable
 
 from jax import vmap
 from jax import random
 from jax._src import dtypes
+from jax._src.typing import Array, DTypeLike
 from jax._src.util import split_list
 import jax.numpy as jnp
 from jax.experimental import sparse
 
 
-def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=None,
-                nse=0.2, n_batch=0, n_dense=0, unique_indices=True,
-                sorted_indices=False, generator=random.uniform, **kwds):
+def random_bcoo(key: Array,
+                shape: Sequence[int], *,
+                dtype: DTypeLike = jnp.float_,
+                indices_dtype: DTypeLike | None = None,
+                nse: float | int = 0.2,
+                n_batch: int = 0,
+                n_dense: int = 0,
+                unique_indices: bool = True,
+                sorted_indices: bool = False,
+                generator: Callable[..., Array] = random.uniform,
+                **kwds: Any) -> sparse.BCOO:
   """Generate a random BCOO matrix.
 
   Args:
@@ -64,6 +75,7 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=None,
     raise ValueError(f"got {nse=}, expected to be between 0 and {sparse_size}")
   if 0 < nse < 1:
     nse = int(math.ceil(nse * sparse_size))
+  assert not isinstance(nse, float)
   nse = operator.index(nse)
 
   data_shape = batch_shape + (nse,) + dense_shape

@@ -32,6 +32,7 @@ from jax._src.interpreters import ad
 
 import numpy as np
 import scipy.sparse
+import scipy.sparse.linalg
 
 
 def lobpcg_standard(
@@ -235,9 +236,11 @@ def _lobpcg_standard_callable(
         lambda state, _: body(state), state, xs=None, length=m)
   else:
     state = jax.lax.while_loop(cond, body, state)
+    diagnostics = None
   i, X, _P, _R, _converged, theta = state
 
   if debug:
+    assert diagnostics is not None
     return theta[0, :], X, i, diagnostics
   return theta[0, :], X, i
 

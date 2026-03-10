@@ -22,16 +22,24 @@ from jax._src import core
 from jax._src import util
 from jax._src.typing import Array
 
+import numpy as np
+
 
 class JAXSparse(util.StrictABC):
   """Base class for high-level JAX sparse objects."""
   data: jax.Array
   shape: tuple[int, ...]
-  nse: property
-  dtype: property
 
   # Ignore type because of https://github.com/python/mypy/issues/4266.
   __hash__ = None  # type: ignore
+
+  @property
+  @abc.abstractmethod
+  def dtype(self) -> np.dtype: ...
+
+  @property
+  @abc.abstractmethod
+  def nse(self) -> int: ...
 
   def __len__(self):
     return self.shape[0]
@@ -72,6 +80,10 @@ class JAXSparse(util.StrictABC):
 
   @abc.abstractmethod
   def transpose(self, axes=None):
+    ...
+
+  @abc.abstractmethod
+  def todense(self) -> jax.Array:
     ...
 
   @property

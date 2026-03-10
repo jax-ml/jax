@@ -307,7 +307,7 @@ class SparseTrace(core.Trace):
     self.spenv = spenv
 
   def to_sparse_tracer(self, val):
-    if isinstance(val, SparseTracer) and self.tag is val._trace.tag:
+    if isinstance(val, SparseTracer) and self.tag is val._trace.tag:  # pyrefly: ignore[missing-attribute]
       return val
     else:
       with core.set_current_trace(self.parent_trace):
@@ -404,7 +404,7 @@ def eval_sparse(
       return
     env[var] = spenv.dense(a)
 
-  def write(var: core.Var, a: SparsifyValue) -> None:
+  def write(var: core.Var, a: SparsifyValue | None) -> None:
     if isinstance(var, core.DropVar):
       return
     assert a is not None
