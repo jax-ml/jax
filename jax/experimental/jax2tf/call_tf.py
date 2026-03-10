@@ -188,7 +188,7 @@ def call_tf(
       checked_res_tf_flat = [
           check_tf_result(i, r_tf, r_aval)
           for i, (r_tf, r_aval) in enumerate(
-              zip(res_tf_flat,
+              zip(res_tf_flat,  # pyrefly: ignore[bad-argument-type]
                   (output_avals
                    if output_avals is not None
                    else (None,) * len(res_tf_flat))))]
@@ -422,7 +422,7 @@ def _call_tf_abstract_eval(
     **__,
 ):
   # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
-  effects = set()
+  effects: set[effects.Effect] = set()
   if ordered:
     effects.add(call_tf_ordered_effect)
   elif has_side_effects:
@@ -603,7 +603,7 @@ def _call_tf_lowering(
                                dst_symtab=ctx.module_context.symbol_table)
   call = func_dialect.CallOp(callee_result_types,
                              ir.FlatSymbolRefAttr.get(fn),
-                             tuple(args_op) + captured_ops)
+                             [*args_op, *captured_ops])
   flat_results = call.results
 
   if ordered:

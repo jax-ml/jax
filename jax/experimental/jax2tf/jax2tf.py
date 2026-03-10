@@ -237,7 +237,7 @@ def convert(fun_jax: Callable,
           "native_serialization_platforms must be a sequence "
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
-    native_serialization_platforms = tuple(native_serialization_platforms)
+    native_serialization_platforms = tuple(native_serialization_platforms)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2607
 
   api.check_callable(fun_jax)
 
@@ -528,6 +528,7 @@ def _make_custom_gradient_fn_tf(fun_jax,
       fun_vjp_jax, vjp_in_avals = impl.get_vjp_fun()
 
       vjp_polymorphic_shapes = tuple(
+        # pyrefly: ignore[missing-attribute]
         str(a.shape)  # Note: may be _DimExpr, not just DimVar
         for a in vjp_in_avals)
       in_cts_flat = convert(
@@ -595,7 +596,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       "You should upgrade TensorFlow, e.g., to tf_nightly."
     )
 
-  call_module_attrs = dict(
+  call_module_attrs: dict[str, Any] = dict(
       version=version,
       Tout=out_types,
       Sout=out_shapes_tf,
