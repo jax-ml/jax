@@ -362,7 +362,7 @@ def _allocate_buffer(
         key,
         ref_count=ref_count,
         value=np.array(val),
-        logging_info=interpret_utils.LoggingInfo(
+        logging_info=interpret_utils.TPULoggingInfo(
             device_id=device_id,
             local_core_id=lci,
             source_info=source_info,
@@ -399,7 +399,7 @@ def _deallocate_buffer(
   key = (memory_space, buffer_id, device_id, local_core_id)
   shared_memory.deallocate_buffer(
       key,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,
@@ -554,7 +554,7 @@ def get(
       key,
       read_range,
       global_core_id,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,
@@ -687,7 +687,7 @@ def store(
       write_range,
       val,
       global_core_id,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,
@@ -767,7 +767,7 @@ def swap(
       val,
       mask,
       global_core_id,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,
@@ -891,7 +891,7 @@ class DMA:
       if self.src_sem is not None:
         self.src_sem.signal(
             self.data_size, self.src_global_core_id, clock=self.clock,
-            logging_info=interpret_utils.LoggingInfo(
+            logging_info=interpret_utils.TPULoggingInfo(
                 device_id=self.src_device_id,
                 local_core_id=self.src_local_core_id,
                 source_info=self.source_info,
@@ -936,7 +936,7 @@ class DMA:
 
       self.dst_sem.signal(
           self.data_size, self.dst_global_core_id, clock=self.clock,
-          logging_info=interpret_utils.LoggingInfo(
+          logging_info=interpret_utils.TPULoggingInfo(
               device_id=self.dst_device_id,
               local_core_id=self.dst_local_core_id,
               source_info=self.source_info,
@@ -1064,7 +1064,7 @@ def dma_wait(device_id, local_core_id, sem_id, size, source_info=None):
       size,
       global_core_id,
       has_tasks=True,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id, local_core_id=local_core_id,
           source_info=source_info,
       ),
@@ -1104,7 +1104,7 @@ def semaphore_signal(
       inc,
       shared_memory.get_global_core_id(target_device_id, target_local_core_id),
       clock,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,
@@ -1128,7 +1128,7 @@ def semaphore_wait(device_id, local_core_id, sem_id, value, source_info=None):
   sem.wait(
       value,
       global_core_id,
-      logging_info=interpret_utils.LoggingInfo(
+      logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
           source_info=source_info,

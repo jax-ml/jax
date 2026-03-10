@@ -261,12 +261,13 @@ class InterpretTest(jtu.JaxTestCase):
     def run():
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 128,), jnp.float32),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           interpret=pltpu.InterpretParams(
-              out_of_bounds_reads=out_of_bounds_reads),
+              out_of_bounds_reads=out_of_bounds_reads
+          ),
       )(jnp.zeros((8, 4, 128), jnp.float32))
 
     if out_of_bounds_reads == 'raise':

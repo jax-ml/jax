@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import abc
 from collections.abc import Sequence
 import dataclasses
 import enum
@@ -58,15 +59,16 @@ class LoggingMode(enum.Flag):
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class LoggingInfo:
+class LoggingInfo(abc.ABC):
   """Holds information for logging."""
 
-  device_id: int
-  local_core_id: int
   source_info: source_info_util.SourceInfo | None = None
+  device_id: int
 
+  @abc.abstractmethod
   def get_location_str(self) -> str:
-    return f"Device {self.device_id}, core {self.local_core_id}"
+    """Returns a string representation of the location (device/core/thread)."""
+    raise NotImplementedError()
 
   def get_source_info_str(self) -> str:
     if self.source_info is None:
@@ -100,6 +102,26 @@ class LoggingInfo:
       lines.append(f"{line_prefix} {self.get_source_info_str()}.")
 
     return "\n".join(lines)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TPULoggingInfo(LoggingInfo):
+  """Logging info for TPU interpret mode."""
+
+  local_core_id: int
+
+  def get_location_str(self) -> str:
+    return f'Device {self.device_id}, core {self.local_core_id}'
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class GPULoggingInfo(LoggingInfo):
+  """Logging info for GPU interpret mode."""
+
+  pallas_thread_id: int
+
+  def get_location_str(self) -> str:
+    return f"Device {self.device_id}, (Pallas) thread {self.pallas_thread_id}"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
