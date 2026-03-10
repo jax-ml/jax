@@ -195,14 +195,18 @@ void register_runtime_error_bindings(nb::module_& m) {
   nb::exception<xla::XlaRuntimeError> exc(m, "JaxRuntimeError",
                                           PyExc_RuntimeError);
   exc.attr("__init__") = nb::cpp_function(
-      [](nb::object self, std::string msg, std::optional<int> code) {
+      [](nb::object self, std::optional<std::string> msg,
+         std::optional<int> code) {
+        std::string msg_val = msg.value_or("");
         int code_val =
             code.value_or(static_cast<int>(absl::StatusCode::kUnknown));
         self.attr("_error_code") = code_val;
-        self.attr("_error_message") = msg;
-        nb::handle(PyExc_RuntimeError).attr("__init__")(self, std::move(msg));
+        self.attr("_error_message") = msg_val;
+        nb::handle(PyExc_RuntimeError)
+            .attr("__init__")(self, std::move(msg_val));
       },
-      nb::is_method(), nb::arg("msg"), nb::arg("code") = nb::none());
+      nb::is_method(), nb::arg("msg") = nb::none(),
+      nb::arg("code") = nb::none());
 
   auto get_error_code_string = nb::cpp_function(
       [](nb::object self) {
