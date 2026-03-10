@@ -229,7 +229,7 @@ class JetTrace(core.Trace):
     self.order = order
 
   def to_primal_terms_pair(self, val):
-    if isinstance(val, JetTracer) and val._trace.tag is self.tag:
+    if isinstance(val, JetTracer) and val._trace.tag is self.tag:  # pyrefly: ignore[missing-attribute]
       return val.primal, val.terms
     else:
       return val, zero_series
@@ -276,8 +276,8 @@ class JetTrace(core.Trace):
     del primitive, jvp  # Unused.
     return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees):
-    del primitive, fwd, bwd, out_trees  # Unused.
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
+    del primitive, fwd, bwd, out_trees, symbolic_zeros  # Unused.
     return fun.call_wrapped(*tracers)
 
 
@@ -411,7 +411,7 @@ def deriv_prop(prim, deriv, primals_in, series_in):
   c0, cs = jet2(deriv, primals_in, series_in)
   c = [c0] + cs
   u = [x] + series
-  v = [primal_out] + [None] * len(series)
+  v: list[Any] = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
     v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
@@ -448,9 +448,9 @@ def _erf_inv_rule(primals_in, series_in):
   x, = primals_in
   series, = series_in
 
-  u = [x] + series
+  u: list[Any] = [x] + series
   primal_out = lax.erf_inv(x)
-  v = [primal_out] + [None] * len(series)
+  v: list[Any] = [primal_out] + [None] * len(series)
 
   # derivative on co-domain for caching purposes
   deriv_const = np.sqrt(np.pi) / 2.
@@ -458,9 +458,9 @@ def _erf_inv_rule(primals_in, series_in):
 
   # manually propagate through deriv_y since we don't have lazy evaluation of sensitivities
 
-  c = [deriv_y(primal_out)] + [None] * (len(series) - 1)
-  tmp_sq = [lax.square(v[0])] + [None] * (len(series) - 1)
-  tmp_exp = [lax.exp(tmp_sq[0])] + [None] * (len(series) - 1)
+  c: list[Any] = [deriv_y(primal_out)] + [None] * (len(series) - 1)
+  tmp_sq: list[Any] = [lax.square(v[0])] + [None] * (len(series) - 1)
+  tmp_exp: list[Any] = [lax.exp(tmp_sq[0])] + [None] * (len(series) - 1)
   for k in range(1, len(series)):
     # we know c[:k], we compute c[k]
 
@@ -492,7 +492,7 @@ def _exp_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.exp(x)] + [None] * len(series)
+  v: list[Any] = [lax.exp(x)] + [None] * len(series)
   for k in range(1,len(v)):
     v[k] = sum(j * v[k-j] * u[j] for j in range(1, k+1)) / k
   primal_out, *series_out = v
@@ -535,8 +535,8 @@ def _logistic_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.logistic(x)] + [None] * len(series)
-  e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
+  v: list[Any] = [lax.logistic(x)] + [None] * len(series)
+  e: list[Any] = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = sum(j * e[k-j] * u[j] for j in range(1, k+1)) / k
     e[k] = (1 - v[0]) * v[k] - sum(v[j] * v[k-j] for j in range(1, k+1))
@@ -561,7 +561,7 @@ def _log_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.log(x)] + [None] * len(series)
+  v: list[Any] = [lax.log(x)] + [None] * len(series)
   for k in range(1, len(v)):
     conv = sum(j * v[j] * u[k-j] for j in range(1, k))
     v[k] = (u[k] - conv / k) / u[0]
@@ -576,9 +576,9 @@ def _atan2_taylor(primals_in, series_in):
   x, series = jet2(lax.div, primals_in, series_in)
   one = lax_internal._const(x, 1)
   c0, cs = jet2(lambda x: lax.div(one, 1 + lax.square(x)), (x, ), (series, ))
-  c = [c0] + cs
-  u = [x] + series
-  v = [primal_out] + [None] * len(series)
+  c: list[Any] = [c0] + cs
+  u: list[Any] = [x] + series
+  v: list[Any] = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
     v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
@@ -624,7 +624,7 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x_terms, y_terms = series_in
   u = [x] + x_terms
   w = [y] + y_terms
-  v = [None] * len(u)
+  v: list[Any] = [None] * len(u)
   op = partial(prim.bind, **params)
   for k in range(0, len(v)):
     v[k] = sum(op(u[j], w[k-j]) for j in range(0, k+1))
