@@ -1584,3 +1584,28 @@ cc_test(
         "@xla//xla/tsl/platform:test_main",
     ],
 )
+
+nanobind_pywrap_extension(
+    name = "test_exceptions",
+    testonly = True,
+    srcs = ["test_exceptions.cc"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
+        "@xla//xla/pjrt:exceptions",
+        "@xla//xla/pjrt:status_casters",
+    ],
+)
+
+py_strict_test(
+    name = "exception_test",
+    srcs = ["exception_test.py"],
+    deps = [
+        ":_jax",
+        ":test_exceptions",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
