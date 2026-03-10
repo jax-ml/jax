@@ -3997,6 +3997,7 @@ def merge_indexers(
 
 
 @register_lowering_rule(primitives.semaphore_read_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_read_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_read_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
   sem_aval, transform_avals = tree_util.tree_unflatten(args_tree, ctx.avals_in)
@@ -4013,10 +4014,13 @@ def _semaphore_read_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
       "=r,l",
       has_side_effects=True,
   )
-  return _ensure_fa(result, jnp.int32)
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(result, jnp.int32)
+  return result
 
 
 @register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -4054,6 +4058,7 @@ def _semaphore_signal_lowering_rule(
     sem = ctx.launch_ctx.to_remote(sem, device_id)
   sem_ptr = mgpu.utils.memref_ptr(sem)
 
+  # TODO(bchetioui): wrap in CustomPrimitiveOp for warpgroup semantics.
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
   val = _ir_constant(value, i32)
   # We only signal the semaphore from a single lane, which does not guarantee
@@ -4069,6 +4074,7 @@ def _semaphore_signal_lowering_rule(
 
 
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   sem_aval, transform_avals, *_ = tree_util.tree_unflatten(
@@ -4080,6 +4086,7 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_wait: {transforms}"
     )
+  # TODO(bchetioui): wrap in CustomPrimitiveOp for warpgroup semantics.
   mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(
       _ensure_ir_value(value, jnp.int32), decrement=decrement
   )

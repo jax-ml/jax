@@ -41,7 +41,6 @@ from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -3032,8 +3031,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
     super().setUp()
-    if self.LOWERING_SEMANTICS != plgpu.LoweringSemantics.Lane:
-      self.skipTest("Test only works on Lane semantics")
+    self.skip_if_wg_semantics()
 
   def test_axis_index(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
@@ -3316,9 +3314,6 @@ class PallasCallWGTest(
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
         pallas_core.core_map_p,
-        pallas_primitives.semaphore_signal_p,
-        pallas_primitives.semaphore_wait_p,
-        pallas_primitives.semaphore_read_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
@@ -6739,6 +6734,12 @@ class ExamplesTest(PallasTest):
     np.testing.assert_allclose(kernel(x, x), x + x)
 
 
+class ExamplesWGTest(
+    ExamplesTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+):
+  ...
+
+
 class SemaphoreTest(PallasTest):
 
   def test_lowering(self):
@@ -6944,8 +6945,8 @@ class SemaphoreTest(PallasTest):
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
 
-class ExamplesWGTest(
-    ExamplesTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+class SemaphoreWGTest(
+    SemaphoreTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
