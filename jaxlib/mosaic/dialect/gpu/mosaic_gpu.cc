@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -890,6 +891,39 @@ llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
   return llvm::success();
 }
 }  // namespace
+
+llvm::LogicalResult AsyncStoreSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return getOperation()->emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+  if (source_type.getShape() != dest_type.getShape()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "shape.",
+        absl::StrJoin(source_type.getShape(), ", "),
+        absl::StrJoin(dest_type.getShape(), ", "));
+  }
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "element type.",
+        source_type.getElementType(), dest_type.getElementType());
+  }
+
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+  return llvm::success();
+}
 
 llvm::LogicalResult TmemAllocOp::verify() {
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(

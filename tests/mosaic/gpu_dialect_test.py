@@ -1178,6 +1178,82 @@ ir.MLIRError,
       mgpu.dialect.tmem_dealloc(ref)
     self.assertTrue(self.module.operation.verify())
 
+  def test_async_store_smem_to_tmem_op_invalid_shape(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu_utils.smem()
+      )
+      tmem_ty = ir.MemRefType.get(
+          (64, 128), ir.BF16Type.get(), memory_space=mgpu_utils.tmem()
+      )
+      (smem, tmem) = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`source` \(128, 128\) .* `destination` \(64, 128\) .* same shape"
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_smem_to_tmem_op_invalid_dtype(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          (128, 128), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      tmem_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu_utils.tmem()
+      )
+      (smem, tmem) = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`source` \(f32\) .* `destination` \(bf16\) .* same element type",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_smem_to_tmem_op_invalid_smem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          (128, 128), ir.F32Type.get(), memory_space=mgpu_utils.tmem()
+      )
+      tmem_ty = ir.MemRefType.get(
+          (128, 128), ir.F32Type.get(), memory_space=mgpu_utils.tmem()
+      )
+      (smem, tmem) = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `source` memref must be in SMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_smem_to_tmem_op_invalid_tmem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          (128, 128), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      tmem_ty = ir.MemRefType.get(
+          (128, 128), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+      )
+      (smem, tmem) = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The tmem memref must have a mosaic_gpu.tmem memory space",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_smem_to_tmem_op_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu_utils.smem()
+      )
+      tmem_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu_utils.tmem()
+      )
+      (smem, tmem) = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
+    self.assertTrue(self.module.operation.verify())
+
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
       (tmem_ref,) = undefs(

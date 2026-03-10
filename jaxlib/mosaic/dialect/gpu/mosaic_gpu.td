@@ -800,6 +800,30 @@ def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncStoreSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_smem_to_tmem", []> {
+  let summary = "Copies SMEM to TMEM asynchronously.";
+  let description = [{
+    Schedules an async copy of the contents of the `source` MemRef in SMEM to
+    the `destination` MemRef in TMEM.
+
+    The `source` and `destination` MemRefs must have the same element type, and
+    shape.
+
+    If `collective` is `true`, the copy is performed by a cluster of 2 CTAs,
+    and we expect that this op is issued by a single CTA.
+    If `collective` is `false`, the copy is performed by a single CTA.
+  }];
+
+
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    MemRefRankOf<[AnyType], [2]>:$destination,
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
   let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
   let description = [{
