@@ -85,30 +85,24 @@ def initialize():
 
   if rocm_plugin_extension:
     logger.info("rocm_plugin_extension found, registering handlers")
-    xla_client.register_custom_type_handler(
-        "ROCM",
-        functools.partial(
-            rocm_plugin_extension.register_custom_type, c_api
-        ),
-    )
     xla_client.register_custom_call_handler(
         "ROCM",
         functools.partial(
             rocm_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    ffi_types = rocm_plugin_extension.ffi_types()
-    logger.info("Registering %d FFI types: %s", len(ffi_types), list(ffi_types.keys()))
-    for _name, _value in ffi_types.items():
-      xla_client.register_custom_type(
-          _name, _value, platform='ROCM'
-      )
-    ffi_handlers = rocm_plugin_extension.ffi_handlers()
-    logger.info("Registering %d FFI handlers: %s", len(ffi_handlers), list(ffi_handlers.keys()))
-    for _name, _value in ffi_handlers.items():
+    ffi_registrations = rocm_plugin_extension.ffi_registrations()
+    logger.info("Registering %d FFI handlers: %s", len(ffi_registrations), list(ffi_registrations.keys()))
+    for _name, _value in ffi_registrations.items():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
       )
+    xla_client.register_custom_type_id_handler(
+        "ROCM",
+        functools.partial(
+            rocm_plugin_extension.register_custom_type_id, c_api
+        ),
+    )
     logger.info("ROCm plugin initialization complete")
   else:
     logger.warning('rocm_plugin_extension is not found.')
