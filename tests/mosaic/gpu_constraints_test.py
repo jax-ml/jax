@@ -180,10 +180,51 @@ class ConstraintSystemTest(parameterized.TestCase):
         layout,
     )
 
-  def test_reduce_reduce_expression_with_unsupported_layout_is_irreducible(self):
-    layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
-    expr = cs.Reduce(layout, axes=(0,), rank=2)
+
+  @parameterized.parameters(
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(128,), vec_size=1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=1),
+          (0, 1),
+          mgpu.WGStridedFragLayout(shape=(128,), vec_size=1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=2),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(2, 128), vec_size=2),
+      ),
+  )
+  def test_reduce_reduce_expression_reduces_strided_layout(
+      self, layout, axes, expected_layout
+  ):
+    expr = cs.Reduce(RL(layout), axes, rank=len(layout.shape))
+    self.assertEqual(cs.reduce_expression(expr, {}), RL(expected_layout))
+
+  @parameterized.parameters(
+      (
+          mgpu.WGStridedFragLayout(shape=(128, 128), vec_size=1),
+          (1,),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=2),
+          (0, 1),
+      ),
+  )
+  def test_reduce_reduce_expression_cant_reduce_unsupported_strided_layout(
+      self, layout, axes
+  ):
+    expr = cs.Reduce(RL(layout), axes, rank=len(layout.shape))
     self.assertEqual(cs.reduce_expression(expr, {}), expr)
+
+  def test_reduce_reduce_expression_reduces_splat_layout(self):
+    layout = RL(mgpu.WGSplatFragLayout((128, 8)))
+    expr = cs.Reduce(layout, axes=(0,), rank=2)
+    expected_layout = RL(mgpu.WGSplatFragLayout((8,)))
+    self.assertEqual(cs.reduce_expression(expr, {}), expected_layout)
 
   def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
     layout = RL(mgpu.WGSplatFragLayout((1024,)))

@@ -31,6 +31,7 @@ from . import inference_utils
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
+from . import utils
 
 
 VariableKey = Any
@@ -206,10 +207,13 @@ def reduce_expression(
       return assignments.get(expr, expr)
     case Reduce(expression=expr, axes=axes, rank=rank):
       reduced_expr = reduce_expression(expr, assignments)
+      def default():
+        """We don't know how to reduce further."""
+        return Reduce(reduced_expr, axes, rank)
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
-        case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
+        case RegisterLayout(value=fa.TiledLayout() as layout):
           num_untiled_dims = rank - len(layout.base_tile_shape)
           reduced_tiling_axes = [
               a - num_untiled_dims for a in axes if a >= num_untiled_dims
@@ -217,8 +221,19 @@ def reduce_expression(
           if reduced_tiling_axes:
             return RegisterLayout(layout.reduce(reduced_tiling_axes))
           return RegisterLayout(layout)
+        case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
+          # We only support reducing leading dimensions.
+          if axes != tuple(range(len(axes))):
+            return default()
+          shape = utils.reduce_shape(layout.shape, axes, keep_dims=False)
+          if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
+            return default()
+          return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
+        case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
+          shape = utils.reduce_shape(layout.shape, axes, keep_dims=False)
+          return RegisterLayout(fa.WGSplatFragLayout(shape))
         case _:
-          return Reduce(expression=reduced_expr, axes=axes, rank=rank)
+          return default()
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
