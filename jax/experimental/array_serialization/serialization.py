@@ -187,7 +187,7 @@ class AsyncManager:
     if jax.process_count() > 1 and distributed.global_state.client is None:
       raise ValueError(_DISTRIBUTED_SYSTEM_MSG)
     self._client = distributed.global_state.client
-    self._count = None
+    self._count: int | None = None
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
@@ -203,14 +203,16 @@ class AsyncManager:
       logger.info('Starting commit to storage layer by process: %s',
                    current_process)
       thread_start_time = time.time()
+      assert self._commit_futures is not None
       for future in self._commit_futures:
         future.result()
       logger.info('Finished committing to storage layer by process: %s',
                    current_process)
 
-      key_for_barrier = None
+      key_for_barrier: str | None = None
       if process_count > 1:
         assert self._client is not None
+        assert self._count is not None
         # All processes will wait at the barrier. When all processes are at the
         # barrier, the barrier will be satisfied. If not, then it will timeout.
         key_for_barrier = _get_key(self._count)
@@ -226,6 +228,7 @@ class AsyncManager:
           logger.info('on_commit_callback successfully ran!')
         if process_count > 1:
           assert self._client is not None
+          assert key_for_barrier is not None
           self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
           logger.info('Process 0 successfully set key %s in the kv store',
                       key_for_barrier)

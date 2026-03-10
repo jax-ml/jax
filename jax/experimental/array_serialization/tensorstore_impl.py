@@ -118,7 +118,8 @@ def _compute_chunk_shape(
   # while chunk_size exceeds target size, reduce chunk_shape
   while chunk_size > 1.1 * file_size_target:  # 10% buffer
     # 1. find the smallest axis divisor across all axes
-    chosen_axis_idx, chosen_divisor = None, 1
+    chosen_axis_idx: int | None = None
+    chosen_divisor = 1
     for axis_idx in range(len(chunk_shape)):
       if len(axis_prime_factors[axis_idx]) == 1:  # ignore axes sizes == 1
         continue
@@ -295,7 +296,7 @@ def get_tensorstore_spec(
     spec['kvstore'] = {'driver': 'ocdbt', 'base': base_kvstore,
                        'path': entry_key}
   else:
-    spec['kvstore'] = base_kvstore
+    spec['kvstore'] = base_kvstore  # pyrefly: ignore[bad-typed-dict-key]
   # done writing tensorstore spec based on destination path
   # optionally, if array is provided, we can add metadata to the spec
   if arr is not None:
