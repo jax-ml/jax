@@ -64,15 +64,27 @@ class COO(JAXSparse):
   data: jax.Array
   row: jax.Array
   col: jax.Array
-  shape: tuple[int, int]
-  nse = property(lambda self: self.data.size)
-  dtype = property(lambda self: self.data.dtype)
-  _info = property(lambda self: COOInfo(
-      shape=self.shape, rows_sorted=self._rows_sorted,
-      cols_sorted=self._cols_sorted))
-  _bufs = property(lambda self: (self.data, self.row, self.col))
+  shape: tuple[int, int]  # pyrefly: ignore[bad-override]
   _rows_sorted: bool
   _cols_sorted: bool
+
+  @property
+  def _info(self) -> COOInfo:
+    return COOInfo(
+      shape=self.shape, rows_sorted=self._rows_sorted,
+      cols_sorted=self._cols_sorted)
+
+  @property
+  def _bufs(self) -> tuple[jax.Array, jax.Array, jax.Array]:
+    return (self.data, self.row, self.col)
+
+  @property
+  def nse(self) -> int:
+    return self.data.size
+
+  @property
+  def dtype(self) -> np.dtype:
+    return self.data.dtype
 
   def __init__(self, args: tuple[Array, Array, Array], *, shape: Shape,
                rows_sorted: bool = False, cols_sorted: bool = False):

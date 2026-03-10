@@ -412,10 +412,12 @@ def _bcoo_extract(indices: Array, arr: Array, *, assume_unique=True) -> Array:
 def _bcoo_extract_impl(indices, arr, *, assume_unique):
   arr = jnp.asarray(arr)
   props = _validate_bcoo_indices(indices, arr.shape)
+  original_props = props
   if not assume_unique:
     indices, sort_ind = _unique_indices(indices, shape=arr.shape, return_index=True)
-    original_props = props
     props = _validate_bcoo_indices(indices, arr.shape)
+  else:
+    sort_ind = ...
 
   ind_slices = tuple(np.zeros(s, int) if i_s == 1 else np.arange(s)
                      for s, i_s in zip(arr.shape[:props.n_batch], indices.shape[:props.n_batch]))
@@ -559,8 +561,8 @@ def _bcoo_transpose_impl(data, indices, *, permutation: Sequence[int], spinfo: S
 def _bcoo_transpose_abstract_eval(data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   batch_perm, _, dense_perm = _validate_permutation(data, indices, permutation, spinfo.shape)
   n_batch = len(batch_perm)
-  indices_shape = np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]]
-  data_shape = np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]]
+  indices_shape = np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]]  # pyrefly: ignore[bad-index]
+  data_shape = np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]]  # pyrefly: ignore[bad-index]
   return core.ShapedArray(data_shape, data.dtype), core.ShapedArray(indices_shape, indices.dtype)
 
 def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo: SparseInfo):
@@ -1352,11 +1354,12 @@ def _bcoo_sort_indices_batching_rule(batched_args, batch_dims, *, spinfo):
   return (data_out, indices_out), out_axes
 
 def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
-  props = _validate_bcoo(*primals, spinfo.shape)
+  data, indices = primals
+
+  props = _validate_bcoo(data, indices, spinfo.shape)
   if props.n_sparse == 0:
     return primals, tangents
 
-  data, indices = primals
   data_dot, _ = tangents
   f = nfold_vmap(_bcoo_sort_indices_unbatched, props.n_batch)
   indices_out, perm = f(indices)
@@ -1521,9 +1524,9 @@ def _bcoo_sum_duplicates_batching_rule(batched_args, batch_dims, *, spinfo, nse)
   return (data_out, indices_out), out_axes
 
 def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
-  props = _validate_bcoo(*primals, spinfo.shape)
-
   data, indices = primals
+  props = _validate_bcoo(data, indices, spinfo.shape)
+
   data_dot, _ = tangents
   indices_out, mapping, nse_batched = _unique_indices(
     indices, shape=spinfo.shape, return_inverse=True, return_true_size=True)
@@ -2482,16 +2485,8 @@ class BCOO(JAXSparse):
   data: Array
   indices: Array
   shape: Shape
-  nse = property(lambda self: self.indices.shape[-2])
-  dtype = property(lambda self: self.data.dtype)
-  n_batch = property(lambda self: self.indices.ndim - 2)
-  n_sparse = property(lambda self: self.indices.shape[-1])
-  n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
   indices_sorted: bool
   unique_indices: bool
-  _info = property(lambda self: SparseInfo(self.shape, self.indices_sorted,
-                                           self.unique_indices))
-  _bufs = property(lambda self: (self.data, self.indices))
 
   def __init__(self, args: tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
@@ -2500,6 +2495,34 @@ class BCOO(JAXSparse):
     self.unique_indices = unique_indices
     super().__init__(args, shape=tuple(shape))
     _validate_bcoo(self.data, self.indices, self.shape)
+
+  @property
+  def _info(self) -> SparseInfo:
+    return SparseInfo(self.shape, self.indices_sorted, self.unique_indices)
+
+  @property
+  def _bufs(self) -> tuple[Array, Array]:
+    return (self.data, self.indices)
+
+  @property
+  def nse(self) -> int:
+    return self.indices.shape[-2]
+
+  @property
+  def dtype(self) -> np.dtype:
+    return self.data.dtype
+
+  @property
+  def n_batch(self) -> int:
+    return self.indices.ndim - 2
+
+  @property
+  def n_sparse(self) -> int:
+    return self.indices.shape[-1]
+
+  @property
+  def n_dense(self) -> int:
+    return self.data.ndim - 1 - self.n_batch
 
   def __repr__(self):
     name = self.__class__.__name__

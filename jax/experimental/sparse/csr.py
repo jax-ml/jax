@@ -56,10 +56,19 @@ class CSR(JAXSparse):
   data: jax.Array
   indices: jax.Array
   indptr: jax.Array
-  shape: tuple[int, int]
-  nse = property(lambda self: self.data.size)
-  dtype = property(lambda self: self.data.dtype)
-  _bufs = property(lambda self: (self.data, self.indices, self.indptr))
+  shape: tuple[int, int]  # pyrefly: ignore[bad-override]
+
+  @property
+  def _bufs(self) -> tuple[jax.Array, jax.Array, jax.Array]:
+    return (self.data, self.indices, self.indptr)
+
+  @property
+  def nse(self) -> int:
+    return self.data.size
+
+  @property
+  def dtype(self) -> np.dtype:
+    return self.data.dtype
 
   def __init__(self, args, *, shape):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
@@ -143,9 +152,15 @@ class CSC(JAXSparse):
   data: jax.Array
   indices: jax.Array
   indptr: jax.Array
-  shape: tuple[int, int]
-  nse = property(lambda self: self.data.size)
-  dtype = property(lambda self: self.data.dtype)
+  shape: tuple[int, int]  # pyrefly: ignore[bad-override]
+
+  @property
+  def nse(self) -> int:
+    return self.data.size
+
+  @property
+  def dtype(self) -> np.dtype:
+    return self.data.dtype
 
   def __init__(self, args, *, shape):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
@@ -236,7 +251,8 @@ def _csr_todense(data: Array, indices: Array, indptr: Array, *, shape: Shape) ->
   return csr_todense_p.bind(data, indices, indptr, shape=shape)
 
 def _csr_todense_impl(data, indices, indptr, *, shape):
-  return _coo_todense(data, *_csr_to_coo(indices, indptr), spinfo=COOInfo(shape=shape))
+  row, col = _csr_to_coo(indices, indptr)
+  return _coo_todense(data, row, col, spinfo=COOInfo(shape=shape))
 
 @csr_todense_p.def_abstract_eval
 def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
@@ -449,7 +465,8 @@ def _csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
   return csr_matvec_p.bind(data, indices, indptr, v, shape=shape, transpose=transpose)
 
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
-  return _coo_matvec(data, *_csr_to_coo(indices, indptr), v, spinfo=COOInfo(shape=shape), transpose=transpose)
+  row, col = _csr_to_coo(indices, indptr)
+  return _coo_matvec(data, row, col, v, spinfo=COOInfo(shape=shape), transpose=transpose)
 
 @csr_matvec_p.def_abstract_eval
 def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
@@ -555,7 +572,8 @@ def _csr_matmat(data: Array, indices: Array, indptr: Array, B: Array,
   return csr_matmat_p.bind(data, indices, indptr, B, shape=shape, transpose=transpose)
 
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
-  return _coo_matmat(data, *_csr_to_coo(indices, indptr), B, spinfo=COOInfo(shape=shape), transpose=transpose)
+  row, col = _csr_to_coo(indices, indptr)
+  return _coo_matmat(data, row, col, B, spinfo=COOInfo(shape=shape), transpose=transpose)
 
 @csr_matmat_p.def_abstract_eval
 def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):

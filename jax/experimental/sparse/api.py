@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
+from typing import Sequence
 
 import jax
 from jax import tree_util
@@ -49,7 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.typing import Array, DTypeLike, Shape
+from jax._src.typing import Array, DTypeLike
 
 
 #----------------------------------------------------------------------
@@ -115,7 +116,7 @@ mlir.register_lowering(todense_p, mlir.lower_fun(
     _todense_impl, multiple_results=False))
 
 
-def empty(shape: Shape, dtype: DTypeLike | None=None, index_dtype: DTypeLike = 'int32',
+def empty(shape: Sequence[int], dtype: DTypeLike | None=None, index_dtype: DTypeLike = 'int32',
           sparse_format: str = 'bcoo', **kwds) -> JAXSparse:
   """Create an empty sparse array.
 
@@ -133,7 +134,7 @@ def empty(shape: Shape, dtype: DTypeLike | None=None, index_dtype: DTypeLike = '
     raise ValueError(f"sparse_format={sparse_format!r} not recognized; "
                      f"must be one of {list(formats.keys())}")
   cls = formats[sparse_format]
-  return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)
+  return cls._empty(tuple(shape), dtype=dtype, index_dtype=index_dtype, **kwds)
 
 
 def eye(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None,
