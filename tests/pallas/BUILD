@@ -1480,6 +1480,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "gpu_pallas_interpret_test",
+    size = "large",
     srcs = ["gpu_pallas_interpret_test.py"],
     enable_backends = ["cpu"],
     shard_count = 12,
