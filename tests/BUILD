@@ -846,13 +846,14 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "lax_scipy_spectral_dac_test",
+    size = "large",
     srcs = ["lax_scipy_spectral_dac_test.py"],
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
         "gpu": ["noasan"],  # Times out.
     },
     shard_count = {
-        "cpu": 2,
+        "cpu": 3,
         "gpu": 3,
         "tpu": 3,
     },
