@@ -337,6 +337,7 @@ jobs:
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      download-rocm-from-github-artifacts: true
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() }}

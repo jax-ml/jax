@@ -26,6 +26,10 @@ inputs:
     description: "GCS location prefix from where the artifacts should be downloaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
     type: string
+  skip-download-rocm-plugins:
+    description: "Whether to skip downloading ROCm plugins from GitHub releases (when already downloaded as artifacts)"
+    default: false
+    type: boolean
 permissions: {}
 runs:
   using: "composite"
@@ -86,25 +90,30 @@ runs:
           if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
 
-            # Get the latest release tag (including pre-releases) from ROCm/jax-plugin
-            echo "Finding latest ROCm plugin release (including pre-releases)..."
-            LATEST_PLUGIN_TAG=$(gh release list -R ROCm/jax-plugin --limit 10 --json tagName,publishedAt \
-                                --jq 'sort_by(.publishedAt) | reverse | .[0].tagName')
-            echo "Latest plugin release: $LATEST_PLUGIN_TAG"
+            # Skip downloading ROCm plugins if they're already available (e.g., from GitHub artifacts)
+            if [[ "${INPUTS_SKIP_DOWNLOAD_ROCM_PLUGINS}" == "true" ]]; then
+              echo "Skipping ROCm plugin download - using pre-downloaded artifacts."
+            else
+              # Get the latest release tag (including pre-releases) from ROCm/jax-plugin
+              echo "Finding latest ROCm plugin release (including pre-releases)..."
+              LATEST_PLUGIN_TAG=$(gh release list -R ROCm/jax-plugin --limit 10 --json tagName,publishedAt \
+                                  --jq 'sort_by(.publishedAt) | reverse | .[0].tagName')
+              echo "Latest plugin release: $LATEST_PLUGIN_TAG"
 
-            # Download ROCm PJRT plugin from latest release
-            echo "Downloading ROCm PJRT plugin from release $LATEST_PLUGIN_TAG..."
-            gh release download "$LATEST_PLUGIN_TAG" \
-              --repo ROCm/jax-plugin \
-              --pattern "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*-py3-none-manylinux*.whl" \
-              --dir $(pwd)/dist/
+              # Download ROCm PJRT plugin from latest release
+              echo "Downloading ROCm PJRT plugin from release $LATEST_PLUGIN_TAG..."
+              gh release download "$LATEST_PLUGIN_TAG" \
+                --repo ROCm/jax-plugin \
+                --pattern "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*-py3-none-manylinux*.whl" \
+                --dir $(pwd)/dist/
 
-            # Download ROCm plugin from latest release
-            echo "Downloading ROCm plugin from release $LATEST_PLUGIN_TAG..."
-            gh release download "$LATEST_PLUGIN_TAG" \
-              --repo ROCm/jax-plugin \
-              --pattern "jax_rocm${JAXCI_ROCM_VERSION}_plugin-*-${PYTHON_MAJOR_MINOR}*manylinux*.whl" \
-              --dir $(pwd)/dist/
+              # Download ROCm plugin from latest release
+              echo "Downloading ROCm plugin from release $LATEST_PLUGIN_TAG..."
+              gh release download "$LATEST_PLUGIN_TAG" \
+                --repo ROCm/jax-plugin \
+                --pattern "jax_rocm${JAXCI_ROCM_VERSION}_plugin-*-${PYTHON_MAJOR_MINOR}*manylinux*.whl" \
+                --dir $(pwd)/dist/
+            fi
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/
@@ -119,6 +128,7 @@ runs:
         INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
         INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
         INPUTS_PYTHON: ${{ inputs.python }}
+        INPUTS_SKIP_DOWNLOAD_ROCM_PLUGINS: ${{ inputs.skip-download-rocm-plugins }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts.outcome == 'failure'

@@ -59,6 +59,10 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         type: string
         default: 'gs://jax-nightly-artifacts/latest'
+      download-rocm-from-github-artifacts:
+        description: "Whether to download ROCm wheels from GitHub Actions artifacts instead of releases"
+        default: false
+        type: boolean
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -93,6 +97,10 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
+      download-rocm-from-github-artifacts:
+        description: "Whether to download ROCm wheels from GitHub Actions artifacts instead of releases"
+        default: false
+        type: boolean
 permissions:
   id-token: write
   contents: read
@@ -128,6 +136,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Download ROCm wheels from GitHub Actions artifacts
+        if: ${{ inputs.download-rocm-from-github-artifacts }}
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        with:
+          pattern: rocm-wheels-*
+          path: dist/
+          merge-multiple: true
       - name: Download JAX ROCm wheels
         uses: ./.github/actions/download-jax-rocm-wheels
         with:
@@ -136,6 +151,7 @@ jobs:
           jaxlib-version: ${{ inputs.jaxlib-version }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
+          skip-download-rocm-plugins: ${{ inputs.download-rocm-from-github-artifacts }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Python dependencies

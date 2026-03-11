@@ -134,6 +134,7 @@ jobs:
       - name: Create dist dir
         run: mkdir -p $JAXCI_OUTPUT_DIR/
       - name: Build ${{ inputs.artifact }}
+        id: build-wheels
         timeout-minutes: 120
         run: |
           bazel --bazelrc=build/rocm/rocm.bazelrc run \
@@ -164,3 +165,10 @@ jobs:
         run: echo "s3_upload_uri=${INPUTS_S3_UPLOAD_URI}" >> "$GITHUB_OUTPUT"
         env:
           INPUTS_S3_UPLOAD_URI: ${{ inputs.s3_upload_uri }}
+      - name: Upload wheels as GitHub Actions artifact
+        if: always() && steps.build-wheels.outcome == 'success'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: rocm-wheels-${{ inputs.artifact }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
+          path: ${{ env.JAXCI_OUTPUT_DIR }}/*.whl
+          retention-days: 1
