@@ -837,7 +837,7 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
         "The size of the `broadcast_dimensions` attribute must be equal to "
         "the rank of the input vector.");
   }
-  auto dims = llvm::to_vector(getBroadcastDimensions());
+  llvm::ArrayRef<int64_t> dims = getBroadcastDimensions();
   for (int i = 0; i < dims.size(); ++i) {
     if (dims[i] < 0 || dims[i] >= result_type.getRank()) {
       return error(
@@ -849,6 +849,14 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
       return error(
           "The values in the `broadcast_dimensions` attribute must be strictly "
           "increasing.");
+    }
+    int64_t operand_dim = operand_type.getShape()[i];
+    int64_t result_dim = result_type.getShape()[dims[i]];
+    if (operand_dim != 1 && operand_dim != result_dim) {
+      return error(
+          "The size of the input vector's dimension {0} must be either 1 or "
+          "equal to the size of the result vector's dimension {1}.",
+          i, dims[i]);
     }
   }
 

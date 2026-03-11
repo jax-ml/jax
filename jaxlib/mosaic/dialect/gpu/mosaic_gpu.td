@@ -483,9 +483,14 @@ def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
 def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
   let summary = "Broadcasts a vector to a new shape.";
   let description = [{
-    `broadcast_dimensions` must have the same size as the rank of the input
-    vector and for each input dimension, specifies which output dimension it
-    corresponds to.
+    The `operand` is broadcast to the shape described by the result type.
+    `broadcast_dimensions` maps the dimensions of `operand` to the dimensions of
+    the target shape, i.e. the i'th dimension of the operand is mapped to the
+    `broadcast_dimensions[i]`'th dimension of the output shape. The dimensions
+    of the operand must have size 1 or be the same size as the dimension in the
+    output shape they are mapped to.
+
+    This op matches the semantics of `lax.broadcast_in_dim`.
   }];
 
   let arguments = (ins

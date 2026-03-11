@@ -838,6 +838,17 @@ ir.MLIRError,
 
     self.assertTrue(self.module.operation.verify())
 
+  def test_broadcast_in_dim_size_1_dim_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      (operand,) = undefs(ir.VectorType.get([1, 64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[0, 1],
+      )
+
+    self.assertTrue(self.module.operation.verify())
+
   def test_broadcast_in_dim_no_0d(self):
     with ir.InsertionPoint(self.module.body):
       (operand,) = undefs(ir.VectorType.get([], ir.F32Type.get()))
@@ -910,6 +921,21 @@ ir.MLIRError,
     with self.assertRaisesRegex(
         ir.MLIRError,
         r"`broadcast_dimensions` attribute must be strictly increasing",
+    ):
+      self.module.operation.verify()
+
+  def test_broadcast_in_dim_dim_size_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      (operand,) = undefs(ir.VectorType.get([2, 64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[0, 1],
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The size of the input vector's dimension 0",
     ):
       self.module.operation.verify()
 
