@@ -52,6 +52,7 @@ from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu.launch_context import CopyPartition
 import jax.numpy as jnp
 import numpy as np
 
@@ -503,6 +504,7 @@ def _copy_gmem_to_smem_lowering(
     barrier_transforms_treedef,
     collective_axes,
     partitioned_axis,
+    leader_tracked,
     for_warpgroup: bool = True,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
@@ -557,7 +559,13 @@ def _copy_gmem_to_smem_lowering(
         lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
         for axis in collective_axes
     )
-  is_partitioned_copy = collective and partitioned_axis is not None
+  if partitioned_axis is not None and leader_tracked is not None:
+    raise ValueError(
+        "Cannot specify both `partitioned_axis` and `leader_tracked`"
+    )
+  if partitioned_axis is not None:
+    leader_tracked = CopyPartition.PARTITIONED(partitioned_axis)
+  is_leader_tracked_copy = collective and leader_tracked is not None
   dst_ty = ir.MemRefType(dst.type)
   bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
   if bits % 8:
@@ -567,9 +575,8 @@ def _copy_gmem_to_smem_lowering(
     )
   bytes = bits // 8
 
-  if is_partitioned_copy:
-    # Bytes is the destination size, which is only half of the total
-    # size of the partitioned transfer so we need to double it.
+  if is_leader_tracked_copy:
+    # Leader receives the completion messages from both CTAs.
     bytes *= 2
     if len(collective) != 1:
       raise ValueError(
@@ -597,7 +604,7 @@ def _copy_gmem_to_smem_lowering(
       bytes //= WARPGROUP_SIZE
       if ctx.module_ctx.auto_barriers:
         mgpu.warpgroup_barrier()  # Make sure all reads have completed.
-      if is_partitioned_copy:
+      if is_leader_tracked_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
             mgpu.utils.cluster_idx(collective[0]),
@@ -613,7 +620,7 @@ def _copy_gmem_to_smem_lowering(
       # TODO(justinfu): The arrival counts are wrong if called outside of a
       # single warp. Figure out how to guard against this in user code.
       bytes = bytes // WARP_SIZE
-      if is_partitioned_copy:
+      if is_leader_tracked_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
             mgpu.utils.cluster_idx(collective[0]),
@@ -638,7 +645,7 @@ def _copy_gmem_to_smem_lowering(
         barrier=barrier,
         arrive=False,
         collective=collective,
-        partitioned=partitioned_axis,
+        leader_tracked=leader_tracked,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
@@ -684,6 +691,7 @@ def copy_gmem_to_smem(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     partitioned_axis: int | None = None,
+    leader_tracked: CopyPartition | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -709,6 +717,11 @@ def copy_gmem_to_smem(
     partitioned_axis: Indicates which array axis along the src/dst Refs to
      partition across during a partitioned collective copy. Requires
      collective_axes to also be specified.
+    leader_tracked: If ``CopyPartition.PARTITIONED(axis)``, equivalent to
+     setting ``partitioned_axis``. If ``CopyPartition.REPLICATED``, all
+     blocks load the same data but only the first block in the collective
+     tracks progress via barrier arrivals. Cannot be used together with
+     ``partitioned_axis``.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -746,6 +759,7 @@ def copy_gmem_to_smem(
       barrier_transforms_treedef=barrier_transforms_treedef,
       collective_axes=collective_axes,
       partitioned_axis=partitioned_axis,
+      leader_tracked=leader_tracked,
   )
   return None
 
@@ -775,6 +789,7 @@ def _async_prefetch_lowering(
     ref_transforms_treedef,
     collective_axes,
     partitioned_axis,
+    leader_tracked,
 ):
   ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
   copy_params = _extract_gmem_copy_params(ctx, ref_transforms)
@@ -792,10 +807,16 @@ def _async_prefetch_lowering(
       # Gathers are a warpgroup-level collective and can't take a predicate.
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
         predicate_kwarg = {}
+    if partitioned_axis is not None and leader_tracked is not None:
+      raise ValueError(
+          "Cannot specify both `partitioned_axis` and `leader_tracked`"
+      )
+    if partitioned_axis is not None:
+      leader_tracked = CopyPartition.PARTITIONED(partitioned_axis)
     ctx.launch_ctx.async_prefetch(
         gmem_ref=ref,
         collective=collective,
-        partitioned=partitioned_axis,
+        leader_tracked=leader_tracked,
         **copy_params,
         **predicate_kwarg,  # type: ignore[arg-type]
     )
@@ -824,6 +845,7 @@ def async_prefetch(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     partitioned_axis: int | None = None,
+    leader_tracked: CopyPartition | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
 
@@ -841,6 +863,11 @@ def async_prefetch(
     partitioned_axis: Indicates which axis of the ``ref`` to partition across
       during a collective prefetch. Requires collective_axes to also be
       specified.
+    leader_tracked: If ``CopyPartition.PARTITIONED(axis)``, equivalent to
+     setting ``partitioned_axis``. If ``CopyPartition.REPLICATED``, all
+     blocks prefetch the same data but only the first block in the
+     collective tracks progress. Cannot be used together with
+     ``partitioned_axis``.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_prefetch"
@@ -856,6 +883,7 @@ def async_prefetch(
       ref_transforms_treedef=ref_transforms_treedef,
       collective_axes=collective_axes,
       partitioned_axis=partitioned_axis,
+      leader_tracked=leader_tracked,
   )
   return None
 

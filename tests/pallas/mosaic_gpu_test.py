@@ -5111,6 +5111,39 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       a = a[0]
     np.testing.assert_array_equal(result, a + b)
 
+  def test_copy_gmem_to_smem_replicated(self):
+    self.skip_if_wg_semantics()
+    block_size = (64, 64)
+    def kernel(a_gmem, out_gmem, a_smem, tma_barrier, cluster_barrier):
+      cluster_idx = lax.axis_index("x")
+      plgpu.copy_gmem_to_smem(
+          a_gmem, a_smem, tma_barrier,
+          collective_axes="x", leader_tracked=plgpu.CopyPartition.REPLICATED,
+      )
+      @pl.when(cluster_idx == 0)
+      def _():
+        plgpu.barrier_wait(tma_barrier)
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+      out_gmem[...] = a_smem[...]
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(block_size, jnp.float32),
+        grid=(1,),
+        grid_names=("_",),
+        cluster_names=("x",),
+        cluster=(2,),
+        scratch_shapes=(
+            plgpu.SMEM(block_size, jnp.float32),
+            plgpu.Barrier(num_arrivals=1),
+            plgpu.ClusterBarrier(collective_axes=("x",)),
+        ),
+    )
+    a = jax.random.uniform(jax.random.key(0), shape=block_size,
+                           dtype=jnp.float32)
+    result = f(a)
+    np.testing.assert_array_equal(result, a)
+
   def test_arrive_wait_on_tc_barrier(self):
     def kernel(out_ref, barrier):
       plgpu.barrier_arrive(barrier)

@@ -97,6 +97,7 @@ from jax._src.state.types import Transform as Transform
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 from jax.experimental.mosaic.gpu.fragmented_array import Replicated as Replicated
 from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
+from jax.experimental.mosaic.gpu.launch_context import CopyPartition as CopyPartition
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.

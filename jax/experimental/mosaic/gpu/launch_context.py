@@ -88,7 +88,8 @@ GLOBAL_BROADCAST = GlobalBroadcast()
 
 
 class CopyPartition:
-  pass
+  PARTITIONED: "type[_Partitioned]"
+  REPLICATED: "_Replicated"
 
 
 @dataclasses.dataclass(frozen=True)
