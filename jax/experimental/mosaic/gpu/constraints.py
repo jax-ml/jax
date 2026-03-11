@@ -94,9 +94,15 @@ class Reduce:
   # The rank of the shape of the input to the reduction. It is necessary to
   # know this in order to reduce `TiledLayout`s correctly.
   rank: int
+  # If `True`, the axes which are reduced are left in the result as dimensions
+  # with size one.
+  keep_dims: bool = False
 
   def __str__(self):
-    return f"Reduce([{self.axes}], {self.expression}, rank={self.rank})"
+    return (
+        f"Reduce([{self.axes}], {self.expression}, rank={self.rank},"
+        f" keep_dims={self.keep_dims})"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -205,15 +211,18 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case Reduce(expression=expr, axes=axes, rank=rank):
+    case Reduce(expression=expr, axes=axes, rank=rank, keep_dims=keep_dims):
       reduced_expr = reduce_expression(expr, assignments)
       def default():
         """We don't know how to reduce further."""
-        return Reduce(reduced_expr, axes, rank)
+        return Reduce(reduced_expr, axes, rank, keep_dims)
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
         case RegisterLayout(value=fa.TiledLayout() as layout):
+          # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
+          if keep_dims:
+            return default()
           num_untiled_dims = rank - len(layout.base_tile_shape)
           reduced_tiling_axes = [
               a - num_untiled_dims for a in axes if a >= num_untiled_dims
@@ -225,12 +234,12 @@ def reduce_expression(
           # We only support reducing leading dimensions.
           if axes != tuple(range(len(axes))):
             return default()
-          shape = utils.reduce_shape(layout.shape, axes, keep_dims=False)
+          shape = utils.reduce_shape(layout.shape, axes, keep_dims)
           if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
             return default()
           return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
         case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
-          shape = utils.reduce_shape(layout.shape, axes, keep_dims=False)
+          shape = utils.reduce_shape(layout.shape, axes, keep_dims)
           return RegisterLayout(fa.WGSplatFragLayout(shape))
         case _:
           return default()

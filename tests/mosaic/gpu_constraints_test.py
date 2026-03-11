@@ -180,12 +180,23 @@ class ConstraintSystemTest(parameterized.TestCase):
         layout,
     )
 
+  # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
+  def test_reduce_reduce_expression_does_not_reduce_tiled_layout_if_keep_dims_is_true(self):
+    expr = cs.Reduce(RL(mgpu.WGMMA_LAYOUT), axes=(0,), rank=2, keep_dims=True)
+    self.assertEqual(cs.reduce_expression(expr, {}), expr)
+
 
   @parameterized.parameters(
       (
           mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
           (0,),
           mgpu.WGStridedFragLayout(shape=(128,), vec_size=1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(1, 128), vec_size=1),
+          True,
       ),
       (
           mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=1),
@@ -199,9 +210,10 @@ class ConstraintSystemTest(parameterized.TestCase):
       ),
   )
   def test_reduce_reduce_expression_reduces_strided_layout(
-      self, layout, axes, expected_layout
+      self, layout, axes, expected_layout, keep_dims=False
   ):
-    expr = cs.Reduce(RL(layout), axes, rank=len(layout.shape))
+    rank = len(layout.shape)
+    expr = cs.Reduce(RL(layout), axes, rank, keep_dims)
     self.assertEqual(cs.reduce_expression(expr, {}), RL(expected_layout))
 
   @parameterized.parameters(
