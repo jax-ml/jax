@@ -3332,32 +3332,13 @@ class FragmentedArray:
             f" got {vec_len}"
         )
     i32_vec_len = vec_len * element_bitwidth // 32
-    # Those needless shenanigans are purely to work around ptxas bugs
-    # that cause SASS miscompilations. This formulation unfortunately
-    # produces less optimized code than it could, but it is correct.
-    if utils.get_arch().major > 9 and element_bitwidth == 16:
-      i16 = ir.IntegerType.get_signless(16)
-      regs = []
-      for i in range(i32_vec_len):
-        lo = llvm.extractelement(vreg, arith.constant(i32, i * 2))
-        hi = llvm.extractelement(vreg, arith.constant(i32, i * 2 + 1))
-        lo_bits = arith.bitcast(i16, lo)
-        hi_bits = arith.bitcast(i16, hi)
-        packed = llvm.inline_asm(
-            i32,
-            [lo_bits, hi_bits],
-            "mov.b32 $0, {$1, $2};",
-            "=r,h,h",
-        )
-        regs.append(packed)
-    else:
-      vreg = utils.bitcast(vreg, ir.VectorType.get(
-          (i32_vec_len,), i32,
-      ))
-      regs = [
-          llvm.extractelement(vreg, arith.constant(i32, i))
-          for i in range(i32_vec_len)
-      ]
+    vreg = utils.bitcast(vreg, ir.VectorType.get(
+        (i32_vec_len,), i32,
+    ))
+    regs = [
+        llvm.extractelement(vreg, arith.constant(i32, i))
+        for i in range(i32_vec_len)
+    ]
     width = 1
     if not is_smem and element_bitwidth == 16:
       for vec_width in (4, 2):
