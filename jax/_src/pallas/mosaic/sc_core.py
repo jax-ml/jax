@@ -30,7 +30,7 @@ from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 
 
-Tiling: TypeAlias = Sequence[Sequence[int]]
+Tiling: TypeAlias = tuple[tuple[int, ...], ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -44,17 +44,12 @@ class MemoryRef(pallas_core.MemoryRef):
       shape: Sequence[int],
       dtype: jax.typing.DTypeLike,
       memory_space: tpu_core.MemorySpace,
-      tiling: Tiling | None = None,
+      tiling: tpu_info.Tiling | None = None,
   ):
     super().__init__(jax_core.ShapedArray(shape, dtype), memory_space)
 
-    for tile in tiling or ():
-      if len(tile) > len(shape):
-        raise ValueError(
-            f"Tile rank must not exceed shape rank: {tile=} vs {shape=}"
-        )
-
-    object.__setattr__(self, "tiling", tiling)
+    if tiling is not None:
+      object.__setattr__(self, "tiling", tiling.get_tiles(shape, dtype))
 
   def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
