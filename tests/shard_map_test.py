@@ -1338,7 +1338,7 @@ class ShardMapTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
 
-    self.assertEqual(tracing_count(), 2)  # 1 for jit, 1 for shmap
+    self.assertEqual(tracing_count(), 1)
     self.assertEqual(lowering_count(), 1)
     self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 
@@ -2170,8 +2170,9 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(jax.vjp(g, 1.)[1])(1.)
     e, = jaxpr.jaxpr.eqns
-    e1, = e.params['jaxpr'].eqns
-    self.assertLen(e1.params['jaxpr'].eqns, 1)
+    e1, e2 = e.params['jaxpr'].eqns
+    self.assertEmpty(e1.outvars)
+    self.assertLen(e2.params['jaxpr'].eqns, 1)
 
   def test_fanout_specs_transpose_to_psum(self):
     mesh = jtu.create_mesh((4,), ('x',))

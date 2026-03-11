@@ -1512,7 +1512,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   init_val_flat, changed = init_val_flat.map3(
       _promote_weak_typed_input,
-      list(init_aval), body_out_avals).unzip2()
+      init_aval, body_out_avals).unzip2()
   if any(changed):
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
