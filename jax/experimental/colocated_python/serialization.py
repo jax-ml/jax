@@ -31,6 +31,7 @@ except ImportError:
 import jax
 from jax._src import api
 from jax._src import tree_util
+from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import numpy as np
@@ -104,7 +105,7 @@ def _make_reduce_func_with_common_obj(
   return wrapped_reduce_func
 
 
-@jax._src.util.cache(max_size=None)
+@util.cache(max_size=None)
 def _get_cpu_device_map() -> dict[int, jax.Device]:
   """Returns a map from a device id to a matching device."""
   cpu_device_map: dict[int, jax.Device] = {}
@@ -241,10 +242,10 @@ def _serialize(obj: Any) -> bytes:
   class _CustomPickler(cloudpickle.Pickler):
     dispatch_table = collections.ChainMap(
         {jax.sharding.Mesh: _reduce_mesh},
-        {jax.sharding.NamedSharding: _reduce_named_sharding},
-        {DeviceList: _reduce_device_list},
-        {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},
-        cloudpickle.CloudPickler.dispatch_table,  # pylint: disable=attribute-error
+        {jax.sharding.NamedSharding: _reduce_named_sharding},  # pyrefly: ignore[bad-argument-type]
+        {DeviceList: _reduce_device_list},  # pyrefly: ignore[bad-argument-type]
+        {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},  # pyrefly: ignore[bad-argument-type]
+        cloudpickle.CloudPickler.dispatch_table,  # pylint: disable=attribute-error  # pyrefly: ignore[bad-argument-type]
     )
     dispatch = dispatch_table
 

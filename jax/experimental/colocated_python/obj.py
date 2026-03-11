@@ -26,8 +26,8 @@ import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import tree_util
+from jax._src import util
 from jax._src.traceback_util import api_boundary
-from jax._src.util import wraps
 from jax.experimental.colocated_python import func
 from jax.experimental.colocated_python import obj_backend
 
@@ -74,7 +74,7 @@ class _InstanceRegistry:
 SINGLETON_INSTANCE_REGISTRY = _InstanceRegistry()
 
 
-@jax._src.util.cache(max_size=4096)
+@util.cache(max_size=4096)
 def _update_instance_devices(
     uid: int, shardings: tuple[jax.sharding.Sharding, ...]
 ) -> None:
@@ -179,8 +179,8 @@ def _make_method(
     def specialize(*args, **kwargs):
       return make_method_wrapper(callable.specialize(*args, **kwargs))
 
-    method_wrapper = wraps(original_method)(method_wrapper)
-    method_wrapper.specialize = specialize
+    method_wrapper = util.wraps(original_method)(method_wrapper)
+    method_wrapper.specialize = specialize  # pyrefly: ignore[missing-attribute]
     return method_wrapper
 
   method_wrapper = make_method_wrapper(callable)
@@ -193,7 +193,7 @@ def wrap_class(
 ) -> type[object]:
   class WrappedClass:
 
-    @wraps(cls.__init__)
+    @util.wraps(cls.__init__)
     def __init__(self, *init_args, **init_kwargs) -> None:
       uid = self._colocated_python_uid = (
           SINGLETON_INSTANCE_REGISTRY.new_instance()

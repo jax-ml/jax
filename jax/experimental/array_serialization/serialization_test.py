@@ -314,7 +314,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(mngr.deserialize_with_paths, [a.sharding],
-                             [path], concurrent_gb=1e-9)  # 1 byte
+                             [path], concurrent_gb=1E-9)  # 1 byte  # pyrefly: ignore[bad-argument-type]
     try:
       future.result(timeout=TIMEOUT_SEC)
     except TimeoutError:
@@ -665,7 +665,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     for out_spec, name in zip(out_specs, ['format', 'ShapeDtypeStruct']):
       with self.subTest(f'deserialization_with_{name}'):
-        out, = serialization.run_deserialization([out_spec], tspecs)
+        out, = serialization.run_deserialization([out_spec], tspecs)  # pyrefly: ignore[bad-argument-type]
         self.assertEqual(out.format, out_format)
         self.assertIsInstance(out, array.ArrayImpl)
         self.assertArraysEqual(out, out_ref)
@@ -793,7 +793,7 @@ _X64_DTYPES_LIST = [
     jnp.complex128,
 ]
 
-if jax.config.x64_enabled:
+if jax.config.x64_enabled:  # pyrefly: ignore[missing-attribute]
   _DTYPES_LIST.extend(_X64_DTYPES_LIST)
 
 
@@ -815,9 +815,9 @@ class CustomNode:
                    meta_fields=['c'])
 @dataclass
 class CustomDataclass:
-  a: int
+  a: jax.Array
   c: str
-  d: int
+  d: jax.Array
 
 
 @jax.tree_util.register_static
@@ -842,7 +842,8 @@ class UserPytreeAPITest(UserAPITestCase):
       tempdir.cleanup()
     super().tearDown()
 
-  def create_tempdir(self):
+  def create_tempdir(self, name=None, cleanup=None):
+    del name, cleanup  # unused
     tempdir = tempfile.TemporaryDirectory()
     self.tempdirs.append(tempdir)
     return pathlib.Path(tempdir.name).resolve()
@@ -968,7 +969,7 @@ class UserPytreeAPITest(UserAPITestCase):
     class D:
       a: Any
       b: Any
-      op: str
+      op: jax.Array
 
     def serialize_D(data):
       return json.dumps(jax.tree.map(lambda x: np.array(x).tolist(), data)
@@ -977,8 +978,8 @@ class UserPytreeAPITest(UserAPITestCase):
     def deserialize_D(data):
       return jnp.array(json.loads(data))
 
-    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
-            7 * jnp.ones(()), P()]
+    data: list[Any] = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+                       7 * jnp.ones(()), P()]
 
     serialize_fn = lambda p: json.dumps(int(p.a)).encode('utf-8')
     deserialize_fn = lambda data: P(json.loads(data))
@@ -1015,8 +1016,8 @@ class UserPytreeAPITest(UserAPITestCase):
 
   def test_masked_reading(self):
     path = self.create_tempdir()
-    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
-            7 * jnp.ones(())]
+    data: list[Any] = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+                       7 * jnp.ones(())]
     tree_save(data, path)
     for mask in [False, True]:
       ret = tree_load(path, mask=mask)
@@ -1124,12 +1125,12 @@ class UserPytreeAPITest(UserAPITestCase):
     with self.assertRaisesRegex(NotImplementedError,
                                 'Deserialization with `Format` instead of'
                                 ' `Sharding` is not currently supported.'):
-      pytree_serialization.load(path, shardings=data.format)
+      pytree_serialization.load(path, shardings=data.format)  # pyrefly: ignore[missing-attribute]
 
   def test_formats_support(self):
     path = self.create_tempdir()
     data = jnp.arange(16 * 16, dtype=jnp.float32).reshape((16, 16))
-    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(
+    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(  # pyrefly: ignore[missing-attribute]
         (16, 16)).format
     sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
     data: jax.Array = jax.device_put(data, sharding)

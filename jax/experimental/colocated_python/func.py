@@ -337,7 +337,7 @@ def _uncached_get_specialized_func(
             # Hold the PyExecutable until async_execution_fun is called at
             # least once, so the number of _OBJECT_STORE references at the
             # backend does not drop to 0.
-            async_execution_func.output_specs_and_push_result_fun = (
+            async_execution_func.output_specs_and_push_result_fun = (  # pyrefly: ignore[missing-attribute]
                 output_specs_and_push_result_fun
             )
 
@@ -370,7 +370,7 @@ def _uncached_get_specialized_func(
     # execution for inline executors.
     result = async_execution_func(*args, **kwargs)
     with mutex:
-      async_execution_func.output_specs_and_push_result_fun = None
+      async_execution_func.output_specs_and_push_result_fun = None  # pyrefly: ignore[missing-attribute]
     return result
 
   return specialized_func
@@ -612,8 +612,8 @@ class _CachedColocatedFunctionMaker:
     # itself. The latter is used as a performance optimization when the input
     # spec is explicitly specified and can skip a collection lookup. The caches
     # use weakrefs so that we avoid creating cyclic references.
-    specialized_collections_wref = lambda: None
-    specialized_functions_wref = lambda: None
+    specialized_collections_wref: Callable[..., Any] = lambda: None
+    specialized_functions_wref: Callable[..., Any] = lambda: None
     wref_mu = threading.Lock()
 
     @api_boundary
@@ -684,7 +684,7 @@ class _CachedColocatedFunctionMaker:
       return result
 
     __call__ = wraps(info.fun)(__call__)
-    __call__.specialize = specialize
+    __call__.specialize = specialize  # pyrefly: ignore[missing-attribute]
     return __call__
 
   def make_callable(

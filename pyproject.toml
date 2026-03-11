@@ -51,8 +51,6 @@ project-excludes = [
     "jax/_src/internal_test_util/export_back_compat_test_data/*.py",
     "jax/example_libraries/**/*.py",
     # TODO(slebedev): Opt in jax/experimental and remove these excludes.
-    "jax/experimental/array_serialization/**/*.py",
-    "jax/experimental/colocated_python/**/*.py",
     "jax/experimental/jax2tf/**/*.py",
     "jax/experimental/mosaic/**/*.py",
     "jax/experimental/slab/**/*.py",
