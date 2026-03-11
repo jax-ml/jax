@@ -2737,25 +2737,33 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Lane)
-def _erf_lowering_rule(ctx: LoweringRuleContext, x):
+def _erf_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   return _ensure_fa(x, x_aval.dtype).erf()
 
 
 @register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Warpgroup)
-def _erf_lowering_rule_wg(ctx: LoweringRuleContext, x):
+def _erf_lowering_rule_wg(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   return math_dialect.erf(_ensure_ir_value(x, x_aval.dtype))
 
 
 @register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Lane)
-def _atan2_lowering_rule(ctx: LoweringRuleContext, y, x):
+def _atan2_lowering_rule(ctx: LoweringRuleContext, y, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   y, x = _bcast(y, x, *ctx.avals_in, *ctx.avals_out)
   return y.atan2(x)
 
 
 @register_lowering_rule(lax.atan2_p, mgpu.LoweringSemantics.Warpgroup)
-def _atan2_lowering_rule_wg(ctx: LoweringRuleContext, y, x):
+def _atan2_lowering_rule_wg(ctx: LoweringRuleContext, y, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   y, x = _bcast_wg(y, x, *ctx.avals_in, *ctx.avals_out)
   return math_dialect.atan2(y, x)
 
