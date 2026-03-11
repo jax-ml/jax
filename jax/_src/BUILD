@@ -1030,6 +1030,7 @@ pytype_strict_library(
     name = "monitoring",
     srcs = ["monitoring.py"],
     type_checking = "pyrefly",
+    deps = [":config"],
 )
 
 pytype_strict_library(
