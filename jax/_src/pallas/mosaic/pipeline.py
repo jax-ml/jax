@@ -200,6 +200,33 @@ def _grid_size(grid):
   return size
 
 
+def _spec_has_trivial_windowing(spec, grid):
+  if spec is None or spec.index_map is None:
+    return True
+  nontrivial_dims = {
+      i for i, d in enumerate(grid) if not isinstance(d, int) or d != 1
+  }
+  if not nontrivial_dims:
+    return True
+  static_dummy_grid = tuple(d if isinstance(d, int) else 2 for d in grid)
+  with pallas_core.tracing_grid_env(static_dummy_grid, mapped_dims=()):
+    closed_jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
+  jaxpr = closed_jaxpr.jaxpr
+  # Refs can be mutated while the pipeline is running so we should not assume
+  # that they are constant.
+  if any(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars):
+    return False
+  nontrivial_invar_ids = {id(jaxpr.invars[i]) for i in nontrivial_dims}
+  for v in jaxpr.outvars:
+    if id(v) in nontrivial_invar_ids:
+      return False
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if id(v) in nontrivial_invar_ids:
+        return False
+  return True
+
+
 class BufferType(enum.Enum):
   """Buffer type for the arguments to an emitted pipeline."""
   INPUT = 1
@@ -1314,7 +1341,7 @@ class Scheduler:
     if not buffered_ref.is_buffered:
       return False
     if buffered_ref.buffer_count < 2:
-      raise NotImplementedError()
+      return self.has_changed(buffered_ref)
     indices = buffered_ref.compute_index(
         *self.fetch_indices[buffered_ref.buffer_count-2])
     next_indices = buffered_ref.compute_index(
@@ -1417,6 +1444,10 @@ class Scheduler:
     if schedule is None:
       schedule = _default_schedule
     pred: Any = schedule['copy_in'](self, buffered_ref, src_ref)
+    # Single-buffered refs skip the prologue, so the first copy_in in the
+    # loop must always fire to populate the buffer before wait_in.
+    if buffered_ref.is_buffered and buffered_ref.buffer_count < 2:
+      pred = pred | self.first_step
     if not buffered_ref.is_input:
       return buffered_ref
 
@@ -1691,14 +1722,24 @@ def make_pipeline_allocations(
   out_specs = _normalize_specs(out_specs)
   in_refs = refs[:num_in_specs]
   out_refs = refs[num_in_specs:]
+  # We only allocate the swap_ref when the pipeline uses prefetch or postyeet,
+  # in which case the user might be depending on the buffer_count they specify
+  # explicitly. Otherwise we can reduce it.
+  can_reduce_buffering = not needs_swap_ref
   def make_input_bref(in_spec, in_ref):
     buffer_count = 2
     use_lookahead = False
-    if in_spec.pipeline_mode is not None:
+    if has_buffering := in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
       use_lookahead = in_spec.pipeline_mode.use_lookahead
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
+    if (
+        can_reduce_buffering
+        and not has_buffering  # pyrefly: ignore[unbound-name]
+        and _spec_has_trivial_windowing(in_spec, grid)
+    ):
+      buffer_count = 1
 
     in_aval = _ref_to_value_aval(in_ref)
     return BufferedRef.input(
@@ -1714,10 +1755,19 @@ def make_pipeline_allocations(
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref, accumulate):
     buffer_count = 2
-    if out_spec.pipeline_mode is not None:
+    if has_buffering := out_spec.pipeline_mode is not None:
       buffer_count = out_spec.pipeline_mode.buffer_count
       if out_spec.pipeline_mode.use_lookahead:
         raise ValueError("Output buffering does not support lookahead.")
+    # Accumulators use their own special DMA logic that seems incompatible with
+    # having only one buffer.
+    if (
+        not accumulate
+        and can_reduce_buffering
+        and not has_buffering  # pyrefly: ignore[unbound-name]
+        and _spec_has_trivial_windowing(out_spec, grid)
+    ):
+      buffer_count = 1
 
     out_aval = _ref_to_value_aval(out_ref)
 

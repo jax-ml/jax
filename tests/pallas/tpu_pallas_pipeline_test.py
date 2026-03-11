@@ -174,6 +174,35 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 512).reshape(8, 512)
     np.testing.assert_allclose(kernel(x), x)
 
+  def test_trivial_windowing_elides_double_buffering(self):
+    def pipeline_body(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4, 1),
+          in_specs=[
+              pl.BlockSpec((8, 128), lambda i, j: (0, i)),
+              pl.BlockSpec((8, 128), lambda i, j: (0, j)),
+          ],
+          out_specs=pl.BlockSpec((8, 128), lambda i, j: (0, i)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 512, dtype=jnp.float32).reshape(8, 512)
+    y = jnp.ones((8, 128), jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+    )(x, y)
+    expected = x + jnp.tile(y, (1, 4))
+    np.testing.assert_allclose(out, expected)
+
   @parameterized.product(
       no_pipelining=[False, True],
   )
