@@ -74,6 +74,7 @@ def _block_spec_from_block_mapping(
     bm: pallas_core.BlockMapping,
     which_parallel: Sequence[bool],
     default_memory_space: MemorySpace,
+    grid: tuple[int | Any, ...] = (),
 ) -> pallas_core.BlockSpec:
   eval_index_map = functools.partial(
       jax_core.eval_jaxpr,
@@ -88,9 +89,10 @@ def _block_spec_from_block_mapping(
         which_parallel,
         indices,
         [
-            pallas_primitives.program_id(axis - 1)
-            for axis, is_parallel in zip(
-                itertools.accumulate(which_parallel), which_parallel
+            0 if isinstance(g, int) and g == 1
+            else pallas_primitives.program_id(axis - 1)
+            for axis, is_parallel, g in zip(
+                itertools.accumulate(which_parallel), which_parallel, grid
             )
             if is_parallel
         ],
@@ -254,6 +256,7 @@ def lower_pipelined_jaxpr_into_module(
         default_memory_space=MemorySpace.SMEM
         if kernel_type is tpu_core.CoreType.SC_SCALAR_SUBCORE
         else MemorySpace.VMEM,
+        grid=grid,
     )
     pipeline.emit_pipeline(
         body_fn,
