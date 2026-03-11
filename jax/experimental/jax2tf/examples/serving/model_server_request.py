@@ -111,7 +111,7 @@ def main(_):
   images_and_labels = tfds.as_numpy(test_ds.take(
       _COUNT_IMAGES.value // _SERVING_BATCH_SIZE.value))
 
-  accurate_count = 0
+  accurate_count = np.array(0)
   for batch_idx, (images, labels) in enumerate(images_and_labels):
     predictions_one_hot = serving_call_mnist(images)
     predictions_digit = np.argmax(predictions_one_hot, axis=1)

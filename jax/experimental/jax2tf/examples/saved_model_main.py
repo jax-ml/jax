@@ -202,6 +202,8 @@ def tf_accelerator_and_tolerances():
     tolerances = dict(atol=1e-6, rtol=1e-4)
   elif tf_accelerator.device_type == "CPU":
     tolerances = dict(atol=1e-5, rtol=1e-5)
+  else:
+    raise RuntimeError(f"Unrecognized {tf_accelerator.device_type=}")
   logging.info("Using tolerances %s", tolerances)
   return tf_accelerator, tolerances
 
