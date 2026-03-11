@@ -533,9 +533,8 @@ def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
 
 
 def infer_tiling(
-    ty: jax_core.AbstractValue,
-    tiling: Tiling | None = None,
-) -> tuple[int | None, ...] | None:
+    ty: jax_core.AbstractValue, tiling: Tiling | None = None
+) -> tuple[int | None, ...]:
   """Compute a tiling for the given shape and type.
 
   For an n-dimensional shape, returns the tiling for the last
