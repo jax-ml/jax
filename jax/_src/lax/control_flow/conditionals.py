@@ -273,7 +273,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   avals = args.map(core.typeof)
   avals = avals.map2(
       lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-      args)
+      list(args))
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})
