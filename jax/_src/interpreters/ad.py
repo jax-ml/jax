@@ -775,7 +775,7 @@ call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 class LinearizeTrace(Trace):
   parent_trace: core.Trace | None
   tangent_trace: core.Trace
-  is_jvp: bool
+  is_vjp: bool
   requires_low: bool
   _name_stack_prefix_len: int
 
