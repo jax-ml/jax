@@ -471,7 +471,7 @@ class AccuracyMode(enum.Enum):
   DEFAULT = 2
 
 @export
-def exp(x: ArrayLike, accuracy=None) -> Array:
+def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise exponential: :math:`e^x`.
 
   This function lowers directly to the  `stablehlo.exponential`_ operation.
@@ -497,8 +497,8 @@ def exp(x: ArrayLike, accuracy=None) -> Array:
   """
   return exp_p.bind(x, accuracy=accuracy)
 
-
-def exp2(x: ArrayLike, accuracy=None) -> Array:
+@export
+def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
   This function is implemented in terms of the `stablehlo.exponential`_
@@ -527,7 +527,7 @@ def exp2(x: ArrayLike, accuracy=None) -> Array:
   return exp2_p.bind(x, accuracy=accuracy)
 
 @export
-def expm1(x: ArrayLike, accuracy=None) -> Array:
+def expm1(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise :math:`e^{x} - 1`.
 
   This function lowers directly to the `stablehlo.exponential_minus_one`_
@@ -556,7 +556,7 @@ def expm1(x: ArrayLike, accuracy=None) -> Array:
   return expm1_p.bind(x, accuracy=accuracy)
 
 @export
-def log(x: ArrayLike, accuracy=None) -> Array:
+def log(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`.
 
   This function lowers directly to the  `stablehlo.log`_ operation.
@@ -582,7 +582,7 @@ def log(x: ArrayLike, accuracy=None) -> Array:
   return log_p.bind(x, accuracy=accuracy)
 
 @export
-def log1p(x: ArrayLike, accuracy=None) -> Array:
+def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise :math:`\mathrm{log}(1 + x)`.
 
   This function lowers directly to the  `stablehlo.log_plus_one`_ operation.
@@ -611,7 +611,7 @@ def log1p(x: ArrayLike, accuracy=None) -> Array:
   return log1p_p.bind(x, accuracy=accuracy)
 
 @export
-def tanh(x: ArrayLike, accuracy=None) -> Array:
+def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`.
 
   This function lowers directly to the `stablehlo.tanh`_ operation.
@@ -639,8 +639,7 @@ def tanh(x: ArrayLike, accuracy=None) -> Array:
   return tanh_p.bind(x, accuracy=accuracy)
 
 @export
-
-def logistic(x: ArrayLike, accuracy=None) -> Array:
+def logistic(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise logistic (sigmoid) function: :math:`\frac{1}{1 + e^{-x}}`.
 
   There is no HLO logistic/sigmoid primitive, so this lowers to a sequence
@@ -648,6 +647,12 @@ def logistic(x: ArrayLike, accuracy=None) -> Array:
 
   Args:
     x: input array. Must have floating point or complex dtype.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -659,7 +664,7 @@ def logistic(x: ArrayLike, accuracy=None) -> Array:
   return logistic_p.bind(x, accuracy=accuracy)
 
 @export
-def sin(x: ArrayLike, accuracy=None) -> Array:
+def sin(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise sine: :math:`\mathrm{sin}(x)`.
 
   For floating-point inputs, this function lowers directly to the
@@ -689,7 +694,7 @@ def sin(x: ArrayLike, accuracy=None) -> Array:
   return sin_p.bind(x, accuracy=accuracy)
 
 @export
-def cos(x: ArrayLike, accuracy=None) -> Array:
+def cos(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise cosine: :math:`\mathrm{cos}(x)`.
 
   For floating-point inputs, this function lowers directly to the
@@ -908,7 +913,7 @@ def integer_pow(x: ArrayLike, y: int) -> Array:
 
 
 @export
-def sqrt(x: ArrayLike, accuracy=None) -> Array:
+def sqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`.
 
   This function lowers directly to the `stablehlo.sqrt`_ operation.
@@ -935,7 +940,7 @@ def sqrt(x: ArrayLike, accuracy=None) -> Array:
   return sqrt_p.bind(x, accuracy=accuracy)
 
 @export
-def rsqrt(x: ArrayLike, accuracy=None) -> Array:
+def rsqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`.
 
   This function lowers directly to the `stablehlo.rsqrt`_ operation.
@@ -963,7 +968,7 @@ def rsqrt(x: ArrayLike, accuracy=None) -> Array:
   return rsqrt_p.bind(x, accuracy=accuracy)
 
 @export
-def cbrt(x: ArrayLike, accuracy=None) -> Array:
+def cbrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise cube root: :math:`\sqrt[3]{x}`.
 
   This function lowers directly to the `stablehlo.cbrt`_ operation.
@@ -3670,7 +3675,7 @@ def reciprocal(x: ArrayLike) -> Array:
   return integer_pow(x, -1)
 
 @export
-def tan(x: ArrayLike, accuracy=None) -> Array:
+def tan(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`.
 
   This function lowers directly to the `stablehlo.tangent`_ operation.
