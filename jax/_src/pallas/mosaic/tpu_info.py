@@ -21,9 +21,10 @@ from typing import Callable, cast
 from jax import numpy as jnp
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
+from jax._src.interpreters import pxla
 from jax._src.pallas import utils as pallas_utils
-from jax._src.pallas.mosaic import core
 
 
 class ChipVersionBase:
@@ -262,7 +263,7 @@ class TpuInfo:
 
 
 def is_tpu_device() -> bool:
-  return chip_version_from_device_kind(core.get_device_kind()) is not None
+  return chip_version_from_device_kind(get_device_kind()) is not None
 
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
@@ -459,13 +460,13 @@ def get_tpu_info() -> TpuInfo:
   Note that all information is *per-TensorCore* so you would need to multiply by
   `num_cores` to obtain the total for the chip.
   """
-  device_kind = core.get_device_kind()
+  device_kind = get_device_kind()
   chip_version = chip_version_from_device_kind(device_kind)
   if chip_version is None:
     if device_kind in registry:
       return registry[device_kind]()
     raise ValueError(f"Unsupported TPU device kind: {device_kind}")
-  return _get_tpu_info_impl(chip_version, core.get_num_device_cores())
+  return _get_tpu_info_impl(chip_version, get_num_device_cores())
 
 
 @jax_util.cache(trace_context_in_key=True)
@@ -577,3 +578,15 @@ def infer_tiling(
     case Tiling.SPARSE_CORE:
       [tile_size] = tiling.shape
       return (*(1,) * len(leading_dims), tile_size * packing)
+
+
+def get_device_kind() -> str:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return pxla.get_default_device().device_kind
+
+
+def get_num_device_cores() -> int:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return pxla.get_default_device().num_cores
