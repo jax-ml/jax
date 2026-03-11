@@ -3002,23 +3002,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.int32],
+      layout=[plgpu.Layout.WGMMA, None]
   )
-  def test_atomic_add(self, dtype):
+  def test_atomic_add(self, dtype, layout):
     self.skip_if_wg_semantics()
     m, n = 128, 64
-    transforms = self.default_transforms(swizzle=64, dtype=dtype)
+    if layout is not None:
+      transforms = self.default_transforms(swizzle=64, dtype=dtype)
+    else:
+      transforms = ()
     def body(inp_ref, out_ref, smem_ref, barrier):
       wg_idx = lax.axis_index("wg")
       @pl.when(wg_idx == 0)
       def _zero():
-        smem_ref[...] = plgpu.layout_cast(
-            jnp.zeros_like(smem_ref), plgpu.Layout.WGMMA
-        )
+        zeros = jnp.zeros_like(smem_ref)
+        if layout is not None:
+          zeros = plgpu.layout_cast(zeros, layout)
+        smem_ref[...] = zeros
       plgpu.barrier_arrive(barrier)
       plgpu.barrier_wait(barrier)
       plgpu.atomic_add(
           smem_ref,
-          plgpu.load(inp_ref, pl.ds(wg_idx * m, m), layout=plgpu.Layout.WGMMA, optimized=False),
+          plgpu.load(inp_ref, pl.ds(wg_idx * m, m), layout=layout, optimized=False),
       )
       plgpu.barrier_arrive(barrier)
       plgpu.barrier_wait(barrier)

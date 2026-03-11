@@ -631,12 +631,56 @@ class WGMMALayoutTest(TestCase):
     inp = np.stack([x, y]).reshape(2 * m, n)
     if op == "add":
       expected = x + y
-    elif op in ("min", "max"):
-      expected = getattr(np, op + "imum")(x, y)
+    elif op == "min":
+      expected = np.minimum(x, y)
+    elif op == "max":
+      expected = np.maximum(x, y)
     else:
       expected = getattr(np, f"bitwise_{op}")(x, y)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (256, 1, 1), inp, expected, expected,
+    )(inp)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      op=["add", "min", "max"],
+      dtype=[jnp.float32, jnp.float16, jnp.bfloat16],
+  )
+  def test_atomic_store_strided(self, op, dtype):
+    if dtype == jnp.float32 and op != "add":
+      self.skipTest("f32 only supports add with red instruction")
+    m, n = 128, 64
+    if op == "add":
+      identity = 0
+    elif op == "min":
+      identity = jnp.finfo(dtype).max
+    elif op == "max":
+      identity = jnp.finfo(dtype).min
+    def kernel(ctx, inp_ref, out, _):
+      del ctx
+      index = ir.IndexType.get()
+      mlir_dtype = utils.dtype_to_ir_type(dtype)
+      is_signed = utils.is_signed(dtype)
+      wg_idx = arith.divui(gpu.thread_id(gpu.Dimension.x), c(128, index))
+      offset = arith.muli(wg_idx, c(m, index))
+      slice_ref = memref_slice(inp_ref, (ds(offset, m), slice(None)))
+      my_fa = mgpu.FragmentedArray.load_strided(
+          slice_ref, is_signed=is_signed,
+      )
+      mgpu.FragmentedArray.splat(
+          c(identity, mlir_dtype), (m, n), is_signed=is_signed,
+      ).store_untiled(out)
+      gpu.barrier()
+      my_fa.store_untiled(out, atomic=op)
+    x = np.arange(1, m * n + 1, dtype=dtype).reshape(m, n)
+    y = np.arange(m * n, 0, -1, dtype=dtype).reshape(m, n)
+    inp = np.stack([x, y]).reshape(2 * m, n)
+    if op == "add":
+      expected = x + y
+    elif op in ("min", "max"):
+      expected = getattr(np, op + "imum")(x, y)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (256, 1, 1), inp, expected, (),
     )(inp)
     np.testing.assert_array_equal(result, expected)
 
