@@ -20,7 +20,7 @@ import collections
 from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 from jax._src import core as jax_core
@@ -31,7 +31,7 @@ from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax.extend import backend as jex_backend
+from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 import numpy as np
 
@@ -195,12 +195,21 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
-  def from_type(self, ty):
+  def from_type(self, ty, tiling: tpu_info.Tiling | None = None):
+    if tiling is not None:
+      return MemoryRef(ty, memory_space=self, tiling=tiling)
     return pallas_core.MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(
+      self,
+      shape: Sequence[int],
+      dtype: jnp.dtype[Any],
+      tiling: tpu_info.Tiling | None = None,
+  ):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
-    return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
+    return self.from_type(
+        jax_core.ShapedArray(tuple(shape), dtype), tiling=tiling
+    )
 
   def __getattr__(self, name):
     if name == "ANY":
@@ -212,6 +221,70 @@ class MemorySpace(enum.Enum):
       )
       return pallas_core.MemorySpace.ANY
     return super().__getattr__(name)  # type: ignore
+
+
+Tiling: TypeAlias = tuple[tuple[int, ...], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class MemoryRef(pallas_core.MemoryRef):
+  """A MemoryRef for SparseCore."""
+
+  tiling: Tiling | None = None
+
+  def __init__(
+      self,
+      inner_aval: jax_core.AbstractValue,
+      memory_space: MemorySpace,
+      tiling: tpu_info.Tiling | None = None,
+  ):
+    super().__init__(inner_aval, memory_space)
+
+    if tiling is not None:
+      if not hasattr(inner_aval, "shape"):
+        raise ValueError(f"{inner_aval} does not have a shape")
+      if not hasattr(inner_aval, "dtype"):
+        raise ValueError(f"{inner_aval} does not have a dtype")
+      object.__setattr__(
+          self, "tiling", tiling.get_tiles(inner_aval.shape, inner_aval.dtype)
+      )
+
+  def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
+    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
+    # try to apply JAX ops to it.
+    return AbstractRef(self.inner_aval, self.memory_space, tiling=self.tiling)
+
+
+class AbstractRef(state.AbstractRef):
+  """An AbstractRef for SparseCore."""
+
+  tiling: Tiling | None
+
+  def __init__(
+      self,
+      aval: jax_core.AbstractValue,
+      memory_space: MemorySpace,
+      *,
+      kind: Any | None = None,
+      tiling: Tiling | None = None,
+  ):
+    super().__init__(aval, memory_space, kind)
+
+    self.tiling = tiling
+
+  def update(
+      self,
+      inner_aval: Any | None = None,
+      memory_space: Any | None = None,
+      kind: Any | None = None,
+      tiling: Tiling | None = None,
+  ) -> AbstractRef:
+    return AbstractRef(
+        inner_aval if inner_aval is not None else self.inner_aval,
+        memory_space if memory_space is not None else self.memory_space,
+        kind=kind if kind is not None else self.kind,
+        tiling=tiling if tiling is not None else self.tiling,
+    )
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -525,15 +598,3 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
-
-
-def get_device_kind() -> str:
-  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
-    return abstract_device.device_kind
-  return jex_backend.get_default_device().device_kind
-
-
-def get_num_device_cores() -> int:
-  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
-    return abstract_device.num_cores
-  return jex_backend.get_default_device().num_cores

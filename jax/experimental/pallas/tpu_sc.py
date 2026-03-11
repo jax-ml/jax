@@ -15,7 +15,6 @@
 
 from jax._src.pallas.mosaic.sc_core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic.sc_core import get_sparse_core_info as get_sparse_core_info
-from jax._src.pallas.mosaic.sc_core import MemoryRef as MemoryRef
 from jax._src.pallas.mosaic.sc_core import ScalarSubcoreMesh as ScalarSubcoreMesh
 from jax._src.pallas.mosaic.sc_core import VectorSubcoreMesh as VectorSubcoreMesh
 from jax._src.pallas.mosaic.sc_primitives import addupdate as addupdate

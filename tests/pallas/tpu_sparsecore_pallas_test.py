@@ -1201,7 +1201,11 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(out_shape=x)
     @pl.with_scoped(
-        plsc.MemoryRef(x.shape, x.dtype, memory_space=pltpu.VMEM, tiling=[(8,)])
+        pltpu.VMEM(
+            x.shape,
+            x.dtype,
+            tiling=pltpu.Tiling.SPARSE_CORE,
+        )
     )
     def kernel(x_ref, o_ref, scratch_ref):
       scratch_ref[...] = x_ref[...]

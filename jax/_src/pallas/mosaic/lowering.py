@@ -264,6 +264,7 @@ class LoweringRuleContext:
       aval,
       *,
       shape=None,
+      tiling=None,
       memory_space=None,
       is_kernel_boundary=False,
       allow_extended_types=True,
@@ -272,6 +273,7 @@ class LoweringRuleContext:
         self.lowering_context.dynamic_shape_replacement_fn,
         aval,
         shape=shape,
+        tiling=tiling,
         memory_space=memory_space,
         is_kernel_boundary=is_kernel_boundary,
         allow_extended_types=allow_extended_types,
@@ -324,6 +326,14 @@ def _memory_space_to_mosaic_attribute(
   return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
 
 
+def _tiling_to_mosaic_attribute(tiling: tpu_core.Tiling | None, shape: tuple[int, ...]) -> ir.Attribute | None:
+  if tiling is None:
+    return None
+  tiles = "".join(f"({','.join(map(str, tile))})" for tile in tiling)
+  strides = _default_tile_strides(tiling, shape)
+  return ir.Attribute.parse(f"#tpu.tiled<{tiles},{strides}>"),
+
+
 def _dtype_to_ir_type(dtype: DTypeLike,
                       is_kernel_boundary: bool = False) -> ir.Type:
   if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
@@ -353,6 +363,7 @@ def aval_to_ir_type(
     aval,
     *,
     shape=None,
+    tiling: tpu_core.Tiling | None = None,
     memory_space: AnyMemorySpace | None = None,
     is_kernel_boundary: bool = False,
     allow_extended_types: bool = True,
@@ -371,6 +382,7 @@ def aval_to_ir_type(
         dynamic_shape_replacement_fn,
         aval=physical_aval,
         shape=shape,
+        tiling=tiling,
         memory_space=memory_space,
         is_kernel_boundary=is_kernel_boundary,
         allow_extended_types=False,
@@ -385,20 +397,23 @@ def aval_to_ir_type(
       sem_type = ir.Type.parse("!tpu.semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
+    layout = _tiling_to_mosaic_attribute(tiling, ())
     memspace = _memory_space_to_mosaic_attribute(
         TPUMemorySpace.SEMAPHORE, kernel_type
     )
-    return ir.MemRefType.get((), sem_type, memory_space=memspace)
+    return ir.MemRefType.get((), sem_type, layout, memspace)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
     if memory_space is None:
       memory_space = aval.memory_space
+    layout = _tiling_to_mosaic_attribute(tiling, shape)
     memspace = _memory_space_to_mosaic_attribute(memory_space, kernel_type)
     shape = dynamic_shape_replacement_fn(shape)
     return ir.MemRefType.get(shape,
       _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
-      memory_space=memspace)
+      layout,
+      memspace)
   if isinstance(aval, jax_core.ShapedArray):
     if shape is None:
       shape = aval.shape
@@ -539,6 +554,12 @@ class MosaicGridMapping:
     scalar_prefetch_avals = in_avals[grid_mapping.slice_index_ops]
     operand_avals = in_avals[grid_mapping.slice_block_ops]
     scratch_avals = in_avals[grid_mapping.slice_scratch_ops]
+    if any(isinstance(aval, tpu_core.AbstractRef) for aval in scratch_avals):
+      # TODO(slebedev): Support tiling annotations for kernel operands.
+      raise NotImplementedError(
+          "`pltpu.MemoryRef`s are not supported as scratch operands to the"
+          " kernel. Allocate them in the kernel body via `pl.run_scoped`."
+      )
     self.scalar_prefetch_types = tuple(
         _get_arg_type(aval) for aval in scalar_prefetch_avals
     )
@@ -3850,14 +3871,33 @@ def _bitcast_convert_type_lowering_rule(
   return arith.bitcast(out_type, x)
 
 
+def _default_tile_strides(
+    tiling: tpu_core.Tiling, shape: Sequence[int]
+) -> Sequence[int]:
+  """Returns default tile strides for a given shape and tiling."""
+  first_tile = tiling[0] if tiling else ()
+  strides = [0] * len(shape)
+  stride = 1
+  for d in reversed(range(len(shape))):
+    assert shape[d] != ir.ShapedType.get_dynamic_size()
+    strides[d] = stride
+    if d >= len(shape) - len(first_tile):
+      tile_d = d - (len(shape) - len(first_tile))
+      stride *= pallas_utils.cdiv(shape[d], first_tile[tile_d])
+    else:
+      stride *= shape[d]
+  return strides
+
+
 def _alloc_value(
     aval: jax_core.AbstractValue | ShapedAbstractValue, *, ctx: LoweringRuleContext
 ) -> ir.Value:
   if isinstance(aval, state.AbstractRef):
+    tiling = aval.tiling if isinstance(aval, tpu_core.AbstractRef) else None
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = ctx.aval_to_ir_type(
-          aval, memory_space=TPUMemorySpace.SEMAPHORE
+          aval, tiling=tiling, memory_space=TPUMemorySpace.SEMAPHORE
       )
       return tpu.sem_alloc(memref_type)
     else:
@@ -3874,13 +3914,11 @@ def _alloc_value(
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
-@register_lowering_rule(primitives.run_scoped_p)
+@register_lowering_rule(
+    primitives.run_scoped_p, kernel_types=[*tpu_core.CoreType]
+)
 def _run_scoped_lowering_rule(
-    ctx: LoweringRuleContext,
-    *consts,
-    jaxpr,
-    collective_axes,
-    alloc_fn=_alloc_value,
+    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes
 ):
   if collective_axes:
     raise NotImplementedError("run_scoped lowering does not support collective axes")
@@ -3889,7 +3927,7 @@ def _run_scoped_lowering_rule(
   with ctx.lowering_context.grid_name_context():
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   with ir.InsertionPoint(region.body):
-    args = map(lambda aval: alloc_fn(aval, ctx=ctx), in_avals)
+    args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
                          for a in in_avals)
     block_shapes = tuple(map(_maybe_physicalize_block_shape,
