@@ -782,12 +782,6 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
     # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
-    ins_iter = iter(ins_flat)
-    _in_pvals = [pe.PartialVal.unknown(aval) if lin else
-                 pe.PartialVal.known(next(ins_iter))
-                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
-    assert next(ins_iter, None) is None
-
     # TODO(mattjj): revise not to require disabling checks
     with config.mutable_array_checks(False):
       jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
