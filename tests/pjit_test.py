@@ -10604,6 +10604,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.argsort(x, axis=0)
     self.assertEqual(out.sharding, x.sharding)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_cond_lowering_constraint(self, mesh):
+    arr1 = jax.device_put(np.arange(8), P('x'))
+    arr2 = jax.device_put(np.arange(8), P('x'))
+
+    @jax.jit
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return y
+      out = jax.lax.cond(True, true_fn, false_fun, x, y)
+      return out * 2
+
+    lowered_text = f.lower(arr1, arr2).as_text()
+    self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

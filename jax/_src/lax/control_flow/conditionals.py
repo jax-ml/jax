@@ -983,8 +983,7 @@ def _cond_to_lojax(pred, *hi_args, branches, **kwds):
 
 cond_p.to_lojax = _cond_to_lojax
 
-def _cond_lowering(ctx, index, *args, branches,
-                   **params):
+def _cond_lowering(ctx, index, *args, branches, **params):
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.ClosedJaxpr] = []
     index_to_kept_index: dict[int, int] = {}
@@ -1050,6 +1049,8 @@ def _cond_lowering(ctx, index, *args, branches,
   tokens_and_outputs = mlir.unflatten_ir_values_like_types(
     case_op.results, output_types)
   tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])
+  outputs = [mlir.lower_with_sharding_in_types(ctx, o, aval)
+             for o, aval in zip(outputs, ctx.avals_out)]
   ctx.set_tokens_out(mlir.TokenSet(zip(ordered_effects, tokens)))
   return outputs
 

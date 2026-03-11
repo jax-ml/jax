@@ -8140,7 +8140,8 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 
     out = lower_comparator(sub_ctx, *comparator.arguments, num_keys=num_keys)
     hlo.return_(mlir.flatten_ir_values(out))
-  return sort.results
+  return [mlir.lower_with_sharding_in_types(ctx, op, aval)
+          for op, aval in zip(sort.results, ctx.avals_out)]
 
 mlir.register_lowering(sort_p, _sort_lower)
 
