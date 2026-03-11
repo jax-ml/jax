@@ -2791,8 +2791,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros((128, 128), jnp.float32),
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref):
       reduced = plgpu.load(x_ref, (), layout=plgpu.Layout.TCGEN05_TMEM_NATIVE.reduce(1), optimized=False)
@@ -3901,8 +3899,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
         ],
-        num_threads=1,
-        thread_name="x",
         cluster=(2,) if collective else (),
         cluster_names=("x",) if collective else (),
     )
@@ -3944,8 +3940,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
             plgpu.SMEM((128, 256), jnp.bfloat16, transforms=transforms),
             plgpu.Barrier(),
         ],
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref, tmem_ref1, tmem_ref2, tmem_ref3, smem_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
@@ -3983,8 +3977,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
         ],
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref, aliased_ref, smem_ref, barrier_ref):
       [tmem_128x32a, tmem_128x32b], tmem_128x64 = aliased_ref
@@ -4088,8 +4080,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         scratch_shapes=[
             plgpu.TMEM((128, 256), jnp.float32),
         ],
-        num_threads=1,
-        thread_name="x",
     )
     def kernel(x_ref, y_ref, tmem_ref):
       x_val = plgpu.load(x_ref, (), layout=plgpu.Layout.TCGEN05, optimized=False)
