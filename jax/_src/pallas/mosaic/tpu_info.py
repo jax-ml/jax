@@ -14,6 +14,7 @@
 
 """Exposes TPU hardware information."""
 
+from collections.abc import Sequence
 import dataclasses
 import enum
 from typing import Callable, cast
@@ -21,9 +22,11 @@ from typing import Callable, cast
 from jax import numpy as jnp
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
+from jax._src import typing as jax_typing
 from jax._src import util as jax_util
+from jax._src.interpreters import pxla
 from jax._src.pallas import utils as pallas_utils
-from jax._src.pallas.mosaic import core
 
 
 class ChipVersionBase:
@@ -262,7 +265,7 @@ class TpuInfo:
 
 
 def is_tpu_device() -> bool:
-  return chip_version_from_device_kind(core.get_device_kind()) is not None
+  return chip_version_from_device_kind(get_device_kind()) is not None
 
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
@@ -459,13 +462,13 @@ def get_tpu_info() -> TpuInfo:
   Note that all information is *per-TensorCore* so you would need to multiply by
   `num_cores` to obtain the total for the chip.
   """
-  device_kind = core.get_device_kind()
+  device_kind = get_device_kind()
   chip_version = chip_version_from_device_kind(device_kind)
   if chip_version is None:
     if device_kind in registry:
       return registry[device_kind]()
     raise ValueError(f"Unsupported TPU device kind: {device_kind}")
-  return _get_tpu_info_impl(chip_version, core.get_num_device_cores())
+  return _get_tpu_info_impl(chip_version, get_num_device_cores())
 
 
 @jax_util.cache(trace_context_in_key=True)
@@ -511,25 +514,54 @@ class Tiling(enum.Enum):
   COMPACT = enum.auto()
   SPARSE_CORE = enum.auto()
 
-  @property
-  def shape(self) -> tuple[int, ...]:
-    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
+  def get_tiles(
+      self, shape: Sequence[int], dtype: jax_typing.DTypeLike
+  ) -> tuple[tuple[int, ...], ...]:
+    info = get_tpu_info()
+    packing = max(1, 32 // dtypes.itemsize_bits(dtype))
     match self:
       case Tiling.COMPACT:
-        return (8, 128)
+        return _get_compact_tiles(info, shape, packing)
       case Tiling.SPARSE_CORE:
-        return (8,)
+        if info.sparse_core is None:
+          raise ValueError("SparseCore is not available")
+        granule_floats = info.sparse_core.dma_granule_size_bytes // 4
+        return ((granule_floats * packing,),)
       case _:
         raise NotImplementedError  # pyrefly#2080
 
 
-def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
-  # This roughly mirrors ``getTilingFactor`` in infer-memref-layout.
-  tpu_generation = get_tpu_info().generation
-  tiling = (1 + int(tpu_generation < 4)) * packing
-  while tiling < min(src, max_tiling):
-    tiling *= 2
-  return tiling
+def _get_compact_tiles(
+    info: TpuInfo, shape: Sequence[int], packing: int
+) -> tuple[tuple[int, ...], ...]:
+  if any(d == 0 for d in shape):
+    return ()
+
+  rank = len(shape)
+  if rank == 0 or rank == 1:
+    num_logical = 1 if rank == 0 else shape[0]
+    n = (
+        pallas_utils.cdiv(num_logical, packing * info.num_lanes)
+        * packing
+        * info.num_lanes
+    )
+    num_physical = min(
+        pallas_utils.next_power_of_2(n), info.num_lanes * info.num_sublanes
+    )
+    tiles: list[tuple[int, ...]] = [(num_physical,)]
+  else:
+    if (second_minor := shape[-2]) < info.num_sublanes:
+      tile_sublanes = max(pallas_utils.next_power_of_2(second_minor), packing)
+    else:
+      tile_sublanes = info.num_sublanes
+    factor = max(1, packing // info.num_sublanes)
+    tiles = [(factor * tile_sublanes, info.num_lanes)]
+
+  if rank >= 1 and packing > 1:
+    if rank == 1:
+      tiles.append((info.num_lanes,))
+    tiles.append((packing, 1))
+  return tuple(tiles)
 
 
 def infer_tiling(
@@ -549,31 +581,29 @@ def infer_tiling(
   shape = ty.shape
   if not hasattr(ty, "dtype"):
     return (None,) * len(shape)
-  if ty.dtype == jnp.dtype("int4"):
-    packing = 8
-  else:
-    packing = 4 // ty.dtype.itemsize
 
   if tiling is None:
     tiling = Tiling.COMPACT
-  tiling_rank = len(tiling.shape)
-  if len(shape) == 1 and tiling == Tiling.COMPACT:
-    sublane_count, lane_count = tiling.shape
-    src_sublane = pallas_utils.cdiv(shape[0], lane_count)
-    max_tiling = max(sublane_count, packing)
-    factor = _get_tiling_factor(src_sublane, max_tiling, packing)
-    return (factor * lane_count,)
+
+  tiles = tiling.get_tiles(shape, ty.dtype)
+  if not tiles:
+    return ()
+  first_tile = tiles[0]
+  tiling_rank = len(first_tile)
   if len(shape) < tiling_rank:
     raise ValueError(
         f"Shape must have at least {tiling_rank} dimensions: {shape=}"
     )
+  return (*(1,) * (len(shape) - tiling_rank), *first_tile)
 
-  leading_dims, final_dims = shape[:-tiling_rank], shape[-tiling_rank:]
-  match tiling:
-    case Tiling.COMPACT:
-      second_minor, _ = final_dims
-      factor = _get_tiling_factor(second_minor, tiling.shape[0], packing)
-      return (*(1,) * len(leading_dims), factor, tiling.shape[1])
-    case Tiling.SPARSE_CORE:
-      [tile_size] = tiling.shape
-      return (*(1,) * len(leading_dims), tile_size * packing)
+
+def get_device_kind() -> str:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return pxla.get_default_device().device_kind
+
+
+def get_num_device_cores() -> int:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return pxla.get_default_device().num_cores
