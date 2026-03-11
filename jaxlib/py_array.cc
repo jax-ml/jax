@@ -107,6 +107,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // IWYU pragma: keep
 #include "xla/util.h"
@@ -427,8 +428,7 @@ nb::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
   static auto* lru_list = new CacheT::LRUList(4096);
   static auto* cache = new CacheT(lru_list);
 
-  static xla::SafeStatic<nb::object> shaped_array_init;
-  const nb::object& shaped_array = shaped_array_init.Get([]() {
+  const nb::object& shaped_array = xla::SafeStaticInit<nb::object>([]() {
     nb::object jax_core;
     try {
       jax_core = nb::module_::import_("jax.core");
@@ -1292,8 +1292,11 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
       ifrt::MemoryKind dst_memory_kind = ifrt::CanonicalizeMemoryKind(
           GetMemoryKind(dst_sharding), dst_devices->devices().front());
 
-      if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
-          array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
+      if (*src_devices == *dst_devices && 
+          src_memory_kind == dst_memory_kind && 
+          array_cs == ifrt::ArrayCopySemantics::kReuseInput && 
+          src_devices->AddressableDeviceList()->size() == 
+              dst_devices->AddressableDeviceList()->size()) {
         if (py_array.sharding().equal(dst_sharding)) {
           results[i] = py_arrays[i];
         } else {
@@ -1963,7 +1966,7 @@ absl::Status PyHostValue::CopyStringArrayToHostAsync(
   auto transfer_guard_formatter = [ifrt_array] {
     return absl::StrCat(
         "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
-        "), dtype=", ifrt_array->dtype(), ", device=",
+        "), dtype=", ifrt_array->dtype().DebugString(), ", device=",
         ifrt_array->sharding().devices()->devices().front()->DebugString());
   };
   TF_RETURN_IF_ERROR(
@@ -2010,7 +2013,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   auto transfer_guard_formatter = [ifrt_array] {
     return absl::StrCat(
         "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
-        "), dtype=", ifrt_array->dtype(), ", device=",
+        "), dtype=", ifrt_array->dtype().DebugString(), ", device=",
         ifrt_array->sharding().devices()->devices().front()->DebugString());
   };
   TF_RETURN_IF_ERROR(
