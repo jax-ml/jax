@@ -202,6 +202,44 @@ def reduce_transpose_expression(
       return Transpose(expression=reduced_expr)
 
 
+def reduce_reduce_expression(
+    expr: Reduce, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(expr.expression, assignments)
+
+  def default():
+    """We don't know how to reduce further."""
+    return dataclasses.replace(expr, expression=reduced_expr)
+
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case RegisterLayout(value=fa.TiledLayout() as layout):
+      # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
+      if expr.keep_dims:
+        return default()
+      num_untiled_dims = expr.rank - len(layout.base_tile_shape)
+      reduced_tiling_axes = [
+          a - num_untiled_dims for a in expr.axes if a >= num_untiled_dims
+      ]
+      if reduced_tiling_axes:
+        return RegisterLayout(layout.reduce(reduced_tiling_axes))
+      return RegisterLayout(layout)
+    case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
+      # We only support reducing leading dimensions.
+      if expr.axes != tuple(range(len(expr.axes))):
+        return default()
+      shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)
+      if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
+        return default()
+      return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
+    case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
+      shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)
+      return RegisterLayout(fa.WGSplatFragLayout(shape))
+    case _:
+      return default()
+
+
 def reduce_expression(
     expr: Expression, assignments: dict[Variable, Constant]
 ) -> Expression | Unsatisfiable:
@@ -211,38 +249,8 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case Reduce(expression=expr, axes=axes, rank=rank, keep_dims=keep_dims):
-      reduced_expr = reduce_expression(expr, assignments)
-      def default():
-        """We don't know how to reduce further."""
-        return Reduce(reduced_expr, axes, rank, keep_dims)
-      match reduced_expr:
-        case Unsatisfiable():
-          return Unsatisfiable()
-        case RegisterLayout(value=fa.TiledLayout() as layout):
-          # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
-          if keep_dims:
-            return default()
-          num_untiled_dims = rank - len(layout.base_tile_shape)
-          reduced_tiling_axes = [
-              a - num_untiled_dims for a in axes if a >= num_untiled_dims
-          ]
-          if reduced_tiling_axes:
-            return RegisterLayout(layout.reduce(reduced_tiling_axes))
-          return RegisterLayout(layout)
-        case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
-          # We only support reducing leading dimensions.
-          if axes != tuple(range(len(axes))):
-            return default()
-          shape = utils.reduce_shape(layout.shape, axes, keep_dims)
-          if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
-            return default()
-          return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
-        case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
-          shape = utils.reduce_shape(layout.shape, axes, keep_dims)
-          return RegisterLayout(fa.WGSplatFragLayout(shape))
-        case _:
-          return default()
+    case Reduce():
+      return reduce_reduce_expression(expr, assignments)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
