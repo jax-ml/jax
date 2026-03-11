@@ -1521,6 +1521,12 @@ compilation_cache_expect_pgle = bool_state(
           'preferred cache entry is found.')
 )
 
+monitoring_tags = string_state(
+    name='jax_monitoring_tags',
+    default=os.getenv('GOOGLE_JAX_COMPILATION_METRICS_TAGS', ''),
+    help='Tags for JAX monitoring, e.g., "key1=val1:key2=val2"',
+)
+
 compilation_cache_max_size = int_state(
     name='jax_compilation_cache_max_size',
     default=-1,

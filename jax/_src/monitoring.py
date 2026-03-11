@@ -24,6 +24,7 @@ aggregation/exporting.
 from __future__ import annotations
 
 from typing import Protocol
+from jax._src import config
 
 
 class EventListenerWithMetadata(Protocol):
@@ -46,6 +47,7 @@ class EventTimeSpanListenerWithMetadata(Protocol):
   ) -> None:
     ...
 
+
 class ScalarListenerWithMetadata(Protocol):
 
   def __call__(
@@ -59,6 +61,27 @@ _event_duration_secs_listeners: list[EventDurationListenerWithMetadata] = []
 _event_time_span_listeners: list[EventTimeSpanListenerWithMetadata] = []
 _scalar_listeners: list[ScalarListenerWithMetadata] = []
 
+_cached_tags_str: str = ""
+_cached_parsed_tags: dict[str, str] = {}
+
+
+def get_parsed_tags() -> dict[str, str]:
+  global _cached_tags_str, _cached_parsed_tags
+  tags_str = config.monitoring_tags.value
+  if tags_str == _cached_tags_str:
+    return _cached_parsed_tags
+
+  tags = {}
+  if tags_str:
+    for pair in tags_str.split(":"):
+      if "=" in pair:
+        key, val = pair.split("=", 1)
+        tags[key] = val
+
+  _cached_tags_str = tags_str
+  _cached_parsed_tags = tags
+  return tags
+
 
 def record_event(event: str, **kwargs: str | int) -> None:
   """Record an event.
@@ -66,6 +89,8 @@ def record_event(event: str, **kwargs: str | int) -> None:
   If **kwargs are specified, all of the named arguments have to be passed in the
   same order across all invocations of this method for the same event.
   """
+  if tags := get_parsed_tags():
+    kwargs = {**tags, **kwargs}
   for callback in _event_listeners:
     callback(event, **kwargs)
 
@@ -77,6 +102,8 @@ def record_event_duration_secs(event: str, duration: float,
   If **kwargs are specified, all of the named arguments have to be passed in the
   same order across all invocations of this method for the same event.
   """
+  if tags := get_parsed_tags():
+    kwargs = {**tags, **kwargs}
   for callback in _event_duration_secs_listeners:
     callback(event, duration, **kwargs)
 
@@ -85,6 +112,8 @@ def record_event_time_span(
     event: str, start_time: float, end_time: float, **kwargs: str | int
 ) -> None:
   """Record an event start and end time in seconds (float)."""
+  if tags := get_parsed_tags():
+    kwargs = {**tags, **kwargs}
   for callback in _event_time_span_listeners:
     callback(event, start_time, end_time, **kwargs)
 
@@ -93,6 +122,8 @@ def record_scalar(
     event: str, value: float | int, **kwargs: str | int
 ) -> None:
   """Record a scalar summary value."""
+  if tags := get_parsed_tags():
+    kwargs = {**tags, **kwargs}
   for callback in _scalar_listeners:
     callback(event, value, **kwargs)
 
