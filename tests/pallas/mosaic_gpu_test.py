@@ -2801,6 +2801,21 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
 
+  def test_broadcast_in_dim_size_one_dimension(self):
+    self.skip_if_wg_semantics()  # failed to infer layout.
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 4, 128), jnp.float32),
+    )
+    def kernel(src_ref, dst_ref):
+      src = plgpu.load(src_ref, (), layout=plgpu.Layout.WG_STRIDED((1, 128), 1))
+      dst = lax.broadcast_in_dim(src, (2, 4, 128), (1, 2))
+      dst_ref[...] = dst
+
+    src = jnp.arange(128, dtype=jnp.float32).reshape((1, 128))
+    dst = lax.broadcast_in_dim(src, (2, 4, 128), (1, 2))
+    np.testing.assert_array_equal(kernel(src), dst)
+
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   def test_copy_layout(self, layout):
     if layout in {
