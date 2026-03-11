@@ -3336,7 +3336,7 @@ class APITest(jtu.JaxTestCase):
   def test_error_for_invalid_dtype(self):
     err_str = (
         "Error interpreting argument to .* as a JAX value. The problematic "
-        "value is of type .* and was passed to the primitive at position 1."
+        "value is of type .* and was passed to add at position 1."
     )
     with self.assertRaisesRegex(TypeError, err_str):
       lax.add(jnp.array(7), np.array("hello"))
@@ -5907,7 +5907,7 @@ class RematTest(jtu.JaxTestCase):
         my_f = lambda: (f(*args),)
         f_ = lu.wrap_init(
             my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
-        out, = core.call_p.bind(f_)
+        out, = core.call_p.bind(subfuns=(f_,))
         return out
       return named_f
 
@@ -5967,11 +5967,9 @@ class RematTest(jtu.JaxTestCase):
     @jax_util.curry
     def call(f, *args):
       my_f = lambda *args: [f(*args)]
-      return core.call(
-          lu.wrap_init(my_f,
-                       debug_info=api_util.debug_info("test_remat", my_f,
-                                                      args, {})),
-          *args, name='foo')[0]
+      sub = lu.wrap_init(
+        my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
+      return core.call(*args, name='foo', subfuns=(sub,))[0]
 
     f = call(add_one)
     g = remat(lambda x: add_one(f(x)))

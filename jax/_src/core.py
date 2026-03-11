@@ -632,8 +632,10 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    args = (args if self.skip_canonicalization else
-      tuple(canonicalize_value(self, i, a) for i, a in enumerate(args)))
+    avals = tuple(_typeof_with_argument_info(self, i, a)
+                  for i, a in enumerate(args))
+    if not self.skip_canonicalization:
+      args = tuple(map(canonicalize_value, args, avals))
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
@@ -689,7 +691,7 @@ class Primitive:
                               .format(self.name))
 
   def get_bind_params(self, params):
-    return [], params
+    return params
 
   def is_high(self, *avals, **params) -> bool:
     return False
@@ -737,12 +739,12 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
   foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
-    subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+    bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
     with source_info_util.user_context(
         traceback, name_stack=name_stack), eqn.ctx.manager:
-      ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
+      ans = eqn.primitive.bind(*map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
     else:
@@ -2065,18 +2067,19 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 class ShardingTypeError(Exception):
   pass
 
-
-# TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
-# passed to primitives are always have avals, etc i.e. they are canonical.
-def canonicalize_value(primitive, i, val):
+def _typeof_with_argument_info(primitive, i, val):
   try:
-    aval = typeof(val)
+    return typeof(val)
   except TypeError as e:
     raise TypeError(
       f"Error interpreting argument to {primitive} as a JAX value."
       f" The problematic value is of type {type(val)} and was passed to"
-      f" the primitive at position {i}.\n"
+      f" {primitive} at position {i}.\n"
     ) from e
+
+# TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
+# passed to primitives are always have avals, etc i.e. they are canonical.
+def canonicalize_value(val, aval):
   if not isinstance(aval, ShapedArray):
     return val
   if aval.sharding.mesh.empty:
@@ -3023,9 +3026,9 @@ class CallPrimitive(Primitive):
   call_primitive = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, fun_and_args, params, /):
-    fun = fun_and_args[0]
-    args = fun_and_args[1:]
+  def bind_with_trace(self, trace, args, params, /):
+    params = dict(params)
+    fun, = params.pop('subfuns')
     return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
@@ -3033,7 +3036,8 @@ class CallPrimitive(Primitive):
     jaxpr = new_params.pop('call_jaxpr')
     subfun = lu.hashable_partial(
         lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info), jaxpr, ())
-    return [subfun], new_params
+    new_params['subfuns'] = (subfun,)
+    return new_params
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
@@ -3050,7 +3054,8 @@ class ClosedCallPrimitive(CallPrimitive):
     jaxpr: ClosedJaxpr = new_params.pop('call_jaxpr')
     subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
                           debug_info=jaxpr.jaxpr.debug_info)
-    return [subfun], new_params
+    new_params['subfuns'] = (subfun,)  # pyrefly: ignore[unsupported-operation]
+    return new_params
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
@@ -3064,9 +3069,9 @@ class MapPrimitive(Primitive):
   map_primitive = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, fun_and_args, params, /):
-    fun: lu.WrappedFun = fun_and_args[0]
-    args = fun_and_args[1:]
+  def bind_with_trace(self, trace, args, params, /):
+    params = dict(params)
+    fun, = params.pop('subfuns')
     assert len(params['in_axes']) == len(args)
     return trace.process_map(self, fun, args, params)
 
@@ -3078,9 +3083,10 @@ class MapPrimitive(Primitive):
     jaxpr: Jaxpr = new_params.pop('call_jaxpr')
     subfun = lu.hashable_partial(
         lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info), jaxpr, ())
+    new_params['subfuns'] = (subfun,)
     axes = new_params.pop('out_axes')
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return [subfun], new_params
+    return new_params
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
   from jax._src.hijax import HiType  # pytype: disable=import-error

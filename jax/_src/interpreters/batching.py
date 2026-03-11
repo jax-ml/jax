@@ -267,7 +267,7 @@ class BatchTrace(Trace):
           return (BatchTracer(self, val_out, dim_out, src)
                   if dim_out is not not_mapped else val_out)
     elif args_not_mapped:  # Not all primitives have batching rules defined
-      return p.bind_with_trace(self.parent_trace, vals_in, params)
+      return p.bind_with_trace(self.parent_trace, tuple(vals_in), dict(params))
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
@@ -278,7 +278,7 @@ class BatchTrace(Trace):
     f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
 
     with core.set_current_trace(self.parent_trace):
-      vals_out = call_primitive.bind(f_, *vals, **params)
+      vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
@@ -314,7 +314,7 @@ class BatchTrace(Trace):
                     for out_axis, d in zip(out_axes_thunk(), dims_out()))
     new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
     with core.set_current_trace(self.parent_trace):
-      vals_out = map_primitive.bind(f, *vals, **new_params)
+      vals_out = map_primitive.bind(*vals, subfuns=(f,), **new_params)
     dims_out_ = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
                   for d, out_axis in zip(dims_out(), out_axes_thunk())]
     src = source_info_util.current()
@@ -324,8 +324,8 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, self.axis_data, in_dims)
-    out_vals = prim.bind_with_trace(self.parent_trace, (fun, jvp, *in_vals),
-                                    dict(symbolic_zeros=symbolic_zeros))
+    out_vals = prim.bind_with_trace(self.parent_trace, tuple(in_vals),
+                                    dict(subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
@@ -346,8 +346,8 @@ class BatchTrace(Trace):
 
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
     out_vals = prim.bind_with_trace(self.parent_trace,
-                                    (fun, fwd, bwd) + tuple(in_vals),
-                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                    tuple(in_vals),
+                                    dict(subfuns=(fun, fwd, bwd), out_trees=out_trees, symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree, input_fwds = out_trees()

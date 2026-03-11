@@ -1568,8 +1568,8 @@ def _interpret_jaxpr(
           if not prim.multiple_results:
             out = out[0]
         else:
-          subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-          out = prim.bind(*subfuns, *deferred_invals(), **bind_params)
+          bind_params = eqn.primitive.get_bind_params(eqn.params)
+          out = prim.bind(*deferred_invals(), **bind_params)
 
       out = out if prim.multiple_results else [out]
       env.write_many(eqn.outvars, out)

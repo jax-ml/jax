@@ -300,7 +300,7 @@ class custom_jvp(Generic[ReturnValue]):
     flat_fun, out_type1 = _flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_type2 = _flatten_jvp(jvp, primal_name, debug_jvp.func_name,
                                        in_tree, out_type1)
-    out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat,
+    out_flat = custom_jvp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_jvp),
                                       symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
@@ -388,8 +388,9 @@ class CustomJVPCallPrimitive(core.Primitive):
   skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params, /):
-    fun, jvp, tracers = args[0], args[1], args[2:]
-    return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
+    params = dict(params)
+    fun, jvp = params.pop('subfuns')
+    return trace.process_custom_jvp_call(self, fun, jvp, args, **params)
 
   def impl(self, fun, _, *args):
     raise NotImplementedError
@@ -402,7 +403,8 @@ class CustomJVPCallPrimitive(core.Primitive):
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
     jvp = lift_jvp(num_consts, jvp_jaxpr_fun)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
-    return [fun, jvp], new_params
+    new_params['subfuns'] = (fun, jvp)  # pyrefly: ignore[unsupported-operation]
+    return new_params
 
 def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
   def jvp(*xs):
@@ -744,8 +746,8 @@ class custom_vjp(Generic[ReturnValue]):
           fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
           debug_fwd, in_tree, out_type)
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
-      out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
-                                        *args_flat, out_trees=out_trees,
+      out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
+                                        out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
       _, (out_tree, _, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
@@ -994,8 +996,9 @@ class CustomVJPCallPrimitive(core.Primitive):
   skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params, /):
-    fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
-    return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
+    params = dict(params)
+    fun, fwd, bwd = params.pop('subfuns')
+    return trace.process_custom_vjp_call(self, fun, fwd, bwd, args, **params)
 
   def impl(self, fun, fwd, bwd, *args):
     raise NotImplementedError
@@ -1010,7 +1013,8 @@ class CustomVJPCallPrimitive(core.Primitive):
     fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
-    return [fun, fwd, bwd], new_params
+    new_params['subfuns'] = (fun, fwd, bwd)  # pyrefly: ignore[unsupported-operation]
+    return new_params
 
 def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
   def fwd(*args):
