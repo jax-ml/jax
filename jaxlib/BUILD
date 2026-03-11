@@ -1077,6 +1077,7 @@ cc_library(
         "@xla//xla/tsl/concurrency:future",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/framework:allocator",
+        "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
