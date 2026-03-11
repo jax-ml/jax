@@ -2154,7 +2154,13 @@ def _broadcast_in_dim_lowering_rule(
   return vector.broadcast(out_type, val)
 
 
-def jax_dot_dims_to_tpu_dot_dot_dims(dimension_numbers, lhs_shape, rhs_shape):
+def jax_dot_dims_to_tpu_dot_dot_dims(
+    dimension_numbers,
+    lhs_shape,
+    rhs_shape,
+    excluding_lhs_dims=frozenset(),
+    excluding_rhs_dims=frozenset(),
+):
   """Converts a jax dot dimension numbers to a tpu dot dimension numbers.
 
   Jax dot dimension numbers are given as a tuple of tuples of sequences of ints
@@ -2164,13 +2170,27 @@ def jax_dot_dims_to_tpu_dot_dot_dims(dimension_numbers, lhs_shape, rhs_shape):
   TPU dot dimension numbers are given as an MLIR definition of the form
   #tpu.dot_dimension_numbers - which can be found in the tpu dilect definition
   # file, tpu.td .
+
+  Args:
+    dimension_numbers: The jax dot dimension numbers.
+    lhs_shape: The shape of the left hand side.
+    rhs_shape: The shape of the right hand side.
+    excluding_lhs_dims: The dimensions of the left hand side to exclude. If
+      specified, these dimensions won't be included in the dot dimension
+      numbers. It's useful when dimensions are not used in contracting, batch,
+      or non-contracting.
+    excluding_rhs_dims: Same as `excluding_lhs_dims`, but for the right hand
+      side.
+
+  Returns:
+    The tpu dot dimension numbers.
   """
   (contracting_dims, batch_dims) = dimension_numbers
   lhs_contracting_dims, rhs_contracting_dims = contracting_dims
   lhs_batch_dims, rhs_batch_dims = batch_dims
 
-  lhs_total_dims = set(range(len(lhs_shape)))
-  rhs_total_dims = set(range(len(rhs_shape)))
+  lhs_total_dims = set(range(len(lhs_shape))) - excluding_lhs_dims
+  rhs_total_dims = set(range(len(rhs_shape))) - excluding_rhs_dims
 
   lhs_non_contracting_dims = sorted(
       lhs_total_dims - set(lhs_contracting_dims) - set(lhs_batch_dims)
