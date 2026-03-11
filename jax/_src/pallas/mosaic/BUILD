@@ -246,6 +246,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:mesh",
+        "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src/pallas",
     ],
