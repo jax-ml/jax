@@ -82,6 +82,7 @@ from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import datetime
 import os
+import tempfile
 import re
 import sys
 from typing import Any
@@ -253,7 +254,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # Replace the word that should not appear.
     updated_testdata = re.sub(r"google.", "googlex", updated_testdata)
     output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
-                           "/tmp/back_compat_testdata")
+                           os.path.join(tempfile.gettempdir(),
+                                        "back_compat_testdata"))
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
     output_file = os.path.join(output_dir, f"{self._testMethodName}.py")

@@ -26,7 +26,8 @@ To add a new test:
     the testdata. Use only `None` for the testdata parameter to signal that
     you want to use a current serialization and not a saved one.
   * Run the test. This will save the serialized data in
-    TEST_UNDECLARED_OUTPUTS_DIR (or "/tmp/back_compat_testdata" if not set).
+    TEST_UNDECLARED_OUTPUTS_DIR (or a "back_compat_testdata" subdirectory of
+    the system temp directory, if not set).
   * Copy the test data defined in the output file, to the file
     jax._src.internal_test_util.export_back_compat_test_data.export_{name}.py.
   * Add a new import statement to this file to import that module
@@ -41,6 +42,7 @@ and cherry pick a new version of the directory
 import logging
 import os
 import re
+import tempfile
 from typing import Any
 
 from absl.testing import absltest
@@ -82,7 +84,7 @@ class CompatTest(jtu.JaxTestCase):
     """Export and serialize a function.
 
     The test data is saved in TEST_UNDECLARED_OUTPUTS_DIR (or
-    "/tmp/back_compat_testdata" if not set) and should be copied as explained
+    the system temp directory, if not set) and should be copied as explained
     in the module docstring.
     """
     exp = _export.export(fun, platforms=platforms)(*args, **kwargs)
@@ -98,7 +100,8 @@ class CompatTest(jtu.JaxTestCase):
     # Replace the word that should not appear.
     updated_testdata = re.sub(r"google.", "googlex", updated_testdata)
     output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
-                           "/tmp/back_compat_testdata")
+                           os.path.join(tempfile.gettempdir(),
+                                        "back_compat_testdata"))
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
     output_file_basename = f"export_{self._testMethodName.replace('test_', '')}.py"
