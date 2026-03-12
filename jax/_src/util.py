@@ -23,7 +23,8 @@ import itertools as it
 import logging
 import math
 import operator
-from typing import (Any, Generic, SupportsIndex, Type, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, ParamSpec, Protocol, SupportsIndex,
+                    Type, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -305,9 +306,32 @@ memoize = cache(max_size=None)
 
 def _ignore(): return None
 
+P = ParamSpec("P")
+R = TypeVar("R", covariant=True)  # pytype: disable=not-supported-yet
+
+class WeakrefCachedFunc(Protocol, Generic[P, R]):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+  def cache_clear(self) -> None: ...
+  def cache_info(self) -> lib_weakref_lru_cache.WeakrefLRUCache.WeakrefLRUCacheInfo: ...
+  def cache_keys(self) -> list[Any]: ...
+  def evict_weakref(self, arg0: Any) -> None: ...
+
+@overload
 def weakref_lru_cache(
-    f=None, *, maxsize: int | None = 2048,
-    trace_context_in_key: bool = True, explain: Callable | None = None):
+    f: Callable[P, R], /, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+) -> WeakrefCachedFunc[P, R]: ...
+
+@overload
+def weakref_lru_cache(
+    f: None = None, /, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+) -> Callable[[Callable[P, R]], WeakrefCachedFunc[P, R]]: ...
+
+def weakref_lru_cache(
+    f: Callable[P, R] | None = None, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+):
   """
   Least recently used cache decorator with weakref support.
 
