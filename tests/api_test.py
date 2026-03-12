@@ -1584,6 +1584,19 @@ class JitTest(jtu.BufferDonationTestCase):
         f()  # crash
     f()  # no crash
 
+  def test_sum_of_closed_over_bools(self, N=32):
+    # Regression test for https://github.com/jax-ml/jax/issues/35762
+    mask = jnp.ones(N, dtype=jnp.bool_)
+
+    with self.subTest("eager"):
+      self.assertEqual(jnp.sum(mask), N)
+
+    with self.subTest("jit arg"):
+      self.assertEqual(jax.jit(lambda m: jnp.sum(m))(mask), N)
+
+    with self.subTest("jit closure"):
+      self.assertEqual(jax.jit(lambda: jnp.sum(mask))(), N)
+
 
 class APITest(jtu.JaxTestCase):
 
