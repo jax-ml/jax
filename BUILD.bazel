@@ -88,7 +88,6 @@ wheel_sources(
         "//jax/extend:ifrt_programs",
         "//jax/extend/mlir",
         "//jax/extend/mlir/dialects",
-        "//jax/tools:colab_tpu",
         "//jax/tools:jax_to_ir",
         "//jax/tools:pgo_nsys_converter",
     ],

@@ -33,13 +33,6 @@ py_library(
 )
 
 py_library(
-    name = "colab_tpu",
-    srcs = [
-        "colab_tpu.py",
-    ],
-)
-
-py_library(
     name = "jax_to_ir",
     srcs = [
         "__init__.py",
