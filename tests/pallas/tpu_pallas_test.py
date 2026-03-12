@@ -3993,6 +3993,40 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q, m, n, k]))
 
+  @parameterized.product(
+      input_output_major_dims=[
+          ((1, 8), (8,)),
+          ((8,), (1, 8)),
+          ((4, 4), (2, 2, 4)),
+          ((2, 2, 4), (4, 4)),
+          ((2, 3), (6,)),
+      ],
+      output_minor_dims=[(8, 128), (4, 256), (8, 120), (5, 32), (5, 7)],
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_reshape_last_dim_to_two_minor_dims_change_major_dim(
+      self, input_output_major_dims, output_minor_dims, dtype
+  ):
+    if output_minor_dims[1] % 128 != 0 and (
+        not jtu.is_cloud_tpu_at_least(2026, 3, 17)
+        or not jtu.is_device_tpu_at_least(5)
+    ):
+      self.skipTest('Operation not supported on this TPU version.')
+    input_major_dims, output_major_dims = input_output_major_dims
+    input_minor_dims = (math.prod(output_minor_dims),)
+    input_shape = input_major_dims + input_minor_dims
+    output_shape = output_major_dims + output_minor_dims
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(output_shape)
+
+    x = np.arange(math.prod(input_shape), dtype=dtype).reshape(input_shape)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape(output_shape))
+
   # (q, m, n) -> (q, m * n) where n % 128 == 0
   @parameterized.parameters(
       (q, m, n, dtype)
