@@ -19,11 +19,56 @@ from collections.abc import Callable
 import dataclasses
 import threading
 from typing import Any
+import weakref
 
 
 @dataclasses.dataclass
 class _ClassWrapperForGarbageCollection:
   obj: Any
+
+
+@dataclasses.dataclass
+class _ConsumableRef:
+  """Stores a strong ref initially, but switches to a weak ref once consumed.
+
+  We consider a _ConsumableRef to have been consumed once the __call__ method
+  has been called once, and the _ConsumableRef is no longer storing a strong
+  ref. We consider a _ConsumableRef to have expired once it has been consumed
+  and the resulting weak ref has expired.
+
+  Pickling and unpickling an unexpired _ConsumableRef will create a new,
+  unconsumed _ConsumableRef. Pickling and unpickling an expired _ConsumableRef
+  will create an expired _ConsumableRef.
+  """
+
+  strong_ref: Any | None = None
+  weak_ref: weakref.ref | None = None
+  _mutex = threading.Lock()
+
+  def __init__(self, obj: Any) -> None:
+    self.strong_ref = obj
+
+  def __call__(self, *args, **kwargs):
+    with self._mutex:
+      if self.strong_ref is not None:
+        assert self.weak_ref is None
+        result = self.strong_ref
+        self.strong_ref = None
+        self.weak_ref = weakref.ref(result)
+        return result
+      elif self.weak_ref is not None:
+        return self.weak_ref()
+      else:
+        return None
+
+  def __reduce__(self):
+    with self._mutex:
+      if self.strong_ref is not None:
+        return type(self), (self.strong_ref,)
+      elif self.weak_ref is not None:
+        return type(self), (self.weak_ref(),)
+      else:
+        return type(self), (None,)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -34,7 +79,11 @@ class _ObjectState:
 
 
 class _ObjectStore:
-  """Stores live objects."""
+  """Stores live objects.
+
+  TODO(madthanu): Currently the dictionary never removes entries that are
+  expired refs.
+  """
 
   def __init__(self) -> None:
     self._lock = threading.Condition()

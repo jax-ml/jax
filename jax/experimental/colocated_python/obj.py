@@ -20,7 +20,6 @@ import inspect
 import random
 import threading
 from typing import Any
-import weakref
 
 import jax
 from jax._src import api_util
@@ -106,25 +105,19 @@ def _make_method(
       return type(self), ()
 
     def _first_call(self):
-      # Temporarily hold a strong reference to a new object if it is created
-      # using initializer.
-      temp_strong_ref = None
-
       def initializer():
         if not use_weakrefs:
           return obj_backend._ClassWrapperForGarbageCollection(  # pylint: disable=protected-access
               cls(*init_args, **init_kwargs)
           )
-        nonlocal temp_strong_ref
-        temp_strong_ref = cls(*init_args, **init_kwargs)
-        return weakref.ref(temp_strong_ref)
+        return obj_backend._ConsumableRef(cls(*init_args, **init_kwargs))  # pylint: disable=protected-access
 
       retrieved = obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
           uid, initializer
       )
 
       if use_weakrefs:
-        self.obj = temp_strong_ref
+        self.obj = retrieved()
       else:
         self.obj = retrieved
 
@@ -140,6 +133,12 @@ def _make_method(
             self.obj, obj_backend._ClassWrapperForGarbageCollection
         )
         return getattr(self.obj.obj, method_name)(*args, **kwargs)
+
+    def __del__(self):
+      if use_weakrefs and not hasattr(self, 'obj'):
+        # It is possible that no one has ever consumed the _ConsumableRef. So
+        # consume it now.
+        self._first_call()
 
   # Colocated Python callable for the controller.
   callable = func_maker.make_callable(
