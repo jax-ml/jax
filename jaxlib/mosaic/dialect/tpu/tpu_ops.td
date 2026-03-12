@@ -867,18 +867,18 @@ def TPU_RoundingModeEnum : EnumAttr<TPU_Dialect, TPU_RoundingMode, "rounding_mod
 // Internal operation. All arith.fptosi operations that change the bitwidth
 // must be canonicalized to this operation.
 def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
-  let arguments = (ins AnyVectorOfAnyRank:$input, TPU_RoundingModeEnum:$rounding_mode);
+  let arguments = (ins AnyVectorOfAnyRank:$in, TPU_RoundingModeEnum:$rounding_mode);
   let results = (outs AnyVectorOfAnyRank:$output);
-  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
   let hasCanonicalizeMethod = 1;
 }
 
 // Internal operation. All arith.fptoui operations that change the bitwidth
 // must be canonicalized to this operation.
 def TPU_FPToUIOp : TPU_Op<"fptoui", [Pure, ElementwiseMappable]> {
-  let arguments = (ins AnyVectorOfAnyRank:$input, TPU_RoundingModeEnum:$rounding_mode);
+  let arguments = (ins AnyVectorOfAnyRank:$in, TPU_RoundingModeEnum:$rounding_mode);
   let results = (outs AnyVectorOfAnyRank:$output);
-  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
 }
 
 // Internal operation. All arith.sitofp operations that change the bitwidth

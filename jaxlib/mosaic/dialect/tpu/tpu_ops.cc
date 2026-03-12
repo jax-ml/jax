@@ -1748,7 +1748,7 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
 }
 
 LogicalResult FPToSIOp::canonicalize(FPToSIOp op, PatternRewriter &rewriter) {
-  if (auto round_op = op.getInput().getDefiningOp<mlir::math::RoundEvenOp>()) {
+  if (auto round_op = op.getIn().getDefiningOp<mlir::math::RoundEvenOp>()) {
     rewriter.replaceOpWithNewOp<tpu::FPToSIOp>(
         op, op.getType(), round_op.getOperand(),
         tpu::RoundingMode::kToNearestEven);
