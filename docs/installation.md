@@ -17,6 +17,10 @@ different builds for different operating systems and accelerators.
   ```
   pip install -U "jax[cuda13]"
   ```
+* **GPU (AMD, ROCm)**
+  ```
+  pip install -U "jax[rocm7-local]"
+  ```
 
 * **TPU (Google Cloud TPU VM)**
   ```
@@ -239,8 +243,20 @@ JAX is not supported on Mac/OSX GPU; instead use the standard {ref}`CPU installa
 
 AMD GPU support is provided by a ROCm JAX plugin supported by AMD.
 
-There are several ways to use JAX on AMDGPU devices.
-Please see [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
+### pip installation: AMD GPU (ROCm)
+
+JAX supports a ROCm install via:
+
+```bash
+pip install --upgrade "jax[rocm7-local]"
+```
+
+ROCm-specific fixes are shipped as *post-releases* of the ROCm plugin/PJRT
+packages (for example, `jax-rocm7-plugin==0.9.1.post1`). Upgrading
+`jax[rocm7-local]` will pick up the newest compatible post-release available from
+your configured package indexes.
+
+For prerequisites (ROCm/Docker), and for ROCm-specific extras such as `jax[rocm7-local]`, please see [AMD's Instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
 
 **Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
 1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
