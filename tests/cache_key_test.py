@@ -25,6 +25,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax.experimental import pallas as pl
 from jax._src import cache_key
 from jax._src import compiler
 from jax._src import config
@@ -288,6 +289,38 @@ class CacheKeyTest(jtu.JaxTestCase):
       key1 = cache_key.get(computation1, devices, compile_options, backend)
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
+
+  @parameterized.parameters([False, True])
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
+  def test_identical_pallas_kernels_different_metadata(self, include_metadata):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Pallas TPU lowering requires TPU backend")
+
+    # Same kernel body at different source lines; same __name__ to avoid kernel_name diff
+    def make_caller_a():
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1.0
+      return jax.jit(lambda x: pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype))(x))
+
+    def make_caller_b():
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1.0
+      return jax.jit(lambda x: pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype))(x))
+
+    x = np.ones((128,), dtype=np.float32)
+    computation1 = make_caller_a().lower(x).compiler_ir()
+    computation2 = make_caller_b().lower(x).compiler_ir()
+
+    with config.compilation_cache_include_metadata_in_key(include_metadata):
+      hash1 = self.get_hashed_value(
+          cache_key._hash_computation, computation1,
+          cache_key.IgnoreCallbacks.NO)
+      hash2 = self.get_hashed_value(
+          cache_key._hash_computation, computation2,
+          cache_key.IgnoreCallbacks.NO)
+    self.assertEqual(include_metadata, hash1 != hash2)
 
   @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_xla_flags(self):
