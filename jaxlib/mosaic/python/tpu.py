@@ -17,17 +17,10 @@
 # ruff: noqa: F401
 # ruff: noqa: F403
 
-from jax._src.lib import jaxlib_extension_version
-# pylint: disable=g-bad-import-order,g-import-not-at-top
-if jaxlib_extension_version >= 418:
-  from ._tpu_enum_gen import *  # pylint: disable=wildcard-import
-  from . import _tpu_ops_gen
-  from ._tpu_ops_gen import *  # pylint: disable=wildcard-import
-  from ._tpu_ops_gen import _Dialect
-else:
-  from . import _tpu_gen as _tpu_ops_gen
-  from ._tpu_gen import *  # pylint: disable=wildcard-import
-  from ._tpu_gen import _Dialect
+from ._tpu_enum_gen import *  # pylint: disable=wildcard-import
+from . import _tpu_ops_gen
+from ._tpu_ops_gen import *  # pylint: disable=wildcard-import
+from ._tpu_ops_gen import _Dialect
 from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import
 try:
   from jaxlib.mlir.dialects._ods_common import _cext
