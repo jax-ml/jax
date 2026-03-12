@@ -200,3 +200,15 @@ def update_setup_with_rocm_version(file_dir: pathlib.Path, rocm_version: str):
   )
   with open(src_file, "w") as f:
     f.write(content)
+
+def update_setup_with_oneapi_version(file_dir: pathlib.Path, oneapi_version: str):
+  src_file = file_dir / "setup.py"
+  with open(src_file) as f:
+    content = f.read()
+  # Sanitize oneapi_version to replace dots with underscores for package names
+  sanitized_version = oneapi_version.replace(".", "_")
+  content = content.replace(
+      "oneapi_version = 0  # placeholder", f"oneapi_version = '{sanitized_version}'"
+  )
+  with open(src_file, "w") as f:
+    f.write(content)

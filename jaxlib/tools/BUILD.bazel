@@ -19,6 +19,9 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+
+# TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load(
     "@xla//third_party/py:py_import.bzl",
@@ -328,6 +331,8 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:rocm_plugin",
         "//jaxlib/rocm:rocm_gpu_support",
+    ]) + if_sycl([
+        "//jax_plugins/oneapi:oneapi_plugin",
     ]),
     py_srcs = [
         ":version",
@@ -346,6 +351,10 @@ wheel_sources(
         "//jax_plugins/rocm:pyproject.toml",
         "//jax_plugins/rocm:setup.py",
         "//jax_plugins/rocm:__init__.py",
+    ]) + if_sycl([
+        "//jax_plugins/oneapi:pyproject.toml",
+        "//jax_plugins/oneapi:setup.py",
+        "//jax_plugins/oneapi:__init__.py",
     ]),
 )
 
@@ -424,6 +433,26 @@ deploy_wheel(
 deploy_wheel(
     name = "deploy_rocm_pjrt_wheel",
     wheel = ":jax_rocm_pjrt_wheel",
+)
+
+jax_wheel(
+    name = "jax_oneapi_pjrt_wheel",
+    enable_oneapi = True,
+    no_abi = True,
+    platform_version = "2025.1",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_oneapi2025_1_pjrt",
+)
+
+jax_wheel(
+    name = "jax_oneapi_pjrt_wheel_editable",
+    editable = True,
+    enable_oneapi = True,
+    platform_version = "2025.1",
+    source_files = [":jax_pjrt_sources"],
+    wheel_binary = ":build_gpu_plugin_wheel_tool",
+    wheel_name = "jax_oneapi2025_1_pjrt",
 )
 
 # Py_import targets.

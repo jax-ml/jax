@@ -86,6 +86,11 @@ _ROCM_VISIBLE_DEVICES = config.string_flag(
     help=(
       'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
       'comma-separate list of integer device IDs.'))
+_ONEAPI_VISIBLE_DEVICES = config.string_flag(
+    'jax_oneapi_visible_devices', 'all',
+    help=(
+      'Restricts the set of ONEAPI devices that JAX will use. Either "all", or a '
+      'comma-separate list of integer device IDs.'))
 
 MOCK_NUM_GPU_PROCESSES = config.int_flag(
     name="mock_num_gpu_processes",
@@ -287,6 +292,9 @@ _plugin_callback_lock = threading.Lock()
 # that a reasonable feature set is implemented and the plugin fails gracefully
 # for unimplemented features. Wrong outputs are not acceptable.
 _nonexperimental_plugins: set[str] = {'cuda', 'rocm'}
+
+# The set of known experimental plugins that have registrations in JAX codebase.
+_experimental_plugins: set[str] = {"oneapi"}
 
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
@@ -510,9 +518,13 @@ def _options_from_jax_configs(plugin_name):
   elif isinstance(pjrt_client_options, dict):
     options.update(pjrt_client_options)
 
-  if plugin_name in ("cuda", "rocm"):
-    visible_devices = (CUDA_VISIBLE_DEVICES.value if plugin_name == "cuda"
-        else _ROCM_VISIBLE_DEVICES.value)
+  _visible_device_configs = {
+      "cuda": CUDA_VISIBLE_DEVICES,
+      "rocm": _ROCM_VISIBLE_DEVICES,
+      "oneapi": _ONEAPI_VISIBLE_DEVICES,
+  }
+  if plugin_name in _visible_device_configs:
+    visible_devices = _visible_device_configs[plugin_name].value
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
     mock_gpu_topology = MOCK_GPU_TOPOLOGY.value or None
@@ -690,6 +702,7 @@ def _discover_and_register_pjrt_plugins():
 _platform_aliases = {
   "cuda": "gpu",
   "rocm": "gpu",
+  "oneapi": "gpu",
 }
 
 _alias_to_platforms: dict[str, list[str]] = {}
@@ -702,6 +715,7 @@ def known_platforms() -> set[str]:
   platforms |= set(_nonexperimental_plugins)
   platforms |= set(_backend_factories.keys())
   platforms |= set(_platform_aliases.values())
+  platforms |= set(_platform_aliases.keys())
   return platforms
 
 
@@ -715,8 +729,8 @@ def is_known_platform(platform: str) -> bool:
 def canonicalize_platform(platform: str) -> str:
   """Replaces platform aliases with their concrete equivalent.
 
-  In particular, replaces "gpu" with either "cuda" or "rocm", depending on which
-  hardware is actually present. We want to distinguish "cuda" and "rocm" for
+  In particular, replaces "gpu" with either "cuda", "oneapi" or "rocm", depending on which
+  hardware is actually present. We want to distinguish "cuda", "oneapi" and "rocm" for
   purposes such as MLIR lowering rules, but in many cases we don't want to
   force users to care.
   """
@@ -734,7 +748,7 @@ def canonicalize_platform(platform: str) -> str:
 
 
 def expand_platform_alias(platform: str) -> list[str]:
-  """Expands, e.g., "gpu" to ["cuda", "rocm"].
+  """Expands, e.g., "gpu" to ["cuda", "rocm", "oneapi"].
 
   This is used for convenience reasons: we expect cuda and rocm to act similarly
   in many respects since they share most of the same code.
