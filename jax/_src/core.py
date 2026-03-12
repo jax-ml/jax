@@ -2103,6 +2103,12 @@ def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
+def getu(aval):
+  return aval.sharding.spec.unreduced
+
+def getr(aval):
+  return aval.sharding.spec.reduced
+
 def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
   if ndim > len(pspec):

@@ -61,7 +61,7 @@ from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive)
-from jax._src.core import typeof
+from jax._src.core import typeof, getu, getr
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -3923,8 +3923,16 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval,
                     ' arithmetic and type casting.')
   return result_dtype(aval.dtype, **kwargs)
 
-def unop_reduced_rule(out_s, aval, **kwargs):
-  return out_s.update(spec=out_s.spec.update(reduced=aval.sharding.spec.reduced))
+def default_unop_reduced_rule(aval):
+  return getr(aval)
+
+def unop_ur_rule(name, aval, **kwargs):
+  reduced = default_unop_reduced_rule(aval)
+  if any(getu(aval)):
+    raise NotImplementedError(
+        f'unreduced rule for {name} is not implemented. Please'
+        ' file an issue at https://github.com/jax-ml/jax/issues')
+  return frozenset(), reduced
 
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -3932,7 +3940,7 @@ def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             sharding_rule=_attrgetter('sharding'),
                             vma_rule=_attrgetter('vma'),
-                            reduced_rule=unop_reduced_rule)
+                            ur_rule=partial(unop_ur_rule, name))
   batching.defvectorized(prim)
   return prim
 
@@ -4024,10 +4032,9 @@ def replicated_axes(sh, mesh):
   return frozenset(mesh.axis_names) - (
       flat_spec | sh.spec.unreduced | sh.spec.reduced)
 
-def nary_reduced_rule(out_s, *avals, **params):
+def default_nary_reduced_rule(*avals, **params):
   cur_mesh = get_abstract_mesh()
-  specs = [a.sharding.spec for a in avals]
-  reduced_spec = {s.reduced for s in specs if s.reduced}
+  reduced_spec = {r for a in avals if (r := core.getr(a))}
   if len(reduced_spec) > 1:
     raise core.ShardingTypeError(
         'All inputs should be reduced across the same mesh axes. Got specs:'
@@ -4035,6 +4042,7 @@ def nary_reduced_rule(out_s, *avals, **params):
   reduced_s, = reduced_spec if reduced_spec else (frozenset(),)
   if reduced_s:
     for a in avals:
+      # TODO(yashkatariya): Generalize this for manual mode
       s = a.sharding.spec
       flat_spec = flatten_spec(s)
       if replicated_axes(a.sharding, cur_mesh) & reduced_s:
@@ -4047,11 +4055,18 @@ def nary_reduced_rule(out_s, *avals, **params):
             ' reduced on. Reshard the input which is reduced to be sharded on'
             ' the mesh axes it is reduced on via `jax.sharding.reshard(inp,'
             f' jax.P(...))`. Got input spec: {s} and reduced spec: {reduced_s}')
-  return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
+  return reduced_s
 
+def nary_ur_rule(name, *avals, **params):
+  reduced = default_nary_reduced_rule(*avals, **params)
+  if any(getu(a) for a in avals):
+    raise NotImplementedError(
+        f'unreduced rule for {name} is not implemented. Please'
+        ' file an issue at https://github.com/jax-ml/jax/issues')
+  return frozenset(), reduced
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
-           require_same_dtypes=True, unreduced_rule=None, reduced_rule=None):
+           require_same_dtypes=True, ur_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
@@ -4060,7 +4075,7 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
       vma_rule=partial(core.standard_vma_rule, name),
-      unreduced_rule=unreduced_rule, reduced_rule=nary_reduced_rule)
+      ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule)
   batching.defbroadcasting(prim)
   return prim
 standard_naryop = partial(naryop, input_dtype)
@@ -4627,14 +4642,15 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_unreduced_rule(out_sharding, x, y):
-  x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
+def _add_ur_rule(x, y):
+  out_reduced = default_nary_reduced_rule(x, y)
+  x_ur, y_ur = getu(x), getu(y)
   if x_ur and y_ur:
     if x_ur != y_ur:
       raise core.ShardingTypeError(
           'lhs and rhs to `add` must be unreduced along the same mesh axes. '
           f'Got lhs={x_ur}, rhs={y_ur}')
-    res_unreduced = x_ur
+    out_unreduced = x_ur
   elif x_ur or y_ur:
     if x_ur and not y_ur:
       lhs_str, rhs_str = 'lhs', 'rhs'
@@ -4646,11 +4662,11 @@ def _add_unreduced_rule(out_sharding, x, y):
         ' not allow this because there will be implicit communication. Please'
         f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
-    res_unreduced = frozenset()
-  return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
+    out_unreduced = frozenset()
+  return out_unreduced, out_reduced
 
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          unreduced_rule=_add_unreduced_rule)
+                          ur_rule=_add_ur_rule)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -4686,8 +4702,9 @@ ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 
-def _mul_unreduced_rule(out_sharding, x, y):
-  x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
+def _mul_ur_rule(x, y):
+  out_reduced = default_nary_reduced_rule(x, y)
+  x_ur, y_ur = getu(x), getu(y)
   if x_ur and y_ur:
     raise core.ShardingTypeError(
           'lhs and rhs to `mul` cannot be unreduced since mul is bilinear. '
@@ -4708,14 +4725,11 @@ def _mul_unreduced_rule(out_sharding, x, y):
     assert not x_ur and not y_ur
     out_unreduced = frozenset()
   if out_unreduced:
-    assert out_sharding.spec.reduced == out_unreduced
+    assert out_reduced == out_unreduced
     out_reduced = frozenset()  # if both are equal, set difference is empty.
-  else:
-    out_reduced = out_sharding.spec.reduced
-  return out_sharding.update(spec=out_sharding.spec.update(
-      unreduced=out_unreduced, reduced=out_reduced))
+  return out_unreduced, out_reduced
 
-mul_p = standard_naryop([_num, _num], 'mul', unreduced_rule=_mul_unreduced_rule)
+mul_p = standard_naryop([_num, _num], 'mul', ur_rule=_mul_ur_rule)
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
@@ -4873,15 +4887,8 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
       return core.get_cur_mesh_sharding()
   return sharding
 
-def _convert_element_type_unreduced_rule(out_s, operand, *, new_dtype,
-                                         weak_type, sharding):
-  return out_s.update(spec=out_s.spec.update(
-      unreduced=operand.sharding.spec.unreduced))
-
-def _convert_element_type_reduced_rule(out_s, operand, *, new_dtype,
-                                       weak_type, sharding):
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
+  return getu(operand), getr(operand)
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
@@ -4968,8 +4975,7 @@ convert_element_type_p = standard_primitive(
     'convert_element_type', weak_type_rule=_convert_element_type_weak_type_rule,
     sharding_rule=_convert_element_type_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'convert_element_type'),
-    unreduced_rule=_convert_element_type_unreduced_rule,
-    reduced_rule=_convert_element_type_reduced_rule)
+    ur_rule=_convert_element_type_ur_rule)
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
@@ -5353,13 +5359,12 @@ def _dot_general_sharding_computation(lhs_spec, rhs_spec,
   return NamedSharding(mesh, P(*(batch_spec + lhs_tensored_spec + rhs_tensored_spec)))
 
 
-def _dot_general_unreduced_rule(out_s, lhs, rhs, *, dimension_numbers,
-                                **kwargs):
-  if lhs.sharding.spec.unreduced or rhs.sharding.spec.unreduced:
+def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
+  if getu(lhs) or getu(rhs):
     raise core.ShardingTypeError(
         f'lhs or rhs passed to dot_general cannot be unreduced. Got {lhs=} and'
         f' {rhs=}')
-  if out_s.spec.unreduced:
+  if out_sharding is not None and out_sharding.spec.unreduced:  # Explicit mode
     (lhs_contracting, rhs_contracting), _ = dimension_numbers
     lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
     rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
@@ -5367,19 +5372,21 @@ def _dot_general_unreduced_rule(out_s, lhs, rhs, *, dimension_numbers,
       raise core.ShardingTypeError(
           'lhs and rhs contracting dims should be sharded identically when'
           ' out_sharding provided to dot_general mentions unreduced_axes.'
-          f' Got {out_s=}, {lhs_contracting_spec=},'
-          f' {rhs_contracting_spec=}')
+          f' Got {lhs_contracting_spec=}, {rhs_contracting_spec=}')
     flat_spec = [s for s in flatten_spec(lhs_contracting_spec) if s is not None]
-    if out_s.spec.unreduced != frozenset(flat_spec):
+    if out_sharding.spec.unreduced != frozenset(flat_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be equal to the contracting"
-          f' specs. Got unreduced axes={out_s.spec.unreduced} and'
+          f' specs. Got unreduced axes={out_sharding.spec.unreduced} and'
           f' contracting spec={lhs_contracting_spec}')
-  return out_s
+    return out_sharding.spec.unreduced
+  return frozenset()
 
-def _dot_general_reduced_rule(out_s, lhs, rhs, *, dimension_numbers, **kwargs):
-  return out_s
-
+def _dot_general_ur_rule(lhs, rhs, *, dimension_numbers, out_sharding, **kwargs):
+  out_unreduced = _dot_general_unreduced_rule(lhs, rhs, dimension_numbers,
+                                              out_sharding)
+  # TODO(yashkatariya): Propagate reduced and make checks like nary_reduced_rule
+  return out_unreduced, frozenset()
 
 def tuple_delete(tup, idx):
   idx_ = set(idx)
@@ -5604,8 +5611,7 @@ dot_general_p = standard_primitive(
     'dot_general',
     sharding_rule=_dot_general_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dot_general'),
-    unreduced_rule=_dot_general_unreduced_rule,
-    reduced_rule=_dot_general_reduced_rule,
+    ur_rule=_dot_general_ur_rule,
 )
 
 
@@ -6705,25 +6711,28 @@ def _concatenate_sharding_rule(*operands, **kwargs):
         f"All operands should have the same sharding. Got shardings {ss}")
   return non_empty_s[0]
 
-def _concatenate_reduced_rule(out_s, *operands, **kwargs):
-  reduced_specs = {o.sharding.spec.reduced
-                   for o in operands if o.sharding.spec.reduced}
+def _concatenate_reduced_rule(*operands, **kwargs):
+  reduced_specs = {r for o in operands if (r := getr(o))}
   if len(reduced_specs) > 1:
     raise core.ShardingTypeError(
         'All operands should be reduced along the same mesh axes. Got reduced'
         f' specs: {reduced_specs}')
   reduced_s, = reduced_specs if reduced_specs else (frozenset(),)
-  return out_s.update(spec=out_s.spec.update(reduced=reduced_s))
+  return reduced_s
 
-def _concatenate_unreduced_rule(out_s, *operands, **kwargs):
-  unreduced_specs = {o.sharding.spec.unreduced
-                     for o in operands if o.sharding.spec.unreduced}
+def _concatenate_unreduced_rule(*operands, **kwargs):
+  unreduced_specs = {u for o in operands if (u := getu(o))}
   if len(unreduced_specs) > 1:
     raise core.ShardingTypeError(
         'All operands should be unreduced along the same mesh axes. Got'
         f' unreduced specs: {unreduced_specs}')
   unreduced_s, = unreduced_specs if unreduced_specs else (frozenset(),)
-  return out_s.update(spec=out_s.spec.update(unreduced=unreduced_s))
+  return unreduced_s
+
+def _concatenate_ur_rule(*operands, **kwargs):
+  out_unreduced = _concatenate_unreduced_rule(*operands, **kwargs)
+  out_reduced = _concatenate_reduced_rule(*operands, **kwargs)
+  return out_unreduced, out_reduced
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
@@ -6755,8 +6764,7 @@ concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'concatenate'),
-    unreduced_rule=_concatenate_unreduced_rule,
-    reduced_rule=_concatenate_reduced_rule)
+    ur_rule=_concatenate_ur_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
@@ -6825,11 +6833,9 @@ def _split_sharding_rule(operand, *, sizes, axis):
   return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
           for out_sh in out_shapes]
 
-def _split_unreduced_rule(out_shardings, operand, *, sizes, axis):
-  return out_shardings
-
-def _split_reduced_rule(out_shardings, operand, *, sizes, axis):
-  return out_shardings
+def _split_ur_rule(operand, *, sizes, axis):
+  out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
+  return [getu(operand)] * len(out_shapes), [getr(operand)] * len(out_shapes)
 
 def _split_vma_rule(operand, *, sizes, axis):
   out_vma = core.standard_vma_rule('split', operand)
@@ -6841,7 +6847,7 @@ split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule, _split_unreduced_rule, _split_reduced_rule))
+            _split_vma_rule, _split_ur_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -6960,9 +6966,12 @@ def _squeeze_sharding_rule(operand, *, dimensions):
   return operand.sharding.update(
       spec=operand.sharding.spec.update(partitions=new_spec))
 
-def _squeeze_reduced_rule(out_s, operand, *, dimensions):
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+def _squeeze_ur_rule(operand, *, dimensions):
+  if operand.sharding.spec.unreduced:
+    raise NotImplementedError(
+        'squeeze unreduced rule is not implemented. Please file a bug at '
+        'https://github.com/jax-ml/jax/issues')
+  return frozenset(), getr(operand)
 
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
@@ -6994,7 +7003,7 @@ squeeze_p = standard_primitive(
     _squeeze_shape_rule, _squeeze_dtype_rule, 'squeeze',
     sharding_rule=_squeeze_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'squeeze'),
-    reduced_rule=_squeeze_reduced_rule)
+    ur_rule=_squeeze_ur_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
@@ -7169,35 +7178,40 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   return operand.sharding.update(spec=new_spec)
 
 
-def _reshape_unreduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
-  if operand.sharding.spec.unreduced:
-    if (sharding is not None and
-        operand.sharding.spec.unreduced != sharding.spec.unreduced):
+def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):
+  op_unreduced = getu(operand)
+  if op_unreduced:
+    if sharding is not None and op_unreduced != sharding.spec.unreduced:
       raise ValueError(
           'out_sharding passed to reshape must be unreduced over the same mesh'
           f' axes as operand. Got out_sharding: {sharding.spec} and operand'
           f' type: {operand.str_short(True)}')
-    return out_s.update(spec=out_s.spec.update(
-        unreduced=operand.sharding.spec.unreduced))
+    return op_unreduced
   if sharding is not None and sharding.spec.unreduced:
     raise ValueError('out_sharding passed to `reshape` cannot contain '
                      f'unreduced axes. Got {sharding}')
-  return out_s
+  return op_unreduced
 
-def _reshape_reduced_rule(out_s, operand, *, new_sizes, dimensions, sharding):
-  if operand.sharding.spec.reduced:
-    if (sharding is not None and
-        operand.sharding.spec.reduced != sharding.spec.reduced):
+def _reshape_reduced_rule(operand, *, new_sizes, dimensions, sharding):
+  op_reduced = getr(operand)
+  if op_reduced:
+    if sharding is not None and op_reduced != sharding.spec.reduced:
       raise ValueError(
           'out_sharding passed to reshape must be reduced over the same mesh'
           f' axes as operand. Got out_sharding: {sharding.spec} and operand'
           f' type: {operand.str_short(True)}')
-    return out_s.update(spec=out_s.spec.update(
-        reduced=operand.sharding.spec.reduced))
+    return op_reduced
   if sharding is not None and sharding.spec.reduced:
     raise ValueError('out_sharding passed to `reshape` cannot contain '
                      f'reduced axes. Got {sharding}')
-  return out_s
+  return op_reduced
+
+def _reshape_ur_rule(operand, *, new_sizes, dimensions, sharding):
+  out_unreduced = _reshape_unreduced_rule(
+      operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
+  out_reduced = _reshape_reduced_rule(
+      operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
+  return out_unreduced, out_reduced
 
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
                             sharding):
@@ -7259,7 +7273,7 @@ reshape_p = standard_primitive(
     _reshape_shape_rule, _reshape_dtype_rule, 'reshape',
     sharding_rule=_reshape_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reshape'),
-    unreduced_rule=_reshape_unreduced_rule, reduced_rule=_reshape_reduced_rule)
+    ur_rule=_reshape_ur_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
@@ -7317,13 +7331,8 @@ def _transpose_sharding_rule(operand, *, permutation):
   new_spec = [o_spec[old_idx] for old_idx in permutation]
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
-def _transpose_unreduced_rule(out_s, operand, *, permutation):
-  return out_s.update(spec=out_s.spec.update(
-      unreduced=operand.sharding.spec.unreduced))
-
-def _transpose_reduced_rule(out_s, operand, *, permutation):
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+def _transpose_ur_rule(operand, *, permutation):
+  return getu(operand), getr(operand)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -7345,8 +7354,7 @@ transpose_p = standard_primitive(
     _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'transpose'),
-    unreduced_rule=_transpose_unreduced_rule,
-    reduced_rule=_transpose_reduced_rule)
+    ur_rule=_transpose_ur_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
@@ -7644,7 +7652,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule, None, None))
+            _reduce_vma_rule, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -7708,26 +7716,24 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
-def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **_):
-  if unreduced_spec := out_s.spec.unreduced:
+def _reduce_sum_unreduced_rule(operand, axes, out_sharding):
+  if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode
     axes = frozenset(axes)
     used_spec = frozenset(
         s for i, spec in enumerate(operand.sharding.spec) if i in axes
         for s in (spec if isinstance(spec, tuple) else (spec,))
     ) | operand.sharding.spec.unreduced
-    if not all(u in used_spec for u in unreduced_spec):
+    if not all(u in used_spec for u in out_sharding.spec.unreduced):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be in operand's specs that"
           f' were summed over. Got {operand=}, {axes=},'
-          f' unreduced_spec={unreduced_spec}')
-  elif operand.sharding.spec.unreduced:
-    return out_s.update(spec=out_s.spec.update(
-        unreduced=operand.sharding.spec.unreduced))
-  return out_s
+          f' unreduced_spec={out_sharding.spec.unreduced}')
+    return out_sharding.spec.unreduced
+  return getu(operand)
 
-def _reduce_sum_reduced_rule(out_s, operand, *, axes, **_):
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+def _reduce_sum_ur_rule(operand, *, axes, out_sharding):
+  out_unreduced = _reduce_sum_unreduced_rule(operand, axes, out_sharding)
+  return out_unreduced, getr(operand)
 
 def _reduce_sum_dtype_rule(operand, *, axes, **_):
   dt = _reduce_number_dtype_rule('reduce_sum', operand)
@@ -7742,8 +7748,7 @@ reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, _reduce_sum_dtype_rule,
   'reduce_sum', sharding_rule=_reduce_sum_sharding_rule,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
-  unreduced_rule=_reduce_sum_unreduced_rule,
-  reduced_rule=_reduce_sum_reduced_rule)
+  ur_rule=_reduce_sum_ur_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 
@@ -8454,7 +8459,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule, None, None))
+            _rng_bit_generator_vma_rule, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 

@@ -1520,10 +1520,12 @@ def _dynamic_slice_sharding_rule(operand, *starts_and_dyn_sizes, slice_sizes):
       operand, *starts_and_dyn_sizes, slice_sizes=slice_sizes)
   return _get_sharding_for_varying_out_shape(out_shape, operand, 'dynamic_slice')
 
-def _dynamic_slice_reduced_rule(out_s, operand, *starts_and_dyn_sizes,
-                                slice_sizes):
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
+  if core.getu(operand):
+    raise NotImplementedError(
+        'unreduced rule for dynamic_slice is not implemented. Please'
+        ' file an issue at https://github.com/jax-ml/jax/issues')
+  return frozenset(), core.getr(operand)
 
 def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
@@ -1614,7 +1616,7 @@ dynamic_slice_p = standard_primitive(
     weak_type_rule=_argnum_weak_type(0),
     sharding_rule=_dynamic_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'),
-    reduced_rule=_dynamic_slice_reduced_rule)
+    ur_rule=_dynamic_slice_ur_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -1657,25 +1659,26 @@ def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
         f" {update.str_short(mesh_axis_types=True)}.")
   return operand.sharding
 
-def _dynamic_update_slice_unreduced_rule(out_s, operand, update, *start_indices):
-  if operand.sharding.spec.unreduced != update.sharding.spec.unreduced:
+def _dus_unreduced_rule(operand, update):
+  if core.getu(operand) != core.getu(update):
     raise core.ShardingTypeError(
         "dynamic_update_slice operand and update must be unreduced along the"
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  return out_s.update(spec=out_s.spec.update(
-      unreduced=operand.sharding.spec.unreduced))
+  return core.getu(operand)
 
-def _dynamic_update_slice_reduced_rule(out_s, operand, update, *start_indices):
-  if operand.sharding.spec.reduced != update.sharding.spec.reduced:
+def _dus_reduced_rule(operand, update):
+  if core.getr(operand) != core.getr(update):
     raise core.ShardingTypeError(
         "dynamic_update_slice operand and update must be reduced along the"
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  return out_s.update(spec=out_s.spec.update(
-      reduced=operand.sharding.spec.reduced))
+  return core.getr(operand)
+
+def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
+  return _dus_unreduced_rule(operand, update), _dus_reduced_rule(operand, update)
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)
@@ -1746,8 +1749,7 @@ dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'),
-    unreduced_rule=_dynamic_update_slice_unreduced_rule,
-    reduced_rule=_dynamic_update_slice_reduced_rule)
+    ur_rule=_dynamic_update_slice_ur_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
