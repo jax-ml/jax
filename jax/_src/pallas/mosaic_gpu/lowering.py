@@ -378,7 +378,6 @@ def _reduce_resource_estimator(
   return Resources(smem_scratch_bytes=ctx.reduction_scratch_bytes)
 
 
-
 @_register_resource_estimator(primitives.jaxpr_call_p)
 def _jaxpr_call_resource_estimator(
     ctx: ResourceEstimatorContext,
@@ -3826,8 +3825,6 @@ def _bcast_wg(
   as ``x_aval`` and ``y_aval``, and broadcasted to the output shape
   if necessary.
   """
-  if not out_aval.shape:
-    return _ensure_ir_value(x, x_aval.dtype), _ensure_ir_value(y, y_aval.dtype)
   x_dtype = x_aval.dtype
   if not isinstance(x, ir.Value):
     if x_aval.weak_type:
@@ -3838,22 +3835,22 @@ def _bcast_wg(
     if y_aval.weak_type:
       y_dtype = x_aval.dtype
     y = _ensure_ir_value(y, y_dtype)
-  if not isinstance(x.type, ir.VectorType):
-    assert not x_aval.shape
-    x = vector_dialect.broadcast(
-        ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(x_dtype)),
-        x,
-    )
-  elif x_aval.shape != out_aval.shape:
-    raise NotImplementedError("Unsupported broadcast")
-  if not isinstance(y.type, ir.VectorType):
-    assert not y_aval.shape
-    y = vector_dialect.broadcast(
-        ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(y_dtype)),
-        y,
-    )
-  elif y_aval.shape != out_aval.shape:
-    raise NotImplementedError("Unsupported broadcast")
+  if not out_aval.shape:
+    return x, y
+
+  def bcast(value, dtype):
+    ty = ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(dtype))
+    if isinstance(value.type, ir.VectorType):
+      assert value.type.rank == len(out_aval.shape), "broadcast ranks mismatch"
+      dims = range(len(out_aval.shape))
+      return mgpu.dialect.broadcast_in_dim(ty, value, dims)
+    else:  # scalar broadcast
+      return vector_dialect.broadcast(ty, value)
+
+  if x_aval.shape != out_aval.shape:
+    x = bcast(x, x_dtype)
+  if y_aval.shape != out_aval.shape:
+    y = bcast(y, y_dtype)
   return x, y
 
 

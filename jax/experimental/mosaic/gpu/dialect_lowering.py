@@ -797,14 +797,7 @@ def _mgpu_layout_cast_op_lowering_rule(
 def _mgpu_broadcast_in_dim_op_lowering_rule(
     _: LoweringContext, op: mgpu.BroadcastInDimOp
 ) -> Sequence[ir.Value]:
-  in_ty = ir.VectorType(op.operand.type)
   out_ty = ir.VectorType(op.result.type)
-  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-    raise NotImplementedError(
-        "Broadcast in dim with non-trivial broadcast dimensions is not"
-        f" supported: {op}"
-    )
-
   broadcast_dims = tuple(op.broadcast_dimensions)
   in_layout_attr = inference_utils.in_layouts(op)[0]
   operand_fa = _fragmented_array_from_ir(op.operand, in_layout_attr)

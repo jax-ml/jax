@@ -2746,7 +2746,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )
 
   def test_broadcast_in_dim_wg_strided_majormost_dim(self):
-    self.skip_if_wg_semantics()
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
@@ -2766,7 +2765,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       ((2, 4, 128),),
   )
   def test_broadcast_wg_strided_majormost_dim(self, out_shape):
-    self.skip_if_wg_semantics()  # Lowering not implemented.
     dtype = jnp.float32
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, dtype)
