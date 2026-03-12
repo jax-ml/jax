@@ -405,31 +405,45 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
         o_ref[...] += x_ref[...] @ y_ref[...]
       pltpu.emit_pipeline(
           pipeline_step,
-          core_axis=0,
-          grid=(512 // block_shape[0], 512 // block_shape[0], 512 // block_shape[0]),
+          core_axis_name='core',
+          grid=(
+              512 // block_shape[0],
+              512 // block_shape[0],
+              512 // block_shape[0],
+          ),
           dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
           in_specs=[
-              pl.BlockSpec(block_shape, lambda i, j, k: (i, k),
-                pipeline_mode=pl.Buffered(buffer_count=x_buffer_count)),
-              pl.BlockSpec(block_shape, lambda i, j, k: (k, j),
-                pipeline_mode=pl.Buffered(buffer_count=y_buffer_count)),
+              pl.BlockSpec(
+                  block_shape,
+                  lambda i, j, k: (i, k),
+                  pipeline_mode=pl.Buffered(buffer_count=x_buffer_count),
+              ),
+              pl.BlockSpec(
+                  block_shape,
+                  lambda i, j, k: (k, j),
+                  pipeline_mode=pl.Buffered(buffer_count=y_buffer_count),
+              ),
           ],
-          out_specs=pl.BlockSpec(block_shape, lambda i, j, k: (i, j),
-            pipeline_mode=pl.Buffered(buffer_count=out_buffer_count)),
+          out_specs=pl.BlockSpec(
+              block_shape,
+              lambda i, j, k: (i, j),
+              pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
+          ),
       )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
-    fn = pl.pallas_call(
-        matmul_kernel,
-        grid=(2,),
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=(pltpu.PARALLEL,)
-        ),
-    )
+
+    @jax.jit
+    def fn(x, y):
+      x_ref = jax.new_ref(x)
+      y_ref = jax.new_ref(y)
+      o_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, jnp.float32))
+      mesh = pltpu.create_tensorcore_mesh('core')
+
+      @pl.core_map(mesh)
+      def _():
+        matmul_kernel(x_ref, y_ref, o_ref)
+
+      return jax.freeze(o_ref)
+
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
 
@@ -1898,46 +1912,180 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_can_partition_nondivisible_grid_with_dynamic_dimensions(self):
-    # TODO(b/358121809): Re-enable this test once the bug is fixed.
-    self.skipTest('Broken test.')
 
     def mul_pipeline(x_ref, y_ref):
       y_ref[...] = x_ref[...] * 2
 
-    def mul_kernel(iters_ref, x_ref, y_ref):
+    def mul_kernel(i, x_ref, y_ref):
       pltpu.emit_pipeline(
           mul_pipeline,
-          grid=(iters_ref[0], 5),
+          grid=(i, 5),
           in_specs=[
               pl.BlockSpec((128, 128), lambda i, j: (i, j)),
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
-          core_axis=0,
+          core_axis_name='core',
           dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
       )(x_ref, y_ref)
 
-    num_cores = jax.devices()[0].num_cores
-    func = pl.pallas_call(
-        mul_kernel,
-        out_shape=jax.ShapeDtypeStruct((640, 640), jnp.float32),
-        grid_spec=pltpu.PrefetchScalarGridSpec(
-            num_scalar_prefetch=1,
-            in_specs=[
-                pl.BlockSpec(memory_space=pl.ANY),
-            ],
-            out_specs=pl.BlockSpec(memory_space=pl.ANY),
-            grid=(num_cores,),
-        ),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=('parallel',)
-        ),
-    )
+    @jax.jit
+    def func(x, i):
+      x_ref = jax.new_ref(x)
+      y_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, x.dtype))
+      mesh = pltpu.create_tensorcore_mesh('core')
+
+      @pl.core_map(mesh)
+      def _():
+        mul_kernel(i, x_ref, y_ref)
+
+      return jax.freeze(y_ref)
+
     x = jax.random.uniform(jax.random.key(0), (640, 640))
-    np.testing.assert_allclose(func(jnp.array([5]), x), x * 2)
+    np.testing.assert_allclose(func(x, 5), x * 2)
+
+  @parameterized.parameters(
+      # 1D scenarios
+      dict(
+          grid_vals=(8,),
+          dimension_semantics=(pltpu.PARALLEL,),
+          dynamic_grid_index=None,
+      ),
+      dict(
+          grid_vals=(5,),
+          dimension_semantics=(pltpu.PARALLEL,),
+          dynamic_grid_index=None,
+      ),
+      dict(
+          grid_vals=(8,),
+          dimension_semantics=(pltpu.PARALLEL,),
+          dynamic_grid_index=0,
+      ),
+      dict(
+          grid_vals=(5,),
+          dimension_semantics=(pltpu.PARALLEL,),
+          dynamic_grid_index=0,
+      ),
+      # 2D scenarios (1 Parallel, 1 Arbitrary)
+      dict(
+          grid_vals=(8, 3),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.ARBITRARY),
+          dynamic_grid_index=None,
+      ),
+      dict(
+          grid_vals=(5, 3),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.ARBITRARY),
+          dynamic_grid_index=None,
+      ),
+      dict(
+          grid_vals=(8, 3),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.ARBITRARY),
+          dynamic_grid_index=0,
+      ),
+      dict(
+          grid_vals=(5, 3),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.ARBITRARY),
+          dynamic_grid_index=0,
+      ),
+      dict(
+          grid_vals=(2, 7),
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL),
+          dynamic_grid_index=1,
+      ),
+      # 2D Two Parallel (Static)
+      dict(
+          grid_vals=(8, 8),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+          dynamic_grid_index=None,
+      ),
+      dict(
+          grid_vals=(5, 7),
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+          dynamic_grid_index=None,
+      ),
+  )
+  def test_can_partition_grid(
+      self, grid_vals, dimension_semantics, dynamic_grid_index=None
+  ):
+
+    def mul_kernel(grid, o_vmem_ref):
+      def mul_pipeline():
+        o_vmem_ref[...] += 1
+      pltpu.emit_pipeline(
+          mul_pipeline,
+          grid=grid,
+          out_specs=[],
+          core_axis_name='core',
+          dimension_semantics=dimension_semantics,
+      )()
+
+    num_cores = pltpu.get_tpu_info().num_cores
+
+    @jax.jit
+    def func(*args):
+      o_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct((num_cores, 8, 128), jnp.int32)
+      )
+      mesh = pltpu.create_tensorcore_mesh('core')
+      @pl.core_map(mesh)
+      def _():
+        def run(o_vmem_ref):
+          o_vmem_ref[...] = jnp.zeros_like(o_vmem_ref)
+          if dynamic_grid_index is None:
+            grid = grid_vals
+          else:
+            grid = list(grid_vals)
+            grid[dynamic_grid_index] = args[0]
+            grid = tuple(grid)
+          mul_kernel(grid, o_vmem_ref)
+          pltpu.sync_copy(o_vmem_ref, o_ref.at[jax.lax.axis_index('core')])
+        pl.run_scoped(run, pltpu.VMEM((8, 128), jnp.int32))
+      return jax.freeze(o_ref)
+
+    if dynamic_grid_index is not None:
+      out = func(jnp.array(grid_vals[dynamic_grid_index], jnp.int32))
+    else:
+      out = func()
+
+    # Calculate expected logic (matches _partition_grid)
+    parallel_dims = [
+        i for i, d in enumerate(dimension_semantics) if d == pltpu.PARALLEL
+    ]
+    div_dims = [
+        i
+        for i in parallel_dims
+        if isinstance(grid_vals[i], int) and grid_vals[i] % num_cores == 0
+    ]
+
+    if div_dims:
+      partition_dim = min(div_dims)
+    else:
+      static_parallel_dims = [
+          i
+          for i in parallel_dims
+          if isinstance(grid_vals[i], int) and grid_vals[i] > 1
+      ]
+      if not static_parallel_dims:
+        partition_dim = parallel_dims[0]  # Must be dynamic (if mixed)
+      else:
+        max_val = max(grid_vals[i] for i in static_parallel_dims)
+        partition_dim = min(
+            i for i in static_parallel_dims if grid_vals[i] == max_val
+        )
+
+    dim_size = grid_vals[partition_dim]
+    other_dims_prod = int(
+        np.prod([v for i, v in enumerate(grid_vals) if i != partition_dim])
+    )
+
+    q, r = divmod(dim_size, num_cores)
+    expected = np.empty((num_cores, 8, 128), jnp.int32)
+    for c in range(num_cores):
+      count = q + (1 if c < r else 0)
+      expected[c] = count * other_dims_prod
+
+    np.testing.assert_allclose(out, expected)
 
   def test_megacore_mul(self):
-    # TODO(b/358121809): Re-enable this test once the bug is fixed.
-    self.skipTest('Broken test.')
     x = jax.random.uniform(jax.random.key(0), (512, 512))
 
     def matmul_pipeline(x_ref, y_ref):
@@ -1951,23 +2099,22 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
               pl.BlockSpec((128, 128), lambda i, j: (i, j)),
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
-          core_axis=0,
-          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL)
+          core_axis_name='core',
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL),
       )(x_ref, y_ref)
 
-    num_cores = jax.devices()[0].num_cores
-    func = pl.pallas_call(
-        matmul_kernel,
-        out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-        grid=(num_cores,),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=('parallel',)
-        ),
-    )
+    @jax.jit
+    def func(x):
+      x_ref = jax.new_ref(x)
+      y_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, x.dtype))
+      mesh = pltpu.create_tensorcore_mesh('core')
+
+      @pl.core_map(mesh)
+      def _():
+        matmul_kernel(x_ref, y_ref)
+
+      return jax.freeze(y_ref)
+
     np.testing.assert_allclose(func(x), x * 2)
 
   @parameterized.parameters(
@@ -1977,8 +2124,6 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
       (768, 1024, 768, 256, 512, 256),
   )
   def test_megacore_matmul(self, m, k, n, bm, bk, bn):
-    # TODO(b/358121809): Re-enable this test once the bug is fixed.
-    self.skipTest('Broken test.')
     k1, k2 = jax.random.split(jax.random.key(42))
     x = jax.random.uniform(k1, (m, k))
     y = jax.random.uniform(k2, (k, n))
@@ -2001,24 +2146,23 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
               pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
           ],
           out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
-          core_axis=0,
-          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
+          core_axis_name='core',
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
       )(x_ref, y_ref, z_ref)
 
-    num_cores = jax.devices()[0].num_cores
-    func = pl.pallas_call(
-        functools.partial(matmul_kernel, bm=bm, bk=bk, bn=bn),
-        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-        grid=(num_cores,),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=('parallel',)
-        ),
-    )
+    @jax.jit
+    def func(x, y):
+      x_ref = jax.new_ref(x)
+      y_ref = jax.new_ref(y)
+      o_ref = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32))
+      mesh = pltpu.create_tensorcore_mesh('core')
+
+      @pl.core_map(mesh)
+      def _():
+        matmul_kernel(x_ref, y_ref, o_ref, bm=bm, bk=bk, bn=bn)
+
+      return jax.freeze(o_ref)
+
     np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
 
 

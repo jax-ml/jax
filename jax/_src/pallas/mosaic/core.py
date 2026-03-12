@@ -31,6 +31,7 @@ from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax.extend import backend as jex_backend
 import jax.numpy as jnp
 import numpy as np
 
@@ -524,3 +525,15 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+def get_device_kind() -> str:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return jex_backend.get_default_device().device_kind
+
+
+def get_num_device_cores() -> int:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return jex_backend.get_default_device().num_cores

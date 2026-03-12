@@ -1811,7 +1811,9 @@ def _cpp_pmap(
           execute, const_args = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
           out = execute(*const_args, *p.flat_args)
         else:
-          out = pxla.xla_pmap_p.bind_with_trace(trace, tuple(p.flat_args), dict(params, subfuns=(p.flat_fun,)))
+          avals = tuple(core.typeof(x) for x in p.flat_args)
+          out = pxla.xla_pmap_p.bind_with_trace(
+            trace, tuple(p.flat_args), avals, dict(params, subfuns=(p.flat_fun,)))
       except api_util.InternalFloatingPointError as e:
         raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 

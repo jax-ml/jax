@@ -646,21 +646,15 @@ class Primitive:
     prev_trace = trace_ctx.trace
     trace_ctx.set_trace(eval_trace)
     try:
-      return self.bind_with_trace(prev_trace, args, params)
+      return self.bind_with_trace(prev_trace, args, avals, params)
     finally:
       trace_ctx.set_trace(prev_trace)
 
-  def bind_with_trace(self, trace, args, params, /):
-    # TODO(mattjj,dougalm): remove this block?
-    try: in_type = map(typeof, args)
-    except: pass  # try lojax error message
-    else:
-      if self.is_high(*in_type, **params) and trace.requires_low:
-        with set_current_trace(trace):
-          return self.to_lojax(*args, **params)  # type: ignore
-      return trace.process_primitive(self, args, params)
-    trace.process_primitive(self, args, params)  # may raise lojax error
-    raise Exception(f"couldn't apply typeof to args: {args}")
+  def bind_with_trace(self, trace, args, avals, params, /):
+    if self.is_high(*avals, **params) and trace.requires_low:
+      with set_current_trace(trace):
+        return self.to_lojax(*args, **params)  # type: ignore
+    return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -3026,7 +3020,7 @@ class CallPrimitive(Primitive):
   call_primitive = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
+  def bind_with_trace(self, trace, args, avals, params, /):
     params = dict(params)
     fun, = params.pop('subfuns')
     return trace.process_call(self, fun, args, params)
@@ -3069,7 +3063,7 @@ class MapPrimitive(Primitive):
   map_primitive = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
+  def bind_with_trace(self, trace, args, avals, params, /):
     params = dict(params)
     fun, = params.pop('subfuns')
     assert len(params['in_axes']) == len(args)

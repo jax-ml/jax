@@ -32,14 +32,9 @@ py_library(
     ],
     deps = [
         "//jax",
-        "//jax/_src:core",
-        "//jax/_src:deprecations",
-        "//jax/_src:frozen_dict",
-        "//jax/_src:lax",
-        "//jax/_src:partial_eval",
-        "//jax/_src:util",
         "//jax/_src/pallas",
-    ] + py_deps("numpy"),
+        "//jax/extend:backend",
+    ],
 )
 
 py_library(
@@ -241,11 +236,10 @@ pytype_strict_library(
     name = "tpu_info",
     srcs = ["tpu_info.py"],
     deps = [
+        ":core",
         "//jax",
-        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:dtypes",
-        "//jax/_src:mesh",
         "//jax/_src:util",
         "//jax/_src/pallas",
     ],

@@ -173,7 +173,7 @@ class CustomTransposePrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, call_args, params, /):
+  def bind_with_trace(self, trace, call_args, avals, params, /):
     call, = params.pop('subfuns', ())
     tracers = call_args
     return trace.process_custom_transpose(self, call, tracers, **params)
