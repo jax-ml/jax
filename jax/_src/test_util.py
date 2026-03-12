@@ -1357,16 +1357,16 @@ class JaxTestCase(parameterized.TestCase):
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif is_sequence(actual) and not hasattr(actual, '__array__'):
-      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'),
-                      msg=f"Expected sequence, got {desired}")
+      if not (is_sequence(desired) and not hasattr(desired, "__array__")):
+        self.fail(f"Expected sequence, got {desired}")
       self.assertEqual(len(actual), len(desired))
       for actual_elt, desired_elt in zip(actual, desired):
         self.assertAllClose(actual_elt, desired_elt, check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
     elif hasattr(actual, '__array__') or np.isscalar(actual):
-      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired),
-                      msg=f"Expected array-like, got {desired}")
+      if not (hasattr(desired, "__array__") or np.isscalar(desired)):
+        self.fail(f"Expected array-like, got {desired}")
       if check_dtypes:
         self.assertDtypesMatch(actual, desired, canonicalize_dtypes=canonicalize_dtypes)
       actual = np.asarray(actual)
@@ -1388,8 +1388,8 @@ class JaxTestCase(parameterized.TestCase):
     if what_clean != expected_clean:
       # Print it so we can copy-and-paste it into the test
       print(f"Found\n{what}\n")
-    self.assertMultiLineEqual(expected_clean, what_clean,
-                              msg=f"Found\n{what}\nExpecting\n{expected}")
+      self.assertMultiLineEqual(expected_clean, what_clean,
+                                msg=f"Found\n{what}\nExpecting\n{expected}")
 
   @contextmanager
   def assertNoWarnings(self):

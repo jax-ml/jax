@@ -1118,11 +1118,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       q1 *= phases
       nm = norm(q1 - q2)
       max_norm = 220 if jtu.is_device_tpu(7, 'x') else 160
-      self.assertTrue(np.all(nm < max_norm), msg=f"norm={np.amax(nm)}")
+      if not np.all(nm < max_norm):
+        self.fail(f"norm={np.amax(nm)}")
 
     # Check a ~= qr
     norm_error = norm(a - np.matmul(lq, lr))
-    self.assertTrue(np.all(norm_error < 60), msg=np.amax(norm_error))
+    if not np.all(norm_error < 60):
+      self.fail(np.amax(norm_error))
 
     # Compare the first 'k' vectors of Q; the remainder form an arbitrary
     # orthonormal basis for the null space.

@@ -1875,7 +1875,8 @@ class ShardMapTest(jtu.JaxTestCase):
     if expected_num_eqns is not None:
       all_jaxprs = it.chain([jaxpr_dce], core.subjaxprs(jaxpr_dce))
       num_eqns = sum(len(subjaxpr.eqns) for subjaxpr in all_jaxprs)
-      self.assertEqual(num_eqns, expected_num_eqns, msg=str(jaxpr_dce))
+      if num_eqns != expected_num_eqns:
+        self.fail(f"{num_eqns=} != {expected_num_eqns=}\n{jaxpr_dce}")
 
     rand_ = jtu.rand_small(np.random.RandomState(0))
     rand  = lambda v: rand_(v.aval.shape, v.aval.dtype)
