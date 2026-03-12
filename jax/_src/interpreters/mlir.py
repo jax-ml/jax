@@ -1478,7 +1478,7 @@ class TokenSet:
   """
   _tokens: collections.OrderedDict[core.Effect, Token]
 
-  def __init__(self, *args, **kwargs):
+  def __init__(self, *args: Any, **kwargs: Any):
     self._tokens = collections.OrderedDict(*args, **kwargs)
 
   def __len__(self):
@@ -2476,7 +2476,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
                      for eff in ordered_effects] + out_nodes
       hlo.return_(out_nodes)
 
-  results = case_op.results
+  results: Any = case_op.results
   if ordered_effects:
     tokens, results = util.split_list(
       unflatten_ir_values_like_types(results, output_types),
@@ -3071,7 +3071,8 @@ def merge_mlir_modules(dst_module: ir.Module,
   # Rename all symbols in src_module that clash with names in dst_module, or
   # are the "main" symbol.
   renamings = {}
-  for op in src_module.body.operations:
+  for op_view in src_module.body.operations:
+    op = type_cast(func_dialect.FuncOp, op_view)
     name = op.sym_name.value
     should_rename = name in dst_symtab or name == "main"
     if should_rename:
@@ -3091,7 +3092,8 @@ def merge_mlir_modules(dst_module: ir.Module,
 
   # Apply the symbol renamings to symbol definitions.
   private = ir.StringAttr.get("private")
-  for op in src_module.body.operations:
+  for op_view in src_module.body.operations:
+    op = type_cast(func_dialect.FuncOp, op_view)
     name = op.sym_name.value
     if name in renamings:
       src_symtab.set_symbol_name(op, renamings[name])

@@ -173,12 +173,16 @@ def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
   Python function pointers are not deterministic across executions.
   """
   def _update_bc_attribute(op: ir.Operation) -> ir.WalkResult:
+    if "call_target_name" not in op.attributes:
+      return ir.WalkResult.ADVANCE
+    call_target_name = op.attributes["call_target_name"]
+    assert isinstance(call_target_name, ir.StringAttr)
     if op.name == "stablehlo.custom_call" and (
         (
             ignore_callbacks == IgnoreCallbacks.ALL
-            and op.attributes["call_target_name"].value.endswith("callback")
+            and call_target_name.value.endswith("callback")
         )
-        or op.attributes["call_target_name"].value == "CustomSPMDPartitioning"
+        or call_target_name.value == "CustomSPMDPartitioning"
     ):
       op.attributes["backend_config"] = ir.StringAttr.get("REMOVED")
     return ir.WalkResult.ADVANCE

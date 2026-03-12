@@ -942,7 +942,7 @@ def _wrap_main_func(
   wrapped_module = module
   with context, ir.Location.unknown(context):
     symbol_table = ir.SymbolTable(wrapped_module.operation)
-    orig_main = symbol_table["main"]
+    orig_main = cast(func_dialect.FuncOp, symbol_table["main"])
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
@@ -997,7 +997,7 @@ def _wrap_main_func(
       new_arg_attrs = []
       for idx in new_main_arg_indices:
         new_arg_attr = {}
-        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]
+        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]  # pytype: disable=attribute-error
           if attr.name == "tf.aliasing_output":
             i = new_main_result_indices.index(attr.attr.value)
             new_arg_attr[attr.name] = ir.IntegerAttr.get(
@@ -1258,14 +1258,14 @@ def _check_module(mod: ir.Module, *,
     elif op_name == "sdy.sharding_constraint":
       check_sharding(op, op.location)
 
-  def walk_operations(op):
+  def walk_operations(op: ir.Operation) -> None:
     check_op(op)
     for region in op.operation.regions:
       for block in region:
         for op in block:
-          walk_operations(op)
+          walk_operations(op.operation)
 
-  walk_operations(mod)
+  walk_operations(mod.operation)
   if disallowed_custom_call_ops:
     disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
     msg = ("Cannot serialize code with custom calls whose targets have no "
@@ -1550,7 +1550,7 @@ call_exported_p.def_impl(_call_exported_impl)
 def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
-  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
+  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)  # pytype: disable=attribute-error
   axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
     return mesh_lib.empty_abstract_mesh
@@ -1562,9 +1562,9 @@ def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
 def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:
   if "mhlo.frontend_attributes" not in submodule.operation.attributes:
     return False
-  frontend_attributes = submodule.operation.attributes[
-      "mhlo.frontend_attributes"
-  ]
+  frontend_attributes = ir.DictAttr(
+      submodule.operation.attributes["mhlo.frontend_attributes"]
+  )
   return "xla.sdy.meshes" in frontend_attributes
 
 def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
@@ -1658,7 +1658,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     else:
       return x
 
-  callee_type = symtab["main"].type
+  main = cast(func_dialect.FuncOp, symtab["main"])
+  callee_type = main.type
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",

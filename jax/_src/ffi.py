@@ -669,7 +669,7 @@ def ffi_call_lowering(
     legacy_backend_config: str | None,
     attributes: Sequence[tuple[str, Any]],
     **_,
-) -> Sequence[ir.Value]:
+) -> Sequence[ir.Value | Sequence[ir.Value]]:
   rule = ffi_lowering(target_name, has_side_effect=has_side_effect,
                       operand_layouts=input_layouts,
                       result_layouts=output_layouts,
