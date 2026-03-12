@@ -1090,6 +1090,67 @@ class LayoutInferenceTest(parameterized.TestCase):
     [in_transform] = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transform, expected_transforms)
 
+  def test_async_store_sparse_metadata_smem_to_tmem_infers_expected_src_dest_layouts(
+      self,
+  ):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
+      self.skipTest("async_store_sparse_metadata_smem_to_tmem not available.")
+
+    element_type = ir.IntegerType.get_signless(2)
+    src_shape = (2, 2, 128, 64)
+    dest_shape = (256, 128)
+    src_type = ir.MemRefType.get(
+        src_shape, element_type, memory_space=mgpu.utils.smem()
+    )
+    dest_type = ir.MemRefType.get(
+        dest_shape, element_type, memory_space=mgpu.utils.tmem()
+    )
+
+    dest_layout = tcgen05.sparse_meta_layout()
+    dest_layout_attr = layouts.to_layout_attr(dest_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      op = mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(src, dest)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [dest_layout_attr])
+
+    [in_transform] = inference_utils.in_transforms(op)
+    # No transforms is expected for this op.
+    self.assertEmpty(in_transform)
+
+  def test_async_store_sparse_metadata_smem_to_tmem_rejects_incompatible_tmem_layout(
+      self,
+  ):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
+      self.skipTest("async_store_sparse_metadata_smem_to_tmem not available.")
+
+    element_type = ir.IntegerType.get_signless(2)
+    src_shape = (2, 2, 128, 64)
+    dest_shape = (256, 128)
+    src_type = ir.MemRefType.get(
+        src_shape, element_type, memory_space=mgpu.utils.smem()
+    )
+    dest_type = ir.MemRefType.get(
+        dest_shape, element_type, memory_space=mgpu.utils.tmem()
+    )
+
+    dest_layout = tcgen05.tmem_half_lane_layout(dest_shape[-1])
+    dest_layout_attr = layouts.to_layout_attr(dest_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout_attr)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(src, dest)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_async_store_smem_to_tmem_rejects_incompatible_tmem_layout(self):
     # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
     if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
