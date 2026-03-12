@@ -27,6 +27,7 @@ from jax._src.core import (
   mapped_aval as mapped_aval,
   Literal as Literal,
   Primitive as Primitive,
+  take_current_trace as take_current_trace,
   Token as Token,
   unmapped_aval as unmapped_aval,
   Var as Var,

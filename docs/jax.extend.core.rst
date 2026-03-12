@@ -17,4 +17,5 @@
   jaxpr_as_fun
   primitives
   mapped_aval
+  take_current_trace
   unmapped_aval

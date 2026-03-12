@@ -90,7 +90,7 @@ _deprecations = {
     _src_core.subjaxprs,
   ),
   "take_current_trace": (
-    "jax.core.take_current_trace is deprecated.",
+    "jax.core.take_current_trace is deprecated. Use jax.extend.core.take_current_trace.",
     _src_core.take_current_trace,
   ),
   "traverse_jaxpr_params": (
