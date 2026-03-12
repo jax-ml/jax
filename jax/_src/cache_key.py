@@ -207,26 +207,23 @@ def _strip_mosaic_debug_info(m: ir.Module) -> None:
     if (op.name != "stablehlo.custom_call"
         or op.attributes["call_target_name"].value != "tpu_custom_call"):
       return ir.WalkResult.ADVANCE
-    try:
-      bc = json.loads(op.attributes["backend_config"].value)
-      body = bc.get("custom_call_config", {}).get("body")
-      if not body:
-        return ir.WalkResult.ADVANCE
-      ctx = ir.Context()
-      tpu.register_dialect(ctx)
-      ctx.allow_unregistered_dialects = True
-      with ctx:
-        kernel = ir.Module.parse(base64.b64decode(body), context=ctx)
-        pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
-            kernel.operation)
-        out = io.BytesIO()
-        kernel.operation.write_bytecode(out)
-      bc["custom_call_config"]["body"] = base64.b64encode(
-          out.getvalue()).decode()
-      op.attributes["backend_config"] = ir.StringAttr.get(
-          json.dumps(bc, separators=(",", ":")))
-    except Exception as e:  # pylint: disable=broad-except
-      logger.debug("Failed to strip Mosaic debug info: %s", e)
+    bc = json.loads(op.attributes["backend_config"].value)
+    body = bc.get("custom_call_config", {}).get("body")
+    if not body:
+      return ir.WalkResult.ADVANCE
+    ctx = ir.Context()
+    tpu.register_dialect(ctx)
+    ctx.allow_unregistered_dialects = True
+    with ctx:
+      kernel = ir.Module.parse(base64.b64decode(body), context=ctx)
+      pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
+          kernel.operation)
+      out = io.BytesIO()
+      kernel.operation.write_bytecode(out)
+    bc["custom_call_config"]["body"] = base64.b64encode(
+        out.getvalue()).decode()
+    op.attributes["backend_config"] = ir.StringAttr.get(
+        json.dumps(bc, separators=(",", ":")))
     return ir.WalkResult.ADVANCE
 
   m.operation.walk(_strip_kernel)
