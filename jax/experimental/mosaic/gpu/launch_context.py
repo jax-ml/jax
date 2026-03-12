@@ -13,13 +13,15 @@
 # limitations under the License.
 # ==============================================================================
 
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import math
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
@@ -88,8 +90,8 @@ GLOBAL_BROADCAST = GlobalBroadcast()
 
 
 class CopyPartition:
-  PARTITIONED: "type[_Partitioned]"
-  REPLICATED: "_Replicated"
+  PARTITIONED: ClassVar[type[_Partitioned]]
+  REPLICATED: ClassVar[_Replicated]
 
 
 @dataclasses.dataclass(frozen=True)
