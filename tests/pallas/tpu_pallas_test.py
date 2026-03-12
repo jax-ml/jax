@@ -4135,14 +4135,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_two_minor_dims_to_last_dim_change_major_dim(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 16):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 17):
       self.skipTest('Test requires a newer libTPU.')
-    if (
-        jax.dtypes.itemsize_bits(dtype) < 16
-        and input_minor_dims == (8, 128)
-        and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
+
     input_major_dims, output_major_dims = input_output_major_dims
     output_minor_dims = (math.prod(input_minor_dims),)
     input_shape = input_major_dims + input_minor_dims

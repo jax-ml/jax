@@ -532,7 +532,51 @@ class IsValidMmaTiling:
     return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
 
 
-Constraint = Equals | Relayout | NotOfType | IsTransferable | IsValidMmaTiling | Divides
+@dataclasses.dataclass(frozen=True)
+class IsSupportedBroadcast:
+  """States that `src` can be broadcasted to `dst`.
+
+  See `FragmentedArray.broadcast_in_dim` for more details.
+  """
+
+  src: Expression
+  dst: Expression
+  dims: tuple[int, ...]
+
+  def holds(self) -> bool | None:
+    match self.src, self.dst:
+      case RegisterLayout(
+          value=fa.WGStridedFragLayout() as src_layout
+      ), RegisterLayout(value=fa.WGStridedFragLayout() as dst_layout):
+        return fa.is_supported_strided_layout_broadcast(src_layout, dst_layout, self.dims)
+      case RegisterLayout(value=src_layout), RegisterLayout(value=dst_layout):
+        # This is an intentionally loose check. We rely on the presence of a
+        # `src = Reduce(dst)` constraint to enforce correctness.
+        return type(src_layout) == type(dst_layout)
+      case Constant() as src, Constant() as dst:
+        raise ValueError(
+            f"Unexpected values {src=} {dst=} in IsSupportedBroadcast"
+            " constraint"
+        )
+      case _:
+        return None
+
+  def __str__(self):
+    return (
+        f"IsSupportedBroadcast(src={self.src}, dst={self.dst},"
+        f" dims={self.dims})"
+    )
+
+
+Constraint = (
+    Equals
+    | Relayout
+    | NotOfType
+    | IsTransferable
+    | IsValidMmaTiling
+    | Divides
+    | IsSupportedBroadcast
+)
 
 
 def reduce_constraint(
@@ -578,6 +622,14 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return Divides(expr_red, tiling_multiple)
+    case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
+      src_red = reduce_expression(src, assignments)
+      dst_red = reduce_expression(dst, assignments)
+      if isinstance(src_red, Unsatisfiable) or isinstance(
+          dst_red, Unsatisfiable
+      ):
+        return Unsatisfiable()
+      return IsSupportedBroadcast(src_red, dst_red, dims)
     case _ as never:
       assert_never(never)
 
@@ -633,6 +685,9 @@ class ConstraintSystem:
           extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
+        case IsSupportedBroadcast(src=src, dst=dst):
+          extract_variables(src)
+          extract_variables(dst)
         case _ as never:
           assert_never(never)
     return free_variables

@@ -151,11 +151,18 @@ def extract_assignment_candidates_from_reduce_equation(
     keep_dims: bool,
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
-  large_shape = large.key.value.type.shape  # pytype: disable=attribute-error
-  if not isinstance(small.value, fa.TiledLayout):
-    # TODO(bchetioui): handle non-tiled layouts.
+  large_shape = large.key.shape  # pytype: disable=attribute-error
+
+  if isinstance(small.value, fa.WGSplatFragLayout):
+    yield cs.RegisterLayout(fa.WGSplatFragLayout(large_shape))
     return
 
+  if isinstance(small.value, fa.WGStridedFragLayout):
+    layout = fa.WGStridedFragLayout(large_shape, small.value.vec_size)
+    yield cs.RegisterLayout(layout)
+    return
+
+  assert isinstance(small.value, fa.TiledLayout)
   # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
   if keep_dims:
     return
@@ -1040,18 +1047,6 @@ def _vector_reduction_constraint_system(
   return cs.ConstraintSystem(), {in_variable: [in_variable.key]}
 
 
-def _reduction_constraints(
-    larger: cs.Variable,
-    smaller: cs.Variable,
-    reduction_dims: tuple[int, ...],
-) -> list[cs.Constraint]:
-  return [
-      cs.Equals(lhs=smaller, rhs=cs.Reduce(larger, reduction_dims, len(larger.key.shape))),
-      # TODO(allanrenucci): Remove once we support reduction of strided layouts.
-      cs.NotOfType(larger, fa.WGStridedFragLayout),
-  ]
-
-
 @_add_constraint_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_constraint_system(
     ctx: DerivationContext,
@@ -1063,17 +1058,17 @@ def _multi_dim_reduction_constraint_system(
   out = ValueSite(op, VariableType.RESULT, 0)
   source_variable = cs.Variable(source)
   out_variable = cs.Variable(out)
-
-  reduction_constraints = _reduction_constraints(
-      source_variable,
-      out_variable,
-      tuple(op.reduction_dims),
-  )
-  # TODO(bchetioui): in the future, we may need to add rules that prevent
-  # strided layouts from being chosen---since trying to reduce a strided layout
-  # may cause us to raise an Exception at the moment.
+  constraints = [
+      cs.NotOfType(source_variable, fa.WGStridedFragLayout),
+      cs.Equals(
+          out_variable,
+          cs.Reduce(
+              source_variable, tuple(op.reduction_dims), rank=len(source.shape)
+          ),
+      ),
+  ]
   return (
-      cs.ConstraintSystem(constraints=reduction_constraints),
+      cs.ConstraintSystem(constraints=constraints),
       {source_variable: [source], out_variable: [acc, out]},
   )
 
@@ -1084,21 +1079,59 @@ def _broadcast_in_dim_constraint_system(
     op: mgpu.BroadcastInDimOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
-  out_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
-  source_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
-  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
-  reduction_dims = tuple(
-      i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
-  )
-  reduction_constraints = _reduction_constraints(
-      out_variable, source_variable, reduction_dims
-  )
+  src_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
+  dst_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
+  src_shape = tuple(op.operand.type.shape)
+  dst_shape = tuple(op.result.type.shape)
 
+  # Map destination index -> source index
+  dst_to_src = {dst: src for src, dst in enumerate(op.broadcast_dimensions)}
+
+  kept_dims = []
+  collapsed_dims = []
+  for dim in range(len(dst_shape)):
+    if dim in dst_to_src:
+      s_idx = dst_to_src[dim]
+      # If the source was 1 but destination is > 1, we reduce but keep the dim.
+      if src_shape[s_idx] == 1 and dst_shape[dim] > 1:
+        kept_dims.append(dim)
+    else:
+      # If the dimension didn't exist in src_shape at all, we remove it.
+      collapsed_dims.append(dim)
+
+  assert kept_dims or collapsed_dims
+
+  if kept_dims and collapsed_dims:
+    raise NotImplementedError(
+        "broadcast with both size-1 and size-0 broadcasted dimensions not"
+        " supported."
+    )
+
+  if kept_dims:
+    reduce_expr = cs.Reduce(
+        dst_variable, axes=tuple(kept_dims), rank=len(dst_shape), keep_dims=True
+    )
+  else:
+    reduce_expr = cs.Reduce(
+        dst_variable,
+        axes=tuple(collapsed_dims),
+        rank=len(dst_shape),
+        keep_dims=False,
+    )
+
+  constraints = [
+      # TODO(allanrenucci): We may not need the `Reduce` constraint if we
+      # support conjuring variables from `IsSupportedBroadcast` constraints.
+      cs.Equals(src_variable, reduce_expr),
+      cs.IsSupportedBroadcast(
+          src_variable, dst_variable, tuple(op.broadcast_dimensions)
+      ),
+  ]
   return (
-      cs.ConstraintSystem(constraints=reduction_constraints),
+      cs.ConstraintSystem(constraints=constraints),
       {
-          source_variable: [source_variable.key],
-          out_variable: [out_variable.key],
+          src_variable: [src_variable.key],
+          dst_variable: [dst_variable.key],
       },
   )
 
@@ -1421,6 +1454,30 @@ def _async_load_tmem_constraint_system(
       cs.ConstraintSystem(constraints=[constraint]),
       {source_variable: [source], destination_variable: [destination]},
   )
+
+
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemToTmemOp)
+  def _async_async_store_smem_to_tmem_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncStoreSmemToTmemOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    source = ValueSite(op, VariableType.OPERAND, 0)
+    source_variable = ctx.producer_ref(source)
+    destination = ValueSite(op, VariableType.OPERAND, 1)
+    destination_variable = ctx.producer_ref(destination)
+    bitwidth = utils.bitwidth(op.destination.type.element_type)
+    packing = 32 // bitwidth
+    return (
+        cs.ConstraintSystem(
+            assignments={
+                destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
+            },
+            constraints=[cs.IsValidMmaTiling(source_variable, bitwidth)],
+        ),
+        {source_variable: [source], destination_variable: [destination]},
+    )
 
 
 @_add_constraint_system_derivation_rule(mgpu.SliceTmemOp)

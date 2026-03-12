@@ -215,11 +215,10 @@ class InterpretTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       def inner(o_ref):
+
         @pl.core_map(
             mesh,
-            interpret=mosaic_interpret.InterpretParams(
-                detect_races=True,
-            ),
+            interpret=mosaic_interpret.InterpretParams(detect_races=True),
         )  # type: ignore[wrong-arg-types]
         def _():
           def body(ref):

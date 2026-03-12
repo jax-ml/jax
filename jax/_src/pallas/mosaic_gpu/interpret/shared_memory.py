@@ -106,8 +106,15 @@ class Barrier(memory.Allocation):
     )
 
   def _log(self, message: str):
-    if self.enable_logging:
-      logging.info(message)
+    # Log every line separately to make sure `absl.logging` adds the correct
+    # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
+    # `message`. This should not lead to mangled output within the logging for
+    # `self` since the lock on `self.cv` is expected to be held whenever this
+    # method is called. However, nothing keeps logged output from being
+    # interleaved with logging from other barriers or from the global
+    # `SharedMemory` object.
+    for msg in message.split("\n"):
+      logging.info(msg)
 
   @property
   def detect_races(self) -> bool:
@@ -135,7 +142,11 @@ class Barrier(memory.Allocation):
               f" barrier (but observed {x} {'phases' if x > 1 else 'phase'})."
           )
 
-  def arrive(self, device_id: int, local_thread_id: int, clock):
+  def arrive(
+      self,
+      clock,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -148,10 +159,14 @@ class Barrier(memory.Allocation):
         self.arrivals_count = 0
         self.phase_change_observed = False
 
-        self._log(
-            f"Device {device_id}, thread {local_thread_id}: Barrier {id(self)}"
-            f" has completed arrival. Phase is now {self.phase}."
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Barrier {id(self)} has completed arrival. Phase is now"
+                  f" {self.phase}.",
+                  line_prefix="`arrive`",
+              )
+          )
 
       if self.detect_races:
         if self.clock is None:
@@ -161,7 +176,12 @@ class Barrier(memory.Allocation):
 
       self.cv.notify_all()
 
-  def wait(self, device_id: int, local_thread_id: int):
+  def wait(
+      self,
+      device_id: int,
+      local_thread_id: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
     with self.cv:
       # We are waiting for the barrier to reach exactly the phase that this
       # thread is waiting for. This could lead to deadlock (see the comment in
@@ -190,21 +210,28 @@ class Barrier(memory.Allocation):
               " completions of the barrier.)"
           )
 
-        self._log(
-            f"Device {device_id}, thread {local_thread_id}: Waiting for barrier"
-            f" {id(self)} to reach phase"
-            f" {self.next_awaited_phase_by_thread[local_thread_id]}. (Current"
-            f" phase: {self.phase})"
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Waiting for barrier {id(self)} to reach phase"
+                  f" {self.next_awaited_phase_by_thread[local_thread_id]}."
+                  f" (Current phase: {self.phase})",
+                  line_prefix="`wait`",
+              )
+          )
         self.cv.wait()
 
       self.phase_change_observed = True
       self.next_awaited_phase_by_thread[local_thread_id] += 1
 
-      self._log(
-          f"Device {device_id}, thread {local_thread_id}: Finished waiting for"
-          f" phase {self.phase} of barrier {id(self)}."
-      )
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"Device {device_id}, thread {local_thread_id}: Finished"
+                f" waiting for phase {self.phase} of barrier {id(self)}.",
+                line_prefix="`wait`",
+            )
+        )
 
       # Read `self.clock` while still holding the lock on `self.cv`. (If race
       # detection is enabled, the clock is needed below to update a vector clock
@@ -244,11 +271,10 @@ class GPUSharedMemory(memory.SharedMemory):
 
   def allocate_barrier(
       self,
-      device_id: int,
-      thread_id: int,
       key: Any,
       ref_count: int,
       num_arrivals: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
@@ -263,10 +289,15 @@ class GPUSharedMemory(memory.SharedMemory):
             ),
         )
         self.mem[key] = barrier
-        self._log(
-            f"Device {device_id}, thread {thread_id}: Allocated barrier"
-            f" {id(barrier)} ({barrier}) with key {key}."
-        )
+
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  "Allocated barrier"
+                  f" {id(barrier)} ({barrier}) with key {key}.",
+                  line_prefix="`allocate_barrier`",
+              )
+          )
 
   def get_barrier_and_increment_clock(
         self, key: Any, device_id: int, thread_id: int
@@ -290,7 +321,11 @@ class GPUSharedMemory(memory.SharedMemory):
 
     return barrier, clock
 
-  def deallocate_barrier(self, device_id: int, thread_id: int, key: Any):
+  def deallocate_barrier(
+      self,
+      key: Any,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
     with self.lock:
       barrier = self.mem[key]
       if not isinstance(barrier, Barrier):
@@ -299,17 +334,25 @@ class GPUSharedMemory(memory.SharedMemory):
             " a `Barrier`."
         )
 
-      self._log(
-          f"Device {device_id}, thread {thread_id}: Decreasing ref count of"
-          f" barrier {id(barrier)} with key {key}."
-      )
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                "Decreasing ref count of"
+                f" barrier {id(barrier)} with key {key}.",
+                line_prefix="`deallocate_barrier`",
+            )
+        )
+
       barrier.deallocate()
 
       if barrier.has_zero_ref_count():
-        self._log(
-            f"Device {device_id}, thread {thread_id}: Deallocating barrier"
-            f" {id(barrier)} with key {key}."
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Deallocating barrier {id(barrier)} with key {key}.",
+                  line_prefix="`deallocate_barrier`",
+              )
+          )
         self.mem.pop(key)
 
   def assert_no_barriers_allocated(self):

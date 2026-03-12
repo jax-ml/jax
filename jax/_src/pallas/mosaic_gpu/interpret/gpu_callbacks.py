@@ -289,7 +289,10 @@ class HostAllocationKey(HostAllocationRequest):
 
 
 def _allocate_buffer_for_all_threads(
-    device_id: Any, allocation_request: Any, value: Any
+    device_id: Any,
+    allocation_request: Any,
+    value: Any,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> np.ndarray:
   """Allocates a buffer for the given `allocation_request`.
 
@@ -343,7 +346,16 @@ def _allocate_buffer_for_all_threads(
     ref_count = allocation_request.initial_ref_count
     # We rely on the fact that `allocate_buffer` will not allocate a new buffer
     # if one with the same key already exists.
-    shared_memory.allocate_buffer(key, ref_count=ref_count, value=value)
+    shared_memory.allocate_buffer(
+        key,
+        ref_count=ref_count,
+        value=value,
+        logging_info=interpret_utils.GPULoggingInfo(
+            device_id=device_id,
+            pallas_thread_id=0,
+            source_info=source_info,
+        ),
+    )
 
   # We expect the `for`-loop above to have executed its body at least once.
   assert key is not None
@@ -354,9 +366,12 @@ def call_allocate_buffer_for_all_threads(
     device_id: int,
     allocation_request: jnp.ndarray,
     value: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> jnp.ndarray:
   return callback.io_callback(
-      _allocate_buffer_for_all_threads,
+      functools.partial(
+          _allocate_buffer_for_all_threads, source_info=source_info
+      ),
       HostAllocationKey.shape_and_dtype(),
       device_id,
       allocation_request,
@@ -370,12 +385,14 @@ def _allocate_buffer(
     thread_id: Any,
     allocation_request: Any,
     value: Any,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> np.ndarray:
   """Allocates a buffer for the given `allocation_request`.
 
   Args:
     allocation_request: Array that converts into a `HostAllocationRequest`.
     value: Array of values to initialize the allocated buffer with.
+    source_info: Information about the source code location of the allocation.
 
   Returns:
     `AllocationKey` to refer to the allocated buffer.
@@ -396,7 +413,16 @@ def _allocate_buffer(
       buffer_id=buffer_id,
   )
   ref_count = allocation_request.initial_ref_count
-  shared_memory.allocate_buffer(key, ref_count=ref_count, value=value)
+  shared_memory.allocate_buffer(
+      key,
+      ref_count=ref_count,
+      value=value,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
+  )
   return key.as_array
 
 
@@ -405,9 +431,10 @@ def call_allocate_buffer(
     thread_id: int,
     allocation_request: jnp.ndarray,
     value: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> jnp.ndarray:
   return callback.io_callback(
-      _allocate_buffer,
+      functools.partial(_allocate_buffer, source_info=source_info),
       HostAllocationKey.shape_and_dtype(),
       device_id,
       thread_id,
@@ -417,17 +444,36 @@ def call_allocate_buffer(
   )
 
 
-def _deallocate_buffer(allocation_key: Any):
+def _deallocate_buffer(
+    device_id: Any,
+    thread_id: Any,
+    allocation_key: Any,
+    source_info: source_info_util.SourceInfo | None = None,
+):
   """Decreases the reference count of the buffer with `allocation_key` (Deallocates the buffer if its reference count becomes zero)."""
   allocation_key = HostAllocationKey.from_array(allocation_key)
   shared_memory = _get_shared_memory()
-  shared_memory.deallocate_buffer(allocation_key)
+  shared_memory.deallocate_buffer(
+      allocation_key,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
+  )
 
 
-def call_deallocate_buffer(allocation_key: jnp.ndarray):
+def call_deallocate_buffer(
+    device_id: int,
+    thread_id: int,
+    allocation_key: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
   callback.io_callback(
-      _deallocate_buffer,
+      functools.partial(_deallocate_buffer, source_info=source_info),
       None,
+      device_id,
+      thread_id,
       allocation_key,
       ordered=True,
   )
@@ -538,7 +584,14 @@ def _get(
 
   read_range = interpret_utils.to_range(transforms)
   ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
-      allocation_key, read_range, global_core_id
+      allocation_key,
+      read_range,
+      global_core_id,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
   )
   clock = clock if clock is not None else clock_
 
@@ -647,7 +700,16 @@ def _swap(
 
   read_write_range = interpret_utils.to_range(transforms)
   ret, (shape, _), clock = shared_memory.swap_buffer_content(
-      allocation_key, read_write_range, val, mask, global_core_id
+      allocation_key,
+      read_write_range,
+      val,
+      mask,
+      global_core_id,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
   )
 
   if ret is None:
@@ -707,6 +769,7 @@ def _allocate_barriers(
     num_arrivals: Any,
     num_barriers: Any,
     ref_count: Any,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> np.ndarray:
   device_id = int(device_id)
   thread_id = int(thread_id)
@@ -732,11 +795,14 @@ def _allocate_barriers(
     )
 
     shared_memory.allocate_barrier(
-        device_id,
-        thread_id,
         key,
         ref_count=ref_count,
         num_arrivals=num_arrivals,
+        logging_info=interpret_utils.GPULoggingInfo(
+            device_id=device_id,
+            pallas_thread_id=thread_id,
+            source_info=source_info,
+        ),
     )
     keys.append(key.as_array)
 
@@ -750,6 +816,7 @@ def call_allocate_barriers(
     num_arrivals: int,
     num_barriers: int,
     ref_count: int,
+    source_info: source_info_util.SourceInfo | None = None,
 ) -> jnp.ndarray:
   shape_and_dtype = HostAllocationKey.shape_and_dtype()
   result_shape = (num_barriers, *shape_and_dtype.shape)
@@ -757,7 +824,7 @@ def call_allocate_barriers(
       result_shape, shape_and_dtype.dtype
   )
   return callback.io_callback(
-      _allocate_barriers,
+      functools.partial(_allocate_barriers, source_info=source_info),
       result_shape_and_dtype,
       device_id,
       thread_id,
@@ -769,7 +836,10 @@ def call_allocate_barriers(
 
 
 def _deallocate_barrier(
-    device_id: Any, thread_id: Any, allocation_key: np.ndarray
+    device_id: Any,
+    thread_id: Any,
+    allocation_key: np.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ):
   device_id = int(device_id)
   thread_id = int(thread_id)
@@ -786,15 +856,23 @@ def _deallocate_barrier(
   for key in keys_to_deallocate:
     barrier_allocation_key = HostAllocationKey.from_array(key)
     shared_memory.deallocate_barrier(
-        device_id, thread_id, barrier_allocation_key
+        barrier_allocation_key,
+        logging_info=interpret_utils.GPULoggingInfo(
+            device_id=device_id,
+            pallas_thread_id=thread_id,
+            source_info=source_info,
+        ),
     )
 
 
 def call_deallocate_barrier(
-    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+    device_id: int,
+    thread_id: int,
+    allocation_key: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ):
   callback.io_callback(
-      _deallocate_barrier,
+      functools.partial(_deallocate_barrier, source_info=source_info),
       None,
       device_id,
       thread_id,
@@ -803,7 +881,12 @@ def call_deallocate_barrier(
   )
 
 
-def _barrier_wait(device_id: int, thread_id: int, allocation_key: np.ndarray):
+def _barrier_wait(
+    device_id: int,
+    thread_id: int,
+    allocation_key: np.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
   device_id = int(device_id)
   thread_id = int(thread_id)
   barrier_key = HostAllocationKey.from_array(allocation_key)
@@ -812,14 +895,25 @@ def _barrier_wait(device_id: int, thread_id: int, allocation_key: np.ndarray):
   barrier, _ = shared_memory.get_barrier_and_increment_clock(
       barrier_key, device_id, thread_id
   )
-  barrier.wait(device_id, thread_id)
+  barrier.wait(
+      device_id,
+      thread_id,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
+  )
 
 
 def call_barrier_wait(
-    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+    device_id: int,
+    thread_id: int,
+    allocation_key: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ):
   callback.io_callback(
-      _barrier_wait,
+      functools.partial(_barrier_wait, source_info=source_info),
       None,
       device_id,
       thread_id,
@@ -828,7 +922,12 @@ def call_barrier_wait(
   )
 
 
-def _barrier_arrive(device_id: int, thread_id: int, allocation_key: np.ndarray):
+def _barrier_arrive(
+    device_id: int,
+    thread_id: int,
+    allocation_key: np.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
   device_id = int(device_id)
   thread_id = int(thread_id)
   barrier_key = HostAllocationKey.from_array(allocation_key)
@@ -837,14 +936,24 @@ def _barrier_arrive(device_id: int, thread_id: int, allocation_key: np.ndarray):
   barrier, clock = shared_memory.get_barrier_and_increment_clock(
       barrier_key, device_id, thread_id
   )
-  barrier.arrive(device_id, thread_id, clock)
+  barrier.arrive(
+      clock,
+      logging_info=interpret_utils.GPULoggingInfo(
+          device_id=device_id,
+          pallas_thread_id=thread_id,
+          source_info=source_info,
+      ),
+  )
 
 
 def call_barrier_arrive(
-    device_id: int, thread_id: int, allocation_key: jnp.ndarray
+    device_id: int,
+    thread_id: int,
+    allocation_key: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
 ):
   callback.io_callback(
-      _barrier_arrive,
+      functools.partial(_barrier_arrive, source_info=source_info),
       None,
       device_id,
       thread_id,

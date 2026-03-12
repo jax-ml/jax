@@ -4973,9 +4973,10 @@ convert_element_type_p = standard_primitive(
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
-def _convert_element_type_bind_with_trace(trace, args, params):
+def _convert_element_type_bind_with_trace(trace, args, avals, params):
   sharding = params['sharding']
-  operand = core.Primitive.bind_with_trace(convert_element_type_p, trace, args, params)
+  operand = core.Primitive.bind_with_trace(convert_element_type_p, trace, args,
+                                           avals, params)
   if sharding is not None and sharding._is_concrete:
     with core.set_current_trace(trace):
       operand = pjit.with_sharding_constraint(operand, sharding)

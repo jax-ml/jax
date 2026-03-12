@@ -111,7 +111,7 @@ class TPULoggingInfo(LoggingInfo):
   local_core_id: int
 
   def get_location_str(self) -> str:
-    return f'Device {self.device_id}, core {self.local_core_id}'
+    return f"Device {self.device_id}, core {self.local_core_id}"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

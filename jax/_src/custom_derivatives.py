@@ -387,7 +387,7 @@ class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
+  def bind_with_trace(self, trace, args, avals, params, /):
     params = dict(params)
     fun, jvp = params.pop('subfuns')
     return trace.process_custom_jvp_call(self, fun, jvp, args, **params)
@@ -995,7 +995,7 @@ class CustomVJPCallPrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
+  def bind_with_trace(self, trace, args, avals, params, /):
     params = dict(params)
     fun, fwd, bwd = params.pop('subfuns')
     return trace.process_custom_vjp_call(self, fun, fwd, bwd, args, **params)

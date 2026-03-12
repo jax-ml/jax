@@ -4019,6 +4019,32 @@ def _semaphore_read_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   return result
 
 
+@contextlib.contextmanager
+def _wrap_in_custom_primitive_if_wg(
+    ctx: LoweringRuleContext, operands: Sequence[ir.Value]
+):
+  """Wraps the body in a CustomPrimitiveOp for warpgroup semantics.
+
+  For warpgroup lowering semantics, yields remapped block arguments that
+  should be used instead of the original operands. For lane semantics,
+  yields the original operands unchanged.
+  """
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    custom_op = mgpu.dialect.CustomPrimitiveOp(
+        result=[],
+        operands_=list(operands),
+        in_layouts=[],
+        in_transforms=[],
+        out_layouts=[],
+    )
+    block = custom_op.body.blocks.append(*[o.type for o in operands])
+    with ir.InsertionPoint(block):
+      yield list(block.arguments)
+      mgpu.dialect.ReturnOp(operands_=[])
+  else:
+    yield list(operands)
+
+
 @register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_signal_lowering_rule(
@@ -4056,20 +4082,20 @@ def _semaphore_signal_lowering_rule(
       )
     assert device_id is not None
     sem = ctx.launch_ctx.to_remote(sem, device_id)
-  sem_ptr = mgpu.utils.memref_ptr(sem)
 
-  # TODO(bchetioui): wrap in CustomPrimitiveOp for warpgroup semantics.
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
   val = _ir_constant(value, i32)
-  # We only signal the semaphore from a single lane, which does not guarantee
-  # anything about the state of the other three warps in the warpgroup (they
-  # might still be e.g. reading memory that someone will overwrite once they
-  # receive a signal).
-  if ctx.module_ctx.auto_barriers:
-    mgpu.utils.warpgroup_barrier()
-  mgpu_utils.SemaphoreRef(sem_ptr).signal(
-      val, predicate=ctx.module_ctx.single_wg_lane_predicate
-  )
+  with _wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
+    sem_ptr = mgpu.utils.memref_ptr(sem)
+    # We only signal the semaphore from a single lane, which does not guarantee
+    # anything about the state of the other three warps in the warpgroup (they
+    # might still be e.g. reading memory that someone will overwrite once they
+    # receive a signal).
+    if ctx.module_ctx.auto_barriers:
+      mgpu.utils.warpgroup_barrier()
+    mgpu_utils.SemaphoreRef(sem_ptr).signal(
+        val, predicate=ctx.module_ctx.single_wg_lane_predicate
+    )
   return ()
 
 
@@ -4086,10 +4112,11 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_wait: {transforms}"
     )
-  # TODO(bchetioui): wrap in CustomPrimitiveOp for warpgroup semantics.
-  mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(
-      _ensure_ir_value(value, jnp.int32), decrement=decrement
-  )
+  val = _ensure_ir_value(value, jnp.int32)
+  with _wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
+    mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(
+        val, decrement=decrement
+    )
   return ()
 
 

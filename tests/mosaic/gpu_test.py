@@ -6773,6 +6773,105 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     x = jax.random.randint(key, shape, -10, 10).astype(dtype)
     self.assertArraysEqual(kernel(x), x)
 
+  def test_async_store_smem_to_tmem(self):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu_dialect, "async_store_smem_to_tmem"):
+      self.skipTest("async_store_smem_to_tmem not available.")
+
+    dtype = jnp.float32
+    shape = (128, 128)
+
+    def body(ctx, gmem_in, gmem_out, scratch):
+      del ctx
+      smem, copy_barrier, tmem = scratch
+      reg_in = mgpu_dialect.vector_load(gmem_in)
+      layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      reg_in = mgpu_dialect.layout_cast(reg_in, layout)
+      mgpu_dialect.vector_store(reg_in, smem, optimized=False)
+
+      mgpu_dialect.async_store_smem_to_tmem(smem, tmem)
+      tcgen05.commit_arrive(copy_barrier.barrier_ref)
+      copy_barrier.wait(orders_tensor_core=True)
+
+      reg_out = mgpu_dialect.async_load_tmem(tmem)
+      mgpu_dialect.vector_store(reg_out, gmem_out, optimized=False)
+
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax_shape,
+        out_shape=jax_shape,
+        smem_scratch_shape=[
+            jax_shape,
+            mgpu.Barrier(1),
+            mgpu.TMEM(shape, dtype, packing=1),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    key = jax.random.key(1234)
+    x = jax.random.normal(key, shape).astype(dtype)
+    self.assertArraysEqual(kernel(x), x)
+
+  def test_async_store_smem_to_tmem_collective(self):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu_dialect, "async_store_smem_to_tmem"):
+      self.skipTest("async_store_smem_to_tmem not available.")
+
+    dtype = jnp.float32
+    shape = (128, 128)
+
+    def body(ctx, gmem_in, gmem_out, scratch):
+      smem, copy_barrier, tmem = scratch
+
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+
+      m_index = arith.muli(block_id, arith.constant(ir.IndexType.get(), 128))
+
+      reg_in = mgpu_dialect.vector_load(memref_slice(gmem_in, ds(m_index, 128)), optimized=False)
+      layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      reg_in = mgpu_dialect.layout_cast(reg_in, layout)
+
+      mgpu_dialect.vector_store(reg_in, smem, optimized=False)
+
+      is_first_block = arith.cmpi(
+          arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
+      )
+
+      with when(is_first_block):
+        mgpu_dialect.async_store_smem_to_tmem(smem, tmem, collective=True)
+        tcgen05.commit_arrive(copy_barrier.barrier_ref, collective=True, ctx=ctx)
+      copy_barrier.wait(orders_tensor_core=True)
+
+      reg_out = mgpu_dialect.async_load_tmem(tmem)
+      sliced_result_gmem = memref_slice(gmem_out, ds(m_index, 128))
+      mgpu_dialect.vector_store(reg_out, sliced_result_gmem)
+
+    gmem_shape = (256, 128)
+    jax_shape = jax.ShapeDtypeStruct(gmem_shape, dtype)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(2, 1, 1),
+        cluster=(2, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax_shape,
+        out_shape=jax_shape,
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct(shape, dtype),
+            mgpu.Barrier(1),
+            mgpu.TMEM(shape, dtype, collective=True, packing=1),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    key = jax.random.key(1234)
+    x = jax.random.normal(key, gmem_shape).astype(dtype)
+    self.assertArraysEqual(kernel(x), x)
+
   @parameterized.product(
       m=(64, 128),
       n=(128, 256, 512),

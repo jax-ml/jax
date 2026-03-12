@@ -163,6 +163,7 @@ class JaxprInterpreter:
         transforms=jax.tree.unflatten(eqn.params["tree"], invals[2:]),
         val=invals[1],
         mask=None,
+        source_info=eqn.source_info,
     )
 
   def _interpret_run_scoped_p(
@@ -189,6 +190,7 @@ class JaxprInterpreter:
                     num_arrivals=dtype.num_arrivals,
                     num_barriers=shape[0],
                     ref_count=self.num_threads,
+                    source_info=eqn.source_info,
                 )
               else:
                 memory_space_idx = gpu_callbacks.get_memory_space_idx(
@@ -215,6 +217,7 @@ class JaxprInterpreter:
                   self.thread_id,
                   allocation_request,
                   self.interpret_params.get_uninitialized_array(shape, dtype),
+                  source_info=eqn.source_info,
               )
             case _:
               raise ValueError(f"Unsupported inner aval: {inner}")
@@ -229,10 +232,16 @@ class JaxprInterpreter:
                     device_id=self.device_info.device_id,
                     thread_id=self.thread_id,
                     allocation_key=allocation,
+                    source_info=eqn.source_info,
                 )
               else:
                 _raise_if_unsupported_memory_space(aval.memory_space)
-                gpu_callbacks.call_deallocate_buffer(allocation)
+                gpu_callbacks.call_deallocate_buffer(
+                    self.device_info.device_id,
+                    self.thread_id,
+                    allocation,
+                    source_info=eqn.source_info,
+                )
 
               # TODO(nrink): For sempahores, check that they have value zero at
               # the end of their lifetimes. (If semaphores are never explicitly
@@ -355,6 +364,7 @@ class JaxprInterpreter:
         device_id=self.device_info.device_id,
         thread_id=self.thread_id,
         allocation_key=allocation_key_as_array,
+        source_info=eqn.source_info,
     )
 
     assert eqn.primitive.multiple_results

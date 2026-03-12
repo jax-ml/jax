@@ -286,6 +286,12 @@ mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
     if (result_type.getShape()[dim] == ShapedType::kDynamic) {
       size_is_aligned =
           isGuaranteedDivisible(getDynamicSizes()[dynamic_dim_idx++], tile_dim);
+    } else if (result_type.getShape()[dim] == source_ty.getShape()[dim]) {
+      // If the result shape is the same as the source shape, we don't put
+      // any restrictions here. The only way to get such a ref is from a kernel
+      // input (as any prior slice would be rejected), which implies the data
+      // is padded to tiling.
+      size_is_aligned = true;
     } else {
       size_is_aligned = result_type.getShape()[dim] % tile_dim == 0;
     }
@@ -878,22 +884,35 @@ LogicalResult ReinterpretCastOp::verify() {
   return success();
 }
 
-LogicalResult EraseLayoutOp::inferReturnTypes(
-    MLIRContext* context, std::optional<Location> location,
-    EraseLayoutOp::Adaptor adaptor,
-    ::llvm::SmallVectorImpl<Type>& inferredReturnTypes) {
-  inferredReturnTypes.push_back(
-      MemRefType::Builder(cast<MemRefType>(adaptor.getOperand().getType()))
-          .setLayout(nullptr));
-  return success();
-}
-
-OpFoldResult EraseLayoutOp::fold(FoldAdaptor op) {
+OpFoldResult EraseLayoutOp::fold(FoldAdaptor adaptor) {
   // If the operand has no interesting layout then there's no need to erase it.
-  if (getOperand().getType().getLayout().isIdentity()) {
-    return op.getOperand();
+  if (getOperand().getType() == getType()) {
+    return adaptor.getOperand();
+  }
+  if (auto erase_layout_op = getOperand().getDefiningOp<EraseLayoutOp>()) {
+    getOperandMutable().assign(erase_layout_op.getOperand());
+    return getResult();
   }
   return OpFoldResult();
+}
+
+LogicalResult EraseLayoutOp::verify() {
+  MemRefType operand_type = getOperand().getType();
+  MemRefType result_type = getType();
+  // TODO(tlongeri): Enforce no shape changes
+  if (operand_type.getElementType() != result_type.getElementType()) {
+    return emitOpError("Cannot change the memref element type");
+  }
+  if (operand_type.getMemorySpace() != result_type.getMemorySpace() &&
+      result_type.getMemorySpace()) {
+    return emitOpError(
+        "Memref memory space must be either erased (changed to null) or "
+        "preserved");
+  }
+  if (operand_type.getLayout() == nullptr) {
+    return emitOpError("Memref layout must be erased");
+  }
+  return success();
 }
 
 template <typename Op>

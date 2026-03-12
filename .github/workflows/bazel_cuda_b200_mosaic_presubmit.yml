@@ -63,24 +63,52 @@ jobs:
   # at all if no matching files were touched.
   # This would lead to Copybara waiting for the status indefinitely.
   changed_files:
-    runs-on: ubuntu-latest  # Do not run tj-actions on self-hosted runners
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: linux-x86-n4-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
+          fetch-depth: 2  # HEAD and HEAD^1 is enough for the diff
           persist-credentials: false
-      # Only run this if it is a pull request
       - name: Get and filter changed files
-        if: ${{ github.event_name == 'pull_request' }}
         id: changed-files
-        uses: tj-actions/changed-files@22103cc46bda19c2b464ffe86db46df6922fd323  # v47.0.5
-        with:
-          files: |
+        env:
+          WATCHED_FILE_PATTERNS: |
             .github/workflows/bazel_cuda_b200_mosaic_presubmit.yml
             ci/run_bazel_cuda_targeted_tests.sh
             jax/_src/pallas/mosaic_gpu/**
             jax/experimental/mosaic/gpu/**
             jaxlib/mosaic/dialect/gpu/**
             jaxlib/mosaic/gpu/**
+        run: |
+          set -ex
+
+          # Create an array with the file patterns and
+          # clear out any empty lines/whitespace.
+          mapfile -t watched_patterns < <(printf '%s\n' "$WATCHED_FILE_PATTERNS" | sed '/^[[:space:]]*$/d')
+
+          git_pathspecs=()
+          for pattern in "${watched_patterns[@]}"; do
+            git_pathspecs+=(":(glob)$pattern")
+          done
+
+          cd "${GITHUB_WORKSPACE:?}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          matched_files="$(git diff --name-only HEAD^1 HEAD -- "${git_pathspecs[@]}")"
+          if [[ -n "$matched_files" ]]; then
+            echo 'any_changed=true' >> "$GITHUB_OUTPUT"
+            {
+              echo '### Relevant changed files'
+              echo ''
+              echo '```'
+              echo "$matched_files"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'any_changed=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Report skipped test reason
         # Display a notice in the workflow summary about skipping tests.
         if: github.event_name == 'pull_request'
@@ -97,8 +125,16 @@ jobs:
 
   run_tests:
     needs: changed_files
-    if: github.event_name == 'workflow_dispatch'
-        || needs.changed_files.outputs.any_changed == 'true'
+    # Because of `needs`, the job is skipped if `changed_files` is skipped.
+    # However, `!cancelled()` forces the `if` to still be evaluated, so workflow_dispatch can run.
+    if: >-
+      ${{
+          !cancelled()
+          && (
+               github.event_name == 'workflow_dispatch'
+               || needs.changed_files.outputs.any_changed == 'true'
+          )
+      }}
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     timeout-minutes: 15  # Stop potential hangs from keeping the job running too long.

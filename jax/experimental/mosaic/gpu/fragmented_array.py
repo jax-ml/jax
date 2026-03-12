@@ -2936,33 +2936,9 @@ class FragmentedArray:
         self.registers.item(), shape, layout, is_signed=self.is_signed
       )
     if isinstance(self.layout, WGStridedFragLayout) and isinstance(layout, WGStridedFragLayout):
-      if self.layout.vec_size != layout.vec_size:
+      if not is_supported_strided_layout_broadcast(self.layout, layout, source_dimensions):
         raise NotImplementedError(
-            "vector size must match for broadcast of WGStridedFragLayout"
-        )
-      # Check if input maps exactly to the end (prevents trailing dims).
-      if source_dimensions != tuple(
-          range(len(shape) - len(self.shape), len(shape))
-      ):
-        raise NotImplementedError(
-            "Broadcast of trailing dimensions is not supported for"
-            " WGStridedFragLayout"
-        )
-      # Identify input indices that are expanded vs. those that are preserved
-      # Expansion: input is 1, output is > 1.
-      # Preserved: input is > 1.
-      exp_indices, pre_indices = [], []
-      for i, dim in enumerate(self.shape):
-        if dim == 1 and shape[source_dimensions[i]] > 1:
-          exp_indices.append(i)
-        if dim > 1:
-          pre_indices.append(i)
-      # If both exist, all expansions must happen before all preserved
-      # dimensions.
-      if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
-        raise NotImplementedError(
-            "Broadcast of trailing dimensions is not supported for"
-            " WGStridedFragLayout"
+            "Unsupported broadcast for WGStridedFragLayout"
         )
       assert layout.shape == shape, (layout.shape, shape)
       return FragmentedArray(
@@ -4296,3 +4272,30 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
       regs.store_tiled(dst, swizzle)
     return
   raise NotImplementedError(f"Unsupported copy: {src.type} -> {dst.type}")
+
+
+def is_supported_strided_layout_broadcast(
+    src: WGStridedFragLayout,
+    dst: WGStridedFragLayout,
+    dims: tuple[int, ...],
+) -> bool:
+  """We only support broadcasting of leading dimensions."""
+  if src.vec_size != dst.vec_size:
+    return False
+  # Check if input maps exactly to the end (prevents trailing dims).
+  if dims != tuple(range(len(dst.shape) - len(src.shape), len(dst.shape))):
+    return False
+  # Identify input indices that are expanded vs. those that are preserved
+  # Expansion: input is 1, output is > 1.
+  # Preserved: input is > 1.
+  exp_indices, pre_indices = [], []
+  for i, dim in enumerate(src.shape):
+    if dim == 1 and dst.shape[dims[i]] > 1:
+      exp_indices.append(i)
+    if dim > 1:
+      pre_indices.append(i)
+  # If both exist, all expansions must happen before all preserved
+  # dimensions.
+  if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
+    return False
+  return True

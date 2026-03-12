@@ -328,25 +328,47 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(bcast, [in_layout])
     self.checkOutLayouts(bcast, [out_layout])
 
-  # TODO(allanrenucci): Turn into a positive test. This is currently not
-  # implemented. The test checks we fail gracefully.
-  @parameterized.parameters(True, False)
-  def test_cant_infer_reduced_strided_layout(self, hint_on_input):
+  def test_dont_infer_invalid_strided_layout(self):
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(ir.VectorType.get((128,), ir.F32Type.get()))
-      if hint_on_input:
-        layout = mgpu.WGStridedFragLayout.from_shaped_type(x.type)
-        x = layout_cast(x, layout)
-      out_type = ir.VectorType.get((128, 128), ir.F32Type.get())
-      out = mgpu.dialect.broadcast_in_dim(out_type, x, [0])
-      if not hint_on_input:
-        layout = mgpu.WGStridedFragLayout.from_shaped_type(out.type)
-        layout_cast(out, layout)
+      out_type = ir.VectorType.get((2, 128), ir.F32Type.get())
+      out = mgpu.dialect.broadcast_in_dim(out_type, x, [1])
+      out_layout = mgpu.WGStridedFragLayout((2, 128), vec_size=2)
+      layout_cast(out, out_layout)
 
     with self.assertRaisesRegex(
-        ValueError, "Failed to infer a possible set of layouts"
+        ValueError, "user-provided layout casts are unsatisfiable"
     ):
       mgpu.infer_layout(self.module)
+
+  @parameterized.product(
+      hint_on_input=(True, False),
+      src_shape_dst_shape_dims=(
+          ((1, 128), (4, 128), (0, 1)),
+          ((1, 1, 128), (2, 4, 128), (0, 1, 2)),
+          ((1, 4, 128), (2, 4, 128), (0, 1, 2)),
+          ((128,), (4, 128), (1,)),
+          ((128,), (128, 128), (1,)),
+      ),
+  )
+  def test_infer_strided_layout_for_broadcast(
+      self, hint_on_input, src_shape_dst_shape_dims
+  ):
+    src_shape, dst_shape, dims = src_shape_dst_shape_dims
+    in_layout = mgpu.WGStridedFragLayout(src_shape, vec_size=1)
+    out_layout = mgpu.WGStridedFragLayout(dst_shape, vec_size=1)
+    with ir.InsertionPoint(self.module.body):
+      [x] = undefs(ir.VectorType.get(src_shape, ir.F32Type.get()))
+      if hint_on_input:
+        x = layout_cast(x, in_layout)
+      out_type = ir.VectorType.get(dst_shape, ir.F32Type.get())
+      op = mgpu.dialect.BroadcastInDimOp(out_type, x, dims)
+      if not hint_on_input:
+        layout_cast(op.result, out_layout)
+
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [in_layout])
+    self.checkOutLayouts(op, [out_layout])
 
   @parameterized.parameters(
       (1, mgpu.WGMMA_LAYOUT, None, None),
@@ -1038,6 +1060,82 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.checkInLayouts(op, [src_layout])
     self.checkInTmemLayouts(op, [dest_layout])
+
+  @parameterized.parameters(ir.F32Type, ir.BF16Type)
+  def test_async_store_smem_to_tmem_infers_expected_src_dest_layouts(self, dtype):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
+      self.skipTest("async_store_smem_to_tmem not available.")
+
+    dtype = dtype.get()
+    shape = (128, 128)
+    dest_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
+    packing = 32 // mgpu.utils.bitwidth(dtype)
+    dest_layout = tcgen05.tmem_default_layout(packing=packing)
+    dest_layout_attr = layouts.to_layout_attr(dest_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      op = mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [dest_layout_attr])
+
+    expect_tiling = (8, 32) if dtype == ir.F32Type.get() else (8, 64)
+    expected_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get(expect_tiling),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transform, expected_transforms)
+
+  def test_async_store_smem_to_tmem_rejects_incompatible_tmem_layout(self):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
+      self.skipTest("async_store_smem_to_tmem not available.")
+
+    f32 = ir.F32Type.get()
+    shape = (128, 128)
+    dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
+
+    dest_non_default_tmem_layout = tcgen05.tmem_half_lane_layout(columns=shape[1], packing=1)
+    dest_layout_attr = layouts.to_layout_attr(dest_non_default_tmem_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout_attr)
+      mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_async_store_smem_to_tmem_rejects_incompatible_tmem_packing(self):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
+      self.skipTest("async_store_smem_to_tmem not available.")
+
+    f32 = ir.F32Type.get()
+    shape = (128, 128)
+    dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
+
+    bad_packing = 2
+    dest_layout_bad_packing = tcgen05.tmem_default_layout(packing=bad_packing)
+    dest_layout_attr = layouts.to_layout_attr(dest_layout_bad_packing)
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout_attr)
+      mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
 
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout

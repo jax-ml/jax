@@ -185,7 +185,6 @@ class ConstraintSystemTest(parameterized.TestCase):
     expr = cs.Reduce(RL(mgpu.WGMMA_LAYOUT), axes=(0,), rank=2, keep_dims=True)
     self.assertEqual(cs.reduce_expression(expr, {}), expr)
 
-
   @parameterized.parameters(
       (
           mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
@@ -512,6 +511,72 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_tiling_is_valid_mma_tiling_does_not_hold_for_invalid_tiling(self):
     layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
     self.assertFalse(cs.IsValidMmaTiling(layout, 16).holds())
+
+  @parameterized.named_parameters(
+      (
+          "(1, 128) -> (4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=1),
+          (0, 1),
+          True,
+      ),
+      (
+          "Not supported: vec_size mismatch",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=2),
+          (0, 1),
+          False,
+      ),
+      (
+          "(1, 1, 128) -> (2, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 1, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          True,
+      ),
+      (
+          "(1, 4, 128) -> (2, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 4, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          True,
+      ),
+      (
+          "(128,) -> (4, 128), vec_size=1",
+          fa.WGStridedFragLayout((128,), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=1),
+          (1,),
+          True,
+      ),
+      (
+          "Not supported: broadcasting trailing dimensions",
+          fa.WGStridedFragLayout((2, 1, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          False,
+      ),
+      (
+          "(128,) -> (128, 128), vec_size=1",
+          fa.WGStridedFragLayout((128,), vec_size=1),
+          fa.WGStridedFragLayout((128, 128), vec_size=1),
+          (1,),
+          True,
+      ),
+      (
+          "(1, 128) -> (18, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((18, 4, 128), vec_size=1),
+          (1, 2),
+          True,
+      ),
+  )
+  def test_is_supported_broadcast_constraint_holds_for_strided_layouts(
+      self, src, dst, dims, holds
+  ):
+    self.assertEqual(
+        cs.IsSupportedBroadcast(RL(src), RL(dst), dims).holds(), holds
+    )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

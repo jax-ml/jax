@@ -88,6 +88,7 @@ pytype_strict_library(
     name = "shared_memory",
     srcs = ["shared_memory.py"],
     deps = [
+        "//jax/_src:source_info_util",
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
