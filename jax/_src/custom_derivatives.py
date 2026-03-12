@@ -398,12 +398,12 @@ class CustomJVPCallPrimitive(core.Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    num_consts: int = new_params.pop('num_consts')  # pyrefly: ignore[bad-assignment]  # pyrefly#2449
+    num_consts: int = new_params.pop('num_consts')
     jvp_jaxpr_fun = new_params.pop('jvp_jaxpr_fun')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    jvp = lift_jvp(num_consts, jvp_jaxpr_fun)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
-    new_params['subfuns'] = (fun, jvp)  # pyrefly: ignore[unsupported-operation]
+    jvp = lift_jvp(num_consts, jvp_jaxpr_fun)
+    new_params['subfuns'] = (fun, jvp)
     return new_params
 
 def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
@@ -947,7 +947,7 @@ def _flatten_bwd(f: Callable,
            "number of arguments to the primal function, but got bwd output "
            "structure {} for primal input structure {}.")
     raise TypeError(msg.format(in_tree2, in_tree)) from None
-  results = []
+  results: list[Any] = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
     if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
       results.append(Zero(a.to_tangent_aval()))
@@ -1006,14 +1006,14 @@ class CustomVJPCallPrimitive(core.Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    num_consts: int = new_params.pop('num_consts')  # pyrefly: ignore[bad-assignment]  # pyrefly#2449
+    num_consts: int = new_params.pop('num_consts')
     fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
+    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
-    new_params['subfuns'] = (fun, fwd, bwd)  # pyrefly: ignore[unsupported-operation]
+    new_params['subfuns'] = (fun, fwd, bwd)
     return new_params
 
 def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
@@ -1772,12 +1772,12 @@ def _remat_opt_jvp(
   tangents = map(ad.instantiate_zeros, tangents)
   consts_nz = [not isinstance(t, Zero) for t in consts_dot]
   consts_dot = [c for nz, c in zip(consts_nz, consts_dot) if nz]
-  in_nz = consts_nz + [True] * len(tangents)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  in_nz = consts_nz + [True] * len(tangents)
   fwd_jaxpr_jvp_, out_nz = ad.jvp_jaxpr(fwd_jaxpr, in_nz, True)
   num_out = len(out_nz) - num_res
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
-      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
 
   # @pe._memoize

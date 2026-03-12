@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import enum
 import functools
@@ -22,7 +22,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
+from typing import Any, Generic, Generator, NoReturn, Optional, Protocol, Type, TypeVar, cast
 import warnings
 
 from jax._src import deprecations
@@ -1889,7 +1889,7 @@ jax_xla_profile_version = int_state(
 )
 
 @contextlib.contextmanager
-def explicit_device_put_scope() -> Iterator[None]:
+def explicit_device_put_scope() -> Generator[None, None, None]:
   """Indicates that the current context is an explicit device_put*() call."""
   state = guard_lib.thread_local_state()
   prev = state.explicit_device_put
@@ -1900,7 +1900,7 @@ def explicit_device_put_scope() -> Iterator[None]:
     state.explicit_device_put = prev
 
 @contextlib.contextmanager
-def explicit_device_get_scope() -> Iterator[None]:
+def explicit_device_get_scope() -> Generator[None, None, None]:
   """Indicates that the current context is an explicit device_get() call."""
   state = guard_lib.thread_local_state()
   prev = state.explicit_device_get
@@ -1994,7 +1994,7 @@ _transfer_guard = optional_enum_state(
     update_global_hook=_update_all_transfer_guard_global)
 
 @contextlib.contextmanager
-def transfer_guard(new_val: str) -> Iterator[None]:
+def transfer_guard(new_val: str) -> Generator[None, None, None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -325,8 +325,11 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 
 @contextmanager
-def collect_lowered_jaxprs() -> Iterator[Sequence[tuple[core.ClosedJaxpr,
-                                                         mlir.ir.Module]]]:
+def collect_lowered_jaxprs() -> Generator[
+    Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
+    None,
+    None,
+]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
   """

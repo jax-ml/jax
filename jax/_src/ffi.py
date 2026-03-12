@@ -531,7 +531,7 @@ def ffi_call(
       static_output_layouts = _convert_layouts_for_ffi_call(result_avals,
                                                             output_layouts_)
 
-    static_input_output_aliases: tuple[tuple[int, int], ...] = ()
+    static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
         i_idx, o_idx = int(i_idx), int(o_idx)
@@ -558,7 +558,7 @@ def ffi_call(
               f"referring to an input with layout {static_input_layouts[i_idx]} "
               "and an output with a different layout "
               f"{static_output_layouts[o_idx]}.")
-        static_input_output_aliases += ((i_idx, o_idx),)
+        static_input_output_aliases.append((i_idx, o_idx))
     args = core.standard_insert_pvary(*args)
     results = ffi_call_p.bind(
         *args,
@@ -568,7 +568,7 @@ def ffi_call(
         has_side_effect=has_side_effect,
         input_layouts=static_input_layouts,
         output_layouts=static_output_layouts,
-        input_output_aliases=static_input_output_aliases,
+        input_output_aliases=tuple(static_input_output_aliases),
         custom_call_api_version=custom_call_api_version,
         legacy_backend_config=legacy_backend_config,
         attributes=_wrap_kwargs_hashable(kwargs),

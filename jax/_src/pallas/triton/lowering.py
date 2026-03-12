@@ -437,7 +437,7 @@ def lower_jaxpr_to_triton_ir(
     else:
       write_env(eqn.outvars[0], outvals)
 
-  return map(read_env, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(read_env, jaxpr.outvars)
 
 
 def lower_fun(
@@ -2603,7 +2603,7 @@ def _scan_lowering_rule(
       pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
   )
   args = map(_ensure_ir_value, args, ctx.avals_in)
-  consts, args = util.split_list(args, [num_consts])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  consts, args = util.split_list(args, [num_consts])
   if has_loop_index:
     lower_bound, *args = args
     upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
@@ -2724,7 +2724,7 @@ def _while_lowering_rule(
     return result
   # Fall back to default while lowering
   cond_consts, body_consts, carry = util.split_list(
-      args, [cond_nconsts, body_nconsts]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      args, [cond_nconsts, body_nconsts]
   )
   cond_const_block_infos, body_const_block_infos, carry_block_infos = (
       util.split_list(ctx.block_infos, [cond_nconsts, body_nconsts])

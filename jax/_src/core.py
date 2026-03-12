@@ -744,7 +744,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     else:
       write(eqn.outvars[0], ans)
     clean_up_dead_vars(eqn, env, lu)
-  return map(read, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(read, jaxpr.outvars)
 
 def check_avals_context_mesh(avals, prim_name):
   cur_mesh = mesh_lib.get_abstract_mesh()
@@ -3048,7 +3048,7 @@ class ClosedCallPrimitive(CallPrimitive):
     jaxpr: ClosedJaxpr = new_params.pop('call_jaxpr')
     subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
                           debug_info=jaxpr.jaxpr.debug_info)
-    new_params['subfuns'] = (subfun,)  # pyrefly: ignore[unsupported-operation]
+    new_params['subfuns'] = (subfun,)
     return new_params
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
@@ -3974,7 +3974,7 @@ def pp_jaxprs(jaxprs: Sequence[ClosedJaxpr | Jaxpr],
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.concat([pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),
-      pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, settings), jaxprs))]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, settings), jaxprs))]
     )), pp.brk(""), pp.text(')')])
   )
 

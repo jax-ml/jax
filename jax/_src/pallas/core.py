@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence, Set
+from collections.abc import Callable, Hashable, Iterable, Generator, Mapping, Sequence, Set
 import contextlib
 import copy
 import dataclasses
@@ -319,7 +319,7 @@ class GridAxis:
 GridEnv = Sequence[GridAxis]
 
 @contextlib.contextmanager
-def grid_env(env: GridEnv) -> Iterator[None]:
+def grid_env(env: GridEnv) -> Generator[None, None, None]:
   _pallas_tracing_env.grid_env_stack.append(env)
   try:
     yield
@@ -945,7 +945,7 @@ class GridMapping:
       axis_env_ctx = contextlib.nullcontext()
     else:
       axis_env_ctx = jax_core.extend_axis_env_nd(
-          zip(self.grid_names, self.grid)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+          zip(self.grid_names, self.grid)  # pyrefly: ignore[bad-argument-type]
       )
     with tracing_grid_env(self.grid, self.vmapped_dims), axis_env_ctx:
       yield

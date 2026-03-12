@@ -928,6 +928,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
                      for i, k, s in zip(lhs_trans[2:],
                                         rhs_trans[2:],
                                         window_strides)]
+  # pyrefly: ignore[no-matching-overload]
   out_space = np.sum([unpad_out_space, padding], axis=0).tolist()
   out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
   return tuple(np.take(out_trans, np.argsort(out_perm)))

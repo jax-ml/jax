@@ -141,4 +141,4 @@ def _remat_jaxpr(jaxpr, policy):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
   fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, len(rem_consts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  return fwd_jaxpr, rem_jaxpr, len(rem_consts)

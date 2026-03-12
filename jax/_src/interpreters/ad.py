@@ -218,7 +218,7 @@ def _linearize_jaxpr(
   primals_and_residuals = map(partial(primal_trace.to_jaxpr_tracer, source_info=source_info),
                               primals_and_residuals)
   primal_jaxpr, primal_consts = primal_trace.to_jaxpr(
-      primals_and_residuals, dbg.with_unknown_names(),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      primals_and_residuals, dbg.with_unknown_names(),
       source_info)
   primal_trace.invalidate()
   primal_jaxpr, primal_consts = _dce_consts(primal_jaxpr, primal_consts)
@@ -262,7 +262,7 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,
                                 source_info=source_info), out_nz_tangents)
-  jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
   tangent_trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
@@ -1440,7 +1440,7 @@ def _custom_lin_transpose(cts_out, *invals, num_res,
     cts_out = map(instantiate_zeros, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
-  nz_cts_in, _ = partition_list(in_zeros, cts_in)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  nz_cts_in, _ = partition_list(in_zeros, cts_in)
   return [None] * num_res + nz_cts_in
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
