@@ -1013,7 +1013,7 @@ def slice_in_dim(operand: Array | np.ndarray, start_index: int | None,
   limit_indices[axis] = limit_index_int
   strides[axis] = core._canonicalize_dimension(stride)
 
-  return slice(operand, start_indices, limit_indices, strides)  # pyrefly: ignore[bad-return, no-matching-overload]  # pyrefly#2385
+  return slice(operand, start_indices, limit_indices, strides)
 
 
 def index_in_dim(operand: Array | np.ndarray, index: int, axis: int = 0,
@@ -1446,7 +1446,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
                  np.add(1, np.multiply(np.subtract(out_ct.shape, 1), strides))))
       pads = zip(start_indices, np.subtract(operand_aval.shape, real_limits),
                  np.subtract(strides, 1))
-    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))
 
 
 def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
@@ -1466,7 +1466,7 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
     new_strides = list(strides)
     new_strides.insert(bdim, 1)
 
-  out = slice(operand, new_start_indices, new_limit_indices, new_strides)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',

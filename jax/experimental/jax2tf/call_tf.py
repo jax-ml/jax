@@ -422,11 +422,11 @@ def _call_tf_abstract_eval(
     **__,
 ):
   # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
-  effects: set[effects.Effect] = set()
+  effs: set[effects.Effect] = set()
   if ordered:
-    effects.add(call_tf_ordered_effect)
+    effs.add(call_tf_ordered_effect)
   elif has_side_effects:
-    effects.add(call_tf_effect)
+    effs.add(call_tf_effect)
 
   # If no output_avals is given, then we ask TF to infer the output shapes.
   # We call this even if output_avals is given because it will ensure that
@@ -437,10 +437,10 @@ def _call_tf_abstract_eval(
 
   # In the case that the tf.function has no return value
   if len(concrete_function_flat_tf.outputs) == 0:
-    return (), effects
+    return (), effs
 
   if output_avals is not None:
-    return output_avals, effects
+    return output_avals, effs
 
   def is_fully_known_shape(s):
     return s.rank is not None and all(d is not None for d in s)
@@ -452,7 +452,7 @@ def _call_tf_abstract_eval(
         core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
         for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
                                 concrete_function_flat_tf.output_shapes))
-    return avals_from_tf, effects
+    return avals_from_tf, effs
 
   msg = ("call_tf cannot call functions whose output has dynamic shape. "
     f"Found output shapes: {concrete_function_flat_tf.output_shapes}. "
@@ -556,8 +556,9 @@ def _call_tf_lowering(
   # graph scopes, and allows us to read the values of the variables
   with tf.init_scope():
     captured_ops = tuple(
-        mlir.ir_constant(np.asarray(inp))
-        for inp in captured_inputs
+        mlir.flatten_ir_values(
+            mlir.ir_constant(np.asarray(inp)) for inp in captured_inputs
+        )
     )
 
   if call_tf_graph:

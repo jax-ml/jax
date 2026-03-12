@@ -429,11 +429,12 @@ def ir_constant(x: Any, mlir_type: ir.Type | None = None) -> ir.Value:
   raise NotImplementedError(x.dtype)
 
 
+lowering_rules: dict[tpu_core.CoreType, dict[jax_core.Primitive, Callable]]
 lowering_rules = {kernel_type: {} for kernel_type in tpu_core.CoreType}
 skip_mlir_conversions = set()
 
 
-T = TypeVar("T")
+T = TypeVar("T", bound=Callable)
 
 
 def register_lowering_rule(
@@ -648,7 +649,6 @@ class MosaicGridMapping:
       return f"#tpu.dimension_semantics<{s}>"
 
     return ir.ArrayAttr.get(
-        # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         map(
             ir.Attribute.parse,
             map(_get_semantics, self._dimension_semantics),
@@ -1304,7 +1304,7 @@ def jaxpr_subcomp(
             ctx,
             cast(Sequence[ShapedAbstractValue], [v.aval for v in eqn.invars]),
             cast(Sequence[ShapedAbstractValue], [v.aval for v in eqn.outvars]),
-            block_shapes,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+            block_shapes,
         )
 
         # Insert trace_start and trace_stop ops on named_scope boundaries.
@@ -4272,7 +4272,7 @@ def random_fold_in_lowering(ctx: LoweringRuleContext, keys, msgs):
   else:
     ctx = dataclasses.replace(ctx,
                         avals_in=[_physical_aval(keys_aval), msgs_aval],
-                        avals_out=map(_physical_aval, ctx.avals_out))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                        avals_out=map(_physical_aval, ctx.avals_out))
     return fold_in_lowering(ctx, keys, msgs)
 
 

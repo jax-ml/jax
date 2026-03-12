@@ -535,7 +535,7 @@ def transform_swap_array(x, transforms, val):
   new_x = val
 
   # Write phase (reversed loop)
-  for intermediate, transform in reversed(zip(intermediates[:-1], transforms)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  for intermediate, transform in reversed(zip(intermediates[:-1], transforms)):
     if isinstance(transform, indexing.NDIndexer):
       indexer = transform
       if _is_trivial_indexer(indexer):
@@ -773,7 +773,7 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
         nonzero_tangents, instantiate=nonzero_tangents)
     if out_nonzero_tangents == nonzero_tangents:
       break
-    nonzero_tangents = map(operator.or_, nonzero_tangents, out_nonzero_tangents)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
+    nonzero_tangents = map(operator.or_, nonzero_tangents, out_nonzero_tangents)
   else:
     raise Exception("Invalid fixpoint")
   del discharged_jaxpr, body_consts, out_nonzero_tangents

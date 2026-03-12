@@ -1368,6 +1368,7 @@ def _wgmma_lowering(
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   if lhs_transpose:
+    assert isinstance(a, ir.Value)
     a = mgpu.memref_transpose(a, (1, 0, 3, 2))
   if rhs_transpose:
     b = mgpu.memref_transpose(b, (1, 0, 3, 2))
@@ -2041,8 +2042,8 @@ def _tcgen05_mma_lowering(
               b_ref,
               a_swizzle=int(lhs_swizzle),
               b_swizzle=int(rhs_swizzle),
-              a_scale=a_scale_ref,
-              b_scale=b_scale_ref,
+              a_scale=a_scale_ref,  # pyrefly: ignore[bad-argument-type]
+              b_scale=b_scale_ref,  # pyrefly: ignore[bad-argument-type]
               a_sparse_metadata=a_sparse_metadata_ref,
               accumulate=accumulate,
               collective=collective,

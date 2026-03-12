@@ -607,7 +607,7 @@ class MapTracer(core.Tracer):
     aval = core.typeof(self.val)
     shard_axes = dict(self.shard_axes)
     for axis_idx in sorted(shard_axes.values())[::-1]:
-      aval = core.mapped_aval(aval.shape[axis_idx], axis_idx, aval)
+      aval = core.mapped_aval(aval.shape[axis_idx], axis_idx, aval)  # pyrefly: ignore[missing-attribute]
     return aval
 
   def full_lower(self):
@@ -1958,8 +1958,8 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_mlir_shardings = map(_to_logical_sharding, in_avals, in_shardings)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
-    out_mlir_shardings = map(_to_logical_sharding, out_avals, out_shardings)  # pyrefly: ignore[bad-assignment]  # pyrefly#2385
+    in_mlir_shardings = map(_to_logical_sharding, in_avals, in_shardings)
+    out_mlir_shardings = map(_to_logical_sharding, out_avals, out_shardings)
     replicated_args = [False] * len(in_avals)
     axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
                                               abstract_mesh)

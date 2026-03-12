@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterator, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Hashable, Iterator, Generator, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -456,8 +456,10 @@ class ModuleContext:
   @contextlib.contextmanager
   def reserve_barrier(
       self, barrier: mgpu.Barrier | mgpu.ClusterBarrier
-  ) -> Iterator[
-      mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef
+  ) -> Generator[
+      mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef,
+      None,
+      None,
   ]:
     """Reserves a barrier.
 
@@ -472,10 +474,9 @@ class ModuleContext:
     available.append(barrier_ref)
 
   @contextlib.contextmanager
-  def reserve_semaphores(self,
-                         shape: tuple[int, ...],
-                         collective_axes: CollectiveAxesType
-                         ) -> Iterator[ir.Value]:
+  def reserve_semaphores(
+      self, shape: tuple[int, ...], collective_axes: CollectiveAxesType
+  ) -> Generator[ir.Value, None, None]:
     allocated_sems = math.prod(shape)
     ref = mgpu.memref_slice(
         self.scoped_gmem_semaphore_base_ptr[collective_axes],
@@ -495,7 +496,7 @@ class ModuleContext:
       struct: jax.ShapeDtypeStruct,
       *,
       layout: tcgen05.TMEMLayout,
-  ) -> Iterator[tcgen05.TMEMRef | ir.Value]:
+  ) -> Generator[tcgen05.TMEMRef | ir.Value, None, None]:
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       off = arith_dialect.addi(
           self.tmem_base, _i32_constant(self.tmem_used_cols)
@@ -526,7 +527,9 @@ class ModuleContext:
     self.tmem_used_cols -= cols_used
 
   @contextlib.contextmanager
-  def scratch_view(self, struct: jax.ShapeDtypeStruct) -> Iterator[ir.Value]:
+  def scratch_view(
+      self, struct: jax.ShapeDtypeStruct
+  ) -> Generator[ir.Value, None, None]:
     """Creates a view into the runtime scratch buffer for the given struct.
 
     This is a low-level API. Use it only if you know what you are doing.
@@ -1269,7 +1272,7 @@ def lower_jaxpr_to_mosaic_gpu(
         write_env(eqn.outvars[0], outvals)
   while named_regions:  # Drain the name stack.
     named_regions.pop().close()
-  return map(read_env, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(read_env, jaxpr.outvars)
 
 
 @register_lowering_rule(primitives.program_id_p, mgpu.LoweringSemantics.Lane)
@@ -1490,7 +1493,7 @@ def _extract_aliased_ref(
           ref = slice_op.result
         else:
           ref_bytes = ref_bits // 8
-          ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))  # pyrefly: ignore[bad-argument-type]
+          ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
           ref = _handle_dtype_bitcast(
               ref,
               ir.MemRefType(ref.type).element_type,
@@ -1589,7 +1592,7 @@ def _bubble_up_transform(
 ) -> tuple[T, T, list[state_types.Transform], list[state_types.Transform]]:
   new_transforms_rev = []
   new_transforms_avals_rev = []
-  for transform, transform_aval in reversed(zip(transforms, transforms_avals)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  for transform, transform_aval in reversed(zip(transforms, transforms_avals)):
     avals = (transform_aval, t_aval)
     (t, new_transform), (t_aval, new_transform_aval) = _lower_fn_with_avals(
         functools.partial(_commute_transform, aval), avals
@@ -1724,10 +1727,10 @@ def _handle_transforms(
           " primitive."
       )
     transformed_ref = ctx.launch_ctx.to_remote(
-        transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)  # pyrefly: ignore[bad-argument-type]
+        transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)
     )
   if is_multicast:
-    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)  # pyrefly: ignore[bad-argument-type]
+    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)
   assert isinstance(ref_aval, state_types.AbstractRef)
   return transformed_ref, ref_aval, new_transforms
 
@@ -1794,7 +1797,6 @@ def _get_lowering_rule(
       ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
       handle_transposes=not transposed, allow_peer_refs=True
   )
-  x_smem = cast(ir.Value, x_smem)
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
   is_signed = mgpu_utils.is_signed(dtype)

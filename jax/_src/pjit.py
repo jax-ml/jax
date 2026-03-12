@@ -792,6 +792,7 @@ _seen_qdds = weakref.WeakKeyDictionary()
 
 def _seen_qdds_get(fun, in_type) -> list:
   cache = _seen_qdds.setdefault(fun, defaultdict(list))
+  assert cache is not None  # pyrefly#2407
   return cache[in_type]
 
 def _qdd_cache_index(fun, in_type) -> int:
@@ -1363,7 +1364,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
                    ctx_mesh, keep_unused, inline, compiler_options_kvs):
   effects = list(ctx.tokens_in.effects())
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
-  output_types = [mlir.token_type()] * len(effects) + output_types  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
+  output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = mlir.flatten_ir_types(output_types)
 
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
@@ -1741,11 +1742,11 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
 
   # Set up staged-out 'unknown' eqn
   unknown_in_shardings = (keep_where(in_shardings, unknown_ins)
-                          + (UNSPECIFIED,) * len(residual_tracers))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                          + (UNSPECIFIED,) * len(residual_tracers))
   unknown_in_layouts = (keep_where(in_layouts, unknown_ins)
-                        + (None,) * len(residual_tracers))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                        + (None,) * len(residual_tracers))
   unknown_donated_invars = (keep_where(donated_invars, unknown_ins)
-                            + (False,) * len(residual_tracers))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                            + (False,) * len(residual_tracers))
   unknown_params = dict(
       jaxpr=unknown_jaxpr,
       in_shardings=unknown_in_shardings,

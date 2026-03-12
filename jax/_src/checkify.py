@@ -432,7 +432,7 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
       write_env(eqn.outvars[0], outvals)
     core.clean_up_dead_vars(eqn, env, last_used)
 
-  return error, map(read_env, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return error, map(read_env, jaxpr.outvars)
 
 def checkify_jaxpr_flat_hashable(jaxpr, hashable_consts, enabled_errors,
                                  err_tree, *args):
@@ -807,7 +807,7 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
   # Query body effects to create a merged error containing all effects (such
   # that in and out carried error are of the same type).
   err_vals, err_tree = jtu.tree_flatten(error)
-  new_in_aval = map(core.typeof, [*err_vals, *consts, *carry]) + xs_mapped  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
+  new_in_aval = map(core.typeof, [*err_vals, *consts, *carry]) + xs_mapped
   _, _, effects = jaxpr_to_checkify_jaxpr(jaxpr, enabled_errors,
                                           err_tree, *new_in_aval)
 
@@ -815,7 +815,7 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
   err_vals, err_tree = jtu.tree_flatten(merged_error)
 
   # Create checked-jaxpr, with the needed pre-processing on the inputs.
-  new_in_aval = map(core.typeof, [*err_vals, *consts, *carry]) + xs_mapped  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
+  new_in_aval = map(core.typeof, [*err_vals, *consts, *carry]) + xs_mapped
   checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(jaxpr, enabled_errors,
                                                         err_tree, *new_in_aval)
 

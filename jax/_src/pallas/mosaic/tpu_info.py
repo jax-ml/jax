@@ -73,8 +73,8 @@ class ChipVersion(ChipVersionBase, enum.Enum):
     return self.value
 
   @property
-  def _num_physical_tensor_cores_per_chip(self) -> int:  # pyrefly: ignore[bad-return]  # pyrefly#2080
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+  def num_physical_tensor_cores_per_chip(self) -> int:
+    match self:
       case (
           ChipVersion.TPU_V2
           | ChipVersion.TPU_V3
@@ -86,11 +86,6 @@ class ChipVersion(ChipVersionBase, enum.Enum):
         return 2
       case ChipVersion.TPU_V4I | ChipVersion.TPU_V5E | ChipVersion.TPU_V6E:
         return 1
-
-  @property
-  def num_physical_tensor_cores_per_chip(self) -> int:
-    # TODO(slebedev): Remove this wrapper once pyrefly#2080 is fixed.
-    return cast(int, self._num_physical_tensor_cores_per_chip)
 
   @property
   def supports_megacore(self) -> bool:
@@ -520,8 +515,6 @@ class Tiling(enum.Enum):
         return (8, 128)
       case Tiling.SPARSE_CORE:
         return (8,)
-      case _:
-        raise NotImplementedError  # pyrefly#2080
 
 
 def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:

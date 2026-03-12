@@ -2375,7 +2375,7 @@ def _make_select_and_scatter_add_harness(name,
       padding=padding)
 
 
-for dtype in set(jtu.dtypes.all) - {np.complex64, np.complex128}:  # pyrefly: ignore[unsupported-operation]
+for dtype in set(jtu.dtypes.all) - {np.complex64, np.complex128}:
   _make_select_and_scatter_add_harness("dtypes", dtype=dtype)
 
 # Validate different reduction primitives
@@ -2399,7 +2399,7 @@ _make_select_and_scatter_add_harness(
 _make_select_and_scatter_add_harness("window_strides", window_strides=(1, 2, 3))
 
 # Validate dtypes on TPU
-for dtype in set(jtu.dtypes.all) - {  # pyrefly: ignore[unsupported-operation]
+for dtype in set(jtu.dtypes.all) - {
     np.bool_, np.complex64, np.complex128, np.int8, np.uint8}:
   for window_strides, window_dimensions, nb_inactive_dims in [((1, 2, 1),
                                                                (1, 3, 1), 2)]:

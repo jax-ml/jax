@@ -182,7 +182,7 @@ class MemorySpace(enum.Enum):
         raise ValueError("packed, collective and layout arguments are only supported for TMEM.")
       mgpu_layout = None
     return GPUMemoryRef(jax_core.ShapedArray(shape, dtype), memory_space=self,
-                        transforms=transforms, layout=mgpu_layout,  # pyrefly: ignore[bad-argument-type]
+                        transforms=transforms, layout=mgpu_layout,
                         collective=collective)
 
 
@@ -1462,7 +1462,7 @@ class ParameterizedLayout(SomeLayout):
   def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
     if args or kwargs:
       raise ValueError(f"Can't instantiate {self} with arguments.")
-    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)  # pyrefly: ignore[bad-return]
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1507,12 +1507,12 @@ class Layout(SomeLayout, enum.Enum):
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:  # pyrefly: ignore[bad-override, bad-return]
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
     def check_no_args():
       if args or kwargs:
         raise ValueError(f"Can't instantiate {self} with arguments.")
 
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+    match self:
       case Layout.WGMMA_TRANSPOSED:
         check_no_args()
         return mgpu.WGMMA_TRANSPOSED_LAYOUT
@@ -1575,7 +1575,7 @@ class TMEMLayout(enum.Enum):
     return ParameterizedLayout(self, args, kwargs)
 
   def to_mgpu(self, *args, **kwargs) -> tcgen05.TMEMLayout:
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+    match self:
       case TMEMLayout.SCALES_LAYOUT:
         return tcgen05.scales_layout(*args, **kwargs)
       case TMEMLayout.SPARSE_METADATA_LAYOUT:
