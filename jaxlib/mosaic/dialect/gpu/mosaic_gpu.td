@@ -829,6 +829,31 @@ def MosaicGPU_AsyncStoreSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_smem_t
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncStoreSparseMetadataSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_sparse_metadata_smem_to_tmem", []> {
+  let summary = "Copies MMA sparse metadata from SMEM to TMEM asynchronously.";
+  let description = [{
+    Schedules an async copy of the sparse metadata from the `source` MemRef
+    in SMEM to the `destination` MemRef in TMEM.
+
+    The `source` and `destination` MemRefs must have the same element type (i2).
+    Given a destination shape of [M, N], the source shape must be
+    [M/128, N/64, 128, 64], and M % 128 == 0 and N % 64 == 0.
+
+    If `collective` is `true`, the copy is performed by a cluster of 2 CTAs,
+    and we expect that this op is issued by a single CTA.
+    If `collective` is `false`, the copy is performed by a single CTA.
+  }];
+
+
+  let arguments = (ins
+    MemRefRankOf<[I<2>], [4]>:$source,
+    MemRefRankOf<[I<2>], [2]>:$destination,
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
   let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
   let description = [{

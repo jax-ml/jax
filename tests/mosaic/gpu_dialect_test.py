@@ -1280,6 +1280,81 @@ ir.MLIRError,
       mgpu.dialect.async_store_smem_to_tmem(smem, tmem)
     self.assertTrue(self.module.operation.verify())
 
+  def test_async_store_sparse_metadata_smem_to_tmem_op_invalid_smem_shape(self):
+    with ir.InsertionPoint(self.module.body):
+      i2 = ir.IntegerType.get_signless(2)
+      smem_ty = ir.MemRefType.get((2, 1, 128, 64), i2, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 128), i2, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`source` memref must have shape \(2, 2, 128, 64\), but got \(2, 1, 128, 64\).",
+    ):
+      self.module.operation.verify()
+
+  @parameterized.parameters(((128, 32),), ((64, 64),))
+  def test_async_store_sparse_metadata_smem_to_tmem_op_invalid_tmem_shape(self, tmem_shape):
+    with ir.InsertionPoint(self.module.body):
+      i2 = ir.IntegerType.get_signless(2)
+      smem_ty = ir.MemRefType.get((2, 2, 128, 64), i2, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get(tmem_shape, i2, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"TMEM memref must be a multiple of",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_sparse_metadata_smem_to_tmem_op_invalid_dtype(self):
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      smem_ty = ir.MemRefType.get((2, 2, 128, 64), bf16, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 128), bf16, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"operand #0 must be 4D memref of 2-bit signless integer values",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_sparse_metadata_smem_to_tmem_op_invalid_smem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      i2 = ir.IntegerType.get_signless(2)
+      smem_ty = ir.MemRefType.get((2, 2, 128, 64), i2, memory_space=mgpu_utils.tmem())
+      tmem_ty = ir.MemRefType.get((256, 128), i2, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `source` memref must be in SMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_sparse_metadata_smem_to_tmem_op_invalid_tmem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      i2 = ir.IntegerType.get_signless(2)
+      smem_ty = ir.MemRefType.get((2, 2, 128, 64), i2, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 128), i2, memory_space=mgpu_utils.smem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The tmem memref must have a mosaic_gpu.tmem memory space",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_sparse_metadata_smem_to_tmem_op_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      i2 = ir.IntegerType.get_signless(2)
+      smem_ty = ir.MemRefType.get((2, 2, 128, 64), i2, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 128), i2, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
+    self.assertTrue(self.module.operation.verify())
+
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
       (tmem_ref,) = undefs(

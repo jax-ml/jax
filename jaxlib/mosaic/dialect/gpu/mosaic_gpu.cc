@@ -933,6 +933,53 @@ llvm::LogicalResult AsyncStoreSmemToTmemOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult AsyncStoreSparseMetadataSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return getOperation()->emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  llvm::ArrayRef<int64_t> tmem_shape = dest_type.getShape();
+  CHECK_EQ(tmem_shape.size(), 2);
+  if (tmem_shape[0] % 128 != 0) {
+    return error(
+        "The first dimension of the TMEM memref must be a multiple of "
+        "128, but got {0}.",
+        tmem_shape[0]);
+  }
+  if (tmem_shape[1] % 64 != 0) {
+    return error(
+        "The second dimension of the TMEM memref must be a multiple of "
+        "64, but got {0}.",
+        tmem_shape[1]);
+  }
+
+  llvm::ArrayRef<int64_t> smem_shape = source_type.getShape();
+  CHECK_EQ(smem_shape.size(), 4);
+
+  std::vector<int64_t> expected_smem_shape_vec = {tmem_shape[0] / 128,
+                                                  tmem_shape[1] / 64, 128, 64};
+  llvm::ArrayRef<int64_t> expected_smem_shape(expected_smem_shape_vec);
+  if (smem_shape != expected_smem_shape) {
+    return error("The `source` memref must have shape ({0}), but got ({1}).",
+                 absl::StrJoin(expected_smem_shape, ", "),
+                 absl::StrJoin(smem_shape, ", "));
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult TmemAllocOp::verify() {
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);
