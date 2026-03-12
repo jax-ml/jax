@@ -4514,21 +4514,26 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       self.skipTest('TPU v7 required for this test.')
 
   @parameterized.named_parameters(
-      ('f32', jnp.float32),
-      ('bf16', jnp.bfloat16),
-      ('f8_e4m3fn', jnp.float8_e4m3fn),
-      ('f8_e5m2', jnp.float8_e5m2),
+      ('f32', jnp.float32, False),
+      ('bf16', jnp.bfloat16, False),
+      ('f8_e4m3fn', jnp.float8_e4m3fn, False),
+      ('f8_e5m2', jnp.float8_e5m2, False),
+      ('bf16_transpose', jnp.bfloat16, True),
+      ('f32_transpose', jnp.float32, True),
   )
-  def test_basic(self, dtype):
+  def test_basic(self, dtype, transpose):
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)
     x = generator.normal(size=(m, k)).astype(dtype)
-    y = generator.normal(size=(k, n)).astype(dtype)
+    if transpose:
+      y = generator.normal(size=(n, k)).astype(dtype)
+    else:
+      y = generator.normal(size=(k, n)).astype(dtype)
 
     def matmul_kernel(x_ref, y_ref, o_ref):
       pltpu.matmul_push_rhs(
-          y_ref[...], mxu_index=0, staging_register=0
+          y_ref[...], mxu_index=0, staging_register=0, transpose=transpose
       )
       pltpu.matmul_acc_lhs(
           acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
@@ -4541,8 +4546,11 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     )
 
     def matmul_ref_kernel(x_ref, y_ref, o_ref):
+      rhs = y_ref[...]
+      if transpose:
+        rhs = rhs.T
       o_ref[...] = jnp.matmul(
-          x_ref[...], y_ref[...], preferred_element_type=jnp.float32
+          x_ref[...], rhs, preferred_element_type=jnp.float32
       )
     matmul_ref = pl.pallas_call(
         matmul_ref_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
