@@ -419,14 +419,14 @@ def batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped ]]:
+  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
-    in_axes: tuple[int | NotMapped ],
+    in_axes: tuple[int | NotMapped, ...],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
                    debug_info=closed_jaxpr.jaxpr.debug_info)

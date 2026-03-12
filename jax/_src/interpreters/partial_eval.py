@@ -469,7 +469,7 @@ def partial_eval_wrapper_nounits2(
 
 custom_partial_eval_rules: dict[Primitive, Callable] = {}
 call_partial_eval_rules: dict[Primitive, Callable] = {}
-call_param_updaters: dict[Primitive, Callable] = {}
+call_param_updaters: dict[Primitive, Callable[..., dict[str, Any]]] = {}
 
 def abstract_eval_fun(fun: Callable, *avals,
                       debug_info: core.DebugInfo, **params):
@@ -1303,7 +1303,7 @@ def closed_call_partial_eval_custom_rule(
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
   new_vars = [*new_inst, *res_val_vars, *res_ref_binders]
-  return eqn_known, eqn_staged, unks_out, inst_out, new_vars
+  return eqn_known, eqn_staged, unks_out, inst_out, new_vars  # pyrefly: ignore[bad-return]
 
 @weakref_lru_cache
 def _closed_jaxpr_partial_eval_custom_cached(
