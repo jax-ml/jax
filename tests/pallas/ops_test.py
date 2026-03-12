@@ -322,9 +322,9 @@ class PallasBaseTest(ptu.PallasTest):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
   def skip_if_mosaic_gpu(self):
-    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+      if jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
@@ -2776,7 +2776,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       if not use_mosaic_gpu:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
-      elif jtu.is_device_rocm():
+      elif jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")
