@@ -239,7 +239,8 @@ class JetTrace(core.Trace):
     primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
 
     if all(t is zero_series for t in series_in):
-      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, params)
+      avals = tuple(core.typeof(x) for x in primals_in)
+      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
       if primitive.multiple_results:
         return [JetTracer(self, p, zero_series) for p in primal_out]
       else:

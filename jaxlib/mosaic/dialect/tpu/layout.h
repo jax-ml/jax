@@ -588,6 +588,54 @@ class TiledRectangularVregBounds : public VRegDataBounds {
   std::array<int64_t, 2> end_offsets_;
 };
 
+// Represents a subset of a (packed) 1D vector register.
+//
+// All indices below are scaled up by the packing. That is, the maximal stop
+// offset for a register containing 16-bit values is twice as large as for
+// a register containing 32-bit values.
+//
+// Standard 1D packing is used. The values start laid out in the low half of the
+// first sublane, then wrap around to the higher half of the first sublane, etc.
+//
+// Attributes:
+//   layout: The layout used to generate the bounds.
+//   start_offset: Index of the element from which the mask begins (inclusive).
+//   stop_offset: Index of the element at which the mask ends (exclusive).
+class SingleRowVRegBounds : public VRegDataBounds {
+ public:
+  SingleRowVRegBounds(const VectorLayout& layout, const int64_t start_offset,
+                      const int64_t stop_offset,
+                      const std::array<int64_t, 2> target_shape)
+      : layout_(layout),
+        start_offset_(start_offset),
+        stop_offset_(stop_offset) {
+    CHECK(0 <= start_offset_ && start_offset_ < stop_offset_ &&
+          stop_offset_ <= getEntriesPerVreg(target_shape));
+  }
+
+  // Total number of entries contained in a vreg.
+  int64_t getEntriesPerVreg(std::array<int64_t, 2> target_shape) const;
+
+  // See base class.
+  bool maskVariesAlong(Direction direction,
+                       std::array<int64_t, 2> target_shape) const override;
+
+  // See base class.
+  FailureOr<TypedValue<VectorType>> getVectorMask(
+      OpBuilder& builder, Location loc, int generation,
+      std::array<int64_t, 2> target_shape) const override;
+
+  // See base class.
+  DenseBoolArrayAttr getSublaneMask(
+      MLIRContext* mlir_ctx,
+      std::array<int64_t, 2> target_shape) const override;
+
+ private:
+  VectorLayout layout_;
+  int64_t start_offset_;
+  int64_t stop_offset_;
+};
+
 using Layout = std::optional<VectorLayout>;
 extern const Layout kNoLayout;
 

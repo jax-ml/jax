@@ -267,7 +267,9 @@ class BatchTrace(Trace):
           return (BatchTracer(self, val_out, dim_out, src)
                   if dim_out is not not_mapped else val_out)
     elif args_not_mapped:  # Not all primitives have batching rules defined
-      return p.bind_with_trace(self.parent_trace, tuple(vals_in), dict(params))
+      avals = tuple(core.typeof(x) for x in vals_in)
+      return p.bind_with_trace(self.parent_trace, tuple(vals_in), avals,
+                               dict(params))
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
@@ -324,7 +326,8 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, self.axis_data, in_dims)
-    out_vals = prim.bind_with_trace(self.parent_trace, tuple(in_vals),
+    avals = tuple(core.typeof(x) for x in in_vals)
+    out_vals = prim.bind_with_trace(self.parent_trace, tuple(in_vals), avals,
                                     dict(subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     src = source_info_util.current()
@@ -345,8 +348,9 @@ class BatchTrace(Trace):
       return [*full_dims, *pruned_dims]
 
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
+    avals = tuple(core.typeof(x) for x in in_vals)
     out_vals = prim.bind_with_trace(self.parent_trace,
-                                    tuple(in_vals),
+                                    tuple(in_vals), avals,
                                     dict(subfuns=(fun, fwd, bwd), out_trees=out_trees, symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -395,19 +399,6 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
   return out_vals, out_dim_srcs, trace
 
 ### API for batching functions with jaxpr type inputs and outputs
-
-# Returns `out_dims` as a second tuple component.
-# The result of `f` should be a `FlatTree`.
-def batch_subtrace_2(f, tag, axis_data, in_dims, in_vals):
-  with core.take_current_trace() as parent_trace:
-    trace = BatchTrace(parent_trace, tag, axis_data)
-    with core.set_current_trace(trace):
-      in_dims = in_dims() if callable(in_dims) else in_dims
-      in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-      outs = f(*in_tracers)
-    out_vals, out_dims = outs.map(trace.to_batch_info).unzip2()
-  return out_vals, list(out_dims)
 
 @lu.transformation_with_aux2
 def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
