@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
 import math
-import operator as op
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -30,6 +29,7 @@ from jax._src import ffi
 from jax._src import literals
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
+from jax._src.sharding import Sharding
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import typing
@@ -215,16 +215,42 @@ class PRNGKeyArray(Array):
   def itemsize(self):
     return self.dtype.itemsize
 
-  _device = property(op.attrgetter('_base_array._device'))
-  _committed = property(op.attrgetter('_base_array._committed'))
-  device = property(op.attrgetter('_base_array.device'))  # pyrefly: ignore[bad-override]
-  devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
-  is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
-  is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
-  delete = property(op.attrgetter('_base_array.delete'))  # type: ignore[assignment]
-  is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
-  on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
-  unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
+  @property
+  def _device(self) -> Device:
+    assert hasattr(self._base_array, "_device")
+    return self._base_array._device
+
+  @property
+  def _committed(self) -> bool:
+    assert hasattr(self._base_array, "_committed")
+    return self._base_array._committed
+
+  @property
+  def device(self) -> Device | Sharding:
+    return self._base_array.device
+
+  @property
+  def is_fully_addressable(self) -> bool:
+    return self._base_array.is_fully_addressable
+
+  @property
+  def is_fully_replicated(self) -> bool:
+    return self._base_array.is_fully_replicated
+
+  def devices(self) -> set[Device]:
+    return self._base_array.devices()
+
+  def delete(self) -> None:
+    self._base_array.delete()
+
+  def is_deleted(self) -> bool:
+    return self._base_array.is_deleted()
+
+  def on_device_size_in_bytes(self) -> int:
+    return self._base_array.on_device_size_in_bytes()
+
+  def unsafe_buffer_pointer(self) -> int:
+    return self._base_array.unsafe_buffer_pointer()
 
   def addressable_data(self, index: int) -> PRNGKeyArray:
     return PRNGKeyArray(self._impl, self._base_array.addressable_data(index))
@@ -303,7 +329,9 @@ class PRNGKeyArray(Array):
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
 
-  def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+  def __array__(self, dtype: np.dtype | None = None, context: None = None,
+                copy: bool | None = None) -> np.ndarray:
+    del dtype, context, copy
     raise TypeError("JAX array with PRNGKey dtype cannot be converted to a NumPy array."
                     " Use jax.random.key_data(arr) if you wish to extract the underlying"
                     " integer array.")
@@ -319,7 +347,7 @@ class PRNGKeyArray(Array):
   def at(self)                  -> _IndexUpdateHelper: assert False  # pyrefly: ignore[bad-override]
   @property
   def T(self)                   -> PRNGKeyArray: assert False
-  def __getitem__(self, key)    -> PRNGKeyArray: assert False
+  def __getitem__(self, _, /)   -> PRNGKeyArray: assert False
   def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
   def ravel(self, *_, **__)     -> PRNGKeyArray: assert False
   def reshape(self, *_, **__)   -> PRNGKeyArray: assert False

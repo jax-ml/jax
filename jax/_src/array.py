@@ -334,7 +334,7 @@ class ArrayImpl(basearray.Array):
     else:
       return repr(self)
 
-  def __getitem__(self, idx):  # pyrefly: ignore[bad-param-name-override]
+  def __getitem__(self, idx, /):
     from jax._src.lax import lax  # pytype: disable=import-error
     from jax._src.numpy import indexing  # pytype: disable=import-error
     self._check_if_deleted()
@@ -433,7 +433,9 @@ class ArrayImpl(basearray.Array):
     """
     return self.sharding.is_fully_addressable
 
-  def __array__(self, dtype=None, context=None, copy=None):  # pyrefly: ignore[bad-override]
+  def __array__(self, dtype: np.dtype | None = None,
+                context: None = None, copy: bool | None = None):
+    del context  # unused
     # copy argument is supported by np.asarray starting in numpy 2.0
     kwds = {} if copy is None else {'copy': copy}
     return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]

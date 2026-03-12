@@ -1618,6 +1618,7 @@ pytype_strict_library(
         ":mlir",
         ":numpy",
         ":pretty_printer",
+        ":sharding",
         ":sharding_impls",
         ":source_info_util",
         ":tree_util",
