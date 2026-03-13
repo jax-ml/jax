@@ -369,6 +369,18 @@ class CoreTest(jtu.JaxTestCase):
                             memory_space=jax.memory.Space.Device)
     self.assertEqual(aval.str_short(True), "f32[8]")
 
+  def test_grad_memory_space_is_device(self):
+    # Gradients should always be on device, even when parameters carry a
+    # pinned_host memory space (e.g. parameter_memory_host_offload=True
+    # in MaxText).
+    # to_tangent_aval / to_ct_aval must not propagate the host memory space.
+    host_aval = core.ShapedArray((4,), jnp.float32,
+                                 memory_space=jax.memory.Space.Host)
+    self.assertEqual(host_aval.to_tangent_aval().memory_space,
+                     jax.memory.Space.Device)
+    self.assertEqual(host_aval.to_ct_aval().memory_space,
+                     jax.memory.Space.Device)
+
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):

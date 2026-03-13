@@ -2326,14 +2326,14 @@ class ShapedArray(AbstractValue):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
         self.weak_type, sharding=self.sharding, vma=self.vma,
-        memory_space=self.memory_space)
+        memory_space=MemorySpace.Device)
 
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     return ShapedArray(
         self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
-        memory_space=self.memory_space)
+        memory_space=MemorySpace.Device)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
