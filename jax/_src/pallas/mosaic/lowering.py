@@ -965,6 +965,17 @@ def lower_jaxpr_into_module(
         block_params["pipeline_mode"] = ir.Attribute.parse(
             f"#tpu.pipeline_mode<{pipeline_mode_str}>"
         )
+        if pipeline_mode.revisit is not None:
+          if (
+              pipeline_mode.revisit == pallas_core.RevisitMode.ANY
+              and buffer_count > 1
+          ):
+            raise LoweringException(
+                "RevisitMode.ANY is not supported with double buffering."
+            )
+          block_params["revisit_mode"] = ir.Attribute.parse(
+              f"#tpu.revisit_mode<{pipeline_mode.revisit.value}>"
+          )
       window_params.append(ir.DictAttr.get(block_params))
       module.body.append(mlir_func)
       sym_tab.insert(mlir_func)

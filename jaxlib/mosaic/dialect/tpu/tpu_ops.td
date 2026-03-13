@@ -56,6 +56,18 @@ def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mod
     let assemblyFormat = "`<` $value `>`";
 }
 
+def TPU_RevisitMode : I32EnumAttr<"RevisitMode", "Revisit mode", [
+  I32EnumAttrCase<"kImmediate", 0, "immediate">,
+  I32EnumAttrCase<"kAny", 1, "any">
+  ]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_RevisitModeEnum : EnumAttr<TPU_Dialect, TPU_RevisitMode, "revisit_mode"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
