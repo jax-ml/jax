@@ -30,7 +30,6 @@ except ImportError:
 else:
   import jax.experimental.mosaic.gpu as mgpu
 
-
 # ruff: noqa: F405
 # pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
@@ -39,6 +38,8 @@ config.parse_flags_with_absl()
 class TestCase(parameterized.TestCase):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or

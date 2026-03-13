@@ -55,7 +55,6 @@ from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
 import jax.numpy as jnp
 import numpy as np
 
-
 try:
   import jax._src.lib.mosaic_gpu as mosaic_gpu_lib  # noqa: F401
   HAS_MOSAIC_GPU = True
@@ -213,6 +212,8 @@ def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or
@@ -7352,6 +7353,11 @@ class EndToEndTest(TestCase):
 
 
 class SerializationTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
   def test_pass_is_registered(self):
     ctx = mlir.make_ir_context()

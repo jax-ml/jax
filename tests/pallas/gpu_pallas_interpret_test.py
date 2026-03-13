@@ -23,7 +23,6 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 
-
 jax.config.parse_flags_with_absl()
 
 
@@ -41,6 +40,8 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')

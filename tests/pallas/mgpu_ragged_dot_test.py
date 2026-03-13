@@ -27,7 +27,6 @@ from jax.experimental.pallas.ops.gpu import transposed_ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
 
-
 config.parse_flags_with_absl()
 
 
@@ -63,6 +62,8 @@ class RaggedDotTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if ragged_dot_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or

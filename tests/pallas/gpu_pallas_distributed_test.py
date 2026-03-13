@@ -50,7 +50,7 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
 
   def setUp(self):
     if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic not supported on ROCm currently.")
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):

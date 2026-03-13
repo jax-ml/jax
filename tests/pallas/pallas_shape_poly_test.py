@@ -552,6 +552,8 @@ class ExportTestWithTriton(jtu.JaxTestCase):
 class ExportTestWithMosaicGpu(ExportTestWithTriton):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     # TODO(b/432678342): remove once this is fixed.
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least(
         "9.0"

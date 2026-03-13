@@ -19,6 +19,7 @@ import math
 import re
 import subprocess
 import sys
+import unittest
 from typing import Any
 
 from absl.testing import absltest
@@ -307,6 +308,10 @@ class PallasBaseTest(ptu.PallasTest):
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):
+    # Node-level skip: only triggers if a test actually tries to use pallas_call
+    # while Mosaic backend is selected on ROCm.
+    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
     if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
       assert plgpu_mgpu is not None
       compiler_params = plgpu_mgpu.CompilerParams(
@@ -318,6 +323,8 @@ class PallasBaseTest(ptu.PallasTest):
 
   def skip_if_mosaic_gpu(self):
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+      if jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
@@ -918,6 +925,8 @@ class OpsTest(PallasBaseTest):
       out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
     def run(interpret=False):
+      if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+        raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
@@ -2742,6 +2751,8 @@ class OpsTest(PallasBaseTest):
       )
       output_ref[...] = output
 
+    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     deq_call = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
@@ -2757,9 +2768,10 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      # ROCm always uses Triton (Mosaic GPU doesn't support ROCm).
-      if jtu.is_device_rocm() or not use_mosaic_gpu:
+      if not use_mosaic_gpu:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
+      elif jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic GPU is not supported on ROCm.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")
     # This is mostly to test that the kernel compiles. It's difficult to

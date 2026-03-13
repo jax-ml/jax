@@ -30,7 +30,6 @@ from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
 
-
 P = jax.sharding.PartitionSpec
 
 
@@ -46,6 +45,8 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if collective_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or

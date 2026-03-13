@@ -32,7 +32,6 @@ from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
-
 config.parse_flags_with_absl()
 
 
@@ -858,6 +857,8 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
     self.skip_unless_tcgen05()

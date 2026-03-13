@@ -57,7 +57,6 @@ try:
 except ImportError:
   mosaic_gpu_lib = None
 
-
 jax.config.parse_flags_with_absl()
 
 
@@ -136,6 +135,8 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 

@@ -32,6 +32,11 @@ V = cs.Variable
 
 class ConstraintSystemTest(parameterized.TestCase):
 
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
+
   def test_constraint_system_is_unsatisfiable_if_assignments_are_incompatible(
       self,
   ):
