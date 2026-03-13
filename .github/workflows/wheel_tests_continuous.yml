@@ -305,8 +305,15 @@ jobs:
         matrix:
           runner: ["linux-x86-64-1gpu-amd"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.11"]
+          python: ["3.11", "3.12", "3.13", "3.14"]
           rocm-version: ["7"]
+          exclude:
+            - artifact: "jax-rocm-pjrt"
+              python: "3.12"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.13"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.14"
     name: "Build ${{ format('{0}', 'ROCm') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
