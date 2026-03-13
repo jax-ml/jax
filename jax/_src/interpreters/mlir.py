@@ -82,9 +82,6 @@ MYPY = False
 IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 
-def _is_not_block_argument(x: IrValues) -> bool:
-  return not isinstance(x, ir.BlockArgument)
-
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
@@ -2335,9 +2332,15 @@ def _platforms_for_eqn(ctx: LoweringRuleContext) -> tuple[str, ...]:
   return tuple(_platforms_for_eqn_ctx(ctx.jaxpr_eqn_ctx) or
                ctx.platforms or ctx.module_context.platforms)
 
-def _get_owner(v: ir.Value):
+def _get_owner(v):
+  if isinstance(v, ir.BlockArgument):
+    return v.owner
   owner = v.owner
-  return owner.operation if isinstance(owner, ir.OpView) else owner
+  op = owner.operation if isinstance(owner, ir.OpView) else owner
+  while op.name == "sdy.sharding_constraint":
+    v = op.operands[0]
+    return _get_owner(v)
+  return op
 
 def lower_per_platform(ctx: LoweringRuleContext,
                        description: str,
@@ -2416,13 +2419,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
         Sequence[IrValues], kept_rules[0](ctx, *rule_args, **rule_kwargs)
     )
     flat_output = flatten_ir_values(output)
-    foreach(
-        lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
-        filter(_is_not_block_argument, flat_output),
-    )
-    foreach(
-        lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)), flat_output
-    )
+    foreach(lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
+            [o for o in flat_output if not isinstance(o, ir.BlockArgument)])
+    foreach(lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
+            [o for o in flat_output if not isinstance(o, ir.BlockArgument)])
     return flat_output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
@@ -2464,7 +2464,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
                         f"{description}, got output {output}") from e
       foreach(
           lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
-          filter(_is_not_block_argument, out_nodes),
+          [o for o in out_nodes if not isinstance(o, ir.BlockArgument)],
       )
       foreach(
           lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),

@@ -40,6 +40,7 @@ from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
+from jax._src.xla_metadata import set_xla_metadata
 from jax._src import prng
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
                           AbstractDevice)
@@ -10622,6 +10623,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
     out = f(arr1, arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_xla_metadata_applied_to_op(self, mesh):
+    arr = jax.device_put(np.arange(8), P('x'))
+
+    @jax.jit
+    def f(x):
+      with set_xla_metadata(_my_tag="yes"):
+        return x * 2
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertRegex(lowered_text, r'multiply.*frontend_attributes')
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
