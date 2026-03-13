@@ -135,10 +135,10 @@ def asarray(x: ArrayLike) -> Array:
   """Lightweight conversion of ArrayLike input to Array output."""
   if isinstance(x, Array):
     return x
-  elif isinstance(x, (bool, np.ndarray, np.generic)):
-    return _convert_element_type(x, weak_type=False)
   elif isinstance(x, literals.TypedNdArray):
     return _convert_element_type(x, weak_type=x.weak_type)
+  elif isinstance(x, (bool, np.ndarray, np.generic)):
+    return _convert_element_type(x, weak_type=False)
   elif isinstance(x, (int, float, builtins.complex)):
     return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)
   else:

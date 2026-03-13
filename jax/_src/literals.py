@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Sequence, Literal
 from jax._src.lib import _jax
 
 import numpy as np
@@ -82,62 +81,54 @@ _jax.set_typed_complex_type(TypedComplex)
 typed_scalar_types: set[type] = {TypedInt, TypedFloat, TypedComplex}
 
 
-class TypedNdArray:
+class TypedNdArray(np.ndarray):
   """A TypedNdArray is a host-side array used by JAX during tracing.
 
-  To most intents and purposes a TypedNdArray is a thin wrapper around a numpy
-  array and should act like it. The primary differences are that a TypedNdArray
-  carries a JAX type:
+  TypedNdArray is a subclass of np.ndarray that carries additional JAX type
+  information:
   * its type is not canonicalized by JAX, irrespective of the jax_enable_x64
     mode
   * it can be weakly typed.
   """
 
-  __slots__ = ('val', 'weak_type')
-
-  val: np.ndarray
   weak_type: bool
 
-  def __init__(self, val: np.ndarray, weak_type: bool):
-    self.val = val
-    self.weak_type = weak_type
+  def __new__(cls, val: np.ndarray, weak_type: bool):
+    obj = np.asarray(val).view(cls)
+    obj.weak_type = weak_type
+    return obj
+
+  def __array_finalize__(self, obj):
+    if obj is None:
+      return
+    self.weak_type = getattr(obj, 'weak_type', False)
 
   @property
-  def dtype(self) -> np.dtype:
-    return self.val.dtype
+  def val(self) -> np.ndarray:
+    return np.asarray(self)
 
-  @property
-  def shape(self) -> tuple[int, ...]:
-    return self.val.shape
-
-  @property
-  def strides(self) -> Sequence[int]:
-    return self.val.strides
-
-  @property
-  def ndim(self) -> int:
-    return self.val.ndim
-
-  @property
-  def size(self) -> int:
-    return self.val.size
-
-  def __len__(self) -> int:
-    return self.val.__len__()
+  def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+    inputs = tuple(np.asarray(x) if isinstance(x, TypedNdArray) else x
+                   for x in inputs)
+    if 'out' in kwargs:
+      kwargs['out'] = tuple(
+          np.asarray(x) if isinstance(x, TypedNdArray) else x
+          for x in kwargs['out'])
+    return getattr(ufunc, method)(*inputs, **kwargs)
 
   def __repr__(self):
     prefix = 'TypedNdArray('
     if self.weak_type:
-      dtype_str = f'dtype={self.val.dtype.name}, weak_type=True)'
+      dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
     else:
-      dtype_str = f'dtype={self.val.dtype.name})'
+      dtype_str = f'dtype={self.dtype.name})'
 
     line_width = np.get_printoptions()['linewidth']
     if self.size == 0:
-      s = f'[], shape={self.val.shape}'
+      s = f'[], shape={self.shape}'
     else:
       s = np.array2string(
-          self.val,
+          np.asarray(self),
           prefix=prefix,
           suffix=',',
           separator=', ',
@@ -149,119 +140,10 @@ class TypedNdArray:
       sep = ' ' * len(prefix)
     return f'{prefix}{s},{sep}{dtype_str}'
 
-  def __array__(self, dtype=None, copy=None):
-    # You might think that we can do the following here:
-    # return self.val.__array__(dtype=dtype, copy=copy)
-    # Unfortunately __array__ appears to be buggy on NumPy < 2.3 and interprets
-    # the "dtype=None" as "the default float type".
-    # TODO(phawkins): revert to the above form once NumPy 2.3 is the minimum
-    # supported version.
-    return np.asarray(self.val, dtype=dtype, copy=copy)  # pytype: disable=wrong-keyword-args
+  def __reduce__(self):
+    return (TypedNdArray, (np.asarray(self), self.weak_type))
 
-  def __add__(self, other):
-    return self.val.__add__(other)
-
-  def __sub__(self, other):
-    return self.val.__sub__(other)
-
-  def __mul__(self, other):
-    return self.val.__mul__(other)
-
-  def __floordiv__(self, other):
-    return self.val.__floordiv__(other)
-
-  def __truediv__(self, other):
-    return self.val.__truediv__(other)
-
-  def __mod__(self, other):
-    return self.val.__mod__(other)
-
-  def __pow__(self, other):
-    return self.val.__pow__(other)
-
-  def __radd__(self, other):
-    return self.val.__radd__(other)
-
-  def __rsub__(self, other):
-    return self.val.__rsub__(other)
-
-  def __rmul__(self, other):
-    return self.val.__rmul__(other)
-
-  def __rtruediv__(self, other):
-    return self.val.__rtruediv__(other)
-
-  def __rfloordiv__(self, other):
-    return self.val.__rfloordiv__(other)
-
-  def __rmod__(self, other):
-    return self.val.__rmod__(other)
-
-  def __rpow__(self, other):
-    return self.val.__rpow__(other)
-
-  def __getitem__(self, index):
-    return self.val.__getitem__(index)
-
-  def __bool__(self):
-    return self.val.__bool__()
-
-  def __int__(self):
-    return self.val.__int__()
-
-  def __float__(self):
-    return self.val.__float__()
-
-  def __complex__(self):
-    return self.val.__complex__()
-
-  def __index__(self):
-    return self.val.__index__()
-
-  def __lt__(self, other):
-    return self.val.__lt__(other)
-
-  def __le__(self, other):
-    return self.val.__le__(other)
-
-  def __eq__(self, other):
-    return self.val.__eq__(other)
-
-  def __ne__(self, other):
-    return self.val.__ne__(other)
-
-  def __gt__(self, other):
-    return self.val.__gt__(other)
-
-  def __ge__(self, other):
-    return self.val.__ge__(other)
-
-  def __abs__(self):
-    return self.val.__abs__()
-
-  def reshape(self, *args, **kw):
-    return self.val.reshape(*args, **kw)
-
-  def item(self, *args):
-    return self.val.item(*args)
-
-  @property
-  def T(self):
-    return self.val.T
-
-  @property
-  def mT(self):
-    return self.val.mT
-
-  def clip(self, *args, **kwargs):
-    return self.val.clip(*args, **kwargs)
-
-  def astype(self, dtype, order: str = 'K', casting: str = 'unsafe', subok: bool = True, copy: bool = True):
-    return self.val.astype(  # type: ignore[no-matching-overload, call-overload]
-        dtype, order=order, casting=casting, subok=subok, copy=copy
-    )
-
-  def tobytes(self, order: Literal['A', 'C', 'F', 'K'] | None = 'C'):
-    return self.val.tobytes(order=order)
+  def __getnewargs__(self):
+    return (np.asarray(self), self.weak_type)
 
 _jax.set_typed_ndarray_type(TypedNdArray)

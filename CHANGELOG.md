@@ -16,6 +16,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.9.2 (March 2, 2026)
+
+* Changes:
+  * The semi-private type `jax._src.literals.TypedNdArray` is now a subclass of
+    `np.ndarray`, rather than a duck type of it.
+
 ## JAX 0.9.1 (March 2, 2026)
 
 * Changes:
