@@ -34,7 +34,7 @@ from jax.experimental.colocated_python import obj_backend
 # default, once the behavior has been declared stable.
 _USE_WEAKREFS = config.bool_state(
     'jax_experimental_colocated_python_object_use_weakrefs_at_backend',
-    False,
+    True,
     help=(
         'Unstable in-development feature that switches the colocated-python'
         ' implementation to internally use reference counting for destructing'
@@ -138,7 +138,9 @@ def _make_method(
       if use_weakrefs and not hasattr(self, 'obj'):
         # It is possible that no one has ever consumed the _ConsumableRef. So
         # consume it now.
-        self._first_call()
+        obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
+            uid, lambda: obj_backend._ConsumableRef(None)  # pylint: disable=protected-access
+        )()
 
   # Colocated Python callable for the controller.
   callable = func_maker.make_callable(
