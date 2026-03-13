@@ -113,10 +113,13 @@ setup(
           f"jax-cuda13-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
-        # ROCm support for ROCm 7.0 and above.
-        'rocm': [
+        # Target that does not depend on ROCm runtime pip wheels, until
+        # ROCm wheels are distributed.
+        # TODO(gulsumgudukbay): add rocm and rocm8 extras once they are
+        # distributed.
+        'rocm7-local': [
           f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
-          f"jax-rocm7-plugin>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-rocm7-plugin=={_jax_version}.*",
         ],
 
         # For automatic bootstrapping distributed jobs in Kubernetes
