@@ -405,12 +405,26 @@ rediraffe_redirects = {
 # Sphinx build. See: https://github.com/jupyter/jupyter_client/issues/487
 import jupyter_client.manager
 from filelock import FileLock
-_original_start_kernel = jupyter_client.manager.KernelManager.start_kernel
-def _start_kernel_with_lock(self, **kwargs):
-    # Prevent Sphinx multiprocessing workers from executing port discovery
-    # simultaneously
-    lock_dir = os.path.join(os.path.dirname(__file__), "build")
-    os.makedirs(lock_dir, exist_ok=True)
-    with FileLock(os.path.join(lock_dir, "jupyter_client_port_lock.lock")):
-        return _original_start_kernel(self, **kwargs)
-jupyter_client.manager.KernelManager.start_kernel = _start_kernel_with_lock
+_original_async_start_kernel = jupyter_client.manager.KernelManager._async_start_kernel
+async def _async_start_kernel_with_lock(self, **kwargs):
+  # Prevent Sphinx multiprocessing workers from executing port discovery
+  # simultaneously
+  lock_dir = os.path.join(os.path.dirname(__file__), "build")
+  os.makedirs(lock_dir, exist_ok=True)
+  with FileLock(os.path.join(lock_dir, "jupyter_client_port_lock.lock")):
+    res = await _original_async_start_kernel(self, **kwargs)
+    client = None
+    try:
+      client = self.client()
+      client.start_channels()
+      client.wait_for_ready(timeout=60)
+    except RuntimeError:
+      # wait_for_ready can raise a RuntimeError on timeout or if the kernel dies.
+      # We swallow it here so we don't crash the build from inside the monkeypatch.
+      # myst-nb/nbclient will perform its own connection checks and handle errors.
+      pass
+    finally:
+      if client is not None:
+        client.stop_channels()
+    return res
+jupyter_client.manager.KernelManager._async_start_kernel = _async_start_kernel_with_lock
