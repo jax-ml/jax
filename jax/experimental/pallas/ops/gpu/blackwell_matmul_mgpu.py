@@ -139,14 +139,18 @@ def matmul_kernel(a, b, config: TuningConfig):
                   a_gmem.at[slice_m, slice_k],
                   a_smem.at[slot],
                   ab_tma_barrier.at[slot],
-                  partitioned_axis=0 if collective else None,
+                  leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
+                  if collective
+                  else None,
                   collective_axes="x" if collective else None,
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[slice_k, slice_n],
                   b_smem.at[slot],
                   ab_tma_barrier.at[slot],
-                  partitioned_axis=1 if collective else None,
+                  leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
+                  if collective
+                  else None,
                   collective_axes="x" if collective else None,
               )
             lax.fori_loop(0, k_iters, _loop_body, None)

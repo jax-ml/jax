@@ -374,11 +374,11 @@ def matmul3(a, b, config: TuningConfig):
           k_slice = pl.ds(ki * tile_k, tile_k)
           plgpu.copy_gmem_to_smem(
               a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-              collective_axes="cluster", partitioned_axis=0
+              collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
           )
           plgpu.copy_gmem_to_smem(
               b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-              collective_axes="cluster", partitioned_axis=1
+              collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
           )
         lax.fori_loop(0, k_iters, _loop_body, None)
 
@@ -488,11 +488,11 @@ def matmul4(a, b, config: TuningConfig):
             k_slice = pl.ds(ki * tile_k, tile_k)
             plgpu.copy_gmem_to_smem(
                 a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                collective_axes="cluster", partitioned_axis=0
+                collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
             )
             plgpu.copy_gmem_to_smem(
                 b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                collective_axes="cluster", partitioned_axis=1
+                collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
             )
 
           lax.fori_loop(0, k_iters, _loop_body, None)
@@ -614,11 +614,11 @@ def matmul5(a, b, config: TuningConfig):
               k_slice = pl.ds(ki * tile_k, tile_k)
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=0
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=1
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
               )
 
             lax.fori_loop(0, k_iters, _loop_body, None)
@@ -762,11 +762,11 @@ def matmul6(a, b, config: TuningConfig):
               k_slice = pl.ds(ki * tile_k, tile_k)
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=0
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=1
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
               )
 
             lax.fori_loop(0, k_iters, _loop_body, None)

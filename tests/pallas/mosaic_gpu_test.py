@@ -4390,14 +4390,14 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
                tma_barrier, mma_barrier,
                acc_tmem, lhs_scales_tmem, rhs_scales_tmem):
       plgpu.copy_gmem_to_smem(lhs_gmem, lhs_smem, tma_barrier,
-                              collective_axes="x", partitioned_axis=0)
+                              collective_axes="x", leader_tracked=plgpu.CopyPartition.PARTITIONED(0))
       plgpu.copy_gmem_to_smem(rhs_gmem, rhs_smem, tma_barrier,
-                              collective_axes="x", partitioned_axis=0)
+                              collective_axes="x", leader_tracked=plgpu.CopyPartition.PARTITIONED(0))
       plgpu.copy_gmem_to_smem(lhs_scales_gmem, lhs_scales_smem, tma_barrier,
-                              collective_axes="x", partitioned_axis=0)
+                              collective_axes="x", leader_tracked=plgpu.CopyPartition.PARTITIONED(0))
       # RHS scales are replicated (multicast)
       plgpu.copy_gmem_to_smem(rhs_scales_gmem, rhs_scales_smem, tma_barrier,
-                              collective_axes="x", partitioned_axis=None)
+                              collective_axes="x")
       cluster_idx = lax.axis_index("x")
 
       @pl.when(cluster_idx == 0)
@@ -5069,14 +5069,14 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
                 a_smem,
                 a_tma_barrier,
                 collective_axes="x",
-                partitioned_axis=0,
+                leader_tracked=plgpu.CopyPartition.PARTITIONED(0),
             )
             plgpu.copy_gmem_to_smem(
                 b_gmem,
                 b_smem,
                 b_tma_barrier,
                 collective_axes="x",
-                partitioned_axis=0,
+                leader_tracked=plgpu.CopyPartition.PARTITIONED(0),
             )
       else:
         plgpu.copy_gmem_to_smem(
@@ -5084,14 +5084,14 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
             a_smem,
             a_tma_barrier,
             collective_axes="x",
-            partitioned_axis=0,
+            leader_tracked=plgpu.CopyPartition.PARTITIONED(0),
         )
         plgpu.copy_gmem_to_smem(
             b_gmem,
             b_smem,
             b_tma_barrier,
             collective_axes="x",
-            partitioned_axis=0,
+            leader_tracked=plgpu.CopyPartition.PARTITIONED(0),
         )
       @pl.when(cluster_idx == 0)
       def _():

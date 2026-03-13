@@ -644,7 +644,7 @@ two accumulators on top would recover the result of performing a MxNxK matrix
 multiplication.
 
 To make loading of the `B` operand easier, {py:func}`plgpu.copy_gmem_to_smem <jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem>`
-can be used together with `collective_axes` and `partitioned_axis` to indicate
+can be used together with `collective_axes` and `leader_tracked=plgpu.CopyPartition.PARTITIONED(axis)` to indicate
 that the two Pallas threads along the collective axis should load the same slice,
 but each will only obtain half of it. Unlike a copy with `collective_axes` alone
 it does not utilize TMA multicast (since each thread loads a distinct slice of
@@ -656,7 +656,7 @@ plgpu.copy_gmem_to_smem(
     b_smem,  # [K, N // 2]
     b_tma_barrier,
     collective_axes="x",
-    partitioned_axis=1,
+    leader_tracked=plgpu.CopyPartition.PARTITIONED(1),
 )
 ```
 
@@ -1307,20 +1307,13 @@ plgpu.kernel(
 )
 ```
 
-#### Collective partitioned copies (Blackwell only)
+#### Leader-tracked collective copies (Blackwell only)
 
-In the Blackwell generations, collective copies that involve clusters of two
-blocks can be _partitioned_ by passing an additional `partitioned_axis` argument.
-When specified, the GMEM reference is expected to be double the size of the
-destination SMEM reference along the specified dimension. The destination in the
-first block will be overwritten with the first half of the GMEM ref, while the
-second block will receive the second half.
-
-This by itself would be equivalent to performing two non-collective copies on
-different input slices, but there's one crucial difference: only the barrier in
-the first block will receive the arrival once both copies complete. The barrier
-argument in the second block is ignored and the second block cannot use it to
-await the completion of the transfer.
+In the Blackwell generation, collective copies that involve clusters of two
+blocks support a `leader_tracked` argument. When specified, only the barrier in
+the first block (the "leader") will receive arrivals once the copy completes.
+The barrier argument in the second block is ignored and the second block cannot
+use it to await the completion of the transfer.
 
 Arguably, this is a bit of a surprising feature, but it makes sense in the
 context of collective MMAs on Blackwell. There, each block is responsible for
@@ -1328,6 +1321,47 @@ loading the operands into SMEM, but only the first block awaits the
 completion of the transfers and issues the MMA instructions. The second block
 usually waits on the completion of the MMA to indicate that the transfer is done,
 and the SMEM data has been read out, implying that it can safely overwrite it.
+
+There are two `leader_tracked` modes:
+
+##### `CopyPartition.PARTITIONED(axis)`
+
+When `leader_tracked=plgpu.CopyPartition.PARTITIONED(axis)`,
+the GMEM reference is expected to be double the size of the
+destination SMEM reference along the specified dimension. The destination in the
+first block will be overwritten with the first half of the GMEM ref, while the
+second block will receive the second half.
+
+This by itself would be equivalent to performing two non-collective copies on
+different input slices, but the key difference is in the barrier tracking
+behavior described above.
+
+```python
+plgpu.copy_gmem_to_smem(
+    b_gmem,  # [K, N]
+    b_smem,  # [K, N // 2]
+    b_tma_barrier,
+    collective_axes="x",
+    leader_tracked=plgpu.CopyPartition.PARTITIONED(1),
+)
+```
+
+##### `CopyPartition.REPLICATED`
+
+When `leader_tracked=plgpu.CopyPartition.REPLICATED`,
+both blocks load the same data (just like a regular collective copy), but
+the barrier tracking is still leader-only. This is especially useful for the
+scales operands of collective MMA that need to be replicated in both blocks.
+
+```python
+plgpu.copy_gmem_to_smem(
+    x_gmem,  # [K, N]
+    x_smem,  # [K, N]
+    tma_barrier,
+    collective_axes="x",
+    leader_tracked=plgpu.CopyPartition.REPLICATED,
+)
+```
 
 ### SMEM to GMEM copies
 

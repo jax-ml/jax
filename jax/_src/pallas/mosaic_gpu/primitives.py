@@ -503,7 +503,6 @@ def _copy_gmem_to_smem_lowering(
     dst_transforms_treedef,
     barrier_transforms_treedef,
     collective_axes,
-    partitioned_axis,
     leader_tracked,
     for_warpgroup: bool = True,
 ):
@@ -559,12 +558,7 @@ def _copy_gmem_to_smem_lowering(
         lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
         for axis in collective_axes
     )
-  if partitioned_axis is not None and leader_tracked is not None:
-    raise ValueError(
-        "Cannot specify both `partitioned_axis` and `leader_tracked`"
-    )
-  if partitioned_axis is not None:
-    leader_tracked = CopyPartition.PARTITIONED(partitioned_axis)
+
   is_leader_tracked_copy = collective and leader_tracked is not None
   dst_ty = ir.MemRefType(dst.type)
   bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
@@ -690,7 +684,6 @@ def copy_gmem_to_smem(
     barrier: _Ref,
     *,
     collective_axes: str | tuple[str, ...] | None = None,
-    partitioned_axis: int | None = None,
     leader_tracked: CopyPartition | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
@@ -699,12 +692,21 @@ def copy_gmem_to_smem(
   all CUDA blocks that share the same index along the collective axis
   receive a copy of the same block of data loaded from `dst` to `src`.
 
-  If both collective_axes and partitioned_axis are specified, this will perform
-  a partitioned collective copy where each block in the cluster will receive
-  a tile of `transfer_size // cluster_size` data from the `src` Ref.
-  For example, if `src` has a shape of (256, 256) and a partitioned
-  copy is performed along axis 0 with cluster size 2, then the first block will
-  receive `src[0:128, :]` and the second will receive `src[128:256, :]`.
+  If both ``collective_axes`` and ``leader_tracked`` are specified as
+  ``CopyPartition.PARTITIONED(axis)``, this will perform a partitioned
+  collective copy where each block in the cluster will receive a tile of
+  ``transfer_size // cluster_size`` data from the ``src`` Ref.
+  For example, if ``src`` has a shape of (256, 256) and a partitioned
+  copy is performed along axis 0 with cluster size 2, then the first block
+  will receive ``src[0:128, :]`` and the second will receive
+  ``src[128:256, :]``.
+
+  If both ``collective_axes`` and ``leader_tracked`` are specified as
+  ``CopyPartition.REPLICATED``, this will perform a replicated copy where
+  all blocks load the same data but only the first block in the collective
+  tracks progress via barrier arrivals.
+
+
   NOTE: Only the first block in the cluster will arrive on the barrier,
   and an additional cluster barrier is necessary to ensure that all blocks in
   the cluster have finished the copy.
@@ -714,14 +716,10 @@ def copy_gmem_to_smem(
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy.
     collective_axes: The collective axes to use for the copy.
-    partitioned_axis: Indicates which array axis along the src/dst Refs to
-     partition across during a partitioned collective copy. Requires
-     collective_axes to also be specified.
-    leader_tracked: If ``CopyPartition.PARTITIONED(axis)``, equivalent to
-     setting ``partitioned_axis``. If ``CopyPartition.REPLICATED``, all
-     blocks load the same data but only the first block in the collective
-     tracks progress via barrier arrivals. Cannot be used together with
-     ``partitioned_axis``.
+    leader_tracked: If specified, only the leader block in the cluster will
+     observe the completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
+     performs a partitioned collective copy along the given axis. If
+     ``CopyPartition.REPLICATED``, all blocks load the same data.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -747,6 +745,10 @@ def copy_gmem_to_smem(
   )
   if isinstance(collective_axes, str):
     collective_axes = (collective_axes,)
+  if leader_tracked is not None and collective_axes is None:
+    raise ValueError(
+        "`collective_axes` must be specified when `leader_tracked` is set"
+    )
   copy_gmem_to_smem_p.bind(
       src,
       dst,
@@ -758,7 +760,6 @@ def copy_gmem_to_smem(
       dst_transforms_treedef=dst_transforms_treedef,
       barrier_transforms_treedef=barrier_transforms_treedef,
       collective_axes=collective_axes,
-      partitioned_axis=partitioned_axis,
       leader_tracked=leader_tracked,
   )
   return None
@@ -788,7 +789,6 @@ def _async_prefetch_lowering(
     *flat_ref_transforms,
     ref_transforms_treedef,
     collective_axes,
-    partitioned_axis,
     leader_tracked,
 ):
   ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
@@ -807,12 +807,7 @@ def _async_prefetch_lowering(
       # Gathers are a warpgroup-level collective and can't take a predicate.
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
         predicate_kwarg = {}
-    if partitioned_axis is not None and leader_tracked is not None:
-      raise ValueError(
-          "Cannot specify both `partitioned_axis` and `leader_tracked`"
-      )
-    if partitioned_axis is not None:
-      leader_tracked = CopyPartition.PARTITIONED(partitioned_axis)
+
     ctx.launch_ctx.async_prefetch(
         gmem_ref=ref,
         collective=collective,
@@ -844,7 +839,6 @@ def async_prefetch(
     ref: _Ref,
     *,
     collective_axes: str | tuple[str, ...] | None = None,
-    partitioned_axis: int | None = None,
     leader_tracked: CopyPartition | None = None,
 ) -> None:
   """Asynchronously prefetches a GMEM reference to the L2 cache.
@@ -853,21 +847,14 @@ def async_prefetch(
   the ``ref``, with other parts covered by blocks that share the same index
   along the collective axis.
 
-  If both ``collective_axes`` and ``partitioned_axis`` are specified, the
-  ``partitioned_axis`` indicates the logical axis used to split the prefetch
-  across the collective axes.
+  Specifying leader_tracked and collective_axes doesn't change the semantics
+  of the prefetch, but if it's followed by a GMEM to SMEM copy, then it allows
+  us to reuse the same TMA descriptor.
 
   Args:
     ref: The source Ref. Must be in GMEM.
     collective_axes: The collective axes to use for the prefetch.
-    partitioned_axis: Indicates which axis of the ``ref`` to partition across
-      during a collective prefetch. Requires collective_axes to also be
-      specified.
-    leader_tracked: If ``CopyPartition.PARTITIONED(axis)``, equivalent to
-     setting ``partitioned_axis``. If ``CopyPartition.REPLICATED``, all
-     blocks prefetch the same data but only the first block in the
-     collective tracks progress. Cannot be used together with
-     ``partitioned_axis``.
+    leader_tracked: The partitioning to use for the prefetch.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_prefetch"
@@ -882,7 +869,6 @@ def async_prefetch(
       *flat_ref_transforms,
       ref_transforms_treedef=ref_transforms_treedef,
       collective_axes=collective_axes,
-      partitioned_axis=partitioned_axis,
       leader_tracked=leader_tracked,
   )
   return None

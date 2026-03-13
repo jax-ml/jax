@@ -461,10 +461,10 @@ issue MMA instructions_:
         def _loop_body(ki, _):
           ...  # Wait for the data to be consumed, as previously.
           plgpu.copy_gmem_to_smem(
-              ..., collective_axes="cluster", partitioned_axis=0
+              ..., collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
           )
           plgpu.copy_gmem_to_smem(
-              ..., collective_axes="cluster", partitioned_axis=1
+              ..., collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
           )
         lax.fori_loop(0, k_iters, _loop_body, None)
 
@@ -483,7 +483,7 @@ issue MMA instructions_:
 You can see a few modifications here. First of all, both blocks must issue the
 async copies. In both blocks we request a copy of the full window for the whole
 cluster, but the addition of `collective_axes="cluster"` indicates that the load
-is performed jointly by both blocks. `partitioned_axis=` specifies which axis of
+is performed jointly by both blocks. `leader_tracked=CopyPartition.PARTITIONED(axis)` specifies which axis of
 the operand should be split across the cluster. We split the LHS rows and RHS
 columns.
 
@@ -850,11 +850,11 @@ def matmul6(a, b, config: TuningConfig):
               k_slice = pl.ds(ki * tile_k, tile_k)
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=0
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=1
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
               )
 
             lax.fori_loop(0, k_iters, _loop_body, None)
