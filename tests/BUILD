@@ -610,6 +610,7 @@ jax_py_test(
 
 jax_multiplatform_test(
     name = "jet_test",
+    size = "large",
     srcs = ["jet_test.py"],
     shard_count = {
         "gpu": 2,
