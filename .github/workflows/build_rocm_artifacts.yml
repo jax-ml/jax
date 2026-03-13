@@ -156,6 +156,9 @@ jobs:
           ls -lh $JAXCI_OUTPUT_DIR/*.whl
           aws s3 cp --only-show-errors --recursive $JAXCI_OUTPUT_DIR/ "${INPUTS_S3_UPLOAD_URI}"/
           echo "Upload complete."
+
+          echo "${INPUTS_S3_UPLOAD_URI}" | \
+            aws s3 cp --only-show-errors - "s3://jax-ci-amd/rocm-wheels/LATEST"
         env:
           INPUTS_S3_UPLOAD_URI: ${{ inputs.s3_upload_uri }}
       - name: Store the S3 upload URI as an output
