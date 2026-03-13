@@ -58,8 +58,8 @@ def remat_transform(policy, f, *args):
     return tree_unflatten(out_tree, out_flat)
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, rs))
 
-class RematTracer(core.Tracer):
-  _trace: RematTrace  # pyrefly: ignore[bad-override]
+class RematTracer(core.Tracer['RematTrace']):
+  _trace: RematTrace
 
   def __init__(self, trace, x, jaxpr_tracer):
     self._trace = trace  # pytype: disable=name-error

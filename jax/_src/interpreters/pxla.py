@@ -593,7 +593,7 @@ def _moveaxis(ndim: int, shard_axes: dict[core.AxisName, int],
   lst.insert(dst - (src < dst), name)
   return {name: i for i, name in enumerate(lst) if name is not None}
 
-class MapTracer(core.Tracer):
+class MapTracer(core.Tracer[MapTrace]):
   __slots__ = ["val", "shard_axes"]
 
   def __init__(self, trace: MapTrace, val, shard_axes: dict[core.AxisName, int]):

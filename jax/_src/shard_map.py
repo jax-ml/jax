@@ -1401,7 +1401,7 @@ class ShardMapTrace(core.Trace):
     return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
 
-class ShardMapTracer(core.Tracer):
+class ShardMapTracer(core.Tracer[ShardMapTrace]):
   vma: frozenset[AxisName]
   val: JaxType
 
@@ -1416,24 +1416,24 @@ class ShardMapTracer(core.Tracer):
   @property
   def aval(self):
     aval = core.typeof(self.val)
-    vma = self.vma if self._trace.check else self._trace.manual_axes  # pyrefly: ignore[missing-attribute]
-    size = prod(self._trace.mesh.shape[n] for n in vma)  # pyrefly: ignore[missing-attribute]
+    vma = self.vma if self._trace.check else self._trace.manual_axes
+    size = prod(self._trace.mesh.shape[n] for n in vma)
     out = core.mapped_aval(size, 0, aval)
     new_sharding = NamedSharding(
-        _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),  # pyrefly: ignore[missing-attribute]
+        _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),
         out.sharding.spec)  # type: ignore[missing-attribute]
     vma = self.vma if config._check_vma.value else frozenset()
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
-    if self._trace.check and self.vma == frozenset():  # pyrefly: ignore[missing-attribute]
-      with core.eval_context(), use_abstract_mesh(self._trace.amesh):  # pyrefly: ignore[missing-attribute]
+    if self._trace.check and self.vma == frozenset():
+      with core.eval_context(), use_abstract_mesh(self._trace.amesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    pb_names = set(self._trace.mesh.axis_names) - self.vma  # pyrefly: ignore[missing-attribute]
+    pb_names = set(self._trace.mesh.axis_names) - self.vma
     self = pvary(self, tuple(pb_names))
     with core.eval_context(), use_abstract_mesh(self._trace.amesh):
       blocks = list(self.val)

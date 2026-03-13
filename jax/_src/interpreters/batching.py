@@ -130,10 +130,10 @@ NotMapped = type(None)
 not_mapped = None
 
 
-class BatchTracer(Tracer):
+class BatchTracer(Tracer['BatchTrace']):
   __slots__ = ['val', 'batch_dim', 'source_info']
 
-  _trace: BatchTrace  # pyrefly: ignore[bad-override]
+  _trace: BatchTrace
 
   def __init__(self, trace: BatchTrace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):

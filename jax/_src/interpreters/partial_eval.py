@@ -116,7 +116,7 @@ class EffectHandle:
   parents : list[Tracer]
   recipe : JaxprEqnRecipe
 
-class JaxprTrace(Trace['JaxprTracer']):
+class JaxprTrace(Trace):
 
   def __init__(self, parent_trace:Trace, name_stack: source_info_util.NameStack, tag:TraceTag):
     super().__init__()
@@ -483,10 +483,10 @@ JaxprTracerRecipe = Union[
     'JaxprEqnRecipe', 'LambdaBinding', 'FreeVar', 'ConstVar', Literal,
 ]
 
-class JaxprTracer(Tracer):
+class JaxprTracer(Tracer[JaxprTrace]):
   __slots__ = ['pval', 'recipe']
 
-  _trace: JaxprTrace  # pyrefly: ignore[bad-override]
+  _trace: JaxprTrace
 
   def __init__(self, trace: JaxprTrace, pval: PartialVal,
                recipe: JaxprTracerRecipe | None):
@@ -1601,10 +1601,10 @@ def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
   return move_binders_to_front(closed_jaxpr, map(op.not_, to_move))
 
 
-class DynamicJaxprTracer(core.Tracer):
+class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
   __slots__ = ['_aval', 'val', 'mutable_qdd', 'parent', '_debug_info']
 
-  _trace: DynamicJaxprTrace  # pyrefly: ignore[bad-override]
+  _trace: DynamicJaxprTrace
 
   def __init__(self, trace: DynamicJaxprTrace,
                aval: core.AbstractValue | core.AvalQDD,

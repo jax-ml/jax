@@ -200,7 +200,7 @@ def traceable(f, store, in_tree_def, *primals_and_series):
   return out_flat
 
 
-class JetTracer(core.Tracer):
+class JetTracer(core.Tracer['JetTrace']):
   __slots__ = ["primal", "terms"]
 
   def __init__(self, trace, primal, terms):
@@ -229,7 +229,7 @@ class JetTrace(core.Trace):
     self.order = order
 
   def to_primal_terms_pair(self, val):
-    if isinstance(val, JetTracer) and val._trace.tag is self.tag:  # pyrefly: ignore[missing-attribute]
+    if isinstance(val, JetTracer) and val._trace.tag is self.tag:
       return val.primal, val.terms
     else:
       return val, zero_series
