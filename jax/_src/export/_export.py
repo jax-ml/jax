@@ -226,6 +226,9 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
+  def __post_init__(self):
+    assert self._has_named_shardings, "Exported instances must have _has_named_shardings set to True"
+
   def mlir_module(self) -> str:
     """A string representation of the ``mlir_module_serialized``."""
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
