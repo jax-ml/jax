@@ -1419,11 +1419,11 @@ def linear_call(fun: Callable,
   ...   def t(_, t): return 7.
   ...   return linear_call(f, t, (), x)
   >>> custom_id(1.)
-  1.0
+  TypedFloat(1.0, dtype=float32)
   >>> transpose(custom_id, 1.)(1.)
   TypedFloat(7.0, dtype=float32)
   >>> transpose(transpose(custom_id, 1.), 1.)(1.)
-  1.0
+  TypedFloat(1.0, dtype=float32)
   >>> transpose(transpose(transpose(custom_id, 1.), 1.), 1.)(1.)
   TypedFloat(7.0, dtype=float32)
 

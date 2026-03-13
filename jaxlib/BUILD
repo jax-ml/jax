@@ -278,7 +278,13 @@ nanobind_pywrap_extension(
 
 nanobind_pywrap_extension(
     name = "weakref_lru_cache",
-    srcs = ["weakref_lru_cache.cc"],
+    srcs = [
+        "weak_key_weak_value_cache.cc",
+        "weak_key_weak_value_cache.h",
+        "weakref_lru_cache.cc",
+        "weakref_lru_cache.h",
+        "weakref_lru_cache_module.cc",
+    ],
     pytype_srcs = ["weakref_lru_cache.pyi"],
     deps = [
         ":nb_class_ptr",

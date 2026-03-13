@@ -634,8 +634,7 @@ class Primitive:
   def bind(self, *args, **params):
     avals = tuple(_typeof_with_argument_info(self, i, a)
                   for i, a in enumerate(args))
-    if not self.skip_canonicalization:
-      args = tuple(map(canonicalize_value, args, avals))
+    args = tuple(canonicalize_value(self, a, av) for a, av in zip(args, avals))
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
@@ -2071,9 +2070,17 @@ def _typeof_with_argument_info(primitive, i, val):
       f" {primitive} at position {i}.\n"
     ) from e
 
+def canonicalize_value_dtype(val):
+  if isinstance(val, (int, float, bool, complex, np.generic, np.ndarray)):
+    return dtypes.canonicalize_value(val)
+  return val
+
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
-def canonicalize_value(val, aval):
+def canonicalize_value(primitive, val, aval):
+  val = canonicalize_value_dtype(val)
+  if primitive.skip_canonicalization:
+    return val
   if not isinstance(aval, ShapedArray):
     return val
   if aval.sharding.mesh.empty:

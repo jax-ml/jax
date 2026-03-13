@@ -42,6 +42,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/reentrant_hash_map.h"
+#include "jaxlib/weakref_lru_cache.h"
 
 namespace nb = nanobind;
 
@@ -1175,7 +1176,7 @@ static PyMethodDef multi_call_def = {
     "__call__", reinterpret_cast<PyCFunction>(MultiWeakrefLRUCache::VectorCall),
     METH_FASTCALL | METH_KEYWORDS, "Calls the multi-weakref cache."};
 
-NB_MODULE(weakref_lru_cache, m) {
+void RegisterWeakrefLruCache(nb::module_& m) {
   auto weakref_lru_cache =
       nb::class_<WeakrefLRUCache>(m, "WeakrefLRUCache",
                                   nb::is_weak_referenceable(),

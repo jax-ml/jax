@@ -38,6 +38,7 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import core
+from jax._src import literals
 from jax._src import effects
 from jax._src import util
 from jax._src.lib import _jax
@@ -351,6 +352,9 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     if getattr(arg_jax, 'dtype', None) == dtypes.float0:
       return tf.zeros(shape=arg_jax.shape,
                       dtype=jax2tf_internal._tf_np_dtype_for_float0)
+    if isinstance(arg_jax, tuple(literals.typed_scalar_types)):
+      # Make sure to preserve the JAX dtype for TypedInt, etc.
+      return tf.constant(np.asarray(arg_jax, dtype=arg_jax.dtype))
     return tf.constant(np.asarray(arg_jax))
 
   args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))

@@ -205,6 +205,8 @@ pytype_strict_library(
         ":dtypes",
         ":literals",
         ":traceback_util",
+        ":util",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 

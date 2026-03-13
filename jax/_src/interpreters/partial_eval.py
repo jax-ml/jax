@@ -1653,7 +1653,7 @@ class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
       if maybe_const is None:
         return self
       else:
-        return core.full_lower(maybe_const.canonical)
+        return core.full_lower(maybe_const)
 
   def _contents(self):
     return ()
@@ -1700,7 +1700,7 @@ class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
     frame = self._trace.frame
     atom = self.val
     val = frame.constvar_to_val.get(atom) if isinstance(atom, Var) else None
-    return self if val is None else get_referent(val.canonical)
+    return self if val is None else get_referent(val)
 
 core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
 
@@ -1747,19 +1747,11 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
       jaxpr_effects.add(eff)
   return jaxpr_effects
 
-class Constants(NamedTuple):
-  # A pair of a canonicalized constant and its original form.
-  # It is important that we keep the original value alive because we use id(c)
-  # as a key in various dictionaries. If the original value were deleted we
-  # may confuse constants if the same object ID is reused.
-  canonical: Any
-  original: Any
-
 
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
-  constvar_to_val: dict[Var, Constants]
+  constvar_to_val: dict[Var, Any]
   tracing_eqns: list[Union[ReferenceType[TracingEqn], Callable[[], TracingEqn]]]
   invars: list[Var]
   effects: core.Effects
@@ -1804,7 +1796,6 @@ class JaxprStackFrame:
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.copy().items())
-    constvals = [c.canonical for c in constvals]
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
 
@@ -2009,10 +2000,9 @@ class DynamicJaxprTrace(core.Trace):
   pure = lift = new_const
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
-    orig_c = c
     id_c = id(c)
-    if isinstance(c, (int, float, bool, complex, np.generic, np.ndarray)):
-      c = dtypes.canonicalize_value(c)
+    assert type(c) not in (int, float, complex, np.generic, np.ndarray), (
+        f"non-canonical constant of type {type(c).__name__}: {c!r}")
     if core.is_literalable(c):
       val = Literal(c, aval)
       return DynamicJaxprTracer(self, aval, val, source_info)
@@ -2022,7 +2012,7 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.constid_to_tracer[id_c] = tracer
       if isinstance(aval, core.AvalQDD):
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
-      self.frame.constvar_to_val[var] = Constants(canonical=c, original=orig_c)
+      self.frame.constvar_to_val[var] = c
       finalize(tracer, self.finalize_const, var, id_c)
       return tracer
 
@@ -2034,10 +2024,7 @@ class DynamicJaxprTrace(core.Trace):
     if isinstance(atom, Literal):
       return atom.val
     else:
-      const = self.frame.constvar_to_val.get(atom)
-      if const is not None:
-        const = const.canonical
-      return const
+      return self.frame.constvar_to_val.get(atom)
 
   def cur_qdd(self, x):
     source_info = source_info_util.current()
@@ -2417,6 +2404,11 @@ def diff_types(dbg, new_leaves, old_leaves):
   if diffs: return 3, len(diffs), msg
 
 
+def _canonicalize_dtype(x):
+  if isinstance(x, (int, float, bool, complex, np.generic, np.ndarray)):
+    return dtypes.canonicalize_value(x)
+  return x
+
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
@@ -2451,6 +2443,7 @@ def trace_to_jaxpr(
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
+    ans = ans.map(_canonicalize_dtype)
     out_tracers = ans.map(partial(trace.to_jaxpr_tracer, source_info=source_info))
     out_avals = out_tracers.map(lambda t: t.aval)
     _check_no_returned_refs(debug_info, list(out_tracers))
@@ -2484,6 +2477,7 @@ def trace_to_jaxpr_dynamic(
     with core.set_current_trace(trace):
       ans = fun.call_wrapped(*in_tracers)
     _check_returned_jaxtypes(fun.debug_info, ans)
+    ans = map(_canonicalize_dtype, ans)
     out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     _check_no_returned_refs(fun.debug_info, out_tracers)
     jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info,
