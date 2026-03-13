@@ -15,6 +15,7 @@
 import concurrent.futures
 from functools import partial
 import glob
+import gzip
 import os
 import shutil
 import sys
@@ -518,6 +519,50 @@ class ProfilerTest(unittest.TestCase):
     options.advanced_configuration = advanced_config
     returned_config = options.advanced_configuration
     self.assertDictEqual(returned_config, advanced_config)
+
+  @jtu.run_on_devices("rocm")
+  @jtu.thread_unsafe_test()
+  def test_rocm_profiling(self):
+    """Test that ROCm profiling captures GPU kernel events."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with jax.profiler.trace(tmpdir):
+        # Test multiple matmul shapes
+        shapes = [(32, 32), (64, 128), (256, 256), (512, 128)]
+        for i, (m, n) in enumerate(shapes):
+          x = jax.random.normal(jax.random.key(i * 2), (m, n))
+          y = jax.random.normal(jax.random.key(i * 2 + 1), (n, m))
+          jnp.dot(x, y).block_until_ready()
+
+      proto_path = glob.glob(
+        os.path.join(tmpdir, "**/*.xplane.pb"), recursive=True
+      )
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains GPU traces
+      self.assertIn(b"/device:GPU", proto)
+
+  @jtu.run_on_devices("rocm")
+  @jtu.thread_unsafe_test()
+  def test_rocm_kernel_details_in_trace_json(self):
+    """Test that ROCm profiling captures kernel_details in trace.json.gz."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with jax.profiler.trace(tmpdir):
+        # Test multiple matmul shapes
+        shapes = [(64, 64), (128, 256), (512, 512), (1024, 256)]
+        for i, (m, n) in enumerate(shapes):
+          x = jax.random.normal(jax.random.key(i * 2), (m, n))
+          y = jax.random.normal(jax.random.key(i * 2 + 1), (n, m))
+          jnp.dot(x, y).block_until_ready()
+
+      trace_files = glob.glob(
+        os.path.join(tmpdir, "**/*.trace.json.gz"), recursive=True
+      )
+      self.assertEqual(len(trace_files), 1)
+      with gzip.open(trace_files[0], "rt") as f:
+        trace_content = f.read()
+      # Sanity check that trace contains kernel_details
+      self.assertIn("kernel_details", trace_content)
 
 
 if __name__ == "__main__":
