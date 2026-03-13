@@ -17,8 +17,13 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
 #include <memory>
 #include <string_view>
+#include <tuple>
 
 #if JAX_GPU_HAVE_64_BIT
 #include <cstddef>
@@ -1241,6 +1246,167 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
+#ifdef JAX_GPU_HIP
+// Workspace size from LAPACK formula instead of querying rocsolver. A
+// two-phase rocsolver workspace query can fail with rocblas_status 8/9 in some
+// environments; the formula avoids that and never blocks. rocsolver gesdd
+// needs more than LAPACK minimum (syevd+geqrf+orgqr buffers). Use 8x: 2x was
+// too small (slow path for 1536/2048); 16x caused ~1GB for N=2048 and
+// allocation cost. 8x gives ~512MB for 2048. LAPACK for JOBZ='S':
+// 4*mn^2+7*mn elements.
+namespace {
+template <typename T>
+size_t GesddWorkspaceSizeFromFormula(signed char job, int m, int n) {
+  int mn = std::min(m, n);
+  int mx = std::max(m, n);
+  int64_t min_elements;
+  switch (job) {
+    case 'N':
+      min_elements = 3 * mn + std::max(mx, 7 * mn);
+      break;
+    case 'O':
+      min_elements = 3 * mn + std::max(mx, 5 * mn * mn + 4 * mn);
+      break;
+    case 'S':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+      break;
+    case 'A':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 6 * mn + mx;
+      break;
+    default:
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+  }
+  min_elements = std::max(int64_t(1), min_elements);
+  int64_t elements = min_elements * 8;
+  elements += 4096;
+  return static_cast<size_t>(elements) * sizeof(T);
+}
+}  // namespace
+
+// Singular Value Decomposition (divide-and-conquer): gesdd (ROCm rocsolver).
+template <typename T>
+ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     bool full_matrices, bool compute_uv, ffi::AnyBuffer a,
+                     ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> s,
+                     ffi::Result<ffi::AnyBuffer> u,
+                     ffi::Result<ffi::AnyBuffer> vt,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  // For square matrices, 'A' and 'S' produce the same output shapes.
+  // Prefer 'S' to avoid slower rocsolver code paths observed for some sizes
+  // (notably n=1536) with job='A'.
+  signed char job =
+      compute_uv ? ((full_matrices && m != n) ? 'A' : 'S') : 'N';
+
+  // Formula-based workspace (no query) to avoid rocblas_status 8/9 in some envs.
+  size_t workspace_size = GesddWorkspaceSizeFromFormula<T>(job, m, n);
+  auto maybe_workspace = scratch.Allocate(workspace_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for gesdd");
+  }
+  void* workspace_ptr = maybe_workspace.value();
+  FFI_RETURN_IF_ERROR_STATUS(
+      solver::SetWorkspace(handle.get(), workspace_ptr, workspace_size));
+
+  auto a_data = static_cast<T*>(a.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  auto s_data =
+      static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
+  auto u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
+  auto vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
+  auto info_data = info->typed_data();
+
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int out_step = m * n;
+  int k = std::min(m, n);
+  int ldu = m;
+  int ldv = full_matrices ? n : k;
+  int u_step = compute_uv ? m * (full_matrices ? m : k) : 0;
+  int vt_step = compute_uv ? ldv * n : 0;
+  int s_step = k;
+
+  for (auto i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(solver::Gesdd<T>(
+        handle.get(), job, job, m, n, out_data, m, s_data, u_data, ldu,
+        vt_data, ldv, info_data));
+    out_data += out_step;
+    s_data += s_step;
+    if (u_data) u_data += u_step;
+    if (vt_data) vt_data += vt_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error GesddDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         bool full_matrices, bool compute_uv, bool transposed,
+                         ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::AnyBuffer> s,
+                         ffi::Result<ffi::AnyBuffer> u,
+                         ffi::Result<ffi::AnyBuffer> vt,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      s->element_type() != ffi::ToReal(dataType) ||
+      u->element_type() != dataType || vt->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gesdd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  int64_t m = transposed ? cols : rows;
+  int64_t n = transposed ? rows : cols;
+  int64_t k = std::min(m, n);
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "gesdd"));
+  FFI_RETURN_IF_ERROR(CheckShape(s->dimensions(), {batch, k}, "s", "gesdd"));
+  if (compute_uv) {
+    if (full_matrices) {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, m}, "u", "gesdd"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(vt->dimensions(), {batch, n, n}, "vt", "gesdd"));
+    } else {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, k}, "u", "gesdd"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(vt->dimensions(), {batch, k, n}, "vt", "gesdd"));
+    }
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "gesdd"));
+
+  SOLVER_DISPATCH_IMPL(GesddImpl, batch, m, n, stream, scratch, full_matrices,
+                       compute_uv, a, out, s, u, vt, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in gesdd", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GesddFfi, GesddDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("full_matrices")
+                                  .Attr<bool>("compute_uv")
+                                  .Attr<bool>("transposed")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // s
+                                  .Ret<ffi::AnyBuffer>()         // u
+                                  .Ret<ffi::AnyBuffer>()         // vt
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+#endif  // JAX_GPU_HIP
 
 // Singular Value Decomposition: gesvdp (Polar decomposition)
 
