@@ -1794,14 +1794,14 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   @parameterized.product(
-      keys_dtype=[np.int32, np.float32],
+      keys_dtype=[np.uint32, np.int32, np.float32],
       values_dtype=[np.int32, np.float32],
       use_mask=[False, True],
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=keys_dtype)
+    keys = (np.arange(vec_dim) - vec_dim // 2).astype(keys_dtype)
     np.random.shuffle(keys)
     keys[3] = keys[1]  # Verify sort stability.
     values = np.arange(vec_dim, dtype=values_dtype)
@@ -1826,13 +1826,17 @@ class VectorSubcoreTest(PallasSCTest):
     out_keys, out_values, *maybe_out_mask = kernel(
         *maybe_mask_arg, keys, values)
 
-    keys_arg = keys
+    keys_arg = keys.copy()
+    if keys.dtype == np.uint32:
+      keys_arg = keys_arg.astype(np.int64)
     if descending:
       keys_arg = -keys_arg
     if use_mask:
-      keys_arg = jnp.where(mask, keys_arg, 100)
-    _, gt_keys = jax.lax.sort_key_val(keys_arg, keys)
-    _, gt_values = jax.lax.sort_key_val(keys_arg, values)
+      sentinel = int(np.max(keys_arg)) + 1
+      keys_arg = np.where(mask, keys_arg, sentinel)
+    sort_indices = np.argsort(keys_arg, kind='stable')
+    gt_keys = keys[sort_indices]
+    gt_values = values[sort_indices]
     if use_mask:
       [out_mask] = maybe_out_mask
       gt_out_mask = jnp.arange(vec_dim) < mask.sum()
