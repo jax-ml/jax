@@ -56,9 +56,10 @@ class SearchSorted(VJPHiPrimitive):
           f"batch_dims={batch_dims} must be in range [0, {sorted_arr_aval.ndim})"
       )
     dimension = operator.index(dimension)
-    if dimension < 0 or dimension >= sorted_arr_aval.ndim:
+    if not batch_dims <= dimension < sorted_arr_aval.ndim:
       raise ValueError(
-          f"dimension={dimension} must be in range [0, {sorted_arr_aval.ndim})"
+          f"dimension={dimension} must be in range [{batch_dims},"
+          f" {sorted_arr_aval.ndim})"
       )
     if sorted_arr_aval.dtype != query_aval.dtype:
       raise ValueError(
@@ -72,11 +73,6 @@ class SearchSorted(VJPHiPrimitive):
     if method not in self.valid_methods:
       raise ValueError(
           f"invalid argument {method=}, expected one of {list(self.valid_methods)}"
-      )
-    if not batch_dims <= dimension < sorted_arr_aval.ndim:
-      raise ValueError(
-          f"dimension={dimension} must be in range [{batch_dims},"
-          f" {sorted_arr_aval.ndim})"
       )
     if sorted_arr_aval.shape[:batch_dims] != query_aval.shape[:batch_dims]:
       raise ValueError(
@@ -199,11 +195,8 @@ def _searchsorted_scan_impl(
   """Scan-based implementation of searchsorted."""
   assert sorted_arr.ndim == 1
   assert side in ["left", "right"]
-  assert dtypes.issubdtype(dtype, np.integer)
   (n,) = sorted_arr.shape
-  if n > dtypes.iinfo(dtype).max:
-    raise OverflowError(f"Python integer {n} out of bounds for {dtype}")
-  if sorted_arr.shape[0] == 0:
+  if sorted_arr.size == 0:
     return lax.full(query.shape, fill_value=0, dtype=dtype)
   if query.ndim > 0:
     return api.vmap(
@@ -268,6 +261,7 @@ def _searchsorted_compare_all_impl(
 def searchsorted(
     sorted_arr: ArrayLike,
     query: ArrayLike,
+    /,
     *,
     side: str = "left",
     dimension: int = 0,
@@ -301,6 +295,7 @@ def searchsorted(
     An array specifying the insertion locations of `query` into `sorted_arr`.
   """
   sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
   prim = SearchSorted(
     core.typeof(sorted_arr),
     core.typeof(query),
@@ -308,6 +303,33 @@ def searchsorted(
     dimension=dimension,
     batch_dims=batch_dims,
     method=method,
-    out_dtype=np.dtype(dtype),
+    out_dtype=out_dtype,
   )
   return prim(sorted_arr, query)
+
+
+# TODO(jakevdp): delete this function when hijax is finalized.
+def searchsorted_via_expand(
+    sorted_arr: ArrayLike,
+    query: ArrayLike,
+    /,
+    *,
+    side: str = "left",
+    dimension: int = 0,
+    batch_dims: int = 0,
+    method: str = "scan",
+    dtype: DTypeLike = "int32",
+):
+  """Compute searchsorted() without binding the hijax primitive."""
+  sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
+  prim = SearchSorted(
+    core.typeof(sorted_arr),
+    core.typeof(query),
+    side=side,
+    dimension=dimension,
+    batch_dims=batch_dims,
+    method=method,
+    out_dtype=out_dtype,
+  )
+  return prim.expand(sorted_arr, query)
