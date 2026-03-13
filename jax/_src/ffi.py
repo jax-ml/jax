@@ -676,7 +676,7 @@ def ffi_call_lowering(
                       operand_output_aliases=dict(input_output_aliases),
                       api_version=custom_call_api_version,
                       backend_config=legacy_backend_config)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))  # pyrefly: ignore[bad-return]
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
 
 
 def ffi_batching_rule(
