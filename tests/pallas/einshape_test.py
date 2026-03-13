@@ -26,6 +26,7 @@ from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
+import numpy as np
 
 
 jax.config.parse_flags_with_absl()
@@ -226,13 +227,14 @@ class EinshapeTest(jtu.JaxTestCase):
     atomic_shape = case["atomic_shape"]
     perm = case["perm"]
 
-    x = jnp.arange(math.prod(lhs_shape)).reshape(lhs_shape).astype(dtype)
+    x_np = np.arange(math.prod(lhs_shape)).reshape(lhs_shape).astype(dtype)
+    x = jnp.asarray(x_np)
     out = self.impl(equation, x, **kwargs)
 
     self.assertEqual(out.shape, rhs_shape)
 
-    x_atomic = x.reshape(atomic_shape)
-    x_transposed = jax.lax.transpose(x_atomic, perm)
+    x_atomic = x_np.reshape(atomic_shape)
+    x_transposed = np.transpose(x_atomic, perm)
     expected = x_transposed.reshape(rhs_shape)
 
     self.assertArraysEqual(out, expected)
