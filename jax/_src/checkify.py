@@ -1008,10 +1008,6 @@ def shard_map_error_check(
   # Update shard_map params to account for extra error values.
   # Use fully sharded partitioning for out errors.
   new_out_specs = (*([P(mesh.axis_names)] * num_out_error_vals), *out_specs)
-  subfun = lu.hashable_partial(
-      lu.wrap_init(core.eval_jaxpr, debug_info=checked_jaxpr.jaxpr.debug_info),
-      checked_jaxpr.jaxpr, checked_jaxpr.consts
-  )
   new_params = dict(
       jaxpr=checked_jaxpr.jaxpr,
       in_specs=new_in_specs,
@@ -1019,7 +1015,6 @@ def shard_map_error_check(
       **kwargs,
   )
   new_params = jshmap.shard_map_p.get_bind_params(new_params)
-  new_params['subfuns'] = (subfun,)
 
   err_and_out = jshmap.shard_map_p.bind(
     *new_vals_in, **new_params)
