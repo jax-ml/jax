@@ -4928,14 +4928,14 @@ class FragmentedArrayTest(TestCase):
 
   @parameterized.product(
       dtype=(jnp.bfloat16, jnp.float16, jnp.float8_e4m3fn, jnp.float8_e5m2,
-             jnp.int8, jnp.uint8),
+             jnp.int8, jnp.uint8, jnp.int4, jnp.uint4),
   )
   def test_warp_mma(self, dtype):
     m, n, k = 128, 128, 128
     dtype = jnp.dtype(dtype)
     is_integer = jnp.issubdtype(dtype, jnp.integer)
     acc_dtype = jnp.int32 if is_integer else jnp.float32
-    k_tile = 32 if dtype.itemsize == 1 else 16
+    k_tile = 256 // dtypes.itemsize_bits(dtype)
     def kernel(ctx: mgpu.LaunchContext, acc, a, b, out, scratch):
       (acc_smem, a_smem, b_smem), barrier = scratch
       layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
@@ -4968,8 +4968,9 @@ class FragmentedArrayTest(TestCase):
       ctx.await_async_copy(0)
 
     if is_integer:
-      a = self.prng.integers(-32, 32, (m, k)).astype(dtype)
-      b = self.prng.integers(-32, 32, (n, k)).astype(dtype)
+      iinfo = jnp.iinfo(dtype)
+      a = self.prng.integers(iinfo.min, iinfo.max + 1, (m, k)).astype(dtype)
+      b = self.prng.integers(iinfo.min, iinfo.max + 1, (n, k)).astype(dtype)
       acc = self.prng.integers(-100, 100, (m, n)).astype(acc_dtype)
     else:
       a = self.prng.uniform(-1, 1, (m, k)).astype(dtype)

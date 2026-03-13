@@ -62,7 +62,8 @@ def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
   elif isinstance(dtype, ir.IntegerType):
     if is_signed is None:
       raise ValueError("is_signed must be specified for integer types")
-    return "s8" if is_signed else "u8"
+    prefix = "s" if is_signed else "u"
+    return f"{prefix}{dtype.width}"
   return str(dtype)
 
 
@@ -72,7 +73,7 @@ def _mma_single_tile(
   """Performs `acc + a @ b.T` using warp level MMA instructions."""
   i32 = ir.IntegerType.get_signless(32)
 
-  k_tile = 32 // utils.bytewidth(a.mlir_dtype)
+  k_tile = 256 // utils.bitwidth(a.mlir_dtype)
   assert a.shape == (64, k_tile)
   assert b.shape == (8, k_tile)
   assert acc.shape == (64, 8)
@@ -153,7 +154,6 @@ def _mma_single_tile(
   )
 
 
-# TODO(cperivol): More datatypes other than (b)f16.
 def mma(
     acc: fa.FragmentedArray,
     a: fa.FragmentedArray,
@@ -191,24 +191,22 @@ def mma(
   # todo(cperivol): A tile shape can have dimensions that are higher
   # multiples of the mma op size as long as those dimensions are not
   # sharded across warps.
-  bf16 = ir.BF16Type.get()
-  f16 = ir.F16Type.get()
+  i4 = ir.IntegerType.get_signless(4)
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
+  bf16 = ir.BF16Type.get()
+  f16 = ir.F16Type.get()
   f8e4m3fn = ir.Float8E4M3FNType.get()
   f8e5m2 = ir.Float8E5M2Type.get()
   if (element_type := a.mlir_dtype) != b.mlir_dtype:
     raise ValueError(f"Dtype mismatch: {a.mlir_dtype} != {b.mlir_dtype}")
-  if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8):
-    raise NotImplementedError(
-        "Only bf16, f16, float8_e4m3fn, float8_e5m2 and i8 supported for the"
-        " operands."
-    )
-  if element_type == i8:
+  if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8, i4):
+    raise NotImplementedError(f"Unsupported operand type: {element_type}")
+  if isinstance(element_type, ir.IntegerType):
     if acc.mlir_dtype != i32:
-      raise NotImplementedError("Only s32 accumulator supported for i8 operands.")
+      raise NotImplementedError("Only s32 accumulator supported for integer operands.")
     if not acc.is_signed:
-      raise ValueError("Only signed accumulator supported for i8 operands.")
+      raise ValueError("Only signed accumulator supported for integer operands.")
   elif acc.mlir_dtype != ir.F32Type.get():
     raise NotImplementedError("Only f32 accumulator supported for floating operands.")
 
