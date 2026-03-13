@@ -765,9 +765,9 @@ def check_avals_context_mesh(avals, prim_name):
 
 # -------------------- tracing --------------------
 
-TracerType = TypeVar('TracerType', bound='Tracer')
+TraceType = TypeVar('TraceType', bound='Trace')
 
-class Trace(Generic[TracerType]):
+class Trace:
   __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low")
 
   def __init__(self):
@@ -900,12 +900,12 @@ else:
   TracerBase = object
   TracerMeta = type
 
-class Tracer(TracerBase, metaclass=TracerMeta):
+class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
   __slots__ = ['__weakref__', '_trace', '_line_info']
   __hash__ = None
 
-  _trace: Trace
+  _trace: TraceType
   _line_info: source_info_util.SourceInfo | None
 
   dtype = _aval_property('dtype')
@@ -913,7 +913,7 @@ class Tracer(TracerBase, metaclass=TracerMeta):
   size = _aval_property('size')
   shape = _aval_property('shape')
 
-  def __init__(self, trace: Trace):
+  def __init__(self, trace: TraceType):
     self._trace = trace
 
   def _error_repr(self):

@@ -140,7 +140,7 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
     with core.set_current_trace(trace):
       ans, aux = f(*(map(partial(maybe_jvp_tracer, trace), primals, tangents)))
     out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
-    aux_primals = [x.primal if isinstance(x, JVPTracer) and x._trace.tag is tag  # pyrefly: ignore[missing-attribute]
+    aux_primals = [x.primal if isinstance(x, JVPTracer) and x._trace.tag is tag
                    else x for x in aux]
   store.store(aux_primals)
   return out_primals, out_tangents
@@ -251,7 +251,7 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
           source_info_util.transform_name_stack('jvp')):
       if has_aux:
         ans, aux = traceable.call_wrapped(*tracers)
-        aux = [x.primal if type(x) is LinearizeTracer and x._trace.tag is tag  # pyrefly: ignore[missing-attribute]
+        aux = [x.primal if type(x) is LinearizeTracer and x._trace.tag is tag
                else x for x in aux]
       else:
         ans = traceable.call_wrapped(*tracers)
@@ -559,7 +559,7 @@ class JVPTrace(Trace):
     self.requires_low = False
 
   def to_primal_tangent_pair(self, val):
-    if isinstance(val, JVPTracer) and val._trace.tag is self.tag:  # pyrefly: ignore[missing-attribute]
+    if isinstance(val, JVPTracer) and val._trace.tag is self.tag:
       return (val.primal, val.tangent)
     else:
       tangent_zero = p2tz(val)
@@ -715,7 +715,7 @@ def maybe_jvp_tracer(trace, primal, tangent):
   else:
     return JVPTracer(trace, primal, tangent)
 
-class JVPTracer(Tracer):
+class JVPTracer(Tracer[JVPTrace]):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
@@ -795,13 +795,14 @@ class LinearizeTrace(Trace):
 
   @property
   def tag(self) -> core.TraceTag:
-    return self.tangent_trace.tag  # pyrefly: ignore[missing-attribute]
+    assert hasattr(self.tangent_trace, "tag")
+    return self.tangent_trace.tag
 
   def _name_stack_suffix(self):
     return source_info_util.current_name_stack()[self._name_stack_prefix_len:]
 
   def to_primal_tangent_pair(self, val):
-    if isinstance(val, LinearizeTracer) and val._trace.tag is self.tag:  # pyrefly: ignore[missing-attribute]
+    if isinstance(val, LinearizeTracer) and val._trace.tag is self.tag:
       return (val.primal, val.tangent)
     else:
       tangent_zero = p2tz(val)
@@ -1082,7 +1083,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     out_nz, = out_nzs
     return out_primal, out_nz, out_consts, linearized
 
-class LinearizeTracer(Tracer):
+class LinearizeTracer(Tracer[LinearizeTrace]):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
