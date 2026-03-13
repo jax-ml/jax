@@ -30,7 +30,7 @@ class MMALayouts:
   layouts for MMA operands based on warp configuration.
   """
 
-  def __init__(self, element_type: ir.Type):
+  def __init__(self, element_type: ir.Type, *, is_sparse: bool = False):
     elems_per_reg = 32 // utils.bitwidth(element_type)
     k = 8 * elems_per_reg
     sub_k = 4 * elems_per_reg
@@ -40,8 +40,9 @@ class MMALayouts:
         lane_dims=(-3, -2),
         vector_dim=-1,
     )
+    rhs_k = k * (1 + is_sparse)
     self.rhs = fa.TiledLayout(
-        fa.Tiling(((8, k), (8, sub_k), (elems_per_reg,))),
+        fa.Tiling(((8, rhs_k), (8, sub_k), (elems_per_reg,))),
         warp_dims=(fa.Replicated(4),),
         lane_dims=(-3, -2),
         vector_dim=-1,
@@ -52,6 +53,14 @@ class MMALayouts:
         lane_dims=(-3, -2),
         vector_dim=-1,
     )
+    if is_sparse:
+      meta_k = k * 2  # 2 k-tiles distributed across thread pairs in each quad
+      self.sparse_metadata = fa.TiledLayout(
+          fa.Tiling(((64, meta_k), (16, meta_k), (8, meta_k), (meta_k // 2,))),
+          warp_dims=(-7,),
+          lane_dims=(-3, -2, -5),
+          vector_dim=-1,
+      )
 
 
 def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
@@ -68,14 +77,26 @@ def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
 
 
 def _mma_single_tile(
-    acc: fa.FragmentedArray, a: fa.FragmentedArray, b: fa.FragmentedArray
+    acc: fa.FragmentedArray,
+    a: fa.FragmentedArray,
+    b: fa.FragmentedArray,
+    sparse_metadata: fa.FragmentedArray | None = None,
+    sparsity_selector: int = 0,
 ) -> fa.FragmentedArray:
   """Performs `acc + a @ b.T` using warp level MMA instructions."""
   i32 = ir.IntegerType.get_signless(32)
-
   k_tile = 256 // utils.bitwidth(a.mlir_dtype)
+
+  sparse_meta_reg = None
+  if is_sparse := sparse_metadata is not None:
+    assert sparse_metadata.shape == (64, k_tile * 2)
+    sparse_meta_reg = utils.bitcast(
+        sparse_metadata.registers.flat[0],
+        ir.IntegerType.get_signless(32),
+    )
+
   assert a.shape == (64, k_tile)
-  assert b.shape == (8, k_tile)
+  assert b.shape == (8, k_tile * (1 + is_sparse))
   assert acc.shape == (64, 8)
   assert a.mlir_dtype == b.mlir_dtype
   is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
@@ -86,7 +107,8 @@ def _mma_single_tile(
       and isinstance(a.layout, fa.TiledLayout)
       and isinstance(b.layout, fa.TiledLayout)
   )
-  num_acc_regs, num_a_regs, num_b_regs = 4, 4, 2
+  num_acc_regs, num_a_regs = 4, 4
+  num_b_regs = 4 if is_sparse else 2
 
   acc_regs = [  # pylint: disable=g-complex-comprehension
       vector.extract(
@@ -101,15 +123,19 @@ def _mma_single_tile(
   b_regs = [utils.bitcast(r, i32) for r in b.registers.flatten()]
 
   # Make sure we have the right number of registers for the instruction.
-  assert len(a_regs) == 4
-  assert len(acc_regs) == 4
-  assert len(b_regs) == 2
+  assert len(a_regs) == num_a_regs
+  assert len(acc_regs) == num_acc_regs
+  assert len(b_regs) == num_b_regs
 
   a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype, is_signed=a.is_signed)
   b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype, is_signed=b.is_signed)
   acc_ptx_dtype = "s32" if is_integer else "f32"
   acc_constraint = "r" if is_integer else "f"
-  instr = f"mma.sync.aligned.m16n8k{k_tile}.row.col.{acc_ptx_dtype}.{a_ptx_dtype}.{b_ptx_dtype}.{acc_ptx_dtype}"
+  instr = (
+      f"{"mma.sp::ordered_metadata" if is_sparse else "mma"}.sync.aligned"
+      f".m16n8k{k_tile * (1 + is_sparse)}.row.col"
+      f".{acc_ptx_dtype}.{a_ptx_dtype}.{b_ptx_dtype}.{acc_ptx_dtype}"
+  )
   counter = itertools.count()
   n_regs_str = lambda n: (
       "{" + ",".join([f"${next(counter)}" for _ in range(n)]) + "}"
@@ -118,7 +144,10 @@ def _mma_single_tile(
   a_regs_str = n_regs_str(num_a_regs)
   b_regs_str = n_regs_str(num_b_regs)
   c_regs_str = n_regs_str(num_acc_regs)
-  ptx = f"{instr} {out_regs_str}, {a_regs_str}, {b_regs_str}, {c_regs_str};"
+  sparse_operands = ""
+  if is_sparse:
+    sparse_operands = f", ${next(counter)}, 0x{sparsity_selector}"
+  ptx = f"{instr} {out_regs_str}, {a_regs_str}, {b_regs_str}, {c_regs_str}{sparse_operands};"
   # See: https://llvm.org/docs/LangRef.html#inline-assembler-expressions
   constraints = (
       f"{','.join([f'={acc_constraint}']*num_acc_regs)},"
@@ -128,6 +157,9 @@ def _mma_single_tile(
   )
 
   in_operands = [*a_regs, *b_regs, *acc_regs]
+  if is_sparse:
+    constraints += ",r"
+    in_operands.append(sparse_meta_reg)
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(acc.mlir_dtype) for _ in acc_regs)})>"
   )
@@ -158,35 +190,45 @@ def mma(
     acc: fa.FragmentedArray,
     a: fa.FragmentedArray,
     b: fa.FragmentedArray,
+    *,
+    a_sparse_metadata: fa.FragmentedArray | None = None,
 ) -> fa.FragmentedArray:
-  """Computes `acc + a @ b.T` using synchronouse MMA instructions.
+  """Computes `acc + a @ b.T` using warp-wide MMA instructions.
 
-  All operands must have `TiledLayout`s. The layouts must be generated
-  by the `MMALayouts` class, which ensures that the tiles are mapped
-  to the warps correctly.
+  All operands must have ``TiledLayout``s generated by the ``MMALayouts``
+  class.
+
+  When ``sparse_metadata`` is provided, the operation is a structured
+  sparse MMA. In that mode, ``a`` holds only the non-zero elements
+  (compressed to half the k dimension), ``b`` is dense (full k), and
+  the metadata encodes which positions are non-zero.  Layouts should
+  come from ``MMALayouts(..., sparse=True)``.
 
   Args:
-    acc: A `FragmentedArray` with a `TiledLayout` generated from
-      `MMALayouts.acc`.
-    a: A `FragmentedArray` with a `TiledLayout`  generated from
-      `MMALayouts.lhs`.
-    b: A `FragmentedArray` with a `TiledLayout` generated from `MMALayouts.rhs`.
+    acc: Accumulator with ``MMALayouts.acc`` layout.
+    a: LHS operand with ``MMALayouts.lhs`` layout.
+    b: RHS operand with ``MMALayouts.rhs`` layout.
+    a_sparse_metadata: Optional sparsity metadata ``FragmentedArray`` with
+      ``MMALayouts.meta`` layout. Shape is ``(m, num_k_tiles)`` with
+      i32 element type.
 
   Returns:
-    A new `FragmentedArray` with the result of the computation with
-      the same type as `acc`.
+    A new ``FragmentedArray`` with the result of the computation with
+      the same type as ``acc``.
   """
+  is_sparse = a_sparse_metadata is not None
 
-  (m, k) = a.shape
-  (n, k2) = b.shape
+  (m, a_k) = a.shape
+  (n, b_k) = b.shape
   (m2, n2) = acc.shape
 
   if m != m2:
     raise ValueError(f"M mismatch: {m} != {m2}")
   if n != n2:
     raise ValueError(f"N mismatch: {n} != {n2}")
-  if k != k2:
-    raise ValueError(f"K mismatch: {k} != {k2}")
+  if a_k * (1 + is_sparse) != b_k:
+    hint = " (K should be halved in A for sparse MMAs)" if is_sparse else ""
+    raise ValueError(f"K mismatch: {a_k} != {b_k}{hint}")
 
   # todo(cperivol): A tile shape can have dimensions that are higher
   # multiples of the mma op size as long as those dimensions are not
@@ -200,17 +242,23 @@ def mma(
   f8e5m2 = ir.Float8E5M2Type.get()
   if (element_type := a.mlir_dtype) != b.mlir_dtype:
     raise ValueError(f"Dtype mismatch: {a.mlir_dtype} != {b.mlir_dtype}")
-  if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8, i4):
-    raise NotImplementedError(f"Unsupported operand type: {element_type}")
-  if isinstance(element_type, ir.IntegerType):
-    if acc.mlir_dtype != i32:
-      raise NotImplementedError("Only s32 accumulator supported for integer operands.")
-    if not acc.is_signed:
-      raise ValueError("Only signed accumulator supported for integer operands.")
-  elif acc.mlir_dtype != ir.F32Type.get():
-    raise NotImplementedError("Only f32 accumulator supported for floating operands.")
+  if is_sparse:
+    if element_type not in (bf16, f16):
+      raise NotImplementedError(f"Unsupported operand type for sparse MMA: {element_type}")
+    if acc.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError("Only f32 accumulator supported for sparse MMA.")
+  else:
+    if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8, i4):
+      raise NotImplementedError(f"Unsupported operand type: {element_type}")
+    if isinstance(element_type, ir.IntegerType):
+      if acc.mlir_dtype != i32:
+        raise NotImplementedError("Only s32 accumulator supported for integer operands.")
+      if not acc.is_signed:
+        raise ValueError("Only signed accumulator supported for integer operands.")
+    elif acc.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError("Only f32 accumulator supported for floating operands.")
 
-  layouts = MMALayouts(element_type)
+  layouts = MMALayouts(element_type, is_sparse=is_sparse)
   if layouts.lhs != a.layout:
     raise ValueError("Expected MMALayouts.lhs layout for A")
   if layouts.rhs != b.layout:
@@ -221,15 +269,17 @@ def mma(
   assert isinstance(a.layout, fa.TiledLayout)
   assert isinstance(b.layout, fa.TiledLayout)
   assert isinstance(acc.layout, fa.TiledLayout)
-  m_tile, k_tile = a.layout.base_tile_shape
-  n_tile, k_tile2 = b.layout.base_tile_shape
+  m_tile, a_k_tile = a.layout.base_tile_shape
+  n_tile, b_k_tile = b.layout.base_tile_shape
   m_tile2, n_tile2 = acc.layout.base_tile_shape
 
-  assert k_tile == k_tile2
+  assert a_k_tile * (1 + is_sparse) == b_k_tile
   assert m_tile2 == m_tile
   assert n_tile2 == n_tile
 
-  num_m_tiles, num_n_tiles, num_k_tiles = m // m_tile, n // n_tile, k // k_tile
+  num_m_tiles = m // m_tile
+  num_n_tiles = n // n_tile
+  num_k_tiles = a_k // a_k_tile
 
   # Do not modify the accumualtor itself.
   acc = acc.copy()
@@ -239,7 +289,16 @@ def mma(
       for n_idx in range(num_n_tiles):
         ms = s(m_idx, m_tile)
         ns = s(n_idx, n_tile)
-        ks = s(k_idx, k_tile)
-        acc[ms, ns] = _mma_single_tile(acc[ms, ns], a[ms, ks], b[ns, ks])
+        a_ks = s(k_idx, a_k_tile)
+        b_ks = s(k_idx, b_k_tile)
+        if is_sparse:
+          meta_tile = a_sparse_metadata[ms, s(k_idx // 2, a_k_tile * 2)]
+          acc[ms, ns] = _mma_single_tile(
+              acc[ms, ns], a[ms, a_ks], b[ns, b_ks], meta_tile, k_idx % 2
+          )
+        else:
+          acc[ms, ns] = _mma_single_tile(
+              acc[ms, ns], a[ms, a_ks], b[ns, a_ks]
+          )
 
   return acc

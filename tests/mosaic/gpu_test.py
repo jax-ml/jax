@@ -4998,6 +4998,105 @@ class FragmentedArrayTest(TestCase):
     else:
       np.testing.assert_allclose(result, expected, atol=1e-5)
 
+  @parameterized.product(
+      dtype=(jnp.bfloat16, jnp.float16),
+  )
+  def test_warp_sparse_mma(self, dtype):
+    m, n, k = 128, 128, 128
+    dtype = jnp.dtype(dtype)
+    acc_dtype = jnp.float32
+    k_tile = 256 // dtypes.itemsize_bits(dtype)
+    sparse_k = k // 2
+
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    assert len(valid_pairs) == 6
+    pair_indices = jax.random.randint(
+        jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8,
+    )
+    sparse_indices = valid_pairs[pair_indices]
+    assert sparse_indices.shape == (m, k // 4, 2)
+
+    a_dense = self.prng.uniform(-1, 1, (m, k)).astype(dtype)
+    b = self.prng.uniform(-1, 1, (n, k)).astype(dtype)
+    acc = self.prng.uniform(-1, 1, (m, n)).astype(acc_dtype)
+
+    a_dense_grouped = a_dense.reshape(m, k // 4, 4)
+    a_compressed = np.take_along_axis(
+        a_dense_grouped, sparse_indices, axis=-1,
+    ).reshape(m, sparse_k)
+    a_logical = np.zeros_like(a_dense, shape=(m, k // 4, 4))
+    np.put_along_axis(
+        a_logical, sparse_indices, a_compressed.reshape(m, k // 4, 2), axis=-1,
+    )
+    a_logical = a_logical.reshape(m, k)
+
+    def format_sparse_meta(meta):
+      mn, k_groups, _2 = meta.shape
+      assert _2 == 2
+      k_half = k_groups * 2
+      meta_tiled = (
+          meta.reshape(mn // 128, 8, 2, 8, k_half // 64, 4, 2, 8)
+          .transpose(0, 4, 1, 6, 3, 5, 2, 7)
+      )
+      return meta_tiled.reshape(mn, k_half).astype(jnp.int2)
+
+    meta = format_sparse_meta(sparse_indices)
+
+    def kernel(ctx: mgpu.LaunchContext, acc_gmem, a_gmem, b_gmem,
+               meta_gmem, out, scratch):
+      smem, barrier = scratch
+      acc_smem, a_smem, b_smem = smem
+      layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype), is_sparse=True)
+
+      def load(x, x_smem, layout, swizzle=32):
+        ctx.async_copy(
+            src_ref=x,
+            dst_ref=x_smem,
+            gmem_transform=mgpu.TileTransform(tuple(x_smem.type.shape[2:])),
+            swizzle=swizzle,
+            barrier=barrier,
+        )
+        barrier.wait()
+        return fa.FragmentedArray.load_tiled(
+            x_smem, swizzle=swizzle, layout=layout, is_signed=None
+        )
+
+      b_fa = load(b_gmem, b_smem, layouts.rhs)
+      a_fa = load(a_gmem, a_smem, layouts.lhs)
+      acc_fa = load(acc_gmem, acc_smem, layouts.acc)
+      meta_fa = fa.FragmentedArray.load_untiled(
+          meta_gmem, layout=layouts.sparse_metadata, is_signed=False, optimized=False,
+      )
+      result_fa = mgpu.mma(acc_fa, a_fa, b_fa, a_sparse_metadata=meta_fa)
+      result_fa.store_tiled(acc_smem, swizzle=32)
+      mgpu.commit_shared()
+      ctx.async_copy(
+          src_ref=acc_smem,
+          dst_ref=out,
+          gmem_transform=mgpu.TileTransform(tuple(acc_smem.type.shape[2:])),
+          swizzle=32,
+      )
+      ctx.await_async_copy(0)
+
+    expected = acc + a_logical.astype(acc_dtype) @ b.astype(acc_dtype).T
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (acc, a_compressed, b, meta),
+        out_shape=expected,
+        smem_scratch_shape=(
+            mgpu.Union([
+                jax.ShapeDtypeStruct(mgpu.tile_shape((m, n), (8, 8)), dtype=acc_dtype),
+                jax.ShapeDtypeStruct(mgpu.tile_shape((m, sparse_k), (8, k_tile)), dtype=dtype),
+                jax.ShapeDtypeStruct(mgpu.tile_shape((n, k), (8, k_tile)), dtype=dtype),
+            ]),
+            mgpu.Barrier(1),
+        ),
+    )(acc, a_compressed, b, meta)
+    np.testing.assert_allclose(result, expected, atol=1e-2, rtol=5e-4)
+
   @parameterized.parameters(
       (jnp.uint8, jnp.uint16, 255),
       (jnp.uint8, jnp.int16, 255),
