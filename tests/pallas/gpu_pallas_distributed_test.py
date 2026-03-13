@@ -14,9 +14,12 @@
 
 """Tests for distributed pallas GPU operations."""
 
+import dataclasses
 import functools
 import os
 import tempfile
+import types
+from typing import ClassVar
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -27,9 +30,9 @@ from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
-from jax.experimental import pallas as pl
+from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
 import jax.numpy as jnp
@@ -40,13 +43,60 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
+# We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
+# monkey patch the functions in `pl` and `plgpu`.
+def do_not_call_me_directly(*args, **kwargs):
+  raise RuntimeError(
+      "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
+  )
+
+# Clone the modules locally because the functions are called from other
+# modules.
+pl = types.ModuleType("_pl_local")
+pl.__dict__.update(_pl.__dict__)
+
+plgpu = types.ModuleType("_plgpu_local")
+plgpu.__dict__.update(_plgpu.__dict__)
+
+_pallas_call = _pl.pallas_call
+_kernel = _plgpu.kernel
+del _pl, _plgpu
+
+plgpu.kernel = do_not_call_me_directly
+pl.pallas_call = do_not_call_me_directly
+
+
 def is_nvshmem_used():
   return (
       "XLA_FLAGS" in os.environ
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
-class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
+_TestCaseBase = (jt_multiprocess.MultiProcessTest
+                 if is_nvshmem_used() is None
+                 else parameterized.TestCase)
+
+
+class MonkeyPatchTest:
+  def test_calling_pallas_call_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      pl.pallas_call()
+
+  def test_calling_kernel_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      plgpu.kernel()
+
+
+class PallasTestMetaclass(type(_TestCaseBase)):
+
+  def __new__(mcs, *args, lowering_semantics=plgpu.LoweringSemantics.Lane):
+    cls = super().__new__(mcs, *args)
+    cls.LOWERING_SEMANTICS = lowering_semantics
+    return cls
+
+
+class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
+  LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
   def setUp(self):
     if jtu.test_device_matches(["rocm"]):
@@ -65,6 +115,26 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
 
     super().setUp()
 
+  def is_wg_semantics(self):
+    return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
+
+  def skip_if_wg_semantics(self):
+    if self.is_wg_semantics():
+      self.skipTest("Not supported under WG semantics")
+
+  def pallas_call(self, *args, **kwargs):
+    compiler_params = dataclasses.replace(
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+    return _pallas_call(*args, compiler_params=compiler_params, **kwargs)
+
+  def kernel(self, *args, **kwargs):
+    compiler_params = dataclasses.replace(
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+    return _kernel(*args, compiler_params=compiler_params, **kwargs)
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
@@ -87,7 +157,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -142,7 +212,7 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       result = x
       for _ in range(25):
-        result = pl.pallas_call(
+        result = self.pallas_call(
             kernel,
             in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
             out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -152,7 +222,7 @@ class PallasCallRemoteDMATest(TestCase):
             ],
         )(result)
 
-        result = pl.pallas_call(
+        result = self.pallas_call(
             different_kernel,
             in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
             out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -196,7 +266,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -244,7 +314,7 @@ class PallasCallRemoteDMATest(TestCase):
       with tempfile.TemporaryDirectory() as tmpdir:
         x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
         def body(x):
-          return pl.pallas_call(
+          return self.pallas_call(
               kernel,
               in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
               out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -289,7 +359,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 128.0, dtype=jnp.float32).reshape((2, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -328,7 +398,7 @@ class PallasCallRemoteDMATest(TestCase):
     x = jnp.zeros((2, 128), dtype=jnp.int32)
     x = x.at[0, 0].set(1)
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -368,7 +438,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -399,7 +469,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -428,7 +498,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem, 2)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -446,6 +516,8 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_signal_parallel(self):
+    # TODO(bchetioui): support for signal parallel.
+    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -459,7 +531,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem2)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -477,6 +549,8 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
+    # TODO(bchetioui): support for signal multicast.
+    self.skip_if_wg_semantics()
     # TODO(b/476264413): Support multimem in multi-thread mode.
     if jax.local_device_count() > 1:
       return  # Multimem not supported in multi-thread mode yet.
@@ -490,7 +564,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -513,7 +587,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -535,6 +609,8 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(False, True)
   def test_copy_tma(self, use_dict):
+    # TODO(bchetioui): support for remote refs.
+    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -560,7 +636,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem)
 
     transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
@@ -617,6 +693,8 @@ class PallasCallMultimemTest(TestCase):
         raise ValueError(reduction)
 
   def test_multimem_store_regs(self):
+    # TODO(bchetioui): support for multimem store.
+    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -629,7 +707,7 @@ class PallasCallMultimemTest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
@@ -647,6 +725,8 @@ class PallasCallMultimemTest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   def test_multimem_store_tma(self):
+    # TODO(bchetioui): support for multimem store.
+    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -662,7 +742,7 @@ class PallasCallMultimemTest(TestCase):
       pl.semaphore_wait(sem)
 
     transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
@@ -706,6 +786,8 @@ class PallasCallMultimemTest(TestCase):
       (jnp.float8_e4m3fn, 16, "add"),
   )
   def test_multimem_load_reduce(self, dtype, vector_length, reduction, tiled_layout=False):
+    # TODO(bchetioui): support for multimem load reduce.
+    self.skip_if_wg_semantics()
     if dtype in (
         jnp.float8_e5m2,
         jnp.float8_e4m3fn,
@@ -760,7 +842,7 @@ class PallasCallMultimemTest(TestCase):
     y_shape = jax.ShapeDtypeStruct((64, 32), dtype)
     y = jax.jit(
         jax.shard_map(
-            pl.pallas_call(
+            self.pallas_call(
                 kernel,
                 in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
                 out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
@@ -1008,6 +1090,20 @@ class PallasCallMultimemTest(TestCase):
     self._test_all_gather(
         shape, jnp.float16, gather_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
     )
+
+
+class PallasCallRemoteDMAWGTest(
+    PallasCallRemoteDMATest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
+
+
+class PallasCallMultimemWGTest(
+    PallasCallMultimemTest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
 
 
 if __name__ == '__main__':
