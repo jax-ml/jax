@@ -344,6 +344,7 @@ jobs:
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() }}
