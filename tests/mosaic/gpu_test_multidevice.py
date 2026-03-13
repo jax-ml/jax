@@ -22,7 +22,6 @@ from jax._src.lib.mlir import ir
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 import jax.numpy as jnp
 import numpy as np
-import unittest
 try:
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
@@ -36,13 +35,11 @@ else:
 config.parse_flags_with_absl()
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class TestCase(parameterized.TestCase):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or

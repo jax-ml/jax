@@ -17,7 +17,6 @@
 # pylint: disable=g-complex-comprehension
 
 import inspect
-import unittest
 
 from absl.testing import parameterized
 import jax
@@ -88,10 +87,6 @@ def _undef_constraint_system(
   return cs.ConstraintSystem(), {cs.Variable(result): [result]}
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class LayoutInferenceTest(parameterized.TestCase):
   @classmethod
   def setUpClass(cls):
@@ -111,6 +106,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     if jax.version._version != jax.lib.__version__:
       raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()

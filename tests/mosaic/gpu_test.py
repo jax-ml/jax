@@ -24,7 +24,6 @@ import os
 import re
 import sys
 import tempfile
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -210,13 +209,11 @@ def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
   return ret.astype(mlir_dtype, is_signed=utils.is_signed(dtype))
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or
@@ -7119,11 +7116,12 @@ class EndToEndTest(TestCase):
     self.assertEqual(ptx().count("\t.param"), 2)
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class SerializationTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
   def test_pass_is_registered(self):
     ctx = mlir.make_ir_context()

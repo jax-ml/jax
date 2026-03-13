@@ -14,7 +14,6 @@
 # ==============================================================================
 
 import functools
-import unittest
 
 from absl.testing import absltest
 
@@ -43,14 +42,12 @@ else:
 config.parse_flags_with_absl()
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class TorchTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if torch is None:
       self.skipTest("Test requires PyTorch")
     if attention_mgpu is None:

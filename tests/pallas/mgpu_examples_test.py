@@ -18,7 +18,6 @@ import dataclasses
 import functools
 import itertools
 import statistics
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -853,15 +852,13 @@ def matmul6(a, b, config: TuningConfig):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
   BENCHMARK = False
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
     self.skip_unless_tcgen05()

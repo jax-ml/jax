@@ -16,7 +16,6 @@
 
 import functools
 import os
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized  # pylint: disable=g-multiple-import
@@ -42,14 +41,12 @@ def is_nvshmem_used() -> bool:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if collective_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or

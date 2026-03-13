@@ -15,7 +15,6 @@
 """Test different parameterizations of matrix multiplication."""
 
 import os
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -41,14 +40,12 @@ def exceeds_h100_smem(alloc_bytes: int) -> bool:
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
 
@@ -84,14 +81,12 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
 

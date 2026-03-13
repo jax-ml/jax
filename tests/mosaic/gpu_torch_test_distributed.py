@@ -40,13 +40,11 @@ except ImportError:
 # pylint: disable=g-complex-comprehension
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class TorchTest(parameterized.TestCase):
 
   def setUpClass():
+    if jtu.test_device_matches(["rocm"]):
+      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
     torch.cuda.set_device("cuda:0")
     torch.set_default_device("cuda")
     if torch is None:

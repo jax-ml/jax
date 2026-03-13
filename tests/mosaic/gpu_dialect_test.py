@@ -16,7 +16,6 @@
 
 from collections.abc import Callable
 import inspect
-import unittest
 
 from absl.testing import parameterized
 import jax
@@ -101,16 +100,14 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
   return [builtin.unrealized_conversion_cast([ty], []) for ty in tys]
 
 
-@unittest.skipIf(
-    jtu.test_device_matches(["rocm"]),
-    "Mosaic GPU is not supported on ROCm.",
-)
 class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
     if jax.version._version != jax.lib.__version__:
       raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
