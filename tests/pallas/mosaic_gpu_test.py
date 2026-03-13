@@ -24,6 +24,7 @@ import re
 import sys
 import tempfile
 import traceback
+import types
 from typing import ClassVar
 
 from absl.testing import absltest
@@ -46,9 +47,9 @@ from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
-from jax.experimental import pallas as pl
+from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas import mosaic_gpu as _plgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -58,6 +59,29 @@ except ImportError:
   mosaic_gpu_lib = None
 
 jax.config.parse_flags_with_absl()
+
+
+# We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
+# monkey patch the functions in `pl` and `plgpu`.
+def do_not_call_me_directly(*args, **kwargs):
+  raise RuntimeError(
+      "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
+  )
+
+# Clone the modules locally because the functions may be called from other
+# modules.
+pl = types.ModuleType("_pl_local")
+pl.__dict__.update(_pl.__dict__)
+
+plgpu = types.ModuleType("_plgpu_local")
+plgpu.__dict__.update(_plgpu.__dict__)
+
+_pallas_call = _pl.pallas_call
+_kernel = _plgpu.kernel
+del _pl, _plgpu
+
+plgpu.kernel = do_not_call_me_directly
+pl.pallas_call = do_not_call_me_directly
 
 
 def _fori_loop(force_while: bool, lb, ub, body, init):
@@ -131,6 +155,16 @@ class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
     return cls
 
 
+class MonkeyPatchTest(jtu.JaxTestCase):
+  def test_calling_pallas_call_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      pl.pallas_call()
+
+  def test_calling_kernel_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      plgpu.kernel()
+
+
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
@@ -155,14 +189,14 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
         kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    return plgpu.kernel(*args, compiler_params=compiler_params, **kwargs)
+    return _kernel(*args, compiler_params=compiler_params, **kwargs)
 
   def pallas_call(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
         kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    return pl.pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    return _pallas_call(*args, compiler_params=compiler_params, **kwargs)
 
   @contextlib.contextmanager
   def capture_stdout(self):
@@ -2474,13 +2508,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       self.fail("Should have raised an exception")
 
   def test_lower_with_abstract_mesh(self):
+    # TODO(bchetioui): support for semaphore_signal_multicast.
+    self.skip_if_wg_semantics()
     def kernel(y_ref, sem):
       plgpu.semaphore_signal_multicast(sem, collective_axes='x')
       # Wait for the multicast signal (each device gets signaled by all devices)
       pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_jax = pl.pallas_call(
+    kernel_jax = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -5526,7 +5562,7 @@ class PipelineTest(PallasTest):
         )(x_gmem, o_gmem)
 
     # The test only intends to check that this does not crash/hang.
-    plgpu.kernel(
+    self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((block_x,), jnp.int32),
         grid=(1,),
@@ -7269,7 +7305,7 @@ class DistributedTest(PallasTest):
                   plgpu.copy_smem_to_gmem(x_smem, o_ref)
                   plgpu.wait_smem_to_gmem(0)
               out_shape = jax.ShapeDtypeStruct(shape=(64, 64), dtype=jnp.float32)
-              result = plgpu.kernel(relu_kernel,
+              result = self.kernel(relu_kernel,
                   out_shape=out_shape,
                   scratch_shapes=dict(
                       x_smem=plgpu.SMEM((64, 64), jnp.float32),
