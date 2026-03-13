@@ -2077,6 +2077,7 @@ jax_multiplatform_test(
         "cpu",
         "cpu_x32",
     ],
+    minimal_shard_count = {"tpu": 2},
     shard_count = 15,
     tags = [
         "noasan",  # Times out
