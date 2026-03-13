@@ -291,7 +291,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertEqual(include_metadata, key1 != key2)
 
   @parameterized.parameters([False, True])
-  @jtu.thread_unsafe_test()  # env vars are not thread-safe
+  @jtu.thread_unsafe_test()
   def test_identical_pallas_kernels_different_metadata(self, include_metadata):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Pallas TPU lowering requires TPU backend")
