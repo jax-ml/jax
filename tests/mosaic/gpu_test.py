@@ -1869,7 +1869,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           gmem_transform=mgpu.TileTransform(tiling),
           barrier=barrier,
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       with when(is_first_block):
         barrier.wait()
@@ -2052,7 +2052,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(lhs_tiling),
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       ctx.async_copy(
           src_ref=rhs,
@@ -2061,14 +2061,14 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(rhs_tiling),
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       ctx.async_copy(
           src_ref=lhs_scales_gmem,
           dst_ref=lhs_scales_smem,
           barrier=barriers[2],
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       # B scales are replicated! Note that this does not use 2CTA TMA and will
       # need to be awaited in the non-leader CTA or else we will double arrive.
@@ -2422,7 +2422,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           swizzle=lhs_swizzle,
           gmem_transform=mgpu.TileTransform(lhs_tiling),
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       ctx.async_copy(
           src_ref=rhs,
@@ -2431,14 +2431,14 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           swizzle=rhs_swizzle,
           gmem_transform=mgpu.TileTransform(rhs_tiling),
           collective=gpu.Dimension.x,
-          partitioned=1,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(1),
       )
       ctx.async_copy(
           src_ref=lhs_sparse_gmem,
           dst_ref=lhs_sparse_smem,
           barrier=barriers[2],
           collective=gpu.Dimension.x,
-          partitioned=0,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       index = ir.IndexType.get()
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
@@ -2794,7 +2794,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[0],
           collective=gpu.Dimension.x,
-          partitioned=1 if lhs_transpose else 0,  # Split non-contracting dim.
+          # Split non-contracting dim.
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(1 if lhs_transpose else 0),
       )
       ctx.async_copy(
           src_ref=rhs,
@@ -2803,7 +2804,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[1],
           collective=gpu.Dimension.x,
-          partitioned=0 if rhs_transpose else 1,  # Split non-contracting dim.
+          # Split non-contracting dim.
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0 if rhs_transpose else 1),
       )
       is_leader_thread = single_thread_predicate()
       is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
@@ -2893,7 +2895,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[0],
           collective=gpu.Dimension.x,
-          partitioned=0,  # Split non-contracting dim.
+          # Split non-contracting dim.
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
       )
       ctx.async_copy(
           src_ref=rhs,
@@ -2902,7 +2905,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[1],
           collective=gpu.Dimension.x,
-          partitioned=1,  # Split non-contracting dim.
+          # Split non-contracting dim.
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(1),
       )
 
       is_leader_thread = single_thread_predicate()

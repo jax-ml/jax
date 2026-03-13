@@ -139,7 +139,8 @@ def build_kernel(
               arrive=False,
               predicate=None,
               collective=gpu.Dimension.x,
-              partitioned=0,  # Non-contracting dim is always 0.
+              # Non-contracting dim is always 0.
+              leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
           )
           ctx.async_copy(
               src_ref=a,

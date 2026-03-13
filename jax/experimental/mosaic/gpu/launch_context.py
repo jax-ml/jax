@@ -1074,7 +1074,6 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-      partitioned: int | None = None,
       leader_tracked: CopyPartition | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
@@ -1110,14 +1109,6 @@ class LaunchContext:
       into their SMEM but only the first block in the collective tracks
       progress via barrier arrivals. This uses the `cta_group::2` mode.
     """
-    if partitioned is not None and leader_tracked is not None:
-      raise ValueError(
-          "Cannot specify both `partitioned` and `leader_tracked`"
-      )
-    if partitioned is not None:
-      leader_tracked = CopyPartition.PARTITIONED(partitioned)
-    del partitioned
-
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
@@ -1601,18 +1592,10 @@ class LaunchContext:
     gmem_peer_id: int | ir.Value | None = None,
     swizzle: int | None = None,
     collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-    partitioned: int | None = None,
     leader_tracked: CopyPartition | None = None,
     # Should select 0 or 1 threads from the WG.
     predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
   ):
-    if partitioned is not None and leader_tracked is not None:
-      raise ValueError(
-          "Cannot specify both `partitioned` and `leader_tracked`"
-      )
-    if partitioned is not None:
-      leader_tracked = CopyPartition.PARTITIONED(partitioned)
-    del partitioned
 
     i32 = ir.IntegerType.get_signless(32)
 
