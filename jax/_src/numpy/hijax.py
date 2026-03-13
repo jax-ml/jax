@@ -205,21 +205,21 @@ def _searchsorted_scan_impl(
     )(sorted_arr, query)
 
   op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator  # pylint: disable=protected-access
-
-  def body_fun(_, state):
+  unsigned_dtype = np.uint64 if dtype == np.int64 else np.uint32
+  def body_fun(state, _):
     low, high = state
-    mid = (low + high) // 2
+    mid = low.astype(unsigned_dtype) + high.astype(unsigned_dtype)
+    mid = lax.div(mid, jnp.array(2, dtype=unsigned_dtype)).astype(dtype)
     go_left = op(query, sorted_arr[mid])
-    return (lax.select(go_left, low, mid), lax.select(go_left, mid, high))
-
+    return (jnp.where(go_left, low, mid), jnp.where(go_left, mid, high)), ()
   (n,) = sorted_arr.shape
   n_levels = int(np.ceil(np.log2(n + 1)))
   vma = tuple(core.typeof(sorted_arr).vma)
   init = (core.pvary(jnp.array(0, dtype), vma),
           core.pvary(jnp.array(n, dtype), vma))
-  return control_flow.fori_loop(
-      0, n_levels, body_fun, init, unroll=n_levels if unrolled else 1
-  )[1]
+  carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
+                               unroll=n_levels if unrolled else 1)
+  return carry[1]
 
 
 @functools.partial(api.jit, static_argnames=["side", "dtype"])
