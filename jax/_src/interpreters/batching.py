@@ -558,7 +558,7 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   out_tangents = map(partial(_matchaxis_symzeros, trace.axis_data.name, size, mesh_axis),
                      out_tangent_bds, out_dims, out_tangents)
   store.store(out_dims)
-  return out_primals + out_tangents  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
+  return out_primals + out_tangents
 
 def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          axis_data: AxisData,

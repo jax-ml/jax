@@ -202,7 +202,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effs,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      eqn = new_eqn_recipe(self, tracers, out_tracers, primitive, params, effs,
                            source)
       if effects.partial_eval_kept_effects.filter_in(effs):
         self.effect_handles.append(EffectHandle(tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
@@ -210,7 +210,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      eqn = new_eqn_recipe(self, tracers, [out_tracer], primitive,  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      eqn = new_eqn_recipe(self, tracers, [out_tracer], primitive,
                            params, effs, source)
       if effects.partial_eval_kept_effects.filter_in(effs):
         self.effect_handles.append(EffectHandle(tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
@@ -796,7 +796,7 @@ def tracers_to_jaxpr(
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   jaxpr = Jaxpr(const_vars, invars,  # type: ignore[arg-type]
-                outvars, eqns, jaxpr_effects, debug_info, is_high)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals

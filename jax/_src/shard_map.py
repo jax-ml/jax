@@ -1528,7 +1528,7 @@ def _shard_map_batch(
     out_vals = prim.bind(*in_vals, subfuns=(fun,), **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
                         source_info=source_info_util.current())
-  return map(make_tracer, out_vals, out_dims())  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(make_tracer, out_vals, out_dims())
 batching.BatchTrace.process_shard_map = _shard_map_batch
 
 def _batch_out_specs(spmd_name, explicit_mesh_axis, dims, out_specs):
