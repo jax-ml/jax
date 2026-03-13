@@ -495,11 +495,16 @@ def _vector_load_op_lowering_rule(
 
   return [_fragmented_array_to_ir(fragmented_array)]
 
-
 @_register_lowering(mgpu.VectorStoreOp)
 def _vector_store_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.VectorStoreOp
 ) -> Sequence[ir.Value]:
+  # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.9.2.
+  if hasattr(op, "atomic_type") and op.atomic_type is not None:
+    atomic = str(mgpu.AtomicOpType(op.atomic_type.value))
+  else:
+    atomic = None
+
   [to_store_layout] = inference_utils.in_layouts(op)
   fragmented_array = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
 
@@ -511,7 +516,9 @@ def _vector_store_op_lowering_rule(
   optimized = op.optimized.value if op.optimized is not None else None
 
   if ref_type.memory_space is None:  # GMEM
-    fragmented_array.store_untiled(ref, optimized=bool(optimized))
+    fragmented_array.store_untiled(
+        ref, optimized=bool(optimized), atomic=atomic
+    )
   elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
@@ -523,14 +530,13 @@ def _vector_store_op_lowering_rule(
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
 
       def store_tiled(optimized: bool):
-        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized)
+        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized, atomic=atomic)  # pytype: disable=wrong-arg-types
 
       _retry_on_failure(store_tiled, optimized)
     else:
 
       def store_untiled(optimized: bool):
-        fragmented_array.store_untiled(ref, optimized=optimized)
-
+        fragmented_array.store_untiled(ref, optimized=optimized, atomic=atomic)  # pytype: disable=wrong-arg-types
       _retry_on_failure(store_untiled, optimized)
   else:
     raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")

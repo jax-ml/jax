@@ -23,7 +23,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import jax
 from jax._src import core as jax_core
@@ -4051,6 +4051,49 @@ def _atomic_store(
   atomic_store_p.bind(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
+
+
+@lowering.register_lowering_rule(
+    atomic_store_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _atomic_store_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext,
+    *args_flat,
+    args_tree,
+    atomic_type: AtomicOpType,
+):
+  ref, transforms, value = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
+  value = lowering._ensure_ir_value(value, value_aval.dtype)  # pylint: disable=protected-access
+  assert isinstance(ref_aval, state_types.AbstractRef)
+  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+      ctx, ref_aval, ref, list(transforms_avals), list(transforms)
+  )
+  if remaining_transforms:
+    raise NotImplementedError(
+        f"Unsupported transforms for atomic_store: {remaining_transforms}"
+    )
+
+  def to_int_attr(atomic_type: AtomicOpType):
+    match atomic_type:
+      case AtomicOpType.ADD:
+        return 0
+      case AtomicOpType.MIN:
+        return 1
+      case AtomicOpType.MAX:
+        return 2
+      case AtomicOpType.AND:
+        return 3
+      case AtomicOpType.OR:
+        return 4
+      case AtomicOpType.XOR:
+        return 5
+      case _:
+        assert_never(atomic_type)
+
+  # TODO(allanrenucci): Remove the pyrefly annotation when .pyi files are updated.
+  mgpu.dialect.vector_store(value, ref, atomic_type=to_int_attr(atomic_type))  # pyrefly: ignore[unexpected-keyword]
+  return ()
 
 
 @lowering.register_lowering_rule(atomic_store_p, mgpu.LoweringSemantics.Lane)

@@ -62,7 +62,7 @@ jax.config.parse_flags_with_absl()
 
 
 # We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
-# monkey patch the functions in `pl` and `plgpu`.
+# monkey patch the functions in `pl` and `plgpu`.
 def do_not_call_me_directly(*args, **kwargs):
   raise RuntimeError(
       "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
@@ -3040,7 +3040,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       layout=[plgpu.Layout.WGMMA, None]
   )
   def test_atomic_add(self, dtype, layout):
-    self.skip_if_wg_semantics()
+    # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "AtomicOpType"):
+      self.skip_if_wg_semantics()
     m, n = 128, 64
     if layout is not None:
       transforms = self.default_transforms(swizzle=64, dtype=dtype)
@@ -3064,7 +3066,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.barrier_wait(barrier)
       @pl.when(wg_idx == 0)
       def _copy_out():
-        out_ref[...] = smem_ref[...]
+        # TODO(b/492443090): layout hint required here.
+        out_ref[...] = plgpu.load(smem_ref, (), layout=layout, optimized=False)
     x = jnp.arange(1, m * n + 1, dtype=dtype).reshape(m, n)
     y = jnp.arange(m * n, 0, -1, dtype=dtype).reshape(m, n)
     inp = jnp.concatenate([x, y], axis=0)
@@ -3356,7 +3359,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.atomic_store_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_smem_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,

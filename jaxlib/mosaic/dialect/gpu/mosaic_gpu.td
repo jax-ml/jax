@@ -421,6 +421,19 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
   let results = (outs AnyFixedVectorOfNonZeroRank);
 }
 
+def MosaicGPU_AtomicOpType : I32EnumAttr<"AtomicOpType",
+    "Atomic store operation type",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Min", 1, "min">,
+      I32EnumAttrCase<"Max", 2, "max">,
+      I32EnumAttrCase<"And", 3, "and">,
+      I32EnumAttrCase<"Or", 4, "or">,
+      I32EnumAttrCase<"Xor", 5, "xor">,
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
       [MemoryEffects<[MemWrite]>]> {
   let summary = "Writes an n-D vector to an n-D slice of memory.";
@@ -431,12 +444,15 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
     If `optimized` is true, raises an error if we cannot generate an optimised
     transfer. If unset, fall back to a non-optimized transfer if unable to
     generate an optimized transfer.
+
+    If `atomic_type` is set, performs an atomic store-(add|min|...) of the value.
   }];
 
   let arguments = (ins
     AnyFixedVectorOfNonZeroRank:$valueToStore,
     AnyNon0RankedMemRef:$destination,
-    OptionalAttr<BoolAttr>:$optimized
+    OptionalAttr<BoolAttr>:$optimized,
+    OptionalAttr<MosaicGPU_AtomicOpType>:$atomic_type
   );
 
   let hasVerifier = 1;
