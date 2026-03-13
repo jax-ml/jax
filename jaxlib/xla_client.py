@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 418  # mlir tpu dialect python bindings for enums
+_version = 419  # [XLA:GPU]: Add 16 byte alignment to CustomKernelMetadata
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
