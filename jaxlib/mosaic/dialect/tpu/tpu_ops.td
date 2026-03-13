@@ -1297,6 +1297,48 @@ let assemblyFormat = [{
   ];
 }
 
+def TPU_SfenceOp : TPU_Op<"sfence"> {
+  let summary = [{
+    Scalar fence is used to introduce a happens-before edge between operations.
+  }];
+
+  let description = [{
+    The Scalar Fence operation ensures that the selected set of descriptors are
+    retired before subsequent operations are executed.
+  }];
+
+  let arguments = (ins
+    UnitAttr:$tasks_retired,
+    UnitAttr:$stream_spmem_committed,
+    UnitAttr:$stream_hbm_committed,
+    UnitAttr:$stream_vmem_committed,
+    UnitAttr:$stream_spmem_retired,
+    UnitAttr:$stream_hbm_retired,
+    UnitAttr:$stream_vmem_retired,
+    UnitAttr:$dma_retired,
+    UnitAttr:$rmf_empty,
+    UnitAttr:$scmf_empty,
+    UnitAttr:$all
+  );
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    ( `tasks_retired` $tasks_retired^ )?
+    ( `stream_spmem_committed` $stream_spmem_committed^ )?
+    ( `stream_hbm_committed` $stream_hbm_committed^ )?
+    ( `stream_vmem_committed` $stream_vmem_committed^ )?
+    ( `stream_spmem_retired` $stream_spmem_retired^ )?
+    ( `stream_hbm_retired` $stream_hbm_retired^ )?
+    ( `stream_vmem_retired` $stream_vmem_retired^ )?
+    ( `dma_retired` $dma_retired^ )?
+    ( `rmf_empty` $rmf_empty^ )?
+    ( `scmf_empty` $scmf_empty^ )?
+    ( `all` $all^ )?
+    attr-dict
+  }];
+}
+
 def TPU_BarrierOp : TPU_Op<"barrier"> {
   let summary = [{Barrier synchronization across SC vector subcores.}];
   let description = [{
