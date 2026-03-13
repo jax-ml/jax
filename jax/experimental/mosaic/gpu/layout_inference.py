@@ -631,11 +631,6 @@ def _vector_load_constraint_system(
     ctx: DerivationContext,
     op: mgpu.VectorLoadOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  # TODO(b/447079781): Investigate whether we should check for contiguous
-  # strides here. An initial implementation of this failed the
-  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-  # we should confirm that this is properly supported.
-
   # Registers
   dest = ValueSite(op, VariableType.RESULT, 0)
   dest_var = cs.Variable(dest)
@@ -663,11 +658,6 @@ def _vector_store_constraint_system(
     ctx: DerivationContext,
     op: mgpu.VectorStoreOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  # TODO(b/447079781): Investigate whether we should check for contiguous
-  # strides here. An initial implementaiton of this failed the
-  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
-  # we should confirm that this is properly supported.
-
   # Registers
   value = ValueSite(op, VariableType.OPERAND, 0)
   value_var = cs.Variable(value)
