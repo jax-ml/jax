@@ -83,6 +83,8 @@ class SearchSorted(VJPHiPrimitive):
           "batch dimension sizes must match; got"
           f" {sorted_arr_aval.shape[:batch_dims]} != {query_aval.shape[:batch_dims]}"
       )
+    if not dtypes.issubdtype(out_dtype, np.integer):
+      raise ValueError(f"out_dtype should be an integer type; got {out_dtype}")
     # Attempt this here to catch overflow errors early.
     out_dtype.type(sorted_arr_aval.shape[dimension])
     self.in_avals = (sorted_arr_aval, query_aval)
@@ -306,6 +308,6 @@ def searchsorted(
     dimension=dimension,
     batch_dims=batch_dims,
     method=method,
-    out_dtype=dtypes.dtype(dtype),
+    out_dtype=np.dtype(dtype),
   )
   return prim(sorted_arr, query)
