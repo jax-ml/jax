@@ -493,6 +493,7 @@ jax_multiplatform_test(
     tags = [
         "mosaic_gpu_test",
         "multiaccelerator",
+        "notap",  # TODO(b/492166290): Re-enable once the jaxlib/xla version is updated.
     ],
     deps = [
         "//jax/_src:test_multiprocess",
