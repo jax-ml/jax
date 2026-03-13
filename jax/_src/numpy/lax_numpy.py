@@ -9457,6 +9457,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
 
   # TODO(jakevdp): fix hijax primitive corner cases and return hijax.searchsorted.
   # return hijax.searchsorted(a, v, side=side, method=method, dtype=dtype)
+  a, v = core.standard_insert_pvary(a, v)
   return hijax._searchsorted_impl(a, v, dimension=0, batch_dims=0,
                                   side=side, method=method, dtype=dtype)
 
