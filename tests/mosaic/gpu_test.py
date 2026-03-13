@@ -6831,7 +6831,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     shape = (128, 128)
 
     def body(ctx, gmem_in, gmem_out, scratch):
-      smem, copy_barrier, tmem = scratch
+      smem, copy_barrier, cluster_barrier, tmem = scratch
 
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
 
@@ -6846,6 +6846,10 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       is_first_block = arith.cmpi(
           arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
       )
+
+      # Ensure SMEM is initialized in both blocks before copying in CTA0.
+      cluster_barrier.arrive()
+      cluster_barrier.wait()
 
       with when(is_first_block):
         mgpu_dialect.async_store_smem_to_tmem(smem, tmem, collective=True)
@@ -6869,6 +6873,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         smem_scratch_shape=[
             jax.ShapeDtypeStruct(shape, dtype),
             mgpu.Barrier(1),
+            mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
             mgpu.TMEM(shape, dtype, collective=True, packing=1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
