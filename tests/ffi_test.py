@@ -29,6 +29,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import compute_on
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
 from jax._src.lib import lapack
@@ -320,6 +321,39 @@ class FfiTest(jtu.JaxTestCase):
     def f(x):
       return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
     jax.jit(f).lower(jax.random.key(0))   # doesn't crash
+
+  def test_latency_metadata(self):
+    def fun(x):
+      return jax.ffi.ffi_call("test_ffi", x, latency_metadata=12345)(x)
+
+    module = jax.jit(fun).lower(0.5).compiler_ir("stablehlo")
+    op = self.find_custom_call_in_module(module)
+    self.assertIn("mhlo.frontend_attributes", op.attributes)
+    attrs = op.attributes["mhlo.frontend_attributes"]
+    self.assertIn("latency_metadata", attrs)
+    self.assertEqual(str(attrs["latency_metadata"]), '"12345"')
+
+  def test_latency_metadata_with_compute_on(self):
+    def fun(x):
+      return jax.ffi.ffi_call("test_ffi", x, latency_metadata=12345)(x)
+
+    @jax.jit
+    def wrapped_fun(x):
+      with compute_on.compute_on("device_host"):
+        return fun(x)
+
+    module = wrapped_fun.lower(0.5).compiler_ir("stablehlo")
+    op = self.find_custom_call_in_module(module)
+    self.assertIn("mhlo.frontend_attributes", op.attributes)
+
+    attrs = op.attributes["mhlo.frontend_attributes"]
+    with self.subTest("latency_metadata"):
+      self.assertIn("latency_metadata", attrs)
+      self.assertEqual(str(attrs["latency_metadata"]), '"12345"')
+
+    with self.subTest("_xla_compute_type"):
+      self.assertIn("_xla_compute_type", attrs)
+      self.assertEqual(str(attrs["_xla_compute_type"]), '"host"')
 
 
 def ffi_call_geqrf(x, **kwargs):

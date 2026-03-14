@@ -28,6 +28,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src import xla_metadata
 from jax._src.hashable_array import HashableArray
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
@@ -388,6 +389,7 @@ def ffi_call(
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
     vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
+    latency_metadata: int | None = ...,
 ) -> Callable[..., Array]:
   ...
 
@@ -405,6 +407,7 @@ def ffi_call(
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
     vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
+    latency_metadata: int | None = ...,
 ) -> Callable[..., Sequence[Array]]:
   ...
 
@@ -421,6 +424,7 @@ def ffi_call(
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
     vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
+    latency_metadata: int | None = None,
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
@@ -475,6 +479,9 @@ def ffi_call(
       ``custom_call_api_version<4``, attributes are passed using the opaque
       string representation provided by this argument. This parameter cannot be
       used with ``custom_call_api_version>=4``.
+    latency_metadata: An optional integer representing the expected latency of
+      the FFI call in nanoseconds. This metadata may be used by the compiler for
+      optimization.
 
   Returns:
     A function that can be called with the input arrays as positional arguments
@@ -572,6 +579,7 @@ def ffi_call(
         custom_call_api_version=custom_call_api_version,
         legacy_backend_config=legacy_backend_config,
         attributes=_wrap_kwargs_hashable(kwargs),
+        latency_metadata=latency_metadata,
     )
     if multiple_results:
       if isinstance(result_shape_dtypes, tuple):
@@ -668,15 +676,24 @@ def ffi_call_lowering(
     custom_call_api_version: int,
     legacy_backend_config: str | None,
     attributes: Sequence[tuple[str, Any]],
+    latency_metadata: int | None = None,
     **_,
 ) -> Sequence[ir.Value | Sequence[ir.Value]]:
-  rule = ffi_lowering(target_name, has_side_effect=has_side_effect,
-                      operand_layouts=input_layouts,
-                      result_layouts=output_layouts,
-                      operand_output_aliases=dict(input_output_aliases),
-                      api_version=custom_call_api_version,
-                      backend_config=legacy_backend_config)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
+  op_builder = build_ffi_lowering_function(
+      target_name,
+      operand_layouts=input_layouts,
+      result_layouts=output_layouts,
+      backend_config=legacy_backend_config,
+      has_side_effect=has_side_effect,
+      operand_output_aliases=dict(input_output_aliases),
+      api_version=custom_call_api_version,
+  )
+  op = op_builder(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
+
+  if latency_metadata is not None:
+    xla_metadata.attach_xla_metadata_to_op({"latency_metadata": latency_metadata}, op)
+
+  return op.results
 
 
 def ffi_batching_rule(
