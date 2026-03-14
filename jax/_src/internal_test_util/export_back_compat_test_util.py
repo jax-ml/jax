@@ -233,9 +233,9 @@ class CompatTestBase(jtu.JaxTestCase):
     current_custom_call_targets = sorted(
         set(re.findall(custom_call_re, module_str)))
 
-    np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
-    # Print the current test data to simplify updating the test.
-    updated_testdata = f"""
+    with np.printoptions(threshold=sys.maxsize, floatmode="unique"):
+      # Print the current test data to simplify updating the test.
+      updated_testdata = f"""
 # Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
