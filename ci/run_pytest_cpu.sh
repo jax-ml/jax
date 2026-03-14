@@ -52,8 +52,8 @@ if [[ -n "${MAX_PROCESSES}" ]]; then
   MAX_PROCESSES_ARG="--maxprocesses=${MAX_PROCESSES}"
 elif [[ "$(uname -s)" == *"MSYS"* ]]; then
   MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Windows sometimes.
-elif [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" && "${IS_JAXCI_PYTHON_NOGIL}" == "1" ]]; then
-  MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Linux ARM64 with nogil.
+elif [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+  MAX_PROCESSES_ARG="--maxprocesses=32"  # Tests OOM on Linux ARM64.
 fi
 # End of test environment variable setup
 
