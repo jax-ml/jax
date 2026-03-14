@@ -101,7 +101,10 @@ echo "Final number of processes to run: $num_processes"
 export JAX_ENABLE_ROCM_XDIST="$gpu_count"
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1 --xla_gpu_enable_nccl_comm_splitting=false --xla_gpu_enable_command_buffer="
+export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1 \
+    --xla_gpu_enable_nccl_comm_splitting=false \
+    --xla_gpu_enable_command_buffer= \
+    --xla_gpu_enable_cublaslt=true"
 
 # ==============================================================================
 # Run tests
