@@ -321,6 +321,7 @@ class CustomCallBackendConfig:
     if self.tiling is not None:
       config.write(b', "sparse_core_config": ')
       config.write(_compact_json_object(tiling=self.tiling.value))
+    # TODO(b/492828402): Remove device_type
     if self.device_type is not None:
       config.write(b', "device_type": ')
       config.write(
