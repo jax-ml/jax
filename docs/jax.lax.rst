@@ -191,6 +191,7 @@ Control flow operators
   :toctree: _autosummary
 
     associative_scan
+    associative_reduce
     cond
     fori_loop
     map

@@ -14,6 +14,7 @@
 """Module for the control flow primitives."""
 from jax._src.lax.control_flow.loops import (
     associative_scan as associative_scan,
+    associative_reduce as associative_reduce,
     cummax as cummax,
     cummax_p as cummax_p,
     cummin as cummin,

@@ -327,6 +327,7 @@ from jax._src.lax.windowed_reductions import (
 )
 from jax._src.lax.control_flow import (
   associative_scan as associative_scan,
+  associative_reduce as associative_reduce,
   cond as cond,
   cond_p as cond_p,
   cumlogsumexp as cumlogsumexp,

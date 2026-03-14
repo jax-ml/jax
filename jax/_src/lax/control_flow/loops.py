@@ -70,7 +70,7 @@ from jax._src.util import (
 from jax._src import xla_bridge as xb
 from jax._src.tree_util import (
     keystr, tree_flatten, tree_map, tree_unflatten,
-    treedef_is_leaf, FlatTree)
+    treedef_is_leaf, FlatTree, Unspecified, tree_leaves)
 import numpy as np
 
 _map = safe_map
@@ -2757,6 +2757,81 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
     scans = [lax.rev(scanned, [axis]) for scanned in scans]
 
   return tree_unflatten(tree, scans)
+
+def array_take_axis(array: Array, axis: int, index: int | slice | Array):
+  indices: list[int | slice | Array] = [slice(None)] * np.ndim(array)
+  indices[axis] = index
+  return array[tuple(indices)]
+
+def tree_take_axis(tree, axis: int, index: int | slice | Array):
+  return tree_map(lambda leaf: array_take_axis(leaf, axis, index), tree)
+
+def tree_dim(tree, axis: int) -> int:
+  leaves = tree_leaves(tree)
+  if not leaves:
+    raise ValueError("Tree cannot be empty for tree_dim.")
+  dim = np.shape(leaves[0])[axis]
+  if any(np.shape(leaf)[axis] != dim for leaf in leaves[1:]):
+    raise ValueError(f"Tree leaves have unequal dimension along {axis=}.")
+  return dim
+
+def associative_reduce(fn: Callable, elems, *, axis: int = 0, identity=Unspecified()):
+  """Performs a reduce with an associative binary operation, in parallel.
+
+  Args:
+    fn: A Python callable implementing an associative binary operation with
+      signature ``r = fn(a, b)``. Function `fn` must be associative, i.e., it
+      must satisfy the equation
+      ``fn(a, fn(b, c)) == fn(fn(a, b), c)``.
+
+      The inputs and result are (possibly nested Python tree structures of)
+      array(s) matching ``elems``. Each array has a dimension in place
+      of the ``axis`` dimension. `fn` should be applied elementwise over
+      the ``axis`` dimension (for example, by using :func:`jax.vmap` over the
+      elementwise function.)
+
+      The result ``r`` has the same shape (and structure) as the two inputs
+      ``a`` and ``b``.
+    elems: A (possibly nested Python tree structure of) array(s), each with
+      an ``axis`` dimension of size ``num_elems``.
+    axis: an integer identifying the axis over which the reduce should occur.
+
+  Returns:
+    A (possibly nested Python tree structure of) array(s) of the same shape
+    and structure as ``elems``, with the axis ``axis`` removed.
+
+  Example: multiplication of a chain of matrices
+
+  >>> matrices = jnp.arange(4 * 2 * 2).reshape((4, 2, 2))
+  >>> lax.associative_reduce(jnp.matmul, matrices)
+  Array([[ 3250,  3499],
+       [14266, 15359]], dtype=int32)
+  """
+
+  dim = tree_dim(elems, axis)
+  while dim > 1:
+    n, parity = divmod(dim, 2)
+    evens = tree_take_axis(elems, axis, slice(0, n * 2, 2))
+    odds = tree_take_axis(elems, axis, slice(1, n * 2, 2))
+    reduced = fn(evens, odds)
+    if parity == 1:
+      last = tree_take_axis(elems, axis, slice(-1, None))
+      elems = tree_map(
+        lambda reduced, last: lax.concatenate([reduced, last], axis),
+        reduced,
+        last,
+      )
+    else:
+      elems = reduced
+    dim = tree_dim(elems, axis)
+
+  if dim == 1:
+    return tree_map(lambda leaf: lax.squeeze(leaf, [axis]), elems)
+  else:
+    if isinstance(identity, Unspecified):
+      raise TypeError("Must specify identity for empty reduction.")
+    else:
+      return identity
 
 def _interleave(a, b, axis):
   """Given two Tensors of static shape, interleave them along the first axis."""

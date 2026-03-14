@@ -2030,6 +2030,33 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.eqns[0].primitive, primitive)
 
   @jtu.sample_product(
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testAssociativeReduce(self, dtype):
+    axis = 1
+    batch_size = 32
+    length = 20
+    matrix_size = 5
+
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
+    rng = rng_factory(self.rng())
+
+    fn = jnp.matmul
+    init_values = jnp.eye(matrix_size, dtype=dtype)
+    shape = (batch_size, length, matrix_size, matrix_size)
+    elems = rng(shape, dtype)
+
+    expected = jnp.take(elems, 0, axis=axis)
+    for i in range(1, elems.shape[axis]):
+      elem = jnp.take(elems, i, axis=axis)
+      expected = fn(expected, elem)
+
+    output = lax.associative_reduce(fn, elems, axis=axis, identity=init_values)
+
+    self.assertAllClose(expected, output)
+
+  @jtu.sample_product(
       [
           dict(
               op=rec.op,
