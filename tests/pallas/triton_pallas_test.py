@@ -48,19 +48,14 @@ class PallasBaseTest(jtu.JaxTestCase):
         self.skipTest("On CPU the test works only in interpret mode")
     elif jtu.test_device_matches(["gpu"]):
       if (jtu.test_device_matches(["cuda"]) and
-          not jtu.is_cuda_compute_capability_at_least("8.0")):
-        self.skipTest("Only works on GPU with capability >= sm80")
+          not jtu.is_cuda_compute_capability_at_least("9.0")):
+        self.skipTest("Only works on GPU with capability >= sm90")
       if plgpu is None:
         self.skipTest("plgpu not available on this platform")
     else:
       self.skipTest("Test only works on CPU and GPU")
 
     super().setUp()
-
-  def _require_compute_capability(self, min_version_str):
-    if (jtu.test_device_matches(["cuda"])
-        and not jtu.is_cuda_compute_capability_at_least(min_version_str)):
-      self.skipTest(f"Requires CUDA compute capability >= {min_version_str}")
 
   def pallas_call(self, *args, **kwargs):
     # Force the use of the Triton backend.
@@ -77,9 +72,6 @@ class TritonPallasTest(PallasBaseTest):
 
   @parameterized.product(src_dtype=DTYPE_LIST, dst_dtype=DTYPE_LIST)
   def test_fp_dtype_cast(self, src_dtype, dst_dtype):
-    if (jnp.dtype(src_dtype).name.startswith("float8")
-        or jnp.dtype(dst_dtype).name.startswith("float8")):
-      self._require_compute_capability("8.9")
     if src_dtype == dst_dtype:
       self.skipTest("No need to test the same dtype")
     if dtypes.itemsize_bits(src_dtype) == 8 and dtypes.itemsize_bits(dst_dtype) == 8:
