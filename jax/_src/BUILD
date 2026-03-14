@@ -1391,6 +1391,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":error_check",
         ":export",
+        ":hijax",
         ":indexing",
         ":lax",
         ":literals",
