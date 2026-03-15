@@ -126,6 +126,11 @@ class MosaicGpuTest(parameterized.TestCase):
     if "a_sparse_metadata" not in sig.parameters:
       self.skipTest("tcgen05_mma does not support a_sparse_metadata")
 
+  def skip_if_not_untile_shape(self):
+    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
+    if not hasattr(mgpu.dialect, "untile_shape"):
+      self.skipTest("mgpu.dialect.untile_shape not available")
+
 
 class DialectTest(MosaicGpuTest):
 
@@ -1884,6 +1889,26 @@ class DialectLoweringTest(MosaicGpuTest):
     ):
       self._tile_shape_type_inference_test_base((128,), (16, 32))
 
+  def test_tile_untile_shape_on_sliced_transposed_memref_is_identity(self):
+    self.skip_if_not_untile_shape()
+    strides = mgpu_utils.get_contiguous_strides((512, 256))
+    offset = 128 * 256 + 32
+    tiling = (8, 16)
+    with ir.InsertionPoint(self.module.body):
+      # This type is equivalent to the type of `y` in
+      #   y = x[128:256, 32:96].T
+      # given `x` a contiguous ref of shape (512, 256).
+      ref_ty = ir.MemRefType.get(
+          (64, 128),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+          layout=ir.StridedLayoutAttr.get(offset, strides[::-1]),
+      )
+      [smem] = undefs(ref_ty)
+      tiled_smem = mgpu.dialect.tile_shape(smem, tiling)
+      untiled_smem = mgpu.dialect.untile_shape(tiled_smem, len(tiling))
+    self.assertEqual(untiled_smem.type, smem.type)
+
   def test_tile_shape_infers_tiled_shape_type(self):
     i32 = ir.IntegerType.get_signless(32)
     shape, tiling = (256, 128, 128), (16, 32)
@@ -1900,6 +1925,67 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertEqual(tuple(tile_then_transpose.type.shape), (256, 4, 8, 32, 16))
     # Check that everything in the type is identical (especially the strides).
     self.assertEqual(tile_then_transpose.type, transpose_then_tile.type)
+
+  def test_untile_shape_of_slice_smem_is_canonicalized(self):
+    self.skip_if_not_untile_shape()
+    i32 = ir.IntegerType.get_signless(32)
+    untiled_shape, tiling = (256, 128, 128), (16, 32)
+    tiled_shape = (256, 8, 4, 16, 32)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          tiled_shape, i32, memory_space=mgpu_utils.smem()
+      )
+      vec_ty = ir.VectorType.get(untiled_shape, i32)
+      smem = mgpu.dialect.slice_smem(ref_ty, mgpu_utils.c(0, i32))
+      untiled_smem = mgpu.dialect.untile_shape(smem, len(tiling))
+      zero = arith.constant(i32, 0)
+      zix = arith.constant(ir.IndexType.get(), 0)
+      store = vector.StoreOp(
+          vector.broadcast(vec_ty, zero), untiled_smem, [zix, zix, zix]
+      )
+
+    untiled_type = untiled_smem.type
+    self.assertEqual(tuple(untiled_type.shape), untiled_shape)
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    new_slice_smem = store.operands[1].owner.opview
+    self.assertIsInstance(new_slice_smem, mgpu.dialect.SliceSMEMOp)
+    self.assertEqual(new_slice_smem.result.type, untiled_type)
+
+  def test_untile_of_tile_shape_is_canonicalized(self):
+    self.skip_if_not_untile_shape()
+    i32 = ir.IntegerType.get_signless(32)
+    untiled_shape, tiling = (256, 128, 128), (16, 32)
+    tiled_shape = (256, 8, 4, 16, 32)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          untiled_shape, i32, memory_space=mgpu_utils.smem()
+      )
+      vec_ty = ir.VectorType.get(untiled_shape, i32)
+      [smem] = undefs(ref_ty)
+      tiled_smem = mgpu.dialect.tile_shape(smem, tiling)
+      untiled_smem = mgpu.dialect.untile_shape(tiled_smem, len(tiling))
+      zero = arith.constant(i32, 0)
+      zix = arith.constant(ir.IndexType.get(), 0)
+      store = vector.StoreOp(
+          vector.broadcast(vec_ty, zero), untiled_smem, [zix, zix, zix]
+      )
+
+    untiled_type = untiled_smem.type
+    self.assertEqual(tuple(tiled_smem.type.shape), tiled_shape)
+    self.assertEqual(tuple(untiled_smem.type.shape), untiled_shape)
+    self.assertEqual(untiled_type.shape, smem.type.shape)
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    self.assertEqual(store.operands[1], smem)
 
 
 if hp is not None:
@@ -1950,6 +2036,21 @@ if hp is not None:
         self.assertEqual(tuple(tiled_type.shape), expected_shape)
         self.assertEqual(offset, 0)
         self.assertEqual(tuple(strides), tuple(expected_strides))
+      run()
+
+    def test_untile_tile_shape_is_identity(self):
+      self.skip_if_not_untile_shape()
+      @hp.given(shape_permutation_and_tiling())
+      def run(args):
+        shape, permutation, tiling = args
+        i32 = ir.IntegerType.get_signless(32)
+        with ir.InsertionPoint(self.module.body):
+          ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
+          [smem] = undefs(ref_ty)
+          transposed_smem = mgpu_utils.memref_transpose(smem, permutation)
+          tiled_smem = mgpu.dialect.tile_shape(transposed_smem, tiling)
+          untiled_smem = mgpu.dialect.untile_shape(tiled_smem, len(tiling))
+        self.assertEqual(untiled_smem.type, transposed_smem.type)
       run()
 
     def test_transform_type_matches_tile_shape_inference(self):
