@@ -37,8 +37,7 @@ jax.config.parse_flags_with_absl()
 def _naive_loss(x, w, labels):
   """Cross-entropy via full [N, V] logits — reference only."""
   logits = x.astype(jnp.float32) @ w.astype(jnp.float32).T  # [N, V]
-  log_z = jnp.log(jnp.sum(jnp.exp(logits - jnp.max(logits, axis=-1, keepdims=True)), axis=-1))
-  log_z += jnp.max(logits, axis=-1)  # log-sum-exp
+  log_z = logsumexp(logits, axis=-1)
   N = x.shape[0]
   target_logit = logits[jnp.arange(N), labels]
   return jnp.mean(-target_logit + log_z)
