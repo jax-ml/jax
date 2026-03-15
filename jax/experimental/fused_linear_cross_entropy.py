@@ -30,7 +30,6 @@ the [N, V] tensor.  Memory complexity is O(N·D + V·D) instead of O(N·V).
 from __future__ import annotations
 
 import functools
-from typing import Callable
 
 import jax
 from jax import lax
