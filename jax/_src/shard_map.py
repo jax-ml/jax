@@ -1795,7 +1795,7 @@ def _shard_map_transpose(out_cts, *args,
       *all_args, subfuns=(fun_trans_callable,), mesh=mesh, in_specs=tuple(new_in_specs),
       check_vma=check_vma, manual_axes=manual_axes, debug_info=dbg)
   left_cts = left_ct.unflatten()
-  return [ad.Zero(unshard_aval(mesh, check_vma, sp, x.aval))
+  return [ad.Zero(unshard_aval(mesh, check_vma, sp.to_ct_spec(), x.aval))
           if type(x) is ad.Zero else x for sp, x in zip(in_specs, left_cts)]
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 

@@ -949,8 +949,8 @@ def _flatten_bwd(f: Callable,
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   results: list[Any] = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
-    if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
-      results.append(Zero(a.to_tangent_aval()))
+    if ct is zero or getattr(a.to_ct_aval(), 'dtype') == dtypes.float0:
+      results.append(Zero(a.to_ct_aval()))
     elif type(ct) is SymbolicZero:
       if not core.typecompat(a.to_ct_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
@@ -1081,7 +1081,7 @@ def _custom_vjp_call_dce(
       if used:
         all_cts.append(next(cts_))
       else:
-        ct_aval = aval.to_tangent_aval()
+        ct_aval = aval.to_ct_aval()
         if symbolic_zeros:
           all_cts.append(SymbolicZero(ct_aval))
         else:
@@ -1199,7 +1199,7 @@ def custom_gradient(fun):
     debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
                                                       debug_info=debug_fwd), out_tree)
-    ans_avals = [core.typeof(x).to_tangent_aval() for x in ans_flat]
+    ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 

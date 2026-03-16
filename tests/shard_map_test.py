@@ -5069,6 +5069,28 @@ class ShardMapTest(jtu.JaxTestCase):
       if axis_type == (AxisType.Explicit,):
         self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_zero_unreduced(self, mesh):
+    @jax.custom_vjp
+    def inner(x):
+      return x
+
+    def inner_fwd(x):
+      return x, None
+
+    def inner_bwd(_, g):
+      return None,
+
+    inner.defvjp(inner_fwd, inner_bwd)
+
+    @jax.shard_map(out_specs=jax.P(reduced={'x'}))
+    def f(x):
+      return inner(x)
+
+    arr = jax.device_put(jnp.arange(8.), jax.P(reduced={'x'}))
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
 
 class FunSpec(NamedTuple):
   name: str
