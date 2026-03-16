@@ -53,7 +53,16 @@ absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
 
 extern "C" void MosaicGpuClearKernelCache();
 
-TEST(CustomCallTest, MosaicGpuUsesCommandBuffers) {
+class CustomCallTest : public ::testing::Test {
+ public:
+  CustomCallTest() {
+    // Clear the cache before every test runs, to make sure the tests are
+    // order-independent.
+    MosaicGpuClearKernelCache();
+  }
+};
+
+TEST_F(CustomCallTest, MosaicGpuUsesCommandBuffers) {
   //  Dumped from the following kernel:
   //
   // ```
@@ -109,28 +118,38 @@ ENTRY main {
   // ideal. With that said, this seems like the most reasonable thing to do, and
   // the naming scheme is relatively stable, so this is unlikely to produce
   // churn.
-  constexpr absl::string_view kBeforeThunkPassesFilename =
-      "module_0001.mosaic_gpu_uses_command_buffers.thunk_sequence.txt";
-  constexpr absl::string_view kAfterThunkPassesFilename =
-      "module_0001.mosaic_gpu_uses_command_buffers.thunk_sequence_after_thunk_"
-      "passes.txt";
+  const std::string kBeforeThunkPassesPattern = absl::StrCat(
+      tmp_path, "/*mosaic_gpu_uses_command_buffers.thunk_sequence.txt");
+  const std::string kAfterThunkPassesPattern =
+      absl::StrCat(tmp_path,
+                   "/*mosaic_gpu_uses_command_buffers.thunk_sequence_after_"
+                   "thunk_passes.txt");
+
+  ::tsl::Env* env = ::tsl::Env::Default();
+  std::vector<std::string> before_thunk_passes_files;
+  std::vector<std::string> after_thunk_passes_files;
+
+  ASSERT_OK(env->GetMatchingPaths(kBeforeThunkPassesPattern,
+                                  &before_thunk_passes_files));
+  ASSERT_OK(env->GetMatchingPaths(kAfterThunkPassesPattern,
+                                  &after_thunk_passes_files));
+
+  ASSERT_EQ(before_thunk_passes_files.size(), 1);
+  ASSERT_EQ(after_thunk_passes_files.size(), 1);
 
   // Ensure that before the thunk passes have run, the first thunk is a custom
   // call thunk as expected.
   std::string before_contents;
-  ASSERT_OK(tsl::ReadFileToString(
-      ::tsl::Env::Default(),
-      absl::StrCat(tmp_path, "/", kBeforeThunkPassesFilename),
-      &before_contents));
+  ASSERT_OK(tsl::ReadFileToString(env, before_thunk_passes_files[0],
+                                  &before_contents));
   EXPECT_THAT(before_contents, testing::StartsWith("001: kCustomCall"));
 
   // Ensure that after the thunk passes have run, the first thunk is a command
   // buffer thunk (which therefore wraps the custom call thunk identified in
   // the previous step).
   std::string after_contents;
-  ASSERT_OK(tsl::ReadFileToString(
-      ::tsl::Env::Default(),
-      absl::StrCat(tmp_path, "/", kAfterThunkPassesFilename), &after_contents));
+  ASSERT_OK(
+      tsl::ReadFileToString(env, after_thunk_passes_files[0], &after_contents));
 
   // There should be only command buffer thunks.
   EXPECT_THAT(after_contents, testing::StartsWith("000: kCommandBuffer"));
@@ -172,7 +191,7 @@ std::string TestMGPUHloModule(std::string extra_attributes = "") {
 // TL;DR: Adding `dwarf2reader::ElfMapper().GetMap();` before
 // `StartCapturingLogs()` can prevent the deadlock and allow the real error
 // message to be printed.
-TEST(CustomCallTest, KernelInitializationIsCached) {
+TEST_F(CustomCallTest, KernelInitializationIsCached) {
   std::string module_str = TestMGPUHloModule();
   ASSERT_OK_AND_ASSIGN(auto module,
                        xla::ParseAndReturnUnverifiedModule(module_str));
@@ -216,7 +235,7 @@ TEST(CustomCallTest, KernelInitializationIsCached) {
 }
 
 // This property is desirable for forward compatibility.
-TEST(CustomCallTest, IgnoresUnknownAttributes) {
+TEST_F(CustomCallTest, IgnoresUnknownAttributes) {
   std::string module_str = TestMGPUHloModule("unknown_attribute = 1");
   ASSERT_OK_AND_ASSIGN(auto module,
                        xla::ParseAndReturnUnverifiedModule(module_str));
@@ -237,7 +256,7 @@ TEST(CustomCallTest, IgnoresUnknownAttributes) {
 // TL;DR: Adding `dwarf2reader::ElfMapper().GetMap();` before
 // `StartCapturingLogs()` can prevent the deadlock and allow the real error
 // message to be printed.
-TEST(CustomCallTest, SerializationAndDeduplication) {
+TEST_F(CustomCallTest, SerializationAndDeduplication) {
   // Use a unique kernel hash to avoid cache hits from previous tests.
   std::string kernel_hash = "serdes_dedup_test_hash_012345678";
   std::string module_str = TestMGPUHloModule();
