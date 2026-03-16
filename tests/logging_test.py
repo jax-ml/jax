@@ -134,6 +134,7 @@ class LoggingTest(jtu.JaxTestCase):
     lines = [l for l in lines if l in allowlist]
     self.assertEmpty(lines)
 
+  @jtu.thread_unsafe_test()  # jax_debug_log_modules is not thread-safe
   def test_debug_logging(self):
     # Warmup so we don't get "No GPU/TPU" warning later.
     jax.jit(lambda x: x + 1)(1)
