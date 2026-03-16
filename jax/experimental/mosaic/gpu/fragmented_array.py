@@ -2013,8 +2013,8 @@ class FragmentedArray:
         out_int_regs: list[ir.Value] = []
         if regs_from_32bit_slice:
           slice_op = reg.owner
-          slice_offset = slice_op.offsets[0].value
-          reg_int = utils.bitcast(slice_op.source, i32)
+          slice_offset = slice_op.offsets[0].value  # pytype: disable=attribute-error
+          reg_int = utils.bitcast(slice_op.source, i32)  # pytype: disable=attribute-error
           reg_int_shr = arith.shrui(reg_int, c(4, i32))
           assert slice_offset % 2 == 0
           out_int_regs.extend(
@@ -2087,8 +2087,8 @@ class FragmentedArray:
         int_ty = ir.IntegerType.get_signless(group_size * 4)
         if regs_from_32bit_slice:
           slice_op = reg.owner
-          slice_offset = slice_op.offsets[0].value
-          reg_int = utils.bitcast(slice_op.source, i32)
+          slice_offset = slice_op.offsets[0].value  # pytype: disable=attribute-error
+          reg_int = utils.bitcast(slice_op.source, i32)  # pytype: disable=attribute-error
           reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)
         else:
           reg_slice_int = utils.bitcast(reg, int_ty)
@@ -3138,7 +3138,7 @@ class FragmentedArray:
         raise ValueError("Only TiledLayouts support swizzling")
       registers = np.empty(layout.registers_shape(shape), dtype=object)
       vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
+      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):  # pytype: disable=wrong-arg-types
         ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
         update(registers, utils.multimem_load_reduce(vec_ty, ptr, reduction, is_signed))
       return cls(_registers=registers, _layout=layout, _is_signed=is_signed)

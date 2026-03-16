@@ -204,7 +204,7 @@ class ProfilerSpec:
   def jax_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
   ) -> ir.Type:
-    return jax.ShapeDtypeStruct(
+    return jax.ShapeDtypeStruct(  # pytype: disable=bad-return-type
         (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
         jnp.uint32,
     )

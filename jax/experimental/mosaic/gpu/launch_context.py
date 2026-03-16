@@ -452,7 +452,7 @@ class Scratch:
       alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
       load_op = llvm.LoadOp(empty_arr_ty, alloc_op)
 
-    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
+    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):  # pytype: disable=attribute-error
       builtin.unrealized_conversion_cast([ptr_ty], [load_op])
 
   def _find_alloc_load_and_device_ptr(
@@ -674,23 +674,23 @@ class LaunchContext:
     op = peer_id.owner
 
     # We accept all arith ops
-    if op.OPERATION_NAME.startswith("arith."):
-      if DEVICE_ID_ATTR in op.attributes:
+    if op.OPERATION_NAME.startswith("arith."):  # pytype: disable=attribute-error
+      if DEVICE_ID_ATTR in op.attributes:  # pytype: disable=attribute-error
         return self.device_id(on_host=True)
       new_operands = [
           self._recompute_peer_id(x, fuel - 1)
-          for x in op.operands
+          for x in op.operands  # pytype: disable=attribute-error
       ]
-      result_types = [r.type for r in op.results]
-      new_attributes = {na: op.attributes[na] for na in op.attributes}
+      result_types = [r.type for r in op.results]  # pytype: disable=attribute-error
+      new_attributes = {na: op.attributes[na] for na in op.attributes}  # pytype: disable=attribute-error
       new_op = ir.Operation.create(
-          op.OPERATION_NAME, result_types, new_operands, new_attributes
+          op.OPERATION_NAME, result_types, new_operands, new_attributes  # pytype: disable=attribute-error
       )
-      return new_op.results if len(new_op.results) > 1 else new_op.result
+      return new_op.results if len(new_op.results) > 1 else new_op.result  # pytype: disable=bad-return-type
 
     # nvshmem_my_pe queries the device id of the current process and works on
     # both the host and the device.
-    if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
+    if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":  # pytype: disable=attribute-error
       i32 = ir.IntegerType.get_signless(32)
       return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
 
@@ -863,7 +863,7 @@ class LaunchContext:
       gmem_slice = (slice(None), *gmem_slice[1:])
 
     # Analyze the slice (taking gathers into account).
-    base_indices, slice_shape, is_squeezed = utils.parse_indices(
+    base_indices, slice_shape, is_squeezed = utils.parse_indices(  # pytype: disable=wrong-arg-types
         gmem_slice,
         ir.MemRefType(gmem_ref.type).shape,
         # NOTE: TMA supports OOB indices, so we skip the check.

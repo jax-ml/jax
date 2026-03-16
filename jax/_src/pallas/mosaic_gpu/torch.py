@@ -79,13 +79,13 @@ def _find_mgpu_call_in_module(module: ir.Module):
   main_funcs = [
       op
       for op in module.body.operations
-      if isinstance(op, func.FuncOp) and op.name.value == "main"
+      if isinstance(op, func.FuncOp) and op.name.value == "main"  # pytype: disable=attribute-error
   ]
   # TODO(apaszke): Add support for jax.jit, which will call another function
   # from main.
   if len(main_funcs) != 1:
     raise ValueError("Expected a single function in the kernel module")
-  [func_body] = main_funcs[0].body.blocks
+  [func_body] = main_funcs[0].body.blocks  # pytype: disable=attribute-error
   return _find_mgpu_call(func_body, list(func_body.arguments))
 
 
@@ -114,17 +114,17 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   name_source = itertools.count()
   value_names: Mapping[ir.Value, int] = defaultdict(lambda: next(name_source))
   for op in block.operations:
-    if _is_custom_call(op, "AllocateBuffer"):
+    if _is_custom_call(op, "AllocateBuffer"):  # pytype: disable=wrong-arg-types
       def allocate_torch_buffer(
           env,
           device,
-          _shape=op.result.type.shape,
-          _dtype=_mlir_to_torch_dtype(torch, op.result.type.element_type),
+          _shape=op.result.type.shape,  # pytype: disable=attribute-error
+          _dtype=_mlir_to_torch_dtype(torch, op.result.type.element_type),  # pytype: disable=attribute-error
           _result_name=value_names[op.result],
       ):
         env[_result_name] = torch.empty(_shape, dtype=_dtype, device=device)
       to_evaluate.append(allocate_torch_buffer)
-    elif _is_custom_call(op, "mosaic_gpu_v2"):
+    elif _is_custom_call(op, "mosaic_gpu_v2"):  # pytype: disable=wrong-arg-types
       if mgpu_call is not None:
         raise ValueError("Multiple Mosaic GPU kernels found in the module")
       mgpu_call = op
@@ -144,20 +144,20 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
       result_type = ir.ShapedType(op.result.type)
       if result_type.shape:
         raise ValueError(f"Only scalar constants are supported, got {op}")
-      if not op.value.is_splat:
+      if not op.value.is_splat:  # pytype: disable=attribute-error
         raise ValueError(f"Only splat constants are supported, got {op}")
       if result_type.element_type == ir.IntegerType.get_signless(32):
         init_env[value_names[op.result]] = ir.IntegerAttr(
-            op.value.get_splat_value()
+            op.value.get_splat_value()  # pytype: disable=attribute-error
         ).value
       else:
         raise NotImplementedError(f"Only i32 constants are supported, got {op}")
     elif op.name == "stablehlo.broadcast_in_dim":
-      if op.broadcast_dimensions:
+      if op.broadcast_dimensions:  # pytype: disable=attribute-error
         raise ValueError("Only scalar broadcasts are supported")
-      target_shape = tuple(op.result.type.shape)
+      target_shape = tuple(op.result.type.shape)  # pytype: disable=attribute-error
       result_name = value_names[op.result]
-      operand_name = value_names[op.operand]
+      operand_name = value_names[op.operand]  # pytype: disable=attribute-error
       dtype = torch.int32
       def run_broadcast(
           env,
@@ -190,7 +190,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
       thunk(env, device)
     return tuple(env[name] for name in mgpu_arg_names)
   output_input_aliases: list[int | None] = [None] * len(mgpu_call.results)
-  for alias in mgpu_call.output_operand_aliases or []:
+  for alias in mgpu_call.output_operand_aliases or []:  # pytype: disable=attribute-error
     alias = hlo.OutputOperandAlias(alias)
     if alias.operand_tuple_indices:
       raise NotImplementedError("Tupled operand indices not supported")
@@ -200,7 +200,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     output_input_aliases[output_index] = alias.operand_index
 
   output_types = [
-      (result.type.shape, _mlir_to_torch_dtype(torch, result.type.element_type))
+      (result.type.shape, _mlir_to_torch_dtype(torch, result.type.element_type))  # pytype: disable=attribute-error
       for result in mgpu_call.results
   ]
   def prepare_outputs(*all_args, device):
@@ -216,7 +216,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
 
 
 def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
-  return isinstance(op, hlo.CustomCallOp) and op.call_target_name.value == name
+  return isinstance(op, hlo.CustomCallOp) and op.call_target_name.value == name  # pytype: disable=attribute-error
 
 
 @util.weakref_lru_cache

@@ -888,7 +888,7 @@ def lowered_as_tpu_kernel(
         if not has_side_effects
         else TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
     )
-  config = _lowered_to_custom_call_config(
+  config = _lowered_to_custom_call_config(  # pytype: disable=wrong-arg-types
       lowered_module_asm,
       lowered_module_asm_version=None,
       vmem_limit_bytes=vmem_limit_bytes,

@@ -1181,7 +1181,7 @@ def _extract_strided_slice_constraint_system(
   variable = cs.Variable(operand)
   offsets = tuple(ir.IntegerAttr(o).value for o in op.offsets)
   constraints = [
-      cs.Divides(variable, offsets),
+      cs.Divides(variable, offsets),  # pytype: disable=wrong-arg-types
       # TODO(allanrenucci): Remove once vectors with splat and strided layouts
       # can be sliced.
       cs.NotOfType(variable, fa.WGSplatFragLayout),
@@ -1260,7 +1260,7 @@ def _custom_primitive_constraint_system(
       variables.append(v)
       transforms = next(in_transforms)
       ref_ty = value_site.value.type
-      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
+      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)  # pytype: disable=wrong-arg-types
       assignments[v] = tiling
 
   out_layouts = iter(op.out_layouts)
@@ -2156,19 +2156,19 @@ def check_layout_assignment(v: ValueSite, layout: cs.Constant) -> None:
 
 def infer_layout(
     module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL
-):
+):  # pytype: disable=wrong-arg-types
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
   `in_layouts` (respectively `in_transforms`, `in_tmem_layouts`) will be set and
-  contain one element per relevant argument in the memory space.
+  contain one element per relevant argument in the memory space.  # pytype: disable=wrong-arg-types
   * If there are vector (respectively SMEM refs, TMEM refs) outputs,
   `out_layouts` (respectively `out_transforms`, `out_tmem_layouts`) will be set
   and contain one element per relevant argument in the memory space.
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
 
-  The fuel is provided in order to limit the number of attempts made by the
+  The fuel is provided in order to limit the number of attempts made by the  # pytype: disable=wrong-arg-types
   solver.
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
@@ -2178,7 +2178,7 @@ def infer_layout(
   def gather_constraints(op: ir.Operation):
     # Terminator ops are handled directly by the op whose region they belong to.
     # This is because they need to be in sync with their parent op's inputs and
-    # outputs---and the parent op's constraints therefore need to take them into
+    # outputs---and the parent op's constraints therefore need to take them into  # pytype: disable=wrong-arg-types
     # account.
     if is_terminator(op):
       return

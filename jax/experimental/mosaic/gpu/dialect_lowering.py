@@ -73,7 +73,7 @@ class LoweringContext:
     if "collective" not in op.attributes:
       return
     if self.is_collective_kernel is None:
-      self.is_collective_kernel = op.attributes["collective"]
+      self.is_collective_kernel = op.attributes["collective"]  # pytype: disable=annotation-type-mismatch
     elif self.is_collective_kernel != op.attributes["collective"]:
       raise ValueError(
           "Collective attributes are inconsistent across operations in the"
@@ -137,8 +137,8 @@ def _undo_conversion_cast(
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
   converted_outputs = builtin.unrealized_conversion_cast(
-      [operand.type for operand in conversion_cast.operands],
-      conversion_cast.results,
+      [operand.type for operand in conversion_cast.operands],  # pytype: disable=attribute-error
+      conversion_cast.results,  # pytype: disable=attribute-error
   )
   if isinstance(converted_outputs, ir.OpResultList):
     converted_outputs = list(converted_outputs)
@@ -189,7 +189,7 @@ def _fragmented_array_from_ir(
     layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
-  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]
+  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pytype: disable=attribute-error
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
@@ -199,7 +199,7 @@ def _fragmented_array_from_ir(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  reverse_conversion_cast = converted_outputs[0].owner.opview
+  reverse_conversion_cast = converted_outputs[0].owner.opview  # pytype: disable=attribute-error
   for attribute in conversion_cast.attributes:
     reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
@@ -237,7 +237,7 @@ def unwrap_transformed_memref(
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
   _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
-  transformed_type = transform_type(ref.type, transforms)
+  transformed_type = transform_type(ref.type, transforms)  # pytype: disable=wrong-arg-types
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
   # Check that the actual transforms match the expected ones.
@@ -462,13 +462,13 @@ def _vector_load_op_lowering_rule(
     raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
   transforms_attr = inference_utils.in_transforms(op)[0]
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(  # pytype: disable=wrong-arg-types
       transforms_attr
   )
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
+    transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)  # pytype: disable=wrong-arg-types
 
     def load_tiled(optimized: bool) -> fa.FragmentedArray:
       return fa.FragmentedArray.load_tiled(
@@ -520,13 +520,13 @@ def _vector_store_op_lowering_rule(
     )
   elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(op)[0]
-    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(  # pytype: disable=wrong-arg-types
         transforms_attr
     )
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
       _check_transforms_and_swizzle_are_supported(ref_type, transforms, swizzle)
-      unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
+      unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)  # pytype: disable=wrong-arg-types
 
       def store_tiled(optimized: bool):
         fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized, atomic=atomic)  # pytype: disable=wrong-arg-types
@@ -657,7 +657,7 @@ def _vector_extract_strided_slice_op_lowering_rule(
   assert out_vec_ty.has_static_shape
   a = _fragmented_array_from_ir(op.source, in_layout)
   indices = tuple(
-      utils.DynamicSlice(
+      utils.DynamicSlice(  # pytype: disable=wrong-arg-types
           ir.IntegerAttr(offset).value, ir.IntegerAttr(length).value
       )
       for offset, length in zip(op.offsets, op.sizes, strict=True)
@@ -762,7 +762,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
     # cross-warp reductions require scratch space.
     dtype = op.source.type.element_type
-    allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
+    allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)  # pytype: disable=unsupported-operands
     scratch = _slice_smem(
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
         arith.constant(None, op.attributes["offset"]),
@@ -998,29 +998,29 @@ def _gmem_slice_and_predicate(
       predicate = dict()
     else:
       raise TypeError(f"Unsupported index type: {idx.type}")
-  return tuple(gmem_slice), predicate
+  return tuple(gmem_slice), predicate  # pytype: disable=bad-return-type
 
 
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  assert ctx.launch_context is not None
+  assert ctx.launch_context is not None  # pytype: disable=bad-return-type
   barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   [transforms_attr] = inference_utils.in_transforms(load_op)
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(  # pytype: disable=wrong-arg-types
       transforms_attr
   )
 
-  unwrapped_dst = unwrap_transformed_memref(
+  unwrapped_dst = unwrap_transformed_memref(  # pytype: disable=wrong-arg-types
       load_op.destination, transforms_attr
   )
-
+  # pytype: disable=wrong-arg-types
   if utils.is_memref_transposed(unwrapped_dst.type):
     strides, _ = ir.MemRefType(unwrapped_dst.type).get_strides_and_offset()
     permutation = tuple(
-        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
+        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)  # pytype: disable=wrong-arg-types
     )
     # We undo the tranpose and apply it as a transform.
     unwrapped_dst = utils.memref_transpose(
@@ -1040,7 +1040,7 @@ def _mgpu_async_load_op_lowering_rule(
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
   # strided layouts when they are contiguous in GMEM. In that case, we could do:
-  # flatten -> async_copy -> unflatted here, as long as flattened size is a
+  # flatten -> async_copy -> unflatted here, as long as flattened size is a  # pytype: disable=wrong-arg-types
   # multiple of 16.
 
   # TODO(dasenov): Add support for the remaining op properties.
@@ -1095,10 +1095,10 @@ def _mgpu_async_store_op_lowering_rule(
   if utils.is_memref_transposed(unwrapped_source.type):
     strides, _ = ir.MemRefType(unwrapped_source.type).get_strides_and_offset()
     permutation = tuple(
-        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
+        sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)  # pytype: disable=wrong-arg-types
     )
     # We undo the tranpose and apply it as a transform.
-    unwrapped_source = utils.memref_transpose(
+    unwrapped_source = utils.memref_transpose(  # pytype: disable=wrong-arg-types
         unwrapped_source, permutation
     )
     if transforms:
@@ -1161,10 +1161,10 @@ if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
     smem_ref_ty = op.source.type
     _check_transforms_and_swizzle_are_supported(smem_ref_ty, transforms, swizzle)
 
-    [in_layout_attr] = inference_utils.in_tmem_layouts(op)
+    [in_layout_attr] = inference_utils.in_tmem_layouts(op)  # pytype: disable=wrong-arg-types
     tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
     with utils.when(ctx.single_thread_per_warpgroup_predicate):
-      tcgen05.async_copy_smem_to_tmem(
+      tcgen05.async_copy_smem_to_tmem(  # pytype: disable=wrong-arg-types
           smem_ref, tmem_ref, swizzle, collective=op.collective
       )
     return []
@@ -1461,13 +1461,13 @@ def _mgpu_wgmma_op_lowering_rule(
     unwrapped_b_ref = unwrap_transformed_memref(wgmma_op.b, b_transforms)
 
   b_swizzle, b_transforms = swizzle_and_transforms_from_transforms_attr(
-      b_transforms
+      b_transforms  # pytype: disable=wrong-arg-types
   )
   minimum_swizzle = mgpu.SwizzlingMode.k32ByteSwizzle
-  _check_transforms_and_swizzle_are_supported(
-      ir.MemRefType(wgmma_op.b.type), b_transforms, b_swizzle, minimum_swizzle
+  _check_transforms_and_swizzle_are_supported(  # pytype: disable=wrong-arg-types
+      ir.MemRefType(wgmma_op.b.type), b_transforms, b_swizzle, minimum_swizzle  # pytype: disable=wrong-arg-types
   )
-
+  # pytype: disable=wrong-arg-types
   if isinstance(wgmma_op.a.type, ir.VectorType):
     expected_a_layout = (
         fa.WGMMA_LAYOUT_8BIT
@@ -1484,7 +1484,7 @@ def _mgpu_wgmma_op_lowering_rule(
         ir.MemRefType(wgmma_op.a.type), a_transforms, a_swizzle, minimum_swizzle
     )
     if a_swizzle != b_swizzle:
-      raise ValueError(
+      raise ValueError(  # pytype: disable=wrong-arg-types
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
@@ -1582,15 +1582,15 @@ def _mgpu_slice_smem_op_lowering_rule(
 
 
 def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
-  if isinstance(offset.owner, arith.ConstantOp):
-    cst_offset = ir.IntegerAttr(offset.owner.value).value
+  if isinstance(offset.owner, arith.ConstantOp):  # pytype: disable=wrong-arg-types
+    cst_offset = ir.IntegerAttr(offset.owner.value).value  # pytype: disable=attribute-error
     size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
-    if cst_offset + size > smem_size:
+    if cst_offset + size > smem_size:  # pytype: disable=wrong-arg-types
       raise ValueError("Ran out of shared memory.")
 
   i8 = ir.IntegerType.get_signless(8)
   smem_base = gpu.dynamic_shared_memory(
-      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())  # pytype: disable=attribute-error
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
@@ -1621,9 +1621,9 @@ def _mgpu_with_transforms_op_lowering_rule(
   )
   return [wrapped_ref]
 
-
+  # pytype: disable=wrong-arg-types
 def _tile_transform_offsets(
-    tiling: Sequence[int],
+    tiling: Sequence[int],  # pytype: disable=wrong-arg-types
     static_offsets: Sequence[int],
     dynamic_offsets: Sequence[ir.Value],
 ) -> tuple[Sequence[int], Sequence[ir.Value]]:
@@ -1712,8 +1712,8 @@ def _memref_subview_op_lowering_rule(
     source_strides, _ = src_ty.get_strides_and_offset()
     for stride, offset, size in zip(
         source_strides, op.static_offsets, op.static_sizes, strict=True
-    ):
-      if stride != 1:
+    ):  # pytype: disable=wrong-arg-types
+      if stride != 1:  # pytype: disable=wrong-arg-types
         continue
       # A dimension with stride 1 is a minor dimension and is swizzled.
       if size % swizzle_elems != 0:
@@ -1782,7 +1782,7 @@ def _memref_subview_op_lowering_rule(
 
 
 @_register_lowering(memref.CastOp)
-def _memref_cast_op_lowering_rule(
+def _memref_cast_op_lowering_rule(  # pytype: disable=wrong-arg-types
     ctx: LoweringContext, op: memref.CastOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for memref.CastOp.
@@ -1821,7 +1821,7 @@ def _memref_cast_op_lowering_rule(
   out_transformed_ty = ir.MemRefType.get(
       in_transformed_ty.shape,
       in_transformed_ty.element_type,
-      memory_space=in_transformed_ty.memory_space,
+      memory_space=in_transformed_ty.memory_space,  # pytype: disable=wrong-arg-types
       layout=out_layout,
   )
   new_cast_op = memref.CastOp(out_transformed_ty, unwrapped_source_ref)
@@ -1832,7 +1832,7 @@ def _memref_cast_op_lowering_rule(
 
 
 def _permutation_to_affine_map_attr(
-    permutation: Sequence[int],
+    permutation: Sequence[int],  # pytype: disable=wrong-arg-types
 ) -> ir.AffineMapAttr:
   return ir.AffineMapAttr.get(ir.AffineMap.get_permutation(permutation))
 
@@ -1851,7 +1851,7 @@ def _memref_transpose_op_lowering_rule(
   elif in_transformed_ty.rank == 4:
     if op.permutation == _permutation_to_affine_map_attr([0, 1]):
       new_permutation = _permutation_to_affine_map_attr([0, 1, 2, 3])
-    elif op.permutation == _permutation_to_affine_map_attr([1, 0]):
+    elif op.permutation == _permutation_to_affine_map_attr([1, 0]):  # pytype: disable=wrong-arg-types
       new_permutation = _permutation_to_affine_map_attr([1, 0, 3, 2])
     else:
       raise NotImplementedError(f"Unsupported permutation={op.permutation}.")
@@ -1869,14 +1869,14 @@ def _memref_transpose_op_lowering_rule(
       new_permutation,
   )
 
-  wrapped_ref = wrap_transformed_memref(
+  wrapped_ref = wrap_transformed_memref(  # pytype: disable=wrong-arg-types
       new_transpose_op.result, op.result.type, out_transforms
   )
   return [wrapped_ref]
 
 
 @_register_lowering(memref.ExpandShapeOp)
-def _memref_expand_shape_op_lowering_rule(
+def _memref_expand_shape_op_lowering_rule(  # pytype: disable=wrong-arg-types
     ctx: LoweringContext, op: memref.ExpandShapeOp
 ) -> Sequence[ir.Value]:
   del ctx
@@ -1889,11 +1889,11 @@ def _memref_expand_shape_op_lowering_rule(
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   out_transformed_ty = transform_type(ir.MemRefType(op.result.type), transforms)
 
-  reassociation = list(op.reassociation)
+  reassociation = list(op.reassociation)  # pytype: disable=wrong-arg-types
   num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
 
   # We don't currently allow expanding tiled dimensions. So to compute the
-  # reassociation on the lowered types, we just need to backfill the original
+  # reassociation on the lowered types, we just need to backfill the original  # pytype: disable=wrong-arg-types
   # one with the number of missing dimensions.
   if num_tiling_dims > 0 and any(
       len(x) > 1 for x in reassociation[-num_tiling_dims:]
@@ -1921,7 +1921,7 @@ def _memref_expand_shape_op_lowering_rule(
 
 
 @_register_lowering(memref.LoadOp)
-def _memref_load_op_lowering_rule(
+def _memref_load_op_lowering_rule(  # pytype: disable=wrong-arg-types
     ctx: LoweringContext, op: memref.LoadOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for memref.LoadOp.
@@ -2012,14 +2012,14 @@ def _tmem_dealloc_op_lowering_rule(
   packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
   output_shape = ir.MemRefType(op.tmem_ref.type).shape
-  ncols = output_shape[1] // packing
+  ncols = output_shape[1] // packing  # pytype: disable=unsupported-operands
 
   with utils.when(ctx.single_warp_per_block_predicate):
     tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact=False)
 
   return []
 
-
+  # pytype: disable=unsupported-operands
 def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
   """Returns the swizzle transform from the given attributes."""
   swizzle = None
@@ -2096,16 +2096,16 @@ def _tcgen05_mma_op_lowering_rule(
   else:
     a_ref = _tmem_ref_from_ir(op.a, in_tmem_layouts[1])
     [b_transforms] = inference_utils.in_transforms(op)
-    b_swizzle = _swizzle(b_transforms)
-    a_swizzle = b_swizzle
-    b_ref = unwrap_transformed_memref(op.b, b_transforms)
-
+    b_swizzle = _swizzle(b_transforms)  # pytype: disable=wrong-arg-types
+    a_swizzle = b_swizzle  # pytype: disable=wrong-arg-types
+    b_ref = unwrap_transformed_memref(op.b, b_transforms)  # pytype: disable=wrong-arg-types
+  # pytype: disable=wrong-arg-types
   with utils.when(ctx.single_thread_per_warpgroup_predicate):
     tcgen05.mma(
         acc_ref,
-        a_ref,
+        a_ref,  # pytype: disable=wrong-arg-types
         b_ref,
-        a_swizzle=a_swizzle,
+        a_swizzle=a_swizzle,  # pytype: disable=wrong-arg-types
         b_swizzle=b_swizzle,
         a_scale=op.a_scale,
         b_scale=op.b_scale,
@@ -2505,7 +2505,7 @@ def _lowering_context(
         warp_predicate,
         auto_barriers,
         smem_size,
-    )
+    )  # pytype: disable=wrong-arg-types
 
 
 def lower_mgpu_dialect(

@@ -558,7 +558,7 @@ ds = DynamicSlice
 
 def memref_slice(ref: ir.Value, index) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
-  base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
+  base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)  # pytype: disable=wrong-arg-types
   # TODO(apaszke): Check that slice is within the memref (indices might be
   # dynamic, but we can at least catch some OOB slices).
 
@@ -743,7 +743,7 @@ def memref_reshape(
       )
   ):
     return memref_unfold(memref_fold(ref, 0, ref_ty.rank), 0, shape)
-  return _reshape(ref, src_shape, dst_shape)
+  return _reshape(ref, src_shape, dst_shape)  # pytype: disable=bad-return-type
 
 
 def memref_fold(
@@ -1194,7 +1194,7 @@ class DialectBarrierRef:
     ptr_type = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     return cls(
-        barrier_ref=BarrierRef(
+        barrier_ref=BarrierRef(  # pytype: disable=wrong-arg-types
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             phases=None,
@@ -2125,7 +2125,7 @@ def get_cluster_ref(
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
   if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
-    raise ValueError(f"Expected SMEM but got: {ref.memory_space}")
+    raise ValueError(f"Expected SMEM but got: {ref.memory_space}")  # pytype: disable=attribute-error
   idxs = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(gpu.Dimension, idxs))  # type: ignore
@@ -2151,8 +2151,8 @@ def get_arch() -> Arch:
   while op is not None:
     if op.name == "builtin.module":
       return Arch(
-          op.attributes["mosaic_gpu.arch_major"].value,
-          op.attributes["mosaic_gpu.arch_minor"].value,
+          op.attributes["mosaic_gpu.arch_major"].value,  # pytype: disable=attribute-error
+          op.attributes["mosaic_gpu.arch_minor"].value,  # pytype: disable=attribute-error
       )
     op = op.parent
   raise ValueError("Cannot retrieve the architecture: no module found")
