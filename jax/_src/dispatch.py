@@ -319,6 +319,15 @@ def _identity_fn(x):
   return x
 
 
+@util.cache(max_size=2048, trace_context_in_key=False)
+def _cached_logical_device_ids(
+    inp_device_assignment,
+    target_device_assignment
+) -> tuple[int, ...]:
+  device_to_index = {d: i for i, d in enumerate(target_device_assignment)}
+  return tuple(device_to_index[d] for d in inp_device_assignment)
+
+
 def _different_device_order_reshard(
     x: array.ArrayImpl, target_sharding: NamedSharding, copy: ArrayCopySemantics
 ) -> array.ArrayImpl:
@@ -332,17 +341,19 @@ def _different_device_order_reshard(
                    donate_argnums=donate_argnums)(x)
 
   if inp_sharding.is_fully_replicated:
-    permute_order = None
+    logical_device_ids = None
   else:
-    permute_order = np.vectorize(target_sharding._device_assignment.index,
-                                  otypes=[int])(inp_sharding._device_assignment)
+    logical_device_ids = _cached_logical_device_ids(
+        inp_sharding._device_assignment,
+        target_sharding._device_assignment,
+    )
+
   new_mesh = Mesh(
       target_sharding.mesh.devices.reshape(inp_sharding.mesh.axis_sizes),
       inp_sharding.mesh.axis_names)
   new_s = NamedSharding(
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
-      _logical_device_ids=(None if permute_order is None else
-                            tuple(permute_order.tolist())))
+      _logical_device_ids=logical_device_ids)
   new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
