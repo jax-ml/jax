@@ -135,19 +135,16 @@ def _maybe_physicalize_block_shape(aval, block_shape):
 # variables.
 #
 # The calling convention of the produced MLIR module is the same as
-# regular mosaic module, except we add on two new attributes to the custom call
+# regular mosaic module, except we add a new attribute to the custom call
 # *per* intermediary placeholder dimension.
 #
-# The attributes are:
-#
-# tpu.dynamic_dimension_mapping_indices_<placeholder>
+# The attribute is:
 # tpu.dynamic_dimension_mapping_module_<placeholder>
 #
-# This first attribute is an array of dictionaries that has the index of
-# the operand index and the specific dimension index within that operand,
-# that are used to compute the symbolic dimension expression.
-# The second attribute is the MLIR module that contains the SHLO functions that
-# compute the symbolic dimension expression for the placeholder.
+# The attribute is an MLIR module that contains the SHLO functions that
+# compute the symbolic dimension expression for the placeholder. The arguments
+# to this MLIR module are the symbolic variables, in order, as defined by the
+# module.
 
 
 class LoweringDynamicShapeEnv:
@@ -1021,37 +1018,18 @@ def lower_jaxpr_into_module(
     for aval in args_dimvars:
       env[aval] = _mosaic_lowering_dynamic_shape_env.to_placeholder(aval)
 
-    # We store the location of each dimvar, so we can map it back
-    # to the argument and dimension index. During specialization phase of Mosaic
-    # use this information to grab the concrete value from specialized TPU
-    # custom call and replace the placeholder.
-    # TODO(slebedev): Use a TypedDict here.
-    location_of_dimvar: dict[str, dict[str, int]] = {}
-
-    # Populate location_of_dimvar from input shapes.
-    for operand_idx, aval in enumerate(lowering_context.avals_in):
-      for dimension_idx, dim in enumerate(getattr(aval, "shape", [])):
-        location_of_dimvar.setdefault(
-            str(dim),
-            {"operand_index": operand_idx, "dimension_index": dimension_idx},
-        )
-
-    # Dynamic grid bounds have to go at the front.
-    if mosaic_grid_mapping.grid:
-      dynamic_dims = (
-          d for d in mosaic_grid_mapping.grid if pallas_core.is_dynamic_dim(d)
-      )
-      for operand_idx, dim in enumerate(dynamic_dims):
-        location_of_dimvar.setdefault(
-            str(dim), {"operand_index": operand_idx, "dimension_index": -1}
-        )
-
     for (
         placeholder,
         dim_expr,
     ) in _mosaic_lowering_dynamic_shape_env.placeholder_to_dim_expr.items():
       top_level_names = list(env.keys())
       if dim_expr not in top_level_names:
+        dim_names = lowering_context.module_context.shape_poly_state.dim_vars
+
+        # Create args for export tracing: one scalar per dim_var
+        args_for_tracing = [
+            jax_core.ShapedArray((), jnp.int32) for _ in range(len(dim_names))
+        ]
         jitted_eval = jax.jit(
             jax_core.evaluate_shape,
             static_argnames=(
@@ -1062,36 +1040,12 @@ def lower_jaxpr_into_module(
         )
         stablehlo = export(
             jitted_eval, platforms=[str(jax.devices()[0].platform)]
-        )(
-            (dim_expr,), tuple(args_dimvars), *(env[v] for v in args_dimvars)
-        ).mlir_module()
-        arg_names = args_dimvars
+        )((dim_expr,), dim_names, *args_for_tracing).mlir_module()
+
         # See Note - On Export Placeholders for more details.
         module.operation.attributes[
             "tpu.dynamic_dimension_mapping_module_" + str(placeholder)
         ] = ir.StringAttr.get(str(stablehlo))
-        arg_locs_attr = []
-        for arg_name in arg_names:
-          if arg_name not in location_of_dimvar:
-            raise ValueError(
-                f"Unable to find location of dimvar {arg_name} in dim_map"
-                f" {location_of_dimvar}"
-            )
-          loc = location_of_dimvar[arg_name]
-          op_idx = ir.IntegerAttr.get(
-              ir.IntegerType.get_signless(64), loc["operand_index"]
-          )
-          dim_idx = ir.IntegerAttr.get(
-              ir.IntegerType.get_signless(64), loc["dimension_index"]
-          )
-          loc_attr = ir.DictAttr.get({
-              "operand_index": op_idx,
-              "dimension_index": dim_idx,
-          })
-          arg_locs_attr.append(loc_attr)
-        module.operation.attributes[
-            "tpu.dynamic_dimension_mapping_indices_" + str(placeholder)
-        ] = ir.ArrayAttr.get(arg_locs_attr)
 
 
 def lower_jaxpr_to_transform_func(
