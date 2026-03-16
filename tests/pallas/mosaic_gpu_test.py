@@ -3360,7 +3360,6 @@ class PallasCallWGTest(
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
         mgpu_primitives.async_copy_scales_to_tmem_p,
-        mgpu_primitives.async_copy_smem_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.semaphore_signal_multicast_p,
@@ -4724,13 +4723,19 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
-    self.skip_if_wg_semantics()
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
+      self.skip_if_wg_semantics()
+
     dtype = jnp.float16
     m, n = 128, 128
     if swizzle is None:
       transforms = (plgpu.TilingTransform((8, 8)),)
     else:
       transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+
+    if self.is_wg_semantics():
+      transforms = ()
 
     def kernel(x_gmem, y_gmem, smem, tma_barrier, mma_barrier, tmem):
       plgpu.copy_gmem_to_smem(x_gmem, smem, tma_barrier)
