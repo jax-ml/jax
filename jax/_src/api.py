@@ -2370,7 +2370,7 @@ class VJP:
   def __call__(self, out_ct, *extra_args):
     if extra_args:
       name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
-      raise TypeError(_vjp_too_many_args(name, len(extra_args)))
+      raise TypeError(_vjp_too_many_args(name, len(extra_args) + 1))
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals)(out_ct)
 

@@ -2570,6 +2570,12 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "unexpected JAX type"):
       pullback(np.ones((2, 4), dtype=np.float32))
 
+  def test_vjp_too_many_args(self):
+    def f(x): return x, x
+    _, pullback = api.vjp(f, 1.)
+    with self.assertRaisesRegex(TypeError, "f was called with 2 arguments"):
+      pullback(1., 1.)
+
   def test_jvp_jit_cached(self):
     """Bug in caching in presence of JVP and JIT."""
 
