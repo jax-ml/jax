@@ -2417,7 +2417,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False)
+  return _quantile(a, q, axis, method, keepdims, False)
 
 
 @export
@@ -2468,7 +2468,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True)
+  return _quantile(a, q, axis, method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool) -> Array:
