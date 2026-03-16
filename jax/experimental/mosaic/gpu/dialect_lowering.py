@@ -1132,6 +1132,22 @@ def _mgpu_async_store_op_lowering_rule(
 
 
 # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+if hasattr(mgpu, "AsyncStoreSparseMetadataSmemToTmemOp"):
+  @_register_lowering(mgpu.AsyncStoreSparseMetadataSmemToTmemOp)
+  def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
+      ctx: LoweringContext, op: mgpu.AsyncStoreSparseMetadataSmemToTmemOp
+  ) -> Sequence[ir.Value]:
+    [in_layout_attr] = inference_utils.in_tmem_layouts(op)
+    tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
+    smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
+    with utils.when(ctx.single_thread_per_warpgroup_predicate):
+      tcgen05.async_copy_sparse_metadata_smem_to_tmem(
+        smem_ref, tmem_ref, collective=op.collective
+      )
+    return []
+
+
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
 if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
   @_register_lowering(mgpu.AsyncStoreSmemToTmemOp)
   def _async_copy_smem_to_tmem_lowering_rule(
