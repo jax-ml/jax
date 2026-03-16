@@ -1030,6 +1030,9 @@ def register_dataclass(
       Data fields *must* be JAX-compatible objects such as arrays (:class:`jax.Array`
       or :class:`numpy.ndarray`), scalars, or pytrees whose leaves are arrays or scalars.
       Note that ``None`` is a valid data field, as JAX recognizes this as an empty pytree.
+    drop_fields: only referenced if ``nodetype`` is a dataclass. Specify a sequence of
+      field names from among ``dataclasses.fields(nodetype)`` to be excluded from pytree
+      registration.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
@@ -1128,7 +1131,7 @@ def register_dataclass(
 
   if dataclasses.is_dataclass(nodetype):
     init_fields = {f.name for f in dataclasses.fields(nodetype) if f.init}
-    init_fields.difference_update(*drop_fields)
+    init_fields.difference_update(drop_fields)
     if {*meta_fields, *data_fields} != init_fields:
       msg = (
           "data_fields and meta_fields must include all dataclass fields with"
