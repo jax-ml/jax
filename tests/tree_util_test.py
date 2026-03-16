@@ -1718,10 +1718,11 @@ class RegistrationTest(jtu.JaxTestCase):
     class Foo:
       x: int
       y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42)
 
-    # ``y`` is explicitly excluded.
+    # ``y`` and ``z`` are explicitly excluded.
     tree_util.register_dataclass(
-        Foo, data_fields=["x"], meta_fields=[], drop_fields=["y"]
+        Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
   def test_register_dataclass_invalid_plain_class(self):
