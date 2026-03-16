@@ -15,8 +15,6 @@
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
 from collections.abc import Callable
-import inspect
-
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -118,13 +116,6 @@ class MosaicGpuTest(parameterized.TestCase):
     self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
         ir.IntegerAttr.get(i32, 0)
     )
-
-
-  def skip_if_no_sparse_metadata(self):
-    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
-    sig = inspect.signature(mgpu.dialect.tcgen05_mma)
-    if "a_sparse_metadata" not in sig.parameters:
-      self.skipTest("tcgen05_mma does not support a_sparse_metadata")
 
 
 class DialectTest(MosaicGpuTest):
@@ -750,7 +741,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_tcgen05_mma_a_sparse_metadata_mem_space_is_tmem(self):
-    self.skip_if_no_sparse_metadata()
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     i2 = ir.IntegerType.get_signless(2)
     with ir.InsertionPoint(self.module.body):
@@ -772,7 +762,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_tcgen05_mma_sparse_a_k_dim_is_half_b_k_dim(self):
-    self.skip_if_no_sparse_metadata()
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     i2 = ir.IntegerType.get_signless(2)
     with ir.InsertionPoint(self.module.body):
@@ -795,7 +784,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_tcgen05_mma_a_sparse_metadata_shape_must_match_a(self):
-    self.skip_if_no_sparse_metadata()
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     i2 = ir.IntegerType.get_signless(2)
     with ir.InsertionPoint(self.module.body):

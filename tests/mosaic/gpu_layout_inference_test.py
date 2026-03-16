@@ -16,8 +16,6 @@
 
 # pylint: disable=g-complex-comprehension
 
-import inspect
-
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -1553,11 +1551,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   def test_infer_tmem_layout_for_tcgen05_mma_sparse_metadata(self):
-    # TODO(bchetioui): remove this once minimum jaxlib version is 0.9.1.
-    sig = inspect.signature(mgpu.dialect.tcgen05_mma)
-    if "a_sparse_metadata" not in sig.parameters:
-      self.skipTest("tcgen05_mma does not support a_sparse_metadata")
-
     m, k, n = 128, 64, 128
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
     with ir.InsertionPoint(self.module.body):

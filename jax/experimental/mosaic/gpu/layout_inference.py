@@ -1409,9 +1409,7 @@ def _tcgen05_mma_constraint_system(
     else:
       constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
 
-  # TODO(bchetioui): remove hasattr once minimum jaxlib version is 0.9.1.
-  if (hasattr(op, "a_sparse_metadata") and
-      (sparse_meta_operand := getattr(op, "a_sparse_metadata")) is not None):
+  if (sparse_meta_operand := getattr(op, "a_sparse_metadata")) is not None:
     sparse_meta = ValueSite(
         op, VariableType.OPERAND, list(op.operands).index(sparse_meta_operand)
     )
