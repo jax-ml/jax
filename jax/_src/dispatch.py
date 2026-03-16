@@ -319,6 +319,15 @@ def _identity_fn(x):
   return x
 
 
+@util.cache(max_size=2048, trace_context_in_key=False)
+def _cached_logical_device_ids(
+    inp_device_list: xc.DeviceList,
+    target_device_list: xc.DeviceList
+) -> tuple[int, ...]:
+  device_to_index = {d: i for i, d in enumerate(target_device_list)}
+  return tuple(device_to_index[d] for d in inp_device_list)
+
+
 def _different_device_order_reshard(
     x: array.ArrayImpl, target_sharding: NamedSharding, copy: ArrayCopySemantics
 ) -> array.ArrayImpl:
@@ -326,23 +335,27 @@ def _different_device_order_reshard(
   inp_sharding = x.sharding
   assert isinstance(inp_sharding, NamedSharding)
 
+  inp_device_list = inp_sharding._internal_device_list
+  target_device_list = target_sharding._internal_device_list
+
   donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
-  if inp_sharding._device_assignment == target_sharding._device_assignment:
+  if inp_device_list == target_device_list:
     return api.jit(_identity_fn, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
 
   if inp_sharding.is_fully_replicated:
-    permute_order = None
+    logical_device_ids = None
   else:
-    permute_order = np.vectorize(target_sharding._device_assignment.index,
-                                  otypes=[int])(inp_sharding._device_assignment)
+    logical_device_ids = _cached_logical_device_ids(
+        inp_device_list, target_device_list,
+    )
+
   new_mesh = Mesh(
       target_sharding.mesh.devices.reshape(inp_sharding.mesh.axis_sizes),
       inp_sharding.mesh.axis_names)
   new_s = NamedSharding(
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
-      _logical_device_ids=(None if permute_order is None else
-                            tuple(permute_order.tolist())))
+      _logical_device_ids=logical_device_ids)
   new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
