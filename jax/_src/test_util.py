@@ -2381,6 +2381,8 @@ def setup_hypothesis(max_examples=30) -> None:
   suppressed_checks = []
   if hasattr(hp.HealthCheck, "differing_executors"):
     suppressed_checks.append(hp.HealthCheck.differing_executors)
+  if is_asan() or is_msan() or is_tsan():
+    suppressed_checks.append(hp.HealthCheck.too_slow)
 
   hp.settings.register_profile(
       "deterministic",
