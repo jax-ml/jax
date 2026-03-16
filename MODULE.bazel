@@ -30,6 +30,8 @@ archive_override(
     integrity = "sha256-fy4BRFz9TyZHGjpKj6nzyNQtlIKYZvwJTKJlM9Lcorc=",
     strip_prefix = "xla-52f095f542408e774ee5a847873b0a497bdeb873",
     urls = ["https://github.com/openxla/xla/archive/52f095f542408e774ee5a847873b0a497bdeb873.tar.gz"],
+    patches = ["//third_party/xla:fix_issubsetof_incarnations.patch"],
+    patch_strip = 1,
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax

@@ -22,6 +22,7 @@ from absl.testing import absltest
 import jax
 from jax import image
 from jax import numpy as jnp
+from jax._src import api
 from jax._src import test_util as jtu
 
 # We use TensorFlow and PIL as reference implementations.
@@ -41,6 +42,13 @@ float_dtypes = jtu.dtypes.all_floating
 inexact_dtypes = jtu.dtypes.inexact
 
 class ImageTest(jtu.JaxTestCase):
+
+  def tearDown(self):
+    # Clear JAX backends after each test to prevent NCCL/RCCL clique
+    # accumulation which can trigger clique invalidation logic that hangs on ROCm.
+    # See: https://github.com/openxla/xla/commit/b47689e
+    api.clear_backends()
+    super().tearDown()
 
   _TF_SHAPES = [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]]
 

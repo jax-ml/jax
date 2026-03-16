@@ -1,0 +1,12 @@
+diff --git a/xla/backends/gpu/collectives/gpu_clique_key.cc b/xla/backends/gpu/collectives/gpu_clique_key.cc
+index 1234567..abcdefg 100644
+--- a/xla/backends/gpu/collectives/gpu_clique_key.cc
++++ b/xla/backends/gpu/collectives/gpu_clique_key.cc
+@@ -95,6 +95,7 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
+   }
+
+   return is_p2p() == other_gpu->is_p2p() &&
++         incarnations_ == other_gpu->incarnations_ &&
+          absl::c_all_of(devices(), [&](GlobalDeviceId id) {
+            return absl::c_linear_search(other_gpu->devices(), id);
+          });
