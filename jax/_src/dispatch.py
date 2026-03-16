@@ -315,7 +315,8 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise InternalFloatingPointError(name, "inf")
 
-def _identity_fn(x):
+def _device_put_reshard(x):
+  """Top level function wrapped with `jit` for resharding."""
   return x
 
 
@@ -340,7 +341,7 @@ def _different_device_order_reshard(
 
   donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
   if inp_device_list == target_device_list:
-    return api.jit(_identity_fn, out_shardings=target_sharding,
+    return api.jit(_device_put_reshard, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
 
   if inp_sharding.is_fully_replicated:
@@ -357,7 +358,7 @@ def _different_device_order_reshard(
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
       _logical_device_ids=logical_device_ids)
   new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)
-  return api.jit(_identity_fn, out_shardings=target_sharding,
+  return api.jit(_device_put_reshard, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
 
 
@@ -587,7 +588,7 @@ def _device_put_impl(
     if x_dll is None and dll is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     return api.jit(
-        _identity_fn,
+        _device_put_reshard,
         out_shardings=l,
         donate_argnums=(0 if copy == ArrayCopySemantics.DONATE_INPUT else None),
     )(x)
