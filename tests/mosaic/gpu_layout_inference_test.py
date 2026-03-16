@@ -1550,7 +1550,8 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(op), [lhs_transforms, rhs_transforms]
     )
 
-  def test_infer_tmem_layout_for_tcgen05_mma_sparse_metadata(self):
+  @parameterized.parameters(False, True)
+  def test_infer_tmem_layout_for_tcgen05_mma_sparse_metadata(self, a_in_smem):
     m, k, n = 128, 64, 128
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
     with ir.InsertionPoint(self.module.body):
@@ -1558,7 +1559,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       f32 = ir.F32Type.get()
       i2 = ir.IntegerType.get_signless(2)
       acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
-      a_ty = ir.MemRefType.get((m, k), bf16, memory_space=smem)
+      a_mem_space = smem if a_in_smem else tmem
+      a_ty = ir.MemRefType.get((m, k), bf16, memory_space=a_mem_space)
       b_ty = ir.MemRefType.get((2 * k, n), bf16, memory_space=smem)
       sparse_meta_ty = ir.MemRefType.get((m, k), i2, memory_space=tmem)
       acc, a, b, sparse_meta = undefs(acc_ty, a_ty, b_ty, sparse_meta_ty)
@@ -1570,7 +1572,11 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
 
     acc_layout = tcgen05._infer_tmem_layout((m, n), collective=False, packing=1)
-    self.checkInTmemLayouts(mma, [acc_layout, tcgen05.sparse_meta_layout()])
+    if a_in_smem:
+      self.checkInTmemLayouts(mma, [acc_layout, tcgen05.sparse_meta_layout()])
+    else:
+      a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
+      self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.sparse_meta_layout()])
 
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
   def test_infer_transforms_for_async_load_store_works_on_ok_input(self, op_type):
