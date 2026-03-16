@@ -10636,6 +10636,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertRegex(lowered_text, r'multiply.*frontend_attributes')
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_cet_unreduced(self, mesh):
+    x = jnp.array([[1, 2], [3, 4]])
+    out = jnp.array(x, out_sharding=P(unreduced={'x'}))
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    for s, es in zip(out.addressable_shards, [x, [[0, 0], [0, 0]]]):
+      self.assertArraysEqual(s.data, es)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
