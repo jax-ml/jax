@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
@@ -547,6 +548,16 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   }
   if (divisor == 1) {
     return true;
+  }
+  if (auto block_arg = dyn_cast<BlockArgument>(value)) {
+    if (auto for_op =
+            dyn_cast<scf::ForOp>(block_arg.getOwner()->getParentOp())) {
+      if (for_op.getInductionVar() == value) {
+        return isGuaranteedDivisible(for_op.getLowerBound(), divisor,
+                                     fuel / 2) &&
+               isGuaranteedDivisible(for_op.getStep(), divisor, (fuel + 1) / 2);
+      }
+    }
   }
   if (auto assume_op = value.getDefiningOp<tpu::AssumeMultipleOp>()) {
     return assume_op.getMultiple() % divisor == 0;
