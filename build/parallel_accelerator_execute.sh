@@ -75,7 +75,7 @@ for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
         # single command.
         export TPU_VISIBLE_CHIPS=$i
         export CUDA_VISIBLE_DEVICES=$i
-        export HIP_VISIBLE_DEVICES=$i
+        export ROCR_VISIBLE_DEVICES=$i
         echo "Running test $TEST_BINARY $* on accelerator $i"
         "$TEST_BINARY" $@
       )

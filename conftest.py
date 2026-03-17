@@ -72,3 +72,13 @@ def pytest_collection() -> None:
     os.environ.setdefault(
         "CUDA_VISIBLE_DEVICES", str(xdist_worker_number % num_cuda_devices)
     )
+
+  elif num_rocm_devices := os.environ.get("JAX_ENABLE_ROCM_XDIST", None):
+    num_rocm_devices = int(num_rocm_devices)
+    xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "")
+    if not xdist_worker_name.startswith("gw"):
+      return
+    xdist_worker_number = int(xdist_worker_name[len("gw") :])
+    os.environ.setdefault(
+        "ROCR_VISIBLE_DEVICES", str(xdist_worker_number % num_rocm_devices)
+    )
