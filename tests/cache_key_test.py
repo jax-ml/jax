@@ -311,15 +311,15 @@ class CacheKeyTest(jtu.JaxTestCase):
     x = np.ones((128,), dtype=np.float32)
     computation1 = make_caller_a().lower(x).compiler_ir()
     computation2 = make_caller_b().lower(x).compiler_ir()
-
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
     with config.compilation_cache_include_metadata_in_key(include_metadata):
-      hash1 = self.get_hashed_value(
-          cache_key._hash_computation, computation1,
-          cache_key.IgnoreCallbacks.NO)
-      hash2 = self.get_hashed_value(
-          cache_key._hash_computation, computation2,
-          cache_key.IgnoreCallbacks.NO)
-    self.assertEqual(include_metadata, hash1 != hash2)
+      key1 = cache_key.get(computation1, devices, compile_options, backend)
+      key2 = cache_key.get(computation2, devices, compile_options, backend)
+    self.assertEqual(include_metadata, key1 != key2)
 
   @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_xla_flags(self):
