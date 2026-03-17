@@ -3865,6 +3865,12 @@ class APITest(jtu.JaxTestCase):
       jax.jit(self.helper_save_tracer)(jnp.ones((4, 3), dtype=jnp.int32))
       _ = self._saved_tracer+1
 
+  def test_escaped_tracer_lower(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/35799
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(UnexpectedTracerError, "unexpected tracer"):
+      jax.jit(lambda x: self._saved_tracer).lower(0.)
+
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/jax-ml/jax/issues/3007
     def f(a, b):
