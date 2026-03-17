@@ -47,6 +47,8 @@ from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version
 
 from jax.experimental.custom_partitioning import custom_partitioning
 
@@ -5090,6 +5092,32 @@ class ShardMapTest(jtu.JaxTestCase):
     arr = jax.device_put(jnp.arange(8.), jax.P(reduced={'x'}))
     out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((1, 2, 1), ('x', 'y', 'z'))
+  def test_unreduced_bwd_manual_reshard_op_shardy(self, mesh):
+    if jaxlib_extension_version < 421:
+      self.skipTest('Requires jaxlib_extension_version >= 421')
+    if ifrt_version < 51:
+      self.skipTest('Requires ifrt_version >= 51')
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 18):
+      self.skipTest('Requires a newer libtpu')
+
+    w = jax.device_put(np.ones((4, 32, 16)),
+                       P(None, None, 'z', reduced={'x', 'y'}))
+    x = jax.device_put(np.ones((2, 2, 32)), P('y'))
+
+    @jax.shard_map(out_specs=P('y'))
+    def f(x, w):
+      return jnp.einsum("btd,edh->bth", x, w)
+
+    def loss(x, w):
+      w2 = jax.reshard(w, P())
+      return f(x, w2).sum()
+
+    x_bar, w_bar = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, w)
+    self.assertEqual(x_bar.sharding, NamedSharding(mesh, P('y', None, None)))
+    self.assertEqual(w_bar.sharding,
+                     NamedSharding(mesh, P(None, None, 'z', unreduced={'x', 'y'})))
 
 
 class FunSpec(NamedTuple):
