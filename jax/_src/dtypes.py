@@ -1145,28 +1145,29 @@ def safe_to_cast(input_dtype_or_value: Any,
   # this effectively treats the output dtype as always strongly-typed.
   return result_type(input_dtype_or_value, output_dtype) == output_dtype
 
+class primal_tangent_dtype_scalar(extended): ...
+
+@dataclasses.dataclass(frozen=True)
+class PrimalTangentDType(ExtendedDType):
+  primal_dtype: Any
+  tangent_dtype: Any
+  name: str
+  type = primal_tangent_dtype_scalar
+  def __repr__(self): return self.name
+  @property
+  def _rules(self):  # type: ignore
+    return types.SimpleNamespace(
+      physical_element_aval=
+      lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),
+      tangent_dtype=lambda dtype: self.tangent_dtype,
+      allow_conversion=True)
+
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
   primal_dtype, tangent_dtype = map(dtype, (primal_dtype, tangent_dtype))
   name_ = name or (f'PrimalTangentDType{{{short_dtype_name(primal_dtype)}'
                    f'/{short_dtype_name(tangent_dtype)}}}')
-  rules = types.SimpleNamespace(
-      physical_element_aval=
-      lambda dtype: types.SimpleNamespace(shape=(), dtype=primal_dtype),
-      tangent_dtype=lambda dtype: tangent_dtype,
-      allow_conversion=True)
-
-  class primal_tangent_dtype_scalar(extended): ...
-
-  @dataclasses.dataclass(frozen=True)
-  class PrimalTangentDType(ExtendedDType):
-    name = name_
-    _rules = rules
-    type = primal_tangent_dtype_scalar
-    def __repr__(self):
-      return name_
-
-  return PrimalTangentDType()
+  return PrimalTangentDType(primal_dtype, tangent_dtype, name_)
 
 @functools.cache
 def short_dtype_name(dtype) -> str:
