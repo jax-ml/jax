@@ -77,7 +77,8 @@ Serialization is broken down into two stages:
 ## Support for reverse-mode AD
 
 Serialization can optionally support higher-order reverse-mode AD. This is done
-by serializing the {func}`jax.vjp` of the primal function along with the primal function,
+by serializing the {func}`jax.vjp` of the primal function along with the primal
+function,
 up to a user-specified order (default is 0, meaning that the rehydrated
 function cannot be differentiated):
 
@@ -145,7 +146,8 @@ JAX runtime system that are:
 
   * **up to 6 months newer** than the version of JAX used for exporting
   (we say that JAX export offers **6 months backward compatibility**).
-  This is useful if we want to archive the exported artifact to be compiled and executed later.
+  This is useful if we want to archive the exported artifact to be compiled and
+  executed later.
   * **up to 3 weeks older** than the version of JAX used for exporting
   (we say that JAX export offers **3 weeks forward compatibility**).
   This is useful if we want to compile and run an exported artifact with a
@@ -155,8 +157,8 @@ JAX runtime system that are:
 (The particular compatibility window lengths are the same that JAX
 [promised for jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#usage-saved-model),
 and are based on [TensorFlow Compatibility](https://www.tensorflow.org/guide/versions#graph_and_checkpoint_compatibility_when_extending_tensorflow).
-The terminology “backward compatibility” is from the perspective of the consumer,
-e.g., the inference system.)
+The terminology “backward compatibility” is from the perspective of the
+consumer, e.g., the inference system.)
 
 What **matters is when the exporting and consuming components were built**,
 not the time when the exporting and the compilation happen.
@@ -168,7 +170,8 @@ To reduce chances of incompatibility, internal JAX users should:
   * **rebuild and redeploy consumer systems as frequently as possible**.
 
 and external users should:
-  * run the exporting and consumer systems with the same version of jaxlib, whenever possible, and
+  * run the exporting and consumer systems with the same version of jaxlib,
+  whenever possible, and
   * export for archival **with the latest released version of jaxlib**.
 
 The compatibility guarantees do not apply if you bypass the `jax.export` APIs
@@ -457,9 +460,10 @@ artifacts using a new mesh constructed at the call site:
 
 ```
 
-As a special facility, if a function was exported for 1 device and if it contains no
-sharding annotations, then it can be invoked on an argument of the same shape but sharded
-on multiple devices, and the compiler will shard the function appropriately:
+As a special facility, if a function was exported for 1 device and if it
+contains no sharding annotations, then it can be invoked on an argument of
+the same shape but sharded on multiple devices, and the compiler will shard
+the function appropriately:
 
 ```python
 ```python
@@ -651,7 +655,8 @@ We list here a history of the calling convention version numbers:
     June 13th, 2023 (JAX 0.4.13).
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
-    See [Errors in presence of shape polymorphism](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
+    See [Errors in presence of shape polymorphism](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
+    Supported by XlaCallModule
     since July 12th, 2023 (cl/547482522),
     available in JAX serialization since July 20th, 2023 (JAX 0.4.14),
     and the default since August 12th, 2023 (JAX 0.4.15).
@@ -693,7 +698,8 @@ I0619 10:54:18.978733 8299482112 _export.py:606] Exported JAX function: fun_name
 I0619 10:54:18.978767 8299482112 _export.py:607] Define JAX_DUMP_IR_TO to dump the module.
 ```
 
-If you set the environment variable `JAX_DUMP_IR_TO` to a directory, the exported (and the JIT compiled) HLO
+If you set the environment variable `JAX_DUMP_IR_TO` to a directory,
+the exported (and the JIT compiled) HLO
 modules will be saved there.
 
 ```shell
@@ -724,24 +730,24 @@ should use to ensure the [compatibility guarantees](#compatibility-guarantees).
 One complication is that external users install JAX and jaxlib
 in separate packages,
 and users often end up using an older jaxlib than JAX.
-We observe that the custom calls live in the jaxlib, and only the jaxlib is relevant
-for a consumer of an exported artifact.
+We observe that the custom calls live in the jaxlib, and only the jaxlib is
+relevant for a consumer of an exported artifact.
 To simplify the process, we are setting the expectation for external users
 that the compatibility window is defined in terms of jaxlib releases,
 and it is their responsibility to ensure that they export with a new jaxlib
 even if JAX would function with an older version.
 
 Thus, we care only about jaxlib releases.
-We can start a backward-compatibility deprecation clock when we make a jaxlib release,
-even if we don’t force it to be the minimum allowed version.
+We can start a backward-compatibility deprecation clock when we make a
+jaxlib release, even if we don’t force it to be the minimum allowed version.
 
 Let’s say that we need to add, delete, or change the semantics of a
 custom call target `T` used by the JAX lowering rules.
 Here is a possible chronology (for changing custom call targets
 that live in jaxlib):
 
-  1. Day “D - 1”, before the change. Say that the active internal JAX version is `0.4.31`
-     (the version of the next JAX and jaxlib releases).
+  1. Day “D - 1”, before the change. Say that the active internal JAX
+     version is `0.4.31` (the version of the next JAX and jaxlib releases).
      The JAX lowering rules use a custom call `T`.
   2. Day “D”, we add the new custom call target `T_NEW`.
     We should create a new custom call target, and clean up the old
@@ -781,16 +787,20 @@ that live in jaxlib):
        * An example is in [PR #29488](https://github.com/jax-ml/jax/pull/29488).
        * Note that if you do this before the next step, the exporting will still not
          use the `T_NEW` lowering, and you have to add
-         `with config.export_ignore_forward_compatibility(True):` around the call to
-         `self.run_one_test`. This can be removed when you actually get to step 4.
+         `with config.export_ignore_forward_compatibility(True):` around the
+         call to `self.run_one_test`. This can be removed when you actually get
+         to step 4.
        * You may also need to enable the test only for new versions of jaxlib.
-  4. Day “D + 21” (end of forward compatibility window; can be even later than 21 days):
+  4. Day “D + 21” (end of forward compatibility window; can be even later than
+    21 days):
     We remove the `forward_compat_mode` in the lowering code, so now exporting
-    will start using the new custom call target `T_NEW` as long as we are using a new `jaxlib`.
-  5. Day "RELEASE > D" (the first JAX release date after `D`, when we release version `0.4.31`):
+    will start using the new custom call target `T_NEW` as long as we are using
+    a new `jaxlib`.
+  5. Day "RELEASE > D" (the first JAX release date after `D`, when we release
+    version `0.4.31`):
     we start the clock for the 6 months backwards compatibility.
-    Note that this is relevant only if `T` is among the custom call targets for which
-    we already guarantee stability, i.e., are listed in
+    Note that this is relevant only if `T` is among the custom call targets for
+    which we already guarantee stability, i.e., are listed in
     [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code).
       * If `RELEASE` is in the forward compatibility window `[D, D + 21]` and if
         we make `RELEASE` the minimum allowed jaxlib version then we can
@@ -816,9 +826,11 @@ in favor of `jax.export` APIs. There have been some minor changes:
     * The old `lowering_parameters` kwarg is now named `platforms`
   * `jax.experimental.export.default_lowering_platform()` is now
     at {func}`jax.export.default_export_platform`.
-  * `jax.experimental.export.call` is now a method of the {class}`jax.export.Exported` object.
+  * `jax.experimental.export.call` is now a method of the
+    {class}`jax.export.Exported` object.
     Instead of `export.call(exp)` you should use `exp.call`.
-  * `jax.experimental.export.serialize` is now a method of the {class}`jax.export.Exported`
+  * `jax.experimental.export.serialize` is now a method of the
+    {class}`jax.export.Exported`
     object. Instead of `export.serialize(exp)` you should use `exp.serialize()`.
   * The configuration flag `--jax-serialization-version` is deprecated.
     Use `--jax-export-calling-convention-version`.
