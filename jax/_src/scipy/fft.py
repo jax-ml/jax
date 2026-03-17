@@ -21,6 +21,7 @@ import operator
 
 import numpy as np
 
+from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy import fft as jnp_fft
@@ -102,12 +103,18 @@ def dct(x: Array, type: int = 2, n: int | None = None,
      [-1.75  0.73  1.01 -2.18]
      [ 1.33 -1.05 -2.34 -0.07]]
   """
-  x = ensure_arraylike("idctn", x)
+  x = ensure_arraylike("dct", x)
 
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.dct: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      dct(x.real, type=type, n=n, norm=norm, axis=axis),
+      dct(x.imag, type=type, n=n, norm=norm, axis=axis),
+    )
 
   axis = canonicalize_axis(axis, x.ndim)
   if n is not None:
@@ -205,12 +212,18 @@ def dctn(x: Array, type: int = 2,
     [[  9.36  11.23   2.12 -10.97]
      [ 11.57   5.86  -1.37  -1.58]]
   """
-  x = ensure_arraylike("idctn", x)
+  x = ensure_arraylike("dctn", x)
 
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.dctn: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      dctn(x.real, type=type, s=s, norm=norm, axes=axes),
+      dctn(x.imag, type=type, s=s, norm=norm, axes=axes),
+    )
 
   if s is not None:
     try:
@@ -308,6 +321,12 @@ def idct(x: Array, type: int = 2, n: int | None = None,
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.idct: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      idct(x.real, type=type, n=n, norm=norm, axis=axis),
+      idct(x.imag, type=type, n=n, norm=norm, axis=axis)
+    )
 
   axis = canonicalize_axis(axis, x.ndim)
   if n is not None:
@@ -409,6 +428,12 @@ def idctn(x: Array, type: int = 2,
     raise NotImplementedError('Only DCT type 2 is implemented.')
   if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.idctn: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      idctn(x.real, type=type, s=s, norm=norm, axes=axes),
+      idctn(x.imag, type=type, s=s, norm=norm, axes=axes)
+    )
 
   if s is not None:
     try:
