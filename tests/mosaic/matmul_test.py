@@ -19,6 +19,7 @@ import os
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
@@ -39,7 +40,7 @@ else:
 
 
 config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 

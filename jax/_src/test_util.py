@@ -22,7 +22,7 @@ import datetime
 import functools
 from functools import cached_property, partial
 import inspect
-import logging
+
 import math
 import os
 import platform
@@ -109,12 +109,6 @@ TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
 
-HYPOTHESIS_PROFILE = config.string_flag(
-    'hypothesis_profile',
-    os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
-    help=('Select the hypothesis profile to use for testing. Available values: '
-          'deterministic, interactive'),
-)
 
 # Global flag ensuring we only patch the subprocess env once per process.
 _bazel_subprocess_env_patched = False
@@ -2338,79 +2332,6 @@ class numpy_with_mpmath:
     else:
       assert 0  # unreachable
 
-# Hypothesis testing support
-def hypothesis_is_thread_safe() -> bool:
-  """Returns True if the installed hypothesis version is thread-safe.
-
-  Hypothesis versions >= 6.136.9 are thread-safe.
-  """
-  try:
-    import hypothesis as hp  # pytype: disable=import-error
-    return tuple(int(x) for x in hp.__version__.split('.')) >= (6, 136, 9)
-  except (ModuleNotFoundError, ImportError):
-    return True
-
-def setup_hypothesis(max_examples=30) -> None:
-  """Sets up the hypothesis profiles.
-
-  Sets up the hypothesis testing profiles, and selects the one specified by
-  the ``JAX_HYPOTHESIS_PROFILE`` environment variable (or the
-  ``--jax_hypothesis_profile`` configuration.
-
-  Args:
-    max_examples: the maximum number of hypothesis examples to try, when using
-      the default "deterministic" profile.
-  """
-  try:
-    import hypothesis as hp  # pytype: disable=import-error
-  except (ModuleNotFoundError, ImportError):
-    return
-
-  # In our tests we often use subclasses with slightly different class variables
-  # to generate whole suites of parameterized tests, but this approach does not
-  # work well with Hypothesis databases, which use some function of the method
-  # identity to generate keys. But, if the method is defined in a superclass,
-  # all subclasses share the same key. This key collision can lead to confusing
-  # false positives in other health checks.
-  #
-  # Still, as far as I understand, for as long as we don't use the example
-  # database, it should be perfectly safe to suppress this health check. This
-  # seems simpler than rewriting our tests that trigger this behavior. See
-  # the end of https://github.com/HypothesisWorks/hypothesis/issues/3446 for
-  # more context.
-  suppressed_checks = []
-  if hasattr(hp.HealthCheck, "differing_executors"):
-    suppressed_checks.append(hp.HealthCheck.differing_executors)
-  if is_asan() or is_msan() or is_tsan():
-    suppressed_checks.append(hp.HealthCheck.too_slow)
-
-  hp.settings.register_profile(
-      "deterministic",
-      database=None,
-      derandomize=True,
-      deadline=None,
-      max_examples=max_examples,
-      print_blob=True,
-      suppress_health_check=suppressed_checks,
-  )
-  hp.settings.register_profile(
-      "interactive",
-      parent=hp.settings.load_profile("deterministic"),
-      max_examples=1,
-      report_multiple_bugs=False,
-      verbosity=hp.Verbosity.verbose,
-      # Don't try and shrink
-      phases=(
-          hp.Phase.explicit,
-          hp.Phase.reuse,
-          hp.Phase.generate,
-          hp.Phase.target,
-          hp.Phase.explain,
-      ),
-  )
-  profile = HYPOTHESIS_PROFILE.value
-  logging.info("Using hypothesis profile: %s", profile)
-  hp.settings.load_profile(profile)
 
 
 def runtime_environment() -> str | None:

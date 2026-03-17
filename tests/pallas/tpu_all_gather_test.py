@@ -18,6 +18,7 @@ from __future__ import annotations
 from absl.testing import absltest
 import jax
 from jax import random
+from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
@@ -76,8 +77,8 @@ def _array_dtypes(draw):
   )
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
-class AllGatherTest(jtu.JaxTestCase):
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
+class AllGatherTest(htu.HypothesisShardedTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -132,4 +133,4 @@ class AllGatherTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=htu.HypothesisShardedTestLoader())

@@ -25,6 +25,7 @@ import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.state import discharge as state_discharge
@@ -35,7 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 jax.config.parse_flags_with_absl()
 
 
@@ -274,7 +275,7 @@ class VectorSubcoreTest(PallasSCTest):
           # fmt: on
       ]
   )
-  @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
+  @jtu.thread_unsafe_test(condition=not htu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
   # TODO(b/478865387): Remove the skip once the bug is fixed.
   @absltest.skip("Needs vector unrolling pass")
@@ -333,7 +334,7 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(3 * 4 * self.num_lanes).reshape(3, 4, self.num_lanes)
     np.testing.assert_array_equal(kernel(x), x.sum(axis=(0, 1)))
 
-  @jtu.thread_unsafe_test(condition=not jtu.hypothesis_is_thread_safe())
+  @jtu.thread_unsafe_test(condition=not htu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
   def test_block_spec_untiled_slicing(self, data):
     self.skipTest(

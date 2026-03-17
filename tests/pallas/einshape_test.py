@@ -23,6 +23,7 @@ from hypothesis import strategies as st
 import jax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -30,7 +31,7 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 
 
 @jax.jit(static_argnames=["equation", "sizes"])

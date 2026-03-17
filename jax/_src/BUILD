@@ -79,7 +79,22 @@ pytype_strict_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+pytype_strict_library(
+    name = "hypothesis_test_util",
+    srcs = ["hypothesis_test_util.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_test_util_visibility,
+    deps = [
+        ":config",
+        ":test_util",
+    ] + py_deps(["hypothesis"]),
 )
 
 pytype_strict_library(

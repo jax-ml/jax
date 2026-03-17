@@ -24,6 +24,7 @@ import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import hijax
+from jax._src import hypothesis_test_util as htu
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -2215,8 +2216,8 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       grid=(num_cores,),
   )(x, y)
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
-class PaddedPipelineEmitterTest(jtu.JaxTestCase):
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
+class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
   def setUp(self):
     super().setUp()
@@ -2655,4 +2656,4 @@ class PipelineHijaxTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=htu.HypothesisShardedTestLoader())

@@ -32,6 +32,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
@@ -59,7 +60,7 @@ import hypothesis.strategies as hps
 # ruff: noqa: F811
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=50)
+htu.setup_hypothesis(max_examples=50)
 
 use_mosaic_gpu = pallas_call._PALLAS_USE_MOSAIC_GPU.value
 
@@ -328,7 +329,7 @@ class PallasBaseTest(ptu.PallasTest):
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(PallasBaseTest):
 
   @parameterized.named_parameters(

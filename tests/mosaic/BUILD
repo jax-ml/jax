@@ -49,6 +49,7 @@ jax_multiplatform_test(
         "noasan",  # Times out.
     ],
     deps = if_cuda_is_configured([
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental:mosaic_gpu_test_util",
     ]) + py_deps([
@@ -128,6 +129,7 @@ jax_py_test(
     tags = ["gpu_mlir_deviceless_test"],
     deps = [
         "//jax",
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src:test_util",
     ] + if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",
@@ -175,6 +177,7 @@ jax_multiplatform_test(
         "noasan",
     ],
     deps = if_cuda_is_configured([
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
         "//jax/experimental/mosaic/gpu/examples:matmul_blackwell",

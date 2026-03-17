@@ -18,13 +18,13 @@ from absl.testing import parameterized
 import hypothesis
 from hypothesis import strategies as st
 import jax
-from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import einshape
 import numpy as np
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 
 
 class EinshapeParseTest(parameterized.TestCase):

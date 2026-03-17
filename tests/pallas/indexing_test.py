@@ -21,6 +21,7 @@ import jax
 from jax import random
 from jax._src import core
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src import util
 from jax._src.state import indexing
 import numpy as np
@@ -38,7 +39,7 @@ import hypothesis.strategies as hps
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=100)
+htu.setup_hypothesis(max_examples=100)
 
 
 Slice = indexing.Slice

@@ -129,6 +129,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -146,6 +147,7 @@ jax_py_test(
     name = "einshape_parse_test",
     srcs = ["einshape_parse_test.py"],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src:test_util",
         "//jax/experimental:pallas",
     ] + py_deps([
@@ -168,6 +170,7 @@ jax_multiplatform_test(
     },
     tags = ["requires-net:external"],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -209,6 +212,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -237,6 +241,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -366,6 +371,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
@@ -390,6 +396,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
         "absl/testing",
@@ -513,6 +520,7 @@ jax_multiplatform_test(
     enable_backends = ["tpu"],
     shard_count = 8,
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -562,14 +570,10 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
         "tpu_v5p",
     ],
-    minimal_shard_count = 5,
+    minimal_shard_count = 2,
     shard_count = 5,
-    tags = [
-        "noasan",  # Times out.
-        "nomsan",  # Times out.
-        "notsan",  # Times out.
-    ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:hijax",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
@@ -772,6 +776,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
@@ -1406,6 +1411,7 @@ jax_multiplatform_test(
     ],
     shard_count = 10,
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",

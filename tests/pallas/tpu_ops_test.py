@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ else:
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=100)
+htu.setup_hypothesis(max_examples=100)
 
 _JAX_DTYPES_NO_BOOL = (
     jnp.float32,
@@ -77,7 +78,7 @@ def rand(
   raise NotImplementedError(f"Unsupported random data generation for {dtype=}")
 
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(

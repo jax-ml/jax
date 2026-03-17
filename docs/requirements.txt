@@ -16,6 +16,7 @@ filelock
 flatbuffers
 pytest
 pytest-xdist
+hypothesis
 
 # Packages used for notebook execution
 matplotlib

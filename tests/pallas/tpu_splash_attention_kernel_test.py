@@ -27,6 +27,7 @@ import hypothesis.strategies as hps
 import jax
 from jax import random
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
@@ -36,7 +37,7 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=5)
+htu.setup_hypothesis(max_examples=5)
 
 partial = functools.partial
 Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])

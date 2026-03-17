@@ -20,6 +20,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -40,7 +41,7 @@ from jax.experimental.mosaic.gpu import utils as mgpu_utils
 try:
   import hypothesis as hp  # pylint: disable=g-import-not-at-top
   import hypothesis.strategies as hps  # pylint: disable=g-import-not-at-top
-  jtu.setup_hypothesis()
+  htu.setup_hypothesis()
 except ImportError:
   hp = hps = None
 

@@ -31,6 +31,7 @@ import jax
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
@@ -72,7 +73,7 @@ else:
 try:
   import hypothesis as hp
   import hypothesis.strategies as hps
-  jtu.setup_hypothesis()
+  htu.setup_hypothesis()
 except ImportError:
   hp = hps = None
 

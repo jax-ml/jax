@@ -1910,7 +1910,9 @@ jax_multiplatform_test(
         "gpu_h100",
         "cpu",
     ],
-    deps = py_deps([
+    deps = [
+        "//jax/_src:hypothesis_test_util",
+    ] + py_deps([
         "absl/testing",
         "numpy",
         "hypothesis",
@@ -2339,4 +2341,18 @@ filegroup(
     visibility = [
         "//jax:internal",
     ],
+)
+
+jax_py_test(
+    name = "hypothesis_test_util_test",
+    srcs = ["hypothesis_test_util_test.py"],
+    shard_count = 2,  # Do not remove. This test is testing sharding!
+    deps = [
+        "//jax",
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+    ]),
 )
