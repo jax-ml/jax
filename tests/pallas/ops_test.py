@@ -962,6 +962,8 @@ class OpsTest(PallasBaseTest):
         self.skipTest("f16 load not supported on TPU")
       if dtype in (jnp.int16, jnp.uint16) and jtu.get_tpu_version() < 6:
         self.skipTest("requires TPU v6+")
+      if dtype == jnp.bfloat16 and not jtu.is_cloud_tpu_at_least(2026, 3, 15):
+        self.skipTest("Requires libtpu >= 2026.3.15")
 
     @functools.partial(
         self.pallas_call,
@@ -1174,6 +1176,12 @@ class OpsTest(PallasBaseTest):
           and not jtu.is_cloud_tpu_at_least(2026, 3, 1)
       ):
         self.skipTest("requires a newer libTPU")
+      if (
+          fn == jnp.sign
+          and dtype == "bfloat16"
+          and not jtu.is_cloud_tpu_at_least(2026, 3, 15)
+      ):
+        self.skipTest("Requires libtpu >= 2026.3.15")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
