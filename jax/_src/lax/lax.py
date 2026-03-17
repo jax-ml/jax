@@ -6590,6 +6590,11 @@ def _tile_abstract_eval(x, reps):
     raise TypeError(
         f"reps length must be equal to the ndim of x, got {len(reps)=} "
         f"and {x.ndim=}.")
+  for i, (r, sh) in enumerate(zip(reps, x.sharding.spec)):
+    if r != 1 and sh is not None:
+      raise core.ShardingTypeError(
+          f'Operand cannot be sharded on dimension {i} when the tiling is'
+          f' non-trivial. Got input type: {x} with reps: {reps}')
   return x.update(shape=tuple(np.multiply(x.shape, reps)))
 
 def _tile_transpose_rule(ct, operand, *, reps):
@@ -6597,9 +6602,11 @@ def _tile_transpose_rule(ct, operand, *, reps):
     return [ad_util.Zero(operand.aval)]
   if not isinstance(operand, ad.UndefinedPrimal):
     return [None]  # transpose wrt literal
+  out_spec = tuple(s for sp in operand.aval.sharding.spec for s in [None, sp])
   ct_reshaped = reshape(
-      ct, tuple(k for pair in zip(reps, operand.aval.shape) for k in pair))
-  axes = tuple(2*i for i in range(operand.aval.ndim))
+      ct, tuple(k for pair in zip(reps, operand.aval.shape) for k in pair),
+      out_sharding=operand.aval.sharding.update(spec=out_spec))
+  axes = tuple(2 * i for i in range(operand.aval.ndim))
   return [reduce_sum(ct_reshaped, axes)]
 
 def _tile_batch_rule(batched_args, batch_dims, *, reps):
@@ -9096,7 +9103,6 @@ def _opt_barrier_transpose(cts, *primals):
   cts = [ad.instantiate_zeros(ct) for ct in cts]
   return optimization_barrier(cts)
 ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose
-
 
 
 def _array_reduce_precision_handler(t, x):

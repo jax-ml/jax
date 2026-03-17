@@ -10071,31 +10071,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(lambda x: g(x).sum()))(jnp.arange(8.))  # doesn't crash
 
-  @jtu.with_explicit_mesh((4, 2), ('x', 'y'))
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_tile(self, mesh):
     @jax.jit
-    def tile(x):
-      return jnp.tile(x, (2, 3))
-
-    x = jax.device_put(np.ones((32, 64)), P('x', 'y'))
-    out = tile(x)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-    self.check_wsc_in_lowered(tile.lower(x).as_text())
+    def f(x):
+      return jnp.tile(x, (1, 2))
 
     x = jax.device_put(np.ones((32, 64)), P('x', None))
-    out = tile(x)
+    out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
-    self.check_wsc_in_lowered(tile.lower(x).as_text())
+    self.check_wsc_in_lowered(f.lower(x).as_text())
 
-    x = jax.device_put(np.ones((32, 64)), P(None, 'y'))
-    out = tile(x)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y')))
-    self.check_wsc_in_lowered(tile.lower(x).as_text())
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(x)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x', None)))
 
-    x = jax.device_put(np.ones((32, 64)), P(None, ('x', 'y')))
-    out = tile(x)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, ('x', 'y'))))
-    self.check_wsc_in_lowered(tile.lower(x).as_text())
+    x = jax.device_put(np.ones((32, 64)), P('x', 'y'))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "cannot be sharded.*tiling is non-trivial"):
+      f(x)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_vmap_grad_axis_error(self, mesh):
