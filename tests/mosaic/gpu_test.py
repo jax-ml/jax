@@ -3229,7 +3229,7 @@ class BarrierTest(TestCase):
     np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
 
 
-class AsyncCopyTest(TestCase):
+class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       swizzle=(None, 32, 64, 128),
@@ -3470,8 +3470,7 @@ class AsyncCopyTest(TestCase):
       dtype=(jnp.float16, jnp.float32),
   )
   def test_tma_load_replicated(self, swizzle, dtype):
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
-      self.skipTest("cta_group::2 requires compute capability 10.0")
+    self.skip_unless_tcgen05() # .cta_group::2 is not supported on sm_120, for example
     index = ir.IndexType.get()
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (8, minor_size)
@@ -3515,8 +3514,7 @@ class AsyncCopyTest(TestCase):
       dtype=(jnp.float16, jnp.float32),
   )
   def test_tma_load_partitioned(self, swizzle, dtype):
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
-      self.skipTest("cta_group::2 requires compute capability 10.0")
+    self.skip_unless_tcgen05() # .cta_group::2 is not supported on sm_120, for example
     index = ir.IndexType.get()
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (16, minor_size)
