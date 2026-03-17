@@ -1,0 +1,45 @@
+diff --git a/xla/debug_options_flags.cc b/xla/debug_options_flags.cc
+index 8d2f41118d2d2..562e5f717065e 100644
+--- a/xla/debug_options_flags.cc
++++ b/xla/debug_options_flags.cc
+@@ -241,7 +241,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
+   // By default, copy TF's Eigen style min_max behavior with nans.
+   opts.set_xla_cpu_enable_fast_min_max(true);
+
+-  opts.set_xla_gpu_enable_cublaslt(true);
++  opts.set_xla_gpu_enable_cublaslt(false);
+
+   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+diff --git a/xla/service/gpu/dot_algorithm_support_test.cc b/xla/service/gpu/dot_algorithm_support_test.cc
+index 883773bf02d1d..77101c96bc8bf 100644
+--- a/xla/service/gpu/dot_algorithm_support_test.cc
++++ b/xla/service/gpu/dot_algorithm_support_test.cc
+@@ -205,12 +205,7 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
+     )");
+     }
+   } else {
+-    // Note: If the algorithm is not supported either the emitter will decline
+-    // to emit it, or the autotuner will not find any supported configs.
+-    EXPECT_THAT(
+-        Run(hlo_text).message(),
+-        ::testing::AnyOf(HasSubstr("Unsupported algorithm"),
+-                         HasSubstr("could not find any supported configs")));
++    EXPECT_THAT(Run(hlo_text).message(), HasSubstr("Unsupported algorithm"));
+   }
+ }
+
+diff --git a/xla/service/gpu/gpu_compiler_test.cc b/xla/service/gpu/gpu_compiler_test.cc
+index 6991149670e26..c5410a02b4a65 100644
+--- a/xla/service/gpu/gpu_compiler_test.cc
++++ b/xla/service/gpu/gpu_compiler_test.cc
+@@ -659,8 +659,7 @@ ENTRY main {
+   ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
+   EXPECT_FALSE(results.results().empty());
+   EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION") ||
+-              // CUBLASLT_FISSION is dumpes as GemmKey in the AutotunerResult.
+-              absl::StrContains(results.DebugString(), "gemm"));
++              absl::StrContains(results.DebugString(), "CUBLASLT_FISSION"));
+ 
+   // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
+   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();

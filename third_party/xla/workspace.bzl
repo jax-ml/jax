@@ -22,6 +22,12 @@ def repo():
         sha256 = XLA_SHA256,
         strip_prefix = "xla-{commit}".format(commit = XLA_COMMIT),
         urls = tf_mirror_urls("https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
+        patch_file = [
+            "//third_party/xla:shardy_temporary.patch",
+            "//third_party/xla:xla_gpu_cublaslt_default.patch",
+            "//third_party/xla:xla_gpu_cublaslt_algorithm3.patch",
+	    "//third_party/xla:xla_nccl_comm_split_deadlock.patch",
+        ],
     )
 
     # For development, one often wants to make changes to the TF repository as well
