@@ -206,6 +206,17 @@ class BoxTypeState(QDD):
     leaf_avals = tuple(a.to_tangent_aval() for a in self.leaf_avals)
     return BoxTypeState(leaf_avals, self.treedef)
 
+  def leading_axis_spec(self):
+    return tuple(a.leading_axis_spec() for a in self.leaf_avals)
+
+  def dec_rank(self, size, spec):
+    leaf_avals = [a.dec_rank(size, spec) for a, spec in zip(self.leaf_avals, spec)]
+    return BoxTypeState(tuple(leaf_avals), self.treedef)
+
+  def inc_rank(self, size, spec):
+    leaf_avals = [a.inc_rank(size, spec) for a, spec in zip(self.leaf_avals, spec)]
+    return BoxTypeState(tuple(leaf_avals), self.treedef)
+
   def normalize(self):
     leaf_types = tuple(a.normalize() for a in self.leaf_avals)
     return BoxTypeState(leaf_types, self.treedef)
@@ -249,6 +260,13 @@ class BoxTy(MutableHiType):
     box_set(box, tree_unflatten(box_state.treedef, hi_vals))
 
   def to_tangent_aval(self):
+    return BoxTy()
+
+  def leading_axis_spec(self):
+    return None
+
+  def dec_rank(self, size, spec):
+    assert spec is None
     return BoxTy()
 
 # Override isinstance checks under tracing

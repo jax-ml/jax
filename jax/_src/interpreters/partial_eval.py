@@ -1603,10 +1603,17 @@ def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
           [elt for elt, move in zip(lst, to_move) if not move])
 
-def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
-                         ) -> ClosedJaxpr:
+def move_binders_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
   """Reorder `invars` by moving those indicated in `to_move` to the back."""
-  return move_binders_to_front(closed_jaxpr, map(op.not_, to_move))
+  return move_binders_to_front(jaxpr, map(op.not_, to_move))
+
+def move_outvars_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
+  return _move_outvars_to_back(jaxpr, tuple(to_move))
+
+@weakref_lru_cache
+def _move_outvars_to_back(jaxpr, to_move: tuple[bool, ...]) -> ClosedJaxpr:
+  new_outvars = _move_to_front(jaxpr.jaxpr.outvars, map(op.not_, to_move))
+  return core.ClosedJaxpr(jaxpr.jaxpr.replace(outvars=new_outvars), jaxpr.consts)
 
 
 class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
@@ -2642,8 +2649,8 @@ def lower_traceable(jaxpr, *lo_args):
              for aval in jaxpr.in_aval_qdds]
   assert (_problem := next(lo_args_, None)) is None
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
-              for lo_val in aval.read_loval(hi_arg)]
+  mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args)
+              if aval.has_qdd for lo_val in aval.read_loval(hi_arg)]
   lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
              for lo_val in v.aval.lower_val(hi_val)]
   return mut_outs + lo_outs

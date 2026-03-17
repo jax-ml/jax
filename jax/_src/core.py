@@ -508,6 +508,10 @@ class Var:
   def __repr__(self):
     return f'Var(id={id(self)}):{self.aval.str_short()}'
 
+  @property
+  def has_qdd(self) -> bool:
+    return self.initial_qdd is not None
+
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del print_dtype  # unused
     return f"{context.var_names[self]}"
@@ -1733,9 +1737,6 @@ class AbstractValue:
   def inc_rank(self, size, spec):
     return unmapped_aval(size, spec, self)
 
-  def leading_axis_spec(self):
-    return 0
-
   def shard(self, mesh, manual_axes, check_vma, spec):
     return shard_aval(mesh, manual_axes, check_vma, spec, self)
 
@@ -1745,6 +1746,9 @@ class AbstractValue:
   def vspace_add(self, x, y):
     from jax._src.ad_util import add_jaxvals  # pytype: disable=import-error
     return add_jaxvals(x, y)
+
+  def leading_axis_spec(self):
+    raise NotImplementedError("must override")
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
@@ -1914,7 +1918,11 @@ class MutableQuasiDynamicData:
     return f'MutableQuasiDynamicData(init_val={self.init_val}, cur_val={self.cur_val})'
 
 class QuasiDynamicData:
-  pass
+  def dec_rank(self, size, spec):
+    raise NotImplementedError("must override")
+
+  def inc_rank(self, size, spec):
+    raise NotImplementedError("must override")
 
 @dataclass(frozen=True)
 class AvalQDD:
@@ -1937,6 +1945,7 @@ class AvalQDD:
       raise ValueError(f"Cannot convert to tangent aval when {self.qdd=}.")
     return AvalQDD(self.aval.to_tangent_aval(), self.qdd.to_tangent_qdd())
 
+
 @dataclass(frozen=True)
 class AvalMutableQDD:
   aval: AbstractValue
@@ -1950,10 +1959,15 @@ def cur_qdd(x):
   finally:
     trace_ctx.set_trace(prev_trace)
 
-def cur_aval_qdd(x):
+def cur_aval_qdd(x) -> AvalQDD:
   aval = typeof(x)
   qdd = cur_qdd(x) if aval.has_qdd else None
   return AvalQDD(aval, qdd)
+
+# TODO(mattjj,dougalm): maybe dedup with above function?
+def cur_aval_maybe_qdd(x) -> AbstractValue | AvalQDD:
+  aval = typeof(x)
+  return AvalQDD(aval, cur_qdd(x)) if aval.has_qdd else aval
 
 ### Extended dtypes
 #
@@ -2424,6 +2438,9 @@ class ShapedArray(AbstractValue):
     u_names = self.mt.unreduced if check_vma else frozenset()
     r_names = self.mt.reduced if check_vma else frozenset()
     return P(sh_names, unreduced=u_names, reduced=r_names) if sh_names else P()
+
+  def leading_axis_spec(self):
+    return 0
 
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
@@ -3167,8 +3184,8 @@ class MapPrimitive(Primitive):
     return new_params
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
-  if isinstance(aval, HiType):
+  from jax._src.hijax import HiType, MutableHiType  # pytype: disable=import-error
+  if isinstance(aval, (HiType, MutableHiType)):
     return aval.dec_rank(size, axis)  # type: ignore
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
@@ -3178,6 +3195,16 @@ def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
 
 def mapped_leading_aval(size, aval) -> AbstractValue:
   return mapped_aval(size, aval.leading_axis_spec(), aval)
+
+def mapped_leading_aval_qdd(size, a: AbstractValue | AvalQDD) -> AbstractValue | AvalQDD:
+  if isinstance(a, AvalQDD):
+    aval, qdd = a.aval, a.qdd
+    return AvalQDD(mapped_aval(size, aval.leading_axis_spec(), aval),
+                  qdd.dec_rank(size, qdd.leading_axis_spec()))
+  elif isinstance(a, AbstractValue):
+    return mapped_aval(size, a.leading_axis_spec(), a)
+  else:
+    assert False
 
 # TODO(yashkatariya): take axis data
 def unmapped_aval(size: AxisSize, axis: int | None,
@@ -3193,6 +3220,11 @@ def unmapped_aval(size: AxisSize, axis: int | None,
 
 def unmapped_leading_aval(size, aval) -> AbstractValue:
   return unmapped_aval(size, aval.leading_axis_spec(), aval)
+
+def unmapped_leading_aval_qdd(size, aval_qdd) -> AvalQDD:
+  aval, qdd = aval_qdd.aval, aval_qdd.qdd
+  return AvalQDD(unmapped_aval(size, aval.leading_axis_spec(), aval),
+                 qdd.inc_rank(size, qdd.leading_axis_spec()))
 
 def _map_shaped_array(
     size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:

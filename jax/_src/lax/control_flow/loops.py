@@ -211,11 +211,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   check_no_transformed_refs_args(lambda: dbg_body, args.vals)
   del init, xs
 
-  args_avals = args.map(core.typeof)
+  args_avals = args.map(core.cur_aval_maybe_qdd)
   init_avals, xs_avals = args_avals.unpack()
 
   from jax._src.hijax import HiType
-  if any(isinstance(a, HiType) for a in xs_avals):
+  if any(isinstance(a, (HiType, core.AvalQDD)) for a in xs_avals):
     if length is None:
       raise ValueError("must provide `length` to `scan`")
   else:
@@ -239,7 +239,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if config.mutable_array_checks.value:
     check_no_aliased_ref_args(lambda: dbg_body, list(args_avals), list(args))
 
-  x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
+  x_avals = xs_avals.map(lambda a: core.mapped_leading_aval_qdd(length, a))
   def _create_jaxpr(carry_avals):
     new_arg_avals = FlatTree.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
@@ -598,7 +598,8 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
     raise ValueError("scan number of arguments doesn't match the number "
                      "of jaxpr arguments: {len(args)} vs {len(jaxpr.in_avals)}")
   out_carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  _, in_carry_avals, _ = split_list(args, [num_consts, num_carry])
+  in_const_avals, in_carry_avals, in_ext_avals = split_list(args, [num_consts, num_carry])
+  in_const_vars, _, in_ext_vars = split_list(jaxpr.invars, [num_consts, num_carry])
   if [i.vma for i in in_carry_avals] != [o.vma for o in out_carry_avals]:
     raise ValueError(
         'Scan carry input and output got mismatched varying manual axes '
@@ -607,6 +608,16 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         'temporary workaround pass the check_vma=False argument to '
         '`jax.shard_map`')
   ys_avals = _map(partial(core.unmapped_leading_aval, length), y_avals)
+
+  inc_rank = lambda qdd: qdd.inc_rank(length, qdd.leading_axis_spec())
+  for v, a in zip(in_const_vars, in_const_avals):
+    if v.has_qdd:
+      assert v.initial_qdd == v.final_qdd == a.mutable_qdd.cur_val
+  for v, a in zip(in_ext_vars, in_ext_avals):
+    if v.has_qdd:
+      assert inc_rank(v.initial_qdd) == a.mutable_qdd.cur_val
+      a.mutable_qdd.update(inc_rank(v.final_qdd))
+
   return out_carry_avals + ys_avals, core.eqn_effects(jaxpr)
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
@@ -758,6 +769,10 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int, num_co
 def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
   # To disable:
   # return jaxpr_known, known_consts, [False] * num_res, []
+
+  # TODO(mattjj): don't always disable in the hijax case
+  if any(a.has_qdd for a in jaxpr_known.in_avals):
+    return jaxpr_known, known_consts, [False] * num_res, []
 
   consts = [pe.PartialVal.unknown(a) if isinstance(a := typeof(c), AbstractRef)
             else pe.PartialVal.known(c) for c in known_consts]
@@ -952,11 +967,13 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   ires, consts_dot, carry_dot, xs_dot, eres = split_list(
       args, [num_ires, num_consts - num_ires, num_carry, sum(xs_lin)])
   is_mutable = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
-                and isinstance(typeof(x), AbstractRef) for x in consts_dot]
+                and (isinstance(a := typeof(x), AbstractRef) or a.has_qdd)
+                for x in consts_dot]
   immut_consts_dot, mut_consts_bar = partition_list(is_mutable, consts_dot)
   jaxpr = _rearrange_mutable_binders(jaxpr, num_ires, num_consts - num_ires)
   is_mutable_ = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
-                 and isinstance(typeof(x), AbstractRef) for x in xs_dot]
+                 and (isinstance(a := typeof(x), AbstractRef) or a.has_qdd)
+                 for x in xs_dot]
   immut_xs_dot, mut_xs_bar = partition_list(is_mutable_, xs_dot)
   jaxpr = _rearrange_mutable_binders(jaxpr, num_consts + num_carry, sum(xs_lin))
   del consts_dot, xs_dot, args
@@ -978,7 +995,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
 
   # prepare transposed jaxpr
   trans_avals, ext_avals = split_list(_map(ad.accum_typeof, trans_in), [num_consts+num_carry])
-  trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
+  trans_avals = trans_avals + [core.mapped_leading_aval_qdd(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, ad.accum_typeof(x)) for x in immut_xs_dot)
   jaxpr_trans = _transpose_scan_jaxpr_fancy(
       jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
@@ -1104,11 +1121,9 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   new_outvars = [v for v, used in zip(eqn.outvars, used_outputs) if used]
-  _, new_effects = eqn.primitive.abstract_eval(
-      *[v.aval for v in new_invars], **new_params)
+  new_effects = core.eqn_effects(jaxpr_dce)
   new_eqn = pe.new_jaxpr_eqn(
-      new_invars,
-      new_outvars,
+      new_invars, new_outvars,
       eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
@@ -1394,12 +1409,25 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
 
-  # lower the jaxpr and bind it using lo input values
+  # lower the jaxpr and move extensive outputs to match scan convention
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
+  const_qdds, carry_qdds, ext_qdds = split_list(jaxpr.final_aval_qdds, [num_consts, num_carry])
+  num_const_mut = sum(len(a.lo_ty()) for a in const_qdds if a.has_qdd)
+  num_carry_mut = sum(len(a.lo_ty()) for a in carry_qdds if a.has_qdd)
+  num_ext_mut = sum(len(a.lo_ty()) for a in ext_qdds if a.has_qdd)
+  num_rest = len(lo_jaxpr.out_avals) - num_const_mut - num_carry_mut - num_ext_mut
+  assert num_const_mut == 0
+  to_move = [False] * num_carry_mut + [True] * num_ext_mut + [False] * num_rest
+  lo_jaxpr = pe.move_outvars_to_back(lo_jaxpr, to_move)
+
+  # bind on lo inputs
   all_outs = scan_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_consts,
                          num_carry=num_carry, linear=tuple(linear), **params)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
-  pe.apply_himut(jaxpr, hi_args, out_mut)
+
+  # split out mutable outputs and apply them
+  out_mut1, lo_outs, out_mut2 = split_list(all_outs, [num_carry_mut, num_rest])
+  pe.apply_himut(jaxpr, hi_args, [*out_mut1, *out_mut2])
+
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 scan_p.to_lojax = _scan_to_lojax
 
