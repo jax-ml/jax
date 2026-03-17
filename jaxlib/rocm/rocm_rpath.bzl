@@ -35,8 +35,11 @@ _ROCM_LINK_ONLY = "@local_config_rocm//rocm:link_only"
 
 _WHEEL_RPATHS = [
     "-Wl,-rpath,$$ORIGIN/../rocm/lib",
+    "-Wl,-rpath,$$ORIGIN/../rocm/lib/rocm_sysdeps/lib",
     "-Wl,-rpath,$$ORIGIN/../../rocm/lib",
+    "-Wl,-rpath,$$ORIGIN/../../rocm/lib/rocm_sysdeps/lib",
     "-Wl,-rpath,/opt/rocm/lib",
+    "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
 ]
 
 def _wheel_features():
