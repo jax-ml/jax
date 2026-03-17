@@ -235,7 +235,6 @@ and it even allows you to specify multi-platform export to
 obtain an `Exported` object that can be compiled and executed
 on multiple platforms.
 
-
 ```python
 >>> import jax
 >>> from jax import export
@@ -348,8 +347,8 @@ devices in the mesh are ignored for tracing and lowering:
 
 >>> # and it knows the shardings for the inputs. These will be applied
 >>> # when the exported is called.
->>> exp.in_shardings_hlo
-({devices=[4]<=[4]},)
+>>> exp.in_shardings_jax(export_mesh)
+(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Auto,)), spec=P('a',)),)
 
 >>> # You can also use a concrete set of devices for exporting
 >>> concrete_devices = jax.local_devices()[:4]
@@ -358,14 +357,11 @@ devices in the mesh are ignored for tracing and lowering:
 ...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
 ...                         sharding=NamedSharding(concrete_mesh, P("a"))))
 
->>> # You can expect the same results
->>> assert exp.in_shardings_hlo == exp2.in_shardings_hlo
-
 >>> # When you call an Exported, you must use a concrete set of devices
->>> arg = jnp.arange(8 * 4)
->>> res1 = exp.call(jax.device_put(arg,
-...                                NamedSharding(concrete_mesh, P("a"))))
+>>> arg = jax.device_put(jnp.arange(8 * 4),
+...                      NamedSharding(concrete_mesh, P("a")))
 
+>>> res1 = exp.call(arg)
 >>> # Check out the first 2 shards of the result
 >>> [f"device={s.device} index={s.index}" for s in res1.addressable_shards[:2]]
 ['device=TFRT_CPU_0 index=(slice(0, 8, None),)',
@@ -446,7 +442,6 @@ contains no sharding annotations, then it can be invoked on an argument of
 the same shape but sharded on multiple devices, and the compiler will shard
 the function appropriately:
 
-```python
 ```python
 >>> import jax
 >>> from jax import export
@@ -763,11 +758,12 @@ that live in jaxlib):
      the next step: Add a backward compatibility test for `T_NEW`,
      and add `T_NEW` to the list of
      [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code) in `_export.py`.
-       * Instructions for adding backwards compatibility tests are at the top of
+       * Instructions for adding backwards compatibility tests are at
+         the top of
          [export_back_compat_test_util.py](https://github.com/search?q=repo%3Ajax-ml%2Fjax+++path%3Aexport_back_compat_test_util.py&amp%3Btype=code&type=code).
        * An example is in [PR #29488](https://github.com/jax-ml/jax/pull/29488).
-       * Note that if you do this before the next step, the exporting will still not
-         use the `T_NEW` lowering, and you have to add
+       * Note that if you do this before the next step, the exporting will
+         still not use the `T_NEW` lowering, and you have to add
          `with config.export_ignore_forward_compatibility(True):` around the
          call to `self.run_one_test`. This can be removed when you actually get
          to step 4.
@@ -789,7 +785,8 @@ that live in jaxlib):
         JIT branch.
   6. Day “RELEASE + 180” (end of backward compatibility window,
     can be even later than 180 days): By now, we must have bumped
-    the minimum jaxlib so that the lowering conditional `jaxlib_version < (0, 4, 31)`
+    the minimum jaxlib so that the lowering conditional
+    `jaxlib_version < (0, 4, 31)`
     was already removed and JAX lowering cannot generate custom calls to `T`.
       * We remove the C++ implementation of the old custom call target `T`.
       * We remove also the backwards compatibility test for `T`
