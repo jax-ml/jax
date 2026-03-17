@@ -37,12 +37,6 @@ Here is an example:
 ...    jax.ShapeDtypeStruct((), np.float32))
 
 >>> # You can inspect the Exported object
->>> exported.fun_name
-'f'
-
->>> exported.in_avals
-(ShapedArray(float32[]),)
-
 >>> print(re.search(r".*@main.*", exported.mlir_module()).group(0))
   func.func public @main(%arg0: tensor<f32> loc("x")) -> (tensor<f32> {jax.result_info = "result"}) {
 
@@ -52,8 +46,6 @@ Here is an example:
 >>> # The serialized function can later be rehydrated and called from
 >>> # another JAX computation, possibly in another process.
 >>> rehydrated_exp: export.Exported = export.deserialize(serialized)
->>> rehydrated_exp.in_avals
-(ShapedArray(float32[]),)
 
 >>> def callee(y):
 ...  return 3. * rehydrated_exp.call(y * 4.)
@@ -121,61 +113,50 @@ transformations, e.g., forward-mode AD (jvp), or {func}`jax.vmap`.
 
 ## Compatibility guarantees
 
-You should not use the raw StableHLO that is obtained from just lowering
-(`jax.jit(f).lower(1.).compiler_ir()`)
-for archival and for compilation in another process, for several reasons.
-
-First, the compilation may use a different version of the compiler, supporting a
-different version of StableHLO. The {class}`jax.export` module takes
-care of this by using the
-[portable-artifact feature of StableHLO](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
-to deal with the possible evolution of the StableHLO opset.
-
-### Compatibility guarantees for custom calls
-
-Second, the raw StableHLO may contain custom calls referencing C++
-functions.
-JAX uses custom calls for lowering of a small number of primitives,
-e.g., linear algebra primitives, sharding annotations, or Pallas kernels.
-These do not fall under the compatibility guarantees for StableHLO.
-The C++ implementations of these functions change rarely, but they can change.
-
-`jax.export` makes the following export compatibility guarantees:
-A JAX exported artifact can be compiled and executed by a compiler and
-JAX runtime system that are:
+When you use the {class}`jax.export` module, you get the following export
+compatibility guarantees:
+A JAX exported and serialized artifact supports `.deserialize` and `.call`
+(i.e. compilation and execution) by a compiler and JAX runtime system that are:
 
   * **up to 6 months newer** than the version of JAX used for exporting
   (we say that JAX export offers **6 months backward compatibility**).
-  This is useful if we want to archive the exported artifact to be compiled and
+  This is useful if you want to archive the exported artifact to be compiled and
   executed later.
   * **up to 3 weeks older** than the version of JAX used for exporting
   (we say that JAX export offers **3 weeks forward compatibility**).
-  This is useful if we want to compile and run an exported artifact with a
+  This is useful if you want to compile and run an exported artifact with a
   consumer that was built and deployed before the export, e.g.,
   an inference system that is already deployed when the exporting is done.
 
 (The particular compatibility window lengths are the same that JAX
-[promised for jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#usage-saved-model),
+[promises for jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#usage-saved-model),
 and are based on [TensorFlow Compatibility](https://www.tensorflow.org/guide/versions#graph_and_checkpoint_compatibility_when_extending_tensorflow).
 The terminology “backward compatibility” is from the perspective of the
 consumer, e.g., the inference system.)
 
 What **matters is when the exporting and consuming components were built**,
 not the time when the exporting and the compilation happen.
-For external JAX users, it is
-[possible to run JAX and jaxlib at different versions](https://docs.jax.dev/en/latest/jep/9419-jax-versioning.html#how-are-jax-and-jaxlib-versioned);
-what matters is when the jaxlib release was built.
+To reduce chances of incompatibility, internal JAX users should **rebuild and
+redeploy consumer systems as frequently as possible**.
 
-To reduce chances of incompatibility, internal JAX users should:
-  * **rebuild and redeploy consumer systems as frequently as possible**.
-
-and external users should:
-  * run the exporting and consumer systems with the same version of jaxlib,
-  whenever possible, and
-  * export for archival **with the latest released version of jaxlib**.
+External users should export for archival **with the latest released version of
+jaxlib**.
 
 The compatibility guarantees do not apply if you bypass the `jax.export` APIs
-to obtain the StableHLO code.
+to obtain the StableHLO code (e.g., by `jax.jit(f).lower(1.).compiler_ir()`)
+and then try to use it with a different build of JAX or jaxlib.
+Unlike direct lowering, the {class}`jax.export` module uses the
+[portable-artifact feature of StableHLO](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
+to deal with the possible evolution of the StableHLO opset.
+
+### Compatibility guarantees for custom calls
+
+Furthermore, the raw StableHLO may contain custom calls referencing C++
+functions.
+JAX uses custom calls for lowering of a small number of primitives,
+e.g., linear algebra primitives, sharding annotations, or Pallas kernels.
+These do not fall under the compatibility guarantees for StableHLO.
+The C++ implementations of these functions change rarely, but they can change.
 
 In order to ensure forward compatibility, when we change the JAX lowering rules
 to use a new custom call target, JAX will refrain for 3 weeks to use the new
