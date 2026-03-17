@@ -2768,6 +2768,57 @@ class Token:
 pytype_aval_mappings[Token] = lambda _: abstract_token
 dtypes.canonicalize_value_handlers[Token] = lambda x: x
 
+_pyobj_registry: dict[int, Any] = {}
+_pyobj_next_id: int = 0
+
+
+class AbstractPyObject(AbstractValue):
+  dtype = np.dtype(np.uint32)
+  shape = ()
+  ndim = 0
+  size = 1
+  weak_type = False
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'PyObject'
+  def to_tangent_aval(self): raise TypeError("PyObject has no tangent aval")
+  def to_ct_aval(self): raise TypeError("PyObject has no cotangent aval")
+  def update(self, **kwargs): return self
+  def strip_weak_type(self): return self
+
+abstract_pyobject: AbstractPyObject = AbstractPyObject()
+
+
+def _wrap_pyobj(obj: Any) -> np.ndarray:
+  global _pyobj_next_id
+  idx = _pyobj_next_id
+  _pyobj_next_id += 1
+  _pyobj_registry[idx] = obj
+  return np.array(idx, dtype=np.uint32)
+
+
+def _unwrap_pyobj(idx: int) -> Any:
+  obj = _pyobj_registry.get(idx)
+  if obj is None:
+    raise RuntimeError(
+        f"PyObject handle {idx} is not registered; "
+        "the object may have been garbage collected")
+  return obj
+
+
+class PyObjectHandle(np.ndarray):
+  """A uint32 numpy scalar representing an opaque Python object by index."""
+
+  def __new__(cls, obj: Any):
+    global _pyobj_next_id
+    idx = _pyobj_next_id
+    _pyobj_next_id += 1
+    _pyobj_registry[idx] = obj
+    instance = np.array(idx, dtype=np.uint32).view(cls)
+    return instance
+
+
+pytype_aval_mappings[PyObjectHandle] = lambda _: abstract_pyobject
+
 
 class AbstractTodo(AbstractValue):
   def __init__(self, inner_aval):

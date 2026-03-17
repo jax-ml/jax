@@ -2319,7 +2319,9 @@ def lower_sharding_computation(
         else s for s, aval in zip(in_shardings, global_in_avals))
 
   for a in global_out_avals:
-    if (a is not core.abstract_token and not a.sharding.mesh.empty and
+    if (a is not core.abstract_token and
+        not isinstance(a, core.AbstractPyObject) and
+        not a.sharding.mesh.empty and
         a.sharding.mesh.are_all_axes_explicit and
         device_assignment is not None and
         len(device_assignment) != a.sharding.mesh.size):

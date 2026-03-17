@@ -53,6 +53,8 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+PyObjectType = core.abstract_pyobject
+
 @dataclasses.dataclass(frozen=True)
 class _FlatCallback:
   """A Python function callable with flat arguments and results.
@@ -64,10 +66,24 @@ class _FlatCallback:
   """
   callback_func: Callable[..., Any]
   in_tree: tree_util.PyTreeDef  # (args, kwargs) pytree for `callback_func`.
+  result_avals: tuple[core.AbstractValue, ...] = ()
+  input_pyobj_mask: tuple[bool, ...] = ()
 
   def __call__(self, *flat_args: Array) -> Sequence[Array]:
+    if self.input_pyobj_mask:
+      flat_args = tuple(
+          core._unwrap_pyobj(int(np.asarray(a))) if is_po else a
+          for a, is_po in zip(flat_args, self.input_pyobj_mask)
+      )
     args, kwargs = tree_util.tree_unflatten(self.in_tree, flat_args)
-    return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
+    results = tree_util.tree_leaves(self.callback_func(*args, **kwargs))
+    if self.result_avals and any(
+        isinstance(a, core.AbstractPyObject) for a in self.result_avals):
+      results = [
+          core._wrap_pyobj(r) if isinstance(aval, core.AbstractPyObject) else r
+          for r, aval in zip(results, self.result_avals)
+      ]
+    return results
 
 
 def pure_callback_impl(
@@ -249,6 +265,8 @@ def pure_callback_lowering(
 mlir.register_lowering(pure_callback_p, pure_callback_lowering, cacheable=False)
 
 def _check_shape_dtype(shape_dtype):
+  if shape_dtype is PyObjectType:
+    return
   dt = np.dtype(shape_dtype.dtype)
   if dtypes.canonicalize_dtype(dt) != dt:
     raise ValueError(
@@ -382,13 +400,24 @@ def pure_callback(
         f"but got: {vmap_method}")
 
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)
+  tree_util.tree_map(
+      _check_shape_dtype, result_shape_dtypes,
+      is_leaf=lambda x: x is PyObjectType)
   result_avals = tree_util.tree_map(
-      lambda x: core.ShapedArray(x.shape, x.dtype), result_shape_dtypes)
-  flat_result_avals, out_tree = tree_util.tree_flatten(result_avals)
+      lambda x: core.abstract_pyobject if x is PyObjectType
+                else core.ShapedArray(x.shape, x.dtype),
+      result_shape_dtypes,
+      is_leaf=lambda x: x is PyObjectType)
+  flat_result_avals, out_tree = tree_util.tree_flatten(
+      result_avals, is_leaf=lambda x: isinstance(x, core.AbstractPyObject))
+  input_pyobj_mask = tuple(
+      isinstance(core.shaped_abstractify(a), core.AbstractPyObject)
+      for a in flat_args)
   out_flat = pure_callback_p.bind(
       *flat_args,
-      callback=_FlatCallback(callback, in_tree),
+      callback=_FlatCallback(callback, in_tree,
+                             result_avals=tuple(flat_result_avals),
+                             input_pyobj_mask=input_pyobj_mask),
       result_avals=tuple(flat_result_avals),
       sharding=sharding,
       vmap_method=vmap_method,
@@ -689,6 +718,9 @@ _xla_shape_handlers[core.ShapedArray] = _make_array_shape
 
 _xla_shape_handlers[core.AbstractToken] = lambda _: xc.Shape.token_shape()
 
+_xla_shape_handlers[core.AbstractPyObject] = lambda _: xc.Shape.array_shape(
+    np.dtype(np.uint32), ())
+
 
 def _emit_tpu_python_callback(
     backend: xc.Client,
@@ -819,17 +851,22 @@ def emit_python_callback(
       raise RuntimeError(
           "Mismatched number of outputs from callback. "
           "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
-    # Handle Python literals, and custom arrays, e.g., tf.Tensor.
-    out_vals = tuple(dtypes.canonicalize_value(np.asarray(a)) for a in out_vals)
+    processed = []
     for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
-      if out_val.shape != out_aval.shape:
-        raise RuntimeError(
-            f"Incorrect output shape for return value #{i}: "
-            f"Expected: {out_aval.shape}, Actual: {out_val.shape}")
-      if out_val.dtype != out_aval.dtype:
-        raise RuntimeError(
-            f"Incorrect output dtype for return value #{i}: "
-            f"Expected: {out_aval.dtype}, Actual: {out_val.dtype}")
+      if isinstance(out_aval, core.AbstractPyObject):
+        processed.append(np.asarray(out_val, dtype=np.uint32))
+      else:
+        out_val = dtypes.canonicalize_value(np.asarray(out_val))
+        if out_val.shape != out_aval.shape:
+          raise RuntimeError(
+              f"Incorrect output shape for return value #{i}: "
+              f"Expected: {out_aval.shape}, Actual: {out_val.shape}")
+        if out_val.dtype != out_aval.dtype:
+          raise RuntimeError(
+              f"Incorrect output dtype for return value #{i}: "
+              f"Expected: {out_aval.dtype}, Actual: {out_val.dtype}")
+        processed.append(out_val)
+    out_vals = tuple(processed)
 
     if platform == "tpu":
       # On TPU we cannot receive empty arrays. So, we return from the wrapped
@@ -839,7 +876,8 @@ def emit_python_callback(
       non_empty_out_vals = tuple(
           out_val
           for out_val, result_aval in zip(out_vals, result_avals)
-          if not is_empty_shape(result_aval.shape))
+          if isinstance(result_aval, core.AbstractPyObject)
+          or not is_empty_shape(result_aval.shape))
       return non_empty_out_vals
     else:
       return out_vals
@@ -848,7 +886,7 @@ def emit_python_callback(
     non_empty_result_avals, non_empty_result_shapes = util.unzip2([
         (aval, shape)
         for aval, shape in zip(result_avals, result_shapes)
-        if not is_empty_shape(aval.shape)])
+        if isinstance(aval, core.AbstractPyObject) or not is_empty_shape(aval.shape)])
     non_empty_outputs, token = _emit_tpu_python_callback(
         backend, ctx, _wrapped_callback,  token,
         operands, operand_avals, operand_shapes,
@@ -857,7 +895,8 @@ def emit_python_callback(
     non_empty_outputs_iter = iter(non_empty_outputs)
     outputs = [
         mlir.ir_constant(np.zeros(result_aval.shape, dtype=result_aval.dtype))
-        if is_empty_shape(result_aval.shape) else next(non_empty_outputs_iter)
+        if not isinstance(result_aval, core.AbstractPyObject)
+        and is_empty_shape(result_aval.shape) else next(non_empty_outputs_iter)
         for result_aval in result_avals]
     return outputs, token, None
 

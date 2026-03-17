@@ -173,6 +173,7 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
+  py_traced_argnums: int | Sequence[int] = ...,
 ) -> pjit.JitWrapped: ...
 
 @overload
@@ -189,6 +190,7 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
+  py_traced_argnums: int | Sequence[int] = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]: ...
 
 def jit(
@@ -204,6 +206,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   compiler_options: dict[str, Any] | None = None,
+  py_traced_argnums: int | Sequence[int] = (),
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -342,6 +345,9 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
+  if isinstance(py_traced_argnums, int):
+    py_traced_argnums = (py_traced_argnums,)
+  py_traced_argnums = tuple(py_traced_argnums)
   kwds = dict(
       in_shardings=in_shardings, out_shardings=out_shardings,
       static_argnums=static_argnums, static_argnames=static_argnames,
@@ -349,9 +355,28 @@ def jit(
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
       compiler_options=compiler_options, use_resource_env=False)
   if isinstance(fun, NotSpecified):
-    return lambda fun: pjit.make_jit(fun, **kwds)
+    return lambda fun: _make_jit_with_pyobj(fun, py_traced_argnums, kwds)
   else:
-    return pjit.make_jit(fun, **kwds)
+    return _make_jit_with_pyobj(fun, py_traced_argnums, kwds)
+
+
+def _make_jit_with_pyobj(fun, py_traced_argnums, jit_kwds):
+  inner = pjit.make_jit(fun, **jit_kwds)
+  if not py_traced_argnums:
+    return inner
+
+  import functools
+
+  @functools.wraps(fun)
+  def wrapper(*args, **kwargs):
+    from jax._src.core import PyObjectHandle  # lazy import to avoid circularity
+    new_args = list(args)
+    for i in py_traced_argnums:
+      if i < len(args):
+        new_args[i] = PyObjectHandle(args[i])
+    return inner(*new_args, **kwargs)
+
+  return wrapper
 
 if not TYPE_CHECKING:
   # TODO(slebedev): This ought to be a decorator, but it seems it makes

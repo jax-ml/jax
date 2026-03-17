@@ -212,6 +212,8 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 ir_type_handlers[core.AbstractTodo] = lambda x: _array_ir_types(x.inner_aval)
+ir_type_handlers[core.AbstractPyObject] = lambda _: ir.RankedTensorType.get(
+    [], ir.IntegerType.get_unsigned(32))
 
 # This is a backwards compatibility shim for external users of jax.mlir apis.
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
@@ -1366,7 +1368,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
-  strip_metadata = lambda a: (a if a is core.abstract_token else
+  strip_metadata = lambda a: (a if a is core.abstract_token
+                              or isinstance(a, core.AbstractPyObject) else
                               core.ShapedArray(a.shape, a.dtype))
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
@@ -1433,7 +1436,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
 
   results_not_matched = collections.defaultdict(collections.deque)
   for i, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
-    if i not in aliased_output_ids and aval is not core.abstract_token:
+    if (i not in aliased_output_ids and aval is not core.abstract_token
+        and not isinstance(aval, core.AbstractPyObject)):
       results_not_matched[(aval.size, rm)].append(i)  # pyrefly: ignore[missing-attribute]
 
   # For each donated argument that hasn't been aliased or donated to XLA, try to
@@ -1939,6 +1943,7 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
+              not isinstance(a, core.AbstractPyObject) and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385

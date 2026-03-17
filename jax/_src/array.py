@@ -1338,3 +1338,24 @@ def _token_global_result_handler(global_aval, out_sharding, committed):
     return core.Token(array)
   return array_handler.wrap(wrapper)
 pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler
+
+
+def _pyobj_global_result_handler(global_aval, out_sharding, committed):
+  uint32_aval = core.ShapedArray((), np.dtype(np.uint32))
+  return _array_global_result_handler(uint32_aval, out_sharding, committed)
+
+pxla.global_result_handlers[core.AbstractPyObject] = _pyobj_global_result_handler
+
+
+def _pyobj_shard_arg(xs, shardings, layouts, copy_semantics):
+  import numpy as _np
+  results = []
+  for x, sharding, layout, sem in safe_zip(xs, shardings, layouts, copy_semantics):
+    uint32_arr = _np.array(int(x), dtype=_np.uint32)
+    uint32_aval = core.ShapedArray((), _np.dtype(_np.uint32))
+    devices = sharding._addressable_device_assignment
+    results.append(pxla.batched_device_put(
+        uint32_aval, sharding, [uint32_arr] * len(devices), devices))
+  return results
+
+pxla.shard_arg_handlers[core.PyObjectHandle] = _pyobj_shard_arg
