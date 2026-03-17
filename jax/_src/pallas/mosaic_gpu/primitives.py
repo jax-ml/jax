@@ -3741,6 +3741,7 @@ def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
 
 
 @lowering.register_lowering_rule(semaphore_signal_parallel_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(semaphore_signal_parallel_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_signal_lowering_rule(
     ctx: lowering.LoweringRuleContext, *args, args_tree,
 ):
@@ -3775,19 +3776,20 @@ def _semaphore_signal_lowering_rule(
         )
       device_id = lowering._ensure_ir_value(device_id, jnp.int32)
       sem = ctx.launch_ctx.to_remote(sem, device_id)
-    sem_ptr = mgpu.utils.memref_ptr(sem)
-    # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
-    # We only signal the semaphore from a single lane, which does not guarantee
-    # anything about the state of the other three warps in the warpgroup (they
-    # might still be e.g. reading memory that someone will overwrite once they
-    # receive a signal).
-    if ctx.module_ctx.auto_barriers:
-      mgpu.utils.warpgroup_barrier()
     val = lowering._ir_constant(value, i32)
-    mgpu_utils.SemaphoreRef(sem_ptr).signal(
-        val, predicate=ctx.module_ctx.single_wg_lane_predicate, relaxed=True,
-    )
-    mgpu_utils.fence_release_sys()
+    with lowering._wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
+      sem_ptr = mgpu.utils.memref_ptr(sem)
+      # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
+      # We only signal the semaphore from a single lane, which does not guarantee
+      # anything about the state of the other three warps in the warpgroup (they
+      # might still be e.g. reading memory that someone will overwrite once they
+      # receive a signal).
+      if ctx.module_ctx.auto_barriers:
+        mgpu.utils.warpgroup_barrier()
+      mgpu_utils.SemaphoreRef(sem_ptr).signal(
+          val, predicate=ctx.module_ctx.single_wg_lane_predicate, relaxed=True,
+      )
+      mgpu_utils.fence_release_sys()
   return ()
 
 try_cluster_cancel_p = jax_core.Primitive('try_cluster_cancel')
@@ -4312,6 +4314,7 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
 
 
 @lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Warpgroup)
 def _multimem_store_lowering_rule(
     ctx: lowering.LoweringRuleContext, value, local_ref, *transforms_leaves, transforms_tree, collective_axes,
 ):
@@ -4339,13 +4342,14 @@ def _multimem_store_lowering_rule(
       raise NotImplementedError(
           f"Unhandled transforms for multimem_store: {transforms}"
       )
-  multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
-  if not ctx.avals_in[0].shape:
-    multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_out[0].dtype), [])
-  else:
-    value.store_untiled(multi_ref, optimized=False)
-  if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, [local_ref]) as [local_ref]:
+    multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
+    if not ctx.avals_in[0].shape:
+      multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_out[0].dtype), [])
+    else:
+      value.store_untiled(multi_ref, optimized=False)
+    if ctx.module_ctx.auto_barriers:
+      mgpu.warpgroup_barrier()  # Make sure the writes have completed.
   return ()
 
 
@@ -4480,6 +4484,7 @@ def _semaphore_signal_multicast_abstract_eval(*avals, args_tree, collective_axes
 
 
 @lowering.register_lowering_rule(semaphore_signal_multicast_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(semaphore_signal_multicast_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_signal_multicast_lowering(
     ctx: lowering.LoweringRuleContext, *args, args_tree, collective_axes
 ):
@@ -4501,10 +4506,11 @@ def _semaphore_signal_multicast_lowering(
     raise ValueError(
         f"collective_axes {collective_axes} must equal entire mesh axes {mesh_info.axis_names}"
     )
-  multi_ref = ctx.launch_ctx.to_remote_multicast(sem)
-  if ctx.module_ctx.auto_barriers:
-    mgpu_utils.warpgroup_barrier()
   i32 = ir.IntegerType.get_signless(32)
   val = lowering._ir_constant(value, i32)
-  mgpu_utils.SemaphoreRef.signal_multimem(mgpu_utils.memref_ptr(multi_ref.ref), val)
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
+    multi_ref = ctx.launch_ctx.to_remote_multicast(sem)
+    if ctx.module_ctx.auto_barriers:
+      mgpu_utils.warpgroup_barrier()
+    mgpu_utils.SemaphoreRef.signal_multimem(mgpu_utils.memref_ptr(multi_ref.ref), val)
   return ()
