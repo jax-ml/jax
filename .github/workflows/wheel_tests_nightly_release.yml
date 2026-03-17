@@ -11,7 +11,7 @@
 # 4. run-bazel-test-cuda: Calls the `bazel_cuda.yml` workflow which downloads the JAX wheels
 #                     that were built by internal CI jobs and runs Bazel CUDA tests.
 # 5. run-pytest-rocm: Calls the `pytest_rocm.yml` workflow which downloads the JAX wheels and
-#                     ROCm plugins from PyPI/GitHub releases and runs ROCm tests.
+#                     ROCm plugins from S3 and runs ROCm tests.
 # 6. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
 #                    built by internal CI jobs and runs TPU tests.
 # 7. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that

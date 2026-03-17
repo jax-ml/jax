@@ -305,8 +305,15 @@ jobs:
         matrix:
           runner: ["linux-x86-64-1gpu-amd"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.11"]
+          python: ["3.11", "3.12", "3.13", "3.14"]
           rocm-version: ["7"]
+          exclude:
+            - artifact: "jax-rocm-pjrt"
+              python: "3.12"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.13"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.14"
     name: "Build ${{ format('{0}', 'ROCm') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
@@ -337,6 +344,7 @@ jobs:
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() }}
