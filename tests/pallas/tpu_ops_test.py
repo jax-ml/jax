@@ -957,6 +957,8 @@ class OpsTest(ptu.PallasTPUTest):
       jnp.bfloat16,
   )
   def test_sigmoid(self, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
+      self.skipTest("requires a newer libTPU")
 
     shape = (32, 128)
     x = jax.random.normal(jax.random.key(42), shape, dtype=dtype)

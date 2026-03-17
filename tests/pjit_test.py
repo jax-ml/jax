@@ -830,6 +830,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     pjit(lambda x: x, in_shardings=None, out_shardings=None)(key)
 
   def test_lower_with_wrapper_error(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
+      self.skipTest("Requires libtpu >= 2026.3.15")
     @jax.jit
     def f(x):
       return x
@@ -10285,6 +10287,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
+      self.skipTest("Requires libtpu >= 2026.3.15")
 
     inp1 = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
     inp2 = jax.device_put(np.arange(8).reshape(2, 4), P('y', None))
@@ -10301,6 +10305,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_split_reduced_concat_unreduced(self, mesh):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
+      self.skipTest("Requires libtpu >= 2026.3.15")
 
     x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
     w = jax.device_put(np.arange(64.).reshape(4, 16), P(reduced={'x'}))
