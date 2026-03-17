@@ -124,7 +124,7 @@ A JAX exported and serialized artifact supports `.deserialize` and `.call`
   executed later.
   * **up to 3 weeks older** than the version of JAX used for exporting
   (we say that JAX export offers **3 weeks forward compatibility**).
-  This is useful if we want to compile and run an exported artifact with a
+  This is useful if you want to compile and run an exported artifact with a
   consumer that was built and deployed before the export, e.g.,
   an inference system that is already deployed when the exporting is done.
 
