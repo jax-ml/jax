@@ -736,6 +736,10 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertAllClose(bwd_result, 2 * g)
     self.assertEqual(repr(dt), 'PrimalTangentDType{i8/bf16}')
 
+    # test equality
+    dt_ = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
+    self.assertEqual(dt, dt_)
+
   @parameterized.parameters(itertools.product([(), (2,), (3, 4)], repeat=2))
   def test_edtype_conversion(self, shape_prefix, shape_suffix):
     class scalar(dtypes.extended): ...
