@@ -103,6 +103,9 @@ def loop(
     step = lax.convert_element_type(step, idx_type)
     zero = jnp.array(0, dtype=idx_type)
   else:
+    lower = lax.asarray(lower)
+    upper = lax.asarray(upper)
+    step = lax.asarray(step)
     zero = 0
 
   def decorator(body):

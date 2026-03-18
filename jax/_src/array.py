@@ -488,7 +488,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise BufferError(
           "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"
+          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
       )
 
   def __reduce__(self):
@@ -1105,7 +1105,7 @@ def make_array_from_single_device_arrays(
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
-  arrays = list(arrays) if isinstance(arrays, tuple) else arrays  # pyrefly: ignore[no-matching-overload]  # pyrefly#2607
+  arrays = list(arrays) if isinstance(arrays, tuple) else arrays
   # TODO(phawkins): ideally the cast() could be checked.
   try:
     return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),

@@ -1153,7 +1153,7 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
 
   message = (
       "A large amount of constants were captured during lowering"
-      f" ({util.pprint_bytes(total_bytes)} total). If this is intentional,"  # pyrefly: ignore[unbound-name]  # pyrefly#2382
+      f" ({util.pprint_bytes(total_bytes)} total). If this is intentional,"
       " disable this warning by setting JAX_CAPTURED_CONSTANTS_WARN_BYTES=-1. "
   )
 

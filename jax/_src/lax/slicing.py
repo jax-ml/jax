@@ -3420,7 +3420,7 @@ def _dynamic_slice_indices(
   ):
     # If i is unsigned, then it cannot be negative.
     if dtypes.issubdtype(_dtype(i), np.unsignedinteger):
-      result.append(i)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      result.append(i)
       continue
     # Test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
@@ -3444,8 +3444,8 @@ def _dynamic_slice_indices(
       continue
     if allow_negative_index:
       d_arr = lax.convert_element_type(d, _dtype(i))
-      # pyrefly: ignore[bad-argument-type, unsupported-operation]  # pyrefly#2385
+      # pyrefly: ignore [unsupported-operation]
       result.append(lax.select(i < 0, i + d_arr, i))
     else:
-      result.append(i)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      result.append(i)
   return result

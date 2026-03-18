@@ -103,7 +103,7 @@ def linearize_subtrace_2(f: Callable, is_vjp: bool,
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
-  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is tag) for c in consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
@@ -1473,7 +1473,7 @@ def _interleave(xs, ys):
 
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
-custom_lin_p.multiple_results = True
+custom_lin_p.multiple_results = True  # pyrefly: ignore[missing-attribute]
 
 def raise_custom_vjp_error_on_jvp(*_, **__):
   raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "

@@ -237,7 +237,7 @@ def convert(fun_jax: Callable,
           "native_serialization_platforms must be a sequence "
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
-    native_serialization_platforms = tuple(native_serialization_platforms)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2607
+    native_serialization_platforms = tuple(native_serialization_platforms)
 
   api.check_callable(fun_jax)
 
