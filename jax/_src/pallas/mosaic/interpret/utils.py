@@ -163,6 +163,9 @@ class InterpretParams:
       `number of devices * num_cores_per_device`. If `None`, the vector clock
       size that is used in the interpreter will default to twice the total
       number of cores.
+      This should be left at/set to `None` for interpreting GPU kernels. (For
+      GPU kernels, the number of vector clocks is determined by the number of
+      devices, `num_cores_or_threads`, and `num_tma_threads_per_device`.)
       Default: None.
     logging_mode: Logging mode for the kernel interpreter.
   """
@@ -181,9 +184,15 @@ class InterpretParams:
           "Number of cores or threads must be at least 1, but got"
           f" {self.num_cores_or_threads}."
       )
+    if self.vector_clock_size is not None and self.vector_clock_size < 1:
+      # Further validation is done in `get_vector_clock_size` below.
+      raise ValueError(
+          "Vector clock size must be at least 1, but got"
+          f" {self.vector_clock_size}."
+      )
 
   def get_vector_clock_size(self, num_devices) -> int:
-    """Returns the number of vector clocks to use.`"""
+    """Returns the number of vector clocks to use for TPU interpret mode.`"""
     num_cores_or_threads = num_devices * self.num_cores_or_threads
     if self.vector_clock_size is not None:
       if num_cores_or_threads >= self.vector_clock_size:
@@ -227,6 +236,8 @@ class InterpretParams:
     return value
 
 
+# TODO(nrink): Move the definition of `InterpretGPUParams` into the directory
+# with GPU interpreter code.
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class InterpretGPUParams(InterpretParams):
   """Parameters for GPU interpret mode.
@@ -244,10 +255,29 @@ class InterpretGPUParams(InterpretParams):
   again in the same process.
 
   Attrs:
+    num_tma_threads_per_device: The number of threads that can be used for
+      simulating memory transfers with the TMA unit. The interpreter does not
+      in fact spawn separate threads for executing TMA memory transfers, but a
+      separate vector clock is maintained for each TMA thread.
+      Default: 1.
     logging_mode: Logging mode for GPU interpret mode.
   """
 
+  num_tma_threads_per_device: int = 1
   logging_mode: LoggingMode | None = None
+
+  def __post_init__(self):
+    super().__post_init__()
+    if self.vector_clock_size is not None:
+      raise ValueError(
+          "`vector_clock_size` must be `None` for GPU interpret mode, but got"
+          f" {self.vector_clock_size}."
+      )
+    if self.num_tma_threads_per_device < 1:
+      raise ValueError(
+          "Number of TMA threads per device must be at least 1, but got"
+          f" {self.num_tma_threads_per_device}."
+      )
 
 
 class Counter:

@@ -577,6 +577,7 @@ class SharedMemory:
       key: Any,
       rnge: tuple[slice | int, ...],
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Reads contents of a memory buffer.
@@ -585,18 +586,20 @@ class SharedMemory:
       key: The key of the buffer to read.
       rnge: The range to read within the buffer.
       global_core_id: The global core ID of the core reading the buffer.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       logging_info: Information about the source of the read.
 
     Returns:
       - The contents of the read range of the buffer, or None if reading out of
         bounds.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 
@@ -632,6 +635,7 @@ class SharedMemory:
       rnge: tuple[slice | int, ...],
       value: np.ndarray,
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[bool, ShapeAndDtype, vc.VectorClock | None]:
     """Stores contents into a memory buffer.
@@ -641,17 +645,19 @@ class SharedMemory:
       rnge: The range within the buffer contents that `value` is written to.
       value: The array to store into the buffer.
       global_core_id: The global core ID of the core writing into the buffer.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       logging_info: Information about the source of the store.
 
     Returns:
       - True of the store was in bounds, False otherwise.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 
@@ -692,6 +698,7 @@ class SharedMemory:
       value: np.ndarray,
       mask: np.ndarray | None,
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Swaps contents of a memory buffer.
@@ -701,6 +708,8 @@ class SharedMemory:
       rnge: The range within the buffer contents that `value` is swapped into.
       value: The array to be written into the buffer.
       mask: The mask to apply to the swap operation.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       global_core_id: The global core ID of the core writing into the buffer.
       logging_info: Information about the source of the swap.
 
@@ -708,12 +717,12 @@ class SharedMemory:
       - The contents of the range of the buffer (prior to the swap), or None if
         accessing buffer contents bounds.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 

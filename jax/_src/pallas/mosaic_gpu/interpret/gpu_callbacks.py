@@ -132,28 +132,20 @@ def _initialize_shared_memory(
 
   num_devices = int(num_devices)
   num_threads = int(num_threads)
-  num_total_threads = num_devices * num_threads
+  num_total_pallas_threads = num_devices * num_threads
 
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
-      _races = RaceDetectionState(num_cores=num_total_threads)
+      _races = RaceDetectionState(num_cores=num_total_pallas_threads)
       _shared_memory = memory.GPUSharedMemory(
           num_devices=num_devices,
-          # We re-use the `SharedMemory`'s capability to model multiple cores
-          # per (TPU) device for modeling the  multiple threads on a single GPU
-          # device.
-          num_cores_per_device=num_threads,
+          num_pallas_threads_per_block=num_threads,
+          num_tma_threads_per_device=interpret_params.num_tma_threads_per_device,
           out_of_bounds_reads=interpret_params.out_of_bounds_reads,
           # TODO(nrink): Support different DMA execution modes on GPU.
           dma_execution_mode="eager",
           uninitialized_memory=interpret_params.uninitialized_memory,
           detect_races=interpret_params.detect_races,
-          vector_clock_size=vector_clock_size,
-          clocks=[
-              vc.make_vector_clock(vector_clock_size)
-              for _ in range(num_total_threads)
-          ],
           barrier=threading.Barrier(num_devices, action=lambda: None),
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory
@@ -162,9 +154,9 @@ def _initialize_shared_memory(
       )
   # The naming of the `num_cores` property of `SharedMemory` originates from the
   # support for multipl cores in a (Megacore) TPU device. As commented above, on
-  # GPU we model multiple threads per device as _cores_ in the
-  # (TPU-/Megacore-)inspired terminology of`SharedMemory`.
-  assert _shared_memory.num_cores == num_total_threads
+  # GPU we model multiple Pallas threads per device as _cores_ in the
+  # (TPU-/Megacore-)inspired terminology of `SharedMemory`.
+  assert _shared_memory.num_cores == num_total_pallas_threads
 
 
 def call_initialize_shared_memory(
@@ -557,6 +549,7 @@ def _get(
     block_indices=None,
     grid_loop_idx=None,
     clock=None,
+    increment_clock: bool = True,
     source_info=None,
     input_name=None,
 ) -> np.ndarray:
@@ -587,6 +580,7 @@ def _get(
       allocation_key,
       read_range,
       global_core_id,
+      increment_clock=increment_clock,
       logging_info=interpret_utils.GPULoggingInfo(
           device_id=device_id,
           pallas_thread_id=thread_id,
@@ -678,6 +672,8 @@ def _swap(
     val,
     mask,
     *,
+    clock=None,
+    increment_clock: bool = True,
     source_info=None,
 ):
   """Performs a swap into the buffer for `allocation_key_as_array` from the given device and thread."""
@@ -699,18 +695,20 @@ def _swap(
   global_core_id = shared_memory.get_global_core_id(device_id, thread_id)
 
   read_write_range = interpret_utils.to_range(transforms)
-  ret, (shape, _), clock = shared_memory.swap_buffer_content(
+  ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
       allocation_key,
       read_write_range,
       val,
       mask,
       global_core_id,
+      increment_clock=increment_clock,
       logging_info=interpret_utils.GPULoggingInfo(
           device_id=device_id,
           pallas_thread_id=thread_id,
           source_info=source_info,
       ),
   )
+  clock = clock if clock is not None else clock_
 
   if ret is None:
     if mask is None:
@@ -748,6 +746,7 @@ def call_swap(
     transforms,
     val,
     mask,
+    clock=None,
     source_info=None,
 ):
   return callback.io_callback(
@@ -759,6 +758,7 @@ def call_swap(
       transforms,
       val,
       mask,
+      clock=clock,
       ordered=True,
   )
 
@@ -968,3 +968,169 @@ def _assert_no_barriers_allocated():
 
 def call_assert_no_barriers_allocated():
   callback.io_callback(_assert_no_barriers_allocated, (), ordered=True)
+
+
+@dataclasses.dataclass(kw_only=True)
+class DeviceLocalMemoryTransfer:
+  """Represents a device-local memory transfer, e.g. GMEM to SMEM."""
+
+  # The device ID of the device on which the memory transfer is being executed.
+  device_id: int
+  # The thread ID of the thread that has initiated the memory transfer.
+  thread_id: int
+
+  # Allocation key (and transforms) for the source buffer.
+  src_allocation_key: np.ndarray
+  src_transforms: tuple[Any, ...]
+
+  # Allocation key (and transforms) for the destination buffer.
+  dst_allocation_key: np.ndarray
+  dst_transforms: tuple[Any, ...]
+
+  # Allocation key for the barrier that should be used to synchronize the
+  # execution of the memory transfer.
+  barrier_allocation_key_as_array: np.ndarray
+
+  source_info: source_info_util.SourceInfo | None = None
+
+  # `data` is only used to track internal state of the `MemoryTransfer`
+  # object. Hence `data` must not be explicitly initialized, as checked in
+  # `__post_init__` below.
+  data: np.ndarray | None = None
+
+  clock: vc.VectorClock | None = None
+
+  def __post_init__(self):
+    assert self.data is None
+
+  def execute(self):
+    """Executes the memory transfer (both reading and writing parts).
+
+    Note that the caller must not hold the lock on the shared memory (because
+    `get` and `swap` are called in this method).
+    """
+
+    shared_memory = _get_shared_memory()
+
+    barrier_key = HostAllocationKey.from_array(
+        self.barrier_allocation_key_as_array
+    )
+    barrier, clock = shared_memory.get_barrier_and_increment_clock(
+        barrier_key, self.device_id, self.thread_id
+    )
+
+    tma_thread_id = shared_memory.get_next_tma_thread_id(self.device_id)
+    global_tma_thread_id = shared_memory.get_global_thread_id(
+        self.device_id, tma_thread_id
+    )
+    # We use the `clock` from the barrier lookup to synchronize the TMA thread
+    # with the Pallas thread that initiated the transfer, i.e. the thread with
+    # `self.thread_id`. Note that the barrier lookup was done with
+    # `self.thread_id`, and hence `clock` is the vector clock for the thread
+    # with `self.thread_id`.
+    if shared_memory.detect_races:
+      self.clock = clock
+
+    # A memory transfer should be executed only once. We check this by asserting
+    # that `self.data` is `None` at the start of the transfer.
+    assert self.data is None
+
+    self.data = _get(
+        device_id=np.array(self.device_id),
+        thread_id=np.array(self.thread_id),
+        clock=vc.copy_vector_clock(self.clock),
+        increment_clock=False,
+        allocation_key=self.src_allocation_key,
+        transforms=self.src_transforms,
+        source_info=self.source_info,
+    )
+    assert self.data is not None
+    if shared_memory.detect_races:
+      assert self.clock is not None
+      vc.inc_vector_clock(self.clock, global_tma_thread_id)
+
+    # We write `self.data` to the destination allocation using `_swap`, where
+    # the result (i.e. the old contents of the destination buffer) is ignored.
+    _swap(
+        device_id=np.array(self.device_id),
+        thread_id=np.array(self.thread_id),
+        clock=vc.copy_vector_clock(self.clock),
+        increment_clock=False,
+        allocation_key_as_array=self.dst_allocation_key,
+        transforms=self.dst_transforms,
+        val=self.data,
+        mask=None,
+        source_info=self.source_info,
+    )
+    if shared_memory.detect_races:
+      assert self.clock is not None
+      vc.inc_vector_clock(self.clock, global_tma_thread_id)
+
+    barrier.arrive(
+        clock=vc.copy_vector_clock(self.clock),
+        logging_info=interpret_utils.GPULoggingInfo(
+            device_id=self.device_id,
+            pallas_thread_id=tma_thread_id,
+            source_info=self.source_info,
+        ),
+    )
+
+
+# TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in
+# GPU interpret mode, consider renaming this function to something along the
+# lines of `_enqueue_device_local_memory_transfer`.
+def _execute_device_local_memory_transfer(
+    *,
+    device_id: np.ndarray,
+    thread_id: np.ndarray,
+    src_allocation_key: np.ndarray,
+    src_transforms: tuple[Any, ...],
+    dst_allocation_key: np.ndarray,
+    dst_transforms: tuple[Any, ...],
+    barrier_allocation_key_as_array: np.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  device_id_as_int = int(device_id)
+  thread_id_as_int = int(thread_id)
+
+  transfer = DeviceLocalMemoryTransfer(
+      device_id=device_id_as_int,
+      thread_id=thread_id_as_int,
+      src_allocation_key=src_allocation_key,
+      src_transforms=src_transforms,
+      dst_allocation_key=dst_allocation_key,
+      dst_transforms=dst_transforms,
+      barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+      source_info=source_info,
+  )
+  transfer.execute()
+
+
+# TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in
+# GPU interpret mode, consider renaming this function to something along the
+# lines of `call_enqueue_device_local_memory_transfer`.
+def call_execute_device_local_memory_transfer(
+    *,
+    device_id: int,
+    thread_id: int,
+    src_allocation_key: jnp.ndarray,
+    src_transforms: tuple[Any, ...],
+    dst_allocation_key: jnp.ndarray,
+    dst_transforms: tuple[Any, ...],
+    barrier_allocation_key_as_array: jnp.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  callback.io_callback(
+      functools.partial(
+          _execute_device_local_memory_transfer, source_info=source_info
+      ),
+      None,
+      device_id=device_id,
+      thread_id=thread_id,
+      src_allocation_key=src_allocation_key,
+      src_transforms=src_transforms,
+      dst_allocation_key=dst_allocation_key,
+      dst_transforms=dst_transforms,
+      barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+      ordered=True,
+  )

@@ -69,6 +69,7 @@ def _ranges_overlap(
 
 @dataclasses.dataclass
 class RaceDetectionState:
+  # TODO(nrink): Remove this field; it seems to be unused.
   num_cores: int
 
   # (memory_space, buffer_id, device_id, local_core_id) -> [(device_id, local_core_id, VectorClock, range)]

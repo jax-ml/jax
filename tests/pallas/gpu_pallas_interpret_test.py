@@ -40,8 +40,6 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
@@ -880,6 +878,175 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel(a, b)
     self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_single_thread(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(in_gmem, smem, barrier)
+      if not with_race:
+        plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM(x.shape, x.dtype)
+        ),
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_two_threads(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        plgpu.copy_gmem_to_smem(in_gmem, smem, barrier)
+
+      @pl.when(tid == 1)
+      def _():
+        if not with_race:
+          plgpu.barrier_wait(barrier)
+        out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(),
+            smem=plgpu.SMEM(x.shape, x.dtype),
+        ),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_parallel_two_threads(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, per_thread_barrier, smem0, smem1):
+      tid = jax.lax.axis_index('t')
+
+      def _per_thread_kernel(smem):
+        plgpu.copy_gmem_to_smem(in_gmem, smem, per_thread_barrier.at[tid])
+        if not with_race:
+          plgpu.barrier_wait(per_thread_barrier.at[tid])
+        out_gmem[tid, ...] = smem[tid, ...]
+
+      # TODO(nrink): Investigate why this does not work with a single SMEM
+      # buffer and `smem.at[0]` and `smem.at[1]`.
+      pl.when(tid == 0)(functools.partial(_per_thread_kernel, smem=smem0))
+      pl.when(tid == 1)(functools.partial(_per_thread_kernel, smem=smem1))
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            per_thread_barrier=plgpu.Barrier(num_barriers=2),
+            smem0=plgpu.SMEM(x.shape, x.dtype),
+            smem1=plgpu.SMEM(x.shape, x.dtype),
+        ),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(num_tma_threads_per_device=[1, 2, 3, 4])
+  def test_copy_gmem_to_smem_multiple_tma_threads(
+      self, num_tma_threads_per_device
+  ):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+    y = 2 * x
+
+    def _kernel(gmem0, gmem1, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(gmem0, smem, barrier.at[0])
+      plgpu.copy_gmem_to_smem(gmem1, smem, barrier.at[1])
+      plgpu.barrier_wait(barrier.at[0])
+      plgpu.barrier_wait(barrier.at[1])
+      out_gmem[...] = gmem0[...] + gmem1[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=mosaic_interpret.InterpretParams(
+            detect_races=True,
+            num_tma_threads_per_device=num_tma_threads_per_device,
+        ),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(num_barriers=2),
+            smem=plgpu.SMEM(x.shape, x.dtype),
+        ),
+    )
+
+    z = kernel(x, y)
+    if num_tma_threads_per_device == 1:
+      # With only one (simulated) TMA thread, the two GMEM-to-SMEM copies are
+      # effectively forced to be executed sequentially. More precisely, the
+      # resulting vector clocks are necessarily (fully linearly) ordered (since
+      # there is only one slot for the single TMA thread in the vector clock).
+      # Hence, we do not detect a race.
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(z, x + y)
+    else:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_multiple_arrivals_at_barrier(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+    y = 2 * x
+
+    def _kernel(gmem0, gmem1, out_gmem, barrier, smem0, smem1):
+      plgpu.copy_gmem_to_smem(gmem0, smem0, barrier)
+      plgpu.copy_gmem_to_smem(gmem1, smem1, barrier)
+      if not with_race:
+        plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem0[...] + smem1[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(num_arrivals=2),
+            smem0=plgpu.SMEM(x.shape, x.dtype),
+            smem1=plgpu.SMEM(x.shape, x.dtype),
+        ),
+    )
+
+    z = kernel(x, y)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(z, x + y)
 
 
 if __name__ == '__main__':

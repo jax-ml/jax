@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Any
+from typing import Any, cast
 
 from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
@@ -76,7 +76,7 @@ class Barrier(memory.Allocation):
     self.phase: int = 0  # Protected by `self.cv`'s lock.
     self.next_awaited_phase_by_thread: list[int] = [  # Protected by `self.cv`'s lock.
         1
-    ] * shared_memory.num_threads_per_device
+    ] * shared_memory.num_pallas_threads_per_block
     # Initialize `self.phase_change_observed` to `True` so that the first
     # arrival (more precisely, the first time we have arrived
     # `self.num_arrivals` times) at the `Barrier` does not raise an error due to
@@ -144,7 +144,7 @@ class Barrier(memory.Allocation):
 
   def arrive(
       self,
-      clock,
+      clock: vc.VectorClock | None = None,
       logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
     with self.cv:
@@ -169,6 +169,7 @@ class Barrier(memory.Allocation):
           )
 
       if self.detect_races:
+        assert clock is not None
         if self.clock is None:
           self.clock = vc.copy_vector_clock(clock)
         else:
@@ -254,20 +255,82 @@ class Barrier(memory.Allocation):
         )
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(init=False)
 class GPUSharedMemory(memory.SharedMemory):
 
+  num_tma_threads_per_device: int
+  logging_mode: interpret_utils.LoggingMode | None = None
+
+  next_tma_thread_id_per_device: dict[int, int]
+
+  def __init__(self, **kwargs):
+    num_pallas_threads_per_block = kwargs.pop("num_pallas_threads_per_block")
+    num_tma_threads_per_device = kwargs.pop("num_tma_threads_per_device")
+    logging_mode = kwargs.pop("logging_mode", None)
+
+    # On each (simulated) GPU device, we currently only ever run a single block
+    # of threads concurrently. Hence, we reserve one vector clock per Pallas
+    # thread (in a block) plus one vector clock per TMA thread (per device).
+    vector_clock_size = kwargs["num_devices"] * (
+        num_pallas_threads_per_block + num_tma_threads_per_device
+    )
+    clocks = [
+        vc.make_vector_clock(vector_clock_size)
+        for _ in range(num_pallas_threads_per_block)
+    ]
+
+    kwargs.update(num_cores_per_device=num_pallas_threads_per_block)
+    kwargs.update(vector_clock_size=vector_clock_size)
+    kwargs.update(clocks=clocks)
+
+    super().__init__(**kwargs)
+
+    if self.dma_execution_mode != "eager":
+      raise NotImplementedError(
+          "Currently only eager DMA execution mode is supported when"
+          " interpreting GPU kernels."
+      )
+
+    self.num_tma_threads_per_device = num_tma_threads_per_device
+    self.logging_mode = cast(interpret_utils.LoggingMode | None, logging_mode)
+    self.next_tma_thread_id_per_device = {
+        device_id: 0 for device_id in range(self.num_devices)
+    }
+
   @property
-  def num_threads_per_device(self) -> int:
+  def num_pallas_threads_per_block(self) -> int:
     return self.num_cores_per_device
 
   @property
-  def num_global_threads(self) -> int:
-    return self.num_cores
+  def num_total_threads_per_device(self) -> int:
+    return self.num_pallas_threads_per_block + self.num_tma_threads_per_device
 
   def get_global_thread_id(self, device_id: int, local_thread_id: int) -> int:
     """Computes the global thread ID from the given device and local thread ID."""
-    return self.get_global_core_id(device_id, local_thread_id)
+    # We reserve one thread ID per device for the TMA thread.
+    return (
+        device_id * self.num_total_threads_per_device
+        + local_thread_id
+    )
+
+  def get_next_tma_thread_id(self, device_id: int) -> int:
+    with self.lock:
+      # TODO(nrink): Consider adding an option for selecting TMA thread IDs
+      # randomly (similar to how 'virtual' device IDs are selected randomly for
+      # DMAs in TPU kernel interpret mode).
+      next_tma_thread_id = self.next_tma_thread_id_per_device[device_id]
+      self.next_tma_thread_id_per_device[device_id] = (
+          next_tma_thread_id + 1
+      ) % self.num_tma_threads_per_device
+      return self.num_pallas_threads_per_block + next_tma_thread_id
+
+  def update_clock(self, vector_clock_idx, clock: vc.VectorClock):
+    with self.lock:
+      vc.update_vector_clock(self.clocks[vector_clock_idx], clock)
+
+  def get_clock(self, vector_clock_idx) -> vc.VectorClock | None:
+    with self.lock:
+      return vc.copy_vector_clock(self.clocks[vector_clock_idx])
 
   def allocate_barrier(
       self,
