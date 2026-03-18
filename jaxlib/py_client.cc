@@ -555,7 +555,8 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
   }
   options.allow_in_place_mlir_modification = true;  // We just cloned the module
   return CompileAndLoadIfrtProgram(
-      client, std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
+      client,
+      std::make_unique<xla::ifrt::HloProgram>(nullptr, std::move(clone)),
       MakeIfrtCompileOptions(std::move(options), std::move(executable_devices),
                              std::move(host_callbacks)));
 }
@@ -581,7 +582,8 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
       std::move(options), std::move(executable_devices),
       std::move(ifrt_loaded_host_callbacks));
   return CompileAndLoadIfrtProgram(
-      client, std::make_unique<xla::ifrt::HloProgram>(module),
+      client,
+      std::make_unique<xla::ifrt::HloProgram>(nullptr, std::move(clone)),
       std::move(compile_options));
 }
 
