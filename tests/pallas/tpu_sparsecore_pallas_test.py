@@ -18,14 +18,15 @@ import functools
 import itertools
 import math
 
+from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
 from jax import lax
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.state import discharge as state_discharge
@@ -88,6 +89,9 @@ class PallasSCTest(jtu.JaxTestCase):
     if self.USE_TC_TILING and jtu.is_cloud_tpu():
       # TODO(apaszke,slebedev): Fix those.
       self.skipTest("Many tests are failing on Cloud TPUs")
+    # TODO: b/483801998 - Remove this once test is fixed.
+    if self.USE_TC_TILING:
+      flags.FLAGS.xla_tpu_mosaic_sc_use_tiled_dmas = False
     super().setUp()
 
   @property

@@ -1422,6 +1422,7 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu_sc",
     ] + py_deps([
         "absl/testing",
+        "absl/flags",
         "hypothesis",
         "numpy",
     ]),
