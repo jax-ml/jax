@@ -43,9 +43,12 @@ _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
 
 
 class CoreType(enum.Enum):
-  TC = 0
-  SC_SCALAR_SUBCORE = 1
-  SC_VECTOR_SUBCORE = 2
+  TC = "tc"
+  SC_SCALAR_SUBCORE = "sc_scalar_subcore"
+  SC_VECTOR_SUBCORE = "sc_vector_subcore"
+
+  def __str__(self) -> str:
+    return self.value
 
 
 class GridDimensionSemantics(enum.Enum):

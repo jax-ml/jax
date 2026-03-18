@@ -516,7 +516,7 @@ def lower_jaxpr_to_func(
   body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   func_op = cast(func.FuncOp, body.func_op)
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
-      f"#tpu.core_type<{kernel_type.name.lower()}>"
+      f"#tpu.core_type<{kernel_type}>"
   )
   func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(
       ir.IntegerType.get_signless(64), num_scratch
