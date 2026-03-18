@@ -20,7 +20,6 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
-import functools
 import itertools
 import math
 from typing import Any, Literal, assert_never
@@ -490,6 +489,9 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
@@ -503,7 +505,6 @@ def _copy_gmem_to_smem_lowering(
     barrier_transforms_treedef,
     collective_axes,
     leader_tracked,
-    for_warpgroup: bool = True,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -588,7 +589,7 @@ def _copy_gmem_to_smem_lowering(
           f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
           f" {WARPGROUP_SIZE}"
       )
-    if for_warpgroup:
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
       # We arrive uniformly from each thread in the WG, so we need to divide the
       # number of bytes by the number of threads in the WG.
       # TODO: apaszke - Relax this. We can just select the WG leader and have it
@@ -668,12 +669,6 @@ def _copy_gmem_to_smem_lowering(
       ),
   )
   return ()
-
-
-lowering.register_lowering_rule(
-    copy_gmem_to_smem_p, *gpu_core.LANExWARP_SEMANTICS
-)(functools.partial(_copy_gmem_to_smem_lowering, for_warpgroup=False))
-
 
 def copy_gmem_to_smem(
     src: _Ref,
