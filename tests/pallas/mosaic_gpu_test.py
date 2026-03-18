@@ -3360,7 +3360,6 @@ class PallasCallWGTest(
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
         mgpu_primitives.async_copy_scales_to_tmem_p,
-        mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,

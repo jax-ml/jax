@@ -3407,7 +3407,8 @@ def _async_copy_to_tmem_abstract_eval(smem_ref, tmem_ref, *_args, **_kwargs):
 def _async_copy_to_tmem_lowering_rule(
     impl, ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves, smem_tree, tmem_tree, collective_axis
 ):
-  assert isinstance(tmem_ref, tcgen05.TMEMRef)
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    assert isinstance(tmem_ref, tcgen05.TMEMRef)
   smem_leaves, tmem_leaves = util.split_list(leaves, [smem_tree.num_leaves])
   smem_transforms = jax.tree.unflatten(smem_tree, smem_leaves)
   tmem_transforms = jax.tree.unflatten(tmem_tree, tmem_leaves)
@@ -3430,6 +3431,18 @@ def _async_copy_to_tmem_lowering_rule(
     raise NotImplementedError(f"Unimplemented transforms for SMEM refs: {smem_transforms}")
   if tmem_transforms:
     raise NotImplementedError(f"Unimplemented transforms for TMEM refs: {tmem_transforms}")
+
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    predicate_ctx: contextlib.AbstractContextManager[None]
+    if collective_axis is not None:
+      predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
+      collective = True
+    else:
+      predicate_ctx = contextlib.nullcontext()
+      collective = False
+    with predicate_ctx:
+      impl(smem_ref, tmem_ref, collective=collective)
+    return ()
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
@@ -3468,6 +3481,22 @@ def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
 def _async_copy_sparse_metadata_to_tmem_lowering_rule(*args, **kwargs):
   return _async_copy_to_tmem_lowering_rule(
       tcgen05.async_copy_sparse_metadata_smem_to_tmem, *args, **kwargs
+  )
+
+
+@lowering.register_lowering_rule(
+    async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_copy_sparse_metadata_to_tmem_lowering_rule_wg(*args, **kwargs):
+  # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+  if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
+    raise NotImplementedError(
+        "async_copy_sparse_metadata_to_tmem_p WG lowering is not implemented."
+    )
+  return _async_copy_to_tmem_lowering_rule(
+      mgpu.dialect.async_store_sparse_metadata_smem_to_tmem,
+      *args,
+      **kwargs,
   )
 
 
