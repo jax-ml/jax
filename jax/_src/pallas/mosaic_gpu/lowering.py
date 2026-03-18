@@ -1434,70 +1434,96 @@ def _extract_aliased_ref(
             layout=layout,
         )
       else:
-        assert layout is None
-        assert isinstance(ref, ir.Value)
-        ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(
-            mlir_dtype
-        )
-        if ref_bits % 8:
-          raise NotImplementedError("Only byte-aligned bitcasts are supported.")
-        assert offset % gpu_core.SMEM_ALIGNMENT == 0
-
-        if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-          if not isinstance(ref.owner, mgpu.dialect.SliceSMEMOp):
-            # This restriction can be lifted by:
-            # - Using memref ops to get the pointer and offset of the base ref.
-            # - Subtracting gpu_dialect.dynamic_shared_memory() from those to
-            #   get the base offset relative to the beginning of SMEM.
-            # - Implementing layout and lowering rules for all ops above.
-            raise NotImplementedError(
-                "The base ref for aliases must come from a slice_smem op."
-            )
-
-          base_offset_op = ref.owner.offset.owner
-          if not isinstance(base_offset_op, arith_dialect.ConstantOp):
-            # This restriction exists in order to have an easy way to identify
-            # the RefUnion to which an alias belongs. The restriction can be
-            # lifted by uniquely identifying RefUnions in some other way, e.g.
-            # keeping a map[ref] -> unique_id in the lowering context.
-            raise NotImplementedError(
-                "Only constant offsets are supported for base refs."
-            )
-          base_offset = base_offset_op.value.value
-          total_offset = base_offset + offset
-          total_offset_const = _i32_constant(total_offset)
-
-          ref_ty = ir.MemRefType.get(
-              transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
+        assert isinstance(ref, ir.Value)  # make pyrefly happy
+        input_ref_ty = ir.MemRefType(ref.type)
+        if input_ref_ty.memory_space == mgpu_utils.smem():
+          assert layout is None
+          ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(
+              mlir_dtype
           )
-          slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset_const)
+          if ref_bits % 8:
+            raise NotImplementedError("Only byte-aligned bitcasts are supported.")
+          assert offset % gpu_core.SMEM_ALIGNMENT == 0
 
-          # The alias ID that is generated here needs to be unique for each
-          # alias across:
-          #  - different RefUnions.
-          #    - This is indicated by a different `base_offset`, since RefUnions
-          #      are separate SMEM allocations.
-          #  - different ref_groups within a RefUnion
-          #    - This is indicated by a different `alias_group_idx`.
-          #  - different elements within a ref_group
-          #    - This is indicated by a different `offset` which is the offset
-          #      of the particular element to the beginning of the RefUnion. We
-          #      assume there are no 0-sized refs, which don't serve a
-          #      practical purpose anyway.
-          #
-          # By combining `total_offset=base_offset + offset` and
-          # `alias_group_idx` to generate the alias ID, we ensure its uniqueness.
-          slice_op.attributes["alias_id"] = ir.StringAttr.get(f"{total_offset}-{alias_group_idx}")
+          if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+            if not isinstance(ref.owner, mgpu.dialect.SliceSMEMOp):
+              # This restriction can be lifted by:
+              # - Using memref ops to get the pointer and offset of the base ref.
+              # - Subtracting gpu_dialect.dynamic_shared_memory() from those to
+              #   get the base offset relative to the beginning of SMEM.
+              # - Implementing layout and lowering rules for all ops above.
+              raise NotImplementedError(
+                  "The base ref for aliases must come from a slice_smem op."
+              )
+
+            base_offset_op = ref.owner.offset.owner
+            if not isinstance(base_offset_op, arith_dialect.ConstantOp):
+              # This restriction exists in order to have an easy way to identify
+              # the RefUnion to which an alias belongs. The restriction can be
+              # lifted by uniquely identifying RefUnions in some other way, e.g.
+              # keeping a map[ref] -> unique_id in the lowering context.
+              raise NotImplementedError(
+                  "Only constant offsets are supported for base refs."
+              )
+            base_offset = base_offset_op.value.value
+            total_offset = base_offset + offset
+            total_offset_const = _i32_constant(total_offset)
+
+            ref_ty = ir.MemRefType.get(
+                transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
+            )
+            slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset_const)
+
+            # The alias ID that is generated here needs to be unique for each
+            # alias across:
+            #  - different RefUnions.
+            #    - This is indicated by a different `base_offset`, since RefUnions
+            #      are separate SMEM allocations.
+            #  - different ref_groups within a RefUnion
+            #    - This is indicated by a different `alias_group_idx`.
+            #  - different elements within a ref_group
+            #    - This is indicated by a different `offset` which is the offset
+            #      of the particular element to the beginning of the RefUnion. We
+            #      assume there are no 0-sized refs, which don't serve a
+            #      practical purpose anyway.
+            #
+            # By combining `total_offset=base_offset + offset` and
+            # `alias_group_idx` to generate the alias ID, we ensure its uniqueness.
+            slice_op.attributes["alias_id"] = ir.StringAttr.get(f"{total_offset}-{alias_group_idx}")
+            ref = slice_op.result
+          else:
+            ref_bytes = ref_bits // 8
+            ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
+            ref = _handle_dtype_bitcast(
+                ref,
+                ir.MemRefType(ref.type).element_type,
+                mlir_dtype,
+            )
+            ref = mgpu.memref_reshape(ref, transformed_shape)
+        elif input_ref_ty.memory_space == mgpu_utils.tmem():
+
+          if isinstance(ref.owner, mgpu.dialect.SliceTmemOp):
+            source_slice_op = ref.owner
+          elif isinstance(
+              ref.owner, mgpu.dialect.TmemLayoutCastOp
+          ) and isinstance(ref.owner.operands[0].owner, mgpu.dialect.SliceTmemOp):
+            source_slice_op = ref.owner.operands[0].owner
+          else:
+            raise NotImplementedError(f"Unsupported TMEM ref {ref}.")
+
+          base_offset = source_slice_op.offset.value
+          assert isinstance(base_offset, int)  # make pyrefly happy
+          total_offset = base_offset + offset
+          ref_ty = ir.MemRefType.get(
+              transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
+          )
+          slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
+          slice_op.attributes["alias_id"] = ir.StringAttr.get(
+              f"{total_offset}-{alias_group_idx}"
+          )
           ref = slice_op.result
         else:
-          ref_bytes = ref_bits // 8
-          ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
-          ref = _handle_dtype_bitcast(
-              ref,
-              ir.MemRefType(ref.type).element_type,
-              mlir_dtype,
-          )
-          ref = mgpu.memref_reshape(ref, transformed_shape)
+          raise NotImplementedError("Unsupported memory space.")
       return (
           ref,
           ref_aval,

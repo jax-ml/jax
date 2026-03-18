@@ -1796,6 +1796,69 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
+  def test_slice_tmem_constraint_system_with_alias_ids_works_correctly(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      src_tmem_type = ir.MemRefType.get(
+          (128, 512), i32, memory_space=mgpu.utils.tmem()
+      )
+      [src] = undefs(src_tmem_type)
+
+      in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+      src = mgpu.dialect.tmem_layout_cast(src, in_layout)
+
+      dst_tmem_type = ir.MemRefType.get(
+          (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+
+      ops = [mgpu.dialect.SliceTmemOp(dst_tmem_type, src, 64) for _ in range(4)]
+      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[2].attributes["alias_id"] = ir.StringAttr.get("b")
+      ops[3].attributes["alias_id"] = ir.StringAttr.get("b")
+
+      layout_0 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+      mgpu.dialect.tmem_layout_cast(ops[0].result, layout_0)
+
+      layout_2 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=2))
+      mgpu.dialect.tmem_layout_cast(ops[2].result, layout_2)
+
+    mgpu.infer_layout(self.module)
+
+    self.checkOutTmemLayouts(ops[0], [layout_0])
+    self.checkOutTmemLayouts(ops[1], [layout_0])
+
+    self.checkOutTmemLayouts(ops[2], [layout_2])
+    self.checkOutTmemLayouts(ops[3], [layout_2])
+
+  def test_slice_tmem_constraint_system_with_alias_ids_fails_on_conflict(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      src_tmem_type = ir.MemRefType.get(
+          (128, 512), i32, memory_space=mgpu.utils.tmem()
+      )
+      [src] = undefs(src_tmem_type)
+
+      in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+      src = mgpu.dialect.tmem_layout_cast(src, in_layout)
+
+      dst_tmem_type = ir.MemRefType.get(
+          (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+
+      ops = [mgpu.dialect.SliceTmemOp(dst_tmem_type, src, 64) for _ in range(2)]
+      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
+
+      layout_0 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+      mgpu.dialect.tmem_layout_cast(ops[0].result, layout_0)
+
+      layout_1 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=2))
+      mgpu.dialect.tmem_layout_cast(ops[1].result, layout_1)
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module)
+
   def test_infer_transforms_preserves_with_transforms_requirements(self):
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()

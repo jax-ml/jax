@@ -4018,7 +4018,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_array_equal(x_result, x + 3)
 
   def test_tmem_ref_aliasing(self):
-    self.skip_if_wg_semantics()
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -4967,13 +4966,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   def test_matmul_with_tmem_aliasing(self, swizzle, dtype):
     # Perform a 128x128 @ 128x128 matmul and a 128x64 @ 64x128 matmul
     # using aliased Refs pointing to the same TMEM address.
-    self.skip_if_wg_semantics()
     shape = (128, 128)
-    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
-    transforms = (
-        plgpu.TilingTransform((8, swizzle_elems)),
-        plgpu.SwizzleTransform(swizzle),
-    )
+    transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
     def kernel(a_gmem, b_gmem, out_gmem128, out_gmem64,
         a_smem, b_smem, tma_barrier, mma_barrier, aliased_refs):
