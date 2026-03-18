@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence, Iterable
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
+import itertools as it
 import logging
 import weakref
 from typing import NamedTuple, Any, Union
@@ -1296,6 +1297,11 @@ def pjit_staging_rule(trace, source_info, *args, **params):
   else:
     out_tracers = trace.default_process_primitive(
         jit_p, args, params, source_info=source_info)
+    # TODO(mattjj): handle qdd in the presence of refs
+    for v, x in zip(it.chain(jaxpr.constvars, jaxpr.invars), it.chain(jaxpr.consts, args)):
+      if v.initial_qdd:
+        assert core.cur_qdd(x) == v.initial_qdd
+        x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
   return out_tracers
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
