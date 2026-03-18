@@ -71,8 +71,8 @@ limitations under the License.
 
 #define FAILUREOR_ASSIGN_OR_RETURN_IMPL(failureor, lhs, rhs)        \
   auto failureor = rhs;                                             \
-  if (failed(failureor)) {                                          \
-    return failure();                                               \
+  if (mlir::failed(failureor)) {                                    \
+    return mlir::failure();                                         \
   }                                                                 \
   FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
       (std::move(failureor).value());
@@ -80,11 +80,11 @@ limitations under the License.
   FAILUREOR_ASSIGN_OR_RETURN_IMPL(           \
       TF_STATUS_MACROS_CONCAT_NAME(failureor, __COUNTER__), lhs, rhs)
 
-#define RETURN_IF_FAILED(...)  \
-  do {                         \
-    if (failed(__VA_ARGS__)) { \
-      return failure();        \
-    }                          \
+#define RETURN_IF_FAILED(...)        \
+  do {                               \
+    if (mlir::failed(__VA_ARGS__)) { \
+      return mlir::failure();        \
+    }                                \
   } while (false)
 
 template <typename Op>
@@ -95,7 +95,7 @@ class StatusToDiagnosticAdapter {
   explicit StatusToDiagnosticAdapter(Op op) : op_(op) {}
 
   // Converts a non-OK absl::Status to an mlir::InFlightDiagnostic.
-  mlir::InFlightDiagnostic operator()(const absl::Status &status) const {
+  mlir::InFlightDiagnostic operator()(const absl::Status& status) const {
     return op_->emitOpError(status.ToString());
   }
 
@@ -153,14 +153,14 @@ namespace mlir::tpu {
 
 class Print {
  public:
-  explicit Print(Operation *t) : payload_(t) {}
-  Operation *payload_;
+  explicit Print(Operation* t) : payload_(t) {}
+  Operation* payload_;
 
  private:
-  friend std::ostream &operator<<(std::ostream &, Print);
+  friend std::ostream& operator<<(std::ostream&, Print);
 };
 
-std::ostream &operator<<(std::ostream &os, Print p);
+std::ostream& operator<<(std::ostream& os, Print p);
 
 template <bool adjust_bool = false>
 int8_t getTypeBitwidth(Type ty) {
@@ -199,10 +199,9 @@ ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
 }
 
-
 // Debug only util.
 template <typename T>
-std::string shapeToString(const T &shape) {
+std::string shapeToString(const T& shape) {
   std::ostringstream os;
   os << "(";
   for (auto it = shape.begin(); it != shape.end(); ++it) {
@@ -228,7 +227,7 @@ inline SmallVector<int64_t> ComputeTileStrides(
 // Computes the dimensions that were squeezed from the source shape to match the
 // target shape. Returns the dimensions in increasing order.
 FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
+    Operation* op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape);
 
 // Assuming MKN matmul - This function must only be called after
@@ -245,7 +244,7 @@ std::optional<std::pair<bool, bool>> isTransposedMatmul(
 // minormost dimension up to target_shape[1] (if allow_minormost_padding is
 // true).
 bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
-                                   const std::array<int64_t, 2> &target_shape,
+                                   const std::array<int64_t, 2>& target_shape,
                                    bool allow_minormost_padding = false);
 
 // TODO(apaszke): Unify this with mlir::tpu::canReinterpretToUntiledMemref.
@@ -256,41 +255,41 @@ bool canReinterpretToUntiledContiguousMemref(MemRefType ty);
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
 
-bool layoutIsValidForValue(const Layout &l, const Value v,
+bool layoutIsValidForValue(const Layout& l, const Value v,
                            const std::array<int64_t, 2> target_shape);
 
 // Returns empty vector on null attribute
 FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr);
 
 FailureOr<SmallVector<Layout>> getOutLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape);
+    Operation& op, const std::array<int64_t, 2> target_shape);
 
 FailureOr<SmallVector<Layout>> getInLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape);
+    Operation& op, const std::array<int64_t, 2> target_shape);
 
-void setInLayout(Operation *op, ArrayRef<Layout> in);
-void setOutLayout(Operation *op, Layout out);
-void setOutLayout(Operation *op, ArrayRef<Layout> out);
-void setLayout(Operation *op, Layout in, Layout out);
-void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
-void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
-void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
+void setInLayout(Operation* op, ArrayRef<Layout> in);
+void setOutLayout(Operation* op, Layout out);
+void setOutLayout(Operation* op, ArrayRef<Layout> out);
+void setLayout(Operation* op, Layout in, Layout out);
+void setLayout(Operation* op, ArrayRef<Layout> in, Layout out);
+void setLayout(Operation* op, Layout in, ArrayRef<Layout> out);
+void setLayout(Operation* op, ArrayRef<Layout> in, ArrayRef<Layout> out);
 
 // Helper functions to create constants.
-inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
+inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder& builder,
                                   Location loc) {
   return arith::ConstantOp::create(builder, loc, builder.getIndexType(),
                                    builder.getIndexAttr(idx));
 }
 
-inline arith::ConstantOp I32Const(int32_t value, OpBuilder &builder,
+inline arith::ConstantOp I32Const(int32_t value, OpBuilder& builder,
                                   Location loc) {
   return arith::ConstantOp::create(builder, loc, builder.getI32Type(),
                                    builder.getI32IntegerAttr(value));
 }
 
 inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
-                                  OpBuilder &builder, Location loc) {
+                                  OpBuilder& builder, Location loc) {
   return arith::ConstantOp::create(
       builder, loc,
       DenseElementsAttr::get(
@@ -304,7 +303,7 @@ std::optional<int64_t> getIntConst(Value v);
 // accessed via `tpu.bitcast` or unary elementwise operations. However,
 // `tpu.bitcast` and unary element-wise operations are excluded from the
 // results.
-SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+SmallVector<Operation*> getNontrivialTransitiveUsers(Value v);
 
 bool hasVectorOperandsOrResults(Operation& op);
 
