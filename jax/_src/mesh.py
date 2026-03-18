@@ -215,9 +215,6 @@ def _unpicke_mesh(devices, axis_names, axis_types):
 
 _mesh_object_dict = {}
 
-def _clear_mesh_cache():
-  global _mesh_object_dict
-  _mesh_object_dict = {}
 
 class Mesh(BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.

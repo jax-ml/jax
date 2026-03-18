@@ -68,8 +68,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import (_clear_mesh_cache,
-                           get_concrete_mesh, get_abstract_mesh, Mesh)
+from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
                                      NamedSharding)
 from jax._src.layout import Format
@@ -3171,7 +3170,6 @@ def clear_backends():
   Clear all backend clients so that new backend clients can be created later.
   """
   xb._clear_backends()
-  _clear_mesh_cache()
   util.clear_all_caches()
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
@@ -3202,7 +3200,6 @@ def clear_caches():
   # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
   # (used for staging and Python-dispatch compiled executable caches).
   util.clear_all_caches()
-  _clear_mesh_cache()
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
