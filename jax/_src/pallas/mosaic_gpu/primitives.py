@@ -1615,15 +1615,29 @@ def tcgen05_mma(acc: _Ref,
   acc_m, acc_n = acc.shape
   lhs_m, lhs_k = a.shape
   rhs_k, rhs_n = b.shape
-  if collective_axis is not None:
-    acc_n /= 2
   is_sparse = a_sparse_metadata is not None
+
   if acc_m != lhs_m:
     raise ValueError(
-        f"Accumulator and LHS have incompatible shapes. Accumulator: {acc.shape}. LHS: {a.shape}.")
-  if acc_n != rhs_n:
+        "Accumulator and LHS have incompatible shapes. Expected LHS to have"
+        " shape (m, k) and accumulator to have shape (m, n). Accumulator:"
+        f" {acc.shape}. LHS: {a.shape}."
+    )
+
+  if collective_axis is not None:
+    if acc_n != rhs_n * 2:
+      raise ValueError(
+          "Accumulator and RHS have incompatible shapes. Expected RHS to have "
+          "shape (k, n) and accumulator to have shape (m, n * 2) in "
+          f"collective mode. Accumulator: {acc.shape}. RHS: {b.shape}."
+      )
+  elif acc_n != rhs_n:
     raise ValueError(
-        f"Accumulator and RHS have incompatible shapes. Accumulator: {acc.shape}. RHS: {b.shape}.")
+        "Accumulator and RHS have incompatible shapes. Expected RHS to have"
+        " shape (k, n) and accumulator to have shape (m, n). Accumulator:"
+        f" {acc.shape}. RHS: {b.shape}."
+    )
+
   if (lhs_k * (1 + is_sparse)) != rhs_k:
     raise ValueError(
         f"LHS and RHS have incompatible shapes. LHS: {a.shape}. RHS: {b.shape}.")
