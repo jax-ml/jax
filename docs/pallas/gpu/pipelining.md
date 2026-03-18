@@ -126,15 +126,14 @@ def matmul(a, b, tile_m=128, tile_n=128, swizzle=128):
         pipeline_step,
         in_specs=[
             plgpu.BlockSpec(
-                (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms
+                (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms, delay_release=1,
             ),
             plgpu.BlockSpec(
-                (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms
+                (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms, delay_release=1,
             ),
         ],
         grid=(grid_k,),
         max_concurrent_steps=2,
-        delay_release=1,
     )
 
     pipeline(a_gmem, b_gmem)
