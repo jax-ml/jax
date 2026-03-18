@@ -173,7 +173,8 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> pjit.JitWrapped: ...
+) -> pjit.JitWrapped:
+  ...
 
 @overload
 def jit(
@@ -189,7 +190,8 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]: ...
+) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+  ...
 
 def jit(
   fun: Callable | NotSpecified = NotSpecified(), /, *,

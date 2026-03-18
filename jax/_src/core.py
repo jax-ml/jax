@@ -1972,9 +1972,11 @@ def cur_aval_qdd(x):
 # to the compiler's language.
 
 @overload
-def physical_aval(aval: ShapedArray) -> ShapedArray: ...
+def physical_aval(aval: ShapedArray) -> ShapedArray:
+  ...
 @overload                       # TODO(frostig): remove this case
-def physical_aval(aval: AbstractValue) -> AbstractValue: ...
+def physical_aval(aval: AbstractValue) -> AbstractValue:
+  ...
 
 def physical_aval(aval):
   if (isinstance(aval, ShapedArray) and

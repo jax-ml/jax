@@ -6539,8 +6539,10 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
       sharding=sharding)
   new_vma = core.standard_vma_rule('broadcast_in_dim', x)
   out_mt = x.mt.update(varying=new_vma)
-  return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                          manual_type=out_mt, memory_space=x.memory_space)
+  out_aval = core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
+                              manual_type=out_mt, memory_space=x.memory_space)
+  core.check_avals_context_mesh([out_aval], 'broadcast_in_dim')
+  return out_aval
 
 def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params = dict(eqn.params)

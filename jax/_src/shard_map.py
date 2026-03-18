@@ -90,14 +90,16 @@ G = TypeVar("G", bound=Callable)
 def shard_map(f: F, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = ...,
               mesh: Mesh | AbstractMesh | None = ...,
-              axis_names: Set[AxisName] = ..., check_vma: bool = ...) -> F: ...
+              axis_names: Set[AxisName] = ..., check_vma: bool = ...) -> F:
+  ...
 
 @overload
 def shard_map(f: None = None, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = ...,
               mesh: Mesh | AbstractMesh | None = ...,
               axis_names: Set[AxisName] = ..., check_vma: bool = ...
-              ) -> Callable[[G], G]: ...
+              ) -> F | Callable[[G], G]:
+  ...
 
 # See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
 # defaults to `Infer`.
@@ -169,7 +171,7 @@ def smap(f: F, /, *,
 def smap(f: None = None, /, *,
          in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
          out_axes: Any, axis_name: AxisName
-         ) -> Callable[[G], G]: ...
+         ) -> Any: ...  # TODO: b/454972769 - Fix pytype error & replace this.
 
 def smap(f: F | None = None, /, *,
          in_axes: int | None | InferFromArgs | tuple[Any, ...] = Infer,
