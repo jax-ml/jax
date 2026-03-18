@@ -1896,6 +1896,20 @@ class BoxTest(jtu.JaxTestCase):
     compiled(box)
     self.assertAllClose(box.get(), 4.)
 
+  def test_nested_jit(self):
+    box = Box([])
+
+    @jax.jit
+    def f():
+      @jax.jit
+      def g():
+        box.set(box.get() + [1])
+      g()
+      g()
+
+    f()  # don't crash
+    self.assertEqual(box.get(), [1., 1.])
+
 
 class RefTest(jtu.JaxTestCase):
 
