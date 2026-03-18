@@ -995,7 +995,6 @@ def _remat_state_discharge_rule(
 
 # TODO
 #  [ ] zeros propagation (needs separate ruleset, maybe jax.vjp improvement)
-#  [ ] accum-native vjp_bwd via with_accums
 
 def checkpoint_name3(name, x):
   return CheckpointName(name, core.typeof(x))(x)
@@ -1039,9 +1038,7 @@ class RematTraced(VJPHiPrimitive):
   def vjp_bwd(self, primals_vjp, outgrad, *arg_accums):
     primals, rem = primals_vjp
     bwd = rem(*lax_internal.optimization_barrier(primals))
-    arg_grads = bwd(outgrad)
-    for x, ct in zip(arg_accums, arg_grads):
-      x.accum(ct)
+    bwd.with_refs(arg_accums)(outgrad)
 
   def jvp(self, primals, tangents):
     return api.jvp(self.traced, primals, tangents)

@@ -2251,23 +2251,24 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
       raise Exception  # TODO accept isomorph tuple tree
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
-  maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.NullAccum(v.aval)
-                if isinstance(x, DontWant) else ad.ValAccum(v.aval)
-                for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
+  maybe_accums = [x if isinstance(x, ad.GradAccum) else
+                  ad.RefAccum(v.aval, x) if _is_ref(x) else ad.NullAccum(v.aval)
+                  if isinstance(x, DontWant) else ad.ValAccum(v.aval)
+                  for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
-                         out_primal_avals), residuals, maybe_refs)
+                         out_primal_avals), residuals, maybe_accums)
 
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
-              maybe_refs, out_ct):
+              maybe_accums, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
+  ad.backward_pass3(jaxpr, True, residuals, maybe_accums, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
              DidntWant() if isinstance(x, ad.NullAccum) else GradRef()
-             for x in maybe_refs]
+             for x in maybe_accums]
   arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
 
