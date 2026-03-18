@@ -1736,7 +1736,7 @@ def make_pipeline_allocations(
       raise ValueError("Grid must be specified when using lookahead.")
     if (
         can_reduce_buffering
-        and not has_buffering  # pyrefly: ignore[unbound-name]
+        and not has_buffering
         and _spec_has_trivial_windowing(in_spec, grid)
     ):
       buffer_count = 1
@@ -1764,7 +1764,7 @@ def make_pipeline_allocations(
     if (
         not accumulate
         and can_reduce_buffering
-        and not has_buffering  # pyrefly: ignore[unbound-name]
+        and not has_buffering
         and _spec_has_trivial_windowing(out_spec, grid)
     ):
       buffer_count = 1

@@ -22,7 +22,7 @@ import warnings
 
 filelock: Any | None = None
 try:
-  import filelock  # pyrefly: ignore[missing-import]
+  import filelock
 except ImportError:
   pass
 

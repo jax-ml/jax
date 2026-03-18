@@ -264,6 +264,7 @@ def main(unused_argv):
       runtime = float("inf")
     # Enable this to get more detailed information.
     else:
+      assert runtime is not None
       print(
           " ".join(f"{k}={v}" for k, v in kwargs.items()),
           f"{int(runtime * 1000):.1f} us",

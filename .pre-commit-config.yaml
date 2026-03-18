@@ -36,7 +36,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 17b22cbf6722a3b9593b8874d9d67ca89f363b0e  # frozen: v0.56.0
+  rev: 75ee4da7d7615e07d0349d254b58ccdb50992f74  # frozen: v0.57.0
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)

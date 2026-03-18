@@ -57,6 +57,7 @@ project-excludes = [
 ]
 ignore-missing-imports = [
     "absl.*",
+    "filelock.*",
     "flatbuffers.*",
     "flax.*",
     "google.colab.*",

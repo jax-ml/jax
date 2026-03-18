@@ -37,6 +37,7 @@ from jax._src.lax.lax import (
   and_p as and_p,
   argmax_p as argmax_p,
   argmin_p as argmin_p,
+  asarray as asarray,
   asin_p as asin_p,
   asinh_p as asinh_p,
   atan_p as atan_p,
