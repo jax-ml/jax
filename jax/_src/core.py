@@ -2297,6 +2297,9 @@ class ManualAxisType:
       kwargs['reduced'] = self.reduced
     return ManualAxisType(**kwargs)
 
+  def to_ct_mt(self):
+    return self.update(unreduced=self.reduced, reduced=self.unreduced)
+
   def empty(self):
     return not self.varying and not self.unreduced and not self.reduced
 
@@ -2393,7 +2396,7 @@ class ShapedArray(AbstractValue):
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
-    ct_mt = primal_mt_to_cotangent_mt(self.mt)
+    ct_mt = self.mt.to_ct_mt()
     return ShapedArray(
         self.shape, dtype, self.weak_type, sharding=sharding, manual_type=ct_mt,
         memory_space=self.memory_space)
@@ -2494,9 +2497,6 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 
 def primal_sharding_to_cotangent_sharding(sharding):
   return sharding.update(spec=sharding.spec.to_ct_spec())
-
-def primal_mt_to_cotangent_mt(mt):
-  return mt.update(unreduced=mt.reduced, reduced=mt.unreduced)
 
 ############################## pvary #################################
 
