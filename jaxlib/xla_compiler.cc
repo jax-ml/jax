@@ -1342,7 +1342,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("is_unreduced", &xla::HloSharding::IsUnreduced)
       .def("is_unknown", &xla::HloSharding::IsUnknown)
       .def("is_tiled", &xla::HloSharding::IsTiled)
-      .def("is_maximal", &xla::HloSharding::IsTileMaximal)
+      .def("is_maximal", &xla::HloSharding::IsReplicatedOrSingleDevice)
       .def("is_hlo_sharding_v3", &xla::HloSharding::UseNamedShardingLeaf)
       .def("hlo_sharding_v3",
            [](const xla::HloSharding& self) { return self.named_sharding(); })
