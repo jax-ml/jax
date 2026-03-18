@@ -1205,10 +1205,13 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
 }
 
 def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
-  let arguments = (ins AnyMemRef:$input);
+  let arguments = (ins
+    AnyMemRef:$input,
+    Optional<I32>:$dynamic_offset  // In units of elements of the output type
+  );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($result)
+    $input ($dynamic_offset^)? attr-dict `:` type($input) `->` type($result)
   }];
   let hasVerifier = 1;
 }
