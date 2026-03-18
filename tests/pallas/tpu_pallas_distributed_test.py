@@ -80,7 +80,11 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           kernel,
           in_specs=[pl.BlockSpec(memory_space=mem)],
           out_specs=pl.BlockSpec(memory_space=mem),
-          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32, vma=frozenset('x')),
+          out_shape=jax.ShapeDtypeStruct(
+              (8, 128),
+              jnp.float32,
+              manual_type=jax.sharding.ManualAxisType(varying={'x'}),
+          ),
       )(x)
 
     devices = jax.devices()[:2]
@@ -136,7 +140,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     )
     with self.assertRaisesRegex(
         ValueError,
-        'When `check_vma=True` on `jax.shard_map`, `vma` on'
+        'When `check_vma=True` on `jax.shard_map`, `manual_type` on'
         ' `jax.ShapeDtypeStruct` must not be `None`'):
       f(x)
 

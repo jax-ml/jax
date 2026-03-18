@@ -392,7 +392,7 @@ def _traced_out_info(self):
           core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=Format(out_l, s),
               weak_type=a.weak_type,
-              vma=(a.vma if config._check_vma.value else None)))
+              manual_type=(a.mt if config._check_vma.value else None)))
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)

@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes:
+  * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
+    `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
+    replaced with `.manual_type.varying`.
+
 ## JAX 0.9.2 (March 2, 2026)
 
 * Changes:

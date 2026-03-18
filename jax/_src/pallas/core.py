@@ -1399,7 +1399,7 @@ def _get_sds(aval: jax_core.AbstractValue):
       return aval.memory_space(aval.shape, aval.dtype)
     case jax_core.ShapedArray():
       return jax_core.ShapeDtypeStruct(
-          aval.shape, aval.dtype, vma=aval.vma, sharding=aval.sharding
+          aval.shape, aval.dtype, manual_type=aval.mt, sharding=aval.sharding
       )
     case _:
       raise ValueError(f"Unsupported abstract value: {aval}")
@@ -1769,21 +1769,20 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
   match out_shape:
     case jax_core.ShapeDtypeStruct():
       if config._check_vma.value:
-        if out_shape.vma is None:
+        if out_shape.manual_type is None:
           raise ValueError(
-              "When `check_vma=True` on `jax.shard_map`, `vma` on"
-              " `jax.ShapeDtypeStruct` must not be `None`. Please specify how the"
-              " output should be varying across mesh axes using the `vma`"
-              " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
-              " `jax.shard_map`.")
-        # TODO(yashkatariya): Use out_shape.mt instead of creating one from
-        # scratch once SDS has mt on it.
+              "When `check_vma=True` on `jax.shard_map`, `manual_type` on"
+              " `jax.ShapeDtypeStruct` must not be `None`. Please specify how"
+              " the output should be varying across mesh axes using the"
+              " `manual_type` argument of `jax.ShapeDtypeStruct` or set"
+              " `check_vma=False` on `jax.shard_map`.")
         return jax_core.ShapedArray(
             shape=out_shape.shape, dtype=out_shape.dtype,
             sharding=jax_core.get_cur_mesh_sharding(),
-            manual_type=jax_core.ManualAxisType(varying=out_shape.vma))
-      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
-                                  sharding=jax_core.get_cur_mesh_sharding())
+            manual_type=out_shape.manual_type)
+      return jax_core.ShapedArray(
+          shape=out_shape.shape, dtype=out_shape.dtype,
+          sharding=jax_core.get_cur_mesh_sharding())
     case MemoryRef():
       return out_shape.get_array_aval()
     case hijax.HiType():
