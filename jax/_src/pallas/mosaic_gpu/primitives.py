@@ -190,8 +190,7 @@ jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 @lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
-    copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane,
-    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
+    copy_smem_to_gmem_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
@@ -672,9 +671,7 @@ def _copy_gmem_to_smem_lowering(
 
 
 lowering.register_lowering_rule(
-    copy_gmem_to_smem_p,
-    mgpu.LoweringSemantics.Lane,
-    primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+    copy_gmem_to_smem_p, *gpu_core.LANExWARP_SEMANTICS
 )(functools.partial(_copy_gmem_to_smem_lowering, for_warpgroup=False))
 
 
@@ -776,9 +773,7 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
-    async_prefetch_p,
-    mgpu.LoweringSemantics.Lane,
-    primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+    async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS
 )
 @lowering.register_lowering_rule(
     async_prefetch_p, mgpu.LoweringSemantics.Warpgroup
@@ -1003,11 +998,7 @@ jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 
 
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Lane)
-@lowering.register_lowering_rule(
-    barrier_wait_p,
-    mgpu.LoweringSemantics.Lane,
-    gpu_core.PrimitiveSemantics.Warp,
-)
+@lowering.register_lowering_rule(barrier_wait_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(
     barrier_wait_p, mgpu.LoweringSemantics.Warpgroup
 )
@@ -3061,9 +3052,7 @@ def _load_abstract_eval(src, *avals_flat, tree, optimized):
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
     lowering._get_lowering_rule
 )
-lowering.register_lowering_rule(
-    load_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
-)(
+lowering.register_lowering_rule(load_p, *gpu_core.LANExWARP_SEMANTICS)(
     lowering._get_lowering_rule
 )
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
@@ -3460,9 +3449,7 @@ def _async_copy_to_tmem_lowering_rule(
     async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Lane
 )
 @lowering.register_lowering_rule(
-    async_copy_scales_to_tmem_p,
-    mgpu.LoweringSemantics.Lane,
-    gpu_core.PrimitiveSemantics.Warp,
+    async_copy_scales_to_tmem_p, *gpu_core.LANExWARP_SEMANTICS
 )
 def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
   return _async_copy_to_tmem_lowering_rule(
@@ -3474,9 +3461,7 @@ def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
     async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Lane
 )
 @lowering.register_lowering_rule(
-    async_copy_sparse_metadata_to_tmem_p,
-    mgpu.LoweringSemantics.Lane,
-    gpu_core.PrimitiveSemantics.Warp,
+    async_copy_sparse_metadata_to_tmem_p, *gpu_core.LANExWARP_SEMANTICS
 )
 def _async_copy_sparse_metadata_to_tmem_lowering_rule(*args, **kwargs):
   return _async_copy_to_tmem_lowering_rule(
@@ -3575,9 +3560,7 @@ def _async_copy_smem_to_tmem_abstract_eval(
     async_copy_smem_to_tmem_p, mgpu.LoweringSemantics.Lane
 )
 @lowering.register_lowering_rule(
-    async_copy_smem_to_tmem_p,
-    mgpu.LoweringSemantics.Lane,
-    gpu_core.PrimitiveSemantics.Warp,
+    async_copy_smem_to_tmem_p, *gpu_core.LANExWARP_SEMANTICS
 )
 def _async_copy_smem_to_tmem_lowering_rule(
     ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves,

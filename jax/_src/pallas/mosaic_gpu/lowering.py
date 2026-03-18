@@ -1121,11 +1121,10 @@ def lower_jaxpr_to_module(
 
 mosaic_lowering_rules = {
     # Lowering rules when using Mosaic GPU lane semantics.
-    (mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warpgroup): {} ,
+    gpu_core.LANExWG_SEMANTICS: {} ,
     gpu_core.LANExWARP_SEMANTICS: {} ,
     # Lowering rules when using Mosaic GPU warpgroup semantics.
-    (mgpu.LoweringSemantics.Warpgroup,
-     gpu_core.PrimitiveSemantics.Warpgroup): {},
+    gpu_core.WGxWG_SEMANTICS: {},
 }
 
 
@@ -1764,9 +1763,7 @@ def _ndindexer_indices(
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(
-    sp.get_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
-)
+@register_lowering_rule(sp.get_p, *gpu_core.LANExWARP_SEMANTICS)
 def _get_lowering_rule(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
@@ -1905,9 +1902,7 @@ def _get_lowering_rule_wg(
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(
-    sp.swap_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
-)
+@register_lowering_rule(sp.swap_p, *gpu_core.LANExWARP_SEMANTICS)
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_ref, value, *leaves, tree
 ):
@@ -2057,9 +2052,7 @@ def _swap_lowering_rule_wg(
 
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Warpgroup)
-@register_lowering_rule(
-    pjit.jit_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp
-)
+@register_lowering_rule(pjit.jit_p, *gpu_core.LANExWARP_SEMANTICS)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError
@@ -2097,8 +2090,7 @@ def _slice_lowering_rule_wg(
 
 
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane,
-                        gpu_core.PrimitiveSemantics.Warp)
+@register_lowering_rule(lax.select_n_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   if len(cases) != 2:
@@ -2218,8 +2210,7 @@ def _broadcast_in_dim_lowering_rule_wg(
 
 
 @register_lowering_rule(lax.convert_element_type_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(lax.convert_element_type_p,
-  mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
+@register_lowering_rule(lax.convert_element_type_p, *gpu_core.LANExWARP_SEMANTICS)
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
@@ -3018,7 +3009,7 @@ def block_id_to_grid_id(ctx: LoweringRuleContext,
 
 
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
+@register_lowering_rule(lax.axis_index_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Warpgroup)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -3076,11 +3067,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
 
 
 @register_lowering_rule(debugging.debug_print_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(
-    debugging.debug_print_p,
-    mgpu.LoweringSemantics.Lane,
-    gpu_core.PrimitiveSemantics.Warp,
-)
+@register_lowering_rule(debugging.debug_print_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(
     debugging.debug_print_p, mgpu.LoweringSemantics.Warpgroup
 )
@@ -3448,9 +3435,8 @@ def _lower_jaxpr_to_for_loop(
 
 
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.scan_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Warpgroup)
-@register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane,
-                        gpu_core.PrimitiveSemantics.Warp)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3621,8 +3607,7 @@ def _while_lowering_rule(
 
 
 @register_lowering_rule(lax.cond_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(lax.cond_p,
-  mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
+@register_lowering_rule(lax.cond_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.cond_p, mgpu.LoweringSemantics.Warpgroup)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
                         **params):
