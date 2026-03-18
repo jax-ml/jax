@@ -1913,6 +1913,32 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
 
+class ComputeTypeMetadataTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      dict(testcase_name='DeviceHost', compute_type='device_host',
+           expected_regex=r'_xla_compute_type\s*=\s*"host"'),
+      dict(testcase_name='GpuStream', compute_type='gpu_stream:1',
+           expected_regex=r'_xla_stream_annotation\s*=\s*"1"'),
+  )
+  def test_compute_type_metadata(self, compute_type, expected_regex):
+    def f(x):
+      with compute_on(compute_type):
+        return jnp.sin(x)
+
+    hlo = jax.jit(f).lower(1.0).as_text()
+    self.assertRegex(hlo, expected_regex)
+
+  def test_compute_type_metadata_preserves_attributes(self):
+    def f(x):
+      with compute_on('device_host'):
+        return set_xla_metadata(jnp.sin(x), foo='bar')
+
+    hlo = jax.jit(f).lower(1.0).as_text()
+    self.assertRegex(hlo, r'_xla_compute_type\s*=\s*"host"')
+    self.assertRegex(hlo, r'foo\s*=\s*"bar"')
+
+
 class StreamAnnotationTest(jtu.JaxTestCase):
 
   def test_stream_annotation_single_instruction(self):
@@ -1939,6 +1965,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     self.assertIn('call-start', compiled_text)
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertIn('wrapped_add', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 2)
 
@@ -1980,6 +2007,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
     self.assertIn('call-start.1', compiled_text)
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertIn('_scheduling_group_id="1"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 1024)
 
@@ -2016,6 +2044,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
     self.assertIn('call-start.1', compiled_f.as_text())
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
 
   @jtu.skip_on_devices('cpu')

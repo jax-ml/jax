@@ -2468,7 +2468,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
       )
       foreach(
           lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
-          out_nodes,
+          [o for o in out_nodes if not isinstance(o, ir.BlockArgument)],
       )
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
@@ -2652,35 +2652,43 @@ def map_compute_type(c_type: str) -> str:
   raise ValueError(f"Invalid compute type {c_type}. Current supported values "
                    "are `device_host`, `device` and `tpu_sparsecore`")
 
+
+def _update_frontend_attributes(op, attrs):
+  attr_array = op.attributes.get("mhlo.frontend_attributes", {})
+  existing = {a.name: a.attr for a in attr_array}
+  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs | existing)
+
+
 def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
-  if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
-    if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
-      stream = ctx.jaxpr_eqn_ctx.compute_type.split(":")[1]
-      dict_attr = {
+  if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
+    return
+
+  if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
+    _, stream = ctx.jaxpr_eqn_ctx.compute_type.split(":", 1)
+    dict_attr = {
         "_xla_stream_annotation": ir.StringAttr.get(stream),
-        "inlineable": ir.StringAttr.get("false"),
-      }
-      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
-    else:
-      dict_attr = {"_xla_compute_type": ir.StringAttr.get(
-          map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
-      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+        "inlineable": ir.StringAttr.get("false")
+    }
+  else:
+    dict_attr = {
+        "_xla_compute_type": ir.StringAttr.get(
+            map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))
+    }
+
+  _update_frontend_attributes(op, dict_attr)
 
 
 def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
-  if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.xla_metadata:
-    ctx_attributes, existing_attributes = {}, {}
-    for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
-      ctx_attributes[k] = ir.StringAttr.get(str(v).lower())
-    if isinstance(op, ir.Operation):
-      # combine with existing mhlo.frontend_attributes
-      for attr in op.attributes:
-        if attr == "mhlo.frontend_attributes":
-          for a in op.attributes[attr]:
-            existing_attributes[a.name] = a.attr
-      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
-          ctx_attributes | existing_attributes
-      )
+  if ctx.jaxpr_eqn_ctx is None:
+    return
+  if not ctx.jaxpr_eqn_ctx.xla_metadata:
+    return
+  ctx_attributes = {
+      k: ir.StringAttr.get(str(v).lower())
+      for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items()
+  }
+  if isinstance(op, ir.Operation):
+    _update_frontend_attributes(op, ctx_attributes)
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
