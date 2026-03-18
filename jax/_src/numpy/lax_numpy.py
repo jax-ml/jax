@@ -6031,24 +6031,33 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     # TODO(jakevdp): deprecate the complex case.
     return array(np.arange(start, stop, step, dtype=dtype), device=out_sharding)
 
-  if step is not None:
-    # arange(N, M, K): when step is specified, fall back to NumPy.
-    return array(np.arange(start, stop, step, dtype=dtype), device=out_sharding)
-
   if stop is None:
     start, stop = 0, start
 
-  if start == 0:
+  if step is not None:
+    # arange(N, M, K)
+    if (dtype is not None and
+        dtypes.issubdtype(dtype, np.floating) and
+        dtypes.finfo(dtype).bits < 32):
+      working_dtype = np.dtype('float32')
+    else:
+      working_dtype = dtype
+    size = max(0, int(np.ceil((stop - start) / step)))
+    return lax.convert_element_type(
+        lax.add(lax.convert_element_type(start, working_dtype),
+                lax.mul(lax.convert_element_type(step, working_dtype),
+                        lax.broadcasted_iota(working_dtype, (size,), 0,
+                                             out_sharding=out_sharding))),
+        dtype)
+  elif start == 0:
     # arange(M) or arange(0, M)
     size = max(0, int(np.ceil(stop)))
     return lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding)
-
   else:
     # arange(N, M)
     size = max(0, int(np.ceil(stop - start)))
     return lax.add(lax.convert_element_type(start, dtype),
-                   lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding))
-
+                    lax.broadcasted_iota(dtype, (size,), 0, out_sharding=out_sharding))
 
 def _arange_dynamic(
     start: DimSize, stop: DimSize, step: DimSize, dtype: DTypeLike) -> Array:

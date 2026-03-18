@@ -26,6 +26,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes:
   * The semi-private type `jax._src.literals.TypedNdArray` is now a subclass of
     `np.ndarray`, rather than a duck type of it.
+  * {func}`jax.numpy.arange` with `step` specified no longer generates the array
+    on host. The benefit is more efficient code, though this can lead to less
+    precise outputs for narrow-width floats (e.g. bfloat16). To recover the
+    previous behavior in this case, use `jnp.array(np.arange(...))`.
 
 ## JAX 0.9.1 (March 2, 2026)
 
