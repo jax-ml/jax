@@ -182,9 +182,9 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
   __slots__ = ["memory_space"]
 
   def __init__(self, shape, dtype, weak_type=False, sharding=None,
-               vma=frozenset(), memory_space=None):
-    super().__init__(shape, dtype, weak_type=weak_type, sharding=sharding,
-                     vma=vma)
+               manual_type=jax_core.ManualAxisType(), memory_space=None):
+    super().__init__(shape, dtype, weak_type, sharding=sharding,
+                     manual_type=manual_type)
     self.memory_space = memory_space
 
   def __eq__(self, other):
@@ -192,7 +192,7 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
 
   def __hash__(self):
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.vma, self.memory_space))
+                 self.mt, self.memory_space))
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return jax_core.str_short_aval(
@@ -200,7 +200,7 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
         self.dtype,
         self.sharding.mesh,
         self.sharding.spec,
-        self.vma,
+        self.mt,
         self.memory_space,
         short_dtypes,
         mesh_axis_types,
@@ -212,7 +212,7 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
       dtype=None,
       weak_type=None,
       sharding=None,
-      vma=None,
+      manual_type=None,
       memory_space=None,
   ):
     if shape is None:
@@ -223,19 +223,20 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
       weak_type = self.weak_type
     if sharding is None:
       sharding = self.sharding
-    if vma is None:
-      vma = self.vma
+    if manual_type is None:
+      manual_type = self.manual_type
     if memory_space is None:
       memory_space = self.memory_space
     return ShapedArrayWithMemorySpace(
-        shape, dtype, weak_type, sharding=sharding, vma=vma,
+        shape, dtype, weak_type, sharding=sharding, manual_type=manual_type,
         memory_space=memory_space
     )
 
   def unwrap(self) -> jax_core.ShapedArray:
     """Returns a ShapedArray with the memory space removed."""
     return jax_core.ShapedArray(
-        self.shape, self.dtype, self.weak_type, sharding=self.sharding, vma=self.vma
+        self.shape, self.dtype, self.weak_type, sharding=self.sharding,
+        manual_type=self.mt
     )
 
 mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
@@ -1775,12 +1776,12 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
               " output should be varying across mesh axes using the `vma`"
               " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
               " `jax.shard_map`.")
-        # TODO(yashkatariya): Remove this once we have `aval.mt`
-        spec = (out_shape.sharding.spec
-                if isinstance(out_shape.sharding, jax_core.NamedSharding) else None)
+        # TODO(yashkatariya): Use out_shape.mt instead of creating one from
+        # scratch once SDS has mt on it.
         return jax_core.ShapedArray(
             shape=out_shape.shape, dtype=out_shape.dtype,
-            sharding=jax_core.get_cur_mesh_sharding(spec), vma=out_shape.vma)
+            sharding=jax_core.get_cur_mesh_sharding(),
+            manual_type=jax_core.ManualAxisType(varying=out_shape.vma))
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype,
                                   sharding=jax_core.get_cur_mesh_sharding())
     case MemoryRef():

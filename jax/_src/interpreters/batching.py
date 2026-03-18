@@ -156,8 +156,9 @@ class BatchTracer(Tracer['BatchTrace']):
     aval = core.typeof(self.val)
     if self._trace.axis_data.spmd_name is not None:
       if config._check_vma.value:
-        aval = aval.update(
-            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
+        mt = aval.mt.update(
+            varying=aval.vma - frozenset(self._trace.axis_data.spmd_name))
+        aval = aval.update(manual_type=mt)
     if self.batch_dim is not_mapped:
       return aval
     elif type(self.batch_dim) is int:
@@ -454,7 +455,8 @@ def _batch_jaxpr2(
           axis_data.size, b, aval, axis_data.explicit_mesh_axis)
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
-          aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
+          mt = aval.mt.update(varying=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
+          aval = aval.update(manual_type=mt)  # type: ignore
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()

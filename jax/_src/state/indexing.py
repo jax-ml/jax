@@ -277,10 +277,7 @@ class NDIndexer(state_types.Transform):
         self._validate_sharding(x.sharding)
         if self.is_dynamic_size:
           return DShapedArray(self.get_indexer_shape(), x.dtype,
-                              weak_type=x.weak_type,
-                              sharding=x.sharding,
-                              vma=x.vma,
-                              memory_space=x.memory_space)
+                              weak_type=x.weak_type)
         return x.update(shape=self.get_indexer_shape())
       case _:
         if type(x) in indexer_transform_type_registry:
@@ -336,34 +333,23 @@ class NDIndexer(state_types.Transform):
 
 
 class DShapedArray:
-  def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               vma: frozenset[core.AxisName] = frozenset(),
-               memory_space: core.MemorySpace = core.MemorySpace.Device):
+  def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = core._dtype_object(dtype)
     self.weak_type = weak_type
-    self.sharding = sharding
-    self.vma = core.get_vma(vma, self.sharding)
-    self.memory_space = core.get_memory_space(memory_space)
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
   def lo_ty(self): return [self]
 
-  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
+  def update(self, shape=None, dtype=None, weak_type=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if 'sharding' not in kwargs:
-      kwargs['sharding'] = self.sharding
-    if 'vma' not in kwargs:
-      kwargs['vma'] = self.vma
-    if 'memory_space' not in kwargs:
-      kwargs['memory_space'] = self.memory_space
-    return DShapedArray(shape, dtype, weak_type, **kwargs)
+    return DShapedArray(shape, dtype, weak_type)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -378,17 +364,10 @@ class DShapedArray:
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type
-            and self.sharding == other.sharding
-            and self.vma == other.vma
-            and self.memory_space == other.memory_space)
+            and self.weak_type == other.weak_type)
 
   def __hash__(self):
-    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
-    # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.vma, self.memory_space))
+    return hash((self.shape, self.dtype, self.weak_type))
 
   def __ne__(self, other):
     return not self == other
@@ -401,19 +380,15 @@ class DShapedArray:
     wt_str = "~" if self.weak_type else ""
     return f'{wt_str}{self.str_short()}'
 
-  def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    return core.str_short_aval(
-        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,  # pyrefly: ignore[missing-attribute]
-        self.vma, self.memory_space, short_dtypes, mesh_axis_types)
+  def str_short(self):
+    return (f"DShapedArray(shape={self.shape}, dtype={self.dtype},"
+            f" weak_type={self.weak_type})")
 
-  def _len(self, ignored_tracer):
+  def _len(self, _):
     try:
       return self.shape[0]
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
-
-  def update_vma(self, vma):
-    return self.update(vma=vma)
 
   def update_weak_type(self, weak_type):
     return self.update(weak_type=weak_type)

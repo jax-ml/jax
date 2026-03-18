@@ -383,12 +383,8 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update_vma(self, vma):
-    return self.update(inner_aval=self.inner_aval.update_vma(vma))
-
-  def update_unreduced_reduced(self, unreduced, reduced):
-    return self.update(inner_aval=self.inner_aval.update_unreduced_reduced(
-        unreduced, reduced))
+  def update_manual_type(self, mt):
+    return self.update(inner_aval=self.inner_aval.update_manual_type(mt))
 
   def update(self, inner_aval=None, memory_space=None, kind=None):  # pyrefly: ignore[bad-override]
     inner_aval = self.inner_aval if inner_aval is None else inner_aval

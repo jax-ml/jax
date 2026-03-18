@@ -88,18 +88,13 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
           ([frozenset()] * num_out, [frozenset()] * num_out))
 
 def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
-  up = lambda sh, u, r: sh.update(spec=sh.spec.update(unreduced=u, reduced=r))
   cur_mesh = mesh_lib.get_abstract_mesh()
   aval_mesh = _get_abstract_mesh_from_avals(avals)
   if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
       (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
     out_s = NamedSharding(aval_mesh, P())
-    out_s = out_s if num_out is None else [out_s] * num_out
-    unreduced, reduced = call_ur_rule(prim, ur_rule, out_s, num_out, *avals,
-                                      **kwargs)
-    return (up(out_s, unreduced, reduced) if num_out is None else
-            [up(s, u, r) for s, u, r in zip(out_s, unreduced, reduced)])  # type: ignore
+    return out_s if num_out is None else [out_s] * num_out
   if sh_rule is None:
     raise core.ShardingTypeError(
         f'sharding rule for {prim.name} is not implemented. Please file an'
@@ -109,6 +104,7 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
   out_s = sh_rule(*avals, **kwargs)
   unreduced, reduced = call_ur_rule(prim, ur_rule, out_s, num_out, *avals,
                                     **kwargs)
+  up = lambda sh, u, r: sh.update(spec=sh.spec.update(unreduced=u, reduced=r))
   return (up(out_s, unreduced, reduced) if num_out is None else
           [up(s, u, r) for s, u, r in zip(out_s, unreduced, reduced)])
 
@@ -127,7 +123,7 @@ def call_shape_dtype_sharding_rule(
     avals_str = ', '.join(i.str_short(short_dtypes=True) for i in avals)
     mesh = mesh_lib.empty_abstract_mesh if e.mesh is None else e.mesh
     out_aval_str = core.str_short_aval(
-        out_shapes, out_dtypes, mesh, e.pspec, frozenset(),
+        out_shapes, out_dtypes, mesh, e.pspec, core.ManualAxisType(),
         core.MemorySpace.Device, short_dtypes=True)
     raise core.ShardingTypeError(
         f'{prim} operation with inputs: {avals_str} produces an illegally'
@@ -155,6 +151,25 @@ def multi_mem_space_rule(prim, num_out, *avals, **kwargs):
   out_mem_space = _default_memory_space_rule(prim, *avals, **kwargs)
   return [out_mem_space] * num_out
 
+def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
+  out_vma = vma_rule(*avals, **kwargs)
+  num_out = len(out_vma) if multi_out else None
+  if mesh_lib.get_abstract_mesh().are_all_axes_manual:
+    out_s = None if num_out is None else [None] * num_out
+    out_unreduced, out_reduced = call_ur_rule(
+        prim, ur_rule, out_s, num_out, *avals, **kwargs)
+  else:
+    # TODO(yashkatariya): Handle partial manual unreduced/reduced.
+    out_unreduced, out_reduced = (
+        (frozenset(), frozenset()) if num_out is None else
+        ([frozenset()] * num_out, [frozenset()] * num_out))
+  if num_out is None:
+    return core.ManualAxisType(varying=out_vma, unreduced=out_unreduced,
+                           reduced=out_reduced)
+  else:
+    return [core.ManualAxisType(varying=v, unreduced=u, reduced=r)
+            for v, u, r in zip(out_vma, out_unreduced, out_reduced)]
+
 
 def standard_abstract_eval(
     prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
@@ -174,13 +189,13 @@ def standard_abstract_eval(
     out_shape, out_dtype, out_sharding = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, ur_rule, False,
         *avals, **kwargs)
-    out_vma = vma_rule(*avals, **kwargs)
+    out_mt = manual_rule(prim, vma_rule, ur_rule, False, *avals, **kwargs)
     out_mem_space = (_default_memory_space_rule(prim, *avals, **kwargs)
                      if memory_space_rule is None else
                      memory_space_rule(*avals, **kwargs))
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-        vma=out_vma, memory_space=out_mem_space)
+        manual_type=out_mt, memory_space=out_mem_space)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   else:
@@ -198,15 +213,15 @@ def standard_multi_result_abstract_eval(
     out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, ur_rule, True,
         *avals, **kwargs)
-    out_vmas = vma_rule(*avals, **kwargs)
+    out_mts = manual_rule(prim, vma_rule, ur_rule, True, *avals, **kwargs)
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
-                                  vma=vma, memory_space=ms)
-                 for s, d, weak_type, sh, vma, ms in zip(
+                                  manual_type=mt, memory_space=ms)
+                 for s, d, weak_type, sh, mt, ms in zip(
                      out_shapes, out_dtypes, weak_types, out_shardings,
-                     out_vmas, out_mem_spaces)]
+                     out_mts, out_mem_spaces)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
   else:

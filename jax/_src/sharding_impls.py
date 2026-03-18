@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
 import math
+import itertools as it
 from typing import Any, NamedTuple, cast
 
 from jax._src import config
@@ -1128,7 +1129,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if isinstance(sharding.mesh, mesh_lib.Mesh):
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
-  for s in flatten_spec(sharding.spec):
+  for s in it.chain(flatten_spec(sharding.spec), sharding.spec.unreduced,
+                    sharding.spec.reduced):
     if s is None:
       continue
     if sharding.mesh._name_to_type[s] in {

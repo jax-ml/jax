@@ -310,10 +310,10 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       def add_implicit_pvary_and_unreduced(val, spec):
         if isinstance(spec, P):
           val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).vma))
-          sharding = typeof(val).sharding
-          unreduced = spec.unreduced - sharding.spec.unreduced
+          aval = typeof(val)
+          unreduced = spec.unreduced - aval.mt.unreduced
           if unreduced:
-            axes = order_wrt_mesh(sharding.mesh, unreduced)
+            axes = order_wrt_mesh(aval.sharding.mesh, unreduced)
             return lax_parallel.vary_unreduced_cast(val, axes)
           else:
             return val
@@ -801,7 +801,7 @@ def _spec_to_names(spec: PartitionSpec):
           for i, names in enumerate(spec) if names is not None}
 
 def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
-                        spec, aval: core.AbstractValue) -> core.AbstractValue:
+                        spec, aval: core.ShapedArray) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
   if spec.unreduced != aval.sharding.spec.unreduced:
     raise ValueError(
@@ -816,24 +816,25 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, manual_axes)
-  new_spec = aval.sharding.spec.update(
-      unreduced=aval.sharding.spec.unreduced if check_vma else frozenset(),
-      reduced=aval.sharding.spec.reduced if check_vma else frozenset())
-  new_sharding = aval.sharding.update(mesh=manual_mesh, spec=new_spec)
-  vma = _spec_to_vma(spec) if check_vma else frozenset()
-  vma = vma | aval.vma
-  return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
+  new_sharding = aval.sharding.update(
+      mesh=manual_mesh,
+      spec=core.modify_spec_for_auto_manual(aval.sharding.spec, manual_mesh))
+  vma = (_spec_to_vma(spec) if check_vma else frozenset()) | aval.mt.varying
+  unreduced = aval.sharding.spec.unreduced if check_vma else frozenset()
+  reduced = aval.sharding.spec.reduced if check_vma else frozenset()
+  mt = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced)
+  return aval.update(shape=new_shape, sharding=new_sharding, manual_type=mt)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
-def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
-                          ) -> core.AbstractValue:
+def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
+                          ) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
-  if check_vma and spec.unreduced != aval.sharding.spec.unreduced:
+  if check_vma and spec.unreduced != aval.mt.unreduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the unreduced"
         f" present on the out_aval. Got out_specs={spec} and"
         f" out_aval={aval.str_short(True)}")
-  if check_vma and spec.reduced != aval.sharding.spec.reduced:
+  if check_vma and spec.reduced != aval.mt.reduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the reduced present"
         f" on the out_aval. Got out_specs={spec} and"
@@ -865,7 +866,9 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.AbstractValue
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
   vma = frozenset(v for v in aval.vma if v in manual_axes)
-  return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
+  # TODO(yashkatariya): Handle partial manual unreduced/reduced.
+  out_mt = core.ManualAxisType(varying=vma)
+  return aval.update(shape=new_shape, sharding=new_sharding, manual_type=out_mt)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -1417,7 +1420,8 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
         _as_manual_mesh(self._trace.amesh, self._trace.manual_axes),
         out.sharding.spec)  # type: ignore[missing-attribute]
     vma = self.vma if config._check_vma.value else frozenset()
-    return out.update(sharding=new_sharding, vma=vma)
+    mt = core.ManualAxisType(varying=vma)
+    return out.update(sharding=new_sharding, manual_type=mt)
 
   def to_concrete_value(self):
     if self._trace.check and self.vma == frozenset():
@@ -1713,7 +1717,8 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
                else next(res_avals_iter).nospec(mesh, check_vma, all_names)
                for f1, f2 in zip(in_fwd, out_fwd)]
   assert next(res_avals_iter, None) is None
-  new_in_specs = (*res_specs, *(P(),) * len(env),
+  env_specs = [_repspec(typeof(e)) for e in env]
+  new_in_specs = (*res_specs, *env_specs,
                   *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz))
   tangent_out_specs = tuple(s.to_tangent_spec() for s, nz in zip(out_specs, nzs_out) if nz)
   tangent_params = dict(

@@ -376,7 +376,10 @@ def _reduce_window_abstract_eval_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
   vma = core.standard_vma_rule('reduce_window', *operand_avals)
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding, vma=vma)
+  if any(core.getu(a) or core.getr(a) for a in operand_avals):
+    raise NotImplementedError
+  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
+                           manual_type=op.mt.update(varying=vma))
                for op in operand_avals)
 
 

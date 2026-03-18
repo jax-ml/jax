@@ -2622,11 +2622,11 @@ class ShardMapTest(jtu.JaxTestCase):
                  out_specs=P(None, None, reduced={'seq'}))
       def ag(a):
         self.assertEqual(a.aval.vma, {'seq'})
-        self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+        self.assertEqual(a.aval.mt.unreduced, frozenset())
         out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
         self.assertEqual(out.aval.vma, frozenset())
-        self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
-        self.assertEqual(out.aval.sharding.spec.reduced, {'seq'})
+        self.assertEqual(out.aval.mt.unreduced, frozenset())
+        self.assertEqual(out.aval.mt.reduced, {'seq'})
         return out
 
       y2 = ag(y)
@@ -2642,20 +2642,20 @@ class ShardMapTest(jtu.JaxTestCase):
                  out_specs=P('seq', None, unreduced={'data'}))
       def rs(a):
         self.assertEqual(a.aval.vma, frozenset())
-        self.assertEqual(a.aval.sharding.spec.unreduced, {'data', 'seq'})
+        self.assertEqual(a.aval.mt.unreduced, {'data', 'seq'})
         out = lax.psum_scatter(a, axis_name='seq', tiled=True)
         self.assertEqual(out.aval.vma, {'seq'})
-        self.assertEqual(out.aval.sharding.spec.unreduced, {'data'})
+        self.assertEqual(out.aval.mt.unreduced, {'data'})
         return out
 
       @shard_map(in_specs=P('seq', None, unreduced={'data'}),
                  out_specs=P('seq', None))
       def ar(a):
         self.assertEqual(a.aval.vma, {'seq'})
-        self.assertEqual(a.aval.sharding.spec.unreduced, {'data'})
+        self.assertEqual(a.aval.mt.unreduced, {'data'})
         out = lax.psum(a, axis_name='data')
         self.assertEqual(out.aval.vma, {'seq'})
-        self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+        self.assertEqual(out.aval.mt.unreduced, frozenset())
         return out
 
       x_bar = jnp.einsum('btf,df->btd', g, y, out_sharding=P('data', 'seq', None))
@@ -2668,7 +2668,6 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(y_bar.aval.sharding.spec.unreduced, {'data'})
       y_bar = ar(y_bar)
       self.assertEqual(y_bar.aval.sharding.spec.unreduced, frozenset())
-
       return (x_bar, y_bar)
 
     f.defvjp(f_fwd, f_bwd)
@@ -2696,23 +2695,23 @@ class ShardMapTest(jtu.JaxTestCase):
                out_specs=P('seq', None, reduced={'data'}))
     def preduced(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(a.aval.mt.unreduced, frozenset())
       out = jax.lax.pcast(a, axis_name='data', to='reduced')
       self.assertEqual(out.aval.vma, {'seq'})
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(out.aval.sharding.spec.reduced, {'data'})
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.reduced, {'data'})
       return out
 
     @shard_map(in_specs=P('seq', None, reduced={'data'}),
                out_specs=P(None, None, reduced={'seq', 'data'}))
     def ag(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(a.aval.sharding.spec.reduced, {'data'})
+      self.assertEqual(a.aval.mt.unreduced, frozenset())
+      self.assertEqual(a.aval.mt.reduced, {'data'})
       out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(out.aval.sharding.spec.reduced, {'seq', 'data'})
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.reduced, {'seq', 'data'})
       return out
 
     @jax.jit
@@ -2751,10 +2750,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P())
     def ar(x):
       self.assertEqual(x.aval.vma, frozenset())
-      self.assertEqual(x.aval.sharding.spec.unreduced, {'x'})
+      self.assertEqual(x.aval.mt.unreduced, {'x'})
       out = jax.lax.psum(x, 'x')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
       return out
 
     @jax.jit
@@ -2786,12 +2785,12 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(), out_specs=P(reduced={'x'}))
     def pr(x):
       self.assertEqual(x.aval.vma, frozenset())
-      self.assertEqual(x.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(x.aval.sharding.spec.reduced, frozenset())
+      self.assertEqual(x.aval.mt.unreduced, frozenset())
+      self.assertEqual(x.aval.mt.reduced, frozenset())
       out = jax.lax.pcast(x, 'x', to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(out.aval.sharding.spec.reduced, {'x'})
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.reduced, {'x'})
       return out
 
     @jax.jit
@@ -2821,11 +2820,11 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P('seq', None), out_specs=P(None, None, reduced={'seq'}))
     def ag(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(a.aval.mt.unreduced, frozenset())
       out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
-      self.assertEqual(out.aval.sharding.spec.reduced, {'seq'})
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.reduced, {'seq'})
       return out
 
     @jax.jit
@@ -2858,10 +2857,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P('x', None))
     def rs(a):
       self.assertEqual(a.aval.vma, frozenset())
-      self.assertEqual(a.aval.sharding.spec.unreduced, {'x'})
+      self.assertEqual(a.aval.mt.unreduced, {'x'})
       out = lax.psum_scatter(a, axis_name='x', tiled=True)
       self.assertEqual(out.aval.vma, {'x'})
-      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(out.aval.mt.unreduced, frozenset())
       return out
 
     @jax.jit
@@ -4510,9 +4509,9 @@ class ShardMapTest(jtu.JaxTestCase):
         ValueError, "jax.lax.pcast can only accept axis_name which"):
       f(arr1, arr2)
 
-  @parameterized.named_parameters(
-      ('1', P('x'), {'x'}, P(None, 'y')),
-      ('2', P(None, 'y'), {'y'}, P('x', None))
+  @parameterized.parameters(
+      (P('x'), {'x'}, P(None, 'y')),
+      (P(None, 'y'), {'y'}, P('x', None)),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_partial_manual_explicit_shmap(self, out_spec, axis_name, aval_spec,
@@ -4602,7 +4601,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x, y):
       self.assertEqual(x.vma, {'x', 'y'})
       self.assertEqual(y.vma, {'y'})
-      self.assertEqual(y.aval.sharding.spec.reduced, {'x'})
+      self.assertEqual(y.aval.mt.reduced, {'x'})
       z = jnp.dot(x, y)
       self.assertEqual(z.vma, {'x', 'y'})
       return jax.lax.psum(z, axis_name='y')
@@ -4630,9 +4629,9 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.shard_map(in_specs=(P('x', None), P(None, None, reduced={'x'})),
                    out_specs=P('x', None))
     def dot(inputs, params):
-      self.assertEqual(params.aval.sharding.spec.reduced, {'x'})
+      self.assertEqual(params.aval.mt.reduced, {'x'})
       params = params.astype(jnp.bfloat16)
-      self.assertEqual(params.aval.sharding.spec.reduced, {'x'})
+      self.assertEqual(params.aval.mt.reduced, {'x'})
       return jnp.dot(inputs.astype(jnp.bfloat16), params)
 
     @jax.jit
@@ -4935,7 +4934,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P(), check_vma=False)
     def g(x):
-      self.assertEqual(x.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(x.aval.mt.unreduced, frozenset())
       return x
 
     out2 = g(out)
