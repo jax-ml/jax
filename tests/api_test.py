@@ -62,6 +62,7 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
+from jax._src.lib import version as jaxlib_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
@@ -1583,6 +1584,20 @@ class JitTest(jtu.BufferDonationTestCase):
       with jax.no_execution():
         f()  # crash
     f()  # no crash
+
+  @unittest.skipIf(jaxlib_version <= (0, 9, 1), "requires jaxlib > 0.9.1 fix")
+  def test_sum_of_closed_over_bools(self, N=32):
+    # Regression test for https://github.com/jax-ml/jax/issues/35762
+    mask = jnp.ones(N, dtype=jnp.bool_)
+
+    with self.subTest("eager"):
+      self.assertEqual(jnp.sum(mask), N)
+
+    with self.subTest("jit arg"):
+      self.assertEqual(jax.jit(lambda m: jnp.sum(m))(mask), N)
+
+    with self.subTest("jit closure"):
+      self.assertEqual(jax.jit(lambda: jnp.sum(mask))(), N)
 
 
 class APITest(jtu.JaxTestCase):
