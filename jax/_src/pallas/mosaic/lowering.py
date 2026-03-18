@@ -282,13 +282,8 @@ class LoweringRuleContext:
 def _memory_space_to_tpu_memory_space(
     memory_space: AnyMemorySpace | None, kernel_type: tpu_core.CoreType
 ) -> TPUMemorySpace | Literal[pallas_core.MemorySpace.ANY]:
-  if memory_space == jax_core.MemorySpace.Device:
-    return pallas_core.MemorySpace.ANY
-
   match memory_space:
     case None:
-      # We pick VMEM as the default one when no memory space is
-      # specified
       match kernel_type:
         case tpu_core.CoreType.TC | tpu_core.CoreType.SC_VECTOR_SUBCORE:
           return TPUMemorySpace.VMEM
@@ -297,7 +292,6 @@ def _memory_space_to_tpu_memory_space(
         case _:
           raise ValueError(f"Unsupported kernel type: {kernel_type}")
     case pallas_core.MemorySpace.ANY:
-      # Map the general ANY memory space to TPU ANY memory space
       return ANY
     case pallas_core.MemorySpace.HOST:
       return TPUMemorySpace.HOST
