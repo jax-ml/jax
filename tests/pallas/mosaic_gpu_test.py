@@ -230,6 +230,32 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
+  def test_griddepcontrol(self):
+    @jax.jit
+    def f(x):
+      def kernel_body(x_ref, o_ref):
+        plgpu.griddepcontrol_wait()
+        o_ref[...] = x_ref[...] + 1.0
+        plgpu.griddepcontrol_launch_dependents()
+
+      return self.kernel(
+          kernel_body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    # We set this to dump PTX so we can verify the instructions are there.
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"):
+      # Capture stdout to verify PTX
+      with self.capture_stdout() as get_ptx:
+        out = f(x)
+
+    np.testing.assert_allclose(out, x + 1.0)
+
+    ptx_output = get_ptx()
+    self.assertIn("griddepcontrol.wait;", ptx_output)
+    self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
+
 
 class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
@@ -3336,6 +3362,35 @@ class PallasCallWGTest(
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
+
+  def test_griddepcontrol(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on a GPU with capability >= sm90a")
+
+    @jax.jit
+    def f(x):
+      def kernel_body(x_ref, o_ref):
+        plgpu.griddepcontrol_wait()
+        o_ref[...] = x_ref[...] + 1.0
+        plgpu.griddepcontrol_launch_dependents()
+
+      return self.kernel(
+          kernel_body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    # We set this to dump PTX so we can verify the instructions are there.
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"):
+      # Capture stdout to verify PTX
+      with self.capture_stdout() as get_ptx:
+        out = f(x)
+
+    np.testing.assert_allclose(out, x + 1.0)
+
+    ptx_output = get_ptx()
+    self.assertIn("griddepcontrol.wait;", ptx_output)
+    self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
 
 
 class PallasCallSm90ATest(PallasSm90ATest):
