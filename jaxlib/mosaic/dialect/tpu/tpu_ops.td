@@ -138,7 +138,7 @@ def TPU_VectorLayoutAttr : TPU_Attr<"VectorLayout", "vpad"> {
 
 def TPU_TiledLayoutAttr
   : TPU_Attr<"TiledLayout", "tiled",
-             [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
+             [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["verifyLayout"]>]> {
   let description = [{
     This attribute represents tiled layouts in memrefs.
 

@@ -526,6 +526,15 @@ LogicalResult TiledLayoutAttr::verify(
   return success();
 }
 
+LogicalResult TiledLayoutAttr::verifyLayout(
+    ArrayRef<int64_t> shape,
+    function_ref<InFlightDiagnostic()> emitError) const {
+  if (getRank() != shape.size()) {
+    return emitError() << "Layout rank does not match shape rank";
+  }
+  return success();
+}
+
 MemRefType getMemRefType(Value value) {
   if (auto erase_op = value.getDefiningOp<tpu::EraseLayoutOp>()) {
     value = erase_op.getOperand();
