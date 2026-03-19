@@ -1573,7 +1573,7 @@ def async_copy_scales_smem_to_tmem(
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
   if dtype not in {ir.Float8E8M0FNUType.get(), ir.Float8E4M3FNType.get()}:
-    raise NotImplementedError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
+    raise ValueError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:
