@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+  * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
+    will now always use the new implementation that wraps
+    `jax.jit(jax.shard_map)`. Please see
+    https://docs.jax.dev/en/latest/migrate_pmap.html for more information.
 * Changes:
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been

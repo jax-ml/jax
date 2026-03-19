@@ -2477,16 +2477,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     too_big = 2 * jax.device_count()
 
-    if config.pmap_shmap_merge.value:
-      expected_regex = re.compile(
-          "cannot select an axis to squeeze out which has size not equal to "
-          r"one, got shape=\(\d,\) and dimensions=\(\d,\)"
-      )
-    else:
-      expected_regex = re.escape(
-          "compiling computation `jit(scan)` that requires {} "
-          "replicas, but only {} XLA devices are available."
-          .format(too_big, jax.device_count()))
+    expected_regex = re.compile(
+        "cannot select an axis to squeeze out which has size not equal to "
+        r"one, got shape=\(\d,\) and dimensions=\(\d,\)"
+    )
 
     self.assertRaisesRegex(
         ValueError, expected_regex,

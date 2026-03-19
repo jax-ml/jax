@@ -2895,61 +2895,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     pjit(foo)(0)  # doesn't crash
 
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_pmap_in_axis_resources_error(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Test does not raise under pmap_shmap_merge=True")
-
-    pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
-    self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        r"One of in_shardings.*got sharding.*which is not allowed."):
-      pjit(lambda x: x, in_shardings=pmap_out.sharding)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        r"One of out_shardings.*got sharding.*which is not allowed."):
-      pjit(lambda x: x, out_shardings=pmap_out.sharding)
-
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_to_pjit_single_device(self):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
-    if config.pmap_shmap_merge.value:
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
-    else:
-      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
     self.assertLen(pmap_out.devices(), jax.device_count())
 
     out = pjit(lambda x: x * 3)(pmap_out)
     self.assertArraysEqual(out, pmap_out * 3)
-    if config.pmap_shmap_merge.value:
-      self.assertLen(out.devices(), jax.device_count())
-    else:
-      # Even though pmap out is on jax.device_count() number of devices, the
-      # output will be 1 device since it will be resharded.
-      self.assertLen(out.devices(), 1)
+    self.assertLen(out.devices(), jax.device_count())
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_to_pjit_multi_device(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-
+    if jax.device_count() < 4:
+      self.skipTest('Requires at least 4 devices.')
     pmap_out = jax.pmap(lambda x, y: x, in_axes=(None, 0), out_axes=None)(
         jnp.arange(4), jnp.arange(4)
     )
     inp2 = jnp.arange(4)
-    if config.pmap_shmap_merge.value:
-      # NOTE(dsuo): Under `pmap_shmap_merge=True`, the mesh shape used by pmap
-      # to produce its output must match the mesh shape used by pjit for its
-      # inputs. Don't use the `mesh` context manager here since it does not
-      # match pmap's default mesh shape (i.e., (4,)).
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
-      out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
-    else:
-      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
-      with mesh:
-        out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
+    # NOTE(dsuo): The mesh shape used by pmap to produce its output must match
+    # the mesh shape used by pjit for its inputs. Don't use a mesh context
+    # manager here since it does not match pmap's default mesh shape (i.e.,
+    # (4,)).
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
+    out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
 
     self.assertArraysEqual(out1, pmap_out * 2)
     self.assertArraysEqual(out2, inp2 * 2)
@@ -2958,21 +2925,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(out1.is_fully_replicated)
     self.assertTrue(out2.is_fully_replicated)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pmap_sharding_input_pjit_in_axis_resources(self):
-    if config.pmap_shmap_merge.value:
-      # NOTE(dsuo): jax.pmap under `pmap_shmap_merge=True` will use this mesh
-      # shape by default, so we need pjit to have the same mesh shape as the one
-      # pmap uses.
-      mesh = jtu.create_mesh((4,), ('x'))
-    else:
-      mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    if jax.device_count() < 4:
+      self.skipTest('Requires at least 4 devices.')
+    mesh = jtu.create_mesh((4,), 'x')
 
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(4))
-    if config.pmap_shmap_merge.value:
-      self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
-    else:
-      self.assertIsInstance(pmap_out.sharding, sharding_impls.PmapSharding)
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.NamedSharding)
 
     out = pjit(lambda x: x * 2, in_shardings=NamedSharding(mesh, P('x')))(pmap_out)
     self.assertArraysEqual(out, pmap_out * 2)
@@ -3203,21 +3162,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaises(IndivisibleError):
       jax.device_put((y, x), s)
 
-    if config.pmap_shmap_merge.value:
-      expected_regex = re.compile(r".*should evenly divide the shape.*")
-      with self.assertRaises(IndivisibleError):
-        s2 = jax.pmap(lambda x: x,
-                      devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
-        jax.device_put(x, s2)
-    else:
-      expected_regex = (
-          "The sharded dimension must be equal to the number of "
-          "devices passed to PmapSharding. Got sharded dimension 0 with value 1 "
-          r"in shape \(1,\) and the number of devices=2")
-      with self.assertRaisesRegex(ValueError, expected_regex):
-        s2 = jax.pmap(lambda x: x,
-                      devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
-        jax.device_put(x, s2)
+    with self.assertRaises(IndivisibleError):
+      s2 = jax.pmap(lambda x: x, devices=list(mesh.devices.flat))(
+          jnp.arange(2)
+      ).sharding
+      jax.device_put(x, s2)
 
     jax.device_put(2., NamedSharding(mesh, P()))  # doesn't crash
 

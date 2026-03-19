@@ -3567,17 +3567,10 @@ class APITest(jtu.JaxTestCase):
       api.vmap(lambda x: x)({})
 
   def test_pmap_empty_arguments(self):
-    if config.pmap_shmap_merge.value:
-      with self.assertRaisesRegex(
-          ValueError,
-          "pmap requires at least one argument with a mapped axis."):
-        api.pmap(lambda x: x)({})
-    else:
-      with self.assertRaisesRegex(
-          ValueError,
-          "pmap wrapped function must be passed at least one argument "
-          r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
-        api.pmap(lambda x: x)({})
+    with self.assertRaisesRegex(
+        ValueError, "pmap requires at least one argument with a mapped axis."
+    ):
+      api.pmap(lambda x: x)({})
 
   @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
@@ -4729,20 +4722,6 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jax.jit(lambda x, y: (x, y))(x, jax.lax.conj(x))[0]
     out = jax.grad(f)(3.0)  # doesn't crash
     self.assertAllClose(out, 1., check_dtypes=False)
-
-  @jtu.thread_unsafe_test()
-  def test_cache_clear_pmap(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Already tested by pjit tests under pmap_shmap_merge=True.")
-
-    @jax.pmap
-    def f(i):
-      return i * 2
-
-    f(np.arange(1, dtype='float32')).block_until_ready()
-    self.assertEqual(f._cache_size, 1)
-    jax.clear_caches()
-    self.assertEqual(f._cache_size, 0)
 
   def test_invalid_value_device_put(self):
     with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):

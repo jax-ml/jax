@@ -22,7 +22,6 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import op_shardings
@@ -34,8 +33,7 @@ from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
 from jax._src import deprecations
 from jax._src.sharding_impls import (
-    pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding,
-    PmapSharding as _PmapSharding)
+    NamedSharding, GSPMDSharding)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -452,26 +450,6 @@ class JaxArrayTest(jtu.JaxTestCase):
         "Input buffers to `Array` must have matching dtypes. "
         "Got int32, expected float32"):
       array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
-
-  def test_array_iter_pmap_sharding(self):
-    if jax.device_count() < 2:
-      self.skipTest('Test requires >= 2 devices.')
-    if config.pmap_shmap_merge.value:
-      self.skipTest(
-          'Under `pmap_shmap_merge=True`, `y[0]` of sharded `y` will replicate'
-          ' because of the indexing operation. '
-      )
-
-    x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
-    y = jax.pmap(jnp.sin)(x)
-    self.assertArraysEqual([list(a.devices())[0] for a in y],
-                           y.sharding._device_assignment,
-                           allow_object_dtype=True)
-
-    sin_x = iter(np.sin(x))
-    for i, j in zip(iter(y), sin_x):
-      self.assertIsInstance(i, array.ArrayImpl)
-      self.assertArraysAllClose(i, j)
 
   def test_array_iter_pmap_sharding_last_dim_sharded(self):
     if jax.device_count() < 2:
@@ -975,34 +953,6 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaises(IndivisibleError):
       mps.shard_shape((8, 3))
 
-  @jtu.ignore_warning(category=DeprecationWarning)
-  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
-  def test_pmap_sharding_hash_eq(self):
-    if jax.device_count() < 2:
-      self.skipTest('Test needs >= 2 devices.')
-    if config.pmap_shmap_merge.value:
-      self.skipTest(
-          'There is not an equivalent cache to test when pmap_shmap_merge=True.'
-      )
-
-    shape = (2, 2)
-    num_elements = math.prod(shape)
-    inp_data = np.arange(num_elements).reshape(shape)
-    out = jax.pmap(lambda x: x)(inp_data)
-    self.assertIsInstance(out.sharding, _PmapSharding)
-    # Populate the device_indices_map cache.
-    _ = out.sharding.devices_indices_map(shape)
-    cache_info1 = pmap_sharding_devices_indices_map.cache_info()
-
-    inp_data2 = np.arange(num_elements, num_elements + num_elements).reshape(shape)
-    out2 = jax.pmap(lambda x: x)(inp_data2)
-    # Populate the device_indices_map cache.
-    _ = out2.sharding.devices_indices_map(shape)
-    cache_info2 = pmap_sharding_devices_indices_map.cache_info()
-
-    self.assertGreater(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
-
   def test_is_compatible_error(self):
     shape = (8, 2)
     mesh = jtu.create_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
@@ -1086,31 +1036,21 @@ class ShardingTest(jtu.JaxTestCase):
       ('sharded_dim_2', (4, 2, 4), 2),
       ('sharded_dim_1_1', (2, 4), 1)
   )
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding(self, shape, sharded_dim):
     if jax.device_count() < 4:
       self.skipTest('Test needs >= 4 devices.')
 
     inp = jnp.arange(math.prod(shape)).reshape(shape)
-    if config.pmap_shmap_merge.value:
-      out = jax.pmap(lambda x: x, in_axes=sharded_dim, axis_name='x')(inp)
-      actual_sharding = out.sharding
-      expected_sharding = jax.sharding.NamedSharding(
-          jax.sharding.Mesh(jax.devices()[: shape[sharded_dim]], 'x'),
-          jax.P('x'),
-      )
-      self.assertEqual(actual_sharding.spec, expected_sharding.spec)
-      self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
-    else:
-      compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
-      # TOOD(dsuo): Investigate why
-      # `compiled._executable.unsafe_call.in_handler.in_shardings` is of type
-      # `GSPMDSharding` when `pmap_shmap_merge=True`. It should be
-      # `NamedSharding`.
-      actual_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
-      expected_sharding = _PmapSharding.default(shape, sharded_dim)
-      self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
-      self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
+    out = jax.pmap(lambda x: x, in_axes=sharded_dim, axis_name='x')(inp)
+    actual_sharding = out.sharding
+    expected_sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(jax.devices()[: shape[sharded_dim]], 'x'),
+        jax.P('x'),
+    )
+    self.assertEqual(actual_sharding.spec, expected_sharding.spec)
+    self.assertEqual(
+        actual_sharding._device_assignment, expected_sharding._device_assignment
+    )
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_with_devices(self):
@@ -1124,21 +1064,14 @@ class ShardingTest(jtu.JaxTestCase):
     ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
     self.assertEqual(ps._device_assignment, new_order)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_default_pmap_sharding_replicated(self):
     x = np.zeros((len(jax.local_devices()), 8), dtype=np.float32)
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None, axis_name='x')(x)
-    if config.pmap_shmap_merge.value:
-      expected_sharding = jax.sharding.NamedSharding(
-          mesh=jax.sharding.Mesh(jax.local_devices(), 'x'),
-          spec=jax.P(),
-      )
-      self.assertEqual(x.sharding, expected_sharding)
-    else:
-      ps = _PmapSharding.default(
-          shape=(8,), sharded_dim=None,
-          devices=jax.local_devices())
-      self.assertEqual(x.sharding, ps)
+    expected_sharding = jax.sharding.NamedSharding(
+        mesh=jax.sharding.Mesh(jax.local_devices(), 'x'),
+        spec=jax.P(),
+    )
+    self.assertEqual(x.sharding, expected_sharding)
 
   def test_mesh_repr(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))

@@ -25,7 +25,6 @@ import sys
 from typing import Any, Generic, Generator, NoReturn, Optional, Protocol, Type, TypeVar, cast
 import warnings
 
-from jax._src import deprecations
 from jax._src import logging_config
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
@@ -1228,33 +1227,6 @@ log_checkpoint_residuals = bool_state(
     help=('Log a message every time jax.checkpoint (aka jax.remat) is '
           'partially evaluated (e.g. for autodiff), printing what residuals '
           'are saved.'))
-
-# Since we want a deprecation warning regardless of value, we need an
-# exemption for when config.py is first loaded.
-_pmap_shmap_merge_initialized = False
-
-
-def _default_pmap_shmap_merge(new_val):
-  del new_val
-  global _pmap_shmap_merge_initialized
-  if _pmap_shmap_merge_initialized:
-    deprecations.warn(
-        'jax-pmap-shmap-merge',
-        (
-            'Setting `jax_pmap_shmap_merge` is deprecated in JAX v0.9.0 and '
-            'will be removed in JAX v0.10.0.'
-        ),
-        stacklevel=3,
-    )
-  _pmap_shmap_merge_initialized = True
-
-pmap_shmap_merge = bool_state(
-    name='jax_pmap_shmap_merge',
-    default=True,
-    upgrade=True,
-    help='If True, pmap and shard_map API will be merged.',
-    validator=_default_pmap_shmap_merge,
-)
 
 custom_vjp3 = bool_state(
     name='jax_custom_vjp3',

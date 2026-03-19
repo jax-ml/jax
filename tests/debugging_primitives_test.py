@@ -21,7 +21,6 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import lax
 from jax._src import ad_checkpoint
-from jax._src import config
 from jax._src import debugging
 from jax._src import deprecations
 from jax._src import dispatch
@@ -800,16 +799,16 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       debug_print("{}", x, ordered=True)
-    if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.skipTest("This test won't raise with 1 device.")
-      if jtu.device_under_test() == "gpu":
-        self.skipTest("Test does not raise under GPU.")
-      if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
-        self.skipTest("Test does not raise under TPU v4+.")
-      regex = "The following ordered effects are not supported for more than 1 device:*"
-    else:
-      regex = "Ordered effects not supported in `pmap`."
+    if jax.device_count() == 1:
+      self.skipTest("This test won't raise with 1 device.")
+    if jtu.device_under_test() == "gpu":
+      self.skipTest("Test does not raise under GPU.")
+    if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
+      self.skipTest("Test does not raise under TPU v4+.")
+    regex = (
+        "The following ordered effects are not supported for more than 1"
+        " device:*"
+    )
     with self.assertRaisesRegex(ValueError, regex):
       f(jnp.arange(jax.local_device_count()))
 

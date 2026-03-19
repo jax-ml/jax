@@ -1588,15 +1588,9 @@ def pmap(
         " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
         " from pmap.")
 
-  if config.pmap_shmap_merge.value:
-    from jax._src.pmap import pmap  # pytype: disable=import-error
-    return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
-                static_broadcasted_argnums=static_broadcasted_argnums,
-                devices=devices, backend=backend,
-                axis_size=axis_size,
-                donate_argnums=donate_argnums)
+  import jax._src.pmap as _pmap  # pytype: disable=import-error
 
-  return _cpp_pmap(
+  return _pmap.pmap(
       fun,
       axis_name,
       in_axes=in_axes,
@@ -1605,7 +1599,8 @@ def pmap(
       devices=devices,
       backend=backend,
       axis_size=axis_size,
-      donate_argnums=donate_argnums)
+      donate_argnums=donate_argnums,
+  )
 
 
 class PmapCallInfo(NamedTuple):
@@ -2807,12 +2802,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    if config.pmap_shmap_merge.value:
-      mesh = Mesh(np.array(devices), ('_device_put_sharded',))
-      sharding = NamedSharding(mesh, P('_device_put_sharded'))
-    else:
-      sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
-      sharding = PmapSharding(np.array(devices), sharding_spec)
+    mesh = Mesh(np.array(devices), ("_device_put_sharded",))
+    sharding = NamedSharding(mesh, P("_device_put_sharded"))
     if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):
       return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
     ys = []
@@ -2868,12 +2859,8 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
       buf = device_put(x[None], devices[0])
     else:
       buf = device_put(x, devices[0])[None]
-    if config.pmap_shmap_merge.value:
-      mesh = Mesh(np.array(devices), ('_device_put_replicated',))
-      sharding = NamedSharding(mesh, P('_device_put_replicated'))
-    else:
-      sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
-      sharding = PmapSharding(np.array(devices), sharding_spec)
+    mesh = Mesh(np.array(devices), ("_device_put_replicated",))
+    sharding = NamedSharding(mesh, P("_device_put_replicated"))
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)

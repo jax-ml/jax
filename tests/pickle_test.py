@@ -26,7 +26,6 @@ except ImportError:
 
 import jax
 from jax import numpy as jnp
-from jax._src import config
 from jax._src import deprecations
 from jax._src import literals
 from jax._src import test_util as jtu
@@ -77,32 +76,6 @@ class CloudpickleTest(jtu.JaxTestCase):
 
     g_unpickled = pickle.loads(s)
     actual = g_unpickled(32)
-    self.assertEqual(expected, actual)
-
-  @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
-  def testPickleOfPmappedFunctions(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest(
-          'Nested pmaps are not relevant for `pmap_shmap_merge=True` and'
-          ' `pmap`s pickled prior to `pmap_shmap_merge=True` may not work, but'
-          " perhaps it's worth making sure that freshly pickled `pmap`s still"
-          ' work?'
-      )
-
-    @jax.pmap
-    def f(x, y):
-      return x * y
-
-    @jax.pmap
-    def g(z):
-      return f(z, z + 77)  # noqa: F821
-
-    expected = g(jnp.asarray([[32]]))
-    s = cloudpickle.dumps(g)
-    del f, g
-
-    g_unpickled = pickle.loads(s)
-    actual = g_unpickled(jnp.asarray([[32]]))
     self.assertEqual(expected, actual)
 
 

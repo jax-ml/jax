@@ -16,11 +16,9 @@
 
 import unittest
 
-from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import array
-from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -53,10 +51,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     ])
 
     self.assertIsInstance(out, array.ArrayImpl)
-    if jax.config.jax_pmap_shmap_merge:
-      self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
-    else:
-      self.assertIsInstance(out.sharding, sharding_impls.PmapSharding)
+    self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
     np.testing.assert_array_equal(
         out, np.array([expected_out.sum(axis=0)] * len(devices)))
 
@@ -67,26 +62,6 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
         devices=jax.local_devices(),
     )(np.arange(jax.local_device_count()))
     np.testing.assert_array_equal(z, np.arange(jax.local_device_count()))
-
-  @parameterized.named_parameters(
-      ("sharded_dim_0", 0),
-      ("sharded_dim_1", 1),
-  )
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_default_pmap_sharding(self, sharded_dim):
-    if jax.config.jax_pmap_shmap_merge:
-      self.skipTest("Does not apply for pmap shard_map merge")
-
-    n = jax.local_device_count()
-    shape = (n, 1) if sharded_dim == 0 else (1, n)
-
-    ps = sharding_impls.PmapSharding.default(shape, sharded_dim)
-    inp = jnp.arange(np.prod(shape)).reshape(shape)
-    compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
-    pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
-
-    self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
-    self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_global_axis_size_initial_style(self):
@@ -158,8 +133,6 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
   @jtu.ignore_warning(category=UserWarning,
                       message=".*Using jit-of-pmap can lead to inefficient data movement")
   def test_replicated_output_sharding_multi_process(self):
-    if not jax.config.jax_pmap_shmap_merge:
-      self.skipTest("Only applies to pmap shmap merge")
 
     f = jax.pmap(lambda x: x, axis_name="i", out_axes=None)
     x = jnp.arange(jax.local_device_count())

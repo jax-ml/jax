@@ -19,7 +19,6 @@ import numpy as np
 from unittest import SkipTest
 
 from jax._src import api
-from jax._src import config
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax._src.shard_map import shard_map
@@ -136,10 +135,9 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     _, f_vjp = jax.vjp(jax.pmap(f), jnp.zeros([1]))
 
-    if config.pmap_shmap_merge.value:
-      expected_regex = r"Invalid value \(nan\) encountered in sharded computation."
-    else:
-      expected_regex = r"invalid value \(nan\) encountered in mul\nWhen differentiating"
+    expected_regex = (
+        r"Invalid value \(nan\) encountered in sharded computation."
+    )
 
     with self.assertRaisesRegex(
         FloatingPointError, expected_regex):

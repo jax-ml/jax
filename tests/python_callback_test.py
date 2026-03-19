@@ -1182,16 +1182,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(_mut, 8)
 
-  def test_cannot_call_ordered_io_in_pmap(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Test does not raise under pmap_shmap_merge=True")
-    def f(x):
-      return io_callback(
-          lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Ordered effects not supported in `pmap`"):
-      jax.pmap(f)(jnp.arange(jax.local_device_count()))
-
   def test_cannot_call_ordered_io_in_vmap(self):
     def f(x):
       return io_callback(
