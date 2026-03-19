@@ -3924,10 +3924,10 @@ def _device_id_to_logical(
       lambda name: _axis_index_rule(ctx, axis_name=name),
   )
   core_index = None
-  if grid_names := ctx.lowering_context.grid_names:
+  if non_mesh_axes and (grid_names := ctx.lowering_context.grid_names):
     if len(grid_names) > 1:
       raise NotImplementedError(
-          "Unable to determine core axis name if grid_names is more than 1."
+          "Unable to determine core axis name if len(grid_names) > 1"
       )
     core_axis_name = grid_names[0]
     core_index = non_mesh_axes.pop(core_axis_name, None)
