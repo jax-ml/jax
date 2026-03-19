@@ -21,7 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
     replaced with `.manual_type.varying`.
 
-## JAX 0.9.2 (March 2, 2026)
+## JAX 0.9.2 (March 18, 2026)
 
 * Changes:
   * The semi-private type `jax._src.literals.TypedNdArray` is now a subclass of
