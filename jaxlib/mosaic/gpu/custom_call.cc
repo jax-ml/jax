@@ -26,7 +26,6 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -65,6 +64,7 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
@@ -78,6 +78,7 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
@@ -133,6 +134,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/passes.h"
 #include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
@@ -155,6 +157,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -483,8 +486,9 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
                  MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, bool is_multimem_used, std::string object_file,
-                 std::string host_func_name, std::string init_func_name)
+                 bool is_nvshmem_used, bool is_multimem_used,
+                 std::string object_file, std::string host_func_name,
+                 std::string init_func_name)
       : lljit(std::move(lljit)),
         host_launch(host_launch),
         init(init),
@@ -547,22 +551,39 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
 // module, compiles the module to LLVM IR, optimizes it using LLVM, and returns
 // the compiled object file.
 absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
-    mlir::ModuleOp module, const mosaic::gpu::DumpOptions& dump_opts) {
+    mlir::ModuleOp module, const mosaic::gpu::DumpOptions& dump_opts,
+    const xla::cpu::TargetMachineOptions* cpu_target_machine_options) {
   llvm::LLVMContext llvm_context;
   auto llvm_module = mlir::translateModuleToLLVMIR(module, llvm_context);
   if (!llvm_module) {
     return absl::InternalError("Failed to translate module to LLVM IR");
   }
 
-  auto tm_builder_or_error = llvm::orc::JITTargetMachineBuilder::detectHost();
-  if (!tm_builder_or_error) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to detect host: %s",
-                        llvm::toString(tm_builder_or_error.takeError())));
-  }
-  tm_builder_or_error->setCodeGenOptLevel(llvm::CodeGenOptLevel::Aggressive);
+  // If the cpu_target_machine_options is provided, use it to create the target
+  // machine builder. Otherwise, detect the current host.
+  auto create_tm_builder =
+      [&]() -> absl::StatusOr<llvm::orc::JITTargetMachineBuilder> {
+    if (cpu_target_machine_options != nullptr) {
+      llvm::orc::JITTargetMachineBuilder builder(
+          llvm::Triple(cpu_target_machine_options->triple()));
+      builder.setCPU(cpu_target_machine_options->cpu());
+      builder.addFeatures(
+          cpu_target_machine_options->GetTargetMachineFeaturesVector());
+      return builder;
+    }
+    auto tm_builder_or_error = llvm::orc::JITTargetMachineBuilder::detectHost();
+    if (!tm_builder_or_error) {
+      return absl::InternalError(
+          absl::StrFormat("Failed to detect host: %s",
+                          llvm::toString(tm_builder_or_error.takeError())));
+    }
+    return std::move(*tm_builder_or_error);
+  };
 
-  auto tm_or_error = tm_builder_or_error->createTargetMachine();
+  TF_ASSIGN_OR_RETURN(auto tm_builder, create_tm_builder());
+  tm_builder.setCodeGenOptLevel(llvm::CodeGenOptLevel::Aggressive);
+
+  auto tm_or_error = tm_builder.createTargetMachine();
   if (!tm_or_error) {
     return absl::InternalError(
         absl::StrFormat("Failed to create target machine: %s",
@@ -732,7 +753,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
 }
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
-    llvm::StringRef module_str, se::CudaComputeCapability cc) {
+    llvm::StringRef module_str, se::CudaComputeCapability cc,
+    const xla::cpu::TargetMachineOptions* cpu_target_machine_options =
+        nullptr) {
   tsl::profiler::TraceMe trace("Compile");
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
   context.allowUnregisteredDialects(true);
@@ -798,8 +821,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
   TF_RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
 
-  TF_ASSIGN_OR_RETURN(auto object_file,
-                      CompileModuleToObject(*module, dump_opts));
+  TF_ASSIGN_OR_RETURN(
+      auto object_file,
+      CompileModuleToObject(*module, dump_opts, cpu_target_machine_options));
   VLOG(5) << "Successfully compiled Mosaic GPU kernel to object file";
 
 #ifndef NDEBUG
@@ -859,19 +883,26 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
     CUdevice device;
     CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
     int supports_multicast;
-    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(&supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
+    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
+        &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
     int nvshmem_world_size = NvshmemApi::Default().n_pes();
-    // multimem instructions require multicast memory; mgpu will emit device-side calls
-    // to nvshmemx_mc_ptr to translate unicast->multicast addresses, which will return
-    // nullptr and lead to memory errors if multicast is not supported on the device
+    // multimem instructions require multicast memory; mgpu will emit
+    // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
+    // addresses, which will return nullptr and lead to memory errors if
+    // multicast is not supported on the device
     // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
     // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
     // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
     if (supports_multicast == 0) {
-      return absl::FailedPreconditionError("System does not support multicast memory; multimem instructions cannot be used.");
+      return absl::FailedPreconditionError(
+          "System does not support multicast memory; multimem instructions "
+          "cannot be used.");
     } else if (nvshmem_world_size == 1) {
-      // There is only one device, so NVSHMEM will not configure multicast mappings and nvshmemx_mc_ptr will return nullptr.
-      return absl::FailedPreconditionError("Multicast memory mappings are not configured with only one device; multimem instructions cannot be used.");
+      // There is only one device, so NVSHMEM will not configure multicast
+      // mappings and nvshmemx_mc_ptr will return nullptr.
+      return absl::FailedPreconditionError(
+          "Multicast memory mappings are not configured with only one device; "
+          "multimem instructions cannot be used.");
     }
   }
   void* module_ptr = nullptr;
@@ -1011,7 +1042,9 @@ using ::mosaic::gpu::CustomCallResources;
 
 // Validate custom call attributes and compile the kernel.
 absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
-    const se::GpuComputeCapability* cc, ffi::Dictionary attrs) {
+    const se::GpuComputeCapability* cc,
+    const xla::cpu::TargetMachineOptions* cpu_target_machine_options,
+    ffi::Dictionary attrs) {
   TF_ASSIGN_OR_RETURN(bool use_custom_barrier,
                       attrs.get<bool>("use_custom_barrier"));
   TF_ASSIGN_OR_RETURN(std::string_view kernel_hash,
@@ -1032,7 +1065,8 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
       CompiledKernel * kernel,
       GetOrCreateKernel(
           hash, [&]() -> absl::StatusOr<std::unique_ptr<CompiledKernel>> {
-            return Compile(module, *cc->cuda_compute_capability());
+            return Compile(module, *cc->cuda_compute_capability(),
+                           cpu_target_machine_options);
           }));
   return std::make_unique<CustomCallResources>(
       CustomCallResources{.kernel = kernel, .hash = hash});
@@ -1234,8 +1268,8 @@ absl::Status MosaicGpuInitialize(
 
     se::DeviceAddressBase barrier_signal_buffer_address =
         device_state.barrier_signal_buffer_handle.address();
-    TF_RETURN_IF_ERROR(stream->MemZero(
-        &barrier_signal_buffer_address, barrier_signal_buffer_address.size()));
+    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
+                                       barrier_signal_buffer_address.size()));
   }
 
   if (device_state.barrier_signal_value_buffer_handle.address().is_null()) {
@@ -1245,9 +1279,9 @@ absl::Status MosaicGpuInitialize(
             xla::gpu::GetMultiGpuBarrierSignalValueSize())};
     se::DeviceAddressBase barrier_signal_value_buffer_address =
         device_state.barrier_signal_value_buffer_handle.address();
-    TF_RETURN_IF_ERROR(stream->MemZero(
-        &barrier_signal_value_buffer_address,
-        barrier_signal_value_buffer_address.size()));
+    TF_RETURN_IF_ERROR(
+        stream->MemZero(&barrier_signal_value_buffer_address,
+                        barrier_signal_value_buffer_address.size()));
   }
 
   // It's important to zero the buffer synchronously to avoid the situation
@@ -1401,9 +1435,11 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                            .Ctx<xla::ffi::State<CustomCallResources>>()
                            .Attrs());
 
-XLA_FFI_DEFINE_HANDLER(
-    kMosaicGPUInstantiate, InstantiateResources,
-    ffi::Ffi::BindInstantiate().Ctx<ffi::TargetGpuComputeCapability>().Attrs());
+XLA_FFI_DEFINE_HANDLER(kMosaicGPUInstantiate, InstantiateResources,
+                       ffi::Ffi::BindInstantiate()
+                           .Ctx<ffi::TargetGpuComputeCapability>()
+                           .Ctx<ffi::CpuTargetMachineOptions>()
+                           .Attrs());
 
 XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuInitialize, MosaicGpuInitialize,

@@ -355,6 +355,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
+        "@xla//xla/backends/cpu:target_machine_options",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/backends/gpu/collectives:gpu_clique_key",
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
