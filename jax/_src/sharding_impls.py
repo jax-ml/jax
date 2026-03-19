@@ -813,11 +813,9 @@ def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
   new_op_sharding.tile_assignment_dimensions = tad
   return xc.HloSharding.from_proto(new_op_sharding)
 
-def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
-  return sharding.num_devices == 1
 
 def make_key_array_phys_sharding(aval, sharding):
-  if is_single_device_sharding(sharding):
+  if sharding.num_devices == 1:
     return sharding
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
@@ -865,7 +863,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
   check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)
 
-  if is_single_device_sharding(phys_sharding):
+  if phys_sharding.num_devices == 1:
     return phys_sharding
   elif isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)

@@ -222,9 +222,8 @@ def batched_device_put(aval: core.ShapedArray,
   util.test_event("batched_device_put_start")
   try:
     bufs = [x for x, d in safe_zip(xs, devices)
-            if (isinstance(x, array.ArrayImpl) and
-                dispatch.is_single_device_sharding(x.sharding) and
-                x.devices() == {d})]
+            if (isinstance(x, array.ArrayImpl) and x.sharding.num_devices == 1
+                and x.devices() == {d})]
     if len(bufs) == len(xs) > 0:
       return array.ArrayImpl(
           aval, sharding, bufs, committed=committed, _skip_checks=True)
@@ -252,7 +251,6 @@ _shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 
 PxlaResultHandler = Callable[..., xc._xla.ResultHandler]
-local_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
 
 
 def global_aval_to_result_handler(
@@ -827,7 +825,6 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
         out_layouts=out_layouts,
         arg_names=arg_names,
         result_names=jaxpr._debug_info.safe_result_paths(len(out_avals)),
-        num_replicas=1,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
@@ -1243,7 +1240,6 @@ def lower_sharding_computation(
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
       out_shardings=out_shardings,
-      spmd_lowering=True,
       tuple_args=tuple_args,
       auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
@@ -1602,30 +1598,22 @@ def get_logical_mesh_ids(mesh_shape):
 
 
 def create_compile_options(
-    computation, mesh, spmd_lowering, tuple_args, auto_spmd_lowering,
-    allow_prop_to_inputs, allow_prop_to_outputs, backend,
-    np_dev, compiler_options):
-  if spmd_lowering:
-    num_replicas, num_partitions = 1, np_dev.size
-  else:
-    num_replicas, num_partitions = np_dev.size, 1
-
+    computation, mesh, tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
+    allow_prop_to_outputs, backend, np_dev, compiler_options):
+  num_replicas, num_partitions = 1, np_dev.size
   xla_device_assignment = np_dev.reshape((num_replicas, num_partitions))
-
   fdo_profile = compiler_options.pop("fdo_profile", None)
-
   compile_options = compiler.get_compile_options(
       num_replicas=num_replicas,
       num_partitions=num_partitions,
       device_assignment=xla_device_assignment,
-      use_spmd_partitioning=spmd_lowering,
+      use_spmd_partitioning=True,
       use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
       fdo_profile=fdo_profile,
       detailed_logging=compiler.use_detailed_logging(computation),
       backend=backend,
   )
-
   opts = compile_options.executable_build_options
   if auto_spmd_lowering:
     assert mesh is not None
@@ -1640,17 +1628,17 @@ def create_compile_options(
 
 
 @weakref_lru_cache
-def _cached_compilation(computation, name, mesh, spmd_lowering,
-                        tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
-                        allow_prop_to_outputs, host_callbacks, backend,
-                        da, compiler_options_kvs, pgle_profiler):
+def _cached_compilation(computation, name, mesh, tuple_args, auto_spmd_lowering,
+                        allow_prop_to_inputs, allow_prop_to_outputs,
+                        host_callbacks, backend, da, compiler_options_kvs,
+                        pgle_profiler):
   # One would normally just write: dev = np.array(device_assignment)
   # The formulation below is substantially faster if there are many devices.
   dev = np.vectorize(lambda i: da[i], otypes=[object])(np.arange(len(da)))
   compiler_options = dict(compiler_options_kvs)
 
   compile_options = create_compile_options(
-      computation, mesh, spmd_lowering, tuple_args, auto_spmd_lowering,
+      computation, mesh, tuple_args, auto_spmd_lowering,
       allow_prop_to_inputs, allow_prop_to_outputs, backend,
       dev, compiler_options)
 
@@ -1827,7 +1815,6 @@ class UnloadedMeshExecutable:
                global_out_avals: Sequence[ShapedArray],
                in_shardings: Sequence[JSharding | AUTO],
                out_shardings: Sequence[(JSharding | AUTO | UnspecifiedValue)],
-               spmd_lowering: bool,
                tuple_args: bool,
                auto_spmd_lowering: bool,
                unordered_effects: list[core.Effect],
@@ -1877,8 +1864,7 @@ class UnloadedMeshExecutable:
 
     util.test_event("pxla_cached_compilation")
     xla_executable = _cached_compilation(
-        hlo, name, mesh, spmd_lowering,
-        tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
+        hlo, name, mesh, tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
         allow_prop_to_outputs, tuple(host_callbacks), backend, device_list,
         compiler_options_kvs, pgle_profiler)
 

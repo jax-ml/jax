@@ -31,7 +31,6 @@ from jax._src import api
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import indexing
@@ -233,7 +232,7 @@ class NDIndexer:
   @staticmethod
   def is_sharded(arr) -> bool:
     """Check whether the array is sharded."""
-    return isinstance(arr, array.ArrayImpl) and not dispatch.is_single_device_sharding(arr.sharding)
+    return isinstance(arr, array.ArrayImpl) and not arr.sharding.num_devices == 1
 
   def has_partial_slices(self) -> bool:
     """Check whether the indexer contains partial slices.
