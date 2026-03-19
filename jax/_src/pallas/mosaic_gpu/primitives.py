@@ -2728,70 +2728,6 @@ def _ref_type_to_transforms(ref_type: RefType) -> ir.ArrayAttr:
   return ir.ArrayAttr.get(transform_attrs)
 
 
-def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
-  """Replaces all uses of the `old` value with the `new` value in `block`."""
-
-  def is_contained_within_block(operand: ir.OpOperand, block: ir.Block) -> bool:
-    current_op = operand.owner.operation
-    while (parent := current_op.parent) is not None:
-      if current_op.block == block:
-        return True
-      current_op = parent
-    return False
-
-  for use in old.uses:
-    if is_contained_within_block(use, block):
-      use.owner.operands[use.operand_number] = new
-
-
-def _clone_custom_op_with_extra_args(
-    custom_op: mgpu.dialect.CustomPrimitiveOp, extra_args: Sequence[ir.Value]
-) -> mgpu.dialect.CustomPrimitiveOp:
-  """Clones a CustomPrimitiveOp and its block adding the given extra_args.
-
-  The new args are not allowed to contain SMEM refs or vector types. The extra
-  args are added in order at the end of the existing parameter list.
-
-  The reason we need to do this is because the custom primitive op has the
-  "IsolatedFromAbove" trait, which requires that its block does not close
-  over any values defined outside of it. When lowering the provided mgpu_fn,
-  it's possible that it closed over values from the conext (such as the SMEM
-  descriptors if it calls async_copy). Post-processing the original block
-  with this function is therefore required to restore the isolation property.
-  """
-  for arg in extra_args:
-    if isinstance(arg.type, ir.MemRefType) and mgpu_utils.is_smem_ref(arg.type):
-      raise ValueError(f"Extra arg {arg} must not be an SMEM ref.")
-    if isinstance(arg.type, ir.VectorType):
-      raise ValueError(f"Extra arg {arg} must not have a vector type.")
-
-  new_operands = list(custom_op.operands) + list(extra_args)
-  old_block = custom_op.body.blocks[0]
-  new_in_types = [a.type for a in list(old_block.arguments) + list(extra_args)]
-
-  # Below, we can reuse all layouts and transforms, because the extra args
-  # are not smem refs or vectors.
-  new_op = mgpu.dialect.CustomPrimitiveOp(
-      result=custom_op.results,
-      operands_=new_operands,
-      in_layouts=custom_op.in_layouts,
-      in_transforms=custom_op.in_transforms,
-      out_layouts=custom_op.out_layouts,
-  )
-  new_block = new_op.body.blocks.append(*new_in_types)
-  for op in old_block.operations:
-    new_block.append(op)
-  for old_arg, new_arg in zip(old_block.arguments, new_block.arguments):
-    old_arg.replace_all_uses_with(new_arg)
-  num_old_args = len(old_block.arguments)
-  for extra_arg, new_arg in zip(
-      extra_args, new_block.arguments[num_old_args:], strict=True
-  ):
-    _replace_uses_in_block(extra_arg, new_arg, new_block)
-
-  return new_op
-
-
 def _custom_primitive_in_specs(
     ctx: lowering.LoweringRuleContext,
     flat_arg_types,
@@ -2964,7 +2900,7 @@ def _populate_custom_primitive_op_block(
 
 
 def _closed_over_values(block: ir.Block) -> list[ir.Value]:
-  """Returns the values closed over in the given block."""
+  """Returns a list of values used within `block` that are defined outside of `block`."""
   def _closed_over_values_inner(
       block: ir.Block, vals_in_block: set[ir.Value]
   ) -> list[ir.Value]:
@@ -2982,6 +2918,67 @@ def _closed_over_values(block: ir.Block) -> list[ir.Value]:
         vals_in_block.add(r)
     return closed_over_values
   return _closed_over_values_inner(block, set())
+
+
+def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
+  """Replaces all uses of the `old` value with the `new` value in `block`."""
+
+  def is_contained_within_block(operand: ir.OpOperand, block: ir.Block) -> bool:
+    current_op = operand.owner.operation
+    while (parent := current_op.parent) is not None:
+      if current_op.block == block:
+        return True
+      current_op = parent
+    return False
+
+  for use in old.uses:
+    if is_contained_within_block(use, block):
+      use.owner.operands[use.operand_number] = new
+
+
+def _isolate_from_above(op: ir.Operation) -> ir.Operation:
+  """Makes `op` conform to the `IsolatedFromAbove` trait.
+
+  This replaces all captured values with new op operands.
+  """
+  if len(op.regions) != 1:
+    raise NotImplementedError("Only support ops with one region.")
+  if len(op.regions[0].blocks) != 1:
+    raise NotImplementedError("Only support ops with one block.")
+
+  block = op.regions[0].blocks[0]
+  captures = _closed_over_values(block)
+  if not captures:
+    return op
+
+  # 1. Create the new operation shell with the expanded operands.
+  new_op = ir.Operation.create(
+      name=op.name,
+      results=[res.type for res in op.results],
+      operands=list(op.operands) + captures,
+      attributes=dict(op.attributes),
+      regions=1,
+  )
+
+  # 2. Move the block from the old op to the new op.
+  block.append_to(new_op.regions[0])
+
+  # 3. Create new block arguments for the captured values.
+  new_args = []
+  for capture in captures:
+    new_args.append(block.add_argument(capture.type, capture.location))
+
+  # 4. Redirect all references from captured values to the newly created
+  # block's arguments.
+  for capture, new_arg in zip(
+      captures, block.arguments[-len(captures) :], strict=True
+  ):
+    _replace_uses_in_block(capture, new_arg, block)
+
+  # 5. Clean up the now-empty old operation.
+  op.erase()
+
+  return new_op
 
 
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Warpgroup)
@@ -3033,11 +3030,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
   # We need to ensure that the block doesn't capture any values from the context
   # and uses args for everything instead. E.g. `LaunchContext.tma_descriptors`
   # will be captured when calling `ctx.async_copy`.
-  captured = _closed_over_values(block)
-  if captured:
-    old_custom_op = custom_op
-    custom_op = _clone_custom_op_with_extra_args(custom_op, captured)
-    old_custom_op.erase()
+  custom_op = _isolate_from_above(custom_op)
 
   return custom_op.results
 
