@@ -15,7 +15,7 @@
 
 from collections.abc import Callable
 import functools
-from typing import Any, Hashable
+from typing import cast, Any, Hashable
 
 from jax._src import api
 from jax._src import checkify
@@ -103,9 +103,10 @@ def loop(
     step = lax.convert_element_type(step, idx_type)
     zero = jnp.array(0, dtype=idx_type)
   else:
-    lower = lax.asarray(lower)
-    upper = lax.asarray(upper)
-    step = lax.asarray(step)
+    # Preserve concrete bounds to allow loop unrolling.
+    lower = cast(int, lower)
+    upper = cast(int, upper)
+    step = cast(int, step)
     zero = 0
 
   def decorator(body):
