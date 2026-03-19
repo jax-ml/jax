@@ -131,10 +131,6 @@ _deprecations = {
         "jax.interpreters.pxla.shard_args was removed in JAX v0.10.0.",
         None,
     ),
-    "xla_pmap_p": (
-        "jax.interpreters.pxla.xla_pmap_p was removed in JAX v0.10.0.",
-        None,
-    ),
     "Chunked": (
         (
             "jax.interpreters.pxla.Chunked was removed in JAX v0.10.0."
