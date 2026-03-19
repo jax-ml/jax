@@ -57,9 +57,6 @@ class LoweringContext:
   single_warp_per_block_predicate: ir.Value | None
   auto_barriers: bool
   smem_requested_bytes: int
-  lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
-      default_factory=set
-  )
   is_collective_kernel: bool | None = dataclasses.field(
       init=False, default=None
   )
@@ -99,7 +96,7 @@ class LoweringContext:
     if not isinstance(new_results, Recursed):
       for old, new in zip(op.results, new_results):
         old.replace_all_uses_with(new)
-      self.lowered_operations.add(op)
+      op.erase()
 
 
 class Recursed:
@@ -2526,6 +2523,3 @@ def lower_mgpu_dialect(
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
       ctx.lower_op(op)
-
-  for lowered_op in ctx.lowered_operations:
-    lowered_op.erase()
