@@ -6666,7 +6666,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
 
-
   @parameterized.named_parameters(
       ("unpacked", (128, 77), jnp.bfloat16, 1, False),
       ("packed", (128, 128), jnp.bfloat16, 2, False),
@@ -6995,6 +6994,288 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     self.assertArraysAllClose(
         kernel(a, b),
         np.matmul(a.astype(acc_type), b.astype(acc_type)),
+        atol=atol,
+        rtol=rtol,
+    )
+
+  @parameterized.product(
+      m=(128,),
+      n=(32, 128, 192),
+      ab_type=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn),
+  )
+  def test_tcgen05_mma_sparse(self, m, n, ab_type):
+    if ab_type == jnp.int8:
+      self.skip_unless_tcgen05_int8()
+
+    acc_type = jnp.float32 if jnp.issubdtype(ab_type, jnp.floating) else jnp.int32
+    sparse_meta_dtype = jnp.uint2
+
+    k = 256
+    a_shape = (m, k // 2)
+    b_shape = (k, n)
+    meta_shape = (m // 128, k // 128, 128, 64)
+    acc_shape = (m, n)
+
+    def cp(src, dst, barrier, shape, dtype):
+      transfer_size_bits = dtypes.itemsize_bits(dtype) * math.prod(shape)
+      assert transfer_size_bits % 8 == 0, f"{transfer_size_bits=} not byte aligned"
+      transfer_size_bytes = transfer_size_bits // 8
+      barrier.arrive_expect_tx(transfer_size_bytes)
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_load(
+          source=src,
+          destination=dst,
+          barrier=barrier.as_barrier_memref(),
+          indices=[zero_i32] * len(shape),
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      barrier.wait()
+
+    def matmul(ctx, a_gmem, b_gmem, meta_gmem, result_gmem, scratch):
+      del ctx
+      (
+          a_smem,
+          b_smem,
+          meta_smem,
+          tma_barrier,
+          mma_barrier,
+          acc_tmem,
+          meta_tmem,
+      ) = scratch
+
+      # GMEM -> SMEM
+      cp(b_gmem, b_smem, tma_barrier, b_shape, ab_type)
+      cp(a_gmem, a_smem, tma_barrier, a_shape, ab_type)
+      cp(meta_gmem, meta_smem, tma_barrier, meta_shape, sparse_meta_dtype)
+
+      mgpu_dialect.async_store_sparse_metadata_smem_to_tmem(meta_smem, meta_tmem)
+      mgpu_dialect.tcgen05_mma(
+          accumulator=acc_tmem,
+          a=a_smem,
+          b=b_smem,
+          a_sparse_metadata=meta_tmem,
+          accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+      )
+      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      mma_barrier.wait(orders_tensor_core=True)
+
+      # TMEM -> Registers -> GMEM
+      r_out = mgpu_dialect.async_load_tmem(acc_tmem)
+      mgpu_dialect.vector_store(r_out, result_gmem)
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(a_shape, ab_type),
+        jax.ShapeDtypeStruct(b_shape, ab_type),
+        jax.ShapeDtypeStruct(meta_shape, sparse_meta_dtype),
+        core.TMABarrier(1),
+        mgpu.Barrier(1),
+        mgpu.TMEM(acc_shape, acc_type),
+        mgpu.TMEM((m, k // 2), sparse_meta_dtype),
+    ]
+
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct(a_shape, ab_type),
+            jax.ShapeDtypeStruct(b_shape, ab_type),
+            jax.ShapeDtypeStruct(meta_shape, sparse_meta_dtype),
+        ),
+        out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
+        smem_scratch_shape=scratch_shape,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    x_pairs = jax.random.randint(
+        jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8
+    )
+    x_sparse = valid_pairs[x_pairs]
+
+    def format_sparse_meta(meta):
+      mn, k, _ = meta.shape
+      k *= 2
+      if np.dtype(ab_type).itemsize == 1:
+        meta_tiled = meta.reshape(mn // 128, 128, k // 64, 64).transpose(0, 2, 1, 3)
+      else:
+        meta_tiled = meta.reshape(mn // 128, 8, 2, 8, k // 64, 4, 2, 8).transpose(0, 4, 1, 6, 3, 5, 2, 7)
+      return meta_tiled.reshape(mn // 128, k // 64, 128, 64).astype(sparse_meta_dtype)
+
+    x_gpu_sparse = format_sparse_meta(x_sparse)
+    if jnp.issubdtype(ab_type, jnp.integer):
+      a = self.prng.integers(-64, 64, size=a_shape).astype(ab_type)
+      b = self.prng.integers(-64, 64, size=b_shape).astype(ab_type)
+    else:
+      a = self.prng.uniform(-1, 1, a_shape).astype(ab_type)
+      b = self.prng.uniform(-1, 1, b_shape).astype(ab_type)
+
+    a_logical = np.zeros_like(a, shape=(m, k // 4, 4))
+    np.put_along_axis(a_logical, x_sparse, a.reshape(x_sparse.shape), axis=-1)
+    a_logical = a_logical.reshape(m, k)
+
+    ref = np.matmul(a_logical.astype(acc_type), b.astype(acc_type))
+    atol, rtol = (0, 0) if ab_type == jnp.int8 else (2e-5, 1e-7)
+
+    self.assertArraysAllClose(
+        kernel(a, b, x_gpu_sparse),
+        ref,
+        atol=atol,
+        rtol=rtol,
+    )
+
+  @parameterized.product(
+      m=(256,),
+      n=(128, 192),
+      ab_type=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn),
+  )
+  def test_tcgen05_mma_sparse_collective(self, m, n, ab_type):
+    if ab_type == jnp.int8:
+      self.skip_unless_tcgen05_int8()
+
+    acc_type = jnp.float32 if jnp.issubdtype(ab_type, jnp.floating) else jnp.int32
+    sparse_meta_dtype = jnp.uint2
+
+    k = 256
+    a_shape = (m, k // 2)
+    a_block_shape = (m // 2, k // 2)
+    b_shape = (k, n)
+    b_block_shape = (k, n // 2)
+    meta_shape = (m // 128, k // 128, 128, 64)
+    meta_block_shape = (m // 256, k // 128, 128, 64)
+    acc_shape = (m, n)
+    acc_block_shape = (m // 2, n)
+
+    def cp(src, dst, barrier, shape, dtype, indices):
+      transfer_size_bits = dtypes.itemsize_bits(dtype) * math.prod(shape)
+      assert transfer_size_bits % 8 == 0, f"{transfer_size_bits=} not byte aligned"
+      transfer_size_bytes = transfer_size_bits // 8
+      barrier.arrive_expect_tx(transfer_size_bytes)
+      mgpu_dialect.async_load(
+          source=src,
+          destination=dst,
+          barrier=barrier.as_barrier_memref(),
+          indices=indices,
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      barrier.wait()
+
+    def matmul(ctx, a_gmem, b_gmem, meta_gmem, result_gmem, scratch):
+      (
+          a_smem,
+          b_smem,
+          meta_smem,
+          tma_barrier,
+          mma_barrier,
+          cluster_barrier,
+          acc_tmem,
+          meta_tmem,
+      ) = scratch
+
+      i32_type = ir.IntegerType.get_signless(32)
+      zero_i32 = arith.constant(i32_type, 0)
+
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id_i32 = arith.index_cast(i32_type, block_id)
+
+      m_index = arith.muli(block_id, arith.constant(ir.IndexType.get(), m // 2))
+      m_index_i32 = arith.muli(block_id_i32, arith.constant(i32_type, m // 2))
+      n_index_i32 = arith.muli(block_id_i32, arith.constant(i32_type, n // 2))
+
+      # GMEM -> SMEM
+      cp(b_gmem, b_smem, tma_barrier, b_block_shape, ab_type, indices=[zero_i32, n_index_i32])
+      cp(a_gmem, a_smem, tma_barrier, a_block_shape, ab_type, indices=[m_index_i32, zero_i32])
+      cp(meta_gmem, meta_smem, tma_barrier, meta_block_shape, sparse_meta_dtype, indices=[block_id_i32, zero_i32, zero_i32, zero_i32])
+
+      cluster_barrier.arrive(orders_tensor_core=True)
+      cluster_barrier.wait(orders_tensor_core=True)
+
+      is_first_block = arith.cmpi(
+          arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
+      )
+
+      with when(is_first_block):
+        mgpu_dialect.async_store_sparse_metadata_smem_to_tmem(meta_smem, meta_tmem, collective=True)
+        mgpu_dialect.tcgen05_mma(
+            accumulator=acc_tmem,
+            a=a_smem,
+            b=b_smem,
+            a_sparse_metadata=meta_tmem,
+            accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+            collective=True,
+        )
+        tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
+
+      mma_barrier.wait(orders_tensor_core=True)
+
+      # TMEM -> Registers -> GMEM
+      r_out = mgpu_dialect.async_load_tmem(acc_tmem)
+      sliced_result_gmem = memref_slice(result_gmem, ds(m_index, m // 2))
+      mgpu_dialect.vector_store(r_out, sliced_result_gmem)
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(a_block_shape, ab_type),
+        jax.ShapeDtypeStruct(b_block_shape, ab_type),
+        jax.ShapeDtypeStruct(meta_block_shape, sparse_meta_dtype),
+        core.TMABarrier(1),
+        mgpu.Barrier(1),
+        mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
+        mgpu.TMEM(acc_block_shape, acc_type, collective=True),
+        mgpu.TMEM((m // 2, k // 2), sparse_meta_dtype, collective=True),
+    ]
+
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(2, 1, 1),
+        cluster=(2, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct(a_shape, ab_type),
+            jax.ShapeDtypeStruct(b_shape, ab_type),
+            jax.ShapeDtypeStruct(meta_shape, sparse_meta_dtype),
+        ),
+        out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
+        smem_scratch_shape=scratch_shape,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    x_pairs = jax.random.randint(
+        jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8
+    )
+    x_sparse = valid_pairs[x_pairs]
+
+    def format_sparse_meta(meta):
+      mn, k, _ = meta.shape
+      k *= 2
+      if np.dtype(ab_type).itemsize == 1:
+        meta_tiled = meta.reshape(mn // 128, 128, k // 64, 64).transpose(0, 2, 1, 3)
+      else:
+        meta_tiled = meta.reshape(mn // 128, 8, 2, 8, k // 64, 4, 2, 8).transpose(0, 4, 1, 6, 3, 5, 2, 7)
+      return meta_tiled.reshape(mn // 128, k // 64, 128, 64).astype(sparse_meta_dtype)
+
+    x_gpu_sparse = format_sparse_meta(x_sparse)
+    if jnp.issubdtype(ab_type, jnp.integer):
+      a = self.prng.integers(-64, 64, size=a_shape).astype(ab_type)
+      b = self.prng.integers(-64, 64, size=b_shape).astype(ab_type)
+    else:
+      a = self.prng.uniform(-1, 1, a_shape).astype(ab_type)
+      b = self.prng.uniform(-1, 1, b_shape).astype(ab_type)
+
+    a_logical = np.zeros_like(a, shape=(m, k // 4, 4))
+    np.put_along_axis(a_logical, x_sparse, a.reshape(x_sparse.shape), axis=-1)
+    a_logical = a_logical.reshape(m, k)
+
+    ref = np.matmul(a_logical.astype(acc_type), b.astype(acc_type))
+    atol, rtol = (0, 0) if ab_type == jnp.int8 else (2e-5, 1e-7)
+
+    self.assertArraysAllClose(
+        kernel(a, b, x_gpu_sparse),
+        ref,
         atol=atol,
         rtol=rtol,
     )

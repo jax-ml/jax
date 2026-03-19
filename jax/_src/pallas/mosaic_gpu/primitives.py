@@ -2064,10 +2064,10 @@ def _tcgen05_mma_lowering_wg(
     scaled: bool,
     sparse: bool,
 ):
-  del a_scale_transforms_tree, b_scale_transforms_tree, a_sparse_metadata_transforms_tree
-  if scaled or sparse:
+  del a_scale_transforms_tree, b_scale_transforms_tree
+  if scaled:
     raise NotImplementedError(
-        "Scaled and sparse MMAs not supported for WG semantics."
+        "Scaled MMAs not supported for WG semantics."
     )
 
   (
@@ -2097,15 +2097,17 @@ def _tcgen05_mma_lowering_wg(
     _, _, avals = avals[0], avals[1], avals[2:]
 
   if sparse:
-    # Sparse metadata is not supported for WG semantics.
-    _, leaves = leaves[0], leaves[1:]
-    _, avals = avals[0], avals[1:]
+    a_sparse_metadata_ref, leaves = leaves[0], leaves[1:]
+    a_sparse_metadata_ref_aval, avals = avals[0], avals[1:]
+  else:
+    a_sparse_metadata_ref = a_sparse_metadata_ref_aval = None
 
   transforms_trees = (
       acc_transforms_tree,
       a_transforms_tree,
       b_transforms_tree,
       barrier_transforms_tree,
+      a_sparse_metadata_transforms_tree,
   )
   ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
   transforms_leaves_lists = util.split_list_checked(leaves, ns)
@@ -2116,48 +2118,64 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_leaves,
       b_transforms_leaves,
       barrier_transforms_leaves,
+      a_sparse_metadata_transforms_leaves,
   ) = transforms_leaves_lists
 
   (
       acc_transforms_leaves_avals,
       a_transforms_leaves_avals,
       b_transforms_leaves_avals,
-      barrier_transforms_leaves_avals,
+      _,
+      a_sparse_metadata_transforms_leaves_avals,
   ) = transforms_avals_lists
 
-  if acc_transforms_tree is not None:
-    acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc_transform_avals = acc_transforms_tree.unflatten(acc_transforms_leaves_avals)
-    acc_ref, _, acc_transforms = lowering._handle_transforms(
-        ctx, acc_aval, acc_ref, acc_transform_avals, acc_transforms, handle_transposes=False
+  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval, handle_transposes=True):
+    if tree is None:
+      return ref
+    transforms = tree.unflatten(leaves)
+    transform_avals = tree.unflatten(leaves_avals)
+    ref, _, transforms = lowering._handle_transforms(
+        ctx, ref_aval, ref, transform_avals, transforms, handle_transposes=handle_transposes
     )
-    if acc_transforms:
+    if transforms:
       raise NotImplementedError(
-          f"Unsupported transforms for ACC: {acc_transforms}."
+          f"Unsupported transforms for {ref}. Transforms {transforms}."
       )
+    return ref
 
-  if a_transforms_tree is not None:
-    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a_transform_avals = a_transforms_tree.unflatten(a_transforms_leaves_avals)
-    handle_transposes = a_aval.memory_space == gpu_core.SMEM
-    a_ref, _, a_transforms = lowering._handle_transforms(
-        ctx, a_aval, a_ref, a_transform_avals, a_transforms, handle_transposes=handle_transposes
-    )
-    if a_transforms:
-      raise NotImplementedError(
-          f"Unsupported transforms for LHS: {a_transforms}."
-      )
+  acc_ref = handle_transforms_and_get_ref(
+      acc_transforms_tree,
+      acc_transforms_leaves,
+      acc_transforms_leaves_avals,
+      acc_ref,
+      acc_aval,
+      handle_transposes=False,
+  )
 
-  if b_transforms_tree is not None:
-    b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-    b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
-    b_ref, _, b_transforms = lowering._handle_transforms(
-        ctx, b_aval, b_ref, b_transform_avals, b_transforms
-    )
-    if b_transforms:
-      raise NotImplementedError(
-          f"Unsupported transforms for RHS: {b_transforms}."
-      )
+  a_ref = handle_transforms_and_get_ref(
+      a_transforms_tree,
+      a_transforms_leaves,
+      a_transforms_leaves_avals,
+      a_ref,
+      a_aval,
+      handle_transposes=a_aval.memory_space == gpu_core.SMEM
+  )
+
+  b_ref = handle_transforms_and_get_ref(
+      b_transforms_tree,
+      b_transforms_leaves,
+      b_transforms_leaves_avals,
+      b_ref,
+      b_aval,
+  )
+
+  a_sparse_metadata_ref = handle_transforms_and_get_ref(
+      a_sparse_metadata_transforms_tree,
+      a_sparse_metadata_transforms_leaves,
+      a_sparse_metadata_transforms_leaves_avals,
+      a_sparse_metadata_ref,
+      a_sparse_metadata_ref_aval,
+  )
 
   if barrier_transforms_tree is not None and barrier_ref is not None:
     barrier_transforms = barrier_transforms_tree.unflatten(
@@ -2186,6 +2204,7 @@ def _tcgen05_mma_lowering_wg(
         b_ref,
         accumulate=accumulate,
         collective=collective,
+        a_sparse_metadata=a_sparse_metadata_ref,
     )
     if arrive:
       assert isinstance(barrier_ref, mgpu.DialectBarrierRef)

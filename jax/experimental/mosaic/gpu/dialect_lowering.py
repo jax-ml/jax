@@ -2075,15 +2075,15 @@ def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
 def _tcgen05_mma_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TcGen05MMAOp
 ) -> Sequence[ir.Value]:
-  if op.a_sparse_metadata is not None:
-    raise NotImplementedError("Sparse metadata not yet implemented.")
-
   ctx.check_collective(op)
 
-  in_tmem_layouts = inference_utils.in_tmem_layouts(op)
+  in_tmem_layouts = list(inference_utils.in_tmem_layouts(op))
   acc_layout = in_tmem_layouts[0]
   acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
 
+  a_sparse_metadata = None
+  if op.a_sparse_metadata is not None:
+    a_sparse_metadata = _tmem_ref_from_ir(op.a_sparse_metadata, in_tmem_layouts[-1])
   if utils.is_smem_ref(op.a):
     a_transforms, b_transforms = inference_utils.in_transforms(op)
     a_swizzle = _swizzle(a_transforms)
@@ -2108,6 +2108,7 @@ def _tcgen05_mma_op_lowering_rule(
         b_scale=op.b_scale,
         accumulate=op.accumulate,
         collective=op.collective.value,
+        a_sparse_metadata=a_sparse_metadata,
     )
 
   return []

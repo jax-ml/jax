@@ -4525,7 +4525,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       dtype=[jnp.float16],
   )
   def test_simple_sparse_matmul(self, m, n, dtype):
-    self.skip_if_wg_semantics()
     k = 128
     swizzle = 128 // jnp.dtype(dtype).itemsize
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
