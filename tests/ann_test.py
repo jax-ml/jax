@@ -121,6 +121,10 @@ class AnnTest(jtu.JaxTestCase):
     num_devices = jax.device_count()
     if num_devices % 2 != 0:
       self.skipTest("Works only when number of devices is a multiple of 2.")
+    # TODO(araganes): Re-enable once upstream HloShardingV3 lands (JAX 0.9.2+).
+    # New pmap's SPMD tiling can't convert back to 1D pmap mesh on ROCm.
+    if jtu.is_device_rocm():
+      self.skipTest("IndivisibleError: SPMD tiling incompatible with 1D pmap mesh on ROCm")
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
     db = rng(db_shape, dtype)
