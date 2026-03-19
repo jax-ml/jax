@@ -245,6 +245,8 @@ class ReentrantHashSet {
   size_t size() const { return size_; }
   bool empty() const { return size_ == 0; }
 
+  // Caution: unlike most methods of this class, clear() is not safe if the
+  // destructor of Key calls back into the set's methods.
   void clear() {
     if (capacity_ == 0) return;
     for (size_t i = 0; i < capacity_; ++i) {
@@ -453,7 +455,10 @@ class ReentrantHashSet {
     CHECK(IsFull(ctrl_[it.idx_]));
     ctrl_[it.idx_] = kDeleted;
     SetCtrlMirrored(it.idx_, kDeleted);
-    slots_[it.idx_].~Key();
+    // Make a temporary copy of the key before destroying it. We want to avoid
+    // reentrant calls into hash set during destruction of Key, and moving it
+    // to a temporary ensures this.
+    Key k = std::move(slots_[it.idx_]);
     --size_;
     ++num_deleted_;
     ++version_;

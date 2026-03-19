@@ -813,13 +813,15 @@ WeakrefLRUCacheBase::CacheInfo WeakrefLRUCacheBase::GetCacheInfo() const {
 void WeakrefLRUCacheBase::Clear() {
   std::vector<std::pair<StrongKey, std::shared_ptr<CacheEntry>>>
       deferred_deletes;
+  std::vector<WeakKey> deferred_outer_keys;
   deferred_deletes.reserve(entries_.size());
+  deferred_outer_keys.reserve(entries_.size());
 
   for (auto& kv : entries_) {
+    // We must copy the Python references in the inner and map before calling
+    // clear().
+    deferred_outer_keys.push_back(kv.first);
     for (auto& inner_kv : *(kv.second)) {
-      if (inner_kv.second->IsLinked()) {
-        inner_kv.second->Unlink();
-      }
       if (inner_kv.second->IsLinked()) {
         inner_kv.second->Unlink();
       }
@@ -828,10 +830,9 @@ void WeakrefLRUCacheBase::Clear() {
     kv.second->clear();
   }
   entries_.clear();
-  deferred_deletes.clear();
   reverse_index_.clear();
-
   total_queries_ = misses_ = 0;
+  // deferred_deletes and deferred_outer_keys are deleted here.
 }
 
 int WeakrefLRUCacheBase::TpTraverse(visitproc visit, void* arg) {
