@@ -559,16 +559,16 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      plgpu.semaphore_signal_multicast(sem, collective_axes='x')
+      plgpu.semaphore_signal_multicast(sem.at[0], collective_axes='x')
       # Wait for the multicast signal (each device gets signaled by all devices)
-      pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
+      pl.semaphore_wait(sem.at[0], 2)  # Wait for signals from both devices
       y_ref[...] = jnp.ones_like(y_ref)
 
     kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
         compiler_params=plgpu.CompilerParams(),
     )
 
