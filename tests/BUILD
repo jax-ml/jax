@@ -1900,6 +1900,16 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "async_collectives_test",
+    srcs = ["async_collectives_test.py"],
+    tags = ["multiaccelerator"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     disable_configs = [

@@ -121,6 +121,10 @@ def psum(x, axis_name, *, axis_index_groups=None):
      [20 22 24 26]
      [20 22 24 26]]
   """
+  return _psum_is_async(x, axis_name, axis_index_groups=axis_index_groups,
+                        is_async=False)
+
+def _psum_is_async(x, axis_name, *, axis_index_groups=None, is_async=False):
   axes = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
           tuple(axis_name))
   # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
@@ -133,12 +137,13 @@ def psum(x, axis_name, *, axis_index_groups=None):
     if from_ == 'unreduced':
       if axis_index_groups is not None:
         raise NotImplementedError
-      return unreduced_psum(leaf, axes)
+      return unreduced_psum(leaf, axes, is_async)
     else:
-      return _psum(leaf, axes, axis_index_groups=axis_index_groups)
+      return _psum(leaf, axes, axis_index_groups=axis_index_groups,
+                   is_async=is_async)
   return tree_util.tree_map(bind, x)
 
-def _psum(x, axis_name, *, axis_index_groups):
+def _psum(x, axis_name, *, axis_index_groups, is_async):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if not axis_name:
@@ -169,10 +174,12 @@ def _psum(x, axis_name, *, axis_index_groups):
   else:
     if config._check_vma.value:
       out_flat = [bind_psum_invariant(leaf, axes=tuple(axis_name),
-                                      axis_index_groups=axis_index_groups)
+                                      axis_index_groups=axis_index_groups,
+                                      is_async=is_async)
                   for leaf in leaves]
     else:
-      out_flat = [psum_p.bind(leaf, axes=tuple(axis_name),
+      prim = psum_start_p if is_async else psum_p
+      out_flat = [prim.bind(leaf, axes=tuple(axis_name),
                               axis_index_groups=axis_index_groups)
                   for leaf in leaves]
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -338,8 +345,12 @@ def pbroadcast(x, axis_name, source):
   Returns:
     Array(s) with ``x`` being copied from the ``source`` index slice of ``axis_name``.
   """
+  return _pbroadcast_is_async(x, axis_name, source, is_async=False)
+
+def _pbroadcast_is_async(x, axis_name, source, is_async=False):
+  prim = pbroadcast_start_p if is_async else pbroadcast_p
   return tree_util.tree_map(
-      partial(pbroadcast_p.bind, axis_name=axis_name, source=source), x)
+      partial(prim.bind, axis_name=axis_name, source=source), x)
 
 
 def ppermute(x, axis_name, perm):
@@ -367,11 +378,15 @@ def ppermute(x, axis_name, perm):
     Array(s) with the same shape as ``x`` with slices along the axis
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
+  return _ppermute_is_async(x, axis_name, perm, is_async=False)
+
+def _ppermute_is_async(x, axis_name, perm, is_async=False):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
-    return ppermute_p.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
+    prim = ppermute_start_p if is_async else ppermute_p
+    return prim.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
   return tree_util.tree_map(bind, x)
 
 
@@ -503,7 +518,8 @@ def pswapaxes(x, axis_name, axis, *, axis_index_groups=None):
   """
   return all_to_all(x, axis_name, axis, axis, axis_index_groups=axis_index_groups)
 
-def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None, tiled=False):
+def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
+               tiled=False):
   """Materialize the mapped axis and map a different axis.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -545,6 +561,12 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
     Otherwise array with shape similar to the input shape, except with split_axis
     divided by axis size and concat_axis multiplied by axis size.
   """
+  return _all_to_all_is_async(x, axis_name, split_axis, concat_axis,
+                              axis_index_groups=axis_index_groups, tiled=tiled,
+                              is_async=False)
+
+def _all_to_all_is_async(x, axis_name, split_axis, concat_axis, *,
+                         axis_index_groups=None, tiled=False, is_async=False):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(x, split_axis=split_axis, concat_axis=concat_axis):
     group_size = _axis_size(axis_name, axis_index_groups)
@@ -567,7 +589,8 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
         x = lax.expand_dims(x, (concat_axis,))  # insert the new axis
         split_axis += 1   # we have a new axis before split_axis now
     x = insert_collective_pvary(axis_name, x)
-    result = all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
+    prim = all_to_all_start_p if is_async else all_to_all_p
+    result = prim.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                                axis_name=axis_name,
                                axis_index_groups=axis_index_groups,
                                tiled=tiled)
@@ -1688,6 +1711,12 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
    [[12 13 14 15]
     [ 4  5  6  7]]]
   """
+  return _all_gather_is_async(x, axis_name, axis_index_groups=axis_index_groups,
+                              axis=axis, tiled=tiled, to=to, is_async=False)
+
+def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
+                         tiled=False, to: str = 'varying', is_async: bool =
+                         False):
   _allowed_ag_to = {'varying', 'reduced'}
   if to not in _allowed_ag_to:
     raise ValueError(
@@ -1695,15 +1724,15 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
         f" values are: {_allowed_ag_to}")
   if to == 'varying':
     return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
-                       axis=axis, tiled=tiled)
+                       axis=axis, tiled=tiled, is_async=is_async)
   else:
     assert to == 'reduced'
     if axis_index_groups is not None:
       raise NotImplementedError
-    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled)
+    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled, is_async=is_async)
 
 
-def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled):
+def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled, is_async):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -1712,7 +1741,8 @@ def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled):
   axis_size = _axis_size(axis_name, axis_index_groups)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
-    return all_gather_p.bind(
+    prim = all_gather_start_p if is_async else all_gather_p
+    return prim.bind(
         leaf,
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
@@ -2170,6 +2200,13 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [12 14]
    [16 18]]
   """
+  return _psum_scatter_is_async(x, axis_name,
+                                scatter_dimension=scatter_dimension,
+                                axis_index_groups=axis_index_groups,
+                                tiled=tiled, is_async=False)
+
+def _psum_scatter_is_async(x, axis_name, *, scatter_dimension=0,
+                           axis_index_groups=None, tiled=False, is_async=False):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
   # generally from JAX.
@@ -2182,13 +2219,16 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
       if axis_index_groups is not None:
         raise NotImplementedError
       return unreduced_psum_scatter(
-          leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled)
+          leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled,
+          is_async=is_async)
     else:
       return _psum_scatter(leaf, axes, scatter_dimension=scatter_dimension,
-                           axis_index_groups=axis_index_groups, tiled=tiled)
+                           axis_index_groups=axis_index_groups, tiled=tiled,
+                           is_async=is_async)
   return tree_util.tree_map(bind, x)
 
-def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled):
+def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
+                  is_async):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2197,7 +2237,8 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
-    return reduce_scatter_p.bind(
+    prim = reduce_scatter_start_p if is_async else reduce_scatter_p
+    return prim.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
@@ -2274,14 +2315,15 @@ batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
 
 ######################## psum_invariant_p ####################################
 
-def bind_psum_invariant(leaf, *, axes, axis_index_groups):
+def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
   if axis_index_groups is not None:
     raise NotImplementedError
   axes_ = frozenset(axes)
   in_vma = core.typeof(leaf).vma
   arg = (pvary(leaf, tuple(pbroadcast_names))
          if (pbroadcast_names := axes_ - in_vma) else leaf)
-  return psum_invariant_p.bind(arg, axes=axes)
+  prim = psum_invariant_start_p if is_async else psum_invariant_p
+  return prim.bind(arg, axes=axes)
 
 psum_invariant_p = core.Primitive('psum_invariant')
 
@@ -2366,14 +2408,15 @@ batching.primitive_batchers[core.pvary_p] = _pvary_batcher
 ####################### all_gather_reduced ###########################
 
 # Varying -> Reduced collective
-def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False):
+def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False, is_async: bool = False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    return all_gather_reduced_p.bind(
+    prim = all_gather_reduced_start_p if is_async else all_gather_reduced_p
+    return prim.bind(
         leaf,
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
@@ -2452,14 +2495,20 @@ batching.fancy_primitive_batchers[all_gather_reduced_p] = _all_gather_reduced_ba
 ####################### unreduced_psum_scatter ###########################
 
 # Unreduced -> Varying collective
-def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
+def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False,
+                           is_async=False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    return unreduced_reduce_scatter_p.bind(
+    prim = (
+        unreduced_reduce_scatter_start_p
+        if is_async
+        else unreduced_reduce_scatter_p
+    )
+    return prim.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
@@ -2539,13 +2588,14 @@ mlir.register_lowering(unreduced_reduce_scatter_p,
 ############################## unreduced_psum ###########################
 
 # Unreduced -> Invariant collective
-def unreduced_psum(x, axis_name):
+def unreduced_psum(x, axis_name, is_async=False):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if not axis_name:
     return x
+  prim = unreduced_psum_start_p if is_async else unreduced_psum_p
   return tree_util.tree_map(
-      lambda leaf: unreduced_psum_p.bind(leaf, axes=tuple(axis_name)), x)
+      lambda leaf: prim.bind(leaf, axes=tuple(axis_name)), x)
 
 unreduced_psum_p = core.Primitive('unreduced_psum')
 
@@ -2779,36 +2829,95 @@ def pcast(x, axis_name, *, to: str):
     return func(leaf, axes)
   return tree_util.tree_map(bind, x)
 
+######################### async ops #########################
 
-def all_gather_start(x, axis_name, axis=0, tiled=False):
-  if tiled: raise NotImplementedError  # TODO(mwhittaker)
-  return all_gather_start_p.bind(x, axis_name=axis_name, axis=axis, tiled=tiled)
+# Asynchronous start primitives.
+all_gather_start_p = core.Primitive("all_gather_start")
+all_gather_reduced_start_p = core.Primitive("all_gather_reduced_start")
+psum_start_p = core.Primitive("psum_start")
+psum_invariant_start_p = core.Primitive("psum_invariant_start")
+unreduced_psum_start_p = core.Primitive("unreduced_psum_start")
+reduce_scatter_start_p = core.Primitive("reduce_scatter_start")
+unreduced_reduce_scatter_start_p = core.Primitive("unreduced_reduce_scatter_start")
+all_to_all_start_p = core.Primitive("all_to_all_start")
+pbroadcast_start_p = core.Primitive("pbroadcast_start")
+ppermute_start_p = core.Primitive("ppermute_start")
 
-all_gather_start_p = core.Primitive('ag_start')
-@all_gather_start_p.def_effectful_abstract_eval
-def _all_gather_start_abstract_eval(x, *, axis_name, axis, tiled):
-  mesh = get_abstract_mesh()
-  size = math.prod(mesh.shape[d] for d in axis_name)
-  result_aval, effs = all_gather_p.abstract_eval(
-      x, axis_name=axis_name, all_gather_dimension=axis, tiled=tiled,
-      axis_index_groups=None, axis_size=size)
-  return core.AbstractTodo(result_aval), effs
+# Asynchronous start functions.
+all_gather_start = partial(_all_gather_is_async, is_async=True)
+psum_start = partial(_psum_is_async, is_async=True)
+psum_scatter_start = partial(_psum_scatter_is_async, is_async=True)
+all_to_all_start = partial(_all_to_all_is_async, is_async=True)
+pbroadcast_start = partial(_pbroadcast_is_async, is_async=True)
+ppermute_start = partial(_ppermute_is_async, is_async=True)
 
-def _ag_start_lowering(ctx, x, *, axis_name, axis, tiled):
-  mesh = get_abstract_mesh()
-  size = math.prod(mesh.shape[d] for d in axis_name)
-  return _all_gather_lowering(
-      ctx, x, all_gather_dimension=axis, axis_name=axis_name,
-      axis_index_groups=None, axis_size=size, tiled=tiled)
-mlir.register_lowering(all_gather_start_p, _ag_start_lowering)
+# Asynchronous start abstract eval.
+def _start_abstract_eval(q):
+  def f(*args, **kwargs):
+    aval, effs = q.abstract_eval(*args, **kwargs)
+    return core.AbstractTodo(aval), effs
+  return f
 
-def all_gather_done(x):
-  return all_gather_done_p.bind(x)
+for p, q in [
+    (all_gather_start_p, all_gather_p),
+    (all_gather_reduced_start_p, all_gather_reduced_p),
+    (psum_start_p, psum_p),
+    (psum_invariant_start_p, psum_invariant_p),
+    (unreduced_psum_start_p, unreduced_psum_p),
+    (reduce_scatter_start_p, reduce_scatter_p),
+    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p),
+    (all_to_all_start_p, all_to_all_p),
+    (pbroadcast_start_p, pbroadcast_p),
+    (ppermute_start_p, ppermute_p),
+]:
+  p.def_effectful_abstract_eval(_start_abstract_eval(q))
 
-all_gather_done_p = core.Primitive('ag_done')
-@all_gather_done_p.def_abstract_eval
-def _all_gather_done_abstract_eval(aval):
-  if not isinstance(aval, core.AbstractTodo): raise TypeError
+# Asynchronous start lowering.
+mlir.register_lowering(all_gather_start_p, _all_gather_lowering)
+for p in ("cuda", "rocm", "tpu"):
+  mlir.register_lowering(all_gather_start_p,
+                         partial(_all_gather_lowering, platform=p),
+                         platform=p)
+mlir.register_lowering(all_gather_reduced_start_p, _all_gather_reduced_lowering)
+for p in ("cuda", "rocm", "tpu"):
+  mlir.register_lowering(all_gather_reduced_start_p,
+                         partial(_all_gather_reduced_lowering, platform=p),
+                         platform=p)
+mlir.register_lowering(psum_start_p,
+                       partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
+mlir.register_lowering(psum_invariant_start_p, _psum_invariant_lowering_rule)
+mlir.register_lowering(unreduced_psum_start_p, _unreduced_psum_lowering)
+mlir.register_lowering(reduce_scatter_start_p,
+                       partial(_reduce_scatter_lowering, lax.add_p))
+mlir.register_lowering(unreduced_reduce_scatter_start_p,
+                       partial(_unreduced_reduce_scatter_lowering, lax.add_p))
+mlir.register_lowering(all_to_all_start_p, _all_to_all_lowering)
+mlir.register_lowering(pbroadcast_start_p, _pbroadcast_lowering, platform="gpu")
+mlir.register_lowering(ppermute_start_p, _ppermute_lowering)
+
+# Asynchronous done primitives.
+all_gather_done_p = core.Primitive("all_gather_done")
+psum_done_p = core.Primitive("psum_done")
+reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
+all_to_all_done_p = core.Primitive("all_to_all_done")
+pbroadcast_done_p = core.Primitive("pbroadcast_done")
+ppermute_done_p = core.Primitive("ppermute_done")
+
+# Asynchronous done functions.
+all_gather_done = all_gather_done_p.bind
+psum_done = psum_done_p.bind
+psum_scatter_done = reduce_scatter_done_p.bind
+all_to_all_done = all_to_all_done_p.bind
+pbroadcast_done = pbroadcast_done_p.bind
+ppermute_done = ppermute_done_p.bind
+
+# Asynchronous done abstract eval and lowering.
+def _done_abstract_eval(aval):
+  if not isinstance(aval, core.AbstractTodo):
+    raise TypeError(f"async done op got {aval}, want core.AbstractTodo")
   return aval.inner_aval
 
-mlir.register_lowering(all_gather_done_p, lambda ctx, x: [x])
+for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
+          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
+  p.def_abstract_eval(_done_abstract_eval)
+  mlir.register_lowering(p, lambda ctx, x: [x])
