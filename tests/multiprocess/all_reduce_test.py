@@ -122,9 +122,6 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
     for actual in out.addressable_shards:
       jtu.check_close(actual.data, local_xs)
 
-  # TODO(dsuo): Remove this warning once PmapSharding is removed. We don't
-  # convert this to shard_map since axis_index_groups raises a
-  # NotImplementedError.
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_psum_axis_index_groups(self):
     devices = list(range(jax.device_count()))

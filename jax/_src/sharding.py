@@ -200,13 +200,7 @@ class Sharding:
     Two shardings are equivalent if they place the same logical array shards on
     the same devices.
     """
-    try:
-      return (are_hlo_shardings_equal(self._to_xla_hlo_sharding(ndim),
-                                     other._to_xla_hlo_sharding(ndim))
-              and self._internal_device_list == other._internal_device_list and
-              self.memory_kind == other.memory_kind)
-    # NotImplementedError is raised by PmapSharding because it can't lower
-    # to OpSharding. So if `other` is a PmapSharding, default to a strict
-    # equality check.
-    except NotImplementedError:
-      return self == other
+    return (are_hlo_shardings_equal(self._to_xla_hlo_sharding(ndim),
+                                   other._to_xla_hlo_sharding(ndim))
+            and self._internal_device_list == other._internal_device_list and
+            self.memory_kind == other.memory_kind)

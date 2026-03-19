@@ -31,7 +31,6 @@ from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
-from jax._src import deprecations
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding)
 from jax.experimental import multihost_utils
@@ -1051,18 +1050,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(
         actual_sharding._device_assignment, expected_sharding._device_assignment
     )
-
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_default_pmap_sharding_with_devices(self):
-    if jax.device_count() < 4:
-      self.skipTest('Test needs >= 4 devices.')
-
-    devs = jax.devices()
-    new_order = (devs[0], devs[3], devs[2], devs[1])
-    if deprecations.is_accelerated_attribute(jax.sharding, 'PmapSharding'):
-      self.skipTest('PmapSharding is accelerated.')
-    ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
-    self.assertEqual(ps._device_assignment, new_order)
 
   def test_default_pmap_sharding_replicated(self):
     x = np.zeros((len(jax.local_devices()), 8), dtype=np.float32)

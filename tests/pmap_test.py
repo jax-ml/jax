@@ -42,7 +42,6 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
-from jax._src.lib import xla_client as xc
 from jax._src.sharding import IndivisibleError
 from jax._src.util import safe_map, safe_zip
 import jax.numpy as jnp
@@ -87,16 +86,21 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
   if input_data is None:
     input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
 
-  sharding_spec = sharding_specs.create_pmap_sharding_spec(
-      input_shape, in_axes, sharded_dim_size)
-
   if devices is None:
     devices = jax.devices()
 
-  pmap_sharding = sharding_impls.PmapSharding(np.array(devices), sharding_spec)
+  if in_axes is None:
+    mesh = jax.sharding.Mesh(np.array(devices), ('batch',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+  else:
+    mesh = jax.sharding.Mesh(np.array(devices), ('batch',))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(*(
+            (None,) * in_axes + ('batch',) +
+            (None,) * (len(input_shape) - in_axes - 1))))
 
   return array.make_array_from_callback(
-      input_shape, pmap_sharding, lambda idx: input_data[idx]), input_data
+      input_shape, sharding, lambda idx: input_data[idx]), input_data
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -2537,63 +2541,6 @@ def _spec_str(spec):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class ShardArgsTest(jtu.JaxTestCase):
-
-  def numpy_array(x):
-    return x
-
-  def device_array(x):
-    return jax.device_put(x)
-
-  # TODO(skye): add coverage for Arrays
-
-  @parameterized.named_parameters(
-      {"testcase_name":
-       f"_{shape=}_spec={_spec_str(spec)}_arg={make_arg.__name__}"
-       .replace(" ", ""),
-       "shape": shape, "spec": spec, "make_arg": make_arg}
-      for make_arg in [numpy_array, device_array]
-      for shape, spec in [
-          # pmap(in_axes=0)
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(4), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
-          # pmap(in_axes=1)
-          [(2, 2), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.Unstacked(2)),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
-          # unsharded
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
-                                     mesh_mapping=())],
-          # replication + sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))],
-          # replication, no sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.Replicated(3),))],
-          # replicated scalar
-          [(), pxla.ShardingSpec(sharding=(),
-                                 mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
-      ])
-  def testShardArgs(self, shape, spec, make_arg):
-    indices = sharding_specs.spec_to_indices(shape, spec)
-    nshards = len(indices)
-    if jax.device_count() < nshards:
-      raise SkipTest
-    x = np.arange(math.prod(shape)).reshape(shape)
-    arg = make_arg(x)
-    sharding = sharding_impls.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None],
-                              [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
-    self.assertEqual(len(results), 1)
-    if isinstance(results[0], array.ArrayImpl):
-      bufs = results[0]._arrays
-    else:
-      bufs = results[0]
-    self.assertEqual(len(bufs), nshards)
-    for buf, idx in zip(bufs, indices):
-      self.assertAllClose(np.asarray(buf), x[idx], check_dtypes=False)
-
-
-@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_input_array_output_array(self):
@@ -2655,8 +2602,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)
-    a1, inp_data = create_input_array_for_pmap(input_shape, in_axes=None,
-                                        sharded_dim_size=input_shape[0])
+    inp_data = np.arange(math.prod(input_shape)).reshape(input_shape)
+    a1 = jnp.array(inp_data)
 
     f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
     out_array = f(a1)

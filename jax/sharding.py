@@ -19,7 +19,6 @@ from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
-    PmapSharding as _deprecated_PmapSharding,
     set_mesh as set_mesh,
     get_mesh as get_mesh,
 )
@@ -40,21 +39,3 @@ from jax._src.pjit import (
     auto_axes as auto_axes,
     explicit_axes as explicit_axes,
 )
-
-_deprecations = {
-  # Added for v0.8.1
-  "PmapSharding": (
-    "jax.sharding.PmapSharding is deprecated; use jax.sharding.NamedSharding instead.",
-    _deprecated_PmapSharding
-  ),
-}
-
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  PmapSharding = _deprecated_PmapSharding
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _deprecated_PmapSharding

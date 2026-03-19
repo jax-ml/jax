@@ -49,7 +49,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, SingleDeviceSharding, physical_sharding,
+    NamedSharding, SingleDeviceSharding, physical_sharding,
     logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
@@ -423,7 +423,7 @@ class KeyTyRules:
     phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
 
     # set up a grounded sharding (with a grounded sharding spec)
-    if isinstance(sharding, (PmapSharding, NamedSharding)):
+    if isinstance(sharding, NamedSharding):
       phys_sharding = physical_sharding(aval, sharding)
     else:
       assert False, f'impossible sharding {sharding} in local sharded result handler'

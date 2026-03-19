@@ -260,8 +260,7 @@ def host_local_array_to_global_array_impl(
   # If the Array is not fully addressable i.e. not host local, return it.
   if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
     return arr
-  if (isinstance(arr, array.ArrayImpl) and isinstance(
-      arr.sharding, sharding_impls.PmapSharding)) or not hasattr(arr, 'shape'):
+  if (isinstance(arr, array.ArrayImpl) and not hasattr(arr, 'shape')):
     arr = np.array(arr)
   if arr.dtype == dtypes.float0:
     arr = np.zeros(arr.shape, dtype=np.dtype(bool))

@@ -22,10 +22,8 @@ import jax
 from jax import lax
 from jax._src import ad_checkpoint
 from jax._src import debugging
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import test_util as jtu
-from jax._src.interpreters import pxla
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
@@ -1107,52 +1105,6 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message='jax.sharding.PmapSharding is deprecated')
-  def test_visualize_pmap_sharding(self):
-    if deprecations.is_accelerated_attribute(jax.sharding, 'PmapSharding'):
-      self.skipTest('PmapSharding is accelerated.')
-    ss = pxla.ShardingSpec(
-        sharding=(pxla.Unstacked(8),),
-        mesh_mapping=(pxla.ShardedAxis(0),))
-    sd = jax.sharding.PmapSharding(self._create_devices(8), ss)
-    shape = (8,)
-    with jtu.capture_stdout() as output:
-      debugging.visualize_sharding(shape, sd)
-    expected = _format_multiline("""
-    ┌───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┐
-    │ CPU 0 │ CPU 1 │ CPU 2 │ CPU 3 │ CPU 4 │ CPU 5 │ CPU 6 │ CPU 7 │
-    └───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘
-    """)
-    self.assertEqual(output(), expected)
-
-    ss = pxla.ShardingSpec(
-        sharding=(pxla.Unstacked(8), pxla.NoSharding()),
-        mesh_mapping=(pxla.ShardedAxis(0),))
-    sd = jax.sharding.PmapSharding(self._create_devices(8), ss)
-    shape = (8, 2)
-    with jtu.capture_stdout() as output:
-      debugging.visualize_sharding(shape, sd)
-    expected = _format_multiline("""
-    ┌───────┐
-    │ CPU 0 │
-    ├───────┤
-    │ CPU 1 │
-    ├───────┤
-    │ CPU 2 │
-    ├───────┤
-    │ CPU 3 │
-    ├───────┤
-    │ CPU 4 │
-    ├───────┤
-    │ CPU 5 │
-    ├───────┤
-    │ CPU 6 │
-    ├───────┤
-    │ CPU 7 │
-    └───────┘
-    """)
-    self.assertEqual(output(), expected)
 
   def test_visualize_sharding_shard_map(self):
     mesh = jtu.create_mesh((2,), 'x')

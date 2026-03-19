@@ -27,7 +27,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import sharding as jsharding
-from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import source_info_util
@@ -46,7 +45,7 @@ from jax._src.op_shardings import (
     are_hlo_shardings_equal, get_num_ways_dim_sharded,
     is_hlo_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
-from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import use_cpp_class, use_cpp_method
 import numpy as np
 
 config_ext = xc._xla.config
@@ -186,176 +185,8 @@ class SingleDeviceSharding(jsharding.Sharding):
 
 SingleDeviceSharding.__module__ = 'jax.sharding'
 
-@util.cache(max_size=4096, trace_context_in_key=False)
-def pmap_sharding_devices_indices_map(
-    self, global_shape: Shape) -> Mapping[Device, Index]:
-  self.shard_shape(global_shape)  # raises a good error message
-  indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
-  return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
 
-@use_cpp_class(xc.PmapSharding)
-class PmapSharding(jsharding.Sharding):
-  devices: np.ndarray
-  sharding_spec: sharding_specs.ShardingSpec
-  _internal_device_list: xc.DeviceList
-
-  @use_cpp_method()
-  def __init__(self, devices: Sequence[Device] | np.ndarray,
-               sharding_spec: sharding_specs.ShardingSpec):
-    self.devices = np.asarray(devices)
-    # The sharding spec should be pmap's sharding spec.
-    self.sharding_spec = sharding_spec
-
-  def __reduce__(self):
-    return (type(self), (self.devices, self.sharding_spec))
-
-  def __eq__(self, other):
-    if not isinstance(other, PmapSharding):
-      return False
-    if self is other:
-      return True
-    return (self.sharding_spec == other.sharding_spec and
-            self.devices.shape == other.devices.shape and
-            self._internal_device_list == other._internal_device_list)
-
-  def __hash__(self):
-    if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self.sharding_spec))
-    return self._hash
-
-  def __str__(self):
-    device_ids = [d.id for d in self.devices.flat]
-    return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
-            f'{device_ids=}, '
-            f'device_platform={self.devices.flat[0].platform.upper()}, '
-            f'device_shape={self.devices.shape})')
-
-  def __repr__(self):
-    return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
-            f'devices={self.devices})')
-
-  def is_equivalent_to(self: PmapSharding, other: PmapSharding,  # type: ignore
-                       ndim: int) -> bool:
-    return self == other
-
-  # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
-  @classmethod
-  def default(cls, shape: Shape, sharded_dim: int | None = 0,
-              devices: Sequence[xc.Device] | None = None) -> PmapSharding:
-    """Creates a :class:`PmapSharding` which matches the default placement
-    used by :func:`jax.pmap`.
-
-    Args:
-      shape: The shape of the input array.
-      sharded_dim: Dimension the input array is sharded on. Defaults to 0.
-      devices: Optional sequence of devices to use. If omitted, the implicit
-        device order used by pmap is used, which is the order of
-        :func:`jax.local_devices`.
-    """
-    if sharded_dim is None:
-      if devices is None:
-        raise ValueError("One of sharded_dim or devices must be set.")
-      nrep = len(devices)
-      return cls(np.array(devices),
-          sharding_specs.pmap_sharding_spec(nrep, nrep, shape, None))
-
-    # The dtype doesn't matter here. Its only used for creating the
-    # sharding_spec.
-    sharding_spec = sharding_specs.create_pmap_sharding_spec(
-        tuple(shape), sharded_dim)
-
-    num_ways_sharded = None
-    for s in sharding_spec.sharding:
-      if isinstance(s, sharding_specs.Unstacked):
-        assert num_ways_sharded is None
-        num_ways_sharded = s.size
-      elif isinstance(s, sharding_specs.Chunked):
-        assert num_ways_sharded is None
-        if len(s.chunks) == 1:
-          num_ways_sharded = s.chunks[0]
-        else:
-          raise NotImplementedError(
-              'Multiple chunks in Chunked dimension not supported.')
-
-    if devices is None:
-      pmap_devices: np.ndarray = np.array(xb.local_devices()[:num_ways_sharded])
-    else:
-      pmap_devices = np.array(devices)
-    return cls(pmap_devices, sharding_spec)
-
-  @property
-  def num_devices(self) -> int:
-    return len(self.device_set)
-
-  @functools.cached_property
-  def device_set(self) -> set[Device]:
-    return set(self.devices.flat)
-
-  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    return pmap_sharding_devices_indices_map(self, global_shape)
-
-  @functools.cached_property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    return tuple(self.devices.flat)
-
-  @property
-  def memory_kind(self) -> str | None:
-    try:
-      return self._internal_device_list.default_memory_kind
-    except:
-      return None
-
-  def with_memory_kind(self, kind: str):
-    raise NotImplementedError("pmap does not support memories.")
-
-  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    raise NotImplementedError("pmap doesn't use OpSharding.")
-
-  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    raise NotImplementedError("pmap doesn't use SdyArray.")
-
-  @functools.cached_property
-  def is_fully_replicated(self) -> bool:
-    for s in self.sharding_spec.sharding:
-      if isinstance(s, (sharding_specs.Unstacked, sharding_specs.Chunked)):
-        return False
-    return True
-
-  @functools.cached_property
-  def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable
-
-  def check_compatible_aval(self, aval_shape: Shape) -> None:
-    return
-
-  def shard_shape(self, global_shape: Shape) -> Shape:
-    sharded_dim = None
-    sharded_dim_size = None
-    sharded_shape = global_shape
-    for i, s in enumerate(self.sharding_spec.sharding):
-      if isinstance(s, sharding_specs.Unstacked):
-        sharded_dim = i
-        sharded_dim_size = s.size
-        sharded_shape = util.tuple_delete(global_shape, sharded_dim)
-        break
-      elif isinstance(s, sharding_specs.Chunked):
-        sharded_dim = i
-        assert len(s.chunks) == 1, s.chunks
-        sharded_dim_size = s.chunks[0]
-        sharded_shape = util.tuple_update(global_shape, sharded_dim, 1)
-        break
-    if sharded_dim is None:
-      return global_shape
-    if global_shape[sharded_dim] != sharded_dim_size:
-      raise ValueError(
-          f'The sharded dimension must be equal to the number of '
-          f'devices passed to PmapSharding. Got sharded dimension {sharded_dim} '
-          f'with value {global_shape[sharded_dim]} in shape {global_shape} and '
-          f'the number of devices={len(self._device_assignment)}')
-    return sharded_shape
-
-PmapSharding.__module__ = 'jax.sharding'
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
@@ -487,9 +318,6 @@ def prepare_axis_resources(axis_resources, arg_name,
     if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
       new_entries.append(entry)
     elif isinstance(entry, jsharding.Sharding):
-      if isinstance(entry, PmapSharding):
-        raise ValueError(f'One of {what} got sharding {entry} which is not '
-                         'allowed.')
       if isinstance(entry, NamedSharding) and entry.mesh.empty:
         raise ValueError(f'One of {what} got an empty NamedSharding: {entry} '
                          'which is not allowed.')
@@ -988,21 +816,11 @@ def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
   return xc.HloSharding.from_proto(new_op_sharding)
 
 def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
-  # Special case PmapSharding here because PmapSharding maps away an axis
-  # and needs to be handled separately.test_pjit_single_device_sharding_add
-  return sharding.num_devices == 1 and not isinstance(sharding, PmapSharding)
+  return sharding.num_devices == 1
 
 def make_key_array_phys_sharding(aval, sharding):
   if is_single_device_sharding(sharding):
     return sharding
-  elif isinstance(sharding, PmapSharding):
-    elt_aval = core.physical_element_aval(aval.dtype)
-    trailing_sharding = [sharding_specs.NoSharding()] * elt_aval.ndim
-    phys_sharding_spec = sharding_specs.ShardingSpec(
-        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
-        mesh_mapping=sharding.sharding_spec.mesh_mapping)
-    return PmapSharding(devices=sharding.devices,
-                        sharding_spec=phys_sharding_spec)
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
@@ -1032,8 +850,6 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
 
 def check_replicated_trailing_dims(sharding: jsharding.Sharding,
                                    logical_shape, dtype):
-  if isinstance(sharding, PmapSharding):
-    return
   if isinstance(sharding, NamedSharding) and sharding.mesh._any_axis_manual:
     return
   phys_shape = core.physical_shape(logical_shape, dtype)
@@ -1053,13 +869,6 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
   if is_single_device_sharding(phys_sharding):
     return phys_sharding
-  elif isinstance(phys_sharding, PmapSharding):
-    elt_aval = core.physical_element_aval(dtype)
-    logical_sharding_spec = sharding_specs.ShardingSpec(
-        sharding=phys_sharding.sharding_spec.sharding[:-elt_aval.ndim],
-        mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
-    return PmapSharding(devices=phys_sharding.devices,
-                        sharding_spec=logical_sharding_spec)
   elif isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)
     phys_shape = core.physical_shape(logical_shape, dtype)

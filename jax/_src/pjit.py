@@ -64,7 +64,7 @@ from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
-    SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
+    SingleDeviceSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
@@ -945,12 +945,9 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
                              else arg_layout)
     else:
       arg_layout, dispatch_arg_layout = None, None
-    # Sharding can be unspecified when array is committed if it's a PmapSharding.
-    is_pmap_sharding = (isinstance(rs, UnspecifiedValue) or
-                        isinstance(arg.sharding, PmapSharding))
     if jit_in_l is None:
       if committed:
-        if is_pmap_sharding:
+        if isinstance(rs, UnspecifiedValue):
           resolved_in_layouts.append(None)
         else:
           resolved_in_layouts.append(dispatch_arg_layout)
@@ -961,7 +958,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
       # required layout methods. Hence `arr.format` can return
       # `Format(None, sharding)`
       if (committed
-          and not is_pmap_sharding
+          and not isinstance(rs, UnspecifiedValue)
           and arg_layout is not None
           and not pxla.is_user_xla_layout_equal(jit_in_l, arg_layout)):
         extra_msg = ''
@@ -1000,8 +997,7 @@ def finalize_arg_sharding(arg_s, committed):
     return arg_s
   else:
     if committed:
-      # If the arg has a PmapSharding, then reshard it unconditionally.
-      return UNSPECIFIED if isinstance(arg_s, PmapSharding) else arg_s
+      return arg_s
     else:
       assert isinstance(arg_s, Sharding)
       if dispatch.is_single_device_sharding(arg_s):
@@ -1052,7 +1048,6 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
               f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
               f'arg memory kind: {arg_s.memory_kind} for arg type: {arg.aval}')
         if (committed and
-            not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_hlo_shardings_equal(
                 pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore[union-attr]
                 arg_s._to_xla_hlo_sharding(arg.ndim))):

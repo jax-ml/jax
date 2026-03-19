@@ -66,7 +66,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
+    NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
@@ -3382,7 +3382,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
-  if (sharding is not None and not isinstance(sharding, PmapSharding) and
+  if (sharding is not None and
       isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)

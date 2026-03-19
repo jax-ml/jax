@@ -44,7 +44,7 @@ from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding,
+    SingleDeviceSharding, NamedSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
@@ -335,34 +335,8 @@ class ArrayImpl(basearray.Array):
       return repr(self)
 
   def __getitem__(self, idx, /):
-    from jax._src.lax import lax  # pytype: disable=import-error
     from jax._src.numpy import indexing  # pytype: disable=import-error
     self._check_if_deleted()
-
-    if isinstance(self.sharding, PmapSharding):
-      cidx = idx if isinstance(idx, tuple) else (idx,)
-
-      padded_cidx = tuple(
-          slice(i, i + 1, None) if isinstance(i, int) else i for i in cidx
-      ) + (slice(None),) * (len(self.shape) - len(cidx))
-
-      indices = tuple(self.sharding.devices_indices_map(self.shape).values())
-      try:
-        arr_idx = indices.index(padded_cidx)
-      except ValueError:
-        arr_idx = None
-      if arr_idx is not None:
-        out = self._arrays[arr_idx]
-        sharding = SingleDeviceSharding(_get_device(out))
-
-        # If cidx was the index of a single shard, then it corresponds to one
-        # shard of the chunked dimension.
-        dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-        # Squeeze on committed arrays to avoid data movement to shard 0.
-        out = lax.squeeze(out, dimensions=dims)
-        assert isinstance(out, ArrayImpl)
-        return ArrayImpl(
-            out.aval, sharding, [out], committed=False, _skip_checks=True)
 
     return indexing.rewriting_take(self, idx)
 
@@ -373,8 +347,6 @@ class ArrayImpl(basearray.Array):
       assert self.is_fully_replicated or self.is_fully_addressable
       if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # pyrefly: ignore[missing-attribute]
-      elif isinstance(self.sharding, PmapSharding):
-        return (self[i] for i in range(self.shape[0]))
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
         # here after uneven partitioning support is added.
