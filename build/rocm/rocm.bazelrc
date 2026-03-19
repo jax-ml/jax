@@ -61,6 +61,23 @@ test:rocm_rbe --strategy=TestRunner=remote,local
 test:rocm_rbe --worker_sandboxing=false
 test:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
 
+# Dynamic execution config for ROCm RBE - builds locally, tests use hybrid mode
+common:rocm_rbe_dynamic --config=rocm_rbe
+# Keep builds local (inherit from rocm_rbe)
+build:rocm_rbe_dynamic --spawn_strategy=local
+# Enable dynamic execution for tests only
+test:rocm_rbe_dynamic --experimental_spawn_scheduler
+test:rocm_rbe_dynamic --strategy=TestRunner=dynamic
+test:rocm_rbe_dynamic --dynamic_mode=default
+# Configure local and remote strategies for dynamic test execution
+test:rocm_rbe_dynamic --dynamic_local_strategy=worker,standalone,local
+test:rocm_rbe_dynamic --dynamic_remote_strategy=remote
+# Delay before starting local test execution (ms) - adjust to prefer remote or local
+# Lower values = more local execution, higher values = more remote execution
+test:rocm_rbe_dynamic --experimental_local_execution_delay=1000
+# Maximum number of test jobs to run locally in parallel (50% of available CPUs)
+test:rocm_rbe_dynamic --local_resources=cpu=HOST_CPUS*0.5
+
 # Used for rules_python bootstrap 1.8.0+
 build --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0
 test --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0

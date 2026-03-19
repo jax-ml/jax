@@ -83,8 +83,8 @@ for arg in "$@"; do
 done
 
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
-    --config=rocm_rbe \
     --config=rocm \
+    --config=rocm_rbe_dynamic \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
