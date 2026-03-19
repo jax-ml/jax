@@ -28,8 +28,7 @@ from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 from functools import partial
 import inspect
-import typing
-from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
+from typing import (Any, Literal, Optional, TypeVar, overload,
                     cast, TYPE_CHECKING)
 import weakref
 
@@ -38,12 +37,11 @@ from contextlib import contextmanager
 
 from jax._src import api_util
 from jax._src import linear_util as lu
-from jax._src import stages
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
-    tree_leaves, Partial, PyTreeDef, keystr, broadcast_prefix,
-    prefix_errors, generate_key_paths, tree_flatten_with_path,
-    equality_errors_pytreedef, register_pytree_node, register_dataclass)
+    tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
+    tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
+    register_dataclass)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -53,25 +51,21 @@ from jax._src import distributed
 from jax._src import dtypes
 from jax._src.dtypes import canonicalize_value
 from jax._src import sharding_impls
-from jax._src import sharding_specs
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
-  flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-  flatten_axes, donation_vector, rebase_donate_argnums,
-  _ensure_index, _ensure_index_tuple, apply_flat_fun_nokwargs, check_callable,
-  debug_info, flat_out_axes)
+  flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
+  flatten_axes, _ensure_index, apply_flat_fun_nokwargs,
+  check_callable, debug_info)
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.mesh import (_clear_mesh_cache,
                            get_concrete_mesh, get_abstract_mesh, Mesh)
-from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
-                                     NamedSharding)
+from jax._src.sharding_impls import PartitionSpec as P, NamedSharding
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -1603,307 +1597,6 @@ def pmap(
   )
 
 
-class PmapCallInfo(NamedTuple):
-  flat_fun: lu.WrappedFun
-  in_tree: PyTreeDef
-  out_tree: Callable[[], PyTreeDef]
-  flat_args: Sequence[Any]
-  donated_invars: Sequence[bool]
-  in_axes_flat: Sequence[int | None]
-  local_axis_size: int
-  out_axes_thunk: Callable
-  devices: Sequence[xc.Device] | None
-  global_axis_size: int
-  is_explicit_global_axis_size: bool
-
-
-def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
-                          global_axis_size: int | None):
-  """Determine global_axis_size for multi-host pmap."""
-  # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
-  # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
-  #   raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
-  if (xb.process_count() == 1 and global_axis_size is not None and
-      global_axis_size != local_axis_size):
-    raise ValueError(
-        f"Specified axis_size {global_axis_size} doesn't match received "
-        f"axis_size {local_axis_size}.")
-
-  if in_devices is not None and backend_name is None:
-    backend = xb.get_device_backend(in_devices[0])
-  else:
-    backend = xb.get_backend(backend_name)
-
-  if global_axis_size is None:
-    if xb.process_count(backend) == 1:
-      global_axis_size = local_axis_size
-    elif in_devices is not None:
-      global_axis_size = len(in_devices)
-    else:
-      global_axis_size = local_axis_size * xb.process_count(backend)
-      assert all(
-          len(xb.local_devices(pi, backend)) == xb.local_device_count(backend)
-          for pi in range(xb.process_count(backend)))
-  return global_axis_size
-
-
-def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
-                  donate_tuple, in_devices, backend_name,
-                  axis_size, args, kwargs):
-  if in_devices is not None and len(in_devices) == 0:
-    raise ValueError("'devices' argument to pmap must be non-empty, or None.")
-
-  dbg = debug_info(
-      "pmap", fun, args, kwargs,
-      static_argnums=static_broadcasted_tuple)
-
-  f = lu.wrap_init(fun, debug_info=dbg)
-  del dbg
-  if static_broadcasted_tuple:
-    if max(static_broadcasted_tuple) >= len(args):
-      raise ValueError(
-          f"pmapped function has static_broadcasted_argnums={static_broadcasted_tuple}"
-          f" but was called with only {len(args)} positional "
-          f"argument{'s' if len(args) > 1 else ''}. "
-          "All static broadcasted arguments must be passed positionally.")
-    dyn_argnums = [i for i in range(len(args))
-                   if i not in static_broadcasted_tuple]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
-
-    if isinstance(in_axes, tuple):
-      dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
-    else:
-      dyn_in_axes = in_axes
-  else:
-    dyn_args, dyn_in_axes = args, in_axes
-  args, in_tree = tree_flatten((dyn_args, kwargs))
-
-  if donate_tuple and not config.debug_nans.value:
-    donated_invars = donation_vector(donate_tuple, (), in_tree)
-  else:
-    donated_invars = (False,) * len(args)
-  try:
-    in_axes_flat = tuple(broadcast_prefix((dyn_in_axes, 0), (dyn_args, kwargs),
-                                          is_leaf=lambda x: x is None))
-  except ValueError:
-    e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs))
-    ex = e('pmap in_axes')
-    msg, = ex.args
-    msg += ("\n\nThe 'full pytree' here is the tuple of arguments passed "
-            "positionally to the pmapped function, and the value of `in_axes` "
-            "must be a tree prefix of that tuple. But it was not a prefix.")
-    if kwargs:
-      msg += ("\n\nWhen some arguments are passed by keyword to the pmapped "
-              "function, they are not included in the comparison to `in_axes`. "
-              "Instead, each argument passed by keyword is mapped over its "
-              "leading axis. See the description of `in_axes` in the `pmap` "
-              "docstring: "
-              "https://docs.jax.dev/en/latest/_autosummary/jax.pmap.html#jax.pmap")
-    msg += ("\n\nCheck that the value of the `in_axes` argument to `pmap` "
-            "is a tree prefix of the tuple of arguments passed positionally to "
-            "the pmapped function.")
-    raise ValueError(msg) from None
-  local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
-
-  f, out_axes_thunk = flat_out_axes(f, out_axes)
-  flat_fun, out_tree = flatten_fun(f, in_tree)
-
-  is_explicit_global_axis_size = axis_size is not None
-  global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
-                                           backend_name, axis_size)
-  return PmapCallInfo(flat_fun=flat_fun,
-                      in_tree=in_tree,
-                      out_tree=out_tree,
-                      flat_args=args,
-                      donated_invars=donated_invars,
-                      in_axes_flat=in_axes_flat,
-                      local_axis_size=local_axis_size,
-                      out_axes_thunk=out_axes_thunk,
-                      devices=None if in_devices is None else tuple(in_devices),
-                      global_axis_size=global_axis_size,
-                      is_explicit_global_axis_size=is_explicit_global_axis_size)
-
-
-def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
-                      donate_argnums, in_axes, out_axes):
-  # axis_size is an optional integer representing the global axis size.  The
-  # aggregate size (across all processes) size of the mapped axis must match the
-  # given value.
-  check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
-  donate_tuple = rebase_donate_argnums(
-      _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)
-
-  if not all(type(l) is int for l in tree_leaves(in_axes)):
-    raise TypeError("pmap in_axes must be an int, None, or (nested) container "
-                    f"with those types as leaves, but got {in_axes}.")
-  if not all(type(l) is int for l in tree_leaves(out_axes)):
-    raise TypeError("pmap out_axes must be an int, None, or (nested) container "
-                    f"with those types as leaves, but got {out_axes}.")
-
-  return axis_name, static_broadcasted_tuple, donate_tuple
-
-
-class _PmapFastpathData(NamedTuple):
-  version: int  # For forward and backward compatibility
-  xla_executable: xc.LoadedExecutable
-  in_handler: Any
-  out_handler: Any
-  out_pytree_def: Any
-  # Data needed to handle the inputs.
-  input_devices: Sequence[xc.Device]
-  input_indices: Sequence[sharding_specs.Index]
-  input_array_shardings: Sequence[Any]
-  # Data needed to build the Array from C++.
-  out_avals: Sequence[Any]
-  out_array_shardings: Sequence[Any]
-  out_committed: Sequence[Any]
-
-
-def _cpp_pmap(
-    fun: Callable,
-    axis_name: AxisName | None = None,
-    *,
-    in_axes=0,
-    out_axes=0,
-    static_broadcasted_argnums: int | Iterable[int] = (),
-    devices: Sequence[xc.Device] | None = None,  # noqa: F811
-    backend: str | None = None,
-    axis_size: int | None = None,
-    donate_argnums: int | Iterable[int] = (),
-  ) -> Any:
-  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
-      fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
-      out_axes)
-  del static_broadcasted_argnums, donate_argnums
-
-  prepare_pmap_fn = partial(_prepare_pmap,
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        devices, backend, axis_size)
-
-  @api_boundary
-  def cache_miss(*args, **kwargs):
-    p = prepare_pmap_fn(args, kwargs)
-    for arg in p.flat_args:
-      dispatch.check_arg(arg)
-
-    params = dict(
-        backend=backend,
-        axis_name=axis_name,
-        axis_size=p.local_axis_size,
-        global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        name=p.flat_fun.__name__,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-    )
-
-    execute: Callable | None = None
-    const_args = []
-    with core.take_current_trace() as trace:
-      try:
-        if isinstance(trace, core.EvalTrace):
-          execute, const_args = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-          out = execute(*const_args, *p.flat_args)
-        else:
-          avals = tuple(core.typeof(x) for x in p.flat_args)
-          out = pxla.xla_pmap_p.bind_with_trace(
-            trace, tuple(p.flat_args), avals, dict(params, subfuns=(p.flat_fun,)))
-      except api_util.InternalFloatingPointError as e:
-        raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
-
-    out_tree, out_flat = p.out_tree, out
-    out_pytree_def = out_tree()
-    out = tree_unflatten(out_pytree_def, out_flat)
-
-    ### Decide whether we can support the C++ fast path
-    use_fastpath = False
-    if isinstance(execute, pxla.ExecuteReplicated):
-      execute_replicated: pxla.ExecuteReplicated = execute
-      use_fastpath = (
-        # TODO(sharadmv): Enable effects in replicated computation
-        not execute_replicated.has_unordered_effects
-        and not execute_replicated.has_host_callbacks and
-        len(const_args) == 0 and
-        # No tracers in the outputs.
-        all(isinstance(x, xc.ArrayImpl) for x in out_flat))
-
-    ### If we can use the fastpath, we return required info to the caller.
-    if use_fastpath:
-      execute_replicated = typing.cast(pxla.ExecuteReplicated, execute)
-      out_handler = execute_replicated.out_handler
-      in_handler = execute_replicated.in_handler
-
-      out_array_shardings = [out.sharding for out in out_flat]
-      out_committed = [out._committed for out in out_flat]
-      fastpath_data = _PmapFastpathData(
-          version=1,
-          xla_executable=execute_replicated.xla_executable,
-          in_handler=in_handler,
-          out_handler=out_handler,
-          out_pytree_def=out_pytree_def,
-          input_devices=in_handler.local_devices,  # pyrefly: ignore[bad-argument-type]
-          input_indices=in_handler.input_indices,  # pyrefly: ignore[bad-argument-type]
-          input_array_shardings=in_handler.in_shardings,
-          out_avals=out_handler.out_avals,
-          out_array_shardings=out_array_shardings,
-          out_committed=out_committed,
-      )
-
-    else:
-      fastpath_data = None
-
-    return out, fastpath_data
-
-  cpp_mapped_f = pmap_lib.pmap(
-      fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None],
-                                   [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
-      pytree_registry=tree_util.default_registry)
-  _pmap_cache_clears.add(cpp_mapped_f)
-
-  pmap_f = wraps(fun)(cpp_mapped_f)
-  # Store some data for the `lower` and `trace` methods
-  pmap_f._fun = fun  # pyrefly: ignore[missing-attribute]
-  pmap_f._prepare_pmap = prepare_pmap_fn  # pyrefly: ignore[missing-attribute]
-  pmap_f._backend = backend  # pyrefly: ignore[missing-attribute]
-  pmap_f._axis_name = axis_name  # pyrefly: ignore[missing-attribute]
-  pmap_f._donate_tuple = donate_tuple  # pyrefly: ignore[missing-attribute]
-
-  # TODO(necula): move these to top-level; we don't need to do this for
-  # every pmap
-  cpp_mapped_f_class = type(pmap_f)
-  cpp_mapped_f_class.lower = _cpp_mapped_lower
-  # We return directly the function produced by pmap_lib.pmap, because we do not
-  # want to have Python in the dispatch path.
-  return pmap_f
-
-@api_boundary
-def _cpp_mapped_lower(pmap_f, *args, **kwargs):
-  p = pmap_f._prepare_pmap(args, kwargs)
-  abstract_args = list(map(shaped_abstractify, p.flat_args))
-  closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
-      p.flat_fun, pmap_f._backend, pmap_f._axis_name,
-      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-      devices=p.devices, name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
-      out_axes_thunk=p.out_axes_thunk, avals=abstract_args)
-  lowering = pxla.lower_parallel_callable(
-      p.flat_fun, pmap_f._axis_name, axis_size=p.local_axis_size,
-      global_axis_size=p.global_axis_size, devices=p.devices,
-      name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
-      donated_invars=p.donated_invars,
-      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-      avals=abstract_args, closed_jaxpr=closed_jaxpr, backend=xc_backend,
-      replicas=replicas, shards=shards, pci=pci, lowering_platforms=None,
-      lowering_parameters=pxla.mlir.LoweringParameters())
-  args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
-  return stages.Lowered(lowering, args_info, p.out_tree())
-_pmap_cache_clears = weakref.WeakSet()
-
-
 @partial(api_boundary, repro_api_name="jax.jvp")
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
@@ -2620,9 +2313,9 @@ def _check_sharding(aval, s):
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.get_token_aval()
-    if not isinstance(s, PmapSharding):
-      pjit.pjit_check_aval_sharding(
-          (s,), (aval,), ("",), "device_put args", allow_uneven_sharding=False)
+    pjit.pjit_check_aval_sharding(
+        (s,), (aval,), ("",), "device_put args", allow_uneven_sharding=False
+    )
     s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
 def pspec_to_sharding(name, val):
@@ -3194,7 +2887,3 @@ def clear_caches():
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
-
-  # Clear all C++ compiled executable caches for pmap
-  for fun in _pmap_cache_clears:
-    fun._cache_clear()

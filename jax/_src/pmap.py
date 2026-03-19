@@ -13,13 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
+# pylint: disable=g-multiple-import,g-importing-member
 from functools import partial
 from typing import Any, Callable, NamedTuple
 import warnings
 
 from jax._src import api
-from jax._src.api_util import (
-    argnums_partial, donation_vector, fun_signature, fun_sourceinfo)
 from jax._src import array
 from jax._src import config
 from jax._src import core
@@ -32,6 +31,9 @@ from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src.api_util import (
+    _ensure_index_tuple, argnums_partial, check_callable, donation_vector,
+    fun_signature, fun_sourceinfo, rebase_donate_argnums)
 from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
@@ -39,16 +41,17 @@ from jax._src.mesh import Mesh
 from jax._src.shard_map import _axes_to_pspec, shard_map
 from jax._src.tree_util import (
     broadcast_flattened_prefix_with_treedef, broadcast_prefix,
-    prefix_errors, tree_flatten, tree_map, tree_unflatten)
+    prefix_errors, tree_flatten, tree_leaves, tree_map, tree_unflatten)
 import numpy as np
+# pylint: enable=g-multiple-import,g-importing-member
 
+# pylint: disable=redefined-builtin
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+# pylint: enable=redefined-builtin
 
 traceback_util.register_exclusion(__file__)
 
-
-# Implementing pmap in terms of shard_map
 
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
@@ -57,7 +60,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     if not devices:
       raise ValueError("'devices' argument to pmap must be non-empty, or None.")
     devices = tuple(devices)
-  axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(  # pylint: disable=protected-access
+  axis_name, static_broadcasted_tuple, donate_tuple = _prepare_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
@@ -118,6 +121,27 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
 
   wrapped.lower = lower  # pyrefly: ignore[missing-attribute]
   return wrapped
+
+
+def _prepare_pmap(fun, axis_name, static_broadcasted_argnums,
+                      donate_argnums, in_axes, out_axes):
+  # axis_size is an optional integer representing the global axis size.  The
+  # aggregate size (across all processes) size of the mapped axis must match the
+  # given value.
+  check_callable(fun)
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name  # pytype: disable=protected-access
+  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
+  donate_tuple = rebase_donate_argnums(
+      _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)
+
+  if not all(type(l) is int for l in tree_leaves(in_axes)):
+    raise TypeError("pmap in_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {in_axes}.")
+  if not all(type(l) is int for l in tree_leaves(out_axes)):
+    raise TypeError("pmap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
+
+  return axis_name, static_broadcasted_tuple, donate_tuple
 
 
 class CachedShardMap(NamedTuple):

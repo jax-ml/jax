@@ -53,7 +53,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
@@ -8489,44 +8488,9 @@ def _array_copy(arr: ArrayLike) -> Array:
   return copy_p.bind(arr)
 
 
-def _which_dim_sharded(s: PmapSharding) -> int | None:
-  sharded_dim = None
-  for i, s_i in enumerate(s.sharding_spec.sharding):
-    if isinstance(s_i, (pxla.Unstacked, pxla.Chunked)):
-      sharded_dim = i
-      break
-  return sharded_dim
-
-
-def _identity_fn(x): return x
-
-
-def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
-  axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(
-    _identity_fn, None, (), (), sharded_dim, sharded_dim)
-  p = api._prepare_pmap(
-      _identity_fn, sharded_dim, sharded_dim, static_broadcasted_tuple,
-      donate_tuple, None, None, None, args, kwargs)
-  out_flat =  pxla.xla_pmap_impl(
-      p.flat_fun, *p.flat_args, backend=None, axis_name=axis_name,
-      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-      devices=p.devices, in_axes=p.in_axes_flat,
-      out_axes_thunk=p.out_axes_thunk, name=p.flat_fun.__name__,
-      donated_invars=p.donated_invars,
-      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-  )
-  return tree_util.tree_unflatten(p.out_tree(), out_flat)
-
-
 # TODO(https://github.com/jax-ml/jax/issues/13552): Look into making this a
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
-  a, = args
-  if isinstance(a, Array) and isinstance(a.sharding, PmapSharding):
-    sharded_dim = _which_dim_sharded(a.sharding)
-    if sharded_dim is None:
-      return dispatch.apply_primitive(prim, *args, **kwargs)
-    return _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs)
   return dispatch.apply_primitive(prim, *args, **kwargs)
 
 # The copy_p primitive exists for expressing making copies of runtime arrays.

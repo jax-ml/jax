@@ -18,7 +18,6 @@ import jax
 import numpy as np
 from unittest import SkipTest
 
-from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax._src.shard_map import shard_map
@@ -107,25 +106,21 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
   def testPmap(self):
-    pmap_funcs = [api._cpp_pmap]
+    f = jax.pmap(lambda x: 0. / x)
+    f(jnp.array([1.]))
 
-    for pmap in pmap_funcs:
-      f = pmap(lambda x: 0. / x)
-      # For the Cpp pmap, the first execution always goes through Python.
-      f(jnp.array([1.]))
+    with self.assertRaisesRegex(
+        FloatingPointError,
+        r"Invalid value \(nan\) encountered in sharded computation"):
+      ans = f(jnp.array([0.]))
+      ans.block_until_ready()
 
+    if jax.device_count() >= 2:
       with self.assertRaisesRegex(
           FloatingPointError,
-          r"invalid value \(nan\) encountered in div"):
-        ans = f(jnp.array([0.]))
+          r"Invalid value \(nan\) encountered in sharded computation"):
+        ans = f(jnp.array([1., 0.]))
         ans.block_until_ready()
-
-      if jax.device_count() >= 2:
-        with self.assertRaisesRegex(
-            FloatingPointError,
-            r"Invalid value \(nan\) encountered in parallel computation"):
-          ans = f(jnp.array([1., 0.]))
-          ans.block_until_ready()
 
   def testGradPmap(self):
     @jax.jit
