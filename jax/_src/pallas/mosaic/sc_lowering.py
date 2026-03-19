@@ -16,6 +16,7 @@
 from collections.abc import Sequence
 import dataclasses
 import functools
+import inspect
 import itertools
 from typing import Any, Callable, cast, NoReturn
 
@@ -798,7 +799,6 @@ def _prepare_dma_refs(
       src_ref, _ = _transform_ref(
           src_ref, src_aval, src_aval.shape, src_transforms
       )
-      indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
       if _has_indirect_offsets(src_transforms):
         raise ValueError(
@@ -815,7 +815,6 @@ def _prepare_dma_refs(
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
-      indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
       if (
           # fmt: off
@@ -841,15 +840,6 @@ def _prepare_dma_refs(
           dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
       indirect_offsets = None
-      indirect_offsets_ref_str = ""
-  if is_add and indirect_offsets is None:
-    raise NotImplementedError(
-        "DMAs with `add=True` must (for now) specify offsets of the"
-        " majormost dimension. You can do this by writing"
-        " `pltpu.async_copy(..., {ref}={ref}.at[jnp.arange(vec_dim)], ...)`"
-        " or `pltpu.async_copy(..., {ref}={ref}.at[indices_ref],"
-        " ...)`.".format(ref=indirect_offsets_ref_str)
-    )
   return src_ref, dst_ref, indirect_offsets
 
 
@@ -882,8 +872,9 @@ def _dma_start_lowering_rule(
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval, add
   )
-  if add and indirect_offsets is None:
-    # TODO: Support regular DMA with add=True.
+  # TODO(bchetioui): remove when minimum jaxlib version is 0.10.0.
+  enqueue_dma_has_add = "add" in inspect.signature(tpu.EnqueueDMAOp).parameters
+  if not enqueue_dma_has_add and indirect_offsets is None:
     raise NotImplementedError(
         "DMAs with `add=True` must (for now) specify offsets of the majormost "
         "dimension. You can do this by writing "
@@ -902,14 +893,26 @@ def _dma_start_lowering_rule(
       device_id, _ = tc_lowering._device_id_to_logical(
           ctx, device_id, device_id_type
       )
-    tpu.enqueue_dma(
-        src_ref,
-        dst_ref,
-        sem,
-        source_semaphore=src_sem,
-        device_id=device_id,
-        priority=priority,
-    )
+    if enqueue_dma_has_add:
+      tpu.enqueue_dma(
+          src_ref,
+          dst_ref,
+          sem,
+          source_semaphore=src_sem,
+          device_id=device_id,
+          priority=priority,
+          add=add,
+      )
+    else:
+      tpu.enqueue_dma(
+          src_ref,
+          dst_ref,
+          sem,
+          source_semaphore=src_sem,
+          device_id=device_id,
+          priority=priority,
+      )
+
     return []
 
   if device_id is not None:

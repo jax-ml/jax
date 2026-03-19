@@ -696,7 +696,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // unsigned_integers applies to the result type (for the source type the sign
-// doesn't matter: integer-to-integer conversions truncate the high bits, 
+// doesn't matter: integer-to-integer conversions truncate the high bits,
 // floats are always signed).
 // Float to integer packing rounds to nearest even.
 // WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
@@ -1334,6 +1334,8 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
 //                     source and destination.
+// add               : If true, add source values to target values. Otherwise
+//                     overwrite.
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$source,
@@ -1345,7 +1347,8 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     OptionalAttr<TPU_CoreTypeEnum>:$core_type, // For megachip
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority,
-    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering,
+    DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let assemblyFormat = [{
     `source` `(` $source `:` type($source) `)`
@@ -1363,7 +1366,8 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     OpBuilder<(ins "Value":$source, "Value":$source_semaphore,
                "Value":$target, "Value":$target_semaphore, "Value":$device_id,
                "Value":$core_id, CArg<"uint32_t", "0">:$priority,
-               CArg<"bool", "false">:$strict_ordering)>,
+               CArg<"bool", "false">:$strict_ordering,
+               CArg<"bool", "false">:$add)>,
   ];
 }
 
