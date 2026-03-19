@@ -75,8 +75,8 @@ test:rocm_rbe_dynamic --dynamic_remote_strategy=remote
 # Delay before starting local test execution (ms) - adjust to prefer remote or local
 # Lower values = more local execution, higher values = more remote execution
 test:rocm_rbe_dynamic --experimental_local_execution_delay=1000
-# Maximum number of test jobs to run locally in parallel (50% of available CPUs)
-test:rocm_rbe_dynamic --local_resources=cpu=HOST_CPUS*0.5
+test:rocm_rbe_dynamic --local_resources=cpu=4
+test:rocm_rbe_dynamic --remote_local_fallback_strategy=local
 
 # Used for rules_python bootstrap 1.8.0+
 build --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0
