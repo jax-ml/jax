@@ -572,6 +572,11 @@ jax_multiplatform_test(
     ],
     minimal_shard_count = 2,
     shard_count = 5,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/experimental:hijax",
