@@ -13,6 +13,27 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+## Released with JAX 0.9.2
+
+* New features:
+
+  * Added support for atomics to the Mosaic GPU backend, through
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_add`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_max`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_min`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_and`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_or`, and
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_xor`.
+
+  * Added a `leader_tracked` argument to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`. This adds
+    support for cluster-collective partitioned/replicated GMEM to SMEM copies
+    whose completion is tracked only by the leader block. Removed the
+    `partitioned_axis` argument (which provided limited access to this feature)
+    from the API.
+
+## Released with JAX 0.9.1
+
 * New features:
 
   * Added a {func}`jax.experimental.pallas.with_scoped` decorator that provides
