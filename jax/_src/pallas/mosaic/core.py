@@ -50,6 +50,9 @@ class CoreType(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+  def __repr__(self) -> str:
+    return self.name
+
 
 class GridDimensionSemantics(enum.Enum):
   PARALLEL = "parallel"
@@ -205,6 +208,9 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+  def __repr__(self) -> str:
+    return self.name
+
   def from_type(self, ty):
     return MemoryRef(ty, memory_space=self)
 
@@ -256,6 +262,9 @@ class CoreMemorySpace:
   def __str__(self) -> str:
     return f"{self.memory_space}@{self.core_type}"
 
+  def __repr__(self) -> str:
+    return f"{self.memory_space!r}@{self.core_type!r}"
+
 
 class dma_semaphore(pallas_core.semaphore_dtype):
   pass
@@ -271,15 +280,22 @@ class SemaphoreType(enum.Enum):
   DMA = "dma"
   BARRIER = "barrier"
 
-  def __call__(self, shape: tuple[int, ...]):
-    dtype: Any
+  @property
+  def dtype(self) -> Any:
     if self == SemaphoreType.DMA:
-      dtype = DMASemaphore()
+      return DMASemaphore()
     elif self == SemaphoreType.BARRIER:
-      dtype = pallas_core.BarrierSemaphore()
+      return pallas_core.BarrierSemaphore()
     else:
-      dtype = pallas_core.Semaphore()
-    return MemoryRef(jax_core.ShapedArray(shape, dtype), MemorySpace.SEMAPHORE)
+      return pallas_core.Semaphore()
+
+  def __call__(self, shape: tuple[int, ...]):
+    return MemoryRef(jax_core.ShapedArray(shape, self.dtype), MemorySpace.SEMAPHORE)
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, CoreType):
+      return NotImplemented
+    return CoreMemorySpace(MemorySpace.SEMAPHORE, other)((), self.dtype)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()

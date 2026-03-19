@@ -55,6 +55,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 
 MemorySpace = tpu_core.MemorySpace
+CoreMemorySpace = tpu_core.CoreMemorySpace
 
 ShapedAbstractValue = tc_lowering.ShapedAbstractValue
 LoweringContext = tc_lowering.LoweringContext
@@ -577,7 +578,7 @@ def _load_lowering_rule(
       ref_memory_space is MemorySpace.VMEM_SHARED
   ):
     raise NotImplementedError(
-        f"Get does not support loading from {ref_memory_space.name}."
+        f"Get does not support loading from {ref_memory_space!r}."
         " Copy the data to a core-local memory space, e.g. VMEM,"
         " via `pltpu.async_copy`."
     )
@@ -639,7 +640,7 @@ def _store_lowering_rule(
       ref_memory_space is MemorySpace.VMEM_SHARED
   ):
     raise NotImplementedError(
-        f"Swap does not support storing to {ref_memory_space.name}."
+        f"Swap does not support storing to {ref_memory_space!r}."
         " Copy the data to a core-local memory space, e.g. VMEM,"
         " via `pltpu.async_copy`."
     )
@@ -753,18 +754,19 @@ def _debug_print_lowering_rule(
   return []
 
 
-def _memref_memory_space(ref: ir.Value) -> MemorySpace:
-  match str(ir.MemRefType(ref.type).memory_space):
-    case "#tpu.memory_space<hbm>":
-      return MemorySpace.HBM
-    case "#tpu.memory_space<vmem>":
-      return MemorySpace.VMEM
-    case "#tpu.memory_space<vmem_shared>":
-      return MemorySpace.VMEM_SHARED
-    case "#tpu.memory_space<smem>":
-      return MemorySpace.SMEM
-    case _:
-      raise LookupError(f"Unknown memory space: {ref.type}")
+def _memref_memory_space(ref: ir.Value) -> MemorySpace | CoreMemorySpace:
+  ir_memory_space = str(ir.MemRefType(ref.type).memory_space)
+  assert ir_memory_space.startswith("#tpu.memory_space<")
+  assert ir_memory_space.endswith(">")
+  ir_memory_space = ir_memory_space[len("#tpu.memory_space<") : -len(">")]
+  ir_memory_space, _, ir_core_type = ir_memory_space.partition(",")
+  ir_core_type = ir_core_type.strip()
+  if not ir_core_type:
+    return MemorySpace(ir_memory_space)
+  else:
+    return CoreMemorySpace(
+        MemorySpace(ir_memory_space), tpu_core.CoreType(ir_core_type)
+    )
 
 
 def _prepare_dma_refs(
@@ -823,13 +825,13 @@ def _prepare_dma_refs(
       ):
         raise NotImplementedError(
             "Scatter/gather via `pltpu.async_copy` from"
-            f" {src_memory_space.name} to {dst_memory_space.name} is not"
+            f" {src_memory_space!r} to {dst_memory_space!r} is not"
             " supported"
         )
       if is_add:
         raise ValueError(
             "DMAs with `add=True` are only supported between VMEM and "
-            f"HBM/VMEM_SHARED. "
+            f"HBM/VMEM_SHARED."
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
       src_ref, _ = _transform_ref(
@@ -1012,7 +1014,7 @@ def _extract_indirect_offsets_from_indexer(
     if offsets_memory_space is not MemorySpace.VMEM:
       raise NotImplementedError(
           "Indices for scatter/gather via `pltpu.async_copy` must be in VMEM,"
-          f" got {offsets_memory_space.name}"
+          f" got {offsets_memory_space!r}"
       )
   if not state_discharge._is_trivial_indexer(
       indexing.NDIndexer(indexer.indices[1:], indexer.shape[1:], ())

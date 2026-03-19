@@ -85,10 +85,18 @@ import numpy as np
 # TODO(sharadmv): enable type checking
 
 NDIndexer = indexing.NDIndexer
-TPUMemorySpace = tpu_core.MemorySpace
-AnyMemorySpace = pallas_core.MemorySpace | TPUMemorySpace
-VMEM = TPUMemorySpace.VMEM
-SMEM = TPUMemorySpace.SMEM
+AnyMemorySpace = (
+    pallas_core.MemorySpace | tpu_core.MemorySpace | tpu_core.CoreMemorySpace
+)
+TPUMemorySpace = (
+    tpu_core.MemorySpace
+    | tpu_core.CoreMemorySpace
+    | Literal[pallas_core.MemorySpace.ANY]
+)
+VMEM = tpu_core.MemorySpace.VMEM
+SMEM = tpu_core.MemorySpace.SMEM
+HOST = tpu_core.MemorySpace.HOST
+SEMAPHORE = tpu_core.MemorySpace.SEMAPHORE
 ANY = pallas_core.MemorySpace.ANY
 # Booleans are stored as the following type in memrefs.
 BOOL_MEMREF_TYPE = np.dtype('int32')
@@ -281,41 +289,53 @@ class LoweringRuleContext:
 
 def _memory_space_to_tpu_memory_space(
     memory_space: AnyMemorySpace | None, kernel_type: tpu_core.CoreType
-) -> TPUMemorySpace | Literal[pallas_core.MemorySpace.ANY]:
+) -> TPUMemorySpace:
   match memory_space:
     case None:
       match kernel_type:
         case tpu_core.CoreType.TC | tpu_core.CoreType.SC_VECTOR_SUBCORE:
-          return TPUMemorySpace.VMEM
+          return VMEM
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
-          return TPUMemorySpace.SMEM
+          return SMEM
         case _:
           raise ValueError(f"Unsupported kernel type: {kernel_type}")
     case pallas_core.MemorySpace.ANY:
       return ANY
     case pallas_core.MemorySpace.HOST:
-      return TPUMemorySpace.HOST
+      return HOST
     case (
         pallas_core.MemorySpace.ERROR
         | pallas_core.MemorySpace.INDEX
         | pallas_core.MemorySpace.KEY
     ):
-      return TPUMemorySpace.SMEM
-    case TPUMemorySpace():
-      # Leave the memory space unchanged
+      return SMEM
+    case tpu_core.CoreMemorySpace():
+      return (
+          memory_space.memory_space
+          if memory_space.core_type is kernel_type
+          else memory_space
+      )
+    case tpu_core.MemorySpace():
       return memory_space
     case _:
-      raise ValueError(f"Invalid memory space: {memory_space}")
+      raise ValueError(f"Invalid memory space: {memory_space!r}")
 
 
 def _memory_space_to_mosaic_attribute(
     memory_space: AnyMemorySpace | None,
     kernel_type: tpu_core.CoreType,
 ) -> ir.Attribute:
-  tpu_memory_space = _memory_space_to_tpu_memory_space(
-      memory_space, kernel_type
-  )
-  return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
+  match _memory_space_to_tpu_memory_space(memory_space, kernel_type):
+    case pallas_core.MemorySpace.ANY:
+      return ir.Attribute.parse("#tpu.memory_space<any>")
+    case tpu_core.MemorySpace() as ms:
+      return ir.Attribute.parse(f"#tpu.memory_space<{ms}>")
+    case tpu_core.CoreMemorySpace() as cms:
+      return ir.Attribute.parse(
+          f"#tpu.memory_space<{cms.memory_space}, {cms.core_type}>"
+      )
+    case _:
+      raise NotImplementedError(f"Invalid memory space: {memory_space!r}")
 
 
 def _dtype_to_ir_type(dtype: DTypeLike,
@@ -379,9 +399,7 @@ def aval_to_ir_type(
       sem_type = ir.Type.parse("!tpu.semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
-    memspace = _memory_space_to_mosaic_attribute(
-        TPUMemorySpace.SEMAPHORE, kernel_type
-    )
+    memspace = _memory_space_to_mosaic_attribute(SEMAPHORE, kernel_type)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
@@ -688,7 +706,7 @@ def _check_block_mappings(
               f"{physical_block_shape}, array shape {physical_array_shape}, "
               # TODO(necula): add index_map source location info
               f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
-              f"memory space {bm.block_aval.memory_space}."
+              f"memory space {bm.block_aval.memory_space!r}."
               "\nSee details at https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
     if rank < 1:
       raise ValueError(
@@ -3860,10 +3878,8 @@ def _alloc_value(
 ) -> ir.Value:
   if isinstance(aval, state.AbstractRef):
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
-      assert aval.memory_space == TPUMemorySpace.SEMAPHORE
-      memref_type = ctx.aval_to_ir_type(
-          aval, memory_space=TPUMemorySpace.SEMAPHORE
-      )
+      assert aval.memory_space == SEMAPHORE
+      memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
       return tpu.sem_alloc(memref_type)
     else:
       memref_type = ctx.aval_to_ir_type(
@@ -3872,9 +3888,7 @@ def _alloc_value(
       assert isinstance(memref_type, ir.MemRefType)
       return memref.alloca(memref_type, [], [])
   elif isinstance(aval, tpu_core.AbstractSemaphore):
-    memref_type = ctx.aval_to_ir_type(
-        aval, memory_space=TPUMemorySpace.SEMAPHORE
-    )
+    memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
     return tpu.sem_alloc(memref_type)
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 

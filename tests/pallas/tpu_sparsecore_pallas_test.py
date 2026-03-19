@@ -1256,6 +1256,19 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_scratch_with_core_type(self):
+    x = jnp.arange(self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        scratch_shapes=(pltpu.VMEM([self.num_lanes], jnp.float32) @ pltpu.CoreType.SC_VECTOR_SUBCORE,),
+    )
+    def kernel(x_ref, o_ref, scratch_ref):
+      scratch_ref[...] = x_ref[...].astype(jnp.float32)
+      o_ref[...] = scratch_ref[...].astype(x.dtype)
+
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.parameters(1, 2, None)
   def test_subcore_parallel(self, num_subcores):
     self.skip_if_tc_tiling()
