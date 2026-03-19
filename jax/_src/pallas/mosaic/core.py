@@ -185,6 +185,14 @@ class CompilerParams:
   replace = dataclasses.replace
 
 
+class MemoryRef(pallas_core.MemoryRef):
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, CoreType):
+      return NotImplemented
+    return dataclasses.replace(self, memory_space=self.memory_space @ other)
+
+
 class MemorySpace(enum.Enum):
   VMEM = "vmem"
   VMEM_SHARED = "vmem_shared"
@@ -198,7 +206,7 @@ class MemorySpace(enum.Enum):
     return self.value
 
   def from_type(self, ty):
-    return pallas_core.MemoryRef(ty, memory_space=self)
+    return MemoryRef(ty, memory_space=self)
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
@@ -214,6 +222,39 @@ class MemorySpace(enum.Enum):
       )
       return pallas_core.MemorySpace.ANY
     return super().__getattr__(name)  # type: ignore
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, CoreType):
+      return NotImplemented
+    return CoreMemorySpace(self, other)
+
+
+@dataclasses.dataclass(frozen=True)
+class CoreMemorySpace:
+  """A memory space tied to a specific core type."""
+
+  memory_space: MemorySpace
+  core_type: CoreType
+
+  def __post_init__(self):
+    match self.memory_space, self.core_type:
+      case MemorySpace.VMEM, CoreType.TC | CoreType.SC_VECTOR_SUBCORE:
+        ...
+      case MemorySpace.SMEM | MemorySpace.SEMAPHORE, _:
+        ...
+      case MemorySpace.CMEM, CoreType.TC:
+        ...
+      case _, _:
+        raise ValueError(
+            "Unsupported core memory space:"
+            f" {self.memory_space, self.core_type}"
+        )
+
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+    return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
+
+  def __str__(self) -> str:
+    return f"{self.memory_space}@{self.core_type}"
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -238,9 +279,7 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(
-        jax_core.ShapedArray(shape, dtype), MemorySpace.SEMAPHORE
-    )
+    return MemoryRef(jax_core.ShapedArray(shape, dtype), MemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()

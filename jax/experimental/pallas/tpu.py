@@ -17,6 +17,7 @@ import typing
 
 from jax._src.pallas.einshape import einshape as einshape
 from jax._src.pallas.mosaic import core as core
+from jax._src.pallas.mosaic.core import CoreMemorySpace as CoreMemorySpace
 from jax._src.pallas.mosaic.core import CoreType as CoreType
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
