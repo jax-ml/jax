@@ -66,7 +66,6 @@ from jax._src.util import foreach
 import numpy as np
 
 
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
@@ -850,12 +849,12 @@ class LoweringRuleContext:
     """
     lowering_parameters = self.module_context.lowering_parameters
 
-    check_platforms: Sequence[str] = (
-        self.platforms or self.module_context.platforms
-    )
-    force_forward_compat = any(
-        p in xb.FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS for p in check_platforms
-    )
+    force_forward_compat = False
+    if self.module_context.backend is not None:
+      force_forward_compat = (
+          self.module_context.backend.runtime_type
+          in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+      )
 
     return (
         lowering_parameters.for_export or force_forward_compat

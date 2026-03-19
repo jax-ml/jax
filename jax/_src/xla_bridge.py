@@ -58,8 +58,8 @@ except ImportError as e:
 
 traceback_util.register_exclusion(__file__)
 
-# The platforms in this set will force forward compatibility for lowering.
-FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS: set[str] = set()
+# The runtimes in this set will force forward compatibility for lowering.
+FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES: set[str] = set()
 
 MIN_COMPUTE_CAPABILITY = 52
 
