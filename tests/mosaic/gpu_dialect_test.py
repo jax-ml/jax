@@ -806,6 +806,26 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_warp_map_op_invalid_operand(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get([128, 160], ir.F16Type.get())
+      vec_ty = ir.VectorType.get([128, 160], ir.F16Type.get())
+      ref, vec = undefs(ref_ty, vec_ty)
+      op = mgpu.dialect.WarpMapOp(operands_=[ref, vec])
+      op.regions[0].blocks.append()
+    with self.assertRaisesRegex(
+        ir.MLIRError, "Can only map over scalars and refs"
+    ):
+      self.module.operation.verify()
+
+  def test_warp_map_op_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get([128, 160], ir.F16Type.get())
+      scalar, ref = undefs(ir.F32Type.get(), ref_ty)
+      op = mgpu.dialect.WarpMapOp(operands_=[scalar, ref])
+      op.regions[0].blocks.append()
+    self.assertTrue(self.module.operation.verify())
+
   def test_tiled_layout_attr_parsing(self):
     with ir.InsertionPoint(self.module.body):
       for layout in (

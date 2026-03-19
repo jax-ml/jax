@@ -712,6 +712,14 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
+    [SingleBlock, NoTerminator, IsolatedFromAbove]> {
+  let summary = "Evaluates a block in parallel on all warps.";
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let regions = (region SizedRegion<1>:$body);
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
     [SameOperandsAndResultType]> {
   let summary = "A noop that allows manually setting transforms on a memref.";

@@ -1147,6 +1147,15 @@ llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult WarpMapOp::verify() {
+  for (mlir::Value operand : getOperands()) {
+    if (mlir::isa<mlir::VectorType>(operand.getType())) {
+      return emitOpError() << "Can only map over scalars and refs.";
+    }
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
