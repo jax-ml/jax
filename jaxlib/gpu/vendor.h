@@ -59,6 +59,7 @@ typedef cublasStatus_t gpublasStatus_t;
 typedef cublasHandle_t gpublasHandle_t;
 typedef cublasOperation_t gpublasOperation_t;
 typedef cublasFillMode_t gpublasFillMode_t;
+typedef cublasSideMode_t gpublasSideMode_t;
 
 typedef CUcontext gpuContext_t;
 typedef CUstreamCaptureMode gpustreamCaptureMode_t;
@@ -197,6 +198,14 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnDorgqr_bufferSize cusolverDnDorgqr_bufferSize
 #define gpusolverDnCungqr_bufferSize cusolverDnCungqr_bufferSize
 #define gpusolverDnZungqr_bufferSize cusolverDnZungqr_bufferSize
+#define gpusolverDnSormqr cusolverDnSormqr
+#define gpusolverDnDormqr cusolverDnDormqr
+#define gpusolverDnCunmqr cusolverDnCunmqr
+#define gpusolverDnZunmqr cusolverDnZunmqr
+#define gpusolverDnSormqr_bufferSize cusolverDnSormqr_bufferSize
+#define gpusolverDnDormqr_bufferSize cusolverDnDormqr_bufferSize
+#define gpusolverDnCunmqr_bufferSize cusolverDnCunmqr_bufferSize
+#define gpusolverDnZunmqr_bufferSize cusolverDnZunmqr_bufferSize
 #define gpusolverDnSpotrf cusolverDnSpotrf
 #define gpusolverDnDpotrf cusolverDnDpotrf
 #define gpusolverDnCpotrf cusolverDnCpotrf
@@ -279,6 +288,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUBLAS_OP_N CUBLAS_OP_N
 #define GPUBLAS_OP_T CUBLAS_OP_T
 #define GPUBLAS_OP_C CUBLAS_OP_C
+#define GPUBLAS_SIDE_LEFT CUBLAS_SIDE_LEFT
+#define GPUBLAS_SIDE_RIGHT CUBLAS_SIDE_RIGHT
 
 #define gpusparseCooSetStridedBatch cusparseCooSetStridedBatch
 #define gpusparseCreate cusparseCreate
@@ -482,6 +493,7 @@ typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef struct hipblasHandle_* gpublasHandle_t;
 typedef hipblasOperation_t gpublasOperation_t;
+typedef hipblasSideMode_t gpublasSideMode_t;
 typedef hipblasStatus_t gpublasStatus_t;
 typedef hipCtx_t gpuContext_t;
 typedef hipStreamCaptureMode gpustreamCaptureMode_t;
@@ -623,6 +635,14 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
 #define gpusolverDnDorgqr_bufferSize hipsolverDorgqr_bufferSize
 #define gpusolverDnCungqr_bufferSize hipsolverCungqr_bufferSize
 #define gpusolverDnZungqr_bufferSize hipsolverZungqr_bufferSize
+#define gpusolverDnSormqr hipsolverSormqr
+#define gpusolverDnDormqr hipsolverDormqr
+#define gpusolverDnCunmqr hipsolverCunmqr
+#define gpusolverDnZunmqr hipsolverZunmqr
+#define gpusolverDnSormqr_bufferSize hipsolverSormqr_bufferSize
+#define gpusolverDnDormqr_bufferSize hipsolverDormqr_bufferSize
+#define gpusolverDnCunmqr_bufferSize hipsolverCunmqr_bufferSize
+#define gpusolverDnZunmqr_bufferSize hipsolverZunmqr_bufferSize
 #define gpusolverDnSpotrf hipsolverSpotrf
 #define gpusolverDnDpotrf hipsolverDpotrf
 #define gpusolverDnCpotrf hipsolverCpotrf
@@ -705,6 +725,8 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
 #define GPUBLAS_OP_N HIPBLAS_OP_N
 #define GPUBLAS_OP_T HIPBLAS_OP_T
 #define GPUBLAS_OP_C HIPBLAS_OP_C
+#define GPUBLAS_SIDE_LEFT HIPBLAS_SIDE_LEFT
+#define GPUBLAS_SIDE_RIGHT HIPBLAS_SIDE_RIGHT
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
 namespace jax::hip {

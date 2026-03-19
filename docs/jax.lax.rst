@@ -256,6 +256,7 @@ Linear algebra operators (jax.lax.linalg)
     householder_product
     lu
     lu_pivots_to_permutation
+    ormqr
     qdwh
     qr
     schur

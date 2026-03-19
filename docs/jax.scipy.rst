@@ -73,6 +73,7 @@ jax.scipy.linalg
    pascal
    polar
    qr
+   qr_multiply
    rsf2csf
    schur
    solve
