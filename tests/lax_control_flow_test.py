@@ -489,6 +489,48 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = (np.array([4, 3]), np.array([1, 2]))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testWhileUnrollInvalid(self):
+    with self.assertRaisesRegex(ValueError, "unroll parameter must be"):
+      lax.while_loop(lambda x: False, lambda x: x, 0, unroll=0)
+
+  @jtu.sample_product(
+      unroll=range(1, 5),
+  )
+  def testWhileUnrollOutput(self, unroll):
+    init_state = (0, jnp.array([0.0, 0.1]))
+
+    def cond(state):
+      return state[0] < 5
+
+    def body(state):
+      i, acc = state
+      return (i + 1, acc + 0.1)
+
+    expected = lax.while_loop(cond, body, init_state)
+    actual = lax.while_loop(cond, body, init_state, unroll=unroll)
+
+    assert jnp.allclose(actual[0], expected[0])
+    assert jnp.allclose(actual[1], expected[1])
+
+  @jtu.sample_product(
+      init_val=range(5),
+      unroll=range(1, 5),
+  )
+  def testWhileUnrollSafety(self, init_val, unroll):
+    def cond_fun(val):
+      return val > 0
+
+    def callback(val):
+      assert cond_fun(val)
+
+    def body_fun(val):
+      jax.debug.callback(callback, val)
+      return val - 1
+
+    val = lax.while_loop(cond_fun, body_fun, init_val, unroll=unroll)
+    assert not cond_fun(val)
+    assert val == 0
+
   def test_issue_3204(self):
     # Error during XLA code generation for vmap of nested loops
     def test(a, b):
