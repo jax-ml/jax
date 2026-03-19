@@ -561,9 +561,7 @@ class Lowered(Stage):
 
   @property
   def in_avals(self):
-    in_avals_ = self._lowering.compile_args.get("global_in_avals", None)
-    if in_avals_ is None:  # For old pmap code i.e. PmapComputation
-      return tree_util.tree_map(lambda x: x._aval, self.args_info)
+    in_avals_ = self._lowering.compile_args["global_in_avals"]
     kept_var_idx = self._lowering.compile_args["kept_var_idx"]
     non_dce_avals = self._lowering.compile_args["all_args_info"].in_avals
     if self.in_tree.num_leaves > len(in_avals_):

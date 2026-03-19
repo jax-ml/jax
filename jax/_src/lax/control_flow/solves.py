@@ -28,7 +28,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import pxla
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import tree_leaves, FlatTree
 from jax._src.util import split_list, safe_map
@@ -504,7 +503,6 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-pxla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))

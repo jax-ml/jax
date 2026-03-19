@@ -42,7 +42,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
@@ -945,7 +944,6 @@ ad.primitive_linearizations[cond_p] = _cond_linearize
 ad.fancy_transposes[cond_p] = _cond_transpose_fancy
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
-pxla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule

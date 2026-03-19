@@ -272,7 +272,6 @@ pytype_strict_library(
         ":remat",
         ":sharding",
         ":sharding_impls",
-        ":sharding_specs",
         ":source_info_util",
         ":stages",
         ":state_types",
@@ -1343,7 +1342,6 @@ pytype_strict_library(
         ":op_shardings",
         ":partition_spec",
         ":sharding",
-        ":sharding_specs",
         ":source_info_util",
         ":tree_util",
         ":util",
@@ -1419,16 +1417,6 @@ py_library_providing_imports_info(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("opt_einsum"),
-)
-
-pytype_strict_library(
-    name = "sharding_specs",
-    srcs = ["sharding_specs.py"],
-    deps = [
-        ":op_shardings",
-        ":util",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

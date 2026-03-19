@@ -39,8 +39,6 @@ from jax._src.interpreters.ad import (
   custom_lin_p as custom_lin_p,
 )
 
-from jax._src.interpreters.pxla import xla_pmap_p as xla_pmap_p
-
 from jax._src.lax.lax import (
   abs_p as abs_p,
   acos_p as acos_p,

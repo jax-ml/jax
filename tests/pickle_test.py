@@ -28,7 +28,6 @@ import jax
 from jax import numpy as jnp
 from jax._src import literals
 from jax._src import test_util as jtu
-from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
 
@@ -138,12 +137,6 @@ class PickleTest(jtu.JaxTestCase):
   def testPickleTracerError(self):
     with self.assertRaises(jax.errors.ConcretizationTypeError):
       jax.jit(pickle.dumps)(0)
-
-  def testPickleSharding(self):
-    sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked(
-        (2, 2)), pxla.Unstacked(3)), (pxla.ShardedAxis(0), pxla.ShardedAxis(1),
-                                      pxla.ShardedAxis(2), pxla.Replicated(4)))
-    self.assertEqual(pickle.loads(pickle.dumps(sharding)), sharding)
 
   def testPickleOpSharding(self):
     op = xc.OpSharding()

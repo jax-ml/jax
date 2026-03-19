@@ -234,7 +234,6 @@ py_library_providing_imports_info(
         "//jax/_src:shard_map",
         "//jax/_src:sharding",
         "//jax/_src:sharding_impls",
-        "//jax/_src:sharding_specs",
         "//jax/_src:source_info_util",
         "//jax/_src:sourcemap",
         "//jax/_src:stages",

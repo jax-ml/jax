@@ -787,8 +787,6 @@ def _export_lowered(
   if "global_out_avals" in lowering.compile_args:
     # This is currently the case for pjit
     out_avals_flat = lowering.compile_args["global_out_avals"]
-  elif "shards" in lowering.compile_args:  # for PmapComputation
-    out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
   else:
     out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
@@ -1099,7 +1097,7 @@ def _check_lowering(lowering) -> None:
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
       "mut", "spmd_lowering", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
-      "keepalive", "host_callbacks", "pmap_nreps", "committed",
+      "keepalive", "host_callbacks", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
       "pgle_profiler", "intermediate_shardings", "context_mesh",
@@ -1126,7 +1124,7 @@ def _check_lowering(lowering) -> None:
       ("host_callbacks", lambda v: not v, "empty"),
       # used on all platforms for callbacks. Not supported yet.
       ("keepalive", lambda v: not v, "empty"),
-      ("pmap_nreps", lambda v: v == 1, "1"),
+
       ("shape_poly_state", lambda v: True, "N/A"),
   ):
     if compile_arg in lowering.compile_args:
