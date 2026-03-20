@@ -4798,6 +4798,120 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.product(
+      m=[256],
+      n=[128, 192],
+      ab_type=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn)
+  )
+  def test_sparse_matmul_collective(self, m, n, ab_type):
+    acc_type = jnp.float32 if jnp.issubdtype(ab_type, jnp.floating) else jnp.int32
+    k = 128
+    transforms = self.default_transforms(swizzle=64, dtype=ab_type)
+    m_block = m // 2
+    n_block = n // 2
+
+    def kernel(
+        a_gmem,
+        b_gmem,
+        a_sparse_gmem,
+        out_gmem,
+        a_smem,
+        b_smem,
+        a_sparse_smem,
+        tma_barrier,
+        mma_barrier,
+        cluster_barrier,
+        acc_tmem,
+        a_sparse_tmem,
+    ):
+      cluster_idx = lax.axis_index("x")
+      slice_a = pl.ds(cluster_idx * m_block, m_block)
+      slice_b = pl.ds(cluster_idx * n_block, n_block)
+      slice_sparse = pl.ds(cluster_idx, m_block // 128)
+
+      # GMEM -> SMEM
+      plgpu.copy_gmem_to_smem(a_gmem.at[slice_a, :], a_smem, tma_barrier)
+      plgpu.copy_gmem_to_smem(b_gmem.at[slice_b, :], b_smem, tma_barrier)
+      plgpu.copy_gmem_to_smem(a_sparse_gmem.at[slice_sparse, :], a_sparse_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+
+      # SMEM -> TMEM
+      plgpu.async_copy_sparse_metadata_to_tmem(a_sparse_smem, a_sparse_tmem, collective_axis="x")
+      # MMA
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          plgpu.transpose_ref(b_smem, (1, 0)),
+          mma_barrier,
+          a_sparse_metadata=a_sparse_tmem,
+          accumulate=False,
+          collective_axis="x",
+      )
+
+      plgpu.barrier_wait(mma_barrier)
+      slice_out = pl.ds(cluster_idx * m_block, m_block)
+      out_gmem[slice_out, :] = plgpu.async_load_tmem(acc_tmem)
+
+    scratch_shapes = dict(
+        a_smem=plgpu.SMEM((m_block, k // 2), ab_type, transforms=transforms),
+        b_smem=plgpu.SMEM((n_block, k), ab_type, transforms=transforms),
+        a_sparse_smem=plgpu.SMEM(
+            (m_block // 128, k // 128, 128, 64), jnp.uint2
+        ),
+        tma_barrier=plgpu.Barrier(num_arrivals=3),
+        mma_barrier=plgpu.Barrier(orders_tensor_core=True),
+        cluster_barrier=plgpu.ClusterBarrier(collective_axes=("x",)),
+        acc_tmem=plgpu.TMEM((m_block, n), acc_type, collective=True),
+        a_sparse_tmem=plgpu.TMEM(
+            (m_block, k // 2),
+            jnp.uint2,
+            layout=plgpu.TMEMLayout.SPARSE_METADATA_LAYOUT,
+            collective=True,
+        ),
+    )
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), acc_type),
+        grid=(1,),
+        grid_names=("_",),
+        cluster=(2,),
+        cluster_names=("x",),
+        scratch_shapes=scratch_shapes,
+    )
+
+    a_shape = (m, k // 2)
+    b_shape = (n, k)
+    if jnp.issubdtype(ab_type, jnp.integer):
+      x = jax.random.randint(jax.random.key(1), shape=a_shape, minval=-64, maxval=64, dtype=ab_type)
+      y = jax.random.randint(jax.random.key(2), shape=b_shape, minval=-64, maxval=64, dtype=ab_type)
+    else:
+      x = jax.random.uniform(jax.random.key(1), shape=a_shape, dtype=ab_type)
+      y = jax.random.uniform(jax.random.key(2), shape=b_shape, dtype=ab_type)
+
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    x_pairs = jax.random.randint(
+        jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8
+    )
+    x_sparse = valid_pairs[x_pairs]
+    in_sparse = plgpu.format_tcgen05_sparse_metadata(x_sparse.astype(jnp.uint2),
+                                                     ab_type)
+    z = f(x, y, in_sparse)
+
+    x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
+    np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
+    x_logical = x_logical.reshape(m, k)
+    ref = x_logical.astype(acc_type) @ y.T.astype(acc_type)
+    atol = rtol = 0
+    if jnp.issubdtype(ab_type, jnp.floating):
+      atol = 7e-5
+      rtol = 5e-6
+    np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
+
+  @parameterized.product(
       m_n_k=[
           (256, 256, 256),
           (256, 128, 128),
