@@ -776,7 +776,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
 
-    x_ref = core.new_ref(1., kind='anselm_ref')
+    x_ref = core.new_ref(1., kind='no_grad_no_remat')
     g = jax.grad(f)(2., x_ref)
     self.assertAllClose(x_ref[...], 5.)
     self.assertAllClose(g, 4.)
@@ -792,7 +792,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
 
-    x_ref = core.new_ref(1., kind='anselm_ref')
+    x_ref = core.new_ref(1., kind='no_grad_no_remat')
     g = jax.grad(f)(2.)
     self.assertAllClose(x_ref[...], 2.)
     self.assertAllClose(g, 1.)
@@ -808,7 +808,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return jnp.sin(out)
 
     lst = []
-    x_ref = core.new_ref(1., kind='anselm_ref')
+    x_ref = core.new_ref(1., kind='no_grad_no_remat')
     g = jax.grad(f)(2.)
     self.assertAllClose(x_ref[...], 2.)
     self.assertAllClose(g, jnp.cos(2.))

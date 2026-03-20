@@ -572,7 +572,7 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
   if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
-  elif ref_tangent.aval.kind == "anselm_ref":
+  elif ref_tangent.aval.kind == "no_grad_no_remat":
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   else:
     if isinstance(ref_tangent, ad_util.Zero):
@@ -589,7 +589,7 @@ def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   ref_tangent, x_tangent, *_ = tangents
   x_tangent = ad_util.instantiate(x_tangent)
-  if ref_tangent.aval.kind != "anselm_ref":
+  if ref_tangent.aval.kind != "no_grad_no_remat":
     addupdate_p.bind(ref_primal, x_primal, *idx, **params)
     addupdate_p.bind(ref_tangent, x_tangent, *idx, **params)
   return [], []
@@ -654,7 +654,7 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
-                # (except for anselm_ref)
+                # (except for no_grad_no_remat)
   ref_unk, *_ = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
@@ -662,7 +662,7 @@ def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
-  elif eqn.invars[0].aval.kind == "anselm_ref":
+  elif eqn.invars[0].aval.kind == "no_grad_no_remat":
     return eqn, None, [False], [False], res
   else:
     return eqn, eqn, [False], [True], res  # full remat
@@ -1076,12 +1076,12 @@ def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind):
   nz, = nzs
   x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
   def mut_lin(_, x_dot):
-    if kind == 'anselm_ref':
+    if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
       return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
-  return x_ref, kind != 'anselm_ref', None, mut_lin
+  return x_ref, kind != 'no_grad_no_remat', None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
