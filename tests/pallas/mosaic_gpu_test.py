@@ -3258,7 +3258,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         )
         def bad(ctx):
           del ctx
-          return mgpu.FragmentedArray.splat(mgpu.c(0.0), (128,))
+          return mgpu.FragmentedArray.splat(mgpu.c(0.0, ir.F32Type.get()), (128,))
         y_ref[...] = bad()
     with self.assertRaisesRegex(
         Exception,
