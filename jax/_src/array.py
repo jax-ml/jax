@@ -27,6 +27,7 @@ from jax._src import api
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import literals
@@ -344,7 +345,7 @@ class ArrayImpl(basearray.Array):
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
-      if self.sharding.num_devices == 1 or self.is_fully_replicated:
+      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # pyrefly: ignore[missing-attribute]
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
@@ -1238,7 +1239,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(api.device_put(x, Format(layout, sharding)))
       else:
         indices = sharding.addressable_devices_indices_map(x.shape).values()
-        if x.sharding.num_devices == 1:
+        if dispatch.is_single_device_sharding(x.sharding):
           results.append(shard_device_array(x, devices, indices, sharding))
         else:
           results.append(
@@ -1268,6 +1269,23 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       global_aval, out_sharding, committed=committed, _skip_checks=True
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
+
+# Only used for Arrays that come out of pmap.
+def _array_local_result_handler(aval, sharding, indices):
+  if aval.dtype == dtypes.float0:
+    def handler(xs):
+      return literals.TypedNdArray(np.zeros(aval.shape, dtypes.float0), weak_type=False)
+    phys_aval = core.physical_aval(aval)
+    return xc.array_result_handler(phys_aval, sharding, committed=True,
+                                   _skip_checks=True).wrap(handler)
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    return aval.dtype._rules.local_sharded_result_handler(
+        aval, sharding, indices)
+  return xc.array_result_handler(
+      aval, sharding, committed=True, _skip_checks=True
+  )
+pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
+
 
 # Token handlers
 

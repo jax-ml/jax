@@ -49,7 +49,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
-    SingleDeviceSharding, physical_sharding, logical_sharding)
+    NamedSharding, SingleDeviceSharding, physical_sharding,
+    logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -414,6 +415,31 @@ class KeyTyRules:
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return PRNGKeyArray(aval.dtype._impl, buf)
     return handler
+
+  @staticmethod
+  def local_sharded_result_handler(aval, sharding, indices):
+    phys_aval = core.physical_aval(aval)
+    key_shape = aval.dtype._impl.key_shape
+    phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
+
+    # set up a grounded sharding (with a grounded sharding spec)
+    if isinstance(sharding, NamedSharding):
+      phys_sharding = physical_sharding(aval, sharding)
+    else:
+      assert False, f'impossible sharding {sharding} in local sharded result handler'
+
+    # set up grounded indices
+    trailing_inds = [slice(None)] * len(key_shape)
+    phys_indices = [(*inds, *trailing_inds) for inds in indices]
+
+    # make a physical handler
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, phys_indices)
+
+    # set up a handler that calls the physical one and wraps back up
+    def handler(arr):
+      return PRNGKeyArray(aval.dtype._impl, arr)
+
+    return phys_handler.wrap(handler)
 
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
