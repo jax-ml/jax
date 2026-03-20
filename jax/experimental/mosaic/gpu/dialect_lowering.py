@@ -495,8 +495,7 @@ def _vector_load_op_lowering_rule(
 def _vector_store_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.VectorStoreOp
 ) -> Sequence[ir.Value]:
-  # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.9.2.
-  if hasattr(op, "atomic_type") and op.atomic_type is not None:
+  if op.atomic_type is not None:
     atomic = str(mgpu.AtomicOpType(op.atomic_type.value))
   else:
     atomic = None
@@ -1128,43 +1127,39 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-if hasattr(mgpu, "AsyncStoreSparseMetadataSmemToTmemOp"):
-  @_register_lowering(mgpu.AsyncStoreSparseMetadataSmemToTmemOp)
-  def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncStoreSparseMetadataSmemToTmemOp
-  ) -> Sequence[ir.Value]:
-    [in_layout_attr] = inference_utils.in_tmem_layouts(op)
-    tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
-    smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
-    with utils.when(ctx.single_thread_per_warpgroup_predicate):
-      tcgen05.async_copy_sparse_metadata_smem_to_tmem(
-        smem_ref, tmem_ref, collective=op.collective
-      )
-    return []
-
-
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
-  @_register_lowering(mgpu.AsyncStoreSmemToTmemOp)
-  def _async_copy_smem_to_tmem_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncStoreSmemToTmemOp
-  ) -> Sequence[ir.Value]:
-    [transforms_attr] = inference_utils.in_transforms(op)
-    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms_attr
+@_register_lowering(mgpu.AsyncStoreSparseMetadataSmemToTmemOp)
+def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncStoreSparseMetadataSmemToTmemOp
+) -> Sequence[ir.Value]:
+  [in_layout_attr] = inference_utils.in_tmem_layouts(op)
+  tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
+  smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
+  with utils.when(ctx.single_thread_per_warpgroup_predicate):
+    tcgen05.async_copy_sparse_metadata_smem_to_tmem(
+      smem_ref, tmem_ref, collective=op.collective
     )
-    smem_ref = unwrap_transformed_memref(op.source, transforms_attr)
-    smem_ref_ty = op.source.type
-    _check_transforms_and_swizzle_are_supported(smem_ref_ty, transforms, swizzle)
+  return []
 
-    [in_layout_attr] = inference_utils.in_tmem_layouts(op)
-    tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
-    with utils.when(ctx.single_thread_per_warpgroup_predicate):
-      tcgen05.async_copy_smem_to_tmem(
-          smem_ref, tmem_ref, swizzle, collective=op.collective
-      )
-    return []
+
+@_register_lowering(mgpu.AsyncStoreSmemToTmemOp)
+def _async_copy_smem_to_tmem_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncStoreSmemToTmemOp
+) -> Sequence[ir.Value]:
+  [transforms_attr] = inference_utils.in_transforms(op)
+  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+      transforms_attr
+  )
+  smem_ref = unwrap_transformed_memref(op.source, transforms_attr)
+  smem_ref_ty = op.source.type
+  _check_transforms_and_swizzle_are_supported(smem_ref_ty, transforms, swizzle)
+
+  [in_layout_attr] = inference_utils.in_tmem_layouts(op)
+  tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
+  with utils.when(ctx.single_thread_per_warpgroup_predicate):
+    tcgen05.async_copy_smem_to_tmem(
+        smem_ref, tmem_ref, swizzle, collective=op.collective
+    )
+  return []
 
 
 @_register_lowering(mgpu.TmemLayoutCastOp)

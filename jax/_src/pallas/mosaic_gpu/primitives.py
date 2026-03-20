@@ -3504,11 +3504,6 @@ def _async_copy_sparse_metadata_to_tmem_lowering_rule(*args, **kwargs):
     async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _async_copy_sparse_metadata_to_tmem_lowering_rule_wg(*args, **kwargs):
-  # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-  if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
-    raise NotImplementedError(
-        "async_copy_sparse_metadata_to_tmem_p WG lowering is not implemented."
-    )
   return _async_copy_to_tmem_lowering_rule(
       mgpu.dialect.async_store_sparse_metadata_smem_to_tmem,
       *args,
@@ -3662,11 +3657,6 @@ def _async_copy_smem_to_tmem_lowering_rule_wg(
     ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves,
     smem_tree, tmem_tree, collective_axis,
 ):
-  # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-  if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
-    raise NotImplementedError(
-        "async_copy_smem_to_tmem_p WG lowering is not implemented."
-    )
   smem_leaves, tmem_leaves = util.split_list(leaves, [smem_tree.num_leaves])
   smem_transforms = jax.tree.unflatten(smem_tree, smem_leaves)
   tmem_transforms = jax.tree.unflatten(tmem_tree, tmem_leaves)

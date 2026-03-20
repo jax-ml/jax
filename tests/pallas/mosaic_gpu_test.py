@@ -3055,9 +3055,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       layout=[plgpu.Layout.WGMMA, None]
   )
   def test_atomic_add(self, dtype, layout):
-    # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "AtomicOpType"):
-      self.skip_if_wg_semantics()
     m, n = 128, 64
     if layout is not None:
       transforms = self.default_transforms(swizzle=64, dtype=dtype)
@@ -4735,10 +4732,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
-      self.skip_if_wg_semantics()
-
     dtype = jnp.float16
     m, n = 128, 128
     if swizzle is None:

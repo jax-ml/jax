@@ -1063,10 +1063,6 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(ir.F32Type, ir.BF16Type)
   def test_async_store_smem_to_tmem_infers_expected_src_dest_layouts(self, dtype):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
-      self.skipTest("async_store_smem_to_tmem not available.")
-
     dtype = dtype.get()
     shape = (128, 128)
     dest_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
@@ -1092,10 +1088,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_async_store_sparse_metadata_smem_to_tmem_infers_expected_src_dest_layouts(
       self,
   ):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
-      self.skipTest("async_store_sparse_metadata_smem_to_tmem not available.")
-
     element_type = ir.IntegerType.get_signless(2)
     src_shape = (2, 2, 128, 64)
     dest_shape = (256, 128)
@@ -1122,10 +1114,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_async_store_sparse_metadata_smem_to_tmem_rejects_incompatible_tmem_layout(
       self,
   ):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_sparse_metadata_smem_to_tmem"):
-      self.skipTest("async_store_sparse_metadata_smem_to_tmem not available.")
-
     element_type = ir.IntegerType.get_signless(2)
     src_shape = (2, 2, 128, 64)
     dest_shape = (256, 128)
@@ -1150,10 +1138,6 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.infer_layout(self.module)
 
   def test_async_store_smem_to_tmem_rejects_incompatible_tmem_layout(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
-      self.skipTest("async_store_smem_to_tmem not available.")
-
     f32 = ir.F32Type.get()
     shape = (128, 128)
     dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
@@ -1173,10 +1157,6 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.infer_layout(self.module)
 
   def test_async_store_smem_to_tmem_rejects_incompatible_tmem_packing(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu.dialect, "async_store_smem_to_tmem"):
-      self.skipTest("async_store_smem_to_tmem not available.")
-
     f32 = ir.F32Type.get()
     shape = (128, 128)
     dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
@@ -1580,7 +1560,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_async_store_scales_smem_to_tmem_infers_expected_src_dest_layouts(
       self, valid_dtype
   ):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
     if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
       self.skipTest("async_store_scales_smem_to_tmem not available.")
 
@@ -1605,7 +1585,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEmpty(in_transform)
 
   def test_async_store_scales_smem_to_tmem_rejects_incompatible_layouts(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
     if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
       self.skipTest("async_store_scales_smem_to_tmem not available.")
 

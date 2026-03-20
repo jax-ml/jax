@@ -6778,10 +6778,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     self.assertArraysEqual(kernel(x), x)
 
   def test_async_store_smem_to_tmem(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu_dialect, "async_store_smem_to_tmem"):
-      self.skipTest("async_store_smem_to_tmem not available.")
-
     dtype = jnp.float32
     shape = (128, 128)
 
@@ -6821,10 +6817,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     self.assertArraysEqual(kernel(x), x)
 
   def test_async_store_smem_to_tmem_collective(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-    if not hasattr(mgpu_dialect, "async_store_smem_to_tmem"):
-      self.skipTest("async_store_smem_to_tmem not available.")
-
     dtype = jnp.float32
     shape = (128, 128)
 

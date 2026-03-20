@@ -1447,55 +1447,51 @@ def _async_load_tmem_constraint_system(
   )
 
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
-  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemToTmemOp)
-  def _async_async_store_smem_to_tmem_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.AsyncStoreSmemToTmemOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    source = ValueSite(op, VariableType.OPERAND, 0)
-    source_variable = ctx.producer_ref(source)
-    destination = ValueSite(op, VariableType.OPERAND, 1)
-    destination_variable = ctx.producer_ref(destination)
-    bitwidth = utils.bitwidth(op.destination.type.element_type)
-    packing = 32 // bitwidth
-    return (
-        cs.ConstraintSystem(
-            assignments={
-                destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
-            },
-            constraints=[cs.IsValidMmaTiling(source_variable, bitwidth)],
-        ),
-        {source_variable: [source], destination_variable: [destination]},
-    )
-
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
-if hasattr(mgpu, "AsyncStoreSparseMetadataSmemToTmemOp"):
-  @_add_constraint_system_derivation_rule(
-      mgpu.AsyncStoreSparseMetadataSmemToTmemOp
+@_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemToTmemOp)
+def _async_async_store_smem_to_tmem_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreSmemToTmemOp,
+) -> ConstraintSystemDerivationRuleResult:
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  source_variable = ctx.producer_ref(source)
+  destination = ValueSite(op, VariableType.OPERAND, 1)
+  destination_variable = ctx.producer_ref(destination)
+  bitwidth = utils.bitwidth(op.destination.type.element_type)
+  packing = 32 // bitwidth
+  return (
+      cs.ConstraintSystem(
+          assignments={
+              destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
+          },
+          constraints=[cs.IsValidMmaTiling(source_variable, bitwidth)],
+      ),
+      {source_variable: [source], destination_variable: [destination]},
   )
-  def _async_store_sparse_metadata_smem_to_tmem_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.AsyncStoreSparseMetadataSmemToTmemOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    source = ValueSite(op, VariableType.OPERAND, 0)
-    source_variable = ctx.producer_ref(source)
-    destination = ValueSite(op, VariableType.OPERAND, 1)
-    destination_variable = ctx.producer_ref(destination)
-    return (
-        cs.ConstraintSystem(
-            assignments={
-                destination_variable: cs.TMEMLayout(
-                    tcgen05.sparse_meta_layout()
-                ),
-                source_variable: cs.SMEMTiling(None),
-            },
-        ),
-        {source_variable: [source], destination_variable: [destination]},
-    )
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+@_add_constraint_system_derivation_rule(
+    mgpu.AsyncStoreSparseMetadataSmemToTmemOp
+)
+def _async_store_sparse_metadata_smem_to_tmem_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreSparseMetadataSmemToTmemOp,
+) -> ConstraintSystemDerivationRuleResult:
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  source_variable = ctx.producer_ref(source)
+  destination = ValueSite(op, VariableType.OPERAND, 1)
+  destination_variable = ctx.producer_ref(destination)
+  return (
+      cs.ConstraintSystem(
+          assignments={
+              destination_variable: cs.TMEMLayout(
+                  tcgen05.sparse_meta_layout()
+              ),
+              source_variable: cs.SMEMTiling(None),
+          },
+      ),
+      {source_variable: [source], destination_variable: [destination]},
+  )
+
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
 if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
   @_add_constraint_system_derivation_rule(mgpu.AsyncStoreScalesSmemToTmemOp)
   def _async_store_scales_smem_to_tmem_constraint_system(
