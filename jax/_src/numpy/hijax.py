@@ -365,7 +365,10 @@ class BinaryUfuncMixin:
     if bdims[0] is None and bdims[1] is None:
       out_bdim = None
     elif bdims[0] is not None and bdims[1] is None:
-      # TODO(jakevdp): this is wrong. Need to handle scalars / batched scalars.
+      #if x.ndim == 1:
+
+
+
       if y.ndim > 0:
         y = lax.expand_dims(y, (bdims[0],))
       out_bdim = bdims[0]
