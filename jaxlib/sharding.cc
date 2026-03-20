@@ -41,7 +41,6 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "jaxlib/py_device_list.h"
-#include "jaxlib/sharded_device_array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
@@ -65,8 +64,6 @@ absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
   } else if (sharding.type().is(SingleDeviceSharding::type())) {
     return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list();
-  } else if (sharding.type().is(PmapSharding::type())) {
-    return nb::cast<const PmapSharding*>(sharding)->internal_device_list();
   } else if (sharding.type().is(GSPMDSharding::type())) {
     return nb::cast<const GSPMDSharding*>(sharding)->internal_device_list();
   } else {
@@ -245,23 +242,6 @@ SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<PyClient> client,
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
 }
 
-PmapSharding::PmapSharding(xla::nb_numpy_ndarray devices,
-                           ShardingSpec sharding_spec)
-    : Sharding(/*num_devices=*/devices.size()),
-      devices_(std::move(devices)),
-      sharding_spec_(std::move(sharding_spec)) {
-  nb::object flat_devices = devices_.attr("flat");
-  internal_device_list_ = make_nb_class<PyDeviceList>(nb::tuple(flat_devices));
-}
-
-/*static*/ PyObject* PmapSharding::type_ = nullptr;
-
-// /*static*/ nanobind::handle PmapSharding::type() { return type_; }
-
-/*static*/ void PmapSharding::InitializeType() {
-  // Intentionally leaks a reference.
-  type_ = nanobind::type<PmapSharding>().inc_ref().ptr();
-}
 
 GSPMDSharding::GSPMDSharding(nb_class_ptr<PyDeviceList> devices,
                              xla::HloSharding op_sharding,
@@ -318,20 +298,6 @@ void RegisterSharding(nb::module_& m) {
                    &SingleDeviceSharding::internal_device_list);
   SingleDeviceSharding::InitializeType();
 
-  nb::class_<PmapSharding, Sharding>(m, "PmapSharding", nb::dynamic_attr())
-      .def(
-          "__init__",
-          [](PmapSharding* self, nb::object devices,
-             ShardingSpec sharding_spec) {
-            new (self) PmapSharding(xla::nb_numpy_ndarray::ensure(devices),
-                                    std::move(sharding_spec));
-          },
-          nb::arg("devices"), nb::arg("sharding_spec"))
-      .def_prop_ro("devices", &PmapSharding::devices)
-      .def_prop_ro("sharding_spec", &PmapSharding::sharding_spec)
-      .def_prop_ro("_internal_device_list",
-                   &PmapSharding::internal_device_list);
-  PmapSharding::InitializeType();
 
   nb::class_<GSPMDSharding, Sharding>(m, "GSPMDSharding", nb::dynamic_attr())
       // NOTE: We explicitly list the two PyDeviceList ctors first since they

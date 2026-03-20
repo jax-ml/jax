@@ -113,10 +113,6 @@ absl::StatusOr<ifrt::DeviceListRef> GetIfrtDeviceList(nb::handle sharding) {
     return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(PmapSharding::type())) {
-    return nb::cast<const PmapSharding*>(sharding)
-        ->internal_device_list()
-        ->ifrt_device_list();
   } else if (sharding.type().is(GSPMDSharding::type())) {
     return nb::cast<const GSPMDSharding*>(sharding)
         ->internal_device_list()

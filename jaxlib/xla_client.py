@@ -341,7 +341,6 @@ HloShardingV3Mesh = _xla.HloShardingV3Mesh
 NamedSharding = _xla.NamedSharding
 HloShardingV3 = _xla.HloShardingV3
 SingleDeviceSharding = _xla.SingleDeviceSharding
-PmapSharding = _xla.PmapSharding
 GSPMDSharding = _xla.GSPMDSharding
 PjRtLayout = _xla.PjRtLayout
 AutotuneCacheMode = _xla.AutotuneCacheMode

@@ -549,12 +549,6 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-    if (sharding.type().ptr() == PmapSharding::type().ptr()) {
-      CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,
-                           shard_arg_fallback, num_args_arrays,
-                           keep_alive_objects);
-      continue;
-    }
 
     if (sharding_num_devices != num_global_devices) {
       CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,

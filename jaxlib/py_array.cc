@@ -227,10 +227,7 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   }
 
   absl::StatusOr<ifrt::ShardingRef> ifrt_sharding =
-      sharding.type().is(PmapSharding::type())
-          ? GetIfrtConcreteSharding(sharding, ifrt::Shape(shape),
-                                    std::move(shapes))
-          : GetIfrtHloSharding(sharding, ifrt::Shape(shape));
+      GetIfrtHloSharding(sharding, ifrt::Shape(shape));
   if (!ifrt_sharding.ok()) {
     // TODO(hyeontaek): Return a absl::Status.
     throw nb::value_error(ifrt_sharding.status().ToString().c_str());
@@ -815,10 +812,7 @@ absl::Status PyArray::set_arrays(nb::object obj) {
 
   TF_ASSIGN_OR_RETURN(
       auto ifrt_sharding,
-      sharding().type().is(PmapSharding::type())
-          ? GetIfrtConcreteSharding(sharding(), ifrt::Shape(shape()),
-                                    std::move(shapes))
-          : GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
+      GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
   TF_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(

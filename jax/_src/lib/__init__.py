@@ -104,7 +104,6 @@ import jaxlib._jax as _jax  # noqa: F401
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
 from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
-from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
 from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401

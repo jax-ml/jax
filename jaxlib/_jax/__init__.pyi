@@ -31,10 +31,8 @@ from . import (
     ifrt_programs as ifrt_programs,
     jax_jit as jax_jit,
     mlir as mlir,
-    pmap_lib as pmap_lib,
     pytree as pytree,
 )
-from .pmap_lib import PmapFunction as PmapFunction
 from .pytree import (PyTreeDef as PyTreeDef, PyTreeRegistry as _PyTreeRegistry)
 
 class JaxRuntimeError(RuntimeError):
@@ -1116,17 +1114,6 @@ class SingleDeviceSharding(Sharding):
   def _device(self) -> object: ...
   @property
   def _memory_kind(self) -> object: ...
-  @property
-  def _internal_device_list(self) -> DeviceList: ...
-
-class PmapSharding(Sharding):
-  def __init__(
-      self, devices: object, sharding_spec: pmap_lib.ShardingSpec
-  ) -> None: ...
-  @property
-  def devices(self) -> numpy.ndarray: ...
-  @property
-  def sharding_spec(self) -> pmap_lib.ShardingSpec: ...
   @property
   def _internal_device_list(self) -> DeviceList: ...
 

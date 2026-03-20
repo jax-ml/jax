@@ -122,7 +122,7 @@ pytype_library(
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
-    ],
+    ] + py_deps(["numpy"]),
 )
 
 symlink_files(
@@ -365,7 +365,6 @@ nanobind_pywrap_extension(
         ":mlir",
         ":nb_class_ptr",
         ":pjit",
-        ":pmap_lib",
         ":pprof_profile_builder",
         ":py_client",
         ":python_ref_manager",
@@ -898,56 +897,6 @@ cc_library(
 )
 
 cc_library(
-    name = "pmap_lib",
-    srcs = ["pmap_lib.cc"],
-    hdrs = ["pmap_lib.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        ":call_location",
-        ":config",
-        ":jax_jit",
-        ":nb_class_ptr",
-        ":py_client",
-        ":py_user_context",
-        ":python_ref_manager",
-        ":pytree",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
-        "@tsl//tsl/profiler/lib:traceme",
-        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
-        "@xla//xla:status_macros",
-        "@xla//xla:util",
-        "@xla//xla:xla_data_proto_cc",
-        "@xla//xla/pjrt:exceptions",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/python:nb_helpers",
-        "@xla//xla/python:nb_numpy",
-        "@xla//xla/python:safe_static_init",
-        "@xla//xla/python:types",
-        "@xla//xla/python/ifrt",
-        "@xla//xla/python/ifrt:user_context",
-        "@xla//xla/tsl/concurrency:ref_count",
-        "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:statusor",
-        "@xla//xla/tsl/python/lib/core:numpy",
-    ],
-)
-
-cc_library(
     name = "cached_py_object",
     hdrs = ["cached_py_object.h"],
     copts = [
@@ -988,7 +937,6 @@ cc_library(
         "py_memory_space.h",
         "py_program.h",
         "py_values.h",
-        "sharded_device_array.h",
         "sharding.h",
         "to_ifrt_sharding.h",
     ],

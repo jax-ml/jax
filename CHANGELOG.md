@@ -21,6 +21,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     will now always use the new implementation that wraps
     `jax.jit(jax.shard_map)`. Please see
     https://docs.jax.dev/en/latest/migrate_pmap.html for more information.
+  * The C++ pmap infrastructure has been removed. The following public APIs
+    are no longer available:
+    * `jax.sharding.PmapSharding`
+    * From `jaxlib.xla_extension`: `PmapFunction`, `pmap`,
+      `NoSharding`, `Chunked`, `Unstacked`, `ShardedAxis`, `Replicated`,
+      `ShardingSpec`.
+    * From `jax.interpreters.pxla`: `MapTracer`, `PmapExecutable`,
+      `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
+      `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
+      `Unstacked`, `spec_to_indices`.
 * Changes:
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been

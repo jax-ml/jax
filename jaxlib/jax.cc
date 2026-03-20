@@ -102,7 +102,6 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/pjit.h"
-#include "jaxlib/pmap_lib.h"
 #include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_compile_only_client.h"
@@ -681,7 +680,6 @@ NB_MODULE(_jax, m) {
   BuildPytreeSubmodule(m);
   BuildGuardSubmodule(m);
   BuildJaxjitSubmodule(m);
-  BuildPmapSubmodule(m);
   BuildPjitSubmodule(m);
   Traceback::Register(m);
   BuildMlirSubmodule(m);
