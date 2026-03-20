@@ -25,13 +25,15 @@ from typing import Any, NamedTuple, cast
 
 from jax._src import config
 from jax._src import core
-from jax._src import mesh as mesh_lib
 from jax._src import sharding as jsharding
 from jax._src import tree_util
 from jax._src import util
 from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
+from jax._src.mesh import (
+    Mesh, AbstractMesh, AxisType, empty_abstract_mesh, empty_concrete_mesh,
+    get_abstract_mesh, get_concrete_mesh)
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
@@ -272,7 +274,7 @@ class GSPMDSharding(jsharding.Sharding):
       raise TypeError(
           f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
     elif self._hlo_sharding.is_replicated():
-      empty_mesh = mesh_lib.AbstractMesh((), ())
+      empty_mesh = AbstractMesh((), ())
       return NamedSharding(empty_mesh, PartitionSpec())._to_sdy_sharding(
           num_dimensions)
     elif self._hlo_sharding.is_tiled():
@@ -281,7 +283,7 @@ class GSPMDSharding(jsharding.Sharding):
             f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
       axis_sizes = tuple(self._hlo_sharding.get_axis_sizes())
       axis_names = tuple(f'_axis_{i}' for i in range(len(axis_sizes)))
-      mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names)
+      mesh = AbstractMesh(axis_sizes, axis_names)
       return _gspmd_to_named_sharding_via_mesh(self, mesh)._to_sdy_sharding(
           num_dimensions)
     else:
@@ -356,7 +358,7 @@ class SPMDAxisContext:
   as well as a set of mesh axes that are currently lowered in the MANUAL
   sharding mode.
   """
-  mesh: mesh_lib.Mesh
+  mesh: Mesh
   manual_axes: frozenset[MeshAxisName] = frozenset()
 
   @property
@@ -395,7 +397,7 @@ class ShardingContext:
   """
   num_devices: int
   device_assignment: tuple[xc.Device, ...] | None = None
-  abstract_mesh: mesh_lib.AbstractMesh | None = None
+  abstract_mesh: AbstractMesh | None = None
 
   def __post_init__(self):
     if self.device_assignment is not None:
@@ -508,7 +510,7 @@ def explode_superdims(sizes, dims):
 
 
 def _hlo_sharding_v3_to_pspec(
-    hlo_sharding: xc.HloSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+    hlo_sharding: xc.HloSharding, mesh: Mesh | AbstractMesh
 ) -> PartitionSpec:
   hlo_sharding_v3 = hlo_sharding.hlo_sharding_v3()
   v3_mesh = hlo_sharding_v3.mesh()
@@ -529,7 +531,7 @@ def _hlo_sharding_v3_to_pspec(
 
 def parse_flatten_op_sharding(
     hlo_sharding: xc.OpSharding | xc.HloSharding,
-    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh) -> Sequence[PartitionSpec]:
+    mesh: Mesh | AbstractMesh) -> Sequence[PartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
     hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
@@ -880,13 +882,13 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
 @util.cache()
 def cached_named_sharding(
-    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, pspec: PartitionSpec,
+    mesh: Mesh | AbstractMesh, pspec: PartitionSpec,
     memory_kind: str | None = None) -> NamedSharding:
   return NamedSharding(mesh, pspec, memory_kind=memory_kind)
 
 
 def _gspmd_to_named_sharding_via_mesh(
-    out_s: GSPMDSharding, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+    out_s: GSPMDSharding, mesh: Mesh | AbstractMesh
 ) -> NamedSharding:
   spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
   return cached_named_sharding(mesh, spec, out_s.memory_kind)
@@ -906,7 +908,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
         f" `NamedSharding` or `PartitionSpec`. Got {sharding} of type:"
         f" {type(sharding)}")
 
-  cur_mesh = mesh_lib.get_abstract_mesh()
+  cur_mesh = get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
     if cur_mesh.empty:
       raise ValueError(
@@ -931,7 +933,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {source_info_util.summarize(source_info_util.current())}')
     # TODO(yashkatariya): Maybe allow concrete mesh at the top level
     # i.e `core.trace_state_clean()` for APIs like jnp.zeros, etc?
-    if isinstance(sharding.mesh, mesh_lib.Mesh):
+    if isinstance(sharding.mesh, Mesh):
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in it.chain(flatten_spec(sharding.spec), sharding.spec.unreduced,
@@ -939,7 +941,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if s is None:
       continue
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisType.Auto, mesh_lib.AxisType.Manual}:
+        AxisType.Auto, AxisType.Manual}:
       raise ValueError(
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
@@ -950,8 +952,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
 
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
-              axis_types: tuple[mesh_lib.AxisType, ...] | None = None,
-              *, devices: Sequence[xc.Device] | None = None) -> mesh_lib.Mesh:
+              axis_types: tuple[AxisType, ...] | None = None,
+              *, devices: Sequence[xc.Device] | None = None) -> Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1025,8 +1027,8 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
         '`jax.make_mesh` does not support multi-slice topologies. Please use'
         ' jax.experimental.mesh_utils.create_hybrid_device_mesh')
   if axis_types is None:
-    axis_types = (mesh_lib.AxisType.Explicit,) * len(mesh_devices.shape)
-  return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
+    axis_types = (AxisType.Explicit,) * len(mesh_devices.shape)
+  return Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 class set_mesh:
   """Sets a concrete mesh in a thread-local context.
@@ -1051,21 +1053,23 @@ class set_mesh:
   """
   __slots__ = ["prev_abstract_mesh", "prev_mesh"]
 
-  def __init__(self, mesh: mesh_lib.Mesh):
-    if not isinstance(mesh, mesh_lib.Mesh):
+  def __init__(self, mesh: Mesh | None):
+    if mesh is not None and not isinstance(mesh, Mesh):
       raise ValueError(
           f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
     if not core.trace_state_clean():
       raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
-    if mesh._any_axis_manual:
+    if mesh is not None and mesh._any_axis_manual:
       raise ValueError(
           f'mesh {mesh} contains manual axes which is not allowed when using'
           ' `jax.set_mesh`. Please use `jax.shard_map` to enter into `Manual`'
           ' mode instead.')
 
+    abs_mesh = empty_abstract_mesh if mesh is None else mesh.abstract_mesh
+    conc_mesh = empty_concrete_mesh if mesh is None else mesh
     self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
-        mesh.abstract_mesh)
-    self.prev_mesh = config.device_context.swap_local(mesh)
+        abs_mesh)
+    self.prev_mesh = config.device_context.swap_local(conc_mesh)
 
   def __enter__(self):
     pass
@@ -1075,17 +1079,17 @@ class set_mesh:
     config.device_context.set_local(self.prev_mesh)
 
 
-def get_mesh() -> mesh_lib.Mesh:
+def get_mesh() -> Mesh:
   if not core.trace_state_clean():
     raise ValueError(
         '`get_mesh` can only be used outside of `jax.jit`. Maybe you want'
         ' `jax.sharding.get_abstract_mesh()`?')
-  return mesh_lib.get_concrete_mesh()
+  return get_concrete_mesh()
 
 
 @contextlib.contextmanager
-def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
-  assert isinstance(mesh, mesh_lib.Mesh)
+def _internal_use_concrete_mesh(mesh: Mesh):
+  assert isinstance(mesh, Mesh)
   prev_val = config.device_context.swap_local(mesh)
   try:
     yield
