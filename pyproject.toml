@@ -53,7 +53,6 @@ project-excludes = [
     "jax/experimental/jax2tf/tests/**/*.py",
     # TODO(slebedev): Opt in jax/experimental and remove these excludes.
     "jax/experimental/mosaic/**/*.py",
-    "jax/experimental/slab/**/*.py",
 ]
 ignore-missing-imports = [
     "absl.*",
