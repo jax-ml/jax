@@ -323,6 +323,85 @@ template struct OrthogonalQr<ffi::DataType::F64>;
 template struct OrthogonalQr<ffi::DataType::C64>;
 template struct OrthogonalQr<ffi::DataType::C128>;
 
+//== Orthogonal QR Multiply ==//
+
+template <ffi::DataType dtype>
+ffi::Error OrthogonalQrMultiply<dtype>::Kernel(ffi::Buffer<dtype> a,
+                                               ffi::Buffer<dtype> tau,
+                                               ffi::Buffer<dtype> c, bool left,
+                                               bool transpose,
+                                               ffi::ResultBuffer<dtype> c_out) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, c_rows, c_cols]),
+                       SplitBatch2D(c.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [a_batch, a_rows, a_cols]),
+                       SplitBatch2D(a.dimensions()));
+
+  auto* tau_data = tau.typed_data();
+  auto* a_data = a.typed_data();
+  auto* c_out_data = c_out->typed_data();
+
+  CopyIfDiffBuffer(c, c_out);
+
+  char side_v = left ? 'L' : 'R';
+  char trans_v;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    trans_v = transpose ? 'C' : 'N';
+  } else {
+    trans_v = transpose ? 'T' : 'N';
+  }
+
+  FFI_ASSIGN_OR_RETURN(auto c_rows_v, MaybeCastNoOverflow<lapack_int>(c_rows));
+  FFI_ASSIGN_OR_RETURN(auto c_cols_v, MaybeCastNoOverflow<lapack_int>(c_cols));
+  FFI_ASSIGN_OR_RETURN(
+      auto k_v, MaybeCastNoOverflow<lapack_int>(tau.dimensions().back()));
+  // LDA is the leading dimension of A: m (= c_rows) when left, n (= c_cols)
+  // when right. The shape rule guarantees a_rows equals the correct value in
+  // both cases, but we compute it explicitly to match the trsm convention.
+  FFI_ASSIGN_OR_RETURN(auto lda_v,
+                       MaybeCastNoOverflow<lapack_int>(left ? a_rows : c_cols));
+
+  int64_t work_size =
+      GetWorkspaceSize(side_v, trans_v, c_rows_v, c_cols_v, k_v, lda_v);
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+  auto c_leading_dim_v = c_rows_v;
+  lapack_int info;
+
+  const int64_t c_out_step{c_rows * c_cols};
+  const int64_t a_step{a_rows * a_cols};
+  const int64_t tau_step{tau.dimensions().back()};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&side_v, &trans_v, &c_rows_v, &c_cols_v, &k_v, a_data, &lda_v, tau_data,
+       c_out_data, &c_leading_dim_v, work_data.get(), &work_size_v, &info);
+    c_out_data += c_out_step;
+    a_data += a_step;
+    tau_data += tau_step;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+int64_t OrthogonalQrMultiply<dtype>::GetWorkspaceSize(char side, char trans,
+                                                      lapack_int m,
+                                                      lapack_int n,
+                                                      lapack_int k,
+                                                      lapack_int lda) {
+  ValueType optimal_size = {};
+  lapack_int c_leading_dim = m;
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+  fn(&side, &trans, &m, &n, &k, nullptr, &lda, nullptr, nullptr, &c_leading_dim,
+     &optimal_size, &workspace_query, &info);
+  return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
+}
+
+template struct OrthogonalQrMultiply<ffi::DataType::F32>;
+template struct OrthogonalQrMultiply<ffi::DataType::F64>;
+template struct OrthogonalQrMultiply<ffi::DataType::C64>;
+template struct OrthogonalQrMultiply<ffi::DataType::C128>;
+
 //== Cholesky Factorization ==//
 
 template <ffi::DataType dtype>
@@ -1445,6 +1524,17 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
           .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/))
 
+#define JAX_CPU_DEFINE_ORMQR(name, data_type)          \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                       \
+      name, OrthogonalQrMultiply<data_type>::Kernel,   \
+      ::xla::ffi::Ffi::Bind()                          \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*a*/)   \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/) \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*c*/)   \
+          .Attr<bool>("left")                          \
+          .Attr<bool>("transpose")                     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*c_out*/))
+
 #define JAX_CPU_DEFINE_POTRF(name, data_type)            \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
       name, CholeskyFactorization<data_type>::Kernel,    \
@@ -1647,6 +1737,11 @@ JAX_CPU_DEFINE_ORGQR(lapack_dorgqr_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_ORGQR(lapack_cungqr_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_ORGQR(lapack_zungqr_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_ORMQR(lapack_sormqr_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_ORMQR(lapack_dormqr_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_ORMQR(lapack_cunmqr_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_ORMQR(lapack_zunmqr_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_POTRF(lapack_spotrf_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_POTRF(lapack_dpotrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_POTRF(lapack_cpotrf_ffi, ::xla::ffi::DataType::C64);
@@ -1697,6 +1792,7 @@ JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_GEQRF
 #undef JAX_CPU_DEFINE_GEQP3
 #undef JAX_CPU_DEFINE_ORGQR
+#undef JAX_CPU_DEFINE_ORMQR
 #undef JAX_CPU_DEFINE_POTRF
 #undef JAX_CPU_DEFINE_GESDD
 #undef JAX_CPU_DEFINE_GESDD_COMPLEX

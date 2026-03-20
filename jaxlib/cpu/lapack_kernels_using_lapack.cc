@@ -48,6 +48,11 @@ jax::OrthogonalQr<ffi::DataType::F64>::FnType dorgqr_;
 jax::OrthogonalQr<ffi::DataType::C64>::FnType cungqr_;
 jax::OrthogonalQr<ffi::DataType::C128>::FnType zungqr_;
 
+jax::OrthogonalQrMultiply<ffi::DataType::F32>::FnType sormqr_;
+jax::OrthogonalQrMultiply<ffi::DataType::F64>::FnType dormqr_;
+jax::OrthogonalQrMultiply<ffi::DataType::C64>::FnType cunmqr_;
+jax::OrthogonalQrMultiply<ffi::DataType::C128>::FnType zunmqr_;
+
 jax::CholeskyFactorization<ffi::DataType::F32>::FnType spotrf_;
 jax::CholeskyFactorization<ffi::DataType::F64>::FnType dpotrf_;
 jax::CholeskyFactorization<ffi::DataType::C64>::FnType cpotrf_;
@@ -122,6 +127,11 @@ static auto init = []() -> int {
   AssignKernelFn<OrthogonalQr<ffi::DataType::F64>>(dorgqr_);
   AssignKernelFn<OrthogonalQr<ffi::DataType::C64>>(cungqr_);
   AssignKernelFn<OrthogonalQr<ffi::DataType::C128>>(zungqr_);
+
+  AssignKernelFn<OrthogonalQrMultiply<ffi::DataType::F32>>(sormqr_);
+  AssignKernelFn<OrthogonalQrMultiply<ffi::DataType::F64>>(dormqr_);
+  AssignKernelFn<OrthogonalQrMultiply<ffi::DataType::C64>>(cunmqr_);
+  AssignKernelFn<OrthogonalQrMultiply<ffi::DataType::C128>>(zunmqr_);
 
   AssignKernelFn<CholeskyFactorization<ffi::DataType::F32>>(spotrf_);
   AssignKernelFn<CholeskyFactorization<ffi::DataType::F64>>(dpotrf_);

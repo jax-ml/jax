@@ -35,6 +35,7 @@ from jax._src.scipy.linalg import (
   pascal as pascal,
   polar as polar,
   qr as qr,
+  qr_multiply as qr_multiply,
   rsf2csf as rsf2csf,
   schur as schur,
   sqrtm as sqrtm,

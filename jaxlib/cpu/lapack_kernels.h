@@ -198,6 +198,28 @@ struct OrthogonalQr {
                                   lapack_int tau_size);
 };
 
+//== Orthogonal QR Multiply ==//
+
+template <::xla::ffi::DataType dtype>
+struct OrthogonalQrMultiply {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(char* side, char* trans, lapack_int* m, lapack_int* n,
+                      lapack_int* k, ValueType* a, lapack_int* lda,
+                      ValueType* tau, ValueType* c, lapack_int* ldc,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> a,
+                                  ::xla::ffi::Buffer<dtype> tau,
+                                  ::xla::ffi::Buffer<dtype> c, bool left,
+                                  bool transpose,
+                                  ::xla::ffi::ResultBuffer<dtype> c_out);
+
+  static int64_t GetWorkspaceSize(char side, char trans, lapack_int m,
+                                  lapack_int n, lapack_int k, lapack_int lda);
+};
+
 //== Cholesky Factorization ==//
 
 template <::xla::ffi::DataType dtype>
@@ -660,6 +682,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sormqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dormqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cunmqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zunmqr_ffi);
 
 }  // namespace jax
 
