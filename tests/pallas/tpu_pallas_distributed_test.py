@@ -20,10 +20,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import shard_map
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
-from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -143,6 +143,66 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         'When `check_vma=True` on `jax.shard_map`, `manual_type` on'
         ' `jax.ShapeDtypeStruct` must not be `None`'):
       f(x)
+
+  @parameterized.named_parameters(
+      ('_tc', pltpu.CoreType.TC),
+      ('_sc', pltpu.CoreType.SC_SCALAR_SUBCORE),
+  )
+  def test_remote_dma_regular_semaphore(self, core_type):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Regular semaphore DMA requires TPU v6+')
+    if core_type == pltpu.CoreType.SC_SCALAR_SUBCORE:
+      if not pltpu.get_tpu_info().sparse_core:
+        self.skipTest('No SparseCores for core_type=sc')
+
+    # Implements very simple remote DMAs using regular semaphores.
+    def kernel(x_ref, y_ref):
+      def body(ready_sem, send_sem, recv_sem):
+        other_dev_id = 1 - lax.axis_index('x')
+        pltpu.semaphore_signal(ready_sem, device_id={'x': other_dev_id})
+        pltpu.semaphore_wait(ready_sem)
+        pltpu.async_remote_copy(
+            x_ref,
+            y_ref,
+            send_sem,
+            recv_sem,
+            device_id={'x': other_dev_id},
+        )
+        pltpu.semaphore_wait(send_sem, 1)
+        pltpu.semaphore_wait(recv_sem, 1)
+
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.REGULAR,
+      )
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=pltpu.CompilerParams(kernel_type=core_type),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    f = jax.jit(
+        shard_map.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P('x'),
+            out_specs=P('x'),
+            check_vma=False,
+        )
+    )
+    y = f(x)
+    expected = jnp.concatenate([x[8:], x[:8]])
+    np.testing.assert_allclose(y, expected)
 
   @parameterized.named_parameters(
       ('left', 'left'),

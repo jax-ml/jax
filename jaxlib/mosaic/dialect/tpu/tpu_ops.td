@@ -1315,9 +1315,17 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // tpu.enqueue_dma enqueues a DMA operation.
 //
 // source            : Memref to copy from.
-// source_semaphore  : Semaphore to signal after the DMA completes.
+// source_semaphore  : Semaphore to signal after the DMA completes. If a regular
+//                     semaphore is provided, it will be incremented by 1 when
+//                     the DMA is complete on platforms that support this mode
+//                     and should be waited on with semaphore_wait(sem, 1).
+//                     Otherwise WaitDMA should be used.
 // target            : Memref to copy to.
-// target_semaphore  : Semaphore to wait on before the DMA completes.
+// target_semaphore  : Semaphore to wait on before the DMA completes. If a regular
+//                     semaphore is provided, it will be incremented by 1 when
+//                     the DMA is complete on platforms that support this mode
+//                     and should be waited on with semaphore_wait(sem, 1).
+//                     Otherwise WaitDMA should be used.
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
@@ -1329,7 +1337,7 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$source,
-    Optional<MemRefOf<[TPU_DMASemaphoreType]>>:$source_semaphore, // For remote DMAs
+    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
     AnyMemRef:$target,
     MemRefOf<[TPU_SomeSemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
