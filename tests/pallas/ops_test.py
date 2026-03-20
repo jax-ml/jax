@@ -2071,7 +2071,14 @@ class OpsTest(PallasBaseTest):
           and len(out_shape) == 1
           and dtype not in {jnp.int32, jnp.bool_}
       ):
-        self.skipTest("Unsupported tiling")
+        if dtype == jnp.int8:
+          self.skipTest("Unaligned 8-bit 1d store not supported")
+        # 16-bit case
+        if (
+            not jtu.is_cloud_tpu_at_least(2026, 3, 25)
+            or jtu.get_tpu_version() < 6
+        ):
+          self.skipTest("Requires a newer libTPU")
 
     @functools.partial(
         self.pallas_call,
