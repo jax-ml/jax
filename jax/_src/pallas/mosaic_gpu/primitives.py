@@ -2621,7 +2621,7 @@ def _inline_mgpu_flat_transformed_args(
     flat_arg_types,
     pytree_args,
     pytree_ref_transforms,
-  ) -> Sequence[ir.Value]:
+  ) -> Sequence[ir.Value | mgpu.FragmentedArray]:
   flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
   flat_arg_avals = ctx.avals_in[:pytree_args.num_leaves]
   ref_transforms = pytree_ref_transforms.unflatten(flat_args_and_transforms[pytree_args.num_leaves:])
@@ -2647,7 +2647,7 @@ def _inline_mgpu_flat_transformed_args(
           )
       _type_check_mgpu_lane_semantics(a, t)
 
-  flat_transformed : list[ir.Value] = []
+  flat_transformed : list[ir.Value | mgpu.FragmentedArray] = []
   for a, aval, t, transforms, transform_avals in zip(
       flat_args,
       flat_arg_avals,
@@ -2661,6 +2661,7 @@ def _inline_mgpu_flat_transformed_args(
       assert transforms is None
       continue
     assert isinstance(aval, state.AbstractRef)
+    assert isinstance(a, ir.Value)
     a, aval, user_transforms = lowering._handle_transforms(
         ctx,
         aval,
