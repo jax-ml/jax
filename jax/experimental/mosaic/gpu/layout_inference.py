@@ -1470,6 +1470,7 @@ if hasattr(mgpu, "AsyncStoreSmemToTmemOp"):
         {source_variable: [source], destination_variable: [destination]},
     )
 
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
 if hasattr(mgpu, "AsyncStoreSparseMetadataSmemToTmemOp"):
   @_add_constraint_system_derivation_rule(
       mgpu.AsyncStoreSparseMetadataSmemToTmemOp
@@ -1488,6 +1489,29 @@ if hasattr(mgpu, "AsyncStoreSparseMetadataSmemToTmemOp"):
                 destination_variable: cs.TMEMLayout(
                     tcgen05.sparse_meta_layout()
                 ),
+                source_variable: cs.SMEMTiling(None),
+            },
+        ),
+        {source_variable: [source], destination_variable: [destination]},
+    )
+
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.9.2.
+if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreScalesSmemToTmemOp)
+  def _async_store_scales_smem_to_tmem_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncStoreScalesSmemToTmemOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    source = ValueSite(op, VariableType.OPERAND, 0)
+    source_variable = ctx.producer_ref(source)
+    destination = ValueSite(op, VariableType.OPERAND, 1)
+    destination_variable = ctx.producer_ref(destination)
+    # TODO(olechwierowicz): Revisit this assignment after cl/883086276 lands.
+    # In particular for collective and scaled mma we need to a different layout for b_scales.
+    return (
+        cs.ConstraintSystem(
+            assignments={
+                destination_variable: cs.TMEMLayout(tcgen05.scales_layout()),
                 source_variable: cs.SMEMTiling(None),
             },
         ),
