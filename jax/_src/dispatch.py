@@ -51,8 +51,7 @@ from jax._src.monitoring import record_scalar, record_event_duration_secs, recor
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding,
-    is_single_device_sharding)
+    NamedSharding, SingleDeviceSharding, GSPMDSharding)
 from jax._src.stages import SourceInfo
 import numpy as np
 
@@ -522,7 +521,7 @@ def _device_put_sharding_impl(
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if x_is_jax_array:
-    if not x_is_fully_addressable and not is_single_device_sharding(x_sharding):
+    if not x_is_fully_addressable and not x_sharding.num_devices == 1:
       raise ValueError(
           "When the second argument to `device_put` is a Device, the first "
           "argument must be a fully addressable array or a non-addressable "
@@ -533,7 +532,7 @@ def _device_put_sharding_impl(
         return x
       else:
         return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
-    elif is_single_device_sharding(x_sharding):
+    elif x_sharding.num_devices == 1:
       device = x_sharding._device_assignment[0] if device is None else device
       sharding = SingleDeviceSharding(device)
       if not x._committed and not sharding.has_addressable_devices:

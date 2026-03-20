@@ -1207,7 +1207,6 @@ def lower_jaxpr_to_module(
     out_layouts: Sequence[Layout | None | AutoLayout] | None = None,
     arg_names: Sequence[str] | None = None,
     result_names: Sequence[str] | None = None,
-    num_replicas: int = 1,
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
     input_output_aliases: None | tuple[int | None, ...] = None,
@@ -1304,7 +1303,7 @@ def lower_jaxpr_to_module(
     attrs = ctx.module.operation.attributes
     attrs["sym_name"] = ir.StringAttr.get(
         sanitize_name(module_name).rstrip("_"))
-    attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
+    attrs["mhlo.num_replicas"] = i32_attr(1)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     lower_jaxpr_to_fun(
         ctx, module_name, jaxpr, ordered_effects,
