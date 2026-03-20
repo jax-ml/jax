@@ -1366,7 +1366,6 @@ def pmap(
     backend: str | None = None,
     axis_size: int | None = None,
     donate_argnums: int | Iterable[int] = (),
-    global_arg_shapes: tuple[tuple[int, ...], ...] | None = None,
   ) -> Any:
   """Old way of doing parallel map. Use :py:func:`jax.shard_map` instead.
 
@@ -1576,14 +1575,7 @@ def pmap(
   >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
-  if global_arg_shapes is not None:
-    raise ValueError(
-        "global_arg_shapes only worked with sharded_jit which has long been"
-        " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
-        " from pmap.")
-
   import jax._src.pmap as _pmap  # pytype: disable=import-error
-
   return _pmap.pmap(
       fun,
       axis_name,

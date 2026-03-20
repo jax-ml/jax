@@ -59,12 +59,10 @@ from jax._src.sharding import Sharding as JSharding, IndivisibleError
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
-    ArrayMapping, AUTO, UnspecifiedValue, array_mapping_to_axis_resources,
-    SingleDeviceSharding, GSPMDSharding, NamedSharding, PartitionSpec as P)
-from jax._src.util import (safe_map, safe_zip, partition_list,
-                           tuple_update,
-                           unzip2, weakref_lru_cache,
-                           tuple_insert)
+    ArrayMapping, AUTO, UnspecifiedValue, SingleDeviceSharding, GSPMDSharding,
+    NamedSharding, PartitionSpec as P)
+from jax._src.util import (safe_map, safe_zip, partition_list, tuple_update,
+                           unzip2, weakref_lru_cache, tuple_insert)
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.typing import ArrayLike
 
@@ -250,9 +248,6 @@ def _shard_abstract_array(size, axis: int, x):
 _shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 
-PxlaResultHandler = Callable[..., xc._xla.ResultHandler]
-
-
 def global_aval_to_result_handler(
     aval: core.AbstractValue, out_sharding, committed: bool
 ) -> Callable[[Sequence[xc.ArrayImpl]], Any]:
@@ -276,8 +271,8 @@ def global_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
+PxlaResultHandler = Callable[..., xc._xla.ResultHandler]
 global_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
-
 
 
 class InputsHandler:
@@ -315,8 +310,6 @@ class ResultsHandler:
 
   def __call__(self, out_bufs):
     return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
-
-
 
 
 def global_avals_to_results_handler(
@@ -438,9 +431,6 @@ class ExecuteReplicated:
       return out_
 
 
-
-
-
 def _axis_read(axis_env, axis_name):
   try:
     return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
@@ -473,8 +463,6 @@ def _axis_groups(mesh_spec, mesh_axes):
   return tuple(unsafe_map(tuple, groups.T))
 
 
-
-
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
@@ -499,13 +487,6 @@ def mesh_global_to_local(mesh, axes: ArrayMapping, aval):
   return untile_aval_nd(mesh.local_mesh.shape, axes,
                         tile_aval_nd(mesh.shape, axes, aval))
 
-
-full_to_shard_p = core.Primitive('full_to_shard')
-
-@full_to_shard_p.def_abstract_eval
-def _full_to_shard_abstract_eval(x, axes, mesh, **_):
-  # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
-  return tile_aval_nd(mesh.shape, axes, x)
 
 def manual_proto(
     aval: core.ShapedArray,
@@ -534,44 +515,6 @@ def manual_proto(
   proto.iota_transpose_perm = tad_perm
   proto.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
   return proto
-
-@partial(mlir.register_lowering, full_to_shard_p)
-def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
-                            manual_axes: frozenset[sharding_impls.MeshAxisName]):
-  # TODO: Can we short-circuit for replicated values? Probably not.
-  aval_in, = ctx.avals_in
-  aval_out, = ctx.avals_out
-  sharding_proto = (
-      NamedSharding(mesh, array_mapping_to_axis_resources(axes))
-      ._to_xla_hlo_sharding(aval_in.ndim).to_proto())
-  unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, sharding_proto,
-                                  unspecified_dims=unspecified_dims)
-  proto = manual_proto(aval_in, manual_axes, mesh)
-  return (mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, proto,
-                                          unspecified_dims=unspecified_dims),)
-
-shard_to_full_p = core.Primitive('shard_to_full')
-
-@shard_to_full_p.def_abstract_eval
-def _shard_to_full_abstract_eval(x, axes, mesh, **_):
-  # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
-  return untile_aval_nd(mesh.shape, axes, x)
-
-@partial(mlir.register_lowering, shard_to_full_p)
-def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapping, mesh: Mesh,
-                            manual_axes: frozenset[sharding_impls.MeshAxisName]):
-  aval_in, = ctx.avals_in
-  aval_out, = ctx.avals_out
-  proto = manual_proto(aval_in, manual_axes, mesh)  # type: ignore
-  unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())  # type: ignore
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, proto,
-                                  unspecified_dims=unspecified_dims)
-  sharding_proto = (
-      NamedSharding(mesh, array_mapping_to_axis_resources(axes))
-      ._to_xla_hlo_sharding(aval_out.ndim).to_proto())
-  return (mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto,
-                                          unspecified_dims),)
 
 
 def check_if_any_auto(
@@ -686,11 +629,13 @@ def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering):
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, donated_invars, kept_var_idx
 
+
 class MutationData(NamedTuple):
   in_mut: list[core.Ref]
   # out_mut[o_idx] = i_idx, when the output[o_idx] corresponds to the
   # mutable array args[i_idx]. None when it does not correspond to a mutable array.
   out_mut: list[int | None]
+
 
 @weakref_lru_cache
 def _discharge_refs(
@@ -760,20 +705,15 @@ class SemanticallyEqualShardings:
     )
 
 
-
-
 @weakref_lru_cache
-def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend,
-                            num_const_args: int,
-                            in_avals,
-                            semantic_in_shardings, semantic_out_shardings,
-                            in_layouts, out_layouts, num_devices, device_assignment,
-                            donated_invars, all_default_mem_kind,
-                            inout_aliases: None | tuple[None | int, ...],
-                            propagated_out_mem_kinds: tuple[None | str, ...],
-                            platforms: tuple[str, ...],
-                            lowering_parameters: mlir.LoweringParameters,
-                            abstract_mesh: AbstractMesh | None):
+def _cached_lowering_to_hlo(
+    closed_jaxpr: core.ClosedJaxpr, module_name, backend, num_const_args: int,
+    in_avals, semantic_in_shardings, semantic_out_shardings,
+    in_layouts, out_layouts, num_devices, device_assignment, donated_invars,
+    all_default_mem_kind, inout_aliases: None | tuple[None | int, ...],
+    propagated_out_mem_kinds: tuple[None | str, ...], platforms: tuple[str, ...],
+    lowering_parameters: mlir.LoweringParameters,
+    abstract_mesh: AbstractMesh | None):
   # in_avals, in_shardings, in_layouts include the jaxpr_const_args(jaxpr)
   out_avals = closed_jaxpr.out_avals
   jaxpr = closed_jaxpr.jaxpr
@@ -792,8 +732,6 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
   replicated_args = [False] * len(in_avals)
   axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
                                             abstract_mesh)
-  num_partitions = num_devices
-
 
   if num_devices > 1:
     unsupported_effects = effects.ordered_effects.filter_in(closed_jaxpr.effects)
@@ -825,7 +763,7 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
         out_layouts=out_layouts,
         arg_names=arg_names,
         result_names=jaxpr._debug_info.safe_result_paths(len(out_avals)),
-        num_partitions=num_partitions,
+        num_partitions=num_devices,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
         propagated_out_mem_kinds=propagated_out_mem_kinds,
@@ -899,9 +837,9 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
   safe_map(write, jaxpr.constvars, [None] * len(jaxpr.constvars))
 
   for eqn in jaxpr.eqns:
-    # TODO(yashkatariya): Replace this with a registration system when there are
-    # more primitives for layout propagation.
     if eqn.primitive is pjit.sharding_constraint_p:
+      out_eqn_layouts = [eqn.params['layout']]
+    elif eqn.primitive is pjit.layout_constraint_p:
       out_eqn_layouts = [eqn.params['layout']]
     else:
       out_eqn_layouts = [None] * len(eqn.outvars)
@@ -2140,9 +2078,6 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
         "compiled. Perhaps you are calling the compiled executable with a "
         "different enable_x64 mode than when it was AOT compiled? "
         f"{num_mismatch_str} mismatches are:\n{str_errors}")
-
-
-
 
 
 def check_device_backend_on_shardings(shardings) -> bool:
