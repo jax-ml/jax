@@ -348,12 +348,23 @@ NB_MODULE(_sdy_mpmd, m) {
         });
 
   nb::class_<NamedSpmdShardingSpec>(m, "NamedSpmdShardingSpec")
+#if SHARDY_MPMD_JAXLIB_VERSION >= 2
+      .def(nb::init<std::string const&, SpmdTensorPartitionSpec,
+                    std::vector<std::string>, std::optional<std::string>>(),
+           nb::arg("mesh_name"), nb::arg("tensor_spec"),
+           nb::arg("unreduced_axes") = std::vector<std::string>(),
+           nb::arg("memory_kind").none() = std::nullopt)
+      .def_ro("mesh_name", &NamedSpmdShardingSpec::mesh_name)
+      .def_ro("tensor_spec", &NamedSpmdShardingSpec::tensor_spec)
+      .def_ro("unreduced_axes", &NamedSpmdShardingSpec::unreduced_axes)
+#else
       .def(nb::init<std::string const&, SpmdTensorPartitionSpec,
                     std::optional<std::string>>(),
            nb::arg("mesh_name"), nb::arg("tensor_spec"),
            nb::arg("memory_kind").none() = std::nullopt)
       .def_ro("mesh_name", &NamedSpmdShardingSpec::mesh_name)
       .def_ro("tensor_spec", &NamedSpmdShardingSpec::tensor_spec)
+#endif
       .def_ro("memory_kind", &NamedSpmdShardingSpec::memory_kind);
   nb::class_<FunctionIOShardingSpecsAndMeshes>(
       m, "FunctionIOShardingSpecsAndMeshes")
