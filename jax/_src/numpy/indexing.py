@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import indexing
+from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
@@ -80,7 +81,7 @@ class IndexType(enum.Enum):
       return cls.INTEGER
     elif _is_boolean_index(idx):
       return cls.BOOLEAN
-    elif isinstance(idx, (Array, np.ndarray)):
+    elif isinstance(idx, (Array, np.ndarray, literals.TypedNdArray)):
       if dtypes.issubdtype(idx.dtype, np.integer):
         return cls.ARRAY
       else:
@@ -266,7 +267,7 @@ class NDIndexer:
       if not core.is_concrete(idx.index):
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(core.typeof(idx.index))
-      assert isinstance(idx.index, (bool, np.ndarray, Array, list))
+      assert isinstance(idx.index, (bool, np.ndarray, Array, literals.TypedNdArray, list))
       if np.ndim(idx.index) == 0:  # pyrefly: ignore[bad-argument-type]
         # Scalar booleans
         assert idx.consumed_axes == ()
@@ -340,7 +341,7 @@ class NDIndexer:
           normed_index = idx.index + size if idx.index < 0 else idx.index  # type: ignore[assignment,operator]
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
       elif idx.typ == IndexType.ARRAY:
-        assert isinstance(idx.index, (Array, np.ndarray))
+        assert isinstance(idx.index, (Array, np.ndarray, literals.TypedNdArray))
         axis, = idx.consumed_axes
         if dtypes.issubdtype(idx.index.dtype, np.unsignedinteger):
           normed_index = idx.index
@@ -1194,7 +1195,7 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
                            "fill_value argument to indexed get()")
     if np.ndim(fill_value) != 0:
       raise ValueError("fill_value argument to indexed get() must be a scalar")
-    if isinstance(fill_value, np.ndarray):
+    if isinstance(fill_value, (np.ndarray, literals.TypedNdArray)):
       fill_value = fill_value.item()
 
   if indexer.scalar_bool_dims:
@@ -1474,7 +1475,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
 
 def _should_unpack_list_index(x):
   """Helper for eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, Array))
+  return (isinstance(x, (np.ndarray, Array, literals.TypedNdArray))
           and np.ndim(x) != 0
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
@@ -1485,7 +1486,7 @@ def eliminate_deprecated_list_indexing(idx):
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
     if isinstance(idx, Sequence) and not isinstance(
-        idx, (Array, np.ndarray, str)
+        idx, (Array, np.ndarray, literals.TypedNdArray, str)
     ):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
@@ -1526,7 +1527,7 @@ def _is_slice_element_none_or_constant_or_symbolic(elt):
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
   return np.isscalar(x) or (
-      isinstance(x, (np.ndarray, Array))
+      isinstance(x, (np.ndarray, literals.TypedNdArray, Array))
       and np.ndim(x) == 0
   )
 

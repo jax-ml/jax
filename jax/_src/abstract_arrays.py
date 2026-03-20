@@ -21,8 +21,8 @@ import weakref
 
 from jax._src import config
 from jax._src import core
-from jax._src import dtypes
 from jax._src import literals
+from jax._src import dtypes
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache
 
@@ -68,7 +68,17 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype), sharding=None)
 
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
-core.pytype_aval_mappings[literals.TypedNdArray] = lambda x: x.aval
+
+
+def _make_shaped_array_for_typed_ndarray(
+    x: literals.TypedNdArray,
+) -> ShapedArray:
+  dtype = x.dtype
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape, dtype, sharding=None, weak_type=x.weak_type)
+
+
+core.pytype_aval_mappings[literals.TypedNdArray] = _make_shaped_array_for_typed_ndarray
 
 
 def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
@@ -122,8 +132,11 @@ core.pytype_aval_mappings[complex] = _complex_aval
 core.literalable_types.update(dtypes.python_scalar_types)
 
 
+def _aval_for_typed_scalar(x):
+  return ShapedArray((), x.dtype, weak_type=True, sharding=None)
+
 for t in literals.typed_scalar_types:
-  core.pytype_aval_mappings[t] = lambda x: x.aval
+  core.pytype_aval_mappings[t] = _aval_for_typed_scalar
 core.literalable_types.update(literals.typed_scalar_types)
 
 _ndarray_dtype_cache = {}

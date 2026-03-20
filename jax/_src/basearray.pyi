@@ -16,6 +16,7 @@ from types import ModuleType
 from typing import Any, Protocol, runtime_checkable, Union
 import numpy as np
 
+from jax._src import literals
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -281,7 +282,8 @@ ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
   StaticScalar,  # valid scalars
-  Any,  # TODO(phawkins): remove after fixing downstream pytype problems.
+  # Typed array and scalar types
+  literals.TypedNdArray,
 ]
 
 

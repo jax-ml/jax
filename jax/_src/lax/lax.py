@@ -37,8 +37,8 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
 from jax._src import literals
+from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -1681,8 +1681,8 @@ def _convert_element_type(
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literals.TypedNdArray(
-        np.asarray(operand).astype(new_dtype), weak_type=weak_type)
+    operand = literals.TypedNdArray(np.asarray(operand).astype(new_dtype),
+                                         weak_type)
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and

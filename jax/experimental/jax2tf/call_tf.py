@@ -38,8 +38,8 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import core
-from jax._src import effects
 from jax._src import literals
+from jax._src import effects
 from jax._src import util
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir

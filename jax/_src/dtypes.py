@@ -32,7 +32,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-
+from jax._src import literals
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -910,12 +910,18 @@ def register_weak_scalar_type(typ: type):
   """Register a scalar type as a weak type."""
   _registered_weak_types.add(typ)
 
-_registered_weak_types: set[JAXType] = set()
+_registered_weak_types: set[JAXType] = {
+    literals.TypedInt,
+    literals.TypedFloat,
+    literals.TypedComplex,
+}
 
 
 def is_weakly_typed(x: Any) -> bool:
   if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
+  if isinstance(x, literals.TypedNdArray):
+    return x.weak_type
   try:
     return x.aval.weak_type
   except AttributeError:
@@ -959,13 +965,13 @@ def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str) -> DType:
     return canonical_dtype
 
 
-_types_whose_dtype_should_not_be_canonicalized: tuple[type, ...] = (
+_types_whose_dtype_should_not_be_canonicalized = (
     Array,
+    literals.TypedNdArray,
+    literals.TypedInt,
+    literals.TypedFloat,
+    literals.TypedComplex,
 )
-
-def register_type_whose_dtype_should_not_be_canonicalized(typ: type):
-  global _types_whose_dtype_should_not_be_canonicalized
-  _types_whose_dtype_should_not_be_canonicalized += (typ,)
 
 def dtype(x: Any) -> DType:
   """Return the dtype object for a value or type.

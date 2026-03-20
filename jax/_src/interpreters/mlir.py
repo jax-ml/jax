@@ -38,9 +38,9 @@ from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import frozen_dict
 from jax._src import hashable_array
+from jax._src import literals
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
-from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
 from jax._src import source_info_util

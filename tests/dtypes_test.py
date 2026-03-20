@@ -30,7 +30,6 @@ import jax
 from jax import numpy as jnp
 from jax._src import earray
 from jax._src import config
-from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
 from jax._src import test_util as jtu
@@ -566,6 +565,8 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
 
   def test_custom_tangent_dtype(self):
+    from jax._src import core
+
     class scale(dtypes.extended):
       pass
 
@@ -631,6 +632,7 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertTrue(dtypes.issubdtype(ScaleTy(dtypes.float8_e5m2), scale))
 
   def test_custom_tangent_dtype_with_scan(self):
+    from jax._src import core
 
     class ScalesTyRules:
       # tell JAX how to lower this dtype to an HLO representation dtype
@@ -860,6 +862,7 @@ class EArrayTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
   def test_extended_dtypes_at_rest(self, jit):
     # Test a trivial isomorphic-to-float32 extended dtype working with EArray
+    from jax._src import core
     from jax._src.interpreters import pxla
 
     class foo(dtypes.extended): pass
