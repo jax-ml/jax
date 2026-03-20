@@ -40,6 +40,10 @@ on:
         options:
         - "1"
         - "0"
+      wheel-version-suffix:
+        description: "Version suffix for post-releases (e.g., .post3). Leave empty for normal builds."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -77,6 +81,10 @@ on:
         description: "S3 location prefix to where the artifacts should be uploaded"
         default: 's3://jax-ci-amd/jax-rocm-plugin-wheels'
         type: string
+      wheel-version-suffix:
+        description: "Version suffix for post-releases (e.g., .post3). Leave empty for normal builds."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -140,6 +148,7 @@ jobs:
                 --config=rocm_release_wheel \
                 --config=rocm_rbe \
                 --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
+                ${{ inputs.wheel-version-suffix && format('--action_env=WHEEL_VERSION_SUFFIX={0}', inputs.wheel-version-suffix) || '' }} \
                 $DEPLOY_TARGET -- $JAXCI_OUTPUT_DIR/
         env:
           DEPLOY_TARGET: ${{ inputs.artifact == 'jax-rocm-plugin' && '//jaxlib/tools:deploy_rocm_plugin_wheel' || '//jaxlib/tools:deploy_rocm_pjrt_wheel' }}
