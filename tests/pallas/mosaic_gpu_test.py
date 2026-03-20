@@ -4569,7 +4569,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_pairs = jax.random.randint(jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8)
     x_sparse = valid_pairs[x_pairs]
     assert x_sparse.shape == (m, k // 4, 2)
-    z = f(x, y, plgpu.format_tcgen05_sparse_metadata(x_sparse.astype(jnp.uint2)))
+    z = f(x, y, plgpu.format_tcgen05_sparse_metadata(x_sparse.astype(jnp.uint2), dtype))
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
