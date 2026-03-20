@@ -156,7 +156,7 @@ class SearchSorted(VJPHiPrimitive):
     primal_out = self(*primals)
     return primal_out, np.empty(primal_out.shape, dtype=dtypes.float0)
 
-  def vjp_fwd(self, nzs_in: Any, *args: Array) -> tuple[Array, None]:
+  def vjp_fwd(self, nzs_in: Any, /, *args: Array) -> tuple[Array, None]:
     return (self(*args), None)
 
   def vjp_bwd_retval(self, res: Any, g: Any):
@@ -354,41 +354,32 @@ class BinaryUfuncMixin:
 
   def batch(
       self,
-      _axis_data: Any,
+      axis_data: Any,
       args: tuple[Array, Array],
-      bdims: tuple[int | None, int | None]
+      dims: tuple[int | None, int | None]
   ) -> tuple[Array, int | None]:
-    del _axis_data  # unused
-    out_bdim: int | None
-    x, y = args
-    print(bdims, [arg.shape for arg in args], self.out_aval)
-    if bdims[0] is None and bdims[1] is None:
-      out_bdim = None
-    elif bdims[0] is not None and bdims[1] is None:
-      #if x.ndim == 1:
+    del axis_data  # unused
 
+    if dims[0] is None and dims[1] is None:
+      return self(*args), None  # pyrefly: ignore[not-callable]
 
+    def bdim_to_front(arg, bdim):
+      if bdim is None:
+        return lax.expand_dims(arg, [0]) if arg.shape else arg
+      elif arg.ndim == 1:
+        assert bdim == 0
+        return lax.expand_dims(arg, range(1, len(self.out_aval.shape) + 1))
+      else:
+        return jnp.moveaxis(arg, bdim, 0)
 
-      if y.ndim > 0:
-        y = lax.expand_dims(y, (bdims[0],))
-      out_bdim = bdims[0]
-    elif bdims[0] is None and bdims[1] is not None:
-      # TODO(jakevdp): this is wrong. Need to handle scalars / batched scalars.
-      if x.ndim > 0:
-        x = lax.expand_dims(x, (bdims[1],))
-      out_bdim = bdims[1]
-    else:
-      assert bdims[0] is not None
-      assert bdims[1] is not None
-      y = jnp.moveaxis(y, bdims[1], bdims[0])
-      out_bdim = bdims[0]
+    x, y = map(bdim_to_front, args, dims)
     batched_caller = self.__class__(core.typeof(x), core.typeof(y))
-    return batched_caller(x, y), out_bdim  # type: ignore[operator]
+    return batched_caller(x, y), 0  # type: ignore[operator]
 
 
 class NumpyMultiply(BinaryUfuncMixin, VJPHiPrimitive):
   """Hijax primitive for numpy.multiply."""
-  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
     if dtypes.dtype(x) == bool:
       return lax.bitwise_and(x, y)
     return lax.mul(x, y)
@@ -398,7 +389,7 @@ class NumpyMultiply(BinaryUfuncMixin, VJPHiPrimitive):
     x_dot, y_dot = tangents
     return multiply(x, y), add(multiply(x, y_dot), multiply(x_dot, y))
 
-  def vjp_fwd(self, nzs_in: Any, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:
+  def vjp_fwd(self, nzs_in: Any, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
     del nzs_in  # unused
     return self(x, y), (x, y)
 
@@ -414,7 +405,7 @@ def multiply(x: ArrayLike, y: ArrayLike) -> Array:
 
 class NumpyAdd(BinaryUfuncMixin, VJPHiPrimitive):
   """Hijax primitive for numpy.add."""
-  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
     if dtypes.dtype(x) == bool:
       return lax.bitwise_or(x, y)
     return lax.add(x, y)
@@ -422,7 +413,7 @@ class NumpyAdd(BinaryUfuncMixin, VJPHiPrimitive):
   def jvp(self, primals: tuple[Array, Array], tangents: tuple[Array, Array]) -> tuple[Array | ad_util.Zero, Array | ad_util.Zero]:
     return add(*primals), add(*tangents)
 
-  def vjp_fwd(self, nzs_in: Any, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:
+  def vjp_fwd(self, nzs_in: Any, /, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
     del nzs_in  # unused
     return self(x, y), (x, y)
 
@@ -437,13 +428,13 @@ def add(x: ArrayLike, y: ArrayLike) -> Array:
 
 class NumpySubtract(BinaryUfuncMixin, VJPHiPrimitive):
   """Hijax primitive for numpy.subtract."""
-  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
     return lax.sub(x, y)
 
   def jvp(self, primals: tuple[Array, Array], tangents: tuple[Array, Array]) -> tuple[Array | ad_util.Zero, Array | ad_util.Zero]:
     return subtract(*primals), subtract(*tangents)
 
-  def vjp_fwd(self, nzs_in: Any, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:
+  def vjp_fwd(self, nzs_in: Any, /, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
     del nzs_in  # unused
     return self(x, y), (x, y)
 
