@@ -977,6 +977,57 @@ llvm::LogicalResult AsyncStoreSparseMetadataSmemToTmemOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult AsyncStoreScalesSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "element type.",
+        source_type.getElementType(), dest_type.getElementType());
+  }
+
+  llvm::ArrayRef<int64_t> tmem_shape = dest_type.getShape();
+  if (tmem_shape[0] % 128 != 0) {
+    return error(
+        "The first dimension of the TMEM memref must be a multiple of "
+        "128, but got {0}.",
+        tmem_shape[0]);
+  }
+  if (tmem_shape[1] % 4 != 0) {
+    return error(
+        "The second dimension of the TMEM memref must be a multiple of "
+        "4, but got {0}.",
+        tmem_shape[1]);
+  }
+
+  llvm::ArrayRef<int64_t> smem_shape = source_type.getShape();
+  std::vector<int64_t> expected_smem_shape_vec = {tmem_shape[0] / 128,
+                                                  tmem_shape[1] / 4, 32, 16};
+  llvm::ArrayRef<int64_t> expected_smem_shape(expected_smem_shape_vec);
+  if (smem_shape != expected_smem_shape) {
+    return error("The `source` memref must have shape ({0}), but got ({1}).",
+                 absl::StrJoin(expected_smem_shape, ", "),
+                 absl::StrJoin(smem_shape, ", "));
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult TmemAllocOp::verify() {
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);

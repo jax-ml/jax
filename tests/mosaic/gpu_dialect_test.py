@@ -1366,6 +1366,94 @@ ir.MLIRError,
       mgpu.dialect.async_store_sparse_metadata_smem_to_tmem(smem, tmem)
     self.assertTrue(self.module.operation.verify())
 
+  def test_async_store_scales_smem_to_tmem_op_invalid_dtype(self):
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f16, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 8), f16, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"operand #0 must be 4D memref of f8E8M0FNU type or f8E4M3FN type values",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_scales_smem_to_tmem_op_invalid_smem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      f8e8 = ir.Float8E8M0FNUType.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f8e8, memory_space=mgpu_utils.tmem())
+      tmem_ty = ir.MemRefType.get((256, 8), f8e8, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `source` memref must be in SMEM",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_scales_smem_to_tmem_op_invalid_tmem_memory_space(self):
+    with ir.InsertionPoint(self.module.body):
+      f8e8 = ir.Float8E8M0FNUType.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f8e8, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 8), f8e8, memory_space=mgpu_utils.smem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The tmem memref must have a mosaic_gpu.tmem memory space",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_scales_smem_to_tmem_op_invalid_tmem_shape_m(self):
+    with ir.InsertionPoint(self.module.body):
+      f8e8 = ir.Float8E8M0FNUType.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f8e8, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((64, 8), f8e8, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The first dimension of the TMEM memref must be a multiple of 128",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_scales_smem_to_tmem_op_invalid_tmem_shape_n(self):
+    with ir.InsertionPoint(self.module.body):
+      f8e8 = ir.Float8E8M0FNUType.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f8e8, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 3), f8e8, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The second dimension of the TMEM memref must be a multiple of 4",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_scales_smem_to_tmem_op_invalid_smem_shape(self):
+    with ir.InsertionPoint(self.module.body):
+      f8e8 = ir.Float8E8M0FNUType.get()
+      smem_ty = ir.MemRefType.get((2, 2, 32, 17), f8e8, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 8), f8e8, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The `source` memref must have shape \(2, 2, 32, 16\)",
+    ):
+      self.module.operation.verify()
+
+  @parameterized.parameters(ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+  def test_async_store_scales_smem_to_tmem_op_ok(self, valid_dtype):
+    f8 = valid_dtype.get()
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get((2, 2, 32, 16), f8, memory_space=mgpu_utils.smem())
+      tmem_ty = ir.MemRefType.get((256, 8), f8, memory_space=mgpu_utils.tmem())
+      smem, tmem = undefs(smem_ty, tmem_ty)
+      mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
+    self.assertTrue(self.module.operation.verify())
+
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
       (tmem_ref,) = undefs(
