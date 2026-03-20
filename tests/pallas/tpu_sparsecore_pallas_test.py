@@ -2105,9 +2105,24 @@ class MpmdMapTest(PallasSCTest):
 
     super().setUp()
 
-  def test_parallel_subkernels(self):
+  @parameterized.product(use_tc_tiling=[False, True])
+  def test_parallel_subkernels(self, use_tc_tiling):
     if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
       self.skipTest("Need a newer libtpu")
+
+    if use_tc_tiling:
+      # When using TC tiling
+      #
+      #   * infer-memref-layout chooses T(256) for `out_hbm_ref`,
+      #   * making the `x.size`-shaped slices non-tile-unaligned,
+      #   * so we need to realize the DMA as a stream,
+      #   * but SMEM->HBM on the scalar subcore must be a DMA,
+      #   * and we get a compilation error.
+      #
+      # TODO(slebedev): Remove the skip once infer-memref-layout chooses
+      # T(128) for 1D refs.
+      self.skipTest("Needs a change in infer-memref-layout to allow TC tiling")
+
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core",
         subcore_axis_name="subcore",
@@ -2117,12 +2132,17 @@ class MpmdMapTest(PallasSCTest):
         axis_name="scs_core", num_cores=self.sc_info.num_cores
     )
 
-    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+    x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
 
     def vector_subcore_fn(x_hbm_ref, out_hbm_ref):
       scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
       pltpu.sync_copy(x_hbm_ref, scratch_ref)
-      scratch_ref[...] += 2 * scratch_ref[...]
+
+      @pl.loop(0, x.size, step=self.num_lanes)
+      def _(i):
+        s = pl.ds(i, self.num_lanes)
+        scratch_ref[s] += 2 * scratch_ref[s]
+
       pltpu.sync_copy(scratch_ref, out_hbm_ref.at[:x.size])
 
     def scalar_subcore_fn(x_hbm_ref, out_hbm_ref):
@@ -2138,6 +2158,9 @@ class MpmdMapTest(PallasSCTest):
     out = mpmd.mpmd_map(
         [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
         out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
+        compiler_params=pltpu.CompilerParams(
+            use_tc_tiling_on_sc=use_tc_tiling,
+        ),
     )(x)
     np.testing.assert_array_equal(out[:x.size], x + 2 * x)
     np.testing.assert_array_equal(out[x.size:], x + 3 * x)

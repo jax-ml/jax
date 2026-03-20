@@ -208,12 +208,9 @@ def _resolve_tiling(
 ) -> tpu_custom_call.Tiling | None:
   if mosaic_params.use_tc_tiling_on_sc is None:
     return None
-  if mosaic_params.kernel_type not in (
-      tpu_core.CoreType.SC_SCALAR_SUBCORE,
-      tpu_core.CoreType.SC_VECTOR_SUBCORE,
-  ):
+  if mosaic_params.kernel_type is tpu_core.CoreType.TC:
     raise ValueError(
-        "use_tc_tiling_on_sc= is only supported for SC_*_SUBCORE kernels"
+        "use_tc_tiling_on_sc= is not supported for TC kernels"
     )
 
   return (
