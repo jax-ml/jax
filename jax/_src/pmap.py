@@ -54,7 +54,7 @@ AxisName = Hashable
 
 @partial(api_boundary, repro_api_name="jax.pmap")
 def pmap(
-    fun: Callable,
+    f: Callable,
     axis_name: AxisName | None = None,
     *,
     in_axes: int | None | Sequence[Any] = 0,
@@ -278,11 +278,10 @@ def pmap(
       raise ValueError("'devices' argument to pmap must be non-empty, or None.")
     devices = tuple(devices)
   axis_name, static_broadcasted_tuple, donate_tuple = _prepare_pmap(
-      fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
-      out_axes)
+      f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
     axis_name = repr(axis_name)
-  wrapped_fun = _pmap_wrap_init(fun, static_broadcasted_tuple)
+  wrapped_fun = _pmap_wrap_init(f, static_broadcasted_tuple)
   out_axes_flat, out_axes_tree = tree_flatten(out_axes)
   out_axes_flat = tuple(out_axes_flat)
 
@@ -312,7 +311,7 @@ def pmap(
     return (cached, jitted_f, dyn_args_flat, dyn_args_tree, donate_tuple,
             process_count, trace_state_clean)
 
-  @util.wraps(fun)
+  @util.wraps(f)
   def wrapped(*args, **kwargs):
     cached, jitted_f, dyn_args_flat, _, _, process_count, trace_state_clean = (
         infer_params(*args, **kwargs))
