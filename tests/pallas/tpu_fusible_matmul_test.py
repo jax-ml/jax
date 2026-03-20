@@ -256,17 +256,17 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
     @jax.jit
     @fuser.fuse
-    def matmul_relu(x, y):
+    def matmul_reduce_sum(x, y):
       x = fusible_matmul(x, y, bm=512, bn=512)
       x = jnp.sum(x, axis=1)
       return x
 
     @jit_no_excess_precision
-    def matmul_relu_ref(x, y):
+    def matmul_reduce_sum_ref(x, y):
       return mm_ref(x, y).sum(axis=1)
 
     np.testing.assert_allclose(
-        matmul_relu(x, y), matmul_relu_ref(x, y), atol=1e-3
+        matmul_reduce_sum(x, y), matmul_reduce_sum_ref(x, y), atol=1e-3
     )
 
   def test_matmul_reduce_sum_broadcast(self):
