@@ -752,6 +752,21 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         x.astype(dtype) * jnp.broadcast_to(x_s[:, None], x.shape),
     )
 
+  def test_inline_mgpu_scalar_args(self):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+    )
+    def kernel(o_ref):
+      @plgpu.inline_mgpu(
+          arg_types=(plgpu.RefType(), plgpu.Layout.WG_SPLAT),
+      )
+      def write(ctx, ref, value):
+        del ctx
+        memref_dialect.store(value.registers.item(), ref, [])
+      write(o_ref, jnp.array(42.0, dtype=jnp.float32))
+    np.testing.assert_array_equal(kernel(), 42.0)
+
   def test_sync_copy(self):
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)

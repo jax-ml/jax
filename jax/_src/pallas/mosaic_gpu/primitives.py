@@ -2633,19 +2633,26 @@ def _inline_mgpu_flat_transformed_args(
       ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp
   )
 
-  if not is_wg_semantics:
+  if is_wg_semantics:
+    flat_args = [
+        lowering._ensure_ir_value(a, aval.dtype) if not isinstance(t, RefType) else a
+        for a, aval, t in zip(flat_args, flat_arg_avals, flat_arg_types)
+    ]
+  else:
     flat_args = [
         lowering._ensure_fa(a, aval.dtype) if not isinstance(t, RefType) else a
         for a, aval, t in zip(flat_args, flat_arg_avals, flat_arg_types)
     ]
-    for a, aval, t in zip(flat_args, flat_arg_avals, flat_arg_types):
-      if is_warp_semantics and not isinstance(t, RefType):
-        if not isinstance(aval, jax_core.ShapedArray) or aval.shape:
-          raise ValueError(
-              "inline_mgpu in a single-warp context only supports scalar"
-              f" arrays (and Refs). Got {aval}."
-          )
+
+  for a, aval, t in zip(flat_args, flat_arg_avals, flat_arg_types):
+    if not is_wg_semantics:
       _type_check_mgpu_lane_semantics(a, t)
+    if is_warp_semantics and not isinstance(t, RefType):
+      if not isinstance(aval, jax_core.ShapedArray) or aval.shape:
+        raise ValueError(
+            "inline_mgpu in a single-warp context only supports scalar"
+            f" arrays (and Refs). Got {aval}."
+        )
 
   flat_transformed : list[ir.Value | mgpu.FragmentedArray] = []
   for a, aval, t, transforms, transform_avals in zip(
@@ -2880,8 +2887,10 @@ def _populate_custom_primitive_op_block(
             _registers=registers, _layout=layout, _is_signed=is_signed
         )
         fn_inputs.append(fa)
-      else:
-        fn_inputs.append(arg)
+      else:  # scalar case.
+        is_signed = mgpu_utils.is_signed(aval.dtype)
+        fa = mgpu.FragmentedArray.splat(arg, (), is_signed=is_signed)
+        fn_inputs.append(fa)
 
     args = jax.tree.unflatten(pytree_args, fn_inputs)
     inner_ret = mgpu_fn(ctx.launch_ctx, *args)
