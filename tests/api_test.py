@@ -5000,18 +5000,18 @@ class APITest(jtu.JaxTestCase):
     def f(i):
       return jnp.sum(i)
 
-    saw_exception = False
+    saw_exception: Exception | None = None
 
     def thread(i0):
       nonlocal saw_exception
       try:
         for i in range(i0, 100, 10):
-          if saw_exception:
+          if saw_exception is not None:
             break
           with config.explain_cache_misses(True):
             f(jnp.zeros(i))
-      except Exception:
-        saw_exception = True
+      except Exception as e:
+        saw_exception = e
         raise
 
     t = [threading.Thread(target=thread, args=(i,)) for i in range(10)]
@@ -5019,7 +5019,8 @@ class APITest(jtu.JaxTestCase):
       i.start()
     for i in t:
       i.join()
-    self.assertFalse(saw_exception)
+    self.assertIsNone(saw_exception,
+                      msg=f"Unexpected exception was raised: {saw_exception}")
 
   @parameterized.named_parameters([
       {"testcase_name": f"{np.dtype(dtype)}", "dtype": dtype}
