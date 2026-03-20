@@ -35,8 +35,8 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import literals
 from jax._src import jaxpr_util
+from jax._src import literals
 from jax._src import op_shardings
 from jax._src import pjit
 from jax._src import profiler
@@ -201,7 +201,8 @@ for _t in dtypes.python_scalar_types:
 
 def _shard_typed_scalar(xs, shardings, layouts, copy_semantics):
   return _shard_np_array(
-      [literals.TypedNdArray(np.array(x, dtype=x.dtype), weak_type=True)
+      [literals.TypedNdArray(
+        np.array(x, dtype=x.dtype), weak_type=True)
        for x in xs],
       shardings, layouts, copy_semantics
   )

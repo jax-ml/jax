@@ -52,10 +52,10 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
-from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
+from jax._src import literals
 from jax._src import sharding_impls
 from jax._src.ad_checkpoint import saved_residuals, remat3, checkpoint_name3
 from jax._src.interpreters import ad as ad_internal
@@ -2132,22 +2132,20 @@ class APITest(jtu.JaxTestCase):
         jax.device_put(literals.TypedFloat(1, np.dtype(np.float64))).dtype)
     self.assertEqual(
         np.dtype(np.complex64),
-        jax.device_put(literals.TypedComplex(
-            1,np.dtype(np.complex64))).dtype)
+        jax.device_put(literals.TypedComplex(1, np.dtype(np.complex64))).dtype)
     if jtu.device_under_test() != "tpu":
       # The TPU compiler does not support complex128.
       self.assertEqual(
           np.dtype(np.complex128),
-          jax.device_put(literals.TypedComplex(
-              1, np.dtype(np.complex128))).dtype)
+          jax.device_put(literals.TypedComplex(1, np.dtype(np.complex128))).dtype)
     self.assertEqual(
         np.dtype(np.int32),
-        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int32),
-                                             weak_type=False)).dtype)
+        jax.device_put(literals.TypedNdArray(
+          np.array([1], dtype=np.int32), weak_type=False)).dtype)
     self.assertEqual(
         np.dtype(np.int64),
-        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int64),
-                                             weak_type=False)).dtype)
+        jax.device_put(literals.TypedNdArray(
+          np.array([1], dtype=np.int64), weak_type=False)).dtype)
 
 
   def test_vmap_inconsistent_sizes_constructs_proper_error_message(self):
