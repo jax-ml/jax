@@ -33,6 +33,7 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
+from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -1855,6 +1856,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       pivoting=[False, True],
   )
   def testQrMultiply(self, shape, dtype, mode, pivoting):
+    if jaxlib_extension_version < 422:
+      self.skipTest("Requires jaxlib_extension_version >= 422")
     if pivoting and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting is only supported on CPU and GPU.")
     rng = jtu.rand_default(self.rng())
@@ -1896,6 +1899,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       mode=['right', 'left'],
   )
   def testQrMultiply1D(self, shape, dtype, mode):
+    if jaxlib_extension_version < 423:
+      self.skipTest("Requires jaxlib_extension_version >= 423")
     rng = jtu.rand_default(self.rng())
     m, n = shape[-2:]
     k = min(m, n)
@@ -1965,6 +1970,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       transpose=[False, True],
   )
   def testOrmqr(self, a_shape, c_shape, dtype, left, transpose):
+    if jaxlib_extension_version < 423:
+      self.skipTest("Requires jaxlib_extension_version >= 423")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(a_shape, dtype), rng(c_shape, dtype)]
 
