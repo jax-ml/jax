@@ -127,7 +127,7 @@ from jax._src.api import live_arrays as live_arrays
 from jax._src.api import make_jaxpr as make_jaxpr
 from jax._src.api import named_call as named_call
 from jax._src.api import named_scope as named_scope
-from jax._src.pmap import pmap as pmap
+from jax._src.api import pmap as pmap
 from jax._src.xla_bridge import process_count as process_count
 from jax._src.xla_bridge import process_index as process_index
 from jax._src.xla_bridge import process_indices as process_indices

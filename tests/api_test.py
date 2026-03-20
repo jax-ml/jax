@@ -3557,7 +3557,7 @@ class APITest(jtu.JaxTestCase):
   def test_pmap_in_axes_bool_error(self):
     # https://github.com/jax-ml/jax/issues/6372
     with self.assertRaisesRegex(TypeError, "must be an int"):
-      jax.pmap(lambda x: x, in_axes=False)(jnp.zeros(1))
+      api.pmap(lambda x: x, in_axes=False)(jnp.zeros(1))
 
   def test_vmap_empty_arguments(self):
     with self.assertRaisesRegex(
@@ -3570,7 +3570,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "pmap requires at least one argument with a mapped axis."
     ):
-      jax.pmap(lambda x: x)({})
+      api.pmap(lambda x: x)({})
 
   @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
@@ -3582,28 +3582,28 @@ class APITest(jtu.JaxTestCase):
     # All defaults
     with jtu.assert_num_jit_and_pmap_compilations(1):
       for _ in range(2):
-        jax.pmap(f)(x, x)
+        api.pmap(f)(x, x)
 
     # With axis name
     with jtu.assert_num_jit_and_pmap_compilations(1):
       for _ in range(2):
-        jax.pmap(f, 'i')(x, x)
+        api.pmap(f, 'i')(x, x)
 
     # With in_axes and out_axes
     for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
       with jtu.assert_num_jit_and_pmap_compilations(1):
         for _ in range(2):
-          jax.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+          api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
 
     # Forward-mode AD on the outside
     with jtu.assert_num_jit_and_pmap_compilations(1):
       for _ in range(2):
-        api.jvp(jax.pmap(f), (x, x), (x, x))
+        api.jvp(api.pmap(f), (x, x), (x, x))
 
     # Reverse-mode AD on the outside. One compilation for forward, one for backward.
     with jtu.assert_num_jit_and_pmap_compilations(2):
       for _ in range(2):
-        api.vjp(jax.pmap(f), x, x)[1]((x, x))
+        api.vjp(api.pmap(f), x, x)[1]((x, x))
 
   def test_device_array_repr(self):
     rep = jnp.ones(()) + 1.
@@ -3981,7 +3981,7 @@ class APITest(jtu.JaxTestCase):
     with jax.checking_leaks():
       lst = []
 
-      @jax.pmap
+      @api.pmap
       def f(x):
         lst.append(x)
         return x
@@ -4012,7 +4012,7 @@ class APITest(jtu.JaxTestCase):
       api.vmap(f)(np.arange(3))  # doesn't crash
       api.grad(f)(3.)  # doesn't crash
 
-      @jax.pmap
+      @api.pmap
       def f(x):
         return x
       f(np.ones(1))  # doesn't crash
@@ -4185,7 +4185,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(jnp.asarray(y), jnp.cos(jnp.array([1., 2., 3.])))
 
     x = AlexArray(jnp.array([[1., 2., 3.]]))
-    y = jax.pmap(jnp.sin)(x)
+    y = api.pmap(jnp.sin)(x)
     self.assertAllClose(y, jnp.sin(jnp.array([[1., 2., 3.]])))
 
     x = jnp.array(1)
@@ -4267,7 +4267,7 @@ class APITest(jtu.JaxTestCase):
     class Foo(enum.IntEnum):
       bar = 1
 
-    @jax.pmap
+    @api.pmap
     def f(_):
       return Foo.bar
 
@@ -7637,17 +7637,17 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.device_supports_buffer_donation()
   def test_pmap_donate_argnums_invalidates_input(self):
-    move = jax.pmap(lambda x: x + x - x, donate_argnums=0)
+    move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()
-    x = jax.pmap(lambda x: x)(jnp.ones([n]))
+    x = api.pmap(lambda x: x)(jnp.ones([n]))
     y = move(x)
     self.assertDeleted(x)
     np.testing.assert_allclose(y, [1.] * n)
 
   @jtu.device_supports_buffer_donation()
   def test_pmap_nested_donate_ignored(self):
-    pmap_fun = jit(lambda x: jax.pmap(lambda y: y ** 2, donate_argnums=0)(x))
-    a = jax.pmap(lambda x: x)(jnp.array([1]))
+    pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
+    a = api.pmap(lambda x: x)(jnp.array([1]))
 
     # NOTE(mattjj): stopped raising error here and instead just ignored
     # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
