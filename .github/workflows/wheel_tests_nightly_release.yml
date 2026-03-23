@@ -37,6 +37,9 @@ on:
         required: false
         default: 'no'
         type: string
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -48,6 +51,7 @@ env:
 
 jobs:
   run-pytest-cpu:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -75,6 +79,7 @@ jobs:
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
 
   run-bazel-test-cpu:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -96,6 +101,7 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-cuda:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -163,16 +169,19 @@ jobs:
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
-      halt-for-connection: ${{inputs.halt-for-connection}}
+      gcs_download_uri: ${{ github.event.inputs.gcs_download_uri || 'gs://jax-nightly-artifacts/latest' }}
+      halt-for-connection: ${{ github.event.inputs.halt-for-connection || 'no' }}
       build_jaxlib: "false"
       build_jax: "false"
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
-      clone_main_xla: 0
+      clone_main_xla: 1
+      xla_repository: "https://github.com/vladbelit/xla.git"
+      xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"
 
   run-pytest-rocm:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     permissions:
       id-token: write
       contents: read
@@ -196,6 +205,7 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-bazel-test-rocm:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/bazel_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -222,6 +232,7 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-tpu:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -286,6 +297,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-tpu:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -360,7 +372,7 @@ jobs:
       clone_main_xla: 0
 
   verify-release-wheels-install:
-    if: ${{ startsWith(github.ref_name, 'release/')}}
+    if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'release/')}}
     defaults:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default
