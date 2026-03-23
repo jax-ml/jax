@@ -13,6 +13,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Removals
+
+  * Removed the previously deprecated `pltpu.ANY` and `pltpu.MemorySpace.ANY`.
+    Use `pl.ANY` instead.
+  * Removed the deprecated `pltpu.delay`, which is now available as `pl.delay`.
+
 ## Released with JAX 0.9.2
 
 * New features:

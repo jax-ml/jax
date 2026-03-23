@@ -76,9 +76,7 @@ from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.
-from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas.core import semaphore as semaphore
-from jax._src.pallas.core import MemorySpace as GeneralMemorySpace
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
@@ -100,16 +98,6 @@ SEMAPHORE = MemorySpace.SEMAPHORE
 from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
 
 _deprecations = {
-    # Added Oct 31, 2025
-    "delay": (
-      "pltpu.delay is deprecated, use pl.delay instead.",
-      pl_primitives.delay
-    ),
-    # Added Dec 10, 2025
-    "ANY": (
-        "pltpu.ANY is deprecated, use pl.ANY instead.",
-        GeneralMemorySpace.ANY
-    ),
     # Added Feb 11, 2026
     "repeat": (
         "pltpu.repeat is deprecated, use jnp.tile instead.",
@@ -123,8 +111,6 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  delay = pl_primitives.delay
-  ANY = GeneralMemorySpace.ANY
   repeat = _deprecated_repeat
   KernelType = CoreType
 else:
@@ -132,5 +118,3 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del pl_primitives
-del GeneralMemorySpace

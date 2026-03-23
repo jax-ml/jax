@@ -24,7 +24,6 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import util
@@ -217,17 +216,6 @@ class MemorySpace(enum.Enum):
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
-
-  def __getattr__(self, name):
-    if name == "ANY":
-      # Deprecated on Dec 10, 2025.
-      deprecations.warn(
-          "pltpu-memory-space-any",
-          "pltpu.MemorySpace.ANY is deprecated. Use pl.ANY instead.",
-          stacklevel=2,
-      )
-      return pallas_core.MemorySpace.ANY
-    return super().__getattr__(name)  # type: ignore
 
   def __matmul__(self, other, /):
     if not isinstance(other, CoreType):
