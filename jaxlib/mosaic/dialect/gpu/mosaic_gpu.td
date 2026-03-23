@@ -112,6 +112,48 @@ def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
   }];
 }
 
+def MosaicGPU_TryClusterCancelOp : Op<MosaicGPU_Dialect, "try_cluster_cancel", []> {
+  let summary = "Initiates an async request to claim a new work unit from the grid.";
+  let description = [{
+    It allows an SM to dynamically acquire work by atomically canceling the launch
+    of a pending cluster from the grid and claiming its CTA ID as the next unit
+    of work.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[I8], [1]>:$cancellation_result,
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    PtxPredicate:$predicate
+  );
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_QueryClusterCancelOp : Op<MosaicGPU_Dialect, "query_cluster_cancel", []> {
+  let summary = "Decodes the result of a `try_cluster_cancel` operation.";
+  let description = [{
+    It interprets the 16-byte opaque response written to shared memory by a
+    completed `try_cluster_cancel` call to determine if a new work unit was
+    successfully claimed.
+
+    If `success` is true, then `x`, `y`, and `z` are set to the CTA ID of the
+    first CTA that is part of the cluster that was claimed.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[I8], [1]>:$cancellation_result
+  );
+
+  let results = (outs
+    I32:$x,
+    I32:$y,
+    I32:$z,
+    I1:$success
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLayout", []> {
   let summary = "Annotates an array that can be collapsed to 1D and sharded across threads.";
   let description = [{

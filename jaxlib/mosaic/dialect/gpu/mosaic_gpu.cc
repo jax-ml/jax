@@ -292,7 +292,8 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
       if (first_vector_index_dim >= 0) {
         return error(
             "Only one index may be a vector but got multiple vector indices "
-            "for dimensions {0} and {1}.", first_vector_index_dim, i);
+            "for dimensions {0} and {1}.",
+            first_vector_index_dim, i);
       }
       first_vector_index_dim = i;
       if (vec_type.getShape()[0] != slice_lengths[i]) {
@@ -334,7 +335,7 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
         "The `slice_lengths` attribute must not contain values less than -1.");
   }
   if (getIndices().size() != getSource().getType().getRank()) {
-     return emitOpError(
+    return emitOpError(
         "The size of `indices` must be equal to the rank of `source`.");
   }
 
@@ -354,6 +355,35 @@ llvm::LogicalResult AsyncStoreOp::verify() {
   return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
                                  getSliceLengths(), getIndices());
+}
+
+llvm::LogicalResult TryClusterCancelOp::verify() {
+  auto result_ty = getCancellationResult().getType();
+  if (result_ty.getNumElements() != 16) {
+    return emitOpError()
+           << "Try cluster cancel response must have 16 elements, but has "
+           << result_ty.getNumElements() << " elements.";
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (result_ty.getMemorySpace() != smem) {
+    return emitOpError() << "Response memref must be in SMEM.";
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult QueryClusterCancelOp::verify() {
+  auto result_ty = getCancellationResult().getType();
+  if (result_ty.getNumElements() != 16) {
+    return emitOpError() << "Response to decode must have 16 elements, but has "
+                         << result_ty.getNumElements() << " elements.";
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (result_ty.getMemorySpace() != smem) {
+    return emitOpError() << "Response memref must be in SMEM.";
+  }
+  return llvm::success();
 }
 
 llvm::LogicalResult WGMMAOp::inferReturnTypes(
@@ -457,8 +487,8 @@ absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileStrides(
   int64_t tiling_rank = tiling.size();
   if (strides.size() < tiling_rank) {
     return absl::InvalidArgumentError(
-        absl::StrCat("Strides have lower rank than tiling: ",
-                     strides.size(), " < ", tiling.size()));
+        absl::StrCat("Strides have lower rank than tiling: ", strides.size(),
+                     " < ", tiling.size()));
   }
 
   llvm::SmallVector<int64_t, 8> ordered_strides(strides.begin(), strides.end());
@@ -537,15 +567,14 @@ absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileStrides(
   return result;
 }
 
-
 // Tiles the trailing offsets in `offsets` according to `tiling`.
 absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileOffset(
     llvm::ArrayRef<int64_t> offsets, llvm::ArrayRef<int32_t> tiling) {
   int64_t tiling_rank = tiling.size();
   if (offsets.size() < tiling_rank) {
     return absl::InvalidArgumentError(
-        absl::StrCat("Offsets have lower rank than tiling: ",
-                     offsets.size(), " < ", tiling.size()));
+        absl::StrCat("Offsets have lower rank than tiling: ", offsets.size(),
+                     " < ", tiling.size()));
   }
 
   llvm::SmallVector<int64_t, 8> result;

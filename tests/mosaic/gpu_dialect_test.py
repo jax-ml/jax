@@ -1517,6 +1517,68 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_try_cluster_cancel_invalid_response_size(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skipTest("TryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      result, barrier = undefs(
+          ir.MemRefType.get([8], ir.IntegerType.get_signless(8)),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+      )
+      mgpu.dialect.try_cluster_cancel(result, barrier)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Try cluster cancel response must have 16 elements, but has 8 elements.",
+    ):
+      self.module.operation.verify()
+
+  def test_query_cluster_cancel_invalid_response_size(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
+      self.skipTest("QueryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      (result,) = undefs(ir.MemRefType.get([8], ir.IntegerType.get_signless(8)))
+      mgpu.dialect.query_cluster_cancel(result)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Response to decode must have 16 elements, but has 8 elements.",
+    ):
+      self.module.operation.verify()
+
+  def test_try_cluster_cancel_not_in_smem(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skipTest("TryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      result, barrier = undefs(
+          ir.MemRefType.get([16], ir.IntegerType.get_signless(8)),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+      )
+      mgpu.dialect.try_cluster_cancel(result, barrier)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Response memref must be in SMEM.",
+    ):
+      self.module.operation.verify()
+
+  def test_query_cluster_cancel_not_in_smem(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
+      self.skipTest("QueryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      (result,) = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8)))
+      mgpu.dialect.query_cluster_cancel(result)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "Response memref must be in SMEM.",
+    ):
+      self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
