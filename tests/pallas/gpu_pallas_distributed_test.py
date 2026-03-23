@@ -516,8 +516,6 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_signal_parallel(self):
-    # TODO(bchetioui): support for signal parallel.
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -549,8 +547,6 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
-    # TODO(bchetioui): support for signal multicast.
-    self.skip_if_wg_semantics()
     # TODO(b/476264413): Support multimem in multi-thread mode.
     if jax.local_device_count() > 1:
       return  # Multimem not supported in multi-thread mode yet.

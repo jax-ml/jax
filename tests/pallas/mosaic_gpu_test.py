@@ -2523,8 +2523,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       self.fail("Should have raised an exception")
 
   def test_lower_with_abstract_mesh(self):
-    # TODO(bchetioui): support for semaphore_signal_multicast.
-    self.skip_if_wg_semantics()
     def kernel(y_ref, sem):
       plgpu.semaphore_signal_multicast(sem, collective_axes='x')
       # Wait for the multicast signal (each device gets signaled by all devices)
@@ -3371,8 +3369,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.semaphore_signal_parallel_p,
-        mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
