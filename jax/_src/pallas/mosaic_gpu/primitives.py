@@ -3489,6 +3489,22 @@ def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
 
 
 @lowering.register_lowering_rule(
+    async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_copy_scales_to_tmem_lowering_rule_wg(*args, **kwargs):
+  # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
+  if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
+    raise NotImplementedError(
+        "async_copy_scales_to_tmem_p WG lowering is not implemented."
+    )
+  return _async_copy_to_tmem_lowering_rule(
+      mgpu.dialect.async_store_scales_smem_to_tmem,
+      *args,
+      **kwargs,
+  )
+
+
+@lowering.register_lowering_rule(
     async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Lane
 )
 @lowering.register_lowering_rule(
