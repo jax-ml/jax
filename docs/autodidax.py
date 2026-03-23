@@ -247,6 +247,7 @@ class ShapedArray:
   array_abstraction_level = 1
   shape: tuple[int, ...]
   dtype: np.dtype
+  weak_type: bool = False
 
   def __init__(self, shape, dtype):
     self.shape = shape
@@ -1549,6 +1550,7 @@ from jax.extend.mlir import ir
 from jax.extend.mlir.dialects import func
 from jax.extend.mlir.dialects import stablehlo as hlo
 from jax._src import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 
 class MlirContext(NamedTuple):
   module: ir.Module
@@ -1646,7 +1648,12 @@ def execute_compiled(compiled, out_avals, *args):
   out_bufs = compiled.execute(input_bufs)
   return [handle_result(aval, buf) for aval, buf in zip(out_avals, out_bufs)]
 
-default_input_handler = xb.get_backend(None).buffer_from_pyval
+def default_input_handler(x):
+  device = xb.get_backend(None).devices()[0]
+  return xc.batched_device_put(get_aval(x),
+                               xc.GSPMDSharding((device,), xc.OpSharding()),
+                               [x], [device], True, enable_x64=True)
+
 input_handlers = {ty: default_input_handler for ty in
                   [bool, int, float, np.ndarray, np.float64, np.float32]}
 
