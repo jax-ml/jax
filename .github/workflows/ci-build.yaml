@@ -154,7 +154,10 @@ jobs:
         uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
-        sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
+        python build/portserver.py &
+        SERVER_PID=$!
+        PORTSERVER_ADDRESS=@unittest-portserver sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
+        kill $SERVER_PID
 
   ffi:
     name: FFI example
