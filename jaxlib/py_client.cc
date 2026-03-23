@@ -308,69 +308,6 @@ absl::Status PyClient::Defragment() {
   return absl::OkStatus();
 }
 
-/* static */ absl::StatusOr<nb::object> PyClient::BufferFromPyval(
-    nb_class_ptr<PyClient> client, nb::handle argument, ifrt::Device* device,
-    bool force_copy, ifrt::Client::HostBufferSemantics host_buffer_semantics) {
-  if (device == nullptr) {
-    TF_RET_CHECK(!client->ifrt_client_->addressable_devices().empty());
-    device = client->ifrt_client_->addressable_devices().front();
-  }
-  CHECK(device != nullptr);
-
-  auto transfer_guard_formatter = [&argument, dst_device = device] {
-    auto type = nb::cast<std::string>(nb::str(argument.type()));
-    // Catch exceptions because shape and dtype properties convertible to str
-    // are not guaranteed to present in an arbitrary argument.
-    std::string shape;
-    std::string dtype;
-    try {
-      shape =
-          nb::cast<std::string>(nb::str(nb::object(argument.attr("shape"))));
-    } catch (const std::exception& e) {
-      shape = "<unknown>";
-    }
-    try {
-      dtype =
-          nb::cast<std::string>(nb::str(nb::object(argument.attr("dtype"))));
-    } catch (const std::exception& e) {
-      dtype = "<unknown>";
-    }
-    return absl::StrCat("type=", type, ", shape=", shape, ", dtype=", dtype,
-                        ", dst_device=", dst_device->DebugString());
-  };
-  TF_RETURN_IF_ERROR(
-      ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
-
-  TF_ASSIGN_OR_RETURN(ifrt::Device * found_device,
-                      client->ifrt_client_->LookupDevice(device->Id()));
-  if (found_device != device) {
-    return xla::InvalidArgument(
-        "Cannot copy value to device '%s' with '%s' backend",
-        device->DebugString(), client->ifrt_client_->platform_name());
-  }
-  GlobalPyRefManager()->CollectGarbage();
-
-  PyUserContextScope user_context_scope;
-  DevicePutOptions options;
-  options.squash_64bit_types = false;
-  options.allow_zero_copy =
-      (!force_copy && (host_buffer_semantics ==
-                       ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
-  TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
-                      DevicePutWithDevice(argument, client->ifrt_client_.get(),
-                                          device, ifrt::MemoryKind(), options));
-  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef device_list,
-                      client->ifrt_client()->MakeDeviceList({device}));
-  auto sharding =
-      make_nb_class<SingleDeviceSharding>(client, std::move(device_list),
-                                          /*memory_kind=*/nb::none());
-  return PyArray::MakeFromIfrtArrayAndSharding(
-      std::move(client), std::move(device_put_result.ifrt_array),
-      std::move(sharding),
-      /*weak_type=*/false, /*committed=*/false,
-      /*skip_checks=*/true);
-}
-
 namespace {
 
 // Makes IFRT `CompileOptions` from XLA `CompileOptions` and optional host
@@ -860,20 +797,6 @@ PyType_Slot PyClient::slots_[] = {
       .def("process_index", &PyClient::process_index)
       .def("host_id", &PyClient::process_index)
       .def("task_id", &PyClient::process_index)
-      .def(
-          "buffer_from_pyval",
-          [](nb_class_ptr<PyClient> client, nb::handle argument,
-             PyDevice* device, bool force_copy,
-             xla::PjRtClient::HostBufferSemantics host_buffer_semantics) {
-            return xla::ValueOrThrow(
-                PyClient::BufferFromPyval(std::move(client), argument,
-                                          device ? device->device() : nullptr,
-                                          force_copy, host_buffer_semantics));
-          },
-          nb::arg("argument"), nb::arg("device").none() = nullptr,
-          nb::arg("force_copy") = false,
-          nb::arg("host_buffer_semantics") =
-              xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy)
       .def(
           "compile",
           [](nb_class_ptr<PyClient> client, MlirModule mlir_module,

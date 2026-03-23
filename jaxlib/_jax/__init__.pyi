@@ -874,13 +874,6 @@ class Client:
   def process_index(self) -> int: ...
   def host_id(self) -> int: ...
   def task_id(self) -> int: ...
-  def buffer_from_pyval(
-      self,
-      argument: object,
-      device: Device | None = ...,
-      force_copy: bool = ...,
-      host_buffer_semantics: HostBufferSemantics = HostBufferSemantics.ZERO_COPY,
-  ) -> object: ...
   def compile(
       self,
       computation: object,

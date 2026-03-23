@@ -158,11 +158,6 @@ class PyClient {
   // TODO(zhangqiaorjc): Remove when we have transparent defragmentation.
   absl::Status Defragment();
 
-  static absl::StatusOr<nanobind::object> BufferFromPyval(
-      nb_class_ptr<PyClient> client, nanobind::handle argument,
-      xla::ifrt::Device* device, bool force_copy,
-      xla::ifrt::Client::HostBufferSemantics host_buffer_semantics);
-
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
   CompileAndLoadIfrtProgram(
       nb_class_ptr<PyClient> client,
