@@ -996,12 +996,13 @@ class BarrierRef:
     )
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
-    with single_thread(scope=ThreadSubset.BLOCK):
-      for i in range(num_barriers):
-        nvvm.mbarrier_init(
-            getelementptr(address, [i], i64),
-            c(arrival_count, i32),
-        )
+    predicate = single_thread_predicate(scope=ThreadSubset.BLOCK)
+    for i in range(num_barriers):
+      nvvm.mbarrier_init(
+          getelementptr(address, [i], i64),
+          c(arrival_count, i32),
+          predicate=predicate,
+      )
     return BarrierRef(address, c(0, i32), phases, num_barriers)
 
   def __iter__(self) -> Iterator["BarrierRef"]:
