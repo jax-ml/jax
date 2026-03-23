@@ -5558,6 +5558,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
          P('x', None, None, None, None, None), P('x', None), False),
         ((1024, 2048, 2, 1, 1, 1), (1024, 4096),
          P(None, 'x', None, None, None, None), P(None, 'x'), False),
+        ((4, 1, 8, 1, 32), (4, 1, 2, 4, 1, 32), P('x', None, None, None, None),
+         P('x', None, None, None, None, None), False),
+        ((4, 1, 2, 4, 1, 32), (4, 1, 8, 1, 32), P('x', None, None, None, None, None),
+         P('x', None, None, None, None), False),
       ]
   )
   @jtu.with_explicit_mesh((2,), ('x',))
@@ -5597,64 +5601,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.reshape(value, (-1, 4), order='F', out_sharding=P(None, 'x'))
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
 
-  @parameterized.named_parameters(
-      ('split_1', (4, 6, 8), (4, 2, 3, 8),
-       P('x', None, 'y'), P('x', None, None, 'y'), ''
-      ),
-      ('split_2', (4, 6, 8), (4, 6, 2, 2, 2),
-       P('x', None, None), P('x', None, None, None, None), ''
-      ),
-      ('split_3_error', (4, 6, 8), (4, 2, 3, 4, 2),
-       P('x', None, None), P('x', None, None, None, None),
-       'Splitting on more than 1 axis is not supported'
-      ),
-      ('split_4', (4, 6, 8), (4, 2, 3, 8),
-       P('x', 'y', None), P('x', 'y', None, None), ''
-      ),
-      ('split_4_xy', (4, 12, 8), (4, 4, 3, 8),
-       P(None, ('x', 'y'), None), P(None, ('x', 'y'), None, None), ''
-      ),
-      ('split_4_error', (4, 6, 8), (4, 3, 2, 8),
-       P('x', 'y', None), None, 'This reshape is not supported'
-      ),
-      ('split_5_error', (4, 6, 8), (4, 4, 2, 6),
-       P('x', None, None), None, 'This reshape is not supported'
-      ),
-      ('split_6_error', (4, 8, 9), (4, 2, 2, 3, 3, 2),
-       P('x', None, None), None, 'This reshape is not supported'
-      ),
-      ('split_7', (10, 1), (2, 5, 1), P('x', None), P('x', None, None), ''),
-      ('split_8', (10, 1), (2, 5, 1, 1), P('x', None),
-       P('x', None, None, None), ''),
-      ('split_9', (10, 1, 1), (2, 5, 1, 1), P('x', None, None),
-       P('x', None, None, None), ''),
-      ('split_10', (1, 10), (1, 2, 5), P(None, 'x'), P(None, 'x', None), ''),
-      ('merge_1', (4, 2, 3, 8), (4, 6, 8),
-       P('x', None, None, 'y'), P('x', None, 'y'), ''
-      ),
-      ('merge_2', (2, 2, 6, 8), (4, 6, 8),
-       P(None, None, 'y', 'x'), P(None, 'y', 'x'), ''
-      ),
-      ('merge_3', (4, 6, 2, 2, 2), (4, 6, 8),
-       P('x', None, None, None, None), P('x', None, None), ''
-      ),
-      ('merge_4', (4, 2, 3, 8), (4, 6, 8),
-       P(None, 'y', None, 'x'), P(None, 'y', 'x'), ''
-      ),
-      ('merge_4_xy', (4, 4, 3, 8), (4, 12, 8),
-       P(None, ('x', 'y'), None, None), P(None, ('x', 'y'), None), ''
-      ),
-      ('merge_4_error', (4, 2, 3, 2, 4), (4, 6, 8),
-       P('x', None, None, None, None), P('x', None, None),
-       'Merging on more than 1 axis is not supported'
-      ),
-      ('merge_5_error', (4, 2, 6, 8), (4, 12, 8),
-       P(None, None, 'y', 'x'), None, 'This reshape is not supported'
-      ),
-      ('merge_6_error', (4, 2, 3, 8), (4, 8, 6),
-       P(None, 'y', None, 'x'), None, 'This reshape is not supported'
-      ),
-      ('merge_7', (2, 5, 1), (10, 1), P('x', None, None), P('x', None), ''),
+  @parameterized.parameters(
+      ((4, 6, 8), (4, 2, 3, 8), P('x', None, 'y'), P('x', None, None, 'y'), False),
+      ((4, 6, 8), (4, 6, 2, 2, 2), P('x', None, None),
+       P('x', None, None, None, None), False),
+      ((4, 6, 8), (4, 2, 3, 4, 2), P('x', None, None),
+       P('x', None, None, None, None), True),
+      ((4, 6, 8), (4, 2, 3, 8), P('x', 'y', None), P('x', 'y', None, None), False),
+      ((4, 12, 8), (4, 4, 3, 8), P(None, ('x', 'y'), None),
+       P(None, ('x', 'y'), None, None), False),
+      ((4, 6, 8), (4, 3, 2, 8), P('x', 'y', None), None, True),
+      ((4, 6, 8), (4, 4, 2, 6),P('x', None, None), None, True),
+      ((4, 8, 9), (4, 2, 2, 3, 3, 2), P('x', None, None), None, True),
+      ((10, 1), (2, 5, 1), P('x', None), P('x', None, None), False),
+      ((10, 1), (2, 5, 1, 1), P('x', None), P('x', None, None, None), False),
+      ((10, 1, 1), (2, 5, 1, 1), P('x', None, None), P('x', None, None, None), False),
+      ( (1, 10), (1, 2, 5), P(None, 'x'), P(None, 'x', None), False),
+      ((4, 2, 3, 8), (4, 6, 8), P('x', None, None, 'y'), P('x', None, 'y'), False),
+      ((2, 2, 6, 8), (4, 6, 8), P(None, None, 'y', 'x'), P(None, 'y', 'x'), False),
+      ((4, 6, 2, 2, 2), (4, 6, 8), P('x', None, None, None, None),
+       P('x', None, None), False),
+      ((4, 2, 3, 8), (4, 6, 8), P(None, 'y', None, 'x'), P(None, 'y', 'x'), False),
+      ((4, 4, 3, 8), (4, 12, 8), P(None, ('x', 'y'), None, None),
+       P(None, ('x', 'y'), None), False),
+      ((4, 2, 3, 2, 4), (4, 6, 8), P('x', None, None, None, None),
+       P('x', None, None), True),
+      ((4, 2, 6, 8), (4, 12, 8), P(None, None, 'y', 'x'), None, True),
+      ((4, 2, 3, 8), (4, 8, 6), P(None, 'y', None, 'x'), None, True),
+      ((2, 5, 1), (10, 1), P('x', None, None), P('x', None), False),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_split_merge_one_axis(self, src_shape, dst_shape, src_spec,
@@ -5671,7 +5645,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return y
 
     if error_msg:
-      with self.assertRaisesRegex(core.ShardingTypeError, error_msg):
+      with self.assertRaisesRegex(
+          core.ShardingTypeError, "This reshape is not supported"):
         f(arr)
     else:
       out = f(arr)
@@ -8454,7 +8429,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh(axis_sizes, ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)
     with jax.set_mesh(mesh):
-      np_inp = np.ones((8,4,4))
+      np_inp = np.ones((8, 4, 4))
       arr = jax.device_put(np_inp, P(None, None, 'x'))
       out = jnp.reshape(arr, (-1, arr.shape[-1]))
       self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))

@@ -7062,10 +7062,13 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
       raise TypeError(msg.format(dimensions, np.shape(operand)))
   return tuple(new_sizes)
 
-def _split_on_one_axis(op_shape, new_sizes, name):
+class ReshapeExplicitError(Exception):
+  pass
+
+def _split_on_one_axis(op_shape, new_sizes):
   if len(new_sizes) <= len(op_shape):
     return False, []
-  orig_op_shape, orig_new_sizes = op_shape, new_sizes
+  orig_op_shape = op_shape
 
   num_1s = 0
   while op_shape[-1] == 1 and new_sizes[-1] == 1:
@@ -7080,17 +7083,17 @@ def _split_on_one_axis(op_shape, new_sizes, name):
     else:
       count += 1
       if count > 1:
-        raise core.ShardingTypeError(
-            f'{name} on more than 1 axis is not supported. Please specify the'
-            ' sharding of the output via the `sharding` argument of'
-            f' jax.lax.reshape. Got operand.shape={orig_op_shape} and'
-            f' {orig_new_sizes=}')
+        raise ReshapeExplicitError()
       temp = [new_sizes[j]]
       next_j = j + 1
+      next_i = i + 1
       while (math.prod(temp) != op_shape[i] or
              (next_j < len(new_sizes) and new_sizes[next_j] == 1)):
         if math.prod(temp) > op_shape[i]:
           return False, []
+        if (math.prod(temp) == op_shape[i] and next_i < len(op_shape) and
+            new_sizes[next_j] == op_shape[next_i]):
+          break
         j += 1
         if j >= len(new_sizes):
           return False, []
@@ -7108,7 +7111,7 @@ def _split_on_one_axis(op_shape, new_sizes, name):
 def _merge_on_one_axis(operand, new_sizes):
   if len(new_sizes) >= len(operand.shape):
     return False, []
-  return _split_on_one_axis(new_sizes, operand.shape, 'Merging')
+  return _split_on_one_axis(new_sizes, operand.shape)
 
 
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
@@ -7121,12 +7124,24 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if non_1s_op_shape == non_1s_new_shape:
     return _split_merge_singleton_dim_sharding_rule(operand, new_sizes)
 
-  is_split, out_split = _split_on_one_axis(operand.shape, new_sizes, 'Splitting')
+  try:
+    is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
+  except ReshapeExplicitError:
+    raise core.ShardingTypeError(
+        'This reshape is not supported. Please specify the sharding of'
+        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
+        f' operand type: {operand}, new sizes: {new_sizes}')
   if is_split:
     return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
                                         dimensions)
 
-  is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
+  try:
+    is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
+  except ReshapeExplicitError:
+    raise core.ShardingTypeError(
+        'This reshape is not supported. Please specify the sharding of'
+        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
+        f' operand type: {operand}, new sizes: {new_sizes}')
   if is_merge:
     return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
                                         dimensions)
