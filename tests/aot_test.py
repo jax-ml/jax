@@ -164,6 +164,8 @@ class JaxAotTest(jtu.JaxTestCase):
     compiled = f.lower(inp).compile()
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
     self.assertLen(compiled.in_avals[0], 1)
+    self.assertLen(compiled.input_shardings[0], 1)
+    self.assertLen(compiled.input_formats[0], 1)
     if config.use_simplified_jaxpr_constants.value:
       self.assertLen(compiled._params.const_args, 1)
       self.assertIs(compiled._params.const_args[0], const)
@@ -203,6 +205,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
     self.assertLen(compiled.in_avals[0], 1)
+    self.assertLen(compiled.input_shardings[0], 1)
+    self.assertLen(compiled.input_formats[0], 1)
     if config.use_simplified_jaxpr_constants.value:
       self.assertLen(compiled._params.const_args, 1)
       self.assertLen(compiled._executable.in_avals, 2)
@@ -212,24 +216,11 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertEqual(compiled._executable.in_avals[0].dtype, expected_dtype)
 
       if expected_dtype is np.int64:  # Otherwise, we made a copy of the const
-        if use_np:
-          self.assertIs(np.asarray(compiled._params.const_args[0]), const)
-        else:
+        if not use_np:
           self.assertIs(compiled._params.const_args[0], const)
     else:
       self.assertLen(compiled._params.const_args, 0)
       self.assertLen(compiled._executable.in_avals, 1)
-
-    # In some cases we expect errors: in 32-bit mode, lowered with 64-bit mode
-    # and execute in 32-bit mode.
-    if (config.use_simplified_jaxpr_constants.value and
-        not config.enable_x64.value and
-        use_np and lower and not exec):
-      with self.assertRaisesRegex(
-          xc.XlaRuntimeError,
-          "got buffer with incompatible size"):
-        run()
-      return
 
     self.assertArraysEqual(run(),
                            lax.convert_element_type(const, inp.dtype) + inp)

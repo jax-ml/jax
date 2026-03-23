@@ -735,7 +735,7 @@ class Compiled(Stage):
       in_avals_ = [
           next(iter_in_avals) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
           else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
-    return self.in_tree.unflatten(in_avals_)
+    return self.in_tree.unflatten(in_avals_[len(self._params.const_args):])
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct
@@ -764,7 +764,7 @@ class Compiled(Stage):
       iter_shardings_flat = iter(shardings_flat)
       shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                         else None for i in range(self.in_tree.num_leaves)]
-    return shardings_flat
+    return shardings_flat[len(self._params.const_args):]
 
   @property
   def input_shardings(self):  # -> PyTree[sharding.Sharding]
@@ -783,7 +783,7 @@ class Compiled(Stage):
       iter_layouts_flat = iter(layouts_flat)
       layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                       else None for i in range(self.in_tree.num_leaves)]
-    return layouts_flat
+    return layouts_flat[len(self._params.const_args):]
 
   @property
   def input_formats(self):
