@@ -4810,6 +4810,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       ab_type=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn)
   )
   def test_sparse_matmul_collective(self, m, n, ab_type):
+    if ab_type == jnp.int8:
+      self.skip_unless_tcgen05_int8()
     acc_type = jnp.float32 if jnp.issubdtype(ab_type, jnp.floating) else jnp.int32
     k = 128
     transforms = self.default_transforms(swizzle=64, dtype=ab_type)
