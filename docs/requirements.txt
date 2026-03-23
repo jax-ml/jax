@@ -17,6 +17,7 @@ flatbuffers
 pytest
 pytest-xdist
 hypothesis
+portpicker
 
 # Packages used for notebook execution
 matplotlib

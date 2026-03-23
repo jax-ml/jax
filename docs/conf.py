@@ -401,30 +401,12 @@ rediraffe_redirects = {
   "working_with_pytrees.md": "pytrees.md",
 }
 
-# Monkey-patch jupyter_client to avoid cross-process ZMQ port collisions during
-# Sphinx build. See: https://github.com/jupyter/jupyter_client/issues/487
-import jupyter_client.manager
-from filelock import FileLock
-_original_async_start_kernel = jupyter_client.manager.KernelManager._async_start_kernel
-async def _async_start_kernel_with_lock(self, **kwargs):
-  # Prevent Sphinx multiprocessing workers from executing port discovery
-  # simultaneously
-  lock_dir = os.path.join(os.path.dirname(__file__), "build")
-  os.makedirs(lock_dir, exist_ok=True)
-  with FileLock(os.path.join(lock_dir, "jupyter_client_port_lock.lock")):
-    res = await _original_async_start_kernel(self, **kwargs)
-    client = None
-    try:
-      client = self.client()
-      client.start_channels()
-      client.wait_for_ready(timeout=60)
-    except RuntimeError:
-      # wait_for_ready can raise a RuntimeError on timeout or if the kernel dies.
-      # We swallow it here so we don't crash the build from inside the monkeypatch.
-      # myst-nb/nbclient will perform its own connection checks and handle errors.
-      pass
-    finally:
-      if client is not None:
-        client.stop_channels()
-    return res
-jupyter_client.manager.KernelManager._async_start_kernel = _async_start_kernel_with_lock
+from jupyter_client.provisioning import KernelProvisionerFactory
+from importlib.metadata import EntryPoint
+
+KernelProvisionerFactory.provisioners["portpicker-provisioner"] = EntryPoint(
+    name="portpicker-provisioner",
+    value="jax_portpicker:PortpickerProvisioner",
+    group="jupyter_client.kernel_provisioners"
+)
+KernelProvisionerFactory.default_provisioner_name = "portpicker-provisioner"
