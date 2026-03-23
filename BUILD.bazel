@@ -38,7 +38,6 @@ wheel_sources(
         "//jax/experimental:colocated_python",
         "//jax/experimental:compilation_cache",
         "//jax/experimental:compute_on",
-        "//jax/experimental:custom_dce",
         "//jax/experimental:custom_partitioning",
         "//jax/experimental:fused",
         "//jax/experimental:hijax",
