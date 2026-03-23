@@ -1172,12 +1172,6 @@ class OpsTest(PallasBaseTest):
       if fn == jnp.log1p and dtype == "bfloat16":
         self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
       if (
-          fn in (jnp.sin, jnp.cos, jnp.tan)
-          and dtype == "bfloat16"
-          and not jtu.is_cloud_tpu_at_least(2026, 3, 1)
-      ):
-        self.skipTest("requires a newer libTPU")
-      if (
           fn == jnp.sign
           and dtype == "bfloat16"
           and not jtu.is_cloud_tpu_at_least(2026, 3, 15)
@@ -1854,8 +1848,6 @@ class OpsTest(PallasBaseTest):
       if dtype == "float16":
         self.skipTest("float16 not supported on TPU")
       if dtype == "int16":
-        if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-          self.skipTest("int16 requires a newer libTPU")
         if jtu.get_tpu_version() < 6:
           self.skipTest("requires TPUv6+")
 
@@ -2425,8 +2417,6 @@ class OpsTest(PallasBaseTest):
       if op in (jnp.argmin, jnp.argmax) and dtype != "float32":
         self.skipTest("argmin/argmax on TPU only supports float32")
       if dtype == "bfloat16":
-        if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-          self.skipTest("bfloat16 requires a newer libTPU")
         if jtu.get_tpu_version() < 6:
           self.skipTest("require 16-bit iota")
       if jtu.get_tpu_version() < 5 and axis == 1:

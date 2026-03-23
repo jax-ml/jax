@@ -144,11 +144,6 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
   def test_infeasible_1d_block_spec_raises(
       self, total_shape, block_shape, dtype
   ):
-    if (
-        block_shape[0] & (block_shape[0] - 1)
-    ) != 0 and not jtu.is_cloud_tpu_at_least(2026, 3, 5):
-      self.skipTest("requires a newer libTPU")
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...] * 2
 

@@ -1583,8 +1583,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_dma_with_regular_semaphore(self):
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest('Regular semaphores in DMAs require TPU v6+')
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 2):
-      self.skipTest("Test requires a newer libtpu")
 
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, y_ref, sem):

@@ -488,9 +488,6 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
 
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 8):
-      self.skipTest("Requires Cloud TPU >= 2026.3.8")
-
     if (
         any(dtypes.itemsize_bits(ty) <= 16 for ty in (msk_dtype, dtype))
         and jtu.get_tpu_version() < 5

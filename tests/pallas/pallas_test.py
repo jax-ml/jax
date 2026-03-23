@@ -360,15 +360,9 @@ class PallasCallTest(ptu.PallasTest):
           dict(shape=(5, 128), block_shape=(8, 128)),
       ]
   )
-  def test_block_spec_valid_block_shapes(self, *,
-                                         shape, block_shape,
-                                         dtype=np.int32):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 5) and (
-        np.iinfo(dtype).bits <= 16
-        or (shape == (1024,) and block_shape == (128,))
-        or (shape == (2048,) and block_shape == (256,))
-    ):
-      self.skipTest("requires newer TPU")
+  def test_block_spec_valid_block_shapes(
+      self, *, shape, block_shape, dtype=np.int32
+  ):
     if not jtu.is_device_tpu_at_least(4) and (
         (shape == (1024,) and block_shape == (128,) and dtype == np.int32)
         or (shape == (1024,) and block_shape == (256,) and dtype == np.int16)
@@ -395,11 +389,6 @@ class PallasCallTest(ptu.PallasTest):
 
       if rank == 1:
         block_shape_is_power_of_2 = (block_shape[0] & (block_shape[0] - 1)) == 0
-
-        if not block_shape_is_power_of_2 and not jtu.is_cloud_tpu_at_least(
-            2026, 3, 5
-        ):
-          self.skipTest("requires a newer libTPU")
 
         chunk_size = (
             pltpu.get_tpu_info().num_sublanes * pltpu.get_tpu_info().num_lanes
