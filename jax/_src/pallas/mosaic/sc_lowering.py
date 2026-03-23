@@ -593,9 +593,19 @@ def _load_lowering_rule(
   ref, ref_block_shape = _transform_ref(
       ref, ref_aval, ref_block_shape, prev_transforms
   )
-  starts, sizes, strides, _, _ = tc_lowering._indexer_to_start_size_stride(
+  starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
   )
+  for first_nontrivial_dim, s in enumerate(sizes):
+    if s != 1:
+      break
+  else:
+    first_nontrivial_dim = len(sizes)
+  if any(squeeze_dims[first_nontrivial_dim:]):
+    raise NotImplementedError(
+        "Integer indexing of refs that follows a non-trivial slice is not"
+        " supported on SC"
+    )
   del sizes  # Currently unused.
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
@@ -655,10 +665,19 @@ def _store_lowering_rule(
   ref, ref_block_shape = _transform_ref(
       ref, ref_aval, ref_block_shape, prev_transforms
   )
-  starts, sizes, strides, _, _ = tc_lowering._indexer_to_start_size_stride(
+  starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
   )
-  del sizes  # Currently unused.
+  for first_nontrivial_dim, s in enumerate(sizes):
+    if s != 1:
+      break
+  else:
+    first_nontrivial_dim = len(sizes)
+  if any(squeeze_dims[first_nontrivial_dim:]):
+    raise NotImplementedError(
+        "Integer indexing of refs that follows a non-trivial slice is not"
+        " supported on SC"
+    )
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
         "Swap only supports slices with stride 1, got {strides}"

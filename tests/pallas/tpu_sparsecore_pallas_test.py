@@ -1894,6 +1894,64 @@ class VectorSubcoreTest(PallasSCTest):
     for values_result, values_in in zip(values_results, values, strict=True):
       np.testing.assert_array_equal(values_result, values_in[perm])
 
+  def test_2d_vmem_row_write(self):
+    """Verify that row-writes to a 2D VMEM scratch work correctly."""
+    num_lanes = self.num_lanes
+    nrows = 4
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1,
+    )
+
+    @self.kernel(
+        out_shape=jax.ShapeDtypeStruct((nrows, num_lanes), jnp.int32),
+        mesh=mesh,
+        scratch_shapes=dict(
+            in_s=pltpu.VMEM((num_lanes,), jnp.int32),
+            out_s=pltpu.VMEM((nrows, num_lanes), jnp.int32),
+        ),
+    )
+    def kernel(in_ref, out_ref, in_s, out_s):
+      pltpu.sync_copy(in_ref, in_s)
+      # Write the same vector to each row of the 2D scratch.
+      for i in range(nrows):
+        out_s[i, :] = in_s[...] + i
+      pltpu.sync_copy(out_s, out_ref)
+
+    x = jnp.arange(num_lanes, dtype=jnp.int32)
+    result = np.asarray(kernel(x))
+    for i in range(nrows):
+      expected_row = np.arange(num_lanes, dtype=np.int32) + i
+      np.testing.assert_allclose(result[i], expected_row, rtol=1e-5)
+
+  def test_2d_vmem_column_write(self):
+    nrows = self.num_lanes
+    ncols = 4
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1,
+    )
+
+    @self.kernel(
+        out_shape=jax.ShapeDtypeStruct((nrows, ncols), jnp.int32),
+        mesh=mesh,
+        scratch_shapes=dict(
+            in_s=pltpu.VMEM((nrows,), jnp.int32),
+            out_s=pltpu.VMEM((nrows, ncols), jnp.int32),
+        ),
+    )
+    def kernel(in_ref, out_ref, in_s, out_s):
+      pltpu.sync_copy(in_ref, in_s)
+      # Write the vector into each column of the 2D scratch.
+      for i in range(ncols):
+        out_s[:nrows, i] = in_s[...] + i
+      pltpu.sync_copy(out_s, out_ref)
+
+    x = jnp.arange(nrows, dtype=jnp.int32)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Integer indexing of refs that follows a non-trivial slice",
+    ):
+      kernel(x)
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True

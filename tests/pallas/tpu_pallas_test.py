@@ -1938,6 +1938,28 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     [message] = log.output
     self.assertIn('AsyncCopyDescriptor was not used', message)
 
+  def test_2d_vmem_column_write(self):
+    nrows = 8
+    ncols = 4
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((nrows, ncols), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        grid=(1,),
+    )
+    def kernel(in_ref, out_ref):
+      scratch = jax.empty_ref(jax.ShapeDtypeStruct((nrows, ncols), jnp.int32), memory_space=pltpu.VMEM)
+      for i in range(ncols):
+        scratch[:nrows, i] = in_ref[...] + i
+      out_ref[...] = scratch[...]
+
+    x = jnp.arange(nrows, dtype=jnp.int32)
+    y = kernel(x)
+    expected = jnp.arange(nrows)[:, None] + jnp.arange(ncols)[None, :]
+    np.testing.assert_array_equal(y, expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
