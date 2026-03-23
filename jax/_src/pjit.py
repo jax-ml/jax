@@ -1407,16 +1407,18 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
 def const_args_shardings(const_args: Sequence[ArrayLike]) -> Sequence[PjitSharding]:
+  const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_shardings(
-      const_args, (sharding_impls.UNSPECIFIED,) * len(const_args))
+      const_args_types, (sharding_impls.UNSPECIFIED,) * len(const_args))
 
 def const_args_layouts(
     const_args: Sequence[ArrayLike],
     avals: Sequence[core.AbstractValue],
     shardings: Sequence[PjitSharding]
     ) -> Sequence[Layout | AutoLayout | None]:
+  const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_layouts(
-      const_args, (None,) * len(const_args), shardings, avals)
+      const_args_types, (None,) * len(const_args), shardings, avals)
 
 def _pjit_batcher(axis_data, vals_in,
                   dims_in: tuple[int, ...],
