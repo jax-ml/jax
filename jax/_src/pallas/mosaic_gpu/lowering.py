@@ -3118,10 +3118,10 @@ def _debug_print_lowering_rule(
         "Only positional arguments are supported by debug_print on Pallas."
     )
   primitives.check_debug_print_format(fmt, *args)
-  scope = mgpu.ThreadSubset.WARPGROUP
-  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
-    scope = mgpu.ThreadSubset.WARP
   if not any(aval.shape for aval in ctx.avals_in):
+    scope = mgpu.ThreadSubset.WARPGROUP
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      scope = mgpu.ThreadSubset.WARP
     mgpu.debug_print(
         fmt,
         *(
@@ -3131,6 +3131,8 @@ def _debug_print_lowering_rule(
         scope=scope
     )
   elif len(ctx.avals_in) == 1:
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      raise NotImplementedError("Can only print scalars in warp-level code.")
     [arg] = args
     if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
       mgpu.dialect.debug_print(fmt, arg)
