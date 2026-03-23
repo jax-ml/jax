@@ -184,7 +184,6 @@ py_library_providing_imports_info(
         "//jax/_src:cudnn",
         "//jax/_src:custom_api_util",
         "//jax/_src:custom_batching",
-        "//jax/_src:custom_dce",
         "//jax/_src:custom_derivatives",
         "//jax/_src:custom_partitioning",
         "//jax/_src:custom_partitioning_sharding_rule",

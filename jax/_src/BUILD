@@ -593,24 +593,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "custom_dce",
-    srcs = ["custom_dce.py"],
-    deps = [
-        ":ad",
-        ":api_util",
-        ":batching",
-        ":core",
-        ":custom_api_util",
-        ":mlir",
-        ":partial_eval",
-        ":source_info_util",
-        ":traceback_util",
-        ":tree_util",
-        ":util",
-    ],
-)
-
-pytype_strict_library(
     name = "custom_derivatives",
     srcs = ["custom_derivatives.py"],
     deps = [

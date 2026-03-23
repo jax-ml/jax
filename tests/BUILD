@@ -60,7 +60,6 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax/_src:custom_derivatives",
-        "//jax/experimental:custom_dce",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -75,7 +74,6 @@ jax_multiplatform_test(
         "//jax/_src:custom_transpose",
         "//jax/_src:shard_map",
         "//jax/experimental:checkify",
-        "//jax/experimental:custom_dce",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",
         "//jax/experimental:pallas_gpu_ops",

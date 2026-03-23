@@ -28,7 +28,6 @@ from jax import lax
 import jax.custom_batching
 import jax.custom_derivatives
 from jax.experimental import checkify
-import jax.experimental.custom_dce
 from jax.experimental import pallas as pl
 from jax._src.shard_map import shard_map
 import jax.numpy as jnp
@@ -1868,73 +1867,6 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_tracer_debug_infos=expected_tracer_debug_infos,
         check_lowering=False,  # TODO(necula): warning during lowering
     )
-
-  def test_custom_dce_static_argnums(self):
-    tracer_spy = TracerSpy()
-    @functools.partial(jax.experimental.custom_dce.custom_dce,
-                       static_argnums=(0,))
-    def my_g(f, x):
-      tracer_spy.append(x)
-      return f(x), 10 * f(x)
-
-    @my_g.def_dce
-    def my_g_dce(f, used_outs, x):  # note: static_argnums are always passed first
-      tracer_spy.append(x)
-      self.assertTrue(callable(f))
-      return [2 * v if used else None
-              for used, v in zip(used_outs, my_g(f, x))]
-
-    def my_f(x):
-      return jnp.exp(x)
-
-    self._check_tracers_and_jaxprs(
-        jax.jit(lambda x: my_g(my_f, x)[0]),
-        0.,
-        tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-            "traced_for=custom_dce, fun=my_g, arg_names=x, result_paths=result[0],result[1]",
-        ],
-        expected_tracer_debug_infos=[
-            # TODO(necula): no leaked tracer from my_g_dce?
-            "traced_for=custom_dce, fun=my_g, arg_names=x, from x",
-        ])
-
-  def test_custom_dce_consts(self):
-    tracer_spy = TracerSpy()
-    @jax.experimental.custom_dce.custom_dce
-    def my_f(x):
-      tracer_spy.append(x)
-      return np.eye(1) * jnp.sin(x), jnp.cos(x)
-
-    @my_f.def_dce
-    def my_rule(used_outs, y):
-      tracer_spy.append(y)
-      return (
-          np.full((1, 1), 2.0) * jnp.exp(y) if used_outs[0] else None,
-          jnp.sqrt(y) if used_outs[1] else None,
-      )
-
-    expected_jaxpr_debug_infos = [
-        "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result",
-    ]
-    if config.use_simplified_jaxpr_constants.value:
-      expected_jaxpr_debug_infos.extend([
-          "traced_for=custom_dce, fun=my_f, arg_names=x, result_paths=result[0],result[1]",
-      ])
-    else:
-      expected_jaxpr_debug_infos.extend([
-          "traced_for=custom_dce, fun=my_f, arg_names=,x, result_paths=result[0],result[1]",
-      ])
-    self._check_tracers_and_jaxprs(
-        jax.jit(lambda x: my_f(x)[0]),
-        np.array(1.1234),
-        tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
-        expected_tracer_debug_infos=[
-            # TODO(necula): no leaked tracer from my_rule?
-            "traced_for=custom_dce, fun=my_f, arg_names=x, from x",
-        ])
 
   def test_custom_linear_solve_complex(self):
     tracer_spy = TracerSpy()

@@ -155,15 +155,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "custom_dce",
-    srcs = ["custom_dce.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jax/_src:custom_dce",
-    ],
-)
-
-pytype_strict_library(
     name = "custom_partitioning",
     srcs = ["custom_partitioning.py"],
     visibility = ["//visibility:public"],
