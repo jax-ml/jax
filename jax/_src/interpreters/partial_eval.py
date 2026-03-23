@@ -627,14 +627,9 @@ def new_eqn_recipe(trace: JaxprTrace,
                    source_info: source_info_util.SourceInfo,
                    ctx: JaxprEqnContext | None = None) -> JaxprEqnRecipe:
   # TODO(necula): move these checks to core.check_jaxpr, and call in more places
-  if primitive.call_primitive or primitive.map_primitive:
+  if primitive.call_primitive:
     assert "call_jaxpr" in params
     assert ("donated_invars" not in params or
-            len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
-  if primitive.map_primitive:
-    assert ("in_axes" in params and
-            len(params["in_axes"]) == len(params["call_jaxpr"].invars))
-    assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
   ctx = ctx or JaxprEqnContext(
