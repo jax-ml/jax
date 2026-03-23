@@ -12,3 +12,9 @@ rich
 matplotlib
 auditwheel
 scipy-stubs
+flax
+jraph
+numpy
+typing_extensions
+tensorflowjs
+google_benchmark

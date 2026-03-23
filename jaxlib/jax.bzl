@@ -85,10 +85,14 @@ _py_deps = {
     "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
     "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
+    "disable_pmap_shmap_merge": [],
     "epath": get_optional_dep("@pypi//etils"),  # etils.epath
     "filelock": get_optional_dep("@pypi//filelock"),
     "flatbuffers": ["@pypi//flatbuffers"],
+    "flax": get_optional_dep("@pypi//flax"),
+    "google_benchmark": get_optional_dep("@pypi//google-benchmark"),
     "hypothesis": ["@pypi//hypothesis"],
+    "jraph": get_optional_dep("@pypi//jraph"),
     "magma": [],
     "matplotlib": get_optional_dep("@pypi//matplotlib"),
     "mpmath": [],
@@ -102,7 +106,9 @@ _py_deps = {
     "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
     "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
+    "tensorflowjs": get_optional_dep("@pypi//tensorflowjs"),
     "tpu_ops": [],
+    "typing_extensions": get_optional_dep("@pypi//typing_extensions"),
     # TODO(vam): remove this once zstandard builds against Python >3.13
     "zstandard": get_optional_dep("@pypi//zstandard", ["3.13", "3.13-ft", "3.14", "3.14-ft"]),
 }

@@ -37,6 +37,9 @@ jax_multiplatform_test(
     deps = [
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
-        "//third_party/py/google_benchmark",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps([
+        "absl/testing",
+        "google_benchmark",
+        "numpy",
+    ]),
 )

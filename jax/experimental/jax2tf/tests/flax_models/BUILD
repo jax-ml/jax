@@ -1,3 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
 # Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,8 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_deps")
 
 # Note: these examples were imported May 26, 2022 and may be out of sync.
 licenses(["notice"])
@@ -28,11 +29,10 @@ package(
 py_library(
     name = "flax_models",
     srcs = glob(["*.py"]),
-    deps = [
-        "//jax",
-        "//third_party/py/flax:core",
-        "//third_party/py/jraph",
-        "//third_party/py/numpy",
-        "//third_party/py/typing_extensions",
-    ],
+    deps = py_deps([
+        "flax",
+        "jraph",
+        "numpy",
+        "typing_extensions",
+    ]),
 )

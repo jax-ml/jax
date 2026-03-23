@@ -45,8 +45,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:partial_eval",
         "//jax/_src:state_types",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps(["numpy"]),
 )
 
 pytype_strict_library(
@@ -56,8 +55,7 @@ pytype_strict_library(
         ":internal",
         "//jax",
         "//jax/_src:core",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps(["numpy"]),
 )
 
 pytype_strict_library(

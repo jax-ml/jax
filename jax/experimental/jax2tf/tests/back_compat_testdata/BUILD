@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_deps")
 
 licenses(["notice"])
 
@@ -24,8 +25,8 @@ package(
 py_library(
     name = "back_compat_testdata",
     srcs = glob(["*.py"]),
-    deps = [
-        "//third_party/py/numpy",
-        "//third_party/py/typing_extensions",
-    ],
+    deps = py_deps([
+        "numpy",
+        "typing_extensions",
+    ]),
 )

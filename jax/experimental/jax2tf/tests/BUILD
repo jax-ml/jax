@@ -65,10 +65,11 @@ py_library(
     deps = [
         "//jax",
         "//jax/experimental/jax2tf/tests/flax_models",
-        "//third_party/py/jraph",
-        "//third_party/py/numpy",
-        "//third_party/py/tensorflowjs",
-    ],
+    ] + py_deps([
+        "jraph",
+        "numpy",
+        "tensorflowjs",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -234,8 +235,7 @@ jax_multiplatform_test(
         ":tf_test_util",
         "//jax/_src:compiler",
         "//jax/experimental/jax2tf",
-        "//third_party/py/absl:app",
-    ],
+    ] + py_deps("absl-all"),
 )
 
 jax_multiplatform_test(
