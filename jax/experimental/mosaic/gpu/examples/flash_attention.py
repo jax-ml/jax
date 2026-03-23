@@ -17,6 +17,7 @@ import contextlib
 import dataclasses
 import enum
 import itertools
+from typing import cast
 
 import jax
 from jax import random
@@ -115,7 +116,7 @@ def build_kernel(
   f16 = ir.F16Type.get()
   f32 = ir.F32Type.get()
 
-  grid = block_partition.num_chunks
+  grid = cast(tuple[int, int, int], block_partition.num_chunks)
   block = (wgs_per_block * 128, 1, 1)
   tiling = (64, 64)
   qo_scratch = jax.ShapeDtypeStruct(

@@ -51,8 +51,6 @@ project-excludes = [
     "jax/_src/internal_test_util/export_back_compat_test_data/*.py",
     "jax/example_libraries/**/*.py",
     "jax/experimental/jax2tf/tests/**/*.py",
-    # TODO(slebedev): Opt in jax/experimental and remove these excludes.
-    "jax/experimental/mosaic/**/*.py",
 ]
 ignore-missing-imports = [
     "absl.*",

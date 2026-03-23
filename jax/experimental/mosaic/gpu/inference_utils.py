@@ -49,7 +49,7 @@ def out_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   return op.attributes["out_layouts"]  # type: ignore
 
 
-def in_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
+def in_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   """Returns the in_transforms attribute of the given operation.
 
   Raises:
@@ -60,7 +60,7 @@ def in_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
   return op.attributes["in_transforms"]  # type: ignore
 
 
-def out_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
+def out_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   """Returns the out_transforms attribute of the given operation.
 
   Raises:

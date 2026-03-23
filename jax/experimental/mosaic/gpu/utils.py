@@ -315,6 +315,7 @@ def multimem_load_reduce(
       "=r," * vector_i32_length + "l",
       has_side_effects=True,
   )
+  assert isinstance(out_reg_struct, ir.Value)
   if vector_i32_length == 1:
     return bitcast(out_reg_struct, ty)
   else:
@@ -591,7 +592,7 @@ def memref_slice(ref: ir.Value, index) -> ir.Value:
 
 
 def _is_contiguous_shape_slice(
-    ref_ty: ir.MemRefType, dim_slice: slice | None = slice(None)
+    ref_ty: ir.MemRefType, dim_slice: slice = slice(None)
 ):
   # If it's not a strided layout then we are definitely contiguous.
   if not isinstance(ref_ty.layout, ir.StridedLayoutAttr):
@@ -746,6 +747,12 @@ def memref_reshape(
   return _reshape(ref, src_shape, dst_shape)
 
 
+@overload
+def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value: ...
+
+@overload
+def memref_fold(ref: MultimemRef, dim, fold_rank) -> MultimemRef: ...
+
 def memref_fold(
     ref: ir.Value | MultimemRef, dim, fold_rank
 ) -> ir.Value | MultimemRef:
@@ -761,7 +768,9 @@ def memref_fold(
         f"Folding {fold_rank} dimensions starting from {dim} is out of bounds"
         f" for shape {new_shape}"
     )
-  new_shape[dim : dim + fold_rank] = [np.prod(new_shape[dim : dim + fold_rank])]
+  new_shape[dim : dim + fold_rank] = [
+      math.prod(new_shape[dim : dim + fold_rank])
+  ]
   identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
   contig_strided_1d = ir.Attribute.parse("strided<[1]>")
   # Not sure why but MLIR expects the strided 1D layout to disappear in this op.
@@ -881,7 +890,7 @@ def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
 
 
 def parse_indices(
-    index, shape: tuple[int, ...], *, check_oob: bool = True
+    index, shape: Sequence[int], *, check_oob: bool = True
 ) -> tuple[list[ir.Value | int], list[int], list[bool]]:
   if not isinstance(index, tuple):
     index = (index,)
@@ -1177,7 +1186,11 @@ class DialectBarrierRef:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
     memref_type = ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier"))
-    return builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
+    result = builtin.unrealized_conversion_cast(
+        [memref_type], [self.get_ptr()]
+    )
+    assert isinstance(result, ir.Value)
+    return result
 
   @classmethod
   def from_barrier_memref(cls, barrier: ir.Value):
@@ -1193,11 +1206,13 @@ class DialectBarrierRef:
 
     ptr_type = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
+    assert isinstance(addr, ir.Value)
     return cls(
         barrier_ref=BarrierRef(
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
-            phases=None,
+            # TODO(slebedev): Why is it safe to use None here?
+            phases=None,  # pyrefly: ignore[bad-argument-type]
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         )
     )
@@ -1516,7 +1531,7 @@ class Partition1D:
       raise ValueError(
           "Exactly one of num_chunks and chunk_size must be specified"
       )
-    common_kwargs = dict(elements=(elements,), partition=(0,))
+    common_kwargs: dict[str, Any] = dict(elements=(elements,), partition=(0,))
     if base_offset is not None:
       common_kwargs["base_offset"] = (base_offset,)
     if num_chunks is not None:
@@ -1817,6 +1832,7 @@ def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
   result = llvm.inline_asm(
       i32, [high, low, permutation], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
   )
+  assert isinstance(result, ir.Value)
   return bitcast(result, result_type)
 
 
@@ -1880,7 +1896,9 @@ def vector_slice(v: ir.Value, s: slice):
   )
 
 
-def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
+def vector_concat(
+    vectors: Sequence[ir.Value[ir.VectorType]]
+) -> ir.Value[ir.VectorType]:
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
   vty = vectors[0].type
@@ -1890,9 +1908,9 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
-    if v.type.element_type != vty.element_type:
+    if v.type.element_type != vty.element_type:  # pyrefly: ignore[missing-attribute]
       raise ValueError("Cannot concatenate vectors of different element types")
-    if v.type.rank != 1:
+    if v.type.rank != 1:  # pyrefly: ignore[missing-attribute]
       raise ValueError("Can only concatenate 1D vectors")
   return _vector_concat_rec(vectors)
 
@@ -2043,11 +2061,11 @@ def query_cluster_cancel(
     }""",
       "=r,=r,=r,=b,r",
   )
-
-  cta_ids = [llvm.extractvalue(i32, desc, [idx]) for idx in [0, 1, 2]]
+  cta_id_x = llvm.extractvalue(i32, desc, [0])
+  cta_id_y = llvm.extractvalue(i32, desc, [1])
+  cta_id_z = llvm.extractvalue(i32, desc, [2])
   cancelled_launch = llvm.extractvalue(i1, desc, [3])
-
-  return (*cta_ids, cancelled_launch)
+  return cta_id_x, cta_id_y, cta_id_z, cancelled_launch
 
 
 def nanosleep(nanos: ir.Value):
@@ -2061,11 +2079,14 @@ def nanosleep(nanos: ir.Value):
   )
 
 
-def nvvm_mbarrier_arrive_expect_tx(barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None):
-  try:
-    return nvvm.mbarrier_arrive_expect_tx(None, barrier, expect_tx, predicate=predicate)  # type: ignore
-  except TypeError:
-    return nvvm.mbarrier_arrive_expect_tx(barrier, expect_tx, predicate=predicate)  # pytype: disable=missing-parameter
+def nvvm_mbarrier_arrive_expect_tx(
+    barrier: ir.Value,
+    expect_tx: ir.Value,
+    predicate: ir.Value | None = None
+):
+  return nvvm.mbarrier_arrive_expect_tx(
+      None, barrier, expect_tx, predicate=predicate
+  )
 
 
 def cluster_idx(
@@ -2078,7 +2099,7 @@ def cluster_idx(
   dimensions. If not provided, the current block's index is used.
   """
   if dim is None:
-    dim = gpu.Dimension
+    dim = tuple(gpu.Dimension)
   elif isinstance(dim, gpu.Dimension):
     dim = (dim,)
   if dim_idx is None:
@@ -2125,8 +2146,8 @@ def get_cluster_ref(
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
   if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
-    raise ValueError(f"Expected SMEM but got: {ref.memory_space}")
-  idxs = [gpu.cluster_block_id(d) for d in gpu.Dimension]
+    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
+  idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(gpu.Dimension, idxs))  # type: ignore
   return ptr_as_memref(

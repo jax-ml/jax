@@ -118,6 +118,7 @@ class ValueSite:
   @property
   def shape(self) -> tuple[int, ...]:
     """Returns the shape of the underlying value."""
+    # pyrefly: ignore[missing-attribute]
     return tuple(self.value.type.shape)  # pytype: disable=attribute-error
 
   @property
@@ -217,7 +218,7 @@ def _default_tmem_layout_for_variable(
   parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
     return tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
-        tuple(value.type.shape), parent.collective, packing=1
+        tuple(value.type.shape), bool(parent.collective), packing=1
     )
   return None
 
@@ -425,10 +426,10 @@ def find_assignments_for(
         `ConstantExpression`s such that the assignment satisfies the constraint
         system otherwise.
   """
-  constraint_system = cs.reduce(constraint_system)
-  if isinstance(constraint_system, cs.Unsatisfiable):
+  if isinstance(result := cs.reduce(constraint_system), cs.Unsatisfiable):
     return cs.Unsatisfiable(), fuel
 
+  constraint_system = result
   remaining_unknowns = [
       u for u in unknowns if u not in constraint_system.assignments.keys()
   ]
@@ -638,6 +639,7 @@ def _vector_load_constraint_system(
   dest = ValueSite(op, VariableType.RESULT, 0)
   dest_var = cs.Variable(dest)
   value_sites_for_variable = {dest_var: [dest]}
+  constraints: list[cs.Constraint]
   constraints = [cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
   # SMEM
@@ -648,6 +650,7 @@ def _vector_load_constraint_system(
     shape = tuple(ir.MemRefType(op.source.type).shape)
     constraints.append(
         cs.IsTransferable(
+            # pyrefly: ignore[missing-attribute]
             source_var, dest_var, shape, utils.bitwidth(op.source.type.element_type)
         )
     )
@@ -675,6 +678,7 @@ def _vector_store_constraint_system(
     shape = tuple(ir.MemRefType(op.destination.type).shape)
     constraints.append(
         cs.IsTransferable(
+            # pyrefly: ignore[missing-attribute]
             value_var, dest_var, shape, utils.bitwidth(op.destination.type.element_type)
         )
     )
@@ -834,6 +838,7 @@ def dynamic_gcd(a: int, b: ir.Value) -> int:
   ):
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
   if isinstance(b.owner, arith.ConstantOp):
+    assert isinstance(b.owner.literal_value, int)
     return math.gcd(a, b.owner.literal_value)
   running_gcd = 1
   for factor in prime_decomposition(a):
@@ -875,8 +880,8 @@ def _while_constraint_system(
             arg,
             cond_operand,
         ]
-      case _ as never:
-        assert_never(never)  # pytype: disable=wrong-arg-types
+      case _:
+        raise RuntimeError(f"Unexpected value site type: {value_site.type}")
 
   return cs.ConstraintSystem(), value_sites_for_variable
 
@@ -977,8 +982,9 @@ def _wgmma_constraint_system(
 
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
-  input_bitwidth = utils.bitwidth(op.b.type.element_type)
+  input_bitwidth = utils.bitwidth(op.b.type.element_type)  # pyrefly: ignore[missing-attribute]
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  constraints: list[cs.Constraint]
   if b_is_transposed:
     constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), input_bitwidth)]
   else:
@@ -999,7 +1005,7 @@ def _wgmma_constraint_system(
       constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
     a_var = cs.Variable(a)
-    if utils.bitwidth(op.a.type.element_type) == 8:
+    if utils.bitwidth(op.a.type.element_type) == 8:  # pyrefly: ignore[missing-attribute]
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT
@@ -1074,8 +1080,8 @@ def _broadcast_in_dim_constraint_system(
   del ctx
   src_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
   dst_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
-  src_shape = tuple(op.operand.type.shape)
-  dst_shape = tuple(op.result.type.shape)
+  src_shape = tuple(op.operand.type.shape)  # pyrefly: ignore[missing-attribute]
+  dst_shape = tuple(op.result.type.shape)  # pyrefly: ignore[missing-attribute]
 
   # Map destination index -> source index
   dst_to_src = {dst: src for src, dst in enumerate(op.broadcast_dimensions)}
@@ -1182,7 +1188,8 @@ def _extract_strided_slice_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   result = ValueSite(op, VariableType.RESULT, 0)
   variable = cs.Variable(operand)
-  offsets = tuple(ir.IntegerAttr(o).value for o in op.offsets)
+  # pyrefly: ignore[bad-argument-type]
+  offsets: tuple[int, ...] = tuple(ir.IntegerAttr(o).value for o in op.offsets)
   constraints = [
       cs.Divides(variable, offsets),
       # TODO(allanrenucci): Remove once vectors with splat and strided layouts
@@ -1206,9 +1213,11 @@ def _vector_extract_constraint_system(
   if not isinstance(op.result.type, ir.VectorType):  # scalar result
     operand = ValueSite(op, VariableType.OPERAND, 0)
     variable = cs.Variable(operand)
-    layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))
+    layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))  # pyrefly: ignore[missing-attribute]
     # We only support indexing for splat layout.
-    assignments = {variable: cs.RegisterLayout(layout)}
+    assignments: dict[cs.Variable, cs.Constant] = {
+        variable: cs.RegisterLayout(layout)
+    }
     return cs.ConstraintSystem(assignments), {variable: [operand]}
 
   if op.dynamic_position:
@@ -1262,7 +1271,9 @@ def _custom_primitive_constraint_system(
       constraints.append(cs.Equals(lhs=source_var, rhs=v))
       variables.append(v)
       transforms = next(in_transforms)
+      assert isinstance(transforms, ir.ArrayAttr)
       ref_ty = value_site.value.type
+      # pyrefly: ignore[bad-argument-type]
       tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
       assignments[v] = tiling
 
@@ -1281,7 +1292,7 @@ def _custom_primitive_constraint_system(
 
 
 def _tmem_layout_from_layout_attr(
-    layout_attr: mgpu.TiledLayout,
+    layout_attr: ir.Attribute,
 ) -> tcgen05.TMEMLayout:
   layout = layouts_lib.from_layout_attr(layout_attr)
   assert isinstance(layout, fa.TiledLayout)
@@ -1352,7 +1363,7 @@ def _tcgen05_mma_constraint_system(
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
   acc_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
-      tuple(acc_type.shape), op.collective, packing=1
+      tuple(acc_type.shape), bool(op.collective), packing=1
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
   acc_is_valid = is_valid_tmem_layout_assignment(acc.shape, acc_layout)
@@ -1361,21 +1372,22 @@ def _tcgen05_mma_constraint_system(
     return cs.Unsatisfiable()
   operands_for_variable[acc_variable] = [acc]
 
-  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
+  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)  # pyrefly: ignore[missing-attribute]
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
   operands_for_variable[b_var] = [b]
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
+  constraints: list[cs.Constraint]
   if b_is_transposed:
     constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), element_type_bitwidth)]
   else:
     constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
 
   # SMEM
-  M = op.accumulator.type.shape[0]
+  M = op.accumulator.type.shape[0]  # pyrefly: ignore[missing-attribute]
   if M == 64 and not op.collective.value:
     # We can't split N into groups if we would partition it below the tile size.
-    N = op.b.type.shape[1]
+    N = op.b.type.shape[1]  # pyrefly: ignore[missing-attribute]
     n_lane_groups = 2
     max_swizzle_elems = next(
         8 * s // element_type_bitwidth
@@ -1393,7 +1405,7 @@ def _tcgen05_mma_constraint_system(
     a_var = ctx.producer_ref(a)
     packing = 32 // utils.bitwidth(a_type.element_type)
     a_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
-        tuple(a_type.shape), op.collective, packing
+        tuple(a_type.shape), bool(op.collective), packing
     )
     assignments[a_var] = cs.TMEMLayout(a_layout)
     operands_for_variable[a_var] = [a]
@@ -1439,7 +1451,7 @@ def _async_load_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
+      utils.bitwidth(op.source.type.element_type),  # pyrefly: ignore[missing-attribute]
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1456,7 +1468,7 @@ def _async_async_store_smem_to_tmem_constraint_system(
   source_variable = ctx.producer_ref(source)
   destination = ValueSite(op, VariableType.OPERAND, 1)
   destination_variable = ctx.producer_ref(destination)
-  bitwidth = utils.bitwidth(op.destination.type.element_type)
+  bitwidth = utils.bitwidth(op.destination.type.element_type)  # pyrefly: ignore[missing-attribute]
   packing = 32 // bitwidth
   return (
       cs.ConstraintSystem(
@@ -1551,7 +1563,7 @@ def _async_store_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
+      utils.bitwidth(op.source.type.element_type),  # pyrefly: ignore[missing-attribute]
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1677,6 +1689,7 @@ def _memref_expand_shape_op_equation_system(
   for dim, idx in zip(
       reversed(op.static_output_shape), reversed(op.reassociation)
   ):
+    # pyrefly: ignore[bad-argument-type]
     if ir.ShapedType.is_dynamic_size(dim) or len(idx) > 1:
       # For simplicity, we only support tiling non-expanded static dimensions.
       # These limitations could be lifted later if needed.
@@ -1747,6 +1760,7 @@ def _with_transforms_constraint_system(
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   var = ctx.producer_ref(source)
+  # pyrefly: ignore[bad-argument-type]
   tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
   if tiling.value is not None:
     # TODO(bchetioui): think about raising a better error here.
@@ -2081,6 +2095,7 @@ def derive_relayout_constraints(
       if value_site.memory_space != MemorySpace.REG:
         continue
 
+      # pyrefly: ignore[missing-attribute]
       elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)  # pytype: disable=attribute-error
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)
@@ -2147,6 +2162,7 @@ def is_valid_register_layout_assignment(
         return False
       return True
     case _:
+      # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
       assert_never(layout)
 
 

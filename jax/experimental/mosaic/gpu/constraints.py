@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import math
 from typing import Any, assert_never, final
@@ -131,7 +131,7 @@ Expression = (
 
 def reduce_reshape_expression(
     reshape: Reshape, assignments: dict[Variable, Constant]
-) -> Expression | Unsatisfiable:
+) -> Expression | Unsatisfiable:  # pyrefly: ignore[bad-return]  # pyrefly#2853
   reduced_expr = reduce_expression(reshape.expression, assignments)
   match reduced_expr:
     case Unsatisfiable():
@@ -209,6 +209,7 @@ def reduce_reduce_expression(
 
   def default():
     """We don't know how to reduce further."""
+    assert not isinstance(reduced_expr, Unsatisfiable)
     return dataclasses.replace(expr, expression=reduced_expr)
 
   match reduced_expr:
@@ -276,12 +277,16 @@ class Equals:
     return f"Equals({self.lhs} == {self.rhs})"
 
 
-_always_supported = lambda *args: True
+_always_supported = lambda bitwidth: True
 
 
 # Maps a tuple of layouts (source, target) to a function that takes in a
 # bitwidth and returns whether the source->target relayout is supported for
 # values of types with the given bitwidth.
+_SUPPORTED_TILED_RELAYOUTS: dict[
+    tuple[fa.FragmentedLayout, fa.FragmentedLayout],
+    Callable[[int], bool],
+]
 _SUPPORTED_TILED_RELAYOUTS = {
     # Transposed layouts.
     (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT): _always_supported,
@@ -342,7 +347,7 @@ class Relayout:
         return splat.shape == strided.shape
       case fa.WGSplatFragLayout(), fa.TiledLayout():
         return layouts_lib.splat_is_compatible_with_tiled(
-            source_layout, target_layout
+            source_layout, target_layout  # pyrefly: ignore[bad-argument-type]  # pyrefly#2857
         )
       case fa.TiledLayout(), fa.TiledLayout():
         is_supported = _SUPPORTED_TILED_RELAYOUTS.get(
@@ -631,7 +636,7 @@ def reduce_constraint(
         return Unsatisfiable()
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case _ as never:
-      assert_never(never)
+      assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
 
 
 @dataclasses.dataclass
@@ -667,7 +672,7 @@ class ConstraintSystem:
         case Transpose(expression=e):
           extract_variables(e)
         case _:
-          assert_never(expr)
+          assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
     for constraint in self.constraints:
       match constraint:
         case Equals(lhs=lhs, rhs=rhs):
@@ -689,7 +694,7 @@ class ConstraintSystem:
           extract_variables(src)
           extract_variables(dst)
         case _ as never:
-          assert_never(never)
+          assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
     return free_variables
 
   def __and__(
@@ -977,6 +982,6 @@ def reduce(
       case ConstraintSystem() as new_system:
         constraint_system = new_system
       case _ as never:
-        assert_never(never)
+        assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2858
 
   return constraint_system

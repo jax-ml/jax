@@ -16,10 +16,10 @@
 
 import itertools
 import math
+from typing import Any
 
 import jax
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
@@ -91,10 +91,7 @@ def build_kernel(
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
-    if jaxlib_extension_version >= 412:
-      is_warp_leader = nvvm.elect_sync()
-    else:
-      is_warp_leader = nvvm.elect_sync(i1)
+    is_warp_leader = nvvm.elect_sync()
     is_leader_of = lambda i: arith.andi(
         arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader
     )
@@ -285,9 +282,9 @@ def main(unused_argv):
   configs = itertools.product(collective, tile_m, tile_n, grid_tile_m, max_concurrent_steps)
   names = ("collective", "tile_m", "tile_n", "grid_tile_m", "max_concurrent_steps")
   best_runtime = float("inf")
-  best_kwargs = {}
+  best_kwargs: dict[str, Any] = {}
   for config in configs:
-    kwargs = dict(zip(names, config))
+    kwargs: dict[str, Any] = dict(zip(names, config))
     tile_m = kwargs["tile_m"]
     tile_n = kwargs["tile_n"]
     if kwargs["collective"]:
@@ -318,6 +315,9 @@ def main(unused_argv):
   with mlir.make_ir_context(), ir.Location.unknown():
     d, runtime = profiler.measure(build_kernel(m, k, n, jnp.float16, **best_kwargs))(a, b)
   d_ref, ref_runtime = profiler.measure(jax.jit(lambda a, b: a @ b.T))(a, b)
+
+  assert runtime is not None
+  assert ref_runtime is not None
 
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
   ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12

@@ -195,7 +195,7 @@ class ProfilerSpec:
 
   def mlir_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
-  ) -> ir.Type:
+  ) -> ir.MemRefType:
     return ir.MemRefType.get(
         (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
         ir.IntegerType.get_signless(32),
@@ -203,7 +203,7 @@ class ProfilerSpec:
 
   def jax_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
-  ) -> ir.Type:
+  ) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(
         (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
         jnp.uint32,
