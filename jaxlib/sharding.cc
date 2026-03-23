@@ -212,6 +212,18 @@ nb::int_ NamedSharding::Hash() const {
   }));
 }
 
+nanobind::object MakeSingleDeviceSharding(nanobind::object device,
+                                          nanobind::object memory_kind) {
+  try {
+    return nb::module_::import_("jax._src.sharding_impls")
+        .attr("make_single_device_sharding")(std::move(device),
+                                             std::move(memory_kind));
+  } catch (nb::python_error& e) {
+  }
+  return make_nb_class<SingleDeviceSharding>(std::move(device),
+                                             std::move(memory_kind));
+}
+
 SingleDeviceSharding::SingleDeviceSharding(nb::object device,
                                            nb::object memory_kind)
     : Sharding(/*num_devices=*/1),

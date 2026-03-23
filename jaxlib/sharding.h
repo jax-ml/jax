@@ -60,6 +60,9 @@ class Sharding {
 absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nanobind::handle sharding);
 
+nanobind::object MakeSingleDeviceSharding(
+    nanobind::object device, nanobind::object memory_kind = nanobind::none());
+
 // Checks if the memory kind is valid, and canonicalizes the
 // memory kind to default memory on backends that support memories.
 nanobind::object CheckAndCanonicalizeMemoryKind(

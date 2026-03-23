@@ -573,8 +573,10 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
           ? nb::object(nb::str(memory_kind.memory_kind()->data(),
                                memory_kind.memory_kind()->size()))
           : nb::none();
-  nb::object sharding = make_nb_class<SingleDeviceSharding>(
-      py_client, ifrt_array->sharding().devices(), std::move(py_memory_kind));
+  nb::object sharding = MakeSingleDeviceSharding(
+      py_client->GetPyDevice(
+          ifrt_array->sharding().devices()->devices().front()),
+      std::move(py_memory_kind));
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
                  std::move(ifrt_array), committed,
