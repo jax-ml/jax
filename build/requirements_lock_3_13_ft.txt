@@ -961,9 +961,9 @@ scipy==1.17.1 ; python_version >= "3.13" \
     # via
     #   -r build/requirements.in
     #   jaxlib
-scipy-stubs==1.17.1.2 \
-    --hash=sha256:2ecadc8c87a3b61aaf7379d6d6b10f1038a829c53b9efe5b174fb97fc8b52237 \
-    --hash=sha256:f19e8f5273dbe3b7ee6a9554678c3973b9695fa66b91f29206d00830a1536c06
+scipy-stubs==1.17.1.3 \
+    --hash=sha256:5eb87a8d23d726706259b012ebe76a4a96a9ae9e141fc59bf55fc8eac2ed9e0f \
+    --hash=sha256:7b91d3f05aa47da06fbca14eb6c5bb4c28994e9245fd250cc847e375bab31297
     # via -r build/test-requirements.txt
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
