@@ -96,6 +96,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
     $@ \
+    --spawn_strategy=local \
     -- \
     //tests:gpu_tests \
     //tests:backend_independent_tests \
