@@ -3916,6 +3916,8 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
   of a pending cluster from the grid and claiming its CTA ID as the next unit
   of work.
 
+  Note that this operation must be called collectively by all Pallas threads.
+
   Args:
     result_ref: An SMEM ref where the 16-byte result will be stored.
     barrier: A barrier used to coordinate the completion of the query.
