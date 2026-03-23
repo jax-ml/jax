@@ -976,7 +976,7 @@ class GridMapping:
       axis_env_ctx = jax_core.extend_axis_env_nd(
           zip(self.grid_names, self.grid)  # pyrefly: ignore[bad-argument-type]
       )
-    with tracing_grid_env(self.grid, self.vmapped_dims), axis_env_ctx:
+    with tracing_grid_env(self.grid, self.vmapped_dims), axis_env_ctx, config._check_vma(False):
       yield
 
   @property
@@ -1474,6 +1474,7 @@ def core_map(
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
+        config._check_vma(False),
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
 
@@ -1729,7 +1730,7 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
+  with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())), config._check_vma(False):
     jax_core.check_jaxpr(jaxpr)
   return _core_map_abstract_eval(*in_atoms, jaxpr=jaxpr, mesh=mesh, **kwargs)
 
