@@ -6152,6 +6152,54 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         self.assertEqual(data.count('"name": "load"'), 2)
         self.assertEqual(data.count('"name": "store"'), 2)
 
+  def test_arrive_expect_tx_non_uniform(self):
+    def body(ctx, result, scratch):
+      del ctx
+      [mbar] = scratch
+      mbar_ref = mbar.as_barrier_memref()
+      i32 = ir.IntegerType.get_signless(32)
+      i1 = ir.IntegerType.get_signless(1)
+      index = ir.IndexType.get()
+
+      mgpu_dialect.arrive_expect_tx(barrier=mbar_ref, expect_tx=ir.IntegerAttr.get(i32, 16))
+
+      # Complete tx with CustomPrimitiveOp because there is no `complete_tx` op
+      # in the dialect.
+      op = mgpu_dialect.CustomPrimitiveOp(
+          result=[],
+          operands_=[mbar_ref],
+          in_layouts=[],
+          in_transforms=[],
+          out_layouts=[],
+      )
+      args_ty = [arg.type for arg in op.operands_]
+      block = op.body.blocks.append(*args_ty)
+      with ir.InsertionPoint(block):
+        is_leader = single_thread_predicate()
+        tx = arith.constant(i32, 16)
+        barrier = utils.DialectBarrierRef.from_barrier_memref(block.arguments[0])
+        barrier.barrier_ref.complete_tx(tx, predicate=is_leader)
+        mgpu_dialect.return_([])
+
+      mgpu_dialect.wait(barrier=mbar_ref, parity=arith.constant(i1, 0))
+
+      is_leader_thread = single_thread_predicate()
+      with when(is_leader_thread):
+        c1 = arith.constant(i32, 1)
+        memref.store(c1, result, [c(0, index)])
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        smem_scratch_shape=[core.TMABarrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    self.assertArraysEqual(kernel(), np.array([1], dtype=np.int32))
+
   @parameterized.parameters(((128,),), ((128, 128),))
   def test_tma_collective_async_cp(self, in_shape):
     def body(ctx, src, dst, scratch):
