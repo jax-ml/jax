@@ -168,7 +168,6 @@ def make_transpose_from_thunk(thunk: Callable,
 
 class CustomTransposePrimitive(core.Primitive):
   call_primitive = False
-  map_primitive = False
   multiple_results = True
   skip_canonicalization = True
 
