@@ -522,12 +522,12 @@ NB_MODULE(_mosaic_gpu_ext, m) {
           nb::arg("shape"))
       .def(
           "registers_element_type",
-          [](const mgpu::TiledLayout& self, MlirType t) {
+          [](const mgpu::TiledLayout& self, MlirType t) -> MlirType {
             auto result = self.RegistersElementType(unwrap(t));
             if (!result.ok()) {
               throw nb::value_error(result.status().message().data());
             }
-            return nb::cast(wrap(*result));
+            return wrap(*result);
           },
           nb::arg("t"))
       .def(
