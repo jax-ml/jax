@@ -986,10 +986,9 @@ NB_MODULE(_jax, m) {
                    [](xla::ifrt::Topology& topology) {
                      return topology.platform_version();
                    })
-      .def("serialize",
-           [](xla::ifrt::Topology& topology) -> nb::bytes {
-             std::string serialized = xla::ValueOrThrow(topology.Serialize());
-             return nb::bytes(serialized.data(), serialized.size());
+      .def("fingerprint",
+           [](xla::ifrt::Topology& topology) -> uint64_t {
+             return xla::ValueOrThrow(topology.Fingerprint());
            })
       .def("__getattr__",
            [](xla::ifrt::Topology& topology,

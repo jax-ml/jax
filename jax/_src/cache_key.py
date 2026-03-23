@@ -22,6 +22,7 @@ import sys
 from typing import cast as type_cast
 
 from jax._src import config
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import _jax
 from jax._src.lib import xla_client
@@ -234,8 +235,11 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
   try:
+    topology = xla_client.get_topology_for_devices(accelerator_devices)
     hash_obj.update(
-        xla_client.get_topology_for_devices(accelerator_devices).serialize()
+        topology.fingerprint().to_bytes(8, byteorder="big")
+        if jaxlib_extension_version >= 423
+        else topology.serialize()  # pyrefly: ignore[not-callable]  # pytype: disable=not-callable
     )
   except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized
