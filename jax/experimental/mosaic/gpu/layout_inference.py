@@ -1815,6 +1815,23 @@ def _async_prefetch_constraint_system(
   return cs.ConstraintSystem(assignments), value_sites
 
 
+# TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "WarpMapOp"):
+  @_add_constraint_system_derivation_rule(mgpu.WarpMapOp)
+  def _warp_map_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.WarpMapOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    value_sites_for_variable: ValueSitesForVariable = dict()
+    for i, o in enumerate(op.operands):
+      if _is_tmem_ref(o) or _is_smem_ref(o):
+        operand = ValueSite(op, VariableType.OPERAND, i)
+        arg = ValueSite(op, VariableType.ARGUMENT, i, region_index=0)
+        var = ctx.producer_ref(operand)
+        value_sites_for_variable.setdefault(var, []).extend([operand, arg])
+    return cs.ConstraintSystem(), value_sites_for_variable
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(is_vector, "layouts", "vector", op)
