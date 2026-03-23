@@ -2748,9 +2748,11 @@ class LayoutInferenceTest(parameterized.TestCase):
           ir.Type.parse("!mosaic_gpu.barrier"),
       )
       args = undefs(*args_ty)
-      args = [
-          mgpu.dialect.with_transforms(a, ir.ArrayAttr.get([])) for a in args
-      ]
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((32,)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      args = [mgpu.dialect.with_transforms(a, transforms) for a in args]
       op = mgpu.dialect.WarpMapOp(operands=args)
       with ir.InsertionPoint(op.body):
         smem_ref, gmem_ref, barrier = op.body.arguments
@@ -2765,25 +2767,26 @@ class LayoutInferenceTest(parameterized.TestCase):
         )
     mgpu.infer_layout(self.module)
     in_transforms = inference_utils.in_transforms(op)
-    self.assertSequenceEqual(in_transforms, [ir.ArrayAttr.get([])])
+    self.assertSequenceEqual(in_transforms, [transforms])
 
   def test_infer_layout_for_warp_map_op_works_for_refs_with_common_producer(self):
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)
       ref_ty = ir.MemRefType.get((2, 128), i32, memory_space=mgpu.utils.smem())
       ref, = undefs(ref_ty)
-      ref = mgpu.dialect.with_transforms(ref, ir.ArrayAttr.get([]))
-      sliced_ref = mgpu.utils.memref_slice(ref, 0)
-      op = mgpu.dialect.WarpMapOp(operands=[ref, ref, sliced_ref])
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((32,)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      op = mgpu.dialect.WarpMapOp(operands=[ref, ref])
       with ir.InsertionPoint(op.body):
-        ref1, ref2, ref3 = op.body.arguments
-        mgpu.dialect.vector_load(ref3)
-        mgpu.dialect.vector_load(ref2)
-        mgpu.dialect.vector_load(ref1)
+        ref1, ref2 = op.body.arguments
+        mgpu.utils.memref_slice(ref1, 0)
+        mgpu.utils.memref_slice(ref2, 1)
     mgpu.infer_layout(self.module)
     in_transforms = inference_utils.in_transforms(op)
-    expected_transforms = [ir.ArrayAttr.get([])] * 3
-    self.assertSequenceEqual(in_transforms, expected_transforms)
+    self.assertSequenceEqual(in_transforms, [transforms] * 2)
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
