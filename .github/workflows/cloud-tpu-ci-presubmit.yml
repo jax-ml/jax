@@ -45,4 +45,6 @@ jobs:
       build_jaxlib: "true"
       build_jax: "true"
       clone_main_xla: 1
+      xla_repository: "https://github.com/vladbelit/xla.git"
+      xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"
     # End Presubmit Naming Check github-tpu-presubmits

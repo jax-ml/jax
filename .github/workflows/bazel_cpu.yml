@@ -55,6 +55,16 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_repository:
+        description: "XLA git repository URL used when overriding XLA."
+        type: string
+        required: false
+        default: "https://github.com/openxla/xla.git"
+      xla_commit:
+        description: "XLA commit SHA used when overriding XLA."
+        type: string
+        required: false
+        default: ""
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -78,6 +88,8 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_REPO: ${{ inputs.xla_repository }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||

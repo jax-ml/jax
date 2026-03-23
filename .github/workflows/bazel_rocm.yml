@@ -83,6 +83,16 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_repository:
+        description: "XLA git repository URL used when overriding XLA."
+        type: string
+        required: false
+        default: "https://github.com/openxla/xla.git"
+      xla_commit:
+        description: "XLA commit SHA used when overriding XLA."
+        type: string
+        required: false
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -109,6 +119,9 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
+    env:
+      JAXCI_XLA_REPO: ${{ inputs.xla_repository }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

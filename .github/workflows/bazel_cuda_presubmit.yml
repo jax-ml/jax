@@ -42,6 +42,8 @@ jobs:
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
       clone_main_xla: 1
+      xla_repository: "https://github.com/vladbelit/xla.git"
+      xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"
       upload_artifacts_to_gcs: false
 
   run-tests:
@@ -94,3 +96,5 @@ jobs:
       build_jax: 'true'
       run_multiaccelerator_tests: 'false'
       clone_main_xla: 1
+      xla_repository: "https://github.com/vladbelit/xla.git"
+      xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"

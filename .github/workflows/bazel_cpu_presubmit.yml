@@ -53,6 +53,8 @@ jobs:
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
         clone_main_xla: 1
+        xla_repository: "https://github.com/vladbelit/xla.git"
+        xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"
         upload_artifacts_to_gcs: false
 
   run_tests:
@@ -92,3 +94,5 @@ jobs:
       build_jax: 'true'
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 1
+      xla_repository: "https://github.com/vladbelit/xla.git"
+      xla_commit: "e8343e40820a47eec9502d9436b1b8037857435c"
