@@ -2311,6 +2311,10 @@ def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
 
+def _pp_reshard(eqn, ctx, settings):
+  return core._pp_eqn(eqn.replace(params={}), ctx, settings)
+core.pp_eqn_rules[reshard_p] = _pp_reshard
+
 # -------------------- auto and user mode -------------------------
 
 @dataclass(frozen=True, kw_only=True)

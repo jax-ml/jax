@@ -4976,8 +4976,7 @@ def _convert_elt_type_fwd_rule(eqn):
 
 def _convert_elt_type_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
-  if params['sharding'] is None or params['sharding'].mesh.empty:
-    del params['sharding']  # don't show trivial case
+  params.pop('sharding', None)  # implied by let binder type
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = standard_primitive(
@@ -5612,6 +5611,7 @@ def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
       (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
+  printed_params.pop('out_sharding', None)  # implied by the let binder type
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
 
@@ -6545,11 +6545,10 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
 
 def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
-  if params['sharding'] is None:
-    del params['sharding']  # don't show trivial case
   if not params['broadcast_dimensions']:
     del params['broadcast_dimensions']  # don't show trivial case
   del params['shape']  # implied by let binder type
+  params.pop('sharding', None)  # implied by let binder type
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
