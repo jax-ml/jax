@@ -2019,6 +2019,18 @@ jax_multiplatform_test(
     deps = py_deps("absl/testing"),
 )
 
+jax_multiplatform_test(
+    name = "nightly_binary_smoke_test",
+    srcs = ["nightly_binary_smoke_test.py"],
+    tags = [
+        "exclusive",
+        "local",
+        "manual",
+        "notap",
+    ],
+    deps = py_deps("absl/testing"),
+)
+
 jax_py_test(
     name = "absl_cpp_logging_test",
     srcs = ["absl_cpp_logging_test.py"],
