@@ -250,7 +250,7 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  backend_config = dict(
+  backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
       use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
@@ -266,7 +266,9 @@ def _mosaic_gpu_lowering_rule(
 
   return mlir.custom_call(
       call_target_name="mosaic_gpu_v2",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      result_types=mlir.flatten_ir_types(
+          mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
+      ),
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
@@ -308,7 +310,7 @@ class Barrier:
 
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
-  collective_dims: Sequence[gpu.Dimension]
+  collective_dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]]
   arrival_count: int = 1
   num_barriers: int = 1
 
@@ -654,7 +656,7 @@ def _launch(
               memory_space=utils.smem(),
           ),
           dynamic_smem,
-          c(profiler_start, index),
+          c(profiler_start, index),  # pyrefly: ignore[unbound-name]
           lowering_semantics,
       )
       if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -662,6 +664,7 @@ def _launch(
         wrap_in_custom_primitive = True
       else:
         wrap_in_custom_primitive = False
+      assert maybe_prof_buffer is not None
       prof = profiler.OnDeviceProfiler(
           profiler_spec,
           prof_smem,
@@ -739,7 +742,7 @@ def _launch(
       if lowering_semantics == LoweringSemantics.Warpgroup:
         init_warp_ctx = contextlib.nullcontext()
       else:
-        init_warp_ctx = utils.when(is_init_warp)
+        init_warp_ctx = utils.when(is_init_warp)  # pyrefly: ignore[unbound-name]
       with init_warp_ctx:
         for alloc in tmem_allocs:
           alloc.dealloc()
@@ -883,7 +886,6 @@ def _lower_as_gpu_kernel(
           host_collective_metadata,
           num_peers,
       ) as (_launch_ctx, smem_refs):
-        nonlocal launch_ctx
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
@@ -1225,6 +1227,6 @@ def _as_torch_gpu_kernel(
     return out[0] if unwrap_output_tuple else out
 
   # Unload the compiled code when the Python function is destroyed.
-  apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)
+  apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)  # pyrefly: ignore[missing-attribute]
 
   return apply

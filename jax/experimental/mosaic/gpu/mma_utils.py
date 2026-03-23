@@ -98,6 +98,7 @@ def create_descriptor(
   if (
       large_tile is not None
       and k_large_tile == k_tiling
+      and mn_large_tile is not None
       and (mn_large_tile == mn_tiling or mn_tiles == 1 and mn_tiling < mn_large_tile)
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.

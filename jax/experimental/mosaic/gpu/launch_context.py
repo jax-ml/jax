@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import Any, ClassVar, Literal
+from typing import cast, Any, ClassVar, Literal
 
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
@@ -121,7 +121,7 @@ class MemRefTransform:
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
-  def transform_strides(self, shape: Sequence[int]) -> tuple[int, ...]:
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
   def batch(self, leading_rank: int) -> 'MemRefTransform':
@@ -436,7 +436,7 @@ class Scratch:
       return
     self._ops_created = True
 
-    gpu_launch_op = self._find_first_op("gpu.launch", self._module_op.body)
+    gpu_launch_op = self._find_first_op("gpu.launch", self._module_op.body)  # pyrefly: ignore[bad-argument-type]
     assert gpu_launch_op is not None
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -462,7 +462,7 @@ class Scratch:
       self._create_ops()
 
     alloc_op = self._find_first_op(
-        "llvm.alloca", self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR
+        "llvm.alloca", self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR  # pyrefly: ignore[bad-argument-type]
     )
     assert alloc_op is not None
     [alloc_user] = alloc_op.result.uses
@@ -514,7 +514,7 @@ def _find_kernel_argument_for_gmem_ref(
   while isinstance(gmem_ref, ir.BlockArgument):
     gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
 
-  if ORIGINAL_KERNEL_ARG_ATTR not in gmem_ref.owner.attributes:
+  if ORIGINAL_KERNEL_ARG_ATTR not in gmem_ref.owner.attributes:  # pyrefly: ignore[missing-attribute]
     raise NotImplementedError(
         f"Expected {gmem_ref.owner} to be a GMEM kernel argument."
     )
@@ -671,7 +671,7 @@ class LaunchContext:
       )
     if isinstance(peer_id, ir.BlockArgument):
       raise ReplicationError("Can't recompute a value that's a block argument")
-    op = peer_id.owner
+    op: Any = peer_id.owner
 
     # We accept all arith ops
     if op.OPERATION_NAME.startswith("arith."):
@@ -690,9 +690,13 @@ class LaunchContext:
 
     # nvshmem_my_pe queries the device id of the current process and works on
     # both the host and the device.
-    if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
+    if (
+        isinstance(op, llvm.CallOp)
+        and op.callee is not None
+        and op.callee.value == "nvshmem_my_pe"
+    ):
       i32 = ir.IntegerType.get_signless(32)
-      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
 
     raise ReplicationError(
         f"Unrecognized op can't be recomputed on the host: {op}"
@@ -734,6 +738,7 @@ class LaunchContext:
               f" {strides[-1]}."
           )
 
+        # pyrefly: ignore[not-iterable]
         _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
         aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
@@ -984,7 +989,8 @@ class LaunchContext:
       slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
       num_squeezed_dims = 1
 
-    dyn_base_indices = list(dyn_base_indices)
+    # pyrefly: ignore[redefinition]
+    dyn_base_indices: list[ir.Value] = list(dyn_base_indices)
     slice_shape = list(slice_shape)
     assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
 
@@ -1721,9 +1727,9 @@ class LaunchContext:
         )
       op = memref_operands[0].owner
 
-    attr = op.attributes[KERNEL_ARG_ID_ATTR]
+    attr = op.attributes[KERNEL_ARG_ID_ATTR]  # pyrefly: ignore[missing-attribute]
     # Save the result so that we can find it out faster next time.
-    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr
+    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr  # pyrefly: ignore[missing-attribute]
     return attr.value
 
   def to_remote(
@@ -1856,7 +1862,7 @@ class LaunchContext:
     i32 = ir.IntegerType.get_signless(32)
     if collective_metadata is None:
       self._ensure_nvshmem_decls()
-      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
     else:
       # Rank id is stored as the first element of the collective metadata.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()

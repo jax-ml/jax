@@ -186,17 +186,18 @@ def _fragmented_array_from_ir(
     layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
-  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]
+  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pyrefly: ignore[missing-attribute]
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
-  reg_ty = producer_layout.registers_element_type(vector_ty.element_type)
+  # pyrefly: ignore[bad-assignment]
+  reg_ty: ir.Type = producer_layout.registers_element_type(vector_ty.element_type)
 
   conversion_cast, converted_outputs = _undo_conversion_cast(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  reverse_conversion_cast = converted_outputs[0].owner.opview
+  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]
   for attribute in conversion_cast.attributes:
     reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
@@ -228,12 +229,14 @@ def wrap_transformed_memref(
   return conversion_cast.result
 
 
+# TODO(bchetioui): Change ``expected_transforms`` to be a ``Sequence``.
 def unwrap_transformed_memref(
-    ref: ir.Value, expected_transforms: ir.ArrayAttr
+    ref: ir.Value[ir.MemRefType], expected_transforms: ir.ArrayAttr
 ) -> ir.Value:
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
   _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
+  # pyrefly: ignore[bad-argument-type]
   transformed_type = transform_type(ref.type, transforms)
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
@@ -271,10 +274,11 @@ def _initialize_barrier_op_lowering_rule(
   i32 = ir.IntegerType.get_signless(32)
   lowered_barrier_type = _lowered_barrier_type()
 
-  for i in range(op.num_barriers.value):
+  for i in range(op.num_barriers.value):  # pyrefly: ignore[no-matching-overload]
     nvvm.mbarrier_init(
         utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
         utils.c(
+            # pyrefly: ignore[unsupported-operation]
             op.arrival_count.value * utils.WARPGROUP_SIZE,
             i32,
         ),
@@ -496,7 +500,8 @@ def _vector_store_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.VectorStoreOp
 ) -> Sequence[ir.Value]:
   if op.atomic_type is not None:
-    atomic = str(mgpu.AtomicOpType(op.atomic_type.value))
+    # pyrefly: ignore[missing-attribute]
+    atomic: Any = str(mgpu.AtomicOpType(op.atomic_type.value))
   else:
     atomic = None
 
@@ -603,7 +608,7 @@ def _broadcasted_iota_op_lowering_rule(
   a = fa.FragmentedArray.broadcasted_iota(
       result_type.element_type,
       tuple(result_type.shape),
-      op.dimension.value,
+      op.dimension.value,  # pyrefly: ignore[bad-argument-type]
       layouts_lib.from_layout_attr(layout),
       is_signed=_default_is_signed(result_type.element_type),
   )
@@ -654,6 +659,7 @@ def _vector_extract_strided_slice_op_lowering_rule(
   a = _fragmented_array_from_ir(op.source, in_layout)
   indices = tuple(
       utils.DynamicSlice(
+          # pyrefly: ignore[bad-argument-type]
           ir.IntegerAttr(offset).value, ir.IntegerAttr(length).value
       )
       for offset, length in zip(op.offsets, op.sizes, strict=True)
@@ -709,13 +715,13 @@ def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
 ) -> Sequence[ir.Value]:
   [layout] = inference_utils.in_layouts(op)
-  element_type = op.vector.type.element_type
+  element_type = op.vector.type.element_type  # pyrefly: ignore[missing-attribute]
   scratch = _slice_smem(
       ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
-      arith.constant(None, op.attributes["offset"]),
+      arith.constant(None, op.attributes["offset"]),  # pyrefly: ignore[bad-argument-type]
       ctx.smem_requested_bytes,
   )
-  axes = range(op.vector.type.rank)
+  axes = range(op.vector.type.rank)  # pyrefly: ignore[missing-attribute]
   op_kind = _combining_kind(op.kind)
   is_signed = _is_reduction_signed(op_kind)
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
@@ -757,11 +763,12 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   reduced_dim = src.layout.tiling.tile_dimension(op.reduction_dims[0])
   if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
     # cross-warp reductions require scratch space.
-    dtype = op.source.type.element_type
+    dtype = op.source.type.element_type  # pyrefly: ignore[missing-attribute]
+    # pyrefly: ignore[unsupported-operation]
     allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
-        arith.constant(None, op.attributes["offset"]),
+        arith.constant(None, op.attributes["offset"]),  # pyrefly: ignore[bad-argument-type]
         ctx.smem_requested_bytes,
     )
   else:
@@ -847,6 +854,8 @@ def swizzle_and_transforms_from_transforms_attr(
     else:
       raise ValueError("Unknown transform: {transform}")
 
+  # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
+  # pyrefly: ignore[bad-return]
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
@@ -944,7 +953,7 @@ def transform_type(
 
   strides, offset = ref_ty.get_strides_and_offset()
   tiled_shape = tile_transform.transform_shape(ref_ty.shape)
-  tiled_strides = tile_strides(strides, tile_transform.tiling)
+  tiled_strides = tile_strides(tuple(strides), tile_transform.tiling)
 
   if offset == ir.ShapedType.get_dynamic_stride_or_offset():
     tiled_offset = offset
@@ -976,9 +985,10 @@ def _gmem_slice_and_predicate(
     op: mgpu.AsyncLoadOp | mgpu.AsyncPrefetchOp | mgpu.AsyncStoreOp,
 ) -> tuple[
     tuple[ir.Value | fa.FragmentedArray | utils.DynamicSlice, ...],
-    dict[str, ir.Value],
+    dict[str, ir.Value | None],
 ]:
   """Returns the GMEM slice and predicate for the given async op."""
+  gmem_slice: list[ir.Value | fa.FragmentedArray | utils.DynamicSlice]
   gmem_slice = []
   predicate = dict(predicate=ctx.single_thread_per_warpgroup_predicate)
   for idx, size in zip(op.indices, op.slice_lengths, strict=True):
@@ -1012,7 +1022,7 @@ def _mgpu_async_load_op_lowering_rule(
   unwrapped_dst = unwrap_transformed_memref(
       load_op.destination, transforms_attr
   )
-
+  assert isinstance(unwrapped_dst.type, ir.MemRefType)
   if utils.is_memref_transposed(unwrapped_dst.type):
     strides, _ = ir.MemRefType(unwrapped_dst.type).get_strides_and_offset()
     permutation = tuple(
@@ -1051,7 +1061,7 @@ def _mgpu_async_load_op_lowering_rule(
       arrive=False,
       swizzle=swizzle,
       gmem_transform=transforms,
-      **predicate,
+      **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
 
@@ -1072,7 +1082,7 @@ def _mgpu_async_prefetch_op_lowering_rule(
       gmem_slice=gmem_slice,
       swizzle=None,
       gmem_transform=(),
-      **predicate,
+      **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
 
@@ -1088,6 +1098,7 @@ def _mgpu_async_store_op_lowering_rule(
       transforms_attr
   )
   unwrapped_source = unwrap_transformed_memref(store_op.source, transforms_attr)
+  assert isinstance(unwrapped_source.type, ir.MemRefType)
   if utils.is_memref_transposed(unwrapped_source.type):
     strides, _ = ir.MemRefType(unwrapped_source.type).get_strides_and_offset()
     permutation = tuple(
@@ -1103,12 +1114,17 @@ def _mgpu_async_store_op_lowering_rule(
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, store_op)
 
+  arrive = (
+      None if store_op.commit_group is None else bool(store_op.commit_group)
+  )
+
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
   # strided layouts when they are contiguous in GMEM. In that case, we could do:
   # flatten -> async_copy -> unflatted here, as long as flattened size is a
   # multiple of 16.
   if store_op.reduction_op is not None:
+    # pyrefly: ignore[missing-attribute]
     reduction_op = mgpu.TMAReduction(store_op.reduction_op.value).name.lower()
   else:
     reduction_op = None
@@ -1120,9 +1136,9 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_slice=gmem_slice,
       swizzle=swizzle,
       gmem_transform=transforms,
-      **predicate,
-      arrive=store_op.commit_group,
-      reduction_op=reduction_op
+      **predicate,  # pyrefly: ignore[bad-argument-type]
+      arrive=arrive,
+      reduction_op=reduction_op  # pyrefly: ignore[bad-argument-type]
   )
   return []
 
@@ -1136,7 +1152,7 @@ def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
   smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
   with utils.when(ctx.single_thread_per_warpgroup_predicate):
     tcgen05.async_copy_sparse_metadata_smem_to_tmem(
-      smem_ref, tmem_ref, collective=op.collective
+      smem_ref, tmem_ref, collective=bool(op.collective)
     )
   return []
 
@@ -1151,13 +1167,14 @@ def _async_copy_smem_to_tmem_lowering_rule(
   )
   smem_ref = unwrap_transformed_memref(op.source, transforms_attr)
   smem_ref_ty = op.source.type
+  assert isinstance(smem_ref_ty, ir.MemRefType)
   _check_transforms_and_swizzle_are_supported(smem_ref_ty, transforms, swizzle)
 
   [in_layout_attr] = inference_utils.in_tmem_layouts(op)
   tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
   with utils.when(ctx.single_thread_per_warpgroup_predicate):
     tcgen05.async_copy_smem_to_tmem(
-        smem_ref, tmem_ref, swizzle, collective=op.collective
+        smem_ref, tmem_ref, swizzle, collective=bool(op.collective)
     )
   return []
 
@@ -1359,6 +1376,7 @@ def _cmpi_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
+  # pyrefly: ignore[missing-attribute]
   impl, is_signed = CMPI_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
   rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
@@ -1383,6 +1401,7 @@ def _cmpf_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
+  # pyrefly: ignore[missing-attribute]
   impl = CMPF_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
   lhs = _fragmented_array_from_ir(op.lhs, layout)
   rhs = _fragmented_array_from_ir(op.rhs, layout)
@@ -1432,7 +1451,7 @@ def _mgpu_wgmma_op_lowering_rule(
   assert out_layout == layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
   # s8/i8 WGMMA expects signed integer accumulator.
-  element_type = wgmma_op.a.type.element_type
+  element_type = wgmma_op.a.type.element_type  # pyrefly: ignore[missing-attribute]
   is_signed = True if isinstance(element_type, ir.IntegerType) else None
   # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
   # The associated fence could be a little expensive and is not needed if the
@@ -1440,7 +1459,7 @@ def _mgpu_wgmma_op_lowering_rule(
   regs = _fragmented_array_from_ir(
       wgmma_op.accumulator, in_layouts[0], is_signed
   )
-  acc = wgmma.WGMMAAccumulator.from_registers(regs)
+  acc = wgmma.WGMMAAccumulator.from_registers(regs)  # pyrefly: ignore[missing-attribute]
 
   if isinstance(wgmma_op.a.type, ir.VectorType):
     a_transforms = None
@@ -1469,6 +1488,7 @@ def _mgpu_wgmma_op_lowering_rule(
     assert in_layouts[1] == layouts_lib.to_layout_attr(expected_a_layout)
     a_operand = _fragmented_array_from_ir(wgmma_op.a, in_layouts[1], is_signed)
   else:
+    assert a_transforms is not None
     a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
         a_transforms
     )
@@ -1483,6 +1503,7 @@ def _mgpu_wgmma_op_lowering_rule(
     assert unwrapped_a_ref is not None
     a_operand = unwrapped_a_ref
 
+  # pyrefly: ignore[missing-attribute]
   new_acc = wgmma.wgmma(acc, a_operand, unwrapped_b_ref, swizzle=b_swizzle)
   return [
       fragmented_array_to_ir(
@@ -1524,7 +1545,8 @@ def _mgpu_arrive_op_lowering_rule(
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     _: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
-  num_bytes = arrive_expect_tx_op.expect_tx.value
+  # pyrefly: ignore[bad-assignment]
+  num_bytes: int = arrive_expect_tx_op.expect_tx.value
   if num_bytes % utils.WARPGROUP_SIZE:
     raise NotImplementedError(
         "Only copies of a multiple of 128 bytes are supported"
@@ -1838,7 +1860,7 @@ def _memref_transpose_op_lowering_rule(
   in_transforms = inference_utils.in_transforms(op)[0]
   unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
-  if in_transformed_ty.rank == op.in_.type.rank:
+  if in_transformed_ty.rank == op.in_.type.rank:  # pyrefly: ignore[missing-attribute]
     new_permutation = op.permutation
   elif in_transformed_ty.rank == 4:
     if op.permutation == _permutation_to_affine_map_attr([0, 1]):
@@ -1881,8 +1903,8 @@ def _memref_expand_shape_op_lowering_rule(
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   out_transformed_ty = transform_type(ir.MemRefType(op.result.type), transforms)
 
-  reassociation = list(op.reassociation)
-  num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
+  reassociation: list[ir.ArrayAttr] = list(op.reassociation)  # pyrefly: ignore[no-matching-overload]
+  num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)  # pyrefly: ignore[missing-attribute]
 
   # We don't currently allow expanding tiled dimensions. So to compute the
   # reassociation on the lowered types, we just need to backfill the original
@@ -1896,7 +1918,7 @@ def _memref_expand_shape_op_lowering_rule(
 
   start_index = len(op.static_output_shape)
   for i in range(start_index, start_index + num_tiling_dims):
-    reassociation.append([i])
+    reassociation.append([i])  # pyrefly: ignore[bad-argument-type]
 
   new_expand_shape_op = memref.ExpandShapeOp(
       out_transformed_ty,
@@ -1965,10 +1987,11 @@ def _tmem_alloc_op_lowering_rule(
   ctx.check_collective(op)
 
   output_shape = ir.MemRefType(op.result.type).shape
+  # pyrefly: ignore[unsupported-operation]
   ncols = output_shape[1] // op.packing.value
 
   with utils.when(ctx.single_warp_per_block_predicate):
-    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, exact=False)
+    tcgen05.tmem_alloc(op.smem_ptr, ncols, bool(op.collective), exact=False)
   gpu.barrier()
   tmem_addr = memref.load(op.smem_ptr, [])
 
@@ -1989,7 +2012,7 @@ def _tmem_relinquish_alloc_permit_op_lowering_rule(
   """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
   ctx.check_collective(op)
   with utils.when(ctx.single_warp_per_block_predicate):
-    tcgen05.tmem_relinquish_alloc_permit(op.collective)
+    tcgen05.tmem_relinquish_alloc_permit(bool(op.collective))
   return []
 
 
@@ -2001,7 +2024,8 @@ def _tmem_dealloc_op_lowering_rule(
   i32 = ir.IntegerType.get_signless(32)
   conversion_cast, [tmem_addr] = _undo_conversion_cast(op.tmem_ref, [i32])
   collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
-  packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
+  # pyrefly: ignore[bad-assignment]
+  packing: int = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
   output_shape = ir.MemRefType(op.tmem_ref.type).shape
   ncols = output_shape[1] // packing
@@ -2012,7 +2036,7 @@ def _tmem_dealloc_op_lowering_rule(
   return []
 
 
-def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
+def _swizzle(attrs: Iterable[ir.Attribute]) -> mgpu.SwizzlingMode:
   """Returns the swizzle transform from the given attributes."""
   swizzle = None
   for attr in attrs:
@@ -2020,6 +2044,8 @@ def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
       if swizzle is not None:
         raise ValueError("Multiple swizzle transforms are not supported.")
       swizzle = mgpu.SwizzleTransformAttr(attr).swizzle
+  # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
+  # pyrefly: ignore[bad-return]
   return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
 
 
@@ -2042,7 +2068,8 @@ def _tmem_ref_from_ir(
   i32 = ir.IntegerType.get_signless(32)
   conversion_cast, [tmem_addr] = _undo_conversion_cast(ref, [i32])
 
-  shape = tuple(mem_ref_ty.shape)
+  assert mem_ref_ty.rank == 2
+  shape = cast(tuple[int, int], tuple(mem_ref_ty.shape))
   el_ty = mem_ref_ty.element_type
   layout_attr = conversion_cast.attributes["layout"]
   if layout_attr != expected_layout:
@@ -2081,6 +2108,8 @@ def _tcgen05_mma_op_lowering_rule(
     a_sparse_metadata = _tmem_ref_from_ir(op.a_sparse_metadata, in_tmem_layouts[-1])
   if utils.is_smem_ref(op.a):
     a_transforms, b_transforms = inference_utils.in_transforms(op)
+    assert isinstance(a_transforms, ir.ArrayAttr)
+    assert isinstance(b_transforms, ir.ArrayAttr)
     a_swizzle = _swizzle(a_transforms)
     b_swizzle = _swizzle(b_transforms)
     a_ref = unwrap_transformed_memref(op.a, a_transforms)
@@ -2088,6 +2117,7 @@ def _tcgen05_mma_op_lowering_rule(
   else:
     a_ref = _tmem_ref_from_ir(op.a, in_tmem_layouts[1])
     [b_transforms] = inference_utils.in_transforms(op)
+    assert isinstance(b_transforms, ir.ArrayAttr)
     b_swizzle = _swizzle(b_transforms)
     a_swizzle = b_swizzle
     b_ref = unwrap_transformed_memref(op.b, b_transforms)
@@ -2099,8 +2129,8 @@ def _tcgen05_mma_op_lowering_rule(
         b_ref,
         a_swizzle=a_swizzle,
         b_swizzle=b_swizzle,
-        a_scale=op.a_scale,
-        b_scale=op.b_scale,
+        a_scale=op.a_scale,  # pyrefly: ignore[bad-argument-type]
+        b_scale=op.b_scale,  # pyrefly: ignore[bad-argument-type]
         accumulate=op.accumulate,
         collective=op.collective.value,
         a_sparse_metadata=a_sparse_metadata,
@@ -2229,7 +2259,7 @@ def _move_scf_block_to_block_with_flattened_arguments(
     new_block: ir.Block,
     last_op_type: type[ir.OpView],
     args_template: Sequence[_VectorTemplate | None],
-    *new_leading_args: Sequence[ir.Value],
+    *new_leading_args: ir.Value,
 ) -> Sequence[_VectorTemplate | None]:
   """Moves the operations from `old_block` to `new_block`.
 
@@ -2385,9 +2415,10 @@ def _infer_flat_result_types(
       continue
     vec_type = ir.VectorType(r.type)
     layout = layouts_lib.from_layout_attr(next(out_layouts_it))
+    # pyrefly: ignore[bad-assignment]
+    reg_type: ir.Type = layout.registers_element_type(vec_type.element_type)
     result_types.extend(
-        [layout.registers_element_type(vec_type.element_type)]
-        * math.prod(layout.registers_shape(tuple(vec_type.shape)))
+        [reg_type] * math.prod(layout.registers_shape(tuple(vec_type.shape)))
     )
   return result_types
 
@@ -2489,6 +2520,7 @@ def _lowering_context(
     i32 = ir.IntegerType.get_signless(32)
     warp_predicate = arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
     smem_size = gpu_launch_op.dynamicSharedMemorySize
+    assert smem_size is not None
     assert isinstance(smem_size.owner, arith.ConstantOp)
     smem_size = ir.IntegerAttr(smem_size.owner.value).value
     return LoweringContext(
@@ -2497,7 +2529,7 @@ def _lowering_context(
         warpgroup_predicate,
         warp_predicate,
         auto_barriers,
-        smem_size,
+        smem_size,  # pyrefly: ignore[bad-argument-type]
     )
 
 

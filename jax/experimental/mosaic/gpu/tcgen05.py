@@ -432,7 +432,6 @@ def mma(
           f" got {b_scale.shape}"
       )
   if is_sparse:
-    a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
     sparse_group_elems = 8 if utils.bitwidth(element_type) == 4 else 4
     # Each sparse group has 2 entries.
     expected_meta_k = k // sparse_group_elems * 2
@@ -513,6 +512,7 @@ def mma(
       a_k_group_elems = k_group_elems // (1 + is_sparse)
       a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
     else:
+      assert a_desc_base is not None
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
       a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
@@ -600,8 +600,8 @@ def _do_mma(
 ) -> None:
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)
-  b_k_idx_tiling, b_k_strides = b_k_strides
+  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
+  b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
   assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
@@ -611,6 +611,7 @@ def _do_mma(
   packing = 8 * 4 // elem_bitwidth
 
   scale_steps = None
+  kind = None
   if is_scaled:
     if isinstance(element_type, ir.Float8E5M2Type) or isinstance(
         element_type, ir.Float8E4M3FNType
@@ -733,6 +734,7 @@ def _do_mma(
       assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
       a_enc_addr_base = a_desc_or_addr
     else:
+      assert not isinstance(a_desc_or_addr, ir.Value)
       assert a_k_idx_tiling is not None and a_k_strides is not None
       a_enc_addr_base, a_offset = a_desc_or_addr
       a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)
@@ -961,7 +963,7 @@ def _infer_tmem_load_registers_layout(
   raise ValueError(f"TMEM layout {tmem_layout} is not supported")
 
 
-def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -> TMEMLayout:
+def _infer_tmem_layout(shape: tuple[int, ...], collective: bool, packing: int) -> TMEMLayout:
   if len(shape) != 2:
     raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
   if packing > 8 or packing.bit_count() != 1:
@@ -1397,7 +1399,7 @@ def _store_32xcols_native(base_addr, vector_regs, tmem_packing) -> None:
   if reg_packing == 1:
     if vector_length == 2:
       # Transform data such that each reg is 32 bits wide.
-      regs = [None] * (len(vector_regs) * 2)
+      regs: list[ir.Value | None] = [None] * (len(vector_regs) * 2)
       c0 = arith.constant(i32, 0)
       c1 = arith.constant(i32, 1)
       for idx, vreg in enumerate(vector_regs):

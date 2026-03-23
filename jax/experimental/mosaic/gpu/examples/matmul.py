@@ -71,7 +71,7 @@ class WGMMADefaultImpl:
       rhs_transpose: bool,
   ) -> dict[str, jax.ShapeDtypeStruct]:
     del block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose  # Unused.
-    return ()
+    return {}
 
   @staticmethod
   def get_result(acc: WGMMAAccumulator) -> FragmentedArray:
