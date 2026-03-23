@@ -250,9 +250,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), op(x, 1))
 
   def test_add_one_block_specs(self):
-    # TODO(b/488280666): Remove this once the bug is fixed.
-    self.skip_if_tc_tiling("The test is flaky with TC tiling")
-
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes, dtype=jnp.int32)
 
@@ -765,7 +762,6 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_load_gather_with_indexing(self):
-    self.skip_if_tc_tiling()
     num_steps = 4
     x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
     indices = jax.random.permutation(
@@ -799,8 +795,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[mask], x[indices][mask])
 
   def test_store_scatter(self):
-    self.skip_if_tc_tiling()
-
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -855,7 +849,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
-    self.skip_if_tc_tiling()
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
@@ -942,7 +935,9 @@ class VectorSubcoreTest(PallasSCTest):
       dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
   )
   def test_bitcast(self, dtype, new_dtype):
-    self.skip_if_tc_tiling()
+    self.skip_if_tc_tiling(
+        "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
+    )
     new_shape = (
         self.num_lanes * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
     )
@@ -1271,8 +1266,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(1, 2, None)
   def test_subcore_parallel(self, num_subcores):
-    self.skip_if_tc_tiling()
-
     if num_subcores is None:
       num_subcores = self.sc_info.num_subcores
 
@@ -1299,7 +1292,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_smem_vmem_store_literals(self):
-    self.skip_if_tc_tiling()
     num_subcores = self.sc_info.num_subcores
 
     @self.kernel(
@@ -1466,9 +1458,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), expected)
 
   def test_parallel_loop_with_carry(self):
-    # TODO(b/488280666): Remove this skip once the bug is fixed.
-    self.skip_if_tc_tiling("The test is flaky with TC tiling")
-
     chunk_size = self.num_lanes
     nchunks = 4
     per_step_increment = 10
@@ -1565,7 +1554,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_barrier_via_mesh(self):
-    self.skip_if_tc_tiling()
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -1592,7 +1580,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
-    self.skip_if_tc_tiling()
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -1746,12 +1733,11 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x)[0], x[0])
 
   def test_copy_in_shard_map(self):
-    self.skip_if_tc_tiling()
     num_devices = len(jax.devices())
     mesh = jtu.create_mesh((num_devices,), ("x",))
 
     rng = np.random.default_rng(0)
-    x = rng.integers(512, size=(num_devices * 1024, 16), dtype=np.int32)
+    x = rng.integers(512, size=(num_devices * 128, 16), dtype=np.int32)
 
     # The test ensures that JAX-level memory space for ``x`` is not propagated
     # into Pallas, since Pallas cannot use it.
@@ -1954,7 +1940,6 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_sliced_copy(self):
-    self.skip_if_tc_tiling()
     x = jnp.arange(self.sc_info.num_cores * self.num_lanes).reshape(
         self.sc_info.num_cores, -1
     )
@@ -2169,8 +2154,6 @@ class MpmdMapTest(PallasSCTest):
 class PipelineTest(PallasSCTest):
 
   def test_basic(self):
-    self.skip_if_tc_tiling()
-
     if self.num_lanes != 8:
       # TODO(b/478865387): Remove the skip once the bug is fixed.
       self.skipTest(
