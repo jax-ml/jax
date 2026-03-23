@@ -21,7 +21,6 @@ import itertools as it
 from functools import partial
 from typing import Any
 
-from jax._src import api_util
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
@@ -38,7 +37,7 @@ from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, typeof, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.state.types import AbstractRef
-from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
+from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            as_hashable_function, weakref_lru_cache,
                            partition_list, subs_list2, foreach)
 
@@ -1331,73 +1330,6 @@ def nonzero_outputs(f, store, *args, **kwargs):
   results = f(*args, **kwargs)
   store.store([not isinstance(r, (Zero, type(None))) for r in results])
   return results
-
-# TODO(mattjj): delete this when the original pmap implementation is removed
-def map_transpose(primitive: core.Primitive, params: dict[str, Any],
-                  call_jaxpr: core.Jaxpr, args, ct, _):
-  # TODO(mattjj): we should unmap any Zeros in ct according to out_axes, but
-  # this code path is not long for this world...
-  args = [x if type(x) is not UndefinedPrimal else
-          UndefinedPrimal(core.mapped_aval(params['axis_size'], ax, x.aval))
-          for x, ax in zip(args, params['in_axes'])]
-  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
-  # TODO(necula): use the right debug_info for the backwards pass
-  fun = lu.hashable_partial(lu.wrap_init(
-    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
-  fun, nz_arg_cts = nonzero_outputs(fun)
-  fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  # Preserve axis for primal arguments, skip tangents (represented as undefined primals).
-  in_axes, out_axes = params['in_axes'], params['out_axes']
-  new_in_axes = (*[axis for axis, x in zip(in_axes, args)
-                   if not is_undefined_primal(x)],
-                 *[axis for axis, x in zip(out_axes, ct)
-                   if type(x) is not Zero])
-  if any(out_axis is None for out_axis in out_axes):
-    raise NotImplementedError(
-        "autodiff of pmap functions with out_axes=None is not supported. "
-        "Consider using shard_map instead.")
-  assert all(out_axis is not None for out_axis in out_axes), out_axes
-  # NOTE: This assumes that the output cotangents being zero is a deterministic
-  #       function of which input cotangents were zero.
-  @as_hashable_function(closure=(in_axes, tuple(type(c) is Zero for c in ct)))
-  def out_axes_thunk():
-    return tuple(axis or 0 for axis, nz in zip(in_axes, nz_arg_cts()) if nz)
-  new_params = dict(params, name=wrap_name('transpose', params['name']),
-                    in_axes=new_in_axes, out_axes_thunk=out_axes_thunk)
-  del new_params['out_axes']
-  update_params = call_transpose_param_updaters.get(primitive)
-  if update_params:
-    new_params = update_params(new_params, map(is_undefined_primal, args),
-                               [type(x) is not Zero for x in ct])
-
-  try:
-    out_flat = primitive.bind(fun, *all_args, **new_params)
-  except api_util.InternalFloatingPointError as e:
-    print("Invalid nan value encountered in the backward pass of a jax.jit "
-          "function. Calling the de-optimized backward pass.")
-    try:
-      _ = backward_pass(call_jaxpr, False, (), args, ct)
-    except (FloatingPointError, ZeroDivisionError) as e2:
-      raise e2 from None
-    else:
-      # If control reaches this line, we got a NaN on the output of `compiled`
-      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      api_util._raise_no_nan_in_deoptimized(e)
-    raise  # should never get here.
-  arg_cts = tree_unflatten(out_tree(), out_flat)
-
-  # The freevars are being fanned out (not mapped). During transpose the
-  # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
-  assert len(in_axes) == len(arg_cts)
-  def unmap_zero(zero, in_axis):
-    return (zero if in_axis is None else
-            Zero(core.unmapped_aval(params['axis_size'], in_axis, zero.aval)))
-  arg_cts = (unmap_zero(arg_ct, in_axis) if type(arg_ct) is Zero else
-             arg_ct if in_axis is not None or arg_ct is None else
-             arg_ct.sum(0)
-             for arg_ct, in_axis in zip(arg_cts, in_axes))
-  return tuple(arg_cts)
-
 
 def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
               instantiate: bool | Sequence[bool]
