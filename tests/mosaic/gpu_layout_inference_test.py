@@ -1556,6 +1556,35 @@ class LayoutInferenceTest(parameterized.TestCase):
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
       self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.sparse_meta_layout()])
 
+  @parameterized.parameters(False, True)
+  def test_infer_tmem_layout_for_tcgen05_mma_with_scales(self, a_in_smem):
+    m = n = k = 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      f32 = ir.F32Type.get()
+      f8e8 = ir.Float8E8M0FNUType.get()
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_mem_space = smem if a_in_smem else tmem
+      a_ty = ir.MemRefType.get((m, k), f16, memory_space=a_mem_space)
+      b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
+      scale_a_ty = ir.MemRefType.get((m, 4), f8e8, memory_space=tmem)
+      scale_b_ty = ir.MemRefType.get((n, 4), f8e8, memory_space=tmem)
+      acc, a, b, scale_a, scale_b = undefs(acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty)
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc, a, b, accumulate, a_scale=scale_a, b_scale=scale_b
+      )
+
+    mgpu.infer_layout(self.module)
+
+    acc_layout = tcgen05._infer_tmem_layout((m, n), collective=False, packing=1)
+    if a_in_smem:
+      self.checkInTmemLayouts(mma, [acc_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
+    else:
+      a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
+      self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
+
   @parameterized.parameters(ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
   def test_async_store_scales_smem_to_tmem_infers_expected_src_dest_layouts(
       self, valid_dtype

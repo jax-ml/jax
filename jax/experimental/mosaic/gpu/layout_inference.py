@@ -1354,10 +1354,6 @@ def _tcgen05_mma_constraint_system(
   assignments: dict[cs.Variable, cs.Constant] = {}
   operands_for_variable: ValueSitesForVariable = {}
 
-  is_scaled = op.a_scale is not None
-  if is_scaled:
-    raise NotImplementedError("Layout inference for block-scaled matmuls.")
-
   # TMEM
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
@@ -1434,6 +1430,30 @@ def _tcgen05_mma_constraint_system(
     if not is_valid_tmem_layout_assignment(sparse_meta.shape, sparse_meta_layout):
       return cs.Unsatisfiable()
     operands_for_variable[sparse_meta_var] = [sparse_meta]
+
+  if (scaled := op.a_scale is not None) != (op.b_scale is not None):
+    raise ValueError(
+        f"Expecting neither or both scales to be present. Got {op.a_scale=},"
+        f" {op.b_scale=}"
+    )
+
+  if scaled and op.collective:
+    # TODO(olechwierowicz): Revisit this after cl/883086276 lands.
+    raise NotImplementedError("Cannot infer layouts for block scaled collective matmuls.")
+  if scaled and not op.collective:
+    def assign_scaled_layout(scale_operand):
+      scale_index = list(op.operands).index(scale_operand)
+      scale = ValueSite(op, VariableType.OPERAND, scale_index)
+      scale_var = ctx.producer_ref(scale)
+      assignments[scale_var] = cs.TMEMLayout(tcgen05.scales_layout())
+      if not is_valid_tmem_layout_assignment(scale.shape, tcgen05.scales_layout()):
+        raise ValueError(
+            f"Cannot assign tcgen05.scales_layout() to {scale_operand=} with"
+            f" shape {scale.shape}."
+        )
+      operands_for_variable[scale_var] = [scale]
+    assign_scaled_layout(op.a_scale)
+    assign_scaled_layout(op.b_scale)
 
   return cs.ConstraintSystem(assignments=assignments, constraints=constraints), operands_for_variable
 
