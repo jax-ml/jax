@@ -42,16 +42,15 @@ from jax._src import xla_metadata_lib
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
-    mapped_aval, unmapped_aval, get_referent, JaxprEqnContext, typeof)
+    get_referent, JaxprEqnContext, typeof)
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import FlatTree, PyTreeDef, treedef_tuple
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
-                           as_hashable_function, weakref_lru_cache,
-                           multi_weakref_lru_cache, subs_list,
-                           HashableFunction, foreach, test_event)
+                           weakref_lru_cache, multi_weakref_lru_cache,
+                           subs_list, HashableFunction, foreach, test_event)
 
 
 map, unsafe_map = safe_map, map
@@ -272,76 +271,6 @@ class JaxprTrace(Trace):
                          out_tracers, primitive, staged_params, jaxpr.effects,
                          source)
     for t in out_tracers: t.recipe = eqn
-    return merge_lists(out_knowns, out_tracers, out_consts)
-
-  def process_map(self, primitive, f: lu.WrappedFun, tracers, params, /):
-    tracers = map(self.to_jaxpr_tracer, tracers)
-    update_params = call_param_updaters.get(primitive) or (lambda p, _, __: p)
-    in_knowns, in_avals, in_consts = partition_pvals([t.pval for t in tracers])
-
-    # This method is like process_call above, except:
-    #   1. we delete an axis from mapped-over input avals' shapes, and
-    #      analogously add an axis to mapped-over output avals' shapes;
-    #   2. we update the in_axes and out_axes/out_axes_thunk parameters to
-    #      reflect the inputs and outputs pruned from the unknown/known sides.
-
-    # Map (delete an axis from) unknown inputs' avals as dictated by in_axes.
-    unk_in_axes, const_in_axes = partition_list(in_knowns, params['in_axes'])
-    in_avals_mapped = [mapped_aval(params['axis_size'], ax, aval)
-                       for ax, aval in zip(unk_in_axes, in_avals)]
-
-    # Wrap f to perform partial evaluation and plumb out aux data.
-    f = trace_to_subjaxpr_nounits2(f, self.tag, f.debug_info, False)
-    f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
-                                          tuple(in_avals_mapped))
-    # Adjust params for knowns (e.g. donated_invars, in_axes, out_axes_thunk)
-    const_params = update_params(params, in_knowns, 0)  # handles donated_invars
-    out_axes_thunk = params['out_axes_thunk']
-    @as_hashable_function(closure=out_axes_thunk)
-    def const_out_axes_thunk():
-      out_knowns, _, jaxpr, _ = aux()
-      _, out_axes = partition_list(out_knowns, out_axes_thunk())
-      return tuple(out_axes) + (0,) * len(jaxpr.constvars)  # res mapped axis 0
-    const_params = dict(const_params, in_axes=tuple(const_in_axes),
-                        out_axes_thunk=const_out_axes_thunk, subfuns=(f,))
-
-    # Run the map, getting known out vals and aux data used for staged-out map.
-    in_const_avals = tuple(core.typeof(c) for c in in_consts)
-    out = primitive.bind_with_trace(self.parent_trace, tuple(in_consts), in_const_avals, const_params)
-    out_knowns, out_avals_mapped, jaxpr, env = aux()
-    # Split apart known outputs from the original call and residuals.
-    out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
-
-    # We can only check_jaxpr with the dynamic axis environment extended:
-    with core.extend_axis_env_nd([(params['axis_name'], params['axis_size'])]):
-      call_jaxpr = convert_constvars_jaxpr(jaxpr)
-
-    # Compute staged and const out_axes, taking into account residuals.
-    out_axes = params['out_axes_thunk']()
-    staged_out_axes, _ = partition_list(out_knowns, out_axes)
-    staged_in_axes = (0,) * len(res) + (None,) * len(env) + (*unk_in_axes,)
-
-    # Create the input tracers for the staged-out (unknown-value) call.
-    const_tracers = map(self.new_instantiated_const, res)
-    env_tracers = map(self.to_jaxpr_tracer, env)
-    unknown_arg_tracers = [t for t in tracers if not t.is_known()]
-    # Adjust params for staged-out call on unknown values.
-    num_new_args = len(const_tracers) + len(env_tracers)
-    staged_params = update_params(params, map(op.not_, in_knowns), num_new_args)
-    staged_params = dict(staged_params, in_axes=staged_in_axes,
-                         out_axes=tuple(staged_out_axes), call_jaxpr=call_jaxpr)
-    del staged_params['out_axes_thunk']
-    # The outputs of the staged-out call are Tracers with the new eqn as recipe.
-    out_avals = [unmapped_aval(params['axis_size'], ax, a)
-                 for ax, a in zip(staged_out_axes, out_avals_mapped)]
-    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
-                   for a in out_avals]
-    effs = core.filter_named_axis_effects(jaxpr.effects, {params['axis_name']})
-    src_info = source_info_util.current()
-    eqn = new_eqn_recipe(self, (*const_tracers, *env_tracers, *unknown_arg_tracers),
-                         out_tracers, primitive, staged_params, effs, src_info)
-    for t in out_tracers: t.recipe = eqn
-
     return merge_lists(out_knowns, out_tracers, out_consts)
 
   def _current_truncated_name_stack(self):
@@ -2126,40 +2055,6 @@ class DynamicJaxprTrace(core.Trace):
     return self.emit_eqn(
         [*const_tracers, *in_tracers], out_avals, call_primitive,
         new_params, new_params['call_jaxpr'].effects, source_info=source_info)
-
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params, /):
-    source_info = source_info_util.current()
-    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    tracers = map(to_jaxpr_tracer, tracers)
-    in_avals = [t.aval for t in tracers]
-    axis_name, axis_size = params['axis_name'], params['axis_size']
-    reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
-                        if in_axis is not None else a
-                        for a, in_axis in zip(in_avals, params['in_axes'])]
-    with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
-      jaxpr, reduced_out_avals, consts = trace_to_jaxpr_dynamic(
-          f.with_unknown_names(), reduced_in_avals)
-      jaxpr, consts = _linearize_of_pmap_hack(f, jaxpr, consts)
-      ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
-      if ordered_effects:
-        raise ValueError("Ordered effects not supported for "
-                         f"map primitives: {ordered_effects}")
-      out_axes = params['out_axes_thunk']()
-      out_avals = [core.unmapped_aval(axis_size, out_axis, a)
-                  if out_axis is not None else a
-                  for a, out_axis in zip(reduced_out_avals, out_axes)]
-      const_tracers = map(to_jaxpr_tracer, consts)
-      new_in_axes = (None,) * len(consts) + params['in_axes']
-      new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
-                        call_jaxpr=convert_constvars_jaxpr(jaxpr))
-      del new_params['out_axes_thunk']
-      update_params = call_param_updaters.get(map_primitive)
-      if update_params:
-        new_params = update_params(new_params, [True] * len(tracers), len(consts))
-      effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
-      out_tracers = self.emit_eqn(
-          [*const_tracers, *tracers], out_avals, map_primitive, new_params, effs, source_info=source_info)
-    return out_tracers
 
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers, /, *,

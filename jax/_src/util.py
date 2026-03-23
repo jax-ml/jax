@@ -696,6 +696,7 @@ class HashableFunction:
   def __repr__(self):
     return f'<hashable {self.f.__name__} with closure={self.closure}>'
 
+# only used in harvest, not jax
 def as_hashable_function(closure):
   return lambda f: HashableFunction(f, closure)
 

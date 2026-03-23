@@ -33,8 +33,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef)
 from jax._src.typing import Array
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                           canonicalize_axis, moveaxis, as_hashable_function,
-                           memoize, weakref_lru_cache, tuple_insert)
+                           canonicalize_axis, moveaxis, memoize,
+                           weakref_lru_cache, tuple_insert)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -284,44 +284,6 @@ class BatchTrace(Trace):
       vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
-
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params, /):
-    vals, dims = unzip2(map(self.to_batch_info, tracers))
-    # The logic for the dimension math below is as follows:
-    # ╔═════════════╦════════════════════════════════════════╦═══════════╗
-    # ║ d / in_axis ║ None                                   ║ int       ║
-    # ╠═════════════╬════════════════════════════════════════╩═══════════╣
-    # ║ None        ║ No extra axis, so in_axis unaffected               ║
-    # ╠═════════════╬════════════════════════════════════════╦═══════════╣
-    # ║ int         ║ Not mapped, so batching dim unaffected ║ See below ║
-    # ╚═════════════╩════════════════════════════════════════╩═══════════╝
-    # When both d and in_axis are defined then:
-    # - If `d <= in_axis`, we have to move the `in_axis` one dimension further;
-    # - If `d >  in_axis`, we have to decrement `d` (as `in_axis` will get removed).
-    def both_mapped(in_out_axis, d):
-      return in_out_axis is not None and d is not not_mapped
-    new_in_axes = tuple(
-      in_axis + 1 if both_mapped(in_axis, d) and d <= in_axis else in_axis
-      for d, in_axis in zip(dims, params['in_axes']))
-    new_dims = tuple(
-      d - 1 if both_mapped(in_axis, d) and in_axis < d else d
-      for d, in_axis in zip(dims, params['in_axes']))
-    f, dims_out = batch_subtrace(f, self.tag, self.axis_data, new_dims)
-    out_axes_thunk = params['out_axes_thunk']
-    # NOTE: This assumes that the choice of the dimensions over which outputs
-    #       are batched is entirely dependent on the function and not e.g. on the
-    #       data or its shapes.
-    @as_hashable_function(closure=out_axes_thunk)
-    def new_out_axes_thunk():
-      return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
-                    for out_axis, d in zip(out_axes_thunk(), dims_out()))
-    new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
-    with core.set_current_trace(self.parent_trace):
-      vals_out = map_primitive.bind(*vals, subfuns=(f,), **new_params)
-    dims_out_ = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
-                  for d, out_axis in zip(dims_out(), out_axes_thunk())]
-    src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out_)]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))

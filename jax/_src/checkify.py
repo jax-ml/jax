@@ -50,8 +50,8 @@ from jax._src.tree_util import tree_flatten
 from jax._src.tree_util import tree_map, FlatTree
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
-from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
-                           unzip3, weakref_lru_cache, HashableWrapper, foreach)
+from jax._src.util import (split_list, safe_map, safe_zip, unzip3,
+                           weakref_lru_cache, HashableWrapper, foreach)
 
 # Backward compatibility: some downstream users implicitly rely on this import,
 # and reference jax.experimental.shard_map without an explicit import.
@@ -367,27 +367,11 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
 
-  # map-specific params handling.
-  if isinstance(primitive, core.MapPrimitive):
-    # Update `in_axes` and `out_axes_thunk` params for map primitive.
-    out_val_axes = params.pop('out_axes')
-
-    @as_hashable_function(closure=out_val_axes)
-    def out_axes_thunk():
-      out_err_num = metadata()[0].num_leaves - len(out_val_axes)
-      return (*(0,)*out_err_num, *out_val_axes)
-
-    params = dict(params,
-                  in_axes=(*(None,)*num_error_vals, *params['in_axes']),
-                  out_axes_thunk=out_axes_thunk)
-
   all_vals = primitive.bind(*err_vals, *invals, subfuns=(partial_checkify,),
                             **params)
 
   out_tree, _ = metadata()
   error, out_vals = tree_unflatten(out_tree, all_vals)
-  if isinstance(primitive, core.MapPrimitive):
-    error = _reduce_any_error(error)
   return error, out_vals
 
 def checkify_jaxpr(jaxpr: core.ClosedJaxpr, enabled_errors,

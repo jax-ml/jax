@@ -38,8 +38,8 @@ from jax._src.core import (Trace, Tracer, typeof, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.state.types import AbstractRef
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                           as_hashable_function, weakref_lru_cache,
-                           partition_list, subs_list2, foreach)
+                           weakref_lru_cache, partition_list, subs_list2,
+                           foreach)
 
 Array = Any
 Ref = Any
@@ -645,18 +645,6 @@ class JVPTrace(Trace):
     args, in_tree = tree_flatten((primals, tangents))
     f_jvp = jvp_subtrace(f, self.tag)
     f_jvp, which_nz_out = nonzero_tangent_outputs(f_jvp)
-    if isinstance(call_primitive, core.MapPrimitive):
-      in_axes = params['in_axes']
-      tangent_in_axes = [ax for ax, nz in zip(in_axes, which_nz) if nz]
-      out_axes_thunk = params['out_axes_thunk']
-      # NOTE: This assumes that the output tangents being zero is a
-      # deterministic function of which input tangents were zero.
-      @as_hashable_function(closure=out_axes_thunk)
-      def new_out_axes_thunk():
-        out_ax = out_axes_thunk()
-        return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
-      params = dict(params, in_axes=(*in_axes, *tangent_in_axes),
-                    out_axes_thunk=new_out_axes_thunk)
     f_jvp, out_tree = traceable(f_jvp, in_tree)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, which_nz) if update_params else params
@@ -668,12 +656,6 @@ class JVPTrace(Trace):
     tangent_out = [p2tz(p) if t is None else t
                    for p, t in zip(primal_out, tangent_out)]
     return [maybe_jvp_tracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
-
-  # The only difference between process_map and process_call is that
-  # the `in_axes` and `out_axes_thunk` params must be updated;
-  # that's handled in process_call.
-  def process_map(self, map_primitive, f, tracers, params):
-    return self.process_call(map_primitive, f, tracers, params)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -951,63 +933,22 @@ class LinearizeTrace(Trace):
     nzs_in = tuple(type(t) is not Zero for t in tangents)
     f_primal, linearize_outs_thunk = linearize_subtrace(
         f, self.is_vjp, self.tag, nzs_in, f.debug_info)
-    if isinstance(call_primitive, core.MapPrimitive):
-      out_axes_thunk = params['out_axes_thunk']
-      @as_hashable_function(closure=out_axes_thunk)
-      def new_out_axes_thunk():
-        _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
-        num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-        out_axes = out_axes_thunk()
-        return (*(0 for _ in range(num_res_out)), *out_axes)
-      primal_params = dict(params, out_axes_thunk=new_out_axes_thunk)
-    else:
-      primal_params = params
 
     avals = [typeof(x) for x in primals]
     all_primal_results = call_primitive.bind_with_trace(
-        self.parent_trace, primals, avals, dict(primal_params, subfuns=(f_primal,)))
+        self.parent_trace, primals, avals, dict(params, subfuns=(f_primal,)))
     residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
     non_fwd_res = all_primal_results[:num_res_out]
     primals_out = all_primal_results[num_res_out:]
     residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
-
-    if isinstance(call_primitive, core.MapPrimitive):
-      in_axes = params['in_axes']
-      out_axes = params['out_axes_thunk']()
-      residual_avals = map(typeof, residuals)
-      residual_axes = [in_axes[f1] if f1 is not None else
-                       out_axes[f2] if f2 is not None else
-                       0 for f1, f2 in zip(in_fwd, out_fwd)]
-      new_in_axes = (*residual_axes, *(None for _ in range(len(env))),
-                     *(ax for ax, nz in zip(in_axes, nzs_in) if nz))
-      new_out_axes = (*(ax for ax, nz in zip(out_axes, nzs_out) if nz),)
-      # NOTE: This assumes that the output tangents being zero is a
-      # deterministic function of which input tangents were zero.
-      @as_hashable_function(closure=new_out_axes)
-      def new_out_axes_thunk():
-        return new_out_axes
-      params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
-
     update_params = call_linearize_param_updaters.get(call_primitive)
     num_new_args = len(residuals) + len(env)
     new_params = (update_params(params, num_new_args, nzs_in)
                   if update_params else params)
     num_residuals = len(residual_avals)
 
-    # TODO(mattjj,dougalm): this tag is read by DynamicJaxprTrace.process_map to
-    # avoid round-tripping the jaxpr and thus getting grad-of-pmap cache misses.
-    # Remove the `if` branch when we replace the pmap implementation.
-    if isinstance(call_primitive, core.MapPrimitive):
-      @as_hashable_function(closure=(num_residuals, lin_jaxpr))
-      def f_tangent(*args):
-        consts = args[:num_residuals]
-        nz_tangents = args[num_residuals:]
-        return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
-      f_tangent._pmap_tag = isinstance(call_primitive, core.MapPrimitive)
-    else:
-      f_tangent = _get_f_tangent(lin_jaxpr, num_residuals)
-
+    f_tangent = _get_f_tangent(lin_jaxpr, num_residuals)
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
     new_params = dict(new_params, subfuns=(lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),))
     args = (*residuals, *env, *nz_tangents_in)
@@ -1018,12 +959,6 @@ class LinearizeTrace(Trace):
     tangents_out = [next(nz_tangents_out_iter) if nz else p2tz(primal)
                     for nz, primal in zip(nzs_out, primals_out)]
     return map(partial(maybe_linearize_tracer, self), primals_out, nzs_out, tangents_out)
-
-  # The only difference between process_map and process_call is that
-  # the `in_axes` and `out_axes_thunk` params must be updated;
-  # that's handled in process_call.
-  def process_map(self, map_primitive, f, tracers, params):
-    return self.process_call(map_primitive, f, tracers, params)
 
 
 @weakref_lru_cache

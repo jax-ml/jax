@@ -1372,12 +1372,6 @@ class ShardMapTrace(core.Trace):
         "function, and open a feature request at "
         "https://github.com/jax-ml/jax/issues !")
 
-  def process_map(self, map_primitive, fun, tracers, params, /):
-    raise NotImplementedError(
-        "Eager evaluation of `pmap` inside a `shard_map` isn't yet supported."
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/jax-ml/jax/issues !")
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros

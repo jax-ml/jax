@@ -47,10 +47,9 @@ from jax._src import linear_util as lu
 from jax._src.tree_util import tree_map
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
-                           tuple_delete, cache,
-                           HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta, foreach,
-                           weakref_cache_key_types, set_module)
+                           tuple_delete, cache, HashableWrapper,
+                           weakref_lru_cache, partition_list, StrictABCMeta,
+                           foreach, weakref_cache_key_types, set_module)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -792,11 +791,6 @@ class Trace:
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_map(self, map_primitive, f, tracers, params, /):
-    msg = (f"{type(self)} must override process_map to handle map-like "
-           "primitives")
-    raise NotImplementedError(msg)
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
@@ -1223,7 +1217,6 @@ class EvalTrace(Trace):
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
     else:
       return primitive.impl(f, *tracers, **params)
-  process_map = process_call
 
   def process_custom_transpose(self, primitive, call, tracers, /, **_):
     del primitive, _
@@ -3141,30 +3134,6 @@ closed_call_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, eqn_effects(call_jaxpr)))
 
 # ------------------- Map -------------------
-
-class MapPrimitive(Primitive):
-  multiple_results = True
-  map_primitive = True
-  skip_canonicalization = True
-
-  def bind_with_trace(self, trace, args, avals, params, /):
-    params = dict(params)
-    fun, = params.pop('subfuns')
-    assert len(params['in_axes']) == len(args)
-    return trace.process_map(self, fun, args, params)
-
-  def process(self, trace, fun, tracers, params):
-    return trace.process_map(self, fun, tracers, params)
-
-  def get_bind_params(self, params):
-    new_params: dict[str, Any] = dict(params)
-    jaxpr: Jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(
-        lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info), jaxpr, ())
-    new_params['subfuns'] = (subfun,)
-    axes = new_params.pop('out_axes')
-    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return new_params
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
   from jax._src.hijax import HiType  # pytype: disable=import-error
