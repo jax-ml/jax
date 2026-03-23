@@ -3879,13 +3879,7 @@ def try_cluster_cancel_lowering(
         f"Try cluster cancel response must be 128 bits, but is {bits} bits."
     )
 
-  is_first_wg = arith_dialect.cmpi(
-      arith_dialect.CmpIPredicate.eq, mgpu.warpgroup_idx(), mgpu.c(0, i32)
-  )
-  is_leader_thread = arith_dialect.andi(
-      ctx.module_ctx.single_lane_predicate, is_first_wg
-  )
-
+  is_leader_thread = ctx.module_ctx.single_lane_predicate
   bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
   barrier.arrive_expect_tx(bytes)
 

@@ -5372,13 +5372,11 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         out_shape=jax.ShapeDtypeStruct((num_sms,), jnp.int32),
         grid=grid,
         grid_names=grid_names,
-        num_threads=2,
-        thread_name="wg",
         cluster=cluster,
         cluster_names=cluster_names,
         scratch_shapes=[
             plgpu.TryClusterCancelResult(2 if with_indexing else None),
-            plgpu.Barrier(num_arrivals=2),
+            plgpu.Barrier(),
             # Requesting SMEM close to the 228kb limit to ensure that each SM
             # only schedules 1 block.
             plgpu.SMEM((220 * 1024,), jnp.int8),
