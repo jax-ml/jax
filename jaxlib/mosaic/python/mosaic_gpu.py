@@ -24,6 +24,7 @@ name. Otherwise, MLIR is unable to find the module during dialect search.
 
 # pylint: disable=g-bad-import-order
 from jaxlib.mosaic.dialect.gpu._mosaic_gpu_gen_ops import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
+from jaxlib.mosaic.dialect.gpu import _mosaic_gpu_gen_ops
 from jaxlib.mosaic.dialect.gpu._mosaic_gpu_gen_enums import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
 from jaxlib.mlir._mlir_libs._mosaic_gpu_ext import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
 
@@ -35,3 +36,21 @@ except ImportError:
 
 # Add the parent module to the search prefix
 _cext.globals.append_dialect_search_prefix(__name__[:__name__.rfind(".")])
+
+
+@_cext.register_operation(_mosaic_gpu_gen_ops._Dialect, replace=True)
+class WarpMapOp(_mosaic_gpu_gen_ops.WarpMapOp):  # noqa: F405
+  """An extension to the automatically generated WarpMapOp bindings."""
+
+  def __init__(self, operands, *, loc=None, ip=None):
+    super().__init__(operands, loc=loc, ip=ip)
+    args_ty = [o.type for o in self.operands_]
+    self.regions[0].blocks.append(*args_ty)  # Append the block.
+
+  @property
+  def body(self):
+    return self.regions[0].blocks[0]
+
+
+def warp_map(operands, *, loc=None, ip=None) -> WarpMapOp:
+  return WarpMapOp(operands, loc=loc, ip=ip)

@@ -716,7 +716,7 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
     [SingleBlock, NoTerminator, IsolatedFromAbove]> {
   let summary = "Evaluates a block in parallel on all warps.";
   let arguments = (ins Variadic<AnyType>:$operands);
-  let regions = (region SizedRegion<1>:$body);
+  let regions = (region SizedRegion<1>:$region);
   let hasVerifier = 1;
 }
 
