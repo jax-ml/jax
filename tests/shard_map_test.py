@@ -4337,6 +4337,81 @@ class ShardMapTest(jtu.JaxTestCase):
     jaxpr = f.trace(jnp.arange(8)).jaxpr
     self.assertNotIn('pvary', str(jaxpr))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eager_reduced_out(self, mesh):
+    arr = jax.device_put(np.arange(8.), P('x'))
+
+    @shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      return jax.lax.all_gather(x, 'x', tiled=True, to='reduced')
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
+    self.assertArraysEqual(out, np.arange(8.))
+
+    out_g = jax.grad(lambda x: f(x).sum())(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out_g, jnp.ones((8,)))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eager_reduced_in(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.pcast(x, 'x', to='varying')
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.concat([np.arange(8.), np.arange(8.)]))
+
+    out_g = jax.grad(lambda x: f(x).sum())(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    expected_g = jax.jit(jax.grad(lambda x: jax.jit(f)(x).sum()))(arr)
+    self.assertArraysEqual(jax.reshard(out_g, P()), jax.reshard(expected_g, P()))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eager_unreduced_out(self, mesh):
+    arr = jax.device_put(np.arange(8.), P('x'))
+
+    @shard_map(out_specs=P(unreduced={'x'}))
+    def f(x):
+      return jax.lax.pcast(x, 'x', to='unreduced')
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
+    self.assertArraysEqual(jax.reshard(out, P()), np.arange(4.) + np.arange(4., 8.))
+
+    out_g = jax.grad(lambda x: f(x).sum())(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+    expected_g = jax.jit(jax.grad(lambda x: jax.jit(f)(x).sum()))(arr)
+    self.assertArraysEqual(out_g, expected_g)
+
+    @shard_map(out_specs=P(unreduced={'x'}))
+    def g(x):
+      out = jax.lax.pcast(x, 'x', to='unreduced')
+      return jnp.sin(out)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "unreduced rule for sin is not implemented"):
+      g(arr)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eager_unreduced_in(self, mesh):
+    arr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+
+    @shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.psum_scatter(x, 'x', tiled=True)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.arange(8.))
+
+    out_g = jax.grad(lambda x: f(x).sum())(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertArraysEqual(out_g, jnp.ones((8,)))
+
   @parameterized.parameters([False, True])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                           axis_types=(AxisType.Explicit, AxisType.Auto))
@@ -4889,28 +4964,6 @@ class ShardMapTest(jtu.JaxTestCase):
     out = jax.jit(jax.shard_map(f, in_specs=P(), out_specs=P(),
                                 check_vma=False))(arr)
     self.assertArraysEqual(out, np.zeros_like(arr, dtype=np.int32))
-
-  @jtu.with_explicit_mesh((2,), 'x')
-  def test_unreduced_eager_shmap(self, mesh):
-    arr = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
-
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Eager shard_map with unreduced/reduced is not implemented"):
-      jax.shard_map(lambda x: x, out_specs=P(unreduced={'x'}))(arr)
-
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Eager shard_map with unreduced/reduced is not implemented"):
-      arr2 = jax.device_put(np.arange(8), P('x'))
-      jax.shard_map(lambda x: jax.lax.pcast(x, 'x', to='unreduced'),
-                    out_specs=P(unreduced={'x'}))(arr2)
-
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "Eager shard_map with unreduced/reduced is not implemented"):
-      jax.shard_map(lambda x: x, in_specs=P(), out_specs=P(unreduced={'x'}),
-                    check_vma=False)(np.arange(8))
 
   @parameterized.parameters(True, False)
   @jtu.with_explicit_mesh((2,), 'x')

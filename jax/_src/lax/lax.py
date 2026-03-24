@@ -6992,11 +6992,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
       spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _squeeze_ur_rule(operand, *, dimensions):
-  if operand.sharding.spec.unreduced:
-    raise NotImplementedError(
-        'squeeze unreduced rule is not implemented. Please file a bug at '
-        'https://github.com/jax-ml/jax/issues')
-  return frozenset(), getr(operand)
+  return getu(operand), getr(operand)
 
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
