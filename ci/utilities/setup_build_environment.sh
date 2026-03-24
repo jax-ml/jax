@@ -104,3 +104,5 @@ retry "bazel --version"
 
 # Create the output directory if it doesn't exist.
 mkdir -p "$JAXCI_OUTPUT_DIR"
+
+# Wow!
