@@ -13,10 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/weakref_lru_cache.h"
+
 #include <Python.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <string>
@@ -42,7 +45,6 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/reentrant_hash_map.h"
-#include "jaxlib/weakref_lru_cache.h"
 
 namespace nb = nanobind;
 
