@@ -1095,7 +1095,7 @@ def _check_lowering(lowering) -> None:
   allowed_compile_args = {
       "backend", "platforms", "mesh", "global_in_avals",
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
-      "mut", "spmd_lowering", "auto_spmd_lowering",
+      "mut", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
@@ -1110,7 +1110,6 @@ def _check_lowering(lowering) -> None:
   # the compile_args have the values that have been implemented.
   not_implemented_msgs = []
   for compile_arg, check_value, err_msg in (
-      ("spmd_lowering", lambda v: v, "True"),
       ("auto_spmd_lowering", lambda v: not v, "False"),
       # tuple_args is a compilation flag, does not affect lowering.
       ("tuple_args", lambda v: True, "N/A"),
