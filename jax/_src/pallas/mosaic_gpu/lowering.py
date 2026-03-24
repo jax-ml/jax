@@ -3317,7 +3317,8 @@ def _run_scoped_lowering_rule(
       # consts. We also don't want to wrap the values in refs.
       no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
       should_discharge = [False] * len(consts) + should_discharge
-      discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
+      with config._check_vma(False):
+        discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
       new_input_vals = (*consts, *input_refs)
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx,
@@ -3403,9 +3404,10 @@ def _run_state_lowering_rule(
         "Expected at least one accumulator to in run_state."
     )
 
-  discharged_jaxpr, new_consts = discharge.discharge_state(
-      jaxpr, (), should_discharge=should_discharge
-  )
+  with config._check_vma(False):
+    discharged_jaxpr, new_consts = discharge.discharge_state(
+        jaxpr, (), should_discharge=should_discharge
+    )
   assert not new_consts
   outs = lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]

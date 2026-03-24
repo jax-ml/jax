@@ -316,7 +316,7 @@ def _mpmd_map(
       flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
           lu.wrap_init(fn, debug_info=debug_info), kernel_in_tree
       )
-      with jax_core.extend_axis_env_nd(mesh.shape.items()):
+      with jax_core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(False):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
             flat_fun, flat_kernel_avals
         )
