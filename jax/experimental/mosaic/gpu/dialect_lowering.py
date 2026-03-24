@@ -71,7 +71,7 @@ class LoweringContext:
         assert self._single_thread_per_warp_predicate is not None
         return self._single_thread_per_warp_predicate
       case _:
-        assert_never(self.thread_semantics)  # pytype: disable=wrong-arg-types
+        assert_never(self.thread_semantics)  # pytype: disable=wrong-arg-types,bad-return-type
 
   def check_collective(self, op: ir.OpView) -> None:
     """Checks that the collective attribute is consistent across operations.

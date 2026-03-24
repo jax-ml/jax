@@ -1016,7 +1016,7 @@ def eval_dynamic_shape_as_ivals(
 def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
                                  shape: core.Shape) -> ir.Value:
   """Evaluates the dynamic shapes as one 1d int32 tensor."""
-  return shape_tensor(eval_dynamic_shape(ctx, shape))  # pyrefly: ignore[bad-return]
+  return shape_tensor(eval_dynamic_shape(ctx, shape))  # pyrefly: ignore[bad-return]  # pytype: disable=bad-return-type
 
 class LoweringResult(NamedTuple):
   module: ir.Module
