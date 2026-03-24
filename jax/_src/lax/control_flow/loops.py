@@ -1203,10 +1203,12 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
         *consts_known_lp, *consts_known_donthoist, *ins_known_lp,
         **dict(params_known, linear=linear_known, num_consts=num_consts))
     return [*intensive_res, *out_loop]
-  call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
-      [v.aval for v in ins_known])
-  call_jaxpr = ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
+
+  call_jaxpr, _ = pe.trace_to_jaxpr(
+      known,
+      FlatTree.flatten_args(*(v.aval for v in ins_known)),
+      debug_info=jaxpr_known_hoist.jaxpr.debug_info)
+
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
       core.closed_call_p, dict(call_jaxpr=call_jaxpr),
@@ -1333,9 +1335,9 @@ def _scan_state_partial_discharge_rule(
 
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=arg_names, result_paths=None)
 
-  new_jaxpr_, _, new_consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(body, debug_info=dbg), in_avals)
-  new_jaxpr = core.ClosedJaxpr(new_jaxpr_, new_consts)
+  new_jaxpr, _ = pe.trace_to_jaxpr(body,
+      FlatTree.flatten_args(*in_avals),
+      debug_info=dbg)
 
   pure_consts, carry, pure_xs = split_list(
       rearrange(args), [num_pure_consts, num_const_refs + num_carry + num_xs_refs])
@@ -2166,13 +2168,15 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
                                  *carry)
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
     return [*body_refs_out, *cond_refs_out, *carry]
-  new_body_jaxpr, _, new_body_consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_body, debug_info=discharged_body_jaxpr.debug_info),
-      [*remaining_body_const_avals,
-       *[a.inner_aval for a in body_ref_avals],
-       *[a.inner_aval for a in cond_ref_avals],
-      *carry_avals])
-  if new_body_consts: raise NotImplementedError
+
+  new_body_jaxpr, _ = pe.trace_to_jaxpr(
+      new_body,
+      FlatTree.flatten_args(*remaining_body_const_avals,
+          *[a.inner_aval for a in body_ref_avals],
+          *[a.inner_aval for a in cond_ref_avals],
+          *carry_avals),
+      debug_info=discharged_body_jaxpr.debug_info)
+  if new_body_jaxpr.consts: raise NotImplementedError
 
   # Since some `Ref`s that were previously consts are now carries, we need to
   # deal with them (i.e. ignore them) in the `cond`, so we need to rewrite the
@@ -2189,18 +2193,19 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     assert len(refs_out) == len(cond_refs)
     return predicate
 
-  new_cond_jaxpr, _, new_cond_consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info.with_unknown_names()),
-      [*remaining_cond_const_avals,
-       *[a.inner_aval for a in body_ref_avals],
-       *[a.inner_aval for a in cond_ref_avals],
-       *carry_avals])
-  if new_cond_consts: raise NotImplementedError
+  new_cond_jaxpr, _ = pe.trace_to_jaxpr(
+      new_cond,
+      FlatTree.flatten_args(*remaining_cond_const_avals,
+          *[a.inner_aval for a in body_ref_avals],
+          *[a.inner_aval for a in cond_ref_avals],
+          *carry_avals),
+      debug_info=cond_jaxpr.debug_info.with_unknown_names())
+  if new_cond_jaxpr.consts: raise NotImplementedError
 
   out = while_p.bind(*remaining_cond_consts, *remaining_body_consts,
                      *body_refs, *cond_refs, *carry,
-                     body_jaxpr=ClosedJaxpr(new_body_jaxpr, ()),
-                     cond_jaxpr=ClosedJaxpr(new_cond_jaxpr, ()),
+                     body_jaxpr=new_body_jaxpr,
+                     cond_jaxpr=new_cond_jaxpr,
                      body_nconsts=num_remaining_body_consts,
                      cond_nconsts=num_remaining_cond_consts)
   body_refs_out, cond_refs_out, carry_out = split_list(
