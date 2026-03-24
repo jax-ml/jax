@@ -640,12 +640,6 @@ def wraps(
     return fun
   return wrapper
 
-
-# NOTE: Ideally we would annotate both the argument and return type as NoReturn
-#       but it seems like pytype doesn't support that...
-def assert_unreachable(x):
-  raise AssertionError(f"Unhandled case: {type(x).__name__}")
-
 def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
@@ -696,9 +690,6 @@ class HashableFunction:
   def __repr__(self):
     return f'<hashable {self.f.__name__} with closure={self.closure}>'
 
-# only used in harvest, not jax
-def as_hashable_function(closure):
-  return lambda f: HashableFunction(f, closure)
 
 class HashablePartial:
   def __init__(self, f, *args, **kwargs):

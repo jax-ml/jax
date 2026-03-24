@@ -850,24 +850,6 @@ def _has_effects(effects) -> bool:
   return any(not isinstance(e, not_really_effects) for e in effects)
 
 
-def remat_expansion(
-    *args, jaxpr: core.Jaxpr, prevent_cse: bool, differentiated: bool, **_
-):
-  assert not jaxpr.constvars
-
-  if differentiated and prevent_cse:
-    translation_rule = _remat_translation_using_opt_barrier
-  else:
-    translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
-
-  return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
-
-
-def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
-  args = lax_internal.optimization_barrier(args)
-  return core.eval_jaxpr(jaxpr, (), *args)
-
-
 def _remat_lowering(
     ctx: mlir.LoweringRuleContext,
     *args,

@@ -1259,13 +1259,6 @@ def _closed_call_transpose(ct, *args, call_jaxpr, **params):
                        call_jaxpr=jaxpr_, **params)
 fancy_transposes[core.closed_call_p] = _closed_call_transpose
 
-
-@lu.transformation_with_aux2
-def nonzero_outputs(f, store, *args, **kwargs):
-  results = f(*args, **kwargs)
-  store.store([not isinstance(r, (Zero, type(None))) for r in results])
-  return results
-
 def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
               instantiate: bool | Sequence[bool]
               ) -> tuple[core.ClosedJaxpr, list[bool]]:

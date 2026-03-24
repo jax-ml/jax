@@ -83,10 +83,6 @@ zip, unsafe_zip = safe_zip, zip
 
 export = util.set_module("jax.lax")
 
-def _matrix_transpose(x: Array) -> Array:
-  assert x.ndim >= 2
-  return transpose(x, [*range(x.ndim - 2), x.ndim - 1, x.ndim - 2])
-
 def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
   info = np.iinfo(dtype)
   val = core.concrete_dim_or_error(val, where)

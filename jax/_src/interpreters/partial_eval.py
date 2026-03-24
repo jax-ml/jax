@@ -50,7 +50,7 @@ from jax._src.tree_util import FlatTree, PyTreeDef, treedef_tuple
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
-                           subs_list, HashableFunction, foreach, test_event)
+                           subs_list, foreach, test_event)
 
 
 map, unsafe_map = safe_map, map
@@ -2504,16 +2504,6 @@ def try_constant_folding(primitive, tracers, params, out_avals):
     if any(c is not None for c in consts_in):
       return const_fold_rules[primitive](consts_in, params, out_avals)
   return None
-
-# TODO(mattjj,dougalm): this special handling is to avoid round-tripping the
-# jaxpr when we do grad-of-pmap. The tag is set by LinearizeTrace.process_call's
-# handling of pmap. Remove when we replace the pmap implementation.
-def _linearize_of_pmap_hack(f: lu.WrappedFun, jaxpr, consts) -> tuple[Jaxpr, list]:
-  if (not f.transforms and type(f.f) is HashableFunction and
-      getattr(f.f, '_pmap_tag', None)):
-    _, jaxpr = f.f.closure
-    return convert_constvars_jaxpr(jaxpr), []
-  return jaxpr, consts
 
 
 @weakref_lru_cache

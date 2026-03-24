@@ -61,7 +61,7 @@ from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
 from jax._src.sharding_impls import (
     ArrayMapping, AUTO, UnspecifiedValue, SingleDeviceSharding, GSPMDSharding,
     NamedSharding, PartitionSpec as P)
-from jax._src.util import (safe_map, safe_zip, partition_list, tuple_update,
+from jax._src.util import (safe_map, safe_zip, partition_list,
                            unzip2, weakref_lru_cache, tuple_insert)
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.typing import ArrayLike
@@ -229,24 +229,6 @@ def batched_device_put(aval: core.ShapedArray,
                                  enable_x64=enable_x64)
   finally:
     util.test_event("batched_device_put_end")
-
-def _shard_aval(size, axis: int, aval):
-  try:
-    return _shard_aval_handlers[type(aval)](size, axis, aval)
-  except KeyError as err:
-    raise TypeError(f"No _shard_aval handler for type: {type(aval)}") from err
-_shard_aval_handlers: dict[type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
-
-def _shard_abstract_array(size, axis: int, x):
-  try:
-    if x.shape[axis] != size:
-      raise ValueError(f"Axis size {size} does not match dimension {axis} of "
-                       f"shape {x.shape}")
-  except IndexError:
-    raise ValueError(f"Cannot split a {x.dim}D value along axis {axis}") from None
-  return x.update(shape=tuple_update(x.shape, axis, 1))
-_shard_aval_handlers[ShapedArray] = _shard_abstract_array
-
 
 def global_aval_to_result_handler(
     aval: core.AbstractValue, out_sharding, committed: bool
