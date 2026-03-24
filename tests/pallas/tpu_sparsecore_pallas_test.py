@@ -22,6 +22,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
+import inspect
 import jax
 from jax import lax
 from jax._src import test_util as jtu
@@ -30,6 +31,7 @@ from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
@@ -1695,6 +1697,58 @@ class VectorSubcoreTest(PallasSCTest):
 
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
+
+  @parameterized.parameters(jnp.int32, jnp.float32)
+  def test_copy_add(self, dtype):
+    # TODO(bchetioui): remove when minimum jaxlib version is 0.10.0.
+    if "add" not in inspect.signature(tpu.EnqueueDMAOp).parameters:
+      self.skipTest("enqueue_dma does not support 'add', skipping")
+    shape = (self.sc_info.num_subcores, 32)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
+
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    @functools.partial(
+        pl.pallas_call,
+        grid=mesh.num_subcores,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
+            dimension_semantics=["subcore_parallel"],
+            use_tc_tiling_on_sc=self.USE_TC_TILING,
+        ),
+        out_shape=jax.ShapeDtypeStruct(shape[1:], dtype),
+        out_specs=pl.BlockSpec(
+            shape[1:], lambda i: (0,), memory_space=pltpu.HBM
+        ),
+        in_specs=[
+            pl.BlockSpec(shape, lambda *_: (0, 0), memory_space=pltpu.HBM),
+        ],
+        scratch_shapes=[
+            pltpu.VMEM_SHARED(shape[1:], dtype),
+            pltpu.VMEM(shape[1:], dtype),
+        ],
+    )
+    def kernel(x_ref, o_ref, shared_scratch_ref, scratch_ref):
+      subcore_id = pl.program_id(0)
+      pltpu.sync_copy(x_ref.at[subcore_id], scratch_ref)
+      # Subcore 0 to init shared scratch.
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(scratch_ref, shared_scratch_ref)
+      plsc.subcore_barrier()
+      # All other cores to add their slice to shared scratch.
+      @pl.when(subcore_id != 0)
+      def _():
+        pltpu.sync_copy(scratch_ref, shared_scratch_ref, add=True)
+      plsc.subcore_barrier()
+      # Subcore 0 to copy shared scratch to output.
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(shared_scratch_ref, scratch_ref)
+        pltpu.sync_copy(scratch_ref, o_ref)
+
+    np.testing.assert_array_equal(kernel(x), x.sum(0))
 
   def test_shared_scratch(self):
     mesh = plsc.VectorSubcoreMesh(
