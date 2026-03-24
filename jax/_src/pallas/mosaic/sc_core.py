@@ -184,6 +184,10 @@ class ScalarSubcoreMesh:
     return collections.OrderedDict({self.axis_name: self.num_cores})
 
   @property
+  def size(self) -> int:
+    return self.num_cores
+
+  @property
   def dimension_semantics(self) -> Sequence[str]:
     return ["core_parallel"]
 
@@ -279,6 +283,10 @@ class VectorSubcoreMesh:
         self.core_axis_name: self.num_cores,
         self.subcore_axis_name: self.num_subcores,
     })
+
+  @property
+  def size(self) -> int:
+    return self.num_cores * self.num_subcores
 
   @property
   def dimension_semantics(self) -> Sequence[str]:
