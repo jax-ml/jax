@@ -185,7 +185,7 @@ def jit(
   backend: str | None = ...,
   inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]: ...
+) -> Callable[[Callable], pjit.JitWrapped]:
   ...
 
 def jit(

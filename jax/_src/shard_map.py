@@ -98,7 +98,7 @@ def shard_map(f: None = None, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = ...,
               mesh: Mesh | AbstractMesh | None = ...,
               axis_names: Set[AxisName] = ..., check_vma: bool = ...
-              ) -> Callable[[G], G]: ...
+              ) -> Callable[[G], G]:
   ...
 
 # See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
@@ -107,7 +107,7 @@ def shard_map(f: F | None = None, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = Infer,
               mesh: Mesh | AbstractMesh | None = None,
               axis_names: Set[AxisName] = frozenset(), check_vma: bool = True
-              ) -> Callable[[G], G]: ...
+              ) -> F | Callable[[G], G]:
   """Map a function over shards of data using a mesh of devices.
 
   See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
@@ -172,7 +172,7 @@ def smap(f: F, /, *,
 def smap(f: None = None, /, *,
          in_axes: int | None | InferFromArgs | tuple[Any, ...] = ...,
          out_axes: Any, axis_name: AxisName
-         ) -> Callable[[G], G]: ...
+         ) -> Callable[[G], G]:
   ...
 
 def smap(f: F | None = None, /, *,
