@@ -1796,6 +1796,7 @@ class NotNeeded:
 class GradValue:
   pass
 
+@register_dataclass
 @dataclasses.dataclass(frozen=True)
 class GradRef:
   pass
@@ -1804,6 +1805,7 @@ class GradRef:
 class DontWant:
   pass
 
+@register_dataclass
 @dataclasses.dataclass(frozen=True)
 class DidntWant:
   pass
