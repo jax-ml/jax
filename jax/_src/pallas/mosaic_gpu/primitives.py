@@ -4133,8 +4133,7 @@ def _atomic_store_lowering_rule_wg(
       case _:
         assert_never(atomic_type)
 
-  # TODO(allanrenucci): Remove the pyrefly annotation when .pyi files are updated.
-  mgpu.dialect.vector_store(value, ref, atomic_type=to_int_attr(atomic_type))  # pyrefly: ignore[unexpected-keyword]
+  mgpu.dialect.vector_store(value, ref, atomic_type=to_int_attr(atomic_type))
   return ()
 
 

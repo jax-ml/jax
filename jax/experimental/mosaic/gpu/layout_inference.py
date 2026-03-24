@@ -1077,7 +1077,7 @@ def _broadcast_in_dim_constraint_system(
   src_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
   dst_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
   src_shape = tuple(op.operand.type.shape)  # pyrefly: ignore[missing-attribute]
-  dst_shape = tuple(op.result.type.shape)  # pyrefly: ignore[missing-attribute]
+  dst_shape = tuple(op.result.type.shape)
 
   # Map destination index -> source index
   dst_to_src = {dst: src for src, dst in enumerate(op.broadcast_dimensions)}
@@ -1269,7 +1269,6 @@ def _custom_primitive_constraint_system(
       transforms = next(in_transforms)
       assert isinstance(transforms, ir.ArrayAttr)
       ref_ty = cast(ir.MemRefType, value_site.value.type)
-      # pyrefly: ignore[bad-argument-type]
       tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
       assignments[v] = tiling
 

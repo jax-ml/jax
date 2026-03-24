@@ -1016,7 +1016,8 @@ def eval_dynamic_shape_as_ivals(
 def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
                                  shape: core.Shape) -> ir.Value:
   """Evaluates the dynamic shapes as one 1d int32 tensor."""
-  return shape_tensor(eval_dynamic_shape(ctx, shape))  # pyrefly: ignore[bad-return]  # pytype: disable=bad-return-type
+  [x] = flatten_ir_values([shape_tensor(eval_dynamic_shape(ctx, shape))])
+  return x
 
 class LoweringResult(NamedTuple):
   module: ir.Module
@@ -1319,7 +1320,7 @@ def lower_jaxpr_to_module(
       raise ValueError(
           "Cannot lower jaxpr with verifier errors. " +
           dump_module_message(ctx.module, "verification"))
-  except ir.MLIRError as e:  # pyrefly: ignore[missing-attribute]
+  except ir.MLIRError as e:
     msg_lines = ["Cannot lower jaxpr with verifier errors:"]
     def emit_diagnostic_info(d):
       msg_lines.append(f"\t{d.message}")

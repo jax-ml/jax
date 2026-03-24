@@ -79,7 +79,7 @@ compiler.register_xla_runtime_error_handler(_handle_xla_runtime_error)
 
 
 def mlir_error_to_verification_error(
-    base_err: ir.MLIRError,  # pyrefly: ignore[missing-attribute]
+    base_err: ir.MLIRError,
 ) -> VerificationError:
   """Reformats MLIRError to include a Python traceback."""
   diagnostic = base_err.error_diagnostics[0]  # pytype: disable=attribute-error
