@@ -47,6 +47,9 @@ class PallasSCMeshTest(jtu.JaxTestCase):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
 
+  def test_fail(self):
+    self.fail()
+
   def test_scalar_subcore_mesh(self):
     sc_info = plsc.get_sparse_core_info()
     mesh = sc_core.ScalarSubcoreMesh(axis_name="x", num_cores=sc_info.num_cores)
