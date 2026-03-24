@@ -74,7 +74,6 @@ for more details.
 
   def __init__(self, message: str):
     error_msg = f"{message}{InconclusiveDimensionOperation._help_msg}"
-    # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)
 
 class UnexpectedDimVar(Exception):

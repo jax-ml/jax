@@ -606,9 +606,6 @@ def softmax(x: ArrayLike,
     :func:`log_softmax`
   """
   if config.softmax_custom_jvp.value:
-    # mypy is confused by the `functools.partial` application in the definition
-    # of `_softmax` and incorrectly concludes that `_softmax` returns
-    # `ReturnValue` -- the unsubstituted type parameter of `custom_jvp`.
     return _softmax(x, axis, where)
   else:
     return _softmax_deprecated(x, axis, where)

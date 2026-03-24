@@ -6444,7 +6444,6 @@ def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
 def _repeat(repeats, arr, *, axis: int,
             total_repeat_length: int | None = None) -> Array:
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
-  assert isinstance(axis, int)  # to appease mypy
 
   if core.is_symbolic_dim(repeats):
     if total_repeat_length is not None:

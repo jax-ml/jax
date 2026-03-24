@@ -1047,7 +1047,7 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
-  # Mypy doesn't notice the .get_allocations assignment above.
+  # Type checkers do not understand the get_allocations assignment above.
   return pipeline  # type: ignore
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:

@@ -14,10 +14,6 @@
 
 """Lowering rules and pass for the MLIR Mosaic GPU dialect."""
 
-# mypy has been causing more problems than it solves here. Disable it for these
-# files. We have pytype checks anyway.
-# mypy: ignore-errors
-
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools

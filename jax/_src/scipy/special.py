@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import cast, Any
+from typing import Any
 
 import numpy as np
 
@@ -2538,8 +2538,7 @@ def exp1(x: ArrayLike) -> Array:
   x, = promote_args_inexact("exp1", x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("exp1 does not support complex-valued inputs.")
-  # Casting because custom_jvp generic does not work correctly with mypy.
-  return cast(Array, expn(1, x))
+  return expn(1, x)
 
 
 def _spence_poly(w: Array) -> Array:

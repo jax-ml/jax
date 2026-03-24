@@ -30,8 +30,7 @@ class JAXSparse(util.StrictABC):
   data: jax.Array
   shape: tuple[int, ...]
 
-  # Ignore type because of https://github.com/python/mypy/issues/4266.
-  __hash__ = None  # type: ignore
+  __hash__ = None
 
   @property
   @abc.abstractmethod

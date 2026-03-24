@@ -21,7 +21,6 @@ import dataclasses
 from typing import Any
 import numpy as np
 
-# mypy: ignore-errors
 
 class Mask:
   """A base class for splash attention masks."""

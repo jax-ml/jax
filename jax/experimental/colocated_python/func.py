@@ -348,9 +348,6 @@ def _uncached_get_specialized_func(
                 _get_spec, (args, kwargs)
             )
             out_specs = specialization.out_specs_fn(*args_specs, **kwargs_specs)
-            # Type checking is ignored to silence mypy error: Incompatible types
-            # in assignment (expression has type "list[Any]", variable has type
-            # "tuple[ShapeDtypeStruct, ...]")  [assignment]
             out_specs_leaves, out_specs_treedef = tree_util.tree_flatten(  # type: ignore[assignment]
                 out_specs
             )

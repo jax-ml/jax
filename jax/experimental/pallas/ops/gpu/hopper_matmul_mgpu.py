@@ -27,7 +27,6 @@ from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
-# mypy: ignore-errors
 
 class MatmulDimension(enum.IntEnum):
   M = 0

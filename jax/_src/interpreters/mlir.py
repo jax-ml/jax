@@ -71,10 +71,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 T = typing.TypeVar("T")
 
-Value = Any  # = ir.Value
-
-# mypy implicitly sets this variable to true when type checking.
-MYPY = False
+Value = ir.Value
 
 # IR Helpers
 
@@ -89,7 +86,7 @@ dense_int_array = ir.DenseI64ArrayAttr.get
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]) -> IrValues:
+def shape_tensor(sizes: Sequence[int | ir.Value]) -> IrValues:
   int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
   i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
   def lower_dim(d):
@@ -861,14 +858,8 @@ class LoweringRuleContext:
     ) and not lowering_parameters.export_ignore_forward_compatibility
 
 
-if not MYPY:
-  class LoweringRule(Protocol):
-    def __call__(self, ctx: LoweringRuleContext,
-                 *args: ir.Value | Sequence[ir.Value],
-                 **kw) -> Sequence[ir.Value | Sequence[ir.Value]]:
-      """Converts a JAX primitive invocation into MLIR."""
-else:
-  LoweringRule = Any
+LoweringRule = Callable[..., Sequence[ir.Value | Sequence[ir.Value]]]
+
 
 @dataclasses.dataclass(frozen=True)
 class LoweringRuleEntry:
@@ -979,7 +970,7 @@ def sharded_aval(aval: core.AbstractValue,
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
-                       shape: core.Shape) -> tuple[int | Value, ...]:
+                       shape: core.Shape) -> tuple[int | ir.Value, ...]:
   ctx = ctx.replace(
       primitive="eval_dynamic_shape",
       avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars),
@@ -993,9 +984,9 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
 
 # TODO: replace usage of eval_dynamic_shape_as_vals with eval_dynamic_shape_as_ivals
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
-                               shape: core.Shape) -> tuple[Value, ...]:
+                               shape: core.Shape) -> tuple[ir.Value, ...]:
   """Evaluates the dynamic shapes as int32 values."""
-  def convert_dim(d: int | Value):
+  def convert_dim(d: int | ir.Value):
     if type(d) is int:
       return ir_constant(np.array(d, dtype=np.int32))
     else:
@@ -1009,9 +1000,9 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
 
 def eval_dynamic_shape_as_ivals(
     ctx: LoweringRuleContext, shape: core.Shape
-    ) -> tuple[int | Value, ...]:
+    ) -> tuple[int | ir.Value, ...]:
   """Evaluates the dynamic shapes as int or ir.int32 values."""
-  def convert_dim(d: int | Value) -> int | ir.Value:
+  def convert_dim(d: int | ir.Value) -> int | ir.Value:
     if type(d) is int:
       return d
     else:
@@ -1023,9 +1014,9 @@ def eval_dynamic_shape_as_ivals(
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
 
 def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
-                                 shape: core.Shape) -> Value:
+                                 shape: core.Shape) -> ir.Value:
   """Evaluates the dynamic shapes as one 1d int32 tensor."""
-  return shape_tensor(eval_dynamic_shape(ctx, shape))
+  return shape_tensor(eval_dynamic_shape(ctx, shape))  # pyrefly: ignore[bad-return]
 
 class LoweringResult(NamedTuple):
   module: ir.Module
