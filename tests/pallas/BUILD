@@ -1441,7 +1441,7 @@ jax_multiplatform_test(
         "tpu_7x",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
