@@ -32,7 +32,6 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
 
-# mypy: ignore-errors
 # ruff: noqa: F405
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access
 

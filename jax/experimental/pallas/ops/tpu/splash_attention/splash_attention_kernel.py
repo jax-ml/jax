@@ -42,7 +42,6 @@ NUM_SUBLANES = 8
 NN_DIM_NUMBERS = (((1,), (0,)), ((), ()))  # standard matmul
 NT_DIM_NUMBERS = (((1,), (1,)), ((), ()))  # RHS transposed
 
-# mypy: ignore-errors
 
 class SegmentIds(NamedTuple):
   """SegmentIds for Q and KV sequences.

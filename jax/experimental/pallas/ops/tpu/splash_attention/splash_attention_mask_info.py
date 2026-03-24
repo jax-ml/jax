@@ -27,7 +27,6 @@ from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_ma
 import jax.numpy as jnp
 import numpy as np
 
-# mypy: ignore-errors
 
 # Logic for processing NumPy masks for kernels
 class MaskInfo(NamedTuple):

@@ -15,7 +15,7 @@
 Typing tests
 ------------
 This test is meant to be both a runtime test and a static type annotation test,
-so it should be checked with pytype/mypy as well as being run with pytest.
+so it should be checked with pytype/Pyrefly as well as being run with pytest.
 """
 
 from __future__ import annotations

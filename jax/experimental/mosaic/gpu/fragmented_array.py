@@ -1842,9 +1842,6 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=self.registers, _layout=self.layout, _is_signed=is_signed
       )
-    # Otherwise, mypy is unhappy with using ``idx`` for both range and
-    # np.ndenumerate.
-    idx: Any
     any_reg = self.registers.flat[0]
     reg_type = any_reg.type
     is_vector_reg = isinstance(reg_type, ir.VectorType)

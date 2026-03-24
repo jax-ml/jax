@@ -991,7 +991,6 @@ def _dma_wait_lowering_rule(
 def _extract_indirect_offsets_from_indexer(
     indexer: indexing.NDIndexer, expected_shape: tuple[int, ...] | None = None
 ) -> ir.Value | None:
-  offsets_ref: Any  # Make mypy happy.
   match indexer.indices:
     case [ir.Value() as offsets, *_] if (
         # fmt: off

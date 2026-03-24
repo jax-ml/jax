@@ -14,10 +14,6 @@
 
 """Defines expressions and constraints over layouts."""
 
-# mypy has been causing more problems than it solves here. Disable it for these
-# files. We have pytype checks anyway.
-# mypy: ignore-errors
-
 from __future__ import annotations
 
 import abc

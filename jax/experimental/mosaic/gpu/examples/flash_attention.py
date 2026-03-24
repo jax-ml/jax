@@ -33,7 +33,6 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
 
-# mypy: ignore-errors
 # ruff: noqa: F405
 
 @dataclasses.dataclass(frozen=True)

@@ -112,7 +112,7 @@ class IndexType(enum.Enum):
 
 class ParsedIndex(NamedTuple):
   """Structure for tracking an indexer parsed within the context of an array shape."""
-  index: Index  # type: ignore[assignment]  # seems to be a strange misfire by mypy.
+  index: Index  # pyrefly: ignore[bad-override]
   typ: IndexType
   consumed_axes: tuple[int, ...]
 
