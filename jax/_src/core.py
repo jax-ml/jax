@@ -795,12 +795,6 @@ class Trace:
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_transpose(self, prim: Primitive,
-                               call: lu.WrappedFun, tracers, /, **params):
-    msg = (f"{type(self)} must override process_custom_transpose "
-           "to handle custom_transpose_call primitives")
-    raise NotImplementedError(msg)
-
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *,
                               out_trees, symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_vjp_call "
@@ -1215,10 +1209,6 @@ class EvalTrace(Trace):
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
     else:
       return primitive.impl(f, *tracers, **params)
-
-  def process_custom_transpose(self, primitive, call, tracers, /, **_):
-    del primitive, _
-    return call.call_wrapped(*tracers)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, **_):
     del primitive, jvp, _  # Unused.

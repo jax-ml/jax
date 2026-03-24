@@ -53,7 +53,6 @@ from jax._src.config import (
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
   softmax_custom_jvp as softmax_custom_jvp,
-  enable_custom_vjp_by_custom_transpose as enable_custom_vjp_by_custom_transpose,
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
@@ -166,7 +165,6 @@ from jax._src.array import (
 # jax and rely on the names imported above.
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
-from jax import custom_transpose as custom_transpose
 from jax import api_util as api_util
 from jax import distributed as distributed
 from jax import debug as debug

@@ -40,7 +40,6 @@ from jax._src import api_util
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src import config
 from jax._src import core
-from jax._src import custom_transpose
 from jax._src import test_util as jtu
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.interpreters import mlir
@@ -1141,61 +1140,6 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=custom_vjp fun, fun=app, arg_names=None, result_paths=None, from unknown",
             # TODO(necula): from None
             "traced_for=jit, fun=<lambda>, arg_names=xy[0],xy[1], from None",
-        ])
-
-  def test_custom_transpose(self):
-    # Helpers from api_test.py
-    class _custom_transpose:
-      def __init__(self, out_types, fun):
-        self.out_types = out_types
-        self.fun = custom_transpose.custom_transpose(fun)
-
-      def __getattr__(self, name):
-        return getattr(self.fun, name)
-
-      def __call__(self, *args):
-        return self.fun(self.out_types, *args)
-
-    def custom_transpose_with_example_out(example_out):
-      return functools.partial(
-          _custom_transpose,
-          jax.tree.map(
-              lambda x: core.typeof(x).to_tangent_aval(), example_out))
-
-    tracer_spy = TracerSpy()
-    def my_f_with_cond(i, x):
-      def my_f(x):
-        tracer_spy.append(x)
-        @custom_transpose_with_example_out(jnp.ones(2))
-        def fn(r, x):
-          tracer_spy.append(r)
-          tracer_spy.append(x["c"])
-          return dict(b=x["c"] / r)
-
-        @fn.def_transpose
-        def fn_tp(r, t):
-          tracer_spy.append(r)
-          return dict(c=2 * t / r)
-
-        return x["c"] + fn(jnp.ones(2) * 3., x)
-
-      return lax.cond(i > 0, my_f, lambda x: x["c"], dict(c=x))
-
-    x = jnp.ones(2) * 6.
-    self._check_tracers_and_jaxprs(
-        jax.jit(lambda x: jax.linear_transpose(functools.partial(my_f_with_cond, 7.),
-                                               x)),
-        x,
-        tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            "traced_for=cond, fun=my_f, arg_names=None, result_paths=None",
-            "traced_for=cond, fun=<lambda>, arg_names=None, result_paths=None",
-            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result[0][0][0],result[0][0][1]",
-        ],
-        expected_tracer_debug_infos=[
-            "traced_for=custom_transpose fun, fun=fn, arg_names=r,x['c'], from r",
-            "traced_for=custom_transpose fun, fun=fn, arg_names=r,x['c'], from x['c']",
-            "traced_for=custom_transpose transpose_fun, fun=fn_tp, arg_names=r,t, from r",
         ])
 
   def test_linear_call(self):

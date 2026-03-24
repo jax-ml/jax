@@ -29,7 +29,6 @@ from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 import numpy as np
 
 from jax._src import ad_util
-from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -46,7 +45,7 @@ from jax._src.core import (
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import FlatTree, PyTreeDef, treedef_tuple
+from jax._src.tree_util import FlatTree, PyTreeDef
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
@@ -287,25 +286,6 @@ class JaxprTrace(Trace):
     del jvp, symbolic_zeros
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
-
-  def process_custom_transpose(self, prim, call, tracers, /, **params):
-    tracers = map(self.to_jaxpr_tracer, tracers)
-    res_ts, lin_ts = split_list(tracers, [params['res_tree'].num_leaves])
-    assert all(t.is_known()     for t in res_ts)
-    lin_all_known   = all(t.is_known()     for t in lin_ts)
-    if lin_all_known:
-      res_cvals = [t.pval[1] for t in res_ts]
-      lin_cvals = [t.pval[1] for t in lin_ts]
-      return prim.bind(*res_cvals, *lin_cvals, subfuns=(call,), **params)
-    else:
-      out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
-                     for aval in params['out_types']]
-      in_tracers = map(self.instantiate_const, tracers)
-      new_params = dict(params, subfuns=(call,))
-      eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, new_params,
-          core.no_effects, source_info_util.current())
-      for t in out_tracers: t.recipe = eqn
-      return out_tracers
 
   def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
@@ -2129,44 +2109,6 @@ class DynamicJaxprTrace(core.Trace):
              bwd=bwd, out_trees=out_trees_,
              symbolic_zeros=symbolic_zeros),
         fun_jaxpr.effects,
-        source_info=source_info)
-
-  def process_custom_transpose(self, prim: core.Primitive,  # pyrefly: ignore[bad-override]
-                               call: lu.WrappedFun, tracers, *,
-                               transpose: lu.WrappedFun,
-                               out_types,
-                               lin_tree: PyTreeDef,
-                               res_tree: PyTreeDef, out_tree: PyTreeDef):
-    source_info = source_info_util.current()
-    to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    tracers = map(to_jaxpr_tracer, tracers)
-    tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
-
-    in_avals_p = [t.aval for t in tracers]
-    in_avals_t = [*[t.aval for t in tracers_res], *out_types]
-
-    call_jaxpr, out_avals, call_consts = trace_to_jaxpr_dynamic(call, in_avals_p)
-    closed_call_jaxpr = core.ClosedJaxpr(
-        convert_constvars_jaxpr(call_jaxpr), ())
-
-    transpose_flat, in_tree2 = api_util.flatten_fun_nokwargs(
-        transpose, treedef_tuple((res_tree, out_tree)))
-
-    # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
-    @_memoize
-    def transpose_jaxpr_thunk():
-      for store in transpose_flat.stores: store.reset()
-      jaxpr, _, consts = trace_to_jaxpr_dynamic(transpose_flat, in_avals_t)
-      return jaxpr, consts
-
-    const_tracers = map(to_jaxpr_tracer, call_consts)
-    return self.emit_eqn(
-        [*const_tracers, *tracers], out_avals, prim,
-        dict(call_jaxpr=closed_call_jaxpr,
-             transpose_jaxpr_thunk=transpose_jaxpr_thunk,
-             out_types=out_types, res_tree=res_tree,
-             lin_tree=lin_tree, out_tree=out_tree),
-        closed_call_jaxpr.effects,
         source_info=source_info)
 
   def to_jaxpr(self, out_tracers: Sequence[Tracer],

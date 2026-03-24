@@ -1349,14 +1349,6 @@ softmax_custom_jvp = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
-
-enable_custom_vjp_by_custom_transpose = bool_state(
-    name='jax_enable_custom_vjp_by_custom_transpose',
-    default=False,
-    upgrade=True,
-    help=('Enables an internal upgrade that implements `jax.custom_vjp` by '
-          'reduction to `jax.custom_jvp` and `jax.custom_transpose`.'))
-
 raise_persistent_cache_errors = bool_state(
     name='jax_raise_persistent_cache_errors',
     default=False,

@@ -56,7 +56,6 @@ UNDOCUMENTED_APIS = {
   'jax.ad_checkpoint': ['checkpoint', 'checkpoint_policies', 'print_saved_residuals', 'remat', 'Offloadable', 'Recompute', 'Saveable'],
   'jax.custom_batching': ['custom_vmap', 'sequential_vmap'],
   'jax.custom_derivatives': ['CustomVJPPrimal', 'SymbolicZero', 'closure_convert', 'custom_gradient', 'custom_jvp', 'custom_jvp_call_p', 'custom_vjp', 'custom_vjp_call_p', 'custom_vjp_primal_tree_values', 'linear_call', 'remat_opt_p', 'zero_from_primal'],
-  'jax.custom_transpose': ['custom_transpose'],
   'jax.debug': ['DebugEffect', 'OrderedDebugEffect', 'log'],
   'jax.distributed': ['is_initialized'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],

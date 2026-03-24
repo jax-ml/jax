@@ -604,7 +604,6 @@ pytype_strict_library(
         ":config",
         ":core",
         ":custom_api_util",
-        ":custom_transpose",
         ":dtypes",
         ":effects",
         ":mlir",
@@ -642,25 +641,6 @@ pytype_strict_library(
     srcs = ["custom_partitioning_sharding_rule.py"],
     deps = [
         "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "custom_transpose",
-    srcs = ["custom_transpose.py"],
-    deps = [
-        ":ad",
-        ":ad_util",
-        ":api",
-        ":api_util",
-        ":core",
-        ":custom_api_util",
-        ":mlir",
-        ":partial_eval",
-        ":source_info_util",
-        ":traceback_util",
-        ":tree_util",
-        ":util",
     ],
 )
 

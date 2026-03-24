@@ -705,37 +705,6 @@ class JVPTrace(Trace):
           out_avals=avals_out, symbolic_zeros=symbolic_zeros, in_zeros=in_zeros)
     return map(partial(maybe_jvp_tracer, self), primals_out, tangents_out)
 
-  def process_custom_transpose(self, prim, call, tracers, **params):
-    ps_in, ts_in = unzip2(map(self.to_primal_tangent_pair, tracers))
-    res_ps_in, lin_ps_in = split_list(ps_in, [params['res_tree'].num_leaves])
-    res_ts_in, lin_ts_in = split_list(ts_in, [params['res_tree'].num_leaves])
-
-    # TODO(frostig): Handle differentiation with respect to residual
-    # operands. Calling `call` twice on all operands invalid, since it
-    # isn't linear in the residuals. However, we know that if we
-    # write:
-    #
-    #   jvp_call_res = lambda x: partial(jvp, lambda r: call(r, x))
-    #
-    # then:
-    #
-    #   jvp(call, (r, x), (dr, dx)) == jvp_call_res(x)(r, dr) + call(r, dx)
-    #
-    # In words: a possible strategy is to take the jvp of `call` with
-    # respect to residuals, and with linear arguments fixed, then add
-    # that to a custom-transpose call to `call` (i.e. what we already
-    # do below in the all-linear argument case).
-
-    if any(type(t) is not Zero for t in res_ts_in):
-      raise NotImplementedError(
-        'JVP of custom transpose with respect to non-symbolic-zero residuals')
-
-    with core.set_current_trace(self.parent_trace):
-      ps_out = prim.bind(*ps_in, subfuns=(call,), **params)
-      lin_ts_in = map(instantiate_zeros, lin_ts_in)
-      ts_out = prim.bind(*res_ps_in, *lin_ts_in, subfuns=(call,), **params)
-
-    return map(partial(maybe_jvp_tracer, self), ps_out, ts_out)
 
 def maybe_jvp_tracer(trace, primal, tangent):
   if (type(tangent) is Zero or

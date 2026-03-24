@@ -187,7 +187,6 @@ py_library_providing_imports_info(
         "//jax/_src:custom_derivatives",
         "//jax/_src:custom_partitioning",
         "//jax/_src:custom_partitioning_sharding_rule",
-        "//jax/_src:custom_transpose",
         "//jax/_src:debugger",
         "//jax/_src:debugging",
         "//jax/_src:deprecations",
