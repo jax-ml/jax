@@ -1181,6 +1181,9 @@ def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
+  let extraClassDeclaration = [{
+    mlir::InFlightDiagnostic verifyTiling();
+  }];
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
@@ -1191,6 +1194,9 @@ def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
+  let extraClassDeclaration = [{
+    mlir::InFlightDiagnostic verifyTiling();
+  }];
   let hasVerifier = 1;
 }
 
@@ -1199,6 +1205,9 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let extraClassDeclaration = [{
+    mlir::InFlightDiagnostic verifyTiling();
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;

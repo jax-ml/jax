@@ -403,12 +403,29 @@ LogicalResult MemRefSqueezeOp::verify() {
 
   auto source_layout = source_type.getLayout();
   auto target_layout = target_type.getLayout();
-  if (!isa<TiledLayoutAttr>(source_layout) &&
-      !isa<TiledLayoutAttr>(target_layout)) {
-    return success();
+  bool has_tiled_layout = isa<TiledLayoutAttr>(source_layout);
+  if (has_tiled_layout != isa<TiledLayoutAttr>(target_layout)) {
+    return emitOpError(
+        "Either both src and dst or none of them should have a tiled layout");
   }
+  if (has_tiled_layout) {
+    return verifyTiling();
+  }
+  return success();
+}
 
-  auto tiles = cast<TiledLayoutAttr>(source_layout).getTiles();
+mlir::InFlightDiagnostic MemRefSqueezeOp::verifyTiling() {
+  MemRefType source_type = getInput().getType();
+  auto source_shape = source_type.getShape();
+  auto target_shape = getType().getShape();
+  auto squeezed_or =
+      computeSqueezedDimsChecked(*this, source_shape, target_shape);
+  if (failed(squeezed_or)) {
+    return {};
+  }
+  auto& squeezed = squeezed_or.value();
+
+  auto tiles = cast<TiledLayoutAttr>(source_type.getLayout()).getTiles();
   switch (tiles.size()) {
     case 0:
       break;
@@ -442,7 +459,7 @@ LogicalResult MemRefSqueezeOp::verify() {
     }
   }
 
-  return success();
+  return {};
 }
 
 // Rewrites
@@ -563,21 +580,27 @@ LogicalResult MemRefReshapeOp::verify() {
         "type.");
   }
   if (src_ty.getLayout().isIdentity() && tgt_ty.getLayout().isIdentity()) {
-    // Untiled reshape
-    return success();
+    return success();  // Untiled reshape
   }
   auto src_layout = dyn_cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
   auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
   if (!src_layout || !tgt_layout) {
     return emitOpError("Only identity or tiled layouts supported.");
   }
+  return verifyTiling();
+}
+
+mlir::InFlightDiagnostic MemRefReshapeOp::verifyTiling() {
+  auto src_ty = getInput().getType();
+  auto tgt_ty = getType();
+  auto src_layout = cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
+  auto tgt_layout = cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
   if (src_layout.getTiles() != tgt_layout.getTiles()) {
     return emitOpError(
         "Expected the same tiling for the input and output memref.");
   }
   if (src_layout.getTiles().empty()) {
-    // Untiled reshape
-    return success();
+    return {};  // Untiled reshape
   }
   auto tile = src_layout.getTiles().front().dimensions();
   if (tile.size() != 2) {
@@ -587,8 +610,8 @@ LogicalResult MemRefReshapeOp::verify() {
       !tgt_layout.tilesAreKnownContiguous(tgt_ty.getShape())) {
     return emitOpError("Not implemented: reshape on a non-contiguous memref.");
   }
-  auto src_tiled_shape = src_ty.getShape().take_back(2);
-  auto tgt_tiled_shape = tgt_ty.getShape().take_back(2);
+  auto src_tiled_shape = src_ty.getShape().take_back(tile.size());
+  auto tgt_tiled_shape = tgt_ty.getShape().take_back(tile.size());
   bool is_src_align_tile_2nd_minor = src_tiled_shape[0] % tile[0] == 0;
   bool is_src_align_tile_minor = src_tiled_shape[1] % tile[1] == 0;
   bool is_tgt_align_tile_2nd_minor = tgt_tiled_shape[0] % tile[0] == 0;
@@ -597,14 +620,14 @@ LogicalResult MemRefReshapeOp::verify() {
     // When the tiling is (1, ?) and the source and target shapes are aligned
     // to the tile, we support reshape on any dims.
   } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
-    return emitError("Expected the minormost dimension to be unchanged");
+    return emitOpError("Expected the minormost dimension to be unchanged");
   } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
     if (!is_src_align_tile_2nd_minor || !is_tgt_align_tile_2nd_minor) {
-      return emitError(
+      return emitOpError(
           "Expected the 2nd minor dimension is aligned to the tile");
     }
   }
-  return success();
+  return {};
 }
 
 LogicalResult TransposeOp::verify() {
@@ -689,6 +712,16 @@ LogicalResult MemRefBitcastOp::verify() {
   if (!src_layout) {
     return emitOpError("Expected a tiled layout for the input memref.");
   }
+  return verifyTiling();
+}
+
+mlir::InFlightDiagnostic MemRefBitcastOp::verifyTiling() {
+  auto src_ty = getMemRefType(getInput());
+  auto tgt_ty = getType();
+  auto src_bitwidth = getElementTypeBitwidth(src_ty);
+  auto tgt_bitwidth = getElementTypeBitwidth(tgt_ty);
+  auto src_layout = cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
+  auto tgt_layout = cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
   // TODO(jevinjiang): verify memref tiling is valid. Here we just assume the
   // source and target tilings are valid.
   auto src_tile = src_layout.getTiles().front().dimensions();
@@ -696,7 +729,7 @@ LogicalResult MemRefBitcastOp::verify() {
   if (src_tile[0] * src_bitwidth != tgt_tile[0] * tgt_bitwidth) {
     return emitOpError("Invalid memref bitcast.");
   }
-  return success();
+  return {};
 }
 
 LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
