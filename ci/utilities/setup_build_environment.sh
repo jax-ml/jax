@@ -99,6 +99,8 @@ function retry {
   exit 1
 }
 
+# A brand new test attempt so as not to re-use an existing PR!
+
 # Retry "bazel --version" 3 times to avoid flakiness when downloading bazel.
 retry "bazel --version"
 
