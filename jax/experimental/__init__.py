@@ -33,31 +33,3 @@ from jax._src.earray import (
 from jax._src.core import (
     cur_qdd as cur_qdd,
 )
-
-_deprecations = {
-  # Remove in v0.10.0
-  "disable_x64": (
-    ("jax.experimental.disable_x64 was removed in JAX v0.9.0;"
-     " use jax.enable_x64(False) instead."),
-    None,
-  ),
-  "enable_x64": (
-    ("jax.experimental.enable_x64 was removed in JAX v0.9.0;"
-     " use jax.enable_x64(True) instead."),
-    None
-  ),
-  "mutable_array": (
-    ("jax.experimental.mutable_array was removed in JAX v0.9.0;"
-     " use jax.new_ref instead."),
-    None,
-  ),
-  "MutableArray": (
-    ("jax.experimental.MutableArray was removed in JAX v0.9.0;"
-     " use jax.Ref instead."),
-    None,
-  ),
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

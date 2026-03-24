@@ -725,7 +725,6 @@ py_library_providing_imports_info(
     name = "experimental",
     srcs = [
         "__init__.py",
-        "x64_context.py",
     ],
     visibility = ["//visibility:public"],
     deps = [

@@ -401,15 +401,6 @@ from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
 
 _deprecations = {
-    # Deprecated in v0.7.1; finalized in v0.9.0.
-    # TODO(jakevdp) remove entry in v0.10.0.
-    "zeros_like_array": (
-        (
-            "jax.lax.zeros_like_array was deprecated in JAX 0.7.1 and removed"
-            " in JAX v0.9.0. Use jax.numpy.zeros_like instead."
-        ),
-        None,
-    ),
     # Deprecated in v0.8.2; finalized in v0.10.0.
     # TODO(jakevdp) remove entry in v0.11.0.
     "pvary": (
