@@ -497,6 +497,9 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -1045,6 +1048,8 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
 @lowering.register_lowering_rule(
     wait_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    wait_smem_to_gmem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext, n, *, wait_read_only
 ):

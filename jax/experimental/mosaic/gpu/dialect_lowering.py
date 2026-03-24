@@ -1030,7 +1030,7 @@ def _gmem_slice_and_predicate(
   return tuple(gmem_slice), predicate
 
 
-@_register_lowering(mgpu.AsyncLoadOp)
+@_register_lowering(mgpu.AsyncLoadOp, support_warp_semantics=True)
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
@@ -1072,9 +1072,9 @@ def _mgpu_async_load_op_lowering_rule(
   # flatten -> async_copy -> unflatted here, as long as flattened size is a
   # multiple of 16.
 
-  # TODO(dasenov): Add support for the remaining op properties.
-  if ctx.auto_barriers:
+  if ctx.auto_barriers and ctx.thread_semantics == utils.ThreadSubset.WARPGROUP:
     utils.warpgroup_barrier()  # Make sure the writes have completed.
+  # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
@@ -1582,18 +1582,23 @@ def _mgpu_arrive_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.ArriveExpectTxOp)
+@_register_lowering(mgpu.ArriveExpectTxOp, support_warp_semantics=True)
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
   # pyrefly: ignore[bad-assignment]
   num_bytes: int = arrive_expect_tx_op.expect_tx.value
   i32 = ir.IntegerType.get_signless(32)
-  if num_bytes % utils.WARPGROUP_SIZE == 0:
+  num_lanes = (
+      utils.WARPGROUP_SIZE
+      if ctx.thread_semantics == utils.ThreadSubset.WARPGROUP
+      else utils.WARP_SIZE
+  )
+  if num_bytes % num_lanes == 0:
     # Prefer uniform arrival whenever possible because it's more efficient.
-    # We arrive uniformly from each thread in the WG, so we need to divide the
-    # number of bytes by the number of threads in the WG.
-    tx_bytes = utils.c(num_bytes // utils.WARPGROUP_SIZE, i32)
+    # We arrive uniformly from each lane in the WG/Warp, so we need to divide
+    # the number of bytes by the number of lanes in the WG/Warp.
+    tx_bytes = utils.c(num_bytes // num_lanes, i32)
   else:
     tx_bytes = arith.select(
         ctx.single_lane_predicate,
@@ -1604,7 +1609,12 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(
       arrive_expect_tx_op.barrier
   )
-  utils.nvvm_mbarrier_arrive_expect_tx(barrier.get_ptr(), tx_bytes)
+  # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
+  # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
+  # thread instead.
+  if ctx.thread_semantics == utils.ThreadSubset.WARP:
+    barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
+  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
 
   return []
 

@@ -3321,7 +3321,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   @parameterized.parameters(False, True)
   def test_copy_gmem_to_smem_from_different_warps(self,
                                                   wait_smem_to_gmem_in_warp):
-    self.skip_if_wg_semantics()  # copy_gmem_to_smem lowering not implemented
     # In this test, we issue a copy from from warp 0 and await it in warp 1.
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
@@ -5202,7 +5201,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       squeezed_index=(True, False),
   )
   def test_copy_gmem_to_smem_partitioned(self, warp_level, squeezed_index):
-    self.skip_if_wg_semantics()  # `pl.core_map` not implemented for warpgroup.
+    self.skip_if_wg_semantics()  # partitioned copies not supported for warpgroup.
     block_size = (128, 128)
     partitioned_block_size = (block_size[0] // 2, block_size[1])
     a = jax.random.uniform(
