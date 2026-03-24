@@ -1473,6 +1473,10 @@ class FlatTree:
     return FlatTree(vals, tree, False)
 
   @staticmethod
+  def flatten_args(*arg_trees: PyTree) -> FlatTree:
+    return FlatTree.flatten((arg_trees, {}))
+
+  @staticmethod
   def flatten_static_argnums(args, static_argnums):
     if not static_argnums:
       return FlatTree.flatten(args)
