@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+
 from jax._src import ad_util
 from jax._src import api
 from jax._src import core
@@ -155,7 +156,7 @@ class SearchSorted(VJPHiPrimitive):
     primal_out = self(*primals)
     return primal_out, np.empty(primal_out.shape, dtype=dtypes.float0)
 
-  def vjp_fwd(self, nzs_in: Any, *args: Array) -> tuple[Array, None]:
+  def vjp_fwd(self, nzs_in: Any, /, *args: Array) -> tuple[Array, None]:
     return (self(*args), None)
 
   def vjp_bwd_retval(self, res: Any, g: Any):
@@ -333,3 +334,114 @@ def searchsorted_via_expand(
     out_dtype=out_dtype,
   )
   return prim.expand(sorted_arr, query)
+
+
+class BinaryUfuncMixin:
+  def __init__(
+      self,
+      x_aval: core.ShapedArray,
+      y_aval: core.ShapedArray,
+  ):
+    if x_aval.dtype != y_aval.dtype:
+      raise ValueError(f"{self.__class__.__name__}: inputs must have the same dtype."
+                       f" Got x.dtype={x_aval.dtype} y.dtype={y_aval.dtype}")
+    out_shape = lax.broadcasting_shape_rule(
+      self.__class__.__name__, x_aval, y_aval)
+    self.in_avals = (x_aval, y_aval)
+    self.out_aval = x_aval.update(shape=out_shape)
+    self.params: dict[str, Any] = {}
+    super().__init__()
+
+  def batch(
+      self,
+      axis_data: Any,
+      args: tuple[Array, Array],
+      dims: tuple[int | None, int | None]
+  ) -> tuple[Array, int | None]:
+    del axis_data  # unused
+
+    if dims[0] is None and dims[1] is None:
+      return self(*args), None  # pyrefly: ignore[not-callable]
+
+    def bdim_to_front(arg, bdim):
+      if bdim is None:
+        return lax.expand_dims(arg, [0]) if arg.shape else arg
+      elif arg.ndim == 1:
+        assert bdim == 0
+        return lax.expand_dims(arg, range(1, len(self.out_aval.shape) + 1))
+      else:
+        return jnp.moveaxis(arg, bdim, 0)
+
+    x, y = map(bdim_to_front, args, dims)
+    batched_caller = self.__class__(core.typeof(x), core.typeof(y))
+    return batched_caller(x, y), 0  # type: ignore[operator]
+
+
+class NumpyMultiply(BinaryUfuncMixin, VJPHiPrimitive):
+  """Hijax primitive for numpy.multiply."""
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
+    if dtypes.dtype(x) == bool:
+      return lax.bitwise_and(x, y)
+    return lax.mul(x, y)
+
+  def jvp(self, primals: tuple[Array, Array], tangents: tuple[Array, Array]) -> tuple[Array | ad_util.Zero, Array | ad_util.Zero]:
+    x, y = primals
+    x_dot, y_dot = tangents
+    return multiply(x, y), add(multiply(x, y_dot), multiply(x_dot, y))
+
+  def vjp_fwd(self, nzs_in: Any, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
+    del nzs_in  # unused
+    return self(x, y), (x, y)
+
+  def vjp_bwd_retval(self, res, g):
+    x, y = res
+    return multiply(g, y), multiply(x, g)
+
+
+def multiply(x: ArrayLike, y: ArrayLike) -> Array:
+  """np.multiply via hijax primitive."""
+  return NumpyMultiply(core.typeof(x), core.typeof(y))(x, y)
+
+
+class NumpyAdd(BinaryUfuncMixin, VJPHiPrimitive):
+  """Hijax primitive for numpy.add."""
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
+    if dtypes.dtype(x) == bool:
+      return lax.bitwise_or(x, y)
+    return lax.add(x, y)
+
+  def jvp(self, primals: tuple[Array, Array], tangents: tuple[Array, Array]) -> tuple[Array | ad_util.Zero, Array | ad_util.Zero]:
+    return add(*primals), add(*tangents)
+
+  def vjp_fwd(self, nzs_in: Any, /, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
+    del nzs_in  # unused
+    return self(x, y), (x, y)
+
+  def vjp_bwd_retval(self, res, g):
+    return g, g
+
+
+def add(x: ArrayLike, y: ArrayLike) -> Array:
+  """np.add via hijax primitive."""
+  return NumpyAdd(core.typeof(x), core.typeof(y))(x, y)
+
+
+class NumpySubtract(BinaryUfuncMixin, VJPHiPrimitive):
+  """Hijax primitive for numpy.subtract."""
+  def expand(self, x: ArrayLike, y: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
+    return lax.sub(x, y)
+
+  def jvp(self, primals: tuple[Array, Array], tangents: tuple[Array, Array]) -> tuple[Array | ad_util.Zero, Array | ad_util.Zero]:
+    return subtract(*primals), subtract(*tangents)
+
+  def vjp_fwd(self, nzs_in: Any, /, x: Array, y: Array) -> tuple[Array, tuple[Array, Array]]:  # pyrefly: ignore[bad-override]
+    del nzs_in  # unused
+    return self(x, y), (x, y)
+
+  def vjp_bwd_retval(self, res, g):
+    return g, -g
+
+
+def subtract(x: ArrayLike, y: ArrayLike) -> Array:
+  """np.subtract via hijax primitive."""
+  return NumpySubtract(core.typeof(x), core.typeof(y))(x, y)
