@@ -31,7 +31,7 @@ from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
 from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding)
+    NamedSharding, GSPMDSharding, make_single_device_sharding)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -203,7 +203,8 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_device_put(self):
     numpy_array = np.array([1, 2, 3])
     arr = jax.device_put(numpy_array, jax.devices()[0])
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
     self.assertArraysEqual(arr, numpy_array)
     self.assertEqual(arr._committed, True)
     for i in arr.addressable_shards:
@@ -262,13 +263,15 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr = jax.jit(lambda x, y: x + y)(a, b)
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
 
   def test_jnp_array_jnp_add(self):
     arr = jnp.add(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
 
   def test_jnp_array_normal_add(self):
     a = jnp.array([1, 2, 3])
@@ -276,7 +279,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr = a + b
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
 
   def test_array_sharded_astype(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -502,7 +506,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     def _check(out, inp, shard_shape):
       self.assertArraysEqual(out, inp)
       self.assertEqual(out.sharding.shard_shape(out.shape), shard_shape)
-      self.assertNotIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+      self.assertLen(out.sharding.device_set, 8)
 
     global_mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
     input_shape = (4, 4, 2)
@@ -789,7 +793,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     sharding = jax.sharding.NamedSharding(global_mesh, P())
     arr = jnp.arange(16)
     self.assertFalse(arr._committed)
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
     out = jax.jit(lambda x: x * 2, in_shardings=sharding)(arr)
     self.assertTrue(out.sharding.is_fully_replicated)
     self.assertArraysEqual(out, arr * 2)
@@ -800,7 +805,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr = jnp.arange(16)
     arr_copy = arr.copy()
     self.assertFalse(arr._committed)
-    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertEqual(arr.sharding,
+                     make_single_device_sharding(jax.devices()[0]))
     out = jax.jit(lambda x: x * 2, in_shardings=sharding, donate_argnums=0)(arr)
     self.assertTrue(out.sharding.is_fully_replicated)
     self.assertArraysEqual(out, arr_copy * 2)
@@ -864,7 +870,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       jax.make_array_from_single_device_arrays((8, 2), s, [])
 
   def test_make_array_from_single_device_arrays_bad_dtype_error(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     shape = (8, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np_inp, s)
@@ -1070,7 +1076,7 @@ class ShardingTest(jtu.JaxTestCase):
     mesh2 = jtu.create_mesh((2, 1), ('x', 'y'))
 
     s1 = jax.sharding.NamedSharding(mesh, P('x'))
-    s2 = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s2 = make_single_device_sharding(jax.devices()[0])
 
     self.assertTrue(s1.is_equivalent_to(s2, 2))
 

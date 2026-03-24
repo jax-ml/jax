@@ -896,7 +896,8 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
 def _maybe_put(x):
   if isinstance(x, (np.ndarray, literals.TypedNdArray)):
     aval = core.shaped_abstractify(x)
-    s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
+    s = sharding.make_single_device_sharding(
+        xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(
         pxla.shard_args(

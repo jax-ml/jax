@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import test_util as jtu
 
 jax.config.parse_flags_with_absl()
@@ -240,7 +241,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
   def test_device_put_committed_check(self):
     devices = self.get_devices()
     x = jnp.array(1.)
-    y = jax.device_put(x, jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+    y = jax.device_put(x, make_single_device_sharding(jax.devices()[0]))
     self.assert_committed_to_device(y, devices[0])
 
   def test_grad_device_put_src_inference(self):
@@ -287,7 +288,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.ones((100, 100)), devices[1])
     y = lax.full_like(x, fill_value=1.0, shape=())
     self.assertEqual(y.shape, ())
-    self.assertEqual(y.sharding, jax.sharding.SingleDeviceSharding(devices[1]))
+    self.assertEqual(y.sharding, make_single_device_sharding(devices[1]))
 
   def test_full_like_replicated_sharding_different_shape(self):
     devices = self.get_devices()

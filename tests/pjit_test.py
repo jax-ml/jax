@@ -55,7 +55,7 @@ from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding,
-    SingleDeviceSharding, parse_flatten_op_sharding)
+    make_single_device_sharding, parse_flatten_op_sharding)
 from jax._src.mesh import use_abstract_mesh
 from jax._src.pjit import pjit, _pjit_lower
 from jax._src.layout import Format, Layout as DLL
@@ -2200,7 +2200,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(jax.dtypes.issubdtype(y.dtype, jax.dtypes.prng_key))
     self.assertEqual(y.sharding, s)
 
-    s1 = SingleDeviceSharding(jax.devices()[1])
+    s1 = make_single_device_sharding(jax.devices()[1])
     z = jax.device_put(x, s1)
     self.assertTrue(jax.dtypes.issubdtype(z.dtype, jax.dtypes.prng_key))
     self.assertEqual(z.sharding, s1)
@@ -2337,7 +2337,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertAllClose(x + i, y)
 
   def test_wsc_eager_copy(self):
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = make_single_device_sharding(jax.devices()[0])
     x = jnp.arange(10)
     y_wsc = jax.lax.with_sharding_constraint(x, sharding)
     y_jit = jax.jit(lambda x: x, out_shardings=sharding)(x)
@@ -2667,7 +2667,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "pjit does not support kwargs when in_shardings is specified."):
       pjit(lambda x: x,
-           in_shardings=SingleDeviceSharding(jax.devices()[0]))(x=jnp.arange(8.))
+           in_shardings=make_single_device_sharding(
+               jax.devices()[0]))(x=jnp.arange(8.))
 
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
@@ -2824,7 +2825,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   def test_pjit_device_backend_axis_resources_error(self):
-    s = SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
@@ -3214,8 +3215,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       self.skipTest('Requires >=2 devices')
 
-    arr = jax.device_put(np.arange(8), SingleDeviceSharding(jax.devices()[0]))
-    const = jax.device_put(np.arange(8), SingleDeviceSharding(jax.devices()[1]))
+    arr = jax.device_put(np.arange(8), make_single_device_sharding(
+        jax.devices()[0]))
+    const = jax.device_put(np.arange(8), make_single_device_sharding(
+        jax.devices()[1]))
 
     @jax.jit
     def f(x):
@@ -3412,24 +3415,23 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.skipTest('Test requires >=2 devices')
 
     x = jnp.arange(8)
+    s0 = partial(make_single_device_sharding, jax.devices()[0])
+    s1 = partial(make_single_device_sharding, jax.devices()[1])
 
     # trivial computation
     out = jax.jit(lambda x: x)(x)
-    self.assertIsInstance(out.sharding, SingleDeviceSharding)
+    self.assertEqual(out.sharding, s0())
 
     # trivial computation with committed inp
     y = jax.device_put(x, jax.devices()[1])
     out2 = jax.jit(lambda x: x)(y)
-    self.assertIsInstance(out2.sharding, SingleDeviceSharding)
-    self.assertEqual(out2.devices(), {jax.devices()[1]})
+    self.assertEqual(out2.sharding, s1())
 
     out3 = jax.jit(lambda x: x * 2)(x)
-    self.assertIsInstance(out3.sharding, SingleDeviceSharding)
+    self.assertEqual(out3.sharding, s0())
 
-    out4 = jax.jit(lambda x: x * 3,
-                   out_shardings=SingleDeviceSharding(jax.devices()[1]))(x)
-    self.assertIsInstance(out4.sharding, SingleDeviceSharding)
-    self.assertEqual(out4.devices(), {jax.devices()[1]})
+    out4 = jax.jit(lambda x: x * 3, out_shardings=s1())(x)
+    self.assertEqual(out4.sharding, s1())
 
   def test_none_out_sharding(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -3462,12 +3464,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     arr3 = jnp.arange(8)
     out3 = jnp.copy(arr3)
-    self.assertIsInstance(out3.sharding, SingleDeviceSharding)
+    self.assertEqual(out3.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
     arr4 = jax.device_put(jnp.arange(8), jax.devices()[1])
     out4 = jnp.copy(arr4)
-    self.assertIsInstance(out4.sharding, SingleDeviceSharding)
-    self.assertEqual(out4.devices(), {jax.devices()[1]})
+    self.assertEqual(out4.sharding, make_single_device_sharding(
+        jax.devices()[1]))
 
   def test_same_named_sharding_pspec_on_eager_ops(self):
     mesh = jtu.create_mesh((1, 8, 1), ('x', 'y', 'z'))
@@ -3488,7 +3491,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
                             message="backend and device argument"):
       jf = pjit(lambda x: x, device=jax.devices()[0])
     out = jax.vmap(jf)(jnp.ones((3,)))  # doesn't crash
-    self.assertIsInstance(out.sharding, SingleDeviceSharding)
+    self.assertEqual(out.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
   def test_to_gspmd_sharding_cache_with_and_without_device(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -3499,7 +3503,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     # Fill up the to_gspmd_sharding cache so that the next jit will miss it.
     out = jax.jit(identity,
-                  in_shardings=SingleDeviceSharding(jax.devices()[0]))(np_inp)
+                  in_shardings=make_single_device_sharding(
+                      jax.devices()[0]))(np_inp)
     self.assertEqual(out.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out, np_inp)
 
@@ -3581,7 +3586,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     cpu_dev = jax.devices('cpu')[0]
     with jax.default_device(cpu_dev):
       cpu_arr = jnp.arange(8)
-      self.assertEqual(cpu_arr.sharding, SingleDeviceSharding(cpu_dev))
+      self.assertEqual(cpu_arr.sharding, make_single_device_sharding(cpu_dev))
       self.assertFalse(cpu_arr._committed)
 
     out = compiled(cpu_arr)
@@ -3639,7 +3644,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out2 = jax.jit(lambda x: x * 2, in_shardings=None)(np_inp)
     self.assertArraysEqual(out2, np_inp * 2)
-    self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(out2.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
   def test_device_put_in_jit_default_mem_kind_no_op(self):
     mesh = jtu.create_mesh((2,), 'x')
@@ -3667,7 +3673,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out2 = jax.jit(lambda x: x * 2, in_shardings=None, out_shardings=None)(np_inp)
     self.assertArraysEqual(out2, np_inp * 2)
-    self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(out2.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
   def test_jit_lower_shape_dtype_struct_sharding_none(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -3693,7 +3700,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
                           s.mesh._flat_devices_tuple)
 
   def test_vmap_spmd_axis_name_error(self):
-    s = SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
 
     def f(inp):
       return with_sharding_constraint(inp, s)
@@ -4412,7 +4419,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(inp, jax.devices()[0])
 
     out = lax_internal._convert_element_type(
-        arr, sharding=SingleDeviceSharding(jax.devices()[0]))
+        arr, sharding=make_single_device_sharding(jax.devices()[0]))
     self.assertArraysEqual(out, inp)
     self.assertEqual(out.unsafe_buffer_pointer(), arr.unsafe_buffer_pointer())
 
@@ -4563,7 +4570,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x * 2
 
     ins, _ = f.lower(np.arange(8)).compile().input_shardings
-    self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(ins[0], make_single_device_sharding(jax.devices()[0]))
 
   def test_aot_devices_to_compile(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -4829,8 +4836,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       self.skipTest('Requires device_count() >= 2')
     np_inp = np.arange(16).reshape(8, 2)
-    arr1 = jax.device_put(np_inp, SingleDeviceSharding(jax.devices()[0]))
-    arr2 = jax.device_put(np_inp, SingleDeviceSharding(jax.devices()[1]))
+    arr1 = jax.device_put(np_inp, make_single_device_sharding(
+        jax.devices()[0]))
+    arr2 = jax.device_put(np_inp, make_single_device_sharding(
+        jax.devices()[1]))
 
     @jax.jit
     def f(x):
@@ -4891,7 +4900,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def f(x):
       out1 = with_sharding_constraint(x, NamedSharding(mesh, P('x')))
       self.assertEqual(out1.aval.sharding.mesh, mesh.abstract_mesh)
-      out2 = with_sharding_constraint(out1, SingleDeviceSharding(jax.devices()[0]))
+      out2 = with_sharding_constraint(out1, make_single_device_sharding(
+          jax.devices()[0]))
       self.assertTrue(out2.aval.sharding.mesh.empty)
       return out2
 
@@ -5792,7 +5802,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.lax.full_like(arr, 0)
     # The sharding is single device because the sharding of input `arr`` to
     # full_like is not concrete.
-    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(out.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_slice(self, mesh):
@@ -9178,7 +9189,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(jax.typeof(array).sharding,
                      NamedSharding(mesh.abstract_mesh, P(None)))
 
-    array = jax.device_put(array, SingleDeviceSharding(jax.devices()[0]))
+    array = jax.device_put(array, make_single_device_sharding(
+        jax.devices()[0]))
     self.assertTrue(jax.typeof(array).sharding.mesh.empty)
 
   @jtu.with_explicit_mesh((2,), 'x')
@@ -10567,12 +10579,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with jax.set_mesh(None):
       inp = jnp.arange(8)
-      self.assertEqual(inp.sharding, SingleDeviceSharding(jax.devices()[0]))
+      self.assertEqual(inp.sharding, make_single_device_sharding(
+          jax.devices()[0]))
       self.assertEqual(jax.sharding.get_mesh(), mesh_lib.empty_concrete_mesh)
       self.assertEqual(jax.sharding.get_abstract_mesh(),
                        mesh_lib.empty_abstract_mesh)
       out = f(inp)
-      self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+      self.assertEqual(out.sharding, make_single_device_sharding(
+          jax.devices()[0]))
       self.assertArraysEqual(out, inp * 2)
 
     self.assertEqual(jax.sharding.get_mesh(), mesh)
@@ -10695,7 +10709,8 @@ class PJitErrorTest(jtu.JaxTestCase):
 
   def testEmptyMesh(self):
     out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
-    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(out.sharding, make_single_device_sharding(
+        jax.devices()[0]))
 
   def test_pspec_to_wsc_without_mesh(self):
     error = r'with_sharding_constraint requires a non-empty mesh in context.*'

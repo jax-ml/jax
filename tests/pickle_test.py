@@ -29,7 +29,7 @@ from jax import numpy as jnp
 from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
-from jax._src.sharding_impls import GSPMDSharding
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 
 import numpy as np
 
@@ -148,7 +148,7 @@ class PickleTest(jtu.JaxTestCase):
         xc.HloSharding.from_proto(op))
 
   def test_pickle_single_device_sharding(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   def test_pickle_single_device_sharding_with_memory_kind(self):
@@ -157,7 +157,7 @@ class PickleTest(jtu.JaxTestCase):
         None,
     ):
       with self.subTest(memory_kind=memory_kind):
-        s = jax.sharding.SingleDeviceSharding(
+        s = make_single_device_sharding(
             jax.devices()[0], memory_kind=memory_kind
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
