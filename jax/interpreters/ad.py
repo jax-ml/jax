@@ -49,10 +49,6 @@ _deprecations = {
         "jax.interpreters.ad.zeros_like_p was removed in JAX v0.9.0.",
         None,
     ),
-    "bilinear_transpose": (
-        "jax.interpreters.ad.bilinear_transpose was removed in JAX v0.9.0.",
-        None,
-    ),
     "call_param_updaters": (
         "jax.interpreters.ad.call_param_updaters was removed in JAX v0.9.0.",
         None,

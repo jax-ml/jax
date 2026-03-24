@@ -1148,8 +1148,6 @@ def defbilinear(prim, lhs_rule, rhs_rule):
   rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, g, **kwargs)
   defjvp(prim, lhs_jvp, rhs_jvp)
   fancy_transposes[prim] = partial(fancy_bilinear_transpose, lhs_rule, rhs_rule)
-  # TODO(mattjj,yashkatariya): remove next line if downstream doesnt need it
-  primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
 
 def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert isinstance(x, GradAccum) ^ isinstance(y, GradAccum)
@@ -1159,21 +1157,6 @@ def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   else:
     if type(cotangent) is not Zero and not isinstance(y, NullAccum):
       y.accum(rhs_rule(cotangent, x, y, **kwargs))
-
-def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
-  assert is_undefined_primal(x) ^ is_undefined_primal(y)
-  if is_undefined_primal(x):
-    if type(cotangent) is Zero:
-      return Zero(x.aval.to_ct_aval()), None
-    else:
-      out = lhs_rule(cotangent, x, y, **kwargs)
-      return out, None
-  else:
-    if type(cotangent) is Zero:
-      return None, Zero(y.aval.to_ct_aval())
-    else:
-      out = rhs_rule(cotangent, x, y, **kwargs)
-      return None, out
 
 def defjvp_zero(primitive):
   assert isinstance(primitive, Primitive)
