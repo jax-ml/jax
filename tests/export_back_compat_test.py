@@ -166,6 +166,7 @@ class CompatTest(bctu.CompatTestBase):
         annotate_data_placement.data_2025_04_07_tpu,
         annotate_data_placement.data_2025_04_07_cuda,
         annotate_data_placement.data_2026_02_04_rocm,
+        annotate_data_placement.data_2026_03_24_tpu,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -910,7 +911,6 @@ class CompatTest(bctu.CompatTestBase):
         else:
           self.run_one_test(func, self.load_testdata(data["gspmd"]))
 
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_platform={platform}", platform=platform)
       for platform in ("tpu", "gpu"))
@@ -925,15 +925,16 @@ class CompatTest(bctu.CompatTestBase):
 
     @partial(jax.jit,
              in_shardings=(dev_sharding, host_sharding),
-             out_shardings=host_sharding)
+             out_shardings=dev_sharding)
     def func(x, y):
-      return x + y
+      return x + jax.device_put(y, dev_sharding)
 
     # Check the actual GPU backend type to load appropriate test data
     if platform == "tpu":
       data = [(annotate_data_placement.data_2025_04_07_tpu,
                ["annotate_device_placement"]),
-              (annotate_data_placement.data_2025_06_30_tpu, None)]
+              (annotate_data_placement.data_2025_06_30_tpu, None),
+              (annotate_data_placement.data_2026_03_24_tpu, None)]
     elif jtu.test_device_matches(["rocm"]):
       # ROCm test data - currently only have one version (Feb 2026)
       data = [(annotate_data_placement.data_2026_02_04_rocm,
@@ -943,6 +944,10 @@ class CompatTest(bctu.CompatTestBase):
                ["annotate_device_placement"]),
               (annotate_data_placement.data_2025_06_30_cuda, None)]
 
+    def prepare_inputs(inputs):
+      return (jax.device_put(inputs[0], dev_sharding),
+              jax.device_put(inputs[1], host_sharding))
+
     # Due to changes in how Shardy is serialized, from using custom calls to
     # natively serializing Shardy with StableHLO, we may need to override
     # the expected custom call targets for old test data that was serialized
@@ -951,9 +956,11 @@ class CompatTest(bctu.CompatTestBase):
       if jax.config.jax_use_shardy_partitioner:
         self.run_one_test(
             func, self.load_testdata(data["shardy"]),
-            expect_current_custom_calls=custom_call_targets_override)
+            expect_current_custom_calls=custom_call_targets_override,
+            prepare_inputs=prepare_inputs)
       else:
-        self.run_one_test(func, self.load_testdata(data["gspmd"]))
+        self.run_one_test(func, self.load_testdata(data["gspmd"]),
+                          prepare_inputs=prepare_inputs)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a

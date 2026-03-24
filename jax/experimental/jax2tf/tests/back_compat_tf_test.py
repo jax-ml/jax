@@ -72,7 +72,8 @@ class CompatTensoflowTest(bctu.CompatTestBase):
   `tf.Graph` containing a XlaCallModule with the actual MLIR module.
   """
 
-  def run_current(self, func: Callable, data: bctu.CompatTestData):
+  def run_current(self, func: Callable, data: bctu.CompatTestData,
+                  prepare_inputs = None):
     # Here we use tf.saved_model and provide  string serialize/deserialize methods
     # for the whole directory.
     @tf.function(autograph=False, jit_compile=True)
@@ -81,7 +82,8 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func
-    return tf_func(*data.inputs)
+    inputs = prepare_inputs(data.inputs) if prepare_inputs else data.inputs
+    return tf_func(*inputs)
 
   def serialize(
       self,

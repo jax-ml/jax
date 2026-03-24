@@ -184,6 +184,8 @@ class CompatTestBase(jtu.JaxTestCase):
                    func: Callable[..., Array] | stages.Wrapped,
                    data: CompatTestData,
                    polymorphic_shapes: Sequence[str] | None = None,
+                   prepare_inputs: Callable[[Sequence[np.ndarray]],
+                                            Sequence[Any]] | None = None,
                    rtol: float | None = None,
                    atol: float | None = None,
                    allow_unstable_custom_call_targets: Sequence[str] = (),
@@ -197,6 +199,9 @@ class CompatTestBase(jtu.JaxTestCase):
       data: the test data
       polymorphic_shapes: when using shape polymorphism, the specification for
         each argument of `func`.
+      prepare_inputs: invoked with the inputs to `func`, should return the
+        arguments to pass to `func`. Useful, e.g., when you want to place the
+        inputs on specific devices, or with specific shardings.
       rtol: relative tolerance for numerical comparisons
       atol: absolute tolerance for numerical comparisons
       check_results: invoked with the results obtained from running the
@@ -218,7 +223,8 @@ class CompatTestBase(jtu.JaxTestCase):
       self.skipTest(f"Test enabled only for {data.platform}")
 
     logging.info("Lowering and running the function at the current version")
-    res_run_current = self.run_current(func, data)
+    res_run_current = self.run_current(func, data,
+                                       prepare_inputs=prepare_inputs)
     if not isinstance(res_run_current, (list, tuple)):
       res_run_current = (res_run_current,)
     res_run_current = tuple(np.array(a) for a in res_run_current)
@@ -289,10 +295,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_current(self,
                   func: Callable | stages.Wrapped,
-                  data: CompatTestData):
+                  data: CompatTestData,
+                  prepare_inputs: Callable[[Sequence[np.ndarray]],
+                                            Sequence[Any]] | None = None):
     """Lowers and runs the test function at the current JAX version."""
     jit_func = func if isinstance(func, stages.Wrapped) else api.jit(func)
-    return jit_func(*data.inputs)
+    inputs = prepare_inputs(data.inputs) if prepare_inputs else data.inputs
+    return jit_func(*inputs)
 
   def serialize(self,
                 func: Callable | stages.Wrapped, data: CompatTestData, *,
