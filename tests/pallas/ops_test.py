@@ -1959,22 +1959,30 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape:
-        self.skipTest(
-            "The Pallas TPU lowering currently supports only blocks of rank"
-            " >= 1"
-        )
+      if not in_shape and not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+        self.skipTest("Requires a newer libTPU")
       if in_shape in [(1, 2, 1, 4, 1), (2, 4, 1)] and jtu.get_tpu_version() < 5:
         self.skipTest("Requires sublane gather support")
 
+    if not in_shape:
+      in_specs = [pl.BlockSpec(memory_space=smem_on_tpu())]
+    else:
+      in_specs = [pl.BlockSpec()]
+
     @functools.partial(
         self.pallas_call,
+        in_specs=in_specs,
         out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
     )
     def f(x_ref, o_ref):
       o_ref[...] = x_ref[...].reshape(out_shape)
 
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    if not in_shape:
+      x = jnp.array(42, dtype=jnp.float32)
+    else:
+      x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(
+          in_shape
+      )
     expected = x.reshape(out_shape)
     np.testing.assert_allclose(f(x), expected)
 
@@ -2018,12 +2026,16 @@ class OpsTest(PallasBaseTest):
   def test_where_broadcasting(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      self.skipTest("Unsupported reshape vector<4xi1> -> vector<4x1x1xi1>")
 
     @functools.partial(
         self.pallas_call,
+        in_specs=[
+            pl.BlockSpec(),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ],
         out_shape=jax.ShapeDtypeStruct((4, 2, 2), floatx),
     )
     def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
@@ -2053,38 +2065,40 @@ class OpsTest(PallasBaseTest):
 
     in_shape, out_shape, dims = shape_spec
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape:
-        self.skipTest(
-            "The Pallas TPU lowering currently supports only blocks of rank"
-            " >= 1"
-        )
-      if (
-          len(in_shape) == 1
-          and len(out_shape) == 1
-          and dtype not in {jnp.int32, jnp.bool_}
-      ):
+      if not in_shape and not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+        self.skipTest("Requires a newer libTPU")
+      if len(out_shape) == 1 and dtype not in {jnp.int32, jnp.bool_}:
         if dtype == jnp.int8:
           self.skipTest("Unaligned 8-bit 1d store not supported")
         # 16-bit case
         if (
-            not jtu.is_cloud_tpu_at_least(2026, 3, 25)
+            not jtu.is_cloud_tpu_at_least(2026, 3, 29)
             or jtu.get_tpu_version() < 6
         ):
           self.skipTest("Requires a newer libTPU")
 
+    if not in_shape:
+      in_specs = [pl.BlockSpec(memory_space=smem_on_tpu())]
+    else:
+      in_specs = [pl.BlockSpec()]
+
     @functools.partial(
         self.pallas_call,
+        in_specs=in_specs,
         out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
     )
     def f(x_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jax.lax.broadcast_in_dim(x, out_shape, dims)
 
-    x = (
-        jnp.arange(math.prod(in_shape), dtype=jnp.int32)
-        .reshape(in_shape)
-        .astype(dtype)
-    )
+    if not in_shape:
+      x = jnp.array(42, dtype=dtype)
+    else:
+      x = (
+          jnp.arange(math.prod(in_shape), dtype=jnp.int32)
+          .reshape(in_shape)
+          .astype(dtype)
+      )
     expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
     np.testing.assert_array_equal(f(x), expected)
 
@@ -2329,7 +2343,7 @@ class OpsTest(PallasBaseTest):
   def test_masked_oob_swap_slice(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
+    # Unsupported dynamic slice load.
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on TPU")
 
@@ -2337,8 +2351,16 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((n,), floatx),
-                  jax.ShapeDtypeStruct((m,), floatx)),
+        in_specs=[
+            pl.BlockSpec(),
+            pl.BlockSpec(),
+            pl.BlockSpec(),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ],
+        out_shape=(
+            jax.ShapeDtypeStruct((n,), floatx),
+            jax.ShapeDtypeStruct((m,), floatx),
+        ),
         input_output_aliases={0: 0, 1: 1},
     )
     def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
@@ -2365,17 +2387,20 @@ class OpsTest(PallasBaseTest):
   def test_reduce_only_dim(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+      self.skipTest("Requires a newer libtpu")
 
     m = 32
     x = random.normal(random.key(0), (m,), dtype=jnp.float32)
     out_shape = jax.ShapeDtypeStruct((), x.dtype)
 
-    @functools.partial(self.pallas_call, out_shape=out_shape)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+    )
     def reduce(x_ref, y_ref):
-      y_ref[...] = jnp.sum(x_ref[jnp.arange(m)], axis=-1)
+      y_ref[...] = jnp.sum(x_ref[...], axis=-1)
 
     y = reduce(x)
     y_ref = jnp.sum(x, axis=-1)
@@ -2552,16 +2577,19 @@ class OpsTest(PallasBaseTest):
   def test_bitcast_convert_type_scalar(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented on TPU")
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+      self.skipTest("Requires a newer libtpu")
 
     x = jnp.int32(42)
     out_dtype = jnp.float32
     out_shape = jax.ShapeDtypeStruct(x.shape, out_dtype)
-    grid = ()
 
-    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=smem_on_tpu())],
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+    )
     def convert(x_ref, y_ref):
       y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_dtype)
 
