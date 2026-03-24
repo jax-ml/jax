@@ -40,10 +40,10 @@ except ImportError:
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.sharding import SingleDeviceSharding
 from jax.test_util import check_grads
 
 from jax._src import array
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -2820,7 +2820,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     zeros_like_with_device = partial(jnp.zeros_like, device=jax.devices()[0])
     y = jax.jit(zeros_like_with_device)(x)
     self.assertEqual(x.shape, y.shape)
-    self.assertEqual(y.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(y.sharding, make_single_device_sharding(jax.devices()[0]))
 
   @jtu.sample_product(
     [dict(shape=shape, out_shape=out_shape, fill_value_shape=fill_value_shape)
@@ -2874,7 +2874,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testArrayCreationWithSharding(self, func, shape, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     kwds = {'fill_value': 1} if func is jnp.full else {}
     out = func(**kwds, shape=shape, dtype=dtype, device=sharding)
     self.assertEqual(out.sharding, sharding)
@@ -2908,7 +2908,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testArangeEyeLinspaceArrayWithSharding(self, func, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     output = func(dtype=dtype, device=sharding)
     if isinstance(output, tuple):
       self.assertEqual(output[0].sharding, sharding)
@@ -2940,7 +2940,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testFullLikeWithSharding(self, func, shape, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     kwds = {'fill_value': 1} if func is jnp.full_like else {}
@@ -3383,7 +3383,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           ValueError, device_error_msg.format(expected_platform)):
         jnp.asarray(x, copy=False, device=jax.local_devices()[0])
-      sharding = SingleDeviceSharding(jax.local_devices()[0])
+      sharding = make_single_device_sharding(jax.local_devices()[0])
       with self.assertRaisesRegex(
           ValueError, device_error_msg.format(expected_platform)):
         jnp.asarray(x, copy=False, device=sharding)
@@ -3399,7 +3399,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # test explicit CPU device or default CPU device context managers overwrite the default backend
     x = make_python_array('l', [0, 1, 2, 3])
     for device in [jax.local_devices(backend='cpu')[0],
-                   SingleDeviceSharding(jax.local_devices(backend='cpu')[0])]:
+                   make_single_device_sharding(
+                       jax.local_devices(backend='cpu')[0])]:
       self.assertArraysEqual(jnp.asarray(x, copy=False, device=device),
                              x_jax, check_dtypes=False)
     with jax.default_device('cpu'):

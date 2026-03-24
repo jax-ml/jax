@@ -46,6 +46,7 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
@@ -4107,7 +4108,7 @@ def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
     device, = sharding._addressable_device_assignment
     aval = core.typeof(x.data)
     results.append(pxla.batched_device_put(
-        aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
+        aval, make_single_device_sharding(device), [x.data], [device]))
   return results
 
 def foo_array_constant_handler(x, aval):

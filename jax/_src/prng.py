@@ -49,7 +49,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
-    SingleDeviceSharding, physical_sharding, logical_sharding)
+    make_single_device_sharding, physical_sharding, logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -171,8 +171,8 @@ class PRNGKeyArray(Array):
       aval = core.typeof(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(
-          aval, SingleDeviceSharding(device), [np.asarray(key_data)], [device],
-          committed=False)
+          aval, make_single_device_sharding(device),
+          [np.asarray(key_data)], [device], committed=False)
     self._base_array = key_data
 
   def _replace_with(self, value: PRNGKeyArray):

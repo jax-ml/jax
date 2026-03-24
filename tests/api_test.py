@@ -63,6 +63,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import version as jaxlib_version
+from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
@@ -507,12 +508,12 @@ class JitTest(jtu.BufferDonationTestCase):
       jax.device_put(arr, may_alias=True, donate=True)
 
     out = jax.device_put(arr,
-                         jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                         make_single_device_sharding(jax.devices()[0]),
                          may_alias=True, donate=False)
     self.assertEqual(id(arr), id(out))
 
     out = jax.device_put(arr,
-                         jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                         make_single_device_sharding(jax.devices()[0]),
                          may_alias=False, donate=False)
     self.assertNotEqual(id(arr), id(out))
 
@@ -958,7 +959,6 @@ class JitTest(jtu.BufferDonationTestCase):
     jitted_f = jit(lambda a: a + 1)
     jitted_f(1)
     out = jitted_f(2)
-    self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
     self.assertIsInstance(out, array.ArrayImpl)
 
   @jtu.skip_on_devices("cpu")
@@ -1220,7 +1220,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(out, 4.)
 
   def test_jit_lower_compile_sharding_computation(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     def f(x): return jax.lax.with_sharding_constraint(x, s)
     out = jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
@@ -2192,7 +2192,6 @@ class APITest(jtu.JaxTestCase):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
     _check_instance(self, x)
-    self.assertIsInstance(x.sharding, jax.sharding.SingleDeviceSharding)
     for s in x.addressable_shards:
       self.assertArraysEqual(s.data, x)
       self.assertEqual(s.replica_id, 0)
@@ -2976,7 +2975,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(count(), 1)
 
   def test_eval_shape_out_shardings(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
 
     @jax.jit(out_shardings=s)
     def f(x):
@@ -7811,7 +7810,7 @@ class OverrideLoweringTest(jtu.JaxTestCase):
   def test_sharding_constraint_as_noop(self):
     def f(x):
       return jax.lax.with_sharding_constraint(
-          x, jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+          x, make_single_device_sharding(jax.devices()[0]))
 
     def wsc_as_noop(ctx, operand, *args, **kwargs):
       del ctx, args, kwargs

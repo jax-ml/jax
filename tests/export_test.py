@@ -31,7 +31,7 @@ from jax import export
 from jax._src.shard_map import shard_map
 from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
                           reshard)
-from jax._src.sharding_impls import GSPMDSharding
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 from jax import tree_util
 
 from jax._src import config
@@ -208,7 +208,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_basic_single_device_sharding(self):
     device = jax.local_devices()[0]
-    s = jax.sharding.SingleDeviceSharding(device)
+    s = make_single_device_sharding(device)
     x = np.arange(16, dtype=np.float32).reshape(4, -1)
     f = jax.jit(lambda x: x * 2., in_shardings=s, out_shardings=s)
     exp_f = get_exported(f)(x)
@@ -1459,7 +1459,7 @@ class JaxExportTest(jtu.JaxTestCase):
       exp.call(b)
 
   def test_memory_space_from_arg(self):
-    shd = jax.sharding.SingleDeviceSharding(
+    shd = make_single_device_sharding(
         jax.devices()[0], memory_kind="pinned_host")
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
@@ -1486,7 +1486,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertEqual(b.sharding, a.sharding)
 
   def test_memory_space_from_out_shardings(self):
-    shd = jax.sharding.SingleDeviceSharding(jax.devices()[0],
+    shd = make_single_device_sharding(jax.devices()[0],
                                             memory_kind="pinned_host")
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)

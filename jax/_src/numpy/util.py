@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
-from jax._src.sharding_impls import SingleDeviceSharding
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip, safe_map, set_module, canonicalize_axis_tuple
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
@@ -306,7 +306,7 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
 def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
                                     ) -> Sharding | None:
   if isinstance(device, xc.Device):
-    return SingleDeviceSharding(device)
+    return make_single_device_sharding(device)
   return device
 
 def choose_device_or_out_sharding(device: xc.Device | Sharding | None,

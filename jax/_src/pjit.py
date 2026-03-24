@@ -64,7 +64,7 @@ from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
-    SingleDeviceSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
+    make_single_device_sharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
@@ -714,10 +714,11 @@ def _create_sharding_for_array(mesh, x, name, api_name):
 def _create_sharding_with_device_backend(device, backend):
   if device is not None:
     assert backend is None
-    out = SingleDeviceSharding(device)
+    out = make_single_device_sharding(device)
   elif backend is not None:
     assert device is None
-    out = SingleDeviceSharding(xb.get_backend(backend).local_devices()[0])
+    out = make_single_device_sharding(
+        xb.get_backend(backend).local_devices()[0])
   else:
     raise AssertionError('Unreachable!')
   out._device_backend = True  # pyrefly: ignore[missing-attribute]

@@ -17,6 +17,7 @@
 import jax
 from jax._src import test_multiprocess as jt_multiprocess
 from jax.sharding import PartitionSpec as P
+from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 
 try:
@@ -31,9 +32,9 @@ class SocketTransferTest(jt_multiprocess.MultiProcessTest):
     x = np.arange(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
-    src_sharding = jax.sharding.SingleDeviceSharding(
+    src_sharding = make_single_device_sharding(
         jax.local_devices(process_index=src_pid)[0])
-    dst_sharding = jax.sharding.SingleDeviceSharding(
+    dst_sharding = make_single_device_sharding(
         jax.local_devices(process_index=dst_pid)[0])
     y = jax.device_put(x, src_sharding)
     z = jax.device_put(y, dst_sharding)

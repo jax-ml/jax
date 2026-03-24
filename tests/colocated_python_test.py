@@ -22,6 +22,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import make_single_device_sharding
 from jax.experimental import colocated_python
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
@@ -85,7 +86,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         serialization._deserialize(serialization._serialize([sharding1])),
         [sharding1])
 
-    sharding2 = jax.sharding.SingleDeviceSharding(
+    sharding2 = make_single_device_sharding(
         cpu_devices[0], memory_kind="pinned_host")
     self.assertEqual(
         serialization._deserialize(serialization._serialize((sharding2,))),
@@ -102,7 +103,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       return x + 1
 
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
-    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    sharding = make_single_device_sharding(cpu_devices[0])
     sds = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
 
     fun_and_specialization = (
@@ -175,7 +176,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = [np.array(1), (np.array(2), {"v": np.array(3)})]
-    x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
+    x = jax.device_put(x, make_single_device_sharding(cpu_devices[0]))
 
     with _count_colocated_python_specialization_cache_miss() as count:
       out = add_one(x)
@@ -240,7 +241,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
-      x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
+      x = jax.device_put(x, make_single_device_sharding(cpu_devices[0]))
 
       out = add_one(x)
       out = jax.device_get(out)
@@ -275,7 +276,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
-      x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
+      x = jax.device_put(x, make_single_device_sharding(cpu_devices[0]))
 
       out = add_one(x)
       out = jax.device_get(out)
@@ -545,7 +546,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         "ascii"
     )
     numpy_string_array = np.array([input_string], dtype=np.dtypes.StringDType())
-    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    sharding = make_single_device_sharding(cpu_devices[0])
     x = jax.device_put(numpy_string_array, device=sharding)
 
     out = f(x)
@@ -582,7 +583,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()
   def test_object_lifecycle(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
-    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    sharding = make_single_device_sharding(cpu_devices[0])
     x = jax.device_put(np.array(0), sharding)
 
     @colocated_python.colocated_python_class
@@ -729,7 +730,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
   def test_object_method_specialization(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     cpu_devices = cpu_devices[:1]
-    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    sharding = make_single_device_sharding(cpu_devices[0])
 
     @colocated_python.colocated_python_class
     class Object:

@@ -51,7 +51,7 @@ from jax._src.monitoring import record_scalar, record_event_duration_secs, recor
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding)
+    NamedSharding, make_single_device_sharding, GSPMDSharding)
 from jax._src.stages import SourceInfo
 import numpy as np
 
@@ -534,7 +534,7 @@ def _device_put_sharding_impl(
         return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
     elif x_sharding.num_devices == 1:
       device = x_sharding._device_assignment[0] if device is None else device
-      sharding = SingleDeviceSharding(device)
+      sharding = make_single_device_sharding(device)
       if not x._committed and not sharding.has_addressable_devices:
         # For uncommitted arrays in McJAX, each process has a local copy of the
         # array. If the destination sharding is not addressable, no data
@@ -548,8 +548,8 @@ def _device_put_sharding_impl(
                                      True)
       return pxla.batched_device_put(aval, sharding, shards, devices)
 
-  sh = SingleDeviceSharding(pxla.get_default_device()
-                            if device is None else device)
+  sh = make_single_device_sharding(pxla.get_default_device()
+                                   if device is None else device)
   return _DeferredShardArg(x, sh, aval, device is not None, copy)
 
 

@@ -92,7 +92,7 @@ class EArray(basearray.Array):
 
   @property
   def device(self):
-    if isinstance(self._data.sharding, sharding_impls.SingleDeviceSharding):
+    if len(self.sharding.device_set) == 1:
       return self._data.device
     return self.sharding
 

@@ -186,7 +186,7 @@ class SingleDeviceSharding(jsharding.Sharding):
 SingleDeviceSharding.__module__ = 'jax.sharding'
 
 
-def make_single_device_sharding(device, memory_kind):
+def make_single_device_sharding(device, memory_kind=None):
   return SingleDeviceSharding(device, memory_kind=memory_kind)
 
 

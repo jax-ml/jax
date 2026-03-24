@@ -59,7 +59,8 @@ from jax._src.sharding import Sharding as JSharding, IndivisibleError
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
-    ArrayMapping, AUTO, UnspecifiedValue, SingleDeviceSharding, GSPMDSharding,
+    ArrayMapping, AUTO, UnspecifiedValue, SingleDeviceSharding,
+    make_single_device_sharding, GSPMDSharding,
     NamedSharding, PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list,
                            unzip2, weakref_lru_cache, tuple_insert)
@@ -356,7 +357,7 @@ class ExecuteReplicated:
       else:
         token_devices = []
         for token in token_buf:
-          assert isinstance(token.sharding, sharding_impls.SingleDeviceSharding)
+          assert len(token.sharding.device_set) == 1
           token_devices.append(token.sharding._device_assignment[0])
         s = NamedSharding(Mesh(token_devices, 'x'), P('x'))
         global_token_array = array.make_array_from_single_device_arrays(
@@ -1658,7 +1659,7 @@ def _maybe_get_and_check_out_shardings(
 
 def finalize_shardings(shardings, device_assignment):
   if len(device_assignment) == 1:
-    return [SingleDeviceSharding(device_assignment[0], memory_kind=o.memory_kind)
+    return [make_single_device_sharding(device_assignment[0], memory_kind=o.memory_kind)
             if isinstance(o, GSPMDSharding) else o for o in shardings]
   return shardings
 

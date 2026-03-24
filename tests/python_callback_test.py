@@ -31,6 +31,7 @@ from jax._src import util
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax._src.shard_map import shard_map
+from jax._src.sharding_impls import make_single_device_sharding
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -1011,7 +1012,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     callback_device_index = sharding._device_assignment.index(callback_device)
 
     def f(x):
-      sharding = jax.sharding.SingleDeviceSharding(callback_device)
+      sharding = make_single_device_sharding(callback_device)
       return jax.pure_callback(func, x, x, sharding=sharding)
 
     f_jit = jax.jit(f, in_shardings=sharding, out_shardings=sharding)
@@ -1276,7 +1277,7 @@ class IOCallbackTest(jtu.JaxTestCase):
     callback_device = devices[0]
     if with_sharding:
       callback_device = devices[-1]
-      io_callback_kwargs['sharding'] = jax.sharding.SingleDeviceSharding(
+      io_callback_kwargs['sharding'] = make_single_device_sharding(
           callback_device
       )
 

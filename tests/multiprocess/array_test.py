@@ -23,6 +23,7 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import make_single_device_sharding
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -515,13 +516,13 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
 
   def test_single_device_sharding_is_fully_addressable(self):
     d = jax.devices()[0]
-    s = jax.sharding.SingleDeviceSharding(d)
+    s = make_single_device_sharding(d)
     self.assertEqual(s.is_fully_addressable,
                      jax.process_index() == d.process_index)
 
   def test_array_with_no_local_shards_has_valid_layout(self):
     d = jax.devices()[0]
-    s = jax.sharding.SingleDeviceSharding(d)
+    s = make_single_device_sharding(d)
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     xs = []
@@ -586,7 +587,7 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     self.assertLen(out.addressable_shards, expected_num_shards)
     for shard in out.addressable_shards:
       np.testing.assert_array_equal(shard.data, inp[shard.index])
-    self.assertEqual(out.sharding, jax.sharding.SingleDeviceSharding(d))
+    self.assertEqual(out.sharding, make_single_device_sharding(d))
 
   def test_device_put_to_device_error(self):
     mesh = jax.make_mesh((jax.device_count(),), ("x",), devices=jax.devices(),
@@ -719,7 +720,7 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     pid = 1
 
     # Create a single device sharding for a device local to process `pid`.
-    s = jax.sharding.SingleDeviceSharding(
+    s = make_single_device_sharding(
         jax.local_devices(process_index=pid)[0])
     y = jax.device_put(x, s)
     expected_num_shards = 1 if jax.process_index() == pid else 0
@@ -933,9 +934,9 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     x = np.arange(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
-    src_sharding = jax.sharding.SingleDeviceSharding(
+    src_sharding = make_single_device_sharding(
         jax.local_devices(process_index=src_pid)[0])
-    dst_sharding = jax.sharding.SingleDeviceSharding(
+    dst_sharding = make_single_device_sharding(
         jax.local_devices(process_index=dst_pid)[0])
     y = jax.device_put(x, src_sharding)
     with self.assertRaisesRegex(
@@ -951,9 +952,9 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     x = arange_fn(64).reshape(8, 8)
     src_pid = 0
     dst_pid = 1
-    src_sharding = jax.sharding.SingleDeviceSharding(
+    src_sharding = make_single_device_sharding(
         jax.local_devices(process_index=src_pid)[0])
-    dst_sharding = jax.sharding.SingleDeviceSharding(
+    dst_sharding = make_single_device_sharding(
         jax.local_devices(process_index=dst_pid)[0])
     y = jax.device_put(x, src_sharding)
     z = jax.device_put(y, dst_sharding)

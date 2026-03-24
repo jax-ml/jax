@@ -43,7 +43,7 @@ from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
-    SingleDeviceSharding, NamedSharding,
+    make_single_device_sharding, NamedSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
@@ -271,7 +271,7 @@ class ArrayImpl(basearray.Array):
   @property
   def device(self):
     self._check_if_deleted()
-    if isinstance(self.sharding, SingleDeviceSharding):
+    if len(self.sharding.device_set) == 1:
       return list(self.sharding.device_set)[0]
     return self.sharding
 
@@ -804,7 +804,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
+    devices = [Format(dll, make_single_device_sharding(d)) for d in devices]
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
