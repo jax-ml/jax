@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features:
+  * Added `ResizeMethod.CUBIC_PYTORCH` to {func}`jax.image.resize` to match
+    PyTorch's bicubic resize ({jax-issue}`#15768`).
+
 * Breaking changes:
   * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
     will now always use the new implementation that wraps

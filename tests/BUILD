@@ -566,6 +566,7 @@ jax_multiplatform_test(
     deps = py_deps([
         "pil",
         "tensorflow_core",
+        "torch",
         "numpy",
         "absl/testing",
     ]),
