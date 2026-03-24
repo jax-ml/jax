@@ -4920,19 +4920,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "of rank 2"):
       jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
 
-  @jtu.with_explicit_mesh((2,), 'x')
-  def test_jit_abstract_in_shardings(self, mesh):
-    arr = jax.device_put(np.arange(8), P('x'))
-    abstract_a = jax.eval_shape(jnp.zeros_like, arr)
-
-    @jax.jit(in_shardings=abstract_a.sharding)
-    def f(x):
-      return x * 2
-
-    out = f(arr)
-    self.assertArraysEqual(out, np.arange(8) * 2)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
-
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
