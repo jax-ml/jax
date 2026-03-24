@@ -5403,7 +5403,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_vjp3_dont_want_bilinear(self):
     def f(x, y):
-      return x * y 
+      return x * y
     x = y = jnp.arange(3.)
     z, f_vjp = jax.vjp(f, x, y)
     f_vjp = f_vjp.with_refs(api.DontWant(), api.GradValue())
@@ -7202,6 +7202,21 @@ class RematTest(jtu.JaxTestCase):
     x = jnp.ones(3)
     txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
     self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+
+  def test_remat_grad_accum_refs(self):
+    @jax.remat
+    def f(param: jax.Array) -> jax.Array:
+        return jnp.sin(param)
+
+
+    param = jnp.array(2.0, dtype=jnp.float32)
+    loss, vjp_fn = jax.vjp(f, param)
+    grad_ref = jax.ref.new_ref(jnp.zeros_like(param))
+
+    vjp_fn.with_refs(grad_ref)(jnp.array(1.0, dtype=param.dtype))
+
+    np.testing.assert_allclose(loss, f(param))
+    np.testing.assert_allclose(jax.ref.get(grad_ref), jax.grad(f)(param))
 
 
 class Remat3Test(jtu.JaxTestCase):
