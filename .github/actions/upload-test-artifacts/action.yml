@@ -1,0 +1,50 @@
+# Composite action to upload test artifacts (JUnit XML) to GitHub Actions.
+name: Upload test artifacts
+
+inputs:
+  test-artifacts-dir:
+    description: "Directory containing test artifact files"
+    default: 'test-artifacts'
+    type: string
+  artifact-name:
+    description: "Name for the GitHub Actions artifact upload"
+    default: 'test-artifacts-${{ github.job }}'
+    type: string
+  gcs-upload-uri:
+    description: "GCS location prefix where the test artifacts should be uploaded"
+    default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+    type: string
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Check for test artifacts
+      id: check-artifacts
+      shell: bash
+      env:
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+      run: |
+        printf -v padded_attempt "attempt%03d" "${{ github.run_attempt }}"
+        echo "padded_attempt=${padded_attempt}" >> "$GITHUB_OUTPUT"
+        if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR"/*.xml 2>/dev/null)" ]]; then
+          echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+          echo "Found test artifacts in $TEST_ARTIFACTS_DIR/"
+          ls -la "$TEST_ARTIFACTS_DIR"/*.xml
+        else
+          echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+          echo "No test artifacts found in $TEST_ARTIFACTS_DIR/"
+        fi
+
+    - name: Upload test artifacts to GCS
+      if: steps.check-artifacts.outputs.has_artifacts == 'true'
+      shell: bash
+      continue-on-error: true
+      env:
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+        GCS_UPLOAD_URI: ${{ inputs.gcs-upload-uri }}
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      run: |
+        artifact_name="$INPUT_ARTIFACT_NAME-${{ steps.check-artifacts.outputs.padded_attempt }}"
+        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/*.xml "$GCS_UPLOAD_URI/$artifact_name/"
+

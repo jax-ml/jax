@@ -154,6 +154,8 @@ bazel test --config=$TEST_CONFIG \
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
 
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
   exit $first_bazel_cmd_retval

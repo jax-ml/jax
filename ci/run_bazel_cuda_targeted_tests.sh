@@ -125,4 +125,7 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   exit 1
 fi
 
-bazel test "${bazel_args[@]}" "${targets[@]}"
+bazel test "${bazel_args[@]}" "${targets[@]}" || bazel_retval=$?
+
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+exit "${bazel_retval:-0}"

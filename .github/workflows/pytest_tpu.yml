@@ -131,3 +131,9 @@ jobs:
           ./ci/run_pytest_tpu.sh
         env:
           INPUTS_PYTHON: ${{ inputs.python }}
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: pytest-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}

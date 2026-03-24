@@ -91,7 +91,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
     --build_tag_filters=${TAG_FILTERS} \
     --test_tag_filters=${TAG_FILTERS} \
-    --remote_download_outputs=minimal \
+    --remote_download_regex='.*test\.xml$' \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
@@ -104,3 +104,6 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     //tests/pallas:backend_independent_tests \
     //jaxlib/tools:check_gpu_wheel_sources_test \
     "${TESTS_TO_IGNORE[@]}"
+
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+exit "${bazel_retval:-0}"

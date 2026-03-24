@@ -58,5 +58,7 @@ fi
 # End of test environment variable setup
 
 echo "Running CPU tests..."
+mkdir -p test-artifacts
 "$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES_ARG \
+ --junitxml=test-artifacts/junit.xml \
  --maxfail=20 tests examples

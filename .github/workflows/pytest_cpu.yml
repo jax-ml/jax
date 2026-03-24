@@ -94,3 +94,9 @@ jobs:
       - name: Run Pytest CPU tests
         timeout-minutes: 60
         run: ./ci/run_pytest_cpu.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-x64_${{ inputs.enable-x64 }}

@@ -138,3 +138,10 @@ jobs:
             --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
             --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:30e7fcfad87b74a4b916565a6156f4d8d01a2f5a4e06d0d0e6c37926a1507d72" \
+            ${JAXCI_ROCM_LOCK_FLAG:-}
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}

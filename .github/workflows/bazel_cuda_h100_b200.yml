@@ -100,6 +100,10 @@ jobs:
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           JAXCI_TEST_TIMEOUT: '420'
         run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
   run_multiaccelerator_tests:
     if: >-
       ${{
@@ -142,3 +146,7 @@ jobs:
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
         run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts

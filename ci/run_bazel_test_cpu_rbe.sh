@@ -110,6 +110,8 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
     --test_output=errors \
+    --nocache_test_results \
+    --remote_download_regex='.*test\.xml$' \
     --color=yes \
     -- \
     //tests:cpu_tests //tests:backend_independent_tests \
@@ -117,4 +119,7 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //tests/multiprocess:cpu_tests \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     //jaxlib/tools:check_cpu_wheel_sources_test \
-    $IGNORE_TESTS
+    $IGNORE_TESTS || bazel_retval=$?
+
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+exit "${bazel_retval:-0}"

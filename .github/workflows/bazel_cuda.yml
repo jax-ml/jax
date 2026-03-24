@@ -128,3 +128,9 @@ jobs:
       - name: "Bazel CUDA tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 60
         run: ${{ ((inputs.run_multiaccelerator_tests == 'false') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}
+      - name: Upload test artifacts
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}-${{ inputs.build_jaxlib }}
