@@ -140,7 +140,7 @@ def _nm_spmm_gpu_lowering(
     output_dtype,
 ):
   assert sparse_operand_idx in (0, 1)
-  sparsity_descriptor = mhlo.SparsityDescriptor.get(  # pyrefly: ignore[missing-attribute]
+  sparsity_descriptor = mhlo.SparsityDescriptor.get(  # pyrefly: ignore[missing-attribute]  # pytype: disable=module-attr
       dimension=dimension_numbers[0][sparse_operand_idx][0], n=2, m=4
   )
   dot_dnums = mhlo.DotDimensionNumbers.get(
@@ -152,7 +152,7 @@ def _nm_spmm_gpu_lowering(
   dot_type = ctx.avals_out[0]
   key = ["lhs_sparsity", "rhs_sparsity"][sparse_operand_idx]
   kwargs = {key: sparsity_descriptor}
-  op = mhlo.SparseDotOp(  # pyrefly: ignore[missing-attribute]
+  op = mhlo.SparseDotOp(  # pyrefly: ignore[missing-attribute]  # pytype: disable=module-attr
       mlir.aval_to_ir_type(dot_type), lhs, rhs, [metadata], dot_dnums, **kwargs
   )
   return op.results

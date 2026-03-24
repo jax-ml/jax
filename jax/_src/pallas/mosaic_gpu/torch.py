@@ -20,7 +20,7 @@ import ctypes
 from collections import defaultdict
 import functools
 import itertools
-from typing import Callable, TypeGuard, Mapping
+from typing import Any, Callable, Mapping, TypeGuard
 import weakref
 
 import jax
@@ -79,13 +79,13 @@ def _find_mgpu_call_in_module(module: ir.Module):
   main_funcs = [
       op
       for op in module.body.operations
-      if isinstance(op, func.FuncOp) and op.name.value == "main"
+      if isinstance(op, func.FuncOp) and op.name.value == "main"  # pytype: disable=attribute-error
   ]
   # TODO(apaszke): Add support for jax.jit, which will call another function
   # from main.
   if len(main_funcs) != 1:
     raise ValueError("Expected a single function in the kernel module")
-  [func_body] = main_funcs[0].body.blocks
+  [func_body] = main_funcs[0].body.blocks  # pytype: disable=attribute-error
   return _find_mgpu_call(func_body, list(func_body.arguments))
 
 
@@ -113,6 +113,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   init_env = {}
   name_source = itertools.count()
   value_names: Mapping[ir.Value, int] = defaultdict(lambda: next(name_source))
+  op: Any
   for op in block.operations:
     if _is_custom_call(op, "AllocateBuffer"):
       def allocate_torch_buffer(
@@ -190,7 +191,7 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
       thunk(env, device)
     return tuple(env[name] for name in mgpu_arg_names)
   output_input_aliases: list[int | None] = [None] * len(mgpu_call.results)
-  for alias in mgpu_call.output_operand_aliases or []:
+  for alias in mgpu_call.output_operand_aliases or []:  # pytype: disable=attribute-error
     alias = hlo.OutputOperandAlias(alias)
     if alias.operand_tuple_indices:
       raise NotImplementedError("Tupled operand indices not supported")
@@ -200,8 +201,9 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     output_input_aliases[output_index] = alias.operand_index
 
   output_types = [
-      (result.type.shape, _mlir_to_torch_dtype(torch, result.type.element_type))
+      (result_type.shape, _mlir_to_torch_dtype(torch, result_type.element_type))
       for result in mgpu_call.results
+      if isinstance(result_type := result.type, ir.ShapedType)
   ]
   def prepare_outputs(*all_args, device):
     outputs = []
@@ -216,7 +218,8 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
 
 
 def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
-  return isinstance(op, hlo.CustomCallOp) and op.call_target_name.value == name
+  # pytype does not see ``hlo.CustomCallOp``.
+  return isinstance(op, hlo.CustomCallOp) and op.call_target_name.value == name  # pytype: disable=attribute-error
 
 
 @util.weakref_lru_cache

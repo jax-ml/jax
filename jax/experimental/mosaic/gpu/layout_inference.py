@@ -22,7 +22,7 @@ import enum
 import itertools
 import math
 import re
-from typing import assert_never, cast
+from typing import Any, assert_never, cast
 
 from absl import logging
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
@@ -1268,7 +1268,7 @@ def _custom_primitive_constraint_system(
       variables.append(v)
       transforms = next(in_transforms)
       assert isinstance(transforms, ir.ArrayAttr)
-      ref_ty = value_site.value.type
+      ref_ty = cast(ir.MemRefType, value_site.value.type)
       # pyrefly: ignore[bad-argument-type]
       tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
       assignments[v] = tiling
@@ -2258,7 +2258,7 @@ def infer_layout(
   global_constraint_system = cs.ConstraintSystem()
   ctx = DerivationContext()
 
-  def gather_constraints(op: ir.Operation):
+  def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.
     # This is because they need to be in sync with their parent op's inputs and
     # outputs---and the parent op's constraints therefore need to take them into

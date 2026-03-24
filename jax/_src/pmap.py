@@ -347,7 +347,7 @@ def _prepare_pmap(fun, axis_name, static_broadcasted_argnums,
   # aggregate size (across all processes) size of the mapped axis must match the
   # given value.
   check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name  # pytype: disable=protected-access
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name  # pylint: disable=protected-access
   static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(
       _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)

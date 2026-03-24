@@ -2643,9 +2643,10 @@ def map_compute_type(c_type: str) -> str:
 
 
 def _update_frontend_attributes(op, attrs):
-  attr_array = op.attributes.get("mhlo.frontend_attributes", {})
-  existing = {a.name: a.attr for a in attr_array}
-  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs | existing)
+  if attr_array := op.attributes.get("mhlo.frontend_attributes"):
+    assert isinstance(attr_array, ir.DictAttr)
+    attrs |= {a.name: a.attr for a in attr_array}
+  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs)
 
 
 def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:

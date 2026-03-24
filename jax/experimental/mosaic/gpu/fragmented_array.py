@@ -3151,7 +3151,7 @@ class FragmentedArray:
       registers = np.empty(layout.registers_shape(shape), dtype=object)
       vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
       # pyrefly: ignore[bad-argument-type]
-      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
+      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):  # pytype: disable=wrong-arg-types
         ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
         update(registers, utils.multimem_load_reduce(vec_ty, ptr, reduction, is_signed))
       return cls(_registers=registers, _layout=layout, _is_signed=is_signed)

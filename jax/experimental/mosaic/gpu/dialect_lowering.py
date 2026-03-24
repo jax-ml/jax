@@ -82,8 +82,8 @@ class LoweringContext:
     if "collective" not in op.attributes:
       return
     if self.is_collective_kernel is None:
-      self.is_collective_kernel = op.attributes["collective"]
-    elif self.is_collective_kernel != op.attributes["collective"]:
+      self.is_collective_kernel = bool(op.attributes["collective"])
+    elif self.is_collective_kernel != bool(op.attributes["collective"]):
       raise ValueError(
           "Collective attributes are inconsistent across operations in the"
           " kernel."
@@ -146,7 +146,7 @@ def _undo_conversion_cast(
   The function will verify that the returned values have types that match
   `expected_types`.
   """
-  conversion_cast = ir_value.owner
+  conversion_cast: Any = ir_value.owner
 
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
@@ -204,7 +204,7 @@ def _fragmented_array_from_ir(
     layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
-  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pyrefly: ignore[missing-attribute]
+  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
@@ -215,7 +215,7 @@ def _fragmented_array_from_ir(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]
+  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
   for attribute in conversion_cast.attributes:
     reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
@@ -1648,8 +1648,8 @@ def _mgpu_slice_smem_op_lowering_rule(
 
 
 def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
-  if isinstance(offset.owner, arith.ConstantOp):
-    cst_offset = ir.IntegerAttr(offset.owner.value).value
+  if isinstance(owner := offset.owner, arith.ConstantOp):
+    cst_offset = ir.IntegerAttr(owner.value).value  # pytype: disable=attribute-error
     size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
     if cst_offset + size > smem_size:
       raise ValueError("Ran out of shared memory.")
@@ -1970,7 +1970,7 @@ def _memref_expand_shape_op_lowering_rule(
 
   start_index = len(op.static_output_shape)
   for i in range(start_index, start_index + num_tiling_dims):
-    reassociation.append([i])  # pyrefly: ignore[bad-argument-type]
+    reassociation.append([i])  # pyrefly: ignore[bad-argument-type]  # pytype: disable=container-type-mismatch
 
   new_expand_shape_op = memref.ExpandShapeOp(
       out_transformed_ty,

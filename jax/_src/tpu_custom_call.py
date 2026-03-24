@@ -23,7 +23,7 @@ import dataclasses
 import enum
 import io
 import json
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from jax._src import api
 from jax._src import config
@@ -879,8 +879,9 @@ def lowered_as_tpu_kernel(
     allow_collective_id_without_custom_barrier: bool = False,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
-  lowered_module_asm = lowered_module.operation.get_asm(
-      binary=True, enable_debug_info=True
+  lowered_module_asm = cast(
+      bytes,
+      lowered_module.operation.get_asm(binary=True, enable_debug_info=True),
   )
   if isinstance(has_side_effects, bool):
     has_side_effects = (

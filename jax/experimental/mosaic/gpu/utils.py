@@ -194,7 +194,7 @@ def debug_print(fmt, *args, uniform=True, scope=None):
 
 @dataclasses.dataclass(frozen=True)
 class MultimemRef:
-  ref: ir.Value
+  ref: ir.Value[ir.MemRefType]
 
   @property
   def type(self) -> ir.Type:
@@ -557,7 +557,7 @@ class DynamicSlice:
 ds = DynamicSlice
 
 
-def memref_slice(ref: ir.Value, index) -> ir.Value:
+def memref_slice(ref: ir.Value[ir.MemRefType], index) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
   base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
   # TODO(apaszke): Check that slice is within the memref (indices might be
@@ -1213,7 +1213,7 @@ class DialectBarrierRef:
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             # TODO(slebedev): Why is it safe to use None here?
-            phases=None,  # pyrefly: ignore[bad-argument-type]
+            phases=None,  # pyrefly: ignore[bad-argument-type]  # pytype: disable=wrong-arg-types
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         )
     )
@@ -1916,7 +1916,9 @@ def vector_concat(
   return _vector_concat_rec(vectors)
 
 
-def _vector_concat_rec(vectors: Sequence[ir.Value]) -> ir.Value:
+def _vector_concat_rec(
+    vectors: Sequence[ir.Value[ir.VectorType]],
+) -> ir.Value[ir.VectorType]:
   match vectors:
     case [v]:
       return v
@@ -2173,8 +2175,8 @@ def get_arch() -> Arch:
   while op is not None:
     if op.name == "builtin.module":
       return Arch(
-          op.attributes["mosaic_gpu.arch_major"].value,
-          op.attributes["mosaic_gpu.arch_minor"].value,
+          op.attributes["mosaic_gpu.arch_major"].value,  # pytype: disable=attribute-error
+          op.attributes["mosaic_gpu.arch_minor"].value,  # pytype: disable=attribute-error
       )
     op = op.parent
   raise ValueError("Cannot retrieve the architecture: no module found")

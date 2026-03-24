@@ -436,7 +436,10 @@ class Scratch:
       return
     self._ops_created = True
 
-    gpu_launch_op = self._find_first_op("gpu.launch", self._module_op.body)  # pyrefly: ignore[bad-argument-type]
+    gpu_launch_op = cast(
+        gpu.LaunchOp | None,
+        self._find_first_op("gpu.launch", self._module_op.body),  # pyrefly: ignore[bad-argument-type]
+    )
     assert gpu_launch_op is not None
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -686,7 +689,7 @@ class LaunchContext:
       new_op = ir.Operation.create(
           op.OPERATION_NAME, result_types, new_operands, new_attributes
       )
-      return new_op.results if len(new_op.results) > 1 else new_op.result
+      return new_op.results if len(new_op.results) > 1 else new_op.result  # pytype: disable=bad-return-type
 
     # nvshmem_my_pe queries the device id of the current process and works on
     # both the host and the device.

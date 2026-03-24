@@ -999,8 +999,7 @@ def _shard_map_lowering_shardy(
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
       output_types, mlir.flatten_ir_values(args), in_shardings, out_shardings,
-      sdy.ManualAxesAttr.get(
-          ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
+      sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
 
   dim_var_types = [mlir.aval_to_ir_type(
       core.ShapedArray((), dtypes.default_int_dtype()))] * num_dim_vars

@@ -1512,7 +1512,7 @@ def _indexer_to_start_size_stride(
   assert next_index is None, (indexer.indices, ref_block_shape)
   new_ref_block_shape = tuple(s for s, squeeze in zip(sizes, squeeze_dims)
                               if not squeeze)
-  return (
+  return (  # pytype: disable=bad-return-type
       tuple(starts),
       tuple(sizes),
       tuple(strides),
