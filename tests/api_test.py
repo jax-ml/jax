@@ -5402,6 +5402,19 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysEqual(out1, jnp.ones((8,)))
     self.assertIsInstance(out2, api.DidntWant)
 
+  def test_vjp3_dont_want_bilinear(self):
+    def f(x, y):
+      return x * y 
+    x = y = jnp.arange(3.)
+    z, f_vjp = jax.vjp(f, x, y)
+    f_vjp = f_vjp.with_refs(api.DontWant(), api.GradValue())
+    ones = jnp.ones_like(z)
+    g = jax.jit(lambda: f_vjp(ones))
+    x_grad, y_grad = g()
+    self.assertEqual(x_grad, api.DidntWant())
+    self.assertAllClose(y_grad, x)
+    self.assertLen(g.trace().jaxpr.eqns, 1)
+
 
 class RematTest(jtu.JaxTestCase):
 
