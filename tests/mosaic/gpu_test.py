@@ -6399,9 +6399,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       elif dtype in (jnp.uint32, jnp.uint64):
         reduction_op = "u" + reduction_op
 
-    if reduction_op in ("smin", "smax", "umin", "umax") and not hasattr(mgpu_dialect.TMAReduction, "Smin"):
-      self.skipTest("The Smin/Smax/Umin/Umax reduction types are required.")
-
     if (
         not launch_context._is_tma_reduction_op_supported(
             reduction_op,
