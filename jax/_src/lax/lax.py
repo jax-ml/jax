@@ -6308,6 +6308,15 @@ def _ragged_dot_general_impl(
       )  # pytype: disable=bad-return-type
 
 
+# TODO(rdyro): Remove this flag and the python transpose once the C++ transpose
+# is available in a released jaxlib.
+ALLOW_RAGGED_DOT_TPU_EXPLICIT_TRANSPOSE = config.bool_state(
+    'allow_ragged_dot_tpu_explicit_transpose',
+    True,
+    'Whether to use the Python explicit transpose for ragged_dot on TPU.'
+)
+
+
 def _ragged_dot_general_lower(
     ctx,
     lhs,
@@ -6346,7 +6355,8 @@ def _ragged_dot_general_lower(
     # TPU lowering uses a fusion which requires explicitly transposing the RHS.
     # TODO(rdyro): Revert this once these changes are moved into the TPU
     # lowering directly.
-    if rhs_contracting == (2,) and rhs_group_dims == (0,) and not rhs_batch:
+    if (ALLOW_RAGGED_DOT_TPU_EXPLICIT_TRANSPOSE.value and
+        rhs_contracting == (2,) and rhs_group_dims == (0,) and not rhs_batch):
       _, rhs_aval, _ = ctx.avals_in
       perm = list(range(rhs_aval.ndim))
       perm[-2], perm[-1] = perm[-1], perm[-2]
