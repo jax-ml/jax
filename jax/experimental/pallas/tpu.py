@@ -74,13 +74,12 @@ from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
-# Those primitives got moved to Pallas core. Keeping the updated imports
-# here for backward compatibility.
-from jax._src.pallas.core import semaphore as semaphore
-from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
-from jax._src.pallas.primitives import semaphore_read as semaphore_read
-from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
-from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.core import semaphore as _deprecated_semaphore
+from jax._src.pallas.primitives import DeviceIdType as _DeprecatedDeviceIdType
+from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
+from jax._src.pallas.primitives import semaphore_read as _deprecated_semaphore_read
+from jax._src.pallas.primitives import semaphore_signal as _deprecated_semaphore_signal
+from jax._src.pallas.primitives import semaphore_wait as _deprecated_semaphore_wait
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
@@ -95,9 +94,26 @@ HBM = MemorySpace.HBM
 HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
 
-from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
 
 _deprecations = {
+    # Added Mar 24, 2026
+    "semaphore": ("pltpu.semaphore is deprecated, use pl.semaphore instead.", _deprecated_semaphore),
+    "DeviceIdType": (
+        "pltpu.DeviceIdType is deprecated, use pl.DeviceIdType instead.",
+        _DeprecatedDeviceIdType,
+    ),
+    "semaphore_read": (
+        "pltpu.semaphore_read is deprecated, use pl.semaphore_read instead.",
+        _deprecated_semaphore_read,
+    ),
+    "semaphore_signal": (
+        "pltpu.semaphore_signal is deprecated, use pl.semaphore_signal instead.",
+        _deprecated_semaphore_signal,
+    ),
+    "semaphore_wait": (
+        "pltpu.semaphore_wait is deprecated, use pl.semaphore_wait instead.",
+        _deprecated_semaphore_wait,
+    ),
     # Added Feb 11, 2026
     "repeat": (
         "pltpu.repeat is deprecated, use jnp.tile instead.",
@@ -111,6 +127,11 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
+  semaphore = _deprecated_semaphore
+  DeviceIdType = _DeprecatedDeviceIdType
+  semaphore_read = _deprecated_semaphore_read
+  semaphore_signal = _deprecated_semaphore_signal
+  semaphore_wait = _deprecated_semaphore_wait
   repeat = _deprecated_repeat
   KernelType = CoreType
 else:

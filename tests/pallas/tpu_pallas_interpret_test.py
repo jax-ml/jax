@@ -760,7 +760,7 @@ class InterpretTest(jtu.JaxTestCase):
           def body(sem):
             @pl.when(jax.lax.axis_index('x') == second_core_to_copy)
             def _():
-              pltpu.semaphore_wait(sem, 1)
+              pl.semaphore_wait(sem, 1)
 
             def copy(x_hbm_ref):
               pltpu.sync_copy(x_ref, x_hbm_ref)
@@ -773,7 +773,7 @@ class InterpretTest(jtu.JaxTestCase):
 
             @pl.when(jax.lax.axis_index('x') == first_core_to_copy)
             def _():
-              pltpu.semaphore_signal(sem, 1, core_index=second_core_to_copy)
+              pl.semaphore_signal(sem, 1, core_index=second_core_to_copy)
 
           pl.run_scoped(
               body,

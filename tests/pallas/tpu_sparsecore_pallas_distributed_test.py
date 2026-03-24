@@ -61,8 +61,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pltpu.semaphore_signal(ready_sem, device_id=neighbor)
-      pltpu.semaphore_wait(ready_sem)
+      pl.semaphore_signal(ready_sem, device_id=neighbor)
+      pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
           x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
       ).wait()
@@ -111,8 +111,8 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pltpu.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
-      pltpu.semaphore_wait(ready_sem)
+      pl.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
+      pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
             x_ref, y_ref, send_sem, recv_sem, device_id=(my_other_id, neighbor)
         ).wait()

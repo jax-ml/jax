@@ -496,10 +496,10 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
           sem0 = pltpu.get_barrier_semaphore()
           for i in range(ddim):
             for j in range(num_cores):
-              pltpu.semaphore_signal(
+              pl.semaphore_signal(
                   sem0, 1, device_id={'device': i, 'core': j},
-                  device_id_type=pltpu.DeviceIdType.MESH)
-          pltpu.semaphore_wait(sem0, ddim * num_cores)
+                  device_id_type=pl.DeviceIdType.MESH)
+          pl.semaphore_wait(sem0, ddim * num_cores)
 
           # Identity function by default
           pltpu.async_copy(in_ref.at[:, slc], out_ref.at[:, slc], sem).wait()
@@ -510,7 +510,7 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
               send_sem=send_sem,
               recv_sem=recv_sem,
               device_id={'core': 1},
-              device_id_type=pltpu.DeviceIdType.MESH,
+              device_id_type=pl.DeviceIdType.MESH,
           )
 
           @pl.when(core_index == 0)
@@ -564,8 +564,8 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         src_neighbor = right_neighbor
         dst_neighbor = left_neighbor
       barrier_sem = pltpu.get_barrier_semaphore()
-      pltpu.semaphore_signal(barrier_sem, device_id=src_neighbor)
-      pltpu.semaphore_wait(barrier_sem, 1)
+      pl.semaphore_signal(barrier_sem, device_id=src_neighbor)
+      pl.semaphore_wait(barrier_sem, 1)
       pltpu.make_async_remote_copy(
           x_ref, o_ref, send_sem, recv_sem, device_id=dst_neighbor,
       ).start()
@@ -652,9 +652,9 @@ def make_bidi_collective_permute(axis_name: str):
           jax.lax.axis_index(axis_name) + 1, axis_size
       )
       barrier_sem = pltpu.get_barrier_semaphore()
-      pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-      pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
-      pltpu.semaphore_wait(barrier_sem, 2)
+      pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
+      pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+      pl.semaphore_wait(barrier_sem, 2)
       assert x.shape[0] % 2 == 0, x.shape
       pltpu.make_async_remote_copy(
           x_ref.at[pl.ds(0, x.shape[0] // 2)],

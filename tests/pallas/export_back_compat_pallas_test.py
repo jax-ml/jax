@@ -135,8 +135,8 @@ class CompatTest(bctu.CompatTestBase):
       def dma_kernel(x, y):
         def body(dma_sem, sem):
           pltpu.async_copy(x, y, dma_sem).wait()
-          pltpu.semaphore_signal(sem)
-          pltpu.semaphore_wait(sem)
+          pl.semaphore_signal(sem)
+          pl.semaphore_wait(sem)
         pl.run_scoped(
             body, pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.REGULAR
         )

@@ -13,6 +13,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * `pltpu.semaphore`, `pltpu.DeviceIdType`, `pltpu.semaphore_signal`,
+    `pltpu.semaphore_wait`, and `pltpu.semaphore_read` are now available in
+    {mod}`jax.experimental.pallas`. Accessing them via
+    {mod}`jax.experimental.pallas.tpu` is deprecated.
+
 * Removals
 
   * Removed the previously deprecated `pltpu.ANY` and `pltpu.MemorySpace.ANY`.

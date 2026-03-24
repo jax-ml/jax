@@ -1125,7 +1125,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         self.assertTupleEqual(dma_sems.shape, (4,))
         self.assertTupleEqual(sems.shape, (3,))
         self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+        self.assertTrue(jnp.issubdtype(sems.dtype, pl.semaphore))
       pl.run_scoped(
           body, pltpu.SemaphoreType.DMA((4,)), pltpu.SemaphoreType.REGULAR((3,))
       )
@@ -1140,7 +1140,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       self.assertTupleEqual(dma_sems.shape, (4,))
       self.assertTupleEqual(sems.shape, (3,))
       self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-      self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+      self.assertTrue(jnp.issubdtype(sems.dtype, pl.semaphore))
 
     jax.block_until_ready(
         self.pallas_call(
@@ -1159,21 +1159,21 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_can_wait_on_semaphore(self):
     def kernel(y_ref):
       def body(sem):
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR)
       def body2(sem):
-        pltpu.semaphore_signal(sem, 2)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem, 2)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body2, pltpu.SemaphoreType.REGULAR)
       def body3(sem):
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
@@ -1185,19 +1185,19 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_can_wait_on_semaphore_array(self):
     def kernel(y_ref):
       def body(sems):
-        pltpu.semaphore_signal(sems.at[0])
-        pltpu.semaphore_wait(sems.at[0])
+        pl.semaphore_signal(sems.at[0])
+        pl.semaphore_wait(sems.at[0])
 
-        pltpu.semaphore_signal(sems.at[1], 2)
-        pltpu.semaphore_wait(sems.at[1])
-        pltpu.semaphore_wait(sems.at[1])
+        pl.semaphore_signal(sems.at[1], 2)
+        pl.semaphore_wait(sems.at[1])
+        pl.semaphore_wait(sems.at[1])
 
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
@@ -1210,19 +1210,19 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(y_ref):
       i = pl.program_id(0)
       def body(sems):
-        pltpu.semaphore_signal(sems.at[i, 0])
-        pltpu.semaphore_wait(sems.at[i, 0])
+        pl.semaphore_signal(sems.at[i, 0])
+        pl.semaphore_wait(sems.at[i, 0])
 
-        pltpu.semaphore_signal(sems.at[i, 1], 2)
-        pltpu.semaphore_wait(sems.at[i, 1])
-        pltpu.semaphore_wait(sems.at[i, 1])
+        pl.semaphore_signal(sems.at[i, 1], 2)
+        pl.semaphore_wait(sems.at[i, 1])
+        pl.semaphore_wait(sems.at[i, 1])
 
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
     jax.block_until_ready(
@@ -1243,9 +1243,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         for r in range(m):
           for c in range(n):
             v = r * n + c
-            pltpu.semaphore_signal(sems.at[r, c],v)
-            y_ref[r, c] = pltpu.semaphore_read(sems.at[r, c])
-            pltpu.semaphore_wait(sems.at[r, c], v)
+            pl.semaphore_signal(sems.at[r, c],v)
+            y_ref[r, c] = pl.semaphore_read(sems.at[r, c])
+            pl.semaphore_wait(sems.at[r, c], v)
 
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
 
@@ -1264,7 +1264,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_hbm_ref, sem_val_ref, dma_sem):
       sem_val_ref[0, 0] = 123
       pltpu.async_copy(x_hbm_ref, y_hbm_ref, dma_sem).wait()
-      sem_val_ref[0, 0] = pltpu.semaphore_read(dma_sem)
+      sem_val_ref[0, 0] = pl.semaphore_read(dma_sem)
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     y, sem_val = jax.block_until_ready(
@@ -1587,10 +1587,10 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, y_ref, sem):
         pltpu.async_copy(x_hbm_ref, x_ref, sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
         y_ref[...] = x_ref[...]
         pltpu.async_copy(y_ref, y_hbm_ref, sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
 
       pl.run_scoped(
           body,
@@ -1834,8 +1834,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   def test_hoisted_semaphore(self):
     def kernel(x_bbm_ref, y_ref, sem, dma_sem):
-      pltpu.semaphore_signal(sem)
-      pltpu.semaphore_wait(sem)
+      pl.semaphore_signal(sem)
+      pl.semaphore_wait(sem)
       pltpu.async_copy(x_bbm_ref, y_ref, dma_sem).wait()
 
     x = jnp.arange(8 * 128.).reshape((8, 128))
@@ -1979,10 +1979,10 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
       )
       input_to_output_copy.start()
       sem_out_ref[0, :] = jnp.ones_like(
-          sem_out_ref[0, :]) * pltpu.semaphore_read(copy_sem.at[0])
+          sem_out_ref[0, :]) * pl.semaphore_read(copy_sem.at[0])
       input_to_output_copy.wait()
       sem_out_ref[1, :] = jnp.ones_like(
-          sem_out_ref[0, :]) * pltpu.semaphore_read(copy_sem.at[0])
+          sem_out_ref[0, :]) * pl.semaphore_read(copy_sem.at[0])
 
     out_shape = (jax.ShapeDtypeStruct((16, 128), jnp.int32),
                  jax.ShapeDtypeStruct((2, 1), jnp.int32))
@@ -2022,22 +2022,22 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
                     sem_ref,
                 ):
       o_ref[...] = jnp.zeros_like(o_ref)
-      pltpu.semaphore_signal(sem_ref.at[0], 1)
-      pltpu.semaphore_signal(sem_ref.at[1], 2)
-      pltpu.semaphore_signal(sem_ref.at[2], 3)
-      pltpu.semaphore_signal(sem_ref.at[3], 4)
-      o_ref[0, 0] = pltpu.semaphore_read(sem_ref.at[0])
-      o_ref[1, 0] = pltpu.semaphore_read(sem_ref.at[1])
-      o_ref[2, 0] = pltpu.semaphore_read(sem_ref.at[2])
-      o_ref[3, 0] = pltpu.semaphore_read(sem_ref.at[3])
-      pltpu.semaphore_wait(sem_ref.at[0], 4)
-      pltpu.semaphore_wait(sem_ref.at[1], 3)
-      pltpu.semaphore_wait(sem_ref.at[2], 2)
-      pltpu.semaphore_wait(sem_ref.at[3], 1)
-      o_ref[4, 0] = pltpu.semaphore_read(sem_ref.at[0])
-      o_ref[5, 0] = pltpu.semaphore_read(sem_ref.at[1])
-      o_ref[6, 0] = pltpu.semaphore_read(sem_ref.at[2])
-      o_ref[7, 0] = pltpu.semaphore_read(sem_ref.at[3])
+      pl.semaphore_signal(sem_ref.at[0], 1)
+      pl.semaphore_signal(sem_ref.at[1], 2)
+      pl.semaphore_signal(sem_ref.at[2], 3)
+      pl.semaphore_signal(sem_ref.at[3], 4)
+      o_ref[0, 0] = pl.semaphore_read(sem_ref.at[0])
+      o_ref[1, 0] = pl.semaphore_read(sem_ref.at[1])
+      o_ref[2, 0] = pl.semaphore_read(sem_ref.at[2])
+      o_ref[3, 0] = pl.semaphore_read(sem_ref.at[3])
+      pl.semaphore_wait(sem_ref.at[0], 4)
+      pl.semaphore_wait(sem_ref.at[1], 3)
+      pl.semaphore_wait(sem_ref.at[2], 2)
+      pl.semaphore_wait(sem_ref.at[3], 1)
+      o_ref[4, 0] = pl.semaphore_read(sem_ref.at[0])
+      o_ref[5, 0] = pl.semaphore_read(sem_ref.at[1])
+      o_ref[6, 0] = pl.semaphore_read(sem_ref.at[2])
+      o_ref[7, 0] = pl.semaphore_read(sem_ref.at[3])
 
     out_shape = jax.ShapeDtypeStruct((8, 1), jnp.int32)
     grid_spec = pltpu.PrefetchScalarGridSpec(

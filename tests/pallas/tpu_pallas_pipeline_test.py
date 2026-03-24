@@ -996,9 +996,9 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
       def _sync_and_bwd_init():
         # barrier at start
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-        pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
+        pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+        pl.semaphore_wait(barrier_sem, 2)
 
         # initializing copies
         initial_bwd_copy.start()
@@ -1239,9 +1239,9 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
       def _sync_and_bwd_init():
         # barrier at start
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-        pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
+        pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+        pl.semaphore_wait(barrier_sem, 2)
         # initializing copies
         initial_bwd_copy.start()
         initial_fwd_copy.start()
@@ -1481,9 +1481,9 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
       def _sync_barrier():
         # barrier at start
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-        pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
+        pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+        pl.semaphore_wait(barrier_sem, 2)
 
       # Writeback previous outputs on first step of our present cycle
       def postyeet(lhs_bref, rhs_bref, out_bref, scheduler):
@@ -1758,9 +1758,9 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
       def _sync_and_bwd_init():
         # barrier at start
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
-        pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
+        pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+        pl.semaphore_wait(barrier_sem, 2)
 
       # Writeback previous outputs on first step of our present cycle
       def postyeet(lhs_bref, rhs_bref, out_bref, scheduler):

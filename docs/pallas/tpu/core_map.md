@@ -69,7 +69,7 @@ In the example kernel below, each core has its own VMEM and semaphore allocation
 
 **Communication between cores**
 
-Before communicating between cores, it is good practice to perform a barrier (using `pltpu.semaphore_signal`) to ensure resources have been allocated and both cores are at the same point during the program.
+Before communicating between cores, it is good practice to perform a barrier (using `pl.semaphore_signal`) to ensure resources have been allocated and both cores are at the same point during the program.
 
 Once the cores are synchronized, use `pltpu.make_async_remote_copy` to send data between them. The `device_id` keyword argument generically allows sending to any core on any device, but if you just pass in `{'core': other_core_id}`, it will perform a intra-device inter-core copy (the other axis names are held constant).
 
@@ -92,8 +92,8 @@ def swap_cores_kernel(in_hbm, out_hbm,
   # You won't need this if not doing inter-core communications.
   dst_core = (core_index + 1) % num_cores
   sem0 = pltpu.get_barrier_semaphore()
-  pltpu.semaphore_signal(sem0, 1, device_id={'core': dst_core})
-  pltpu.semaphore_wait(sem0, 1)
+  pl.semaphore_signal(sem0, 1, device_id={'core': dst_core})
+  pl.semaphore_wait(sem0, 1)
 
   # Swap data between core 0 and core 1
   the_copy = pltpu.make_async_remote_copy(

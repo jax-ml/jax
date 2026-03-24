@@ -748,7 +748,7 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
   ):
     raise ValueError(
         "dma_wait requires a DMA semaphore, but got a regular semaphore."
-        " Use pltpu.semaphore_wait() instead."
+        " Use pl.semaphore_wait() instead."
     )
   return [], _get_dma_effects(
       src_transforms_avals,
