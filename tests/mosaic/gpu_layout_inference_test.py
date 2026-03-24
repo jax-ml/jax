@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
 from jax._src import config
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -1448,7 +1449,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   @parameterized.product(
       swizzle_lhs=tuple(mgpu.dialect.SwizzlingMode),
       swizzle_rhs=tuple(mgpu.dialect.SwizzlingMode),
-      dtype=(jnp.bfloat16, jnp.float32),
+      dtype=(jnp.float4_e2m1fn, jnp.float8_e4m3fn, jnp.float8_e5m2, jnp.bfloat16, jnp.float32),
       lhs_in_tmem=(False, True),
   )
   def test_infer_transforms_for_tcgen05_mma_op(
@@ -1457,8 +1458,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     if mgpu.dialect.SwizzlingMode.kNoSwizzle in (swizzle_lhs, swizzle_rhs):
       self.skipTest("kNoSwizzle is not supported by this test.")
 
-    swizzle_elems_lhs = swizzle_lhs // np.dtype(dtype).itemsize
-    swizzle_elems_rhs = swizzle_rhs // np.dtype(dtype).itemsize
+    swizzle_elems_lhs = 8 * swizzle_lhs // dtypes.itemsize_bits(dtype)
+    swizzle_elems_rhs = 8 * swizzle_rhs // dtypes.itemsize_bits(dtype)
     m = 128
     # Note: `group_m` and `group_k` should be coprime with 2 for the test to be
     # correct. Otherwise, we may infer larger swizzles than the test intends to
@@ -1482,7 +1483,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     self.assertNotIn("out_tmem_layouts", tcgen05_mma_op.attributes)
     acc_layout = tcgen05._infer_tmem_layout(out_shape, collective=False, packing=1)
-    a_packing = 2 if dtype == jnp.bfloat16 else 1
+    a_packing = 32 // dtypes.itemsize_bits(dtype)
     a_layout = tcgen05._infer_tmem_layout(lhs_shape, collective=False, packing=a_packing)
     expected_layouts = [acc_layout, a_layout] if lhs_in_tmem else [acc_layout]
     self.checkInTmemLayouts(tcgen05_mma_op, expected_layouts)
