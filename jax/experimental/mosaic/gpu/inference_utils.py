@@ -182,6 +182,11 @@ def _in_attr_for_operand(
     predicate = lambda v: isinstance(v.type, ir.VectorType)
   elif attr_name == "in_transforms":
     predicate = is_transformable_smem_memref
+  elif attr_name == "in_tmem_layouts":
+    predicate = (
+        lambda v: isinstance(v.type, ir.MemRefType)
+        and ir.MemRefType(v.type).memory_space == utils.tmem()
+    )
   else:
     raise ValueError(f"Unknown attribute: {attr_name}")
 
@@ -192,6 +197,9 @@ def _in_attr_for_operand(
 
 in_layout_for_operand = partial(
     _in_attr_for_operand, attr_name="in_layouts"
+)
+in_tmem_layout_for_operand = partial(
+    _in_attr_for_operand, attr_name="in_tmem_layouts"
 )
 in_transforms_for_operand = partial(
     _in_attr_for_operand, attr_name="in_transforms"

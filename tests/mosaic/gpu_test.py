@@ -7454,6 +7454,155 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         rtol=rtol,
     )
 
+  @parameterized.product(
+      m=(128,),
+      n=(128, 256),
+      scale_type=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      ab_type=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn)
+  )
+  def test_simple_scaled_matmul(self, m, n, scale_type, ab_type):
+    acc_type = jnp.float32
+
+    block_size = 32
+    if scale_type == jnp.float8_e4m3fn:
+      if ab_type != jnp.float4_e2m1fn:
+        self.skipTest("Only float4_e2m1fn input is supported for e4m3fn scale.")
+      block_size = 16
+
+    k = 256
+    a_shape = (m, k)
+    b_shape = (n, k)
+    k_scales = k // block_size
+    scale_shape_a = (m // 128, k_scales // 4, 32, 16)
+    scale_shape_b = (n // 128, k_scales // 4, 32, 16)
+    acc_shape = (m, n)
+
+    # TODO(olechwierowicz): Move these sync cp helpers in the top of the file.
+    def cp(src, dst, barrier, shape, dtype):
+      transfer_size_bits = dtypes.itemsize_bits(dtype) * math.prod(shape)
+      assert transfer_size_bits % 8 == 0, f"{transfer_size_bits=} not byte aligned"
+      transfer_size_bytes = transfer_size_bits // 8
+      barrier.arrive_expect_tx(transfer_size_bytes)
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_load(
+          source=src,
+          destination=dst,
+          barrier=barrier.as_barrier_memref(),
+          indices=[zero_i32] * len(shape),
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      barrier.wait()
+
+    def matmul(ctx, a_gmem, b_gmem, a_scale_gmem, b_scale_gmem, result_gmem, scratch):
+      del ctx
+      (
+          a_smem,
+          b_smem,
+          a_scale_smem,
+          b_scale_smem,
+          tma_barrier,
+          mma_barrier,
+          acc_tmem,
+          a_scale_tmem,
+          b_scale_tmem,
+      ) = scratch
+
+      # GMEM -> SMEM
+      cp(b_gmem, b_smem, tma_barrier, b_shape, ab_type)
+      cp(a_gmem, a_smem, tma_barrier, a_shape, ab_type)
+      cp(a_scale_gmem, a_scale_smem, tma_barrier, scale_shape_a, scale_type)
+      cp(b_scale_gmem, b_scale_smem, tma_barrier, scale_shape_b, scale_type)
+
+      mgpu_dialect.async_store_scales_smem_to_tmem(a_scale_smem, a_scale_tmem)
+      mgpu_dialect.async_store_scales_smem_to_tmem(b_scale_smem, b_scale_tmem)
+      mgpu_dialect.tcgen05_mma(
+          accumulator=acc_tmem,
+          a=a_smem,
+          b=mgpu.memref_transpose(b_smem, (1,0)),
+          a_scale=a_scale_tmem,
+          b_scale=b_scale_tmem,
+          accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+      )
+      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      mma_barrier.wait(orders_tensor_core=True)
+
+      # TMEM -> Registers -> GMEM
+      r_out = mgpu_dialect.async_load_tmem(acc_tmem)
+      mgpu_dialect.vector_store(r_out, result_gmem)
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(a_shape, ab_type),
+        jax.ShapeDtypeStruct(b_shape, ab_type),
+        jax.ShapeDtypeStruct(scale_shape_a, scale_type),
+        jax.ShapeDtypeStruct(scale_shape_b, scale_type),
+        core.TMABarrier(1),
+        mgpu.Barrier(1),
+        mgpu.TMEM(acc_shape, acc_type),
+        mgpu.TMEM((m, k_scales), scale_type),
+        mgpu.TMEM((n, k_scales), scale_type),
+    ]
+
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct(a_shape, ab_type),
+            jax.ShapeDtypeStruct(b_shape, ab_type),
+            jax.ShapeDtypeStruct(scale_shape_a, scale_type),
+            jax.ShapeDtypeStruct(scale_shape_b, scale_type),
+        ),
+        out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
+        smem_scratch_shape=scratch_shape,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, (m, k)).astype(ab_type)
+    y = self.prng.uniform(-1, 1, (n, k)).astype(ab_type)
+
+    ksx, ksy = jax.random.split(jax.random.key(1234), 2)
+    def scale_data(key, dim):
+      if scale_type == jnp.float8_e4m3fn:
+        return jnp.abs(
+          jax.random.normal(key, (dim, k_scales), dtype=jnp.float32).astype(
+             scale_type
+          )
+        )
+      else:
+        assert scale_type == jnp.float8_e8m0fnu
+        return jax.lax.bitcast_convert_type(
+            jax.random.randint(key, (dim, k_scales), 122, 132, dtype=jnp.uint8),
+            scale_type
+        )
+
+    x_scale = scale_data(ksx, m)
+    y_scale = scale_data(ksy, n)
+
+    def format_scales(scales):
+      mn, k = scales.shape
+      assert mn % 128 == 0 and k % 4 == 0
+      return (
+          scales.reshape(mn // 128, 4, 32, k // 4, 4)
+          .transpose(0, 3, 2, 1, 4)
+          .reshape(mn // 128, k // 4, 32, 16)
+      ).astype(scale_type)
+
+    x_scale_fmt = format_scales(x_scale)
+    y_scale_fmt = format_scales(y_scale)
+
+    result = kernel(x, y, x_scale_fmt, y_scale_fmt)
+
+    x_logical_scale = np.repeat(x_scale, block_size, axis=1).astype(np.float32)
+    y_logical_scale = np.repeat(y_scale, block_size, axis=1).astype(np.float32)
+
+    expected = np.dot(
+        np.array(x, dtype=np.float32) * x_logical_scale,
+        (np.array(y, dtype=np.float32) * y_logical_scale).T,
+    )
+    self.assertArraysAllClose(result, expected, atol=2e-4, rtol=5e-6)
+
   def test_slice_tmem(self):
     def tmem_type(ref: ir.Value):
       return ir.MemRefType.get(
