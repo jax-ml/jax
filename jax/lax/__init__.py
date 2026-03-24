@@ -383,9 +383,6 @@ from jax._src.lax.parallel import (
   ragged_all_to_all as ragged_all_to_all,
   ragged_all_to_all_p as ragged_all_to_all_p,
 )
-from jax._src.core import (
-    pvary as _deprecated_pvary,
-)
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
@@ -413,20 +410,18 @@ _deprecations = {
         ),
         None,
     ),
-    # Deprecated in v0.8.2.
-    # TODO(jakevdp) finalize in v0.10.0.
+    # Deprecated in v0.8.2; finalized in v0.10.0.
+    # TODO(jakevdp) remove entry in v0.11.0.
     "pvary": (
-        "jax.lax.pvary is deprecated. Use `jax.lax.pcast(..., to='varying')",
-        _deprecated_pvary,
+        "jax.lax.pvary was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
+        " use `jax.lax.pcast(..., to='varying')",
+        None,
     ),
 }
 
 import typing as _typing
-if _typing.TYPE_CHECKING:
-  pvary = _deprecated_pvary
-else:
+if not _typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
-del _deprecated_pvary
 del _typing

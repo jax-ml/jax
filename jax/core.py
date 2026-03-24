@@ -68,14 +68,17 @@ from jax._src.core import (
 )
 
 _deprecations = {
-  # Added for v0.8.2
+  # Deprecated in v0.8.2; finalized in v0.10.0.
+  # TODO(jakevdp) remove entry in v0.11.0.
+  "get_aval": (
+    "jax.core.get_aval was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
+    " use jax.typeof instead.",
+    None,
+  ),
+  # Deprecated in v0.8.2
   "call_impl": (
     "jax.core.call_impl is deprecated.",
     _src_core.call_impl,
-  ),
-  "get_aval": (
-    "jax.core.get_aval is deprecated; use jax.typeof instead.",
-    _src_core.typeof,
   ),
   "mapped_aval": (
     "jax.core.mapped_aval is deprecated. Use jax.extend.core.mapped_aval.",
