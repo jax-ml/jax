@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/weakref_lru_cache.h"
+
 #include <Python.h>
 
 #include <cstddef>
@@ -42,7 +44,6 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/reentrant_hash_map.h"
-#include "jaxlib/weakref_lru_cache.h"
 
 namespace nb = nanobind;
 
@@ -148,7 +149,7 @@ struct WeakKey {
       }
       return true;
     }
-      bool operator()(WeakKey a, PointerWeakKey b) const {
+    bool operator()(WeakKey a, PointerWeakKey b) const {
       if (a.refs.size() != b.refs.size()) {
         return false;
       }
@@ -701,6 +702,8 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
       if (explain_.has_value()) {
         explainer = (*explain_)();
         if (!explainer.is_none()) {
+          // GetKeys() may allocate Python objects, which may release
+          // the lock.
           miss_keys = GetKeys();
         } else {
           explainer = nb::object();
@@ -781,22 +784,28 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
 }
 
 std::vector<nb::object> WeakrefLRUCacheBase::GetKeys() {
-  std::vector<nb::object> results;
+  std::vector<std::shared_ptr<CacheEntry>> snapshot;
+
+  // Snapshot entries without allocating any Python objects. It is not safe
+  // to allocate Python objects during traversal of the map, because that may
+  // trigger garbage collection and ultimately may mutate the map (e.g., because
+  // of keys being garbage collected).
   for (const auto& kv : entries_) {
-    const WeakKey& wr_key = kv.first;
     for (const auto& inner_kv : *kv.second) {
-      const StrongKey& key = inner_kv.first;
-      const std::shared_ptr<CacheEntry>& value = inner_kv.second;
-      if (!value->completed.HasBeenNotified()) {
-        continue;
+      if (inner_kv.second->completed.HasBeenNotified()) {
+        snapshot.push_back(inner_kv.second);
       }
-
-      nb::object wr_key_obj = WeakrefKeyToPython(wr_key.refs);
-
-      nb::tuple result =
-          nb::make_tuple(wr_key_obj, key.context(), key.args(), key.kwargs());
-      results.push_back(std::move(result));
     }
+  }
+
+  // Produce the output, which may allocate Python objects.
+  std::vector<nb::object> results;
+  results.reserve(snapshot.size());
+  for (const auto& entry : snapshot) {
+    nb::object wr_key_obj = WeakrefKeyToPython(entry->wr_key.refs);
+    nb::tuple result = nb::make_tuple(wr_key_obj, entry->key.context(),
+                                      entry->key.args(), entry->key.kwargs());
+    results.push_back(std::move(result));
   }
   return results;
 }
