@@ -3820,8 +3820,45 @@ class TransferPlan(Protocol):
     raise NotImplementedError
 
 
-TrivialTransferPlan = mgpu.dialect.TrivialTransferPlan
-StaggeredTransferPlan = mgpu.dialect.StaggeredTransferPlan
+@dataclasses.dataclass(frozen=True)
+class TrivialTransferPlan(TransferPlan):
+  @property
+  def tile_index_transforms(self):
+    return (lambda x: x,)
+
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
+    assert len(group_elems) == 1
+    return group_elems[0]
+
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
+    assert group_idx == 0
+    return new
+
+
+@dataclasses.dataclass(frozen=True)
+class StaggeredTransferPlan(TransferPlan):
+  stagger: int
+  dim: int
+  size: int
+  group_pred: ir.Value
+
+  @property
+  def tile_index_transforms(self):
+    dim = self.dim  # pytype: disable=attribute-error
+    def rotate(idx: tuple[int, ...]) -> tuple[int, ...]:
+      return (
+          *idx[:dim], (idx[dim] + self.stagger) % self.size, *idx[dim + 1 :],
+      )
+    return (lambda x: x, rotate)
+
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
+    assert len(group_elems) == 2
+    return arith.select(self.group_pred, group_elems[1], group_elems[0])
+
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
+    assert 0 <= group_idx <= 1
+    sides = [old, new] if group_idx == 0 else [new, old]
+    return arith.select(self.group_pred, *sides)
 
 
 def plan_tiled_transfer(
