@@ -1125,6 +1125,7 @@ mosaic_lowering_rules = {
     gpu_core.LANExWARP_SEMANTICS: {} ,
     # Lowering rules when using Mosaic GPU warpgroup semantics.
     gpu_core.WGxWG_SEMANTICS: {},
+    gpu_core.WGxWARP_SEMANTICS: {},
 }
 
 
@@ -1900,11 +1901,15 @@ def _get_lowering_rule(
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(sp.get_p, *gpu_core.WGxWARP_SEMANTICS)
 def _get_lowering_rule_wg(
     ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
 ):
   if not isinstance(x_ref, ir.Value) and isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only load from references (got {x_ref}).")
+  shape = ctx.avals_out[0].shape
+  if shape and ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    raise ValueError("Can only load scalars in warp-level code.")
 
   transforms = jax.tree.unflatten(tree, leaves)
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
@@ -2044,6 +2049,7 @@ def _swap_lowering_rule(
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(sp.swap_p, *gpu_core.WGxWARP_SEMANTICS)
 def _swap_lowering_rule_wg(
     ctx: LoweringRuleContext, x_smem, value, *leaves, tree
 ):
@@ -2054,6 +2060,8 @@ def _swap_lowering_rule_wg(
       isinstance(x_smem, ir.Value) and isinstance(x_smem.type, ir.MemRefType)
   ):
     raise TypeError(f"Can only store to references (got {x_smem}).")
+  if shape and ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    raise NotImplementedError("Can only store scalars in warp-level lowering.")
   transforms = jax.tree.unflatten(tree, leaves)
   transform_avals = jax.tree.unflatten(tree, ctx.avals_in[2:])
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
@@ -2253,11 +2261,18 @@ def _convert_element_type_lowering_rule(
 
 @register_lowering_rule(
     lax.convert_element_type_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(
+    lax.convert_element_type_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _convert_element_type_lowering_rule_wg(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   del weak_type, sharding
   [x_aval] = ctx.avals_in
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if x_aval.shape:
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
   [y_aval] = ctx.avals_out
   x = _ensure_ir_value(x, x_aval.dtype)
 
@@ -2406,6 +2421,10 @@ for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
 def _binary_op_lowering_rule_wg(
     ctx: LoweringRuleContext, x, y, *, ui_impl, si_impl, f_impl=None
 ):
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if any(aval_in.shape for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
   x_aval, y_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
   x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
@@ -2445,17 +2464,23 @@ for op, si_impl, ui_impl, f_impl in [
         arith_dialect.minimumf,
     ),
 ]:
-  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = partial(
+  rule = partial(
       _binary_op_lowering_rule_wg,
       si_impl=si_impl,
       ui_impl=ui_impl,
       f_impl=f_impl,
   )
+  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = rule
+  mosaic_lowering_rules[gpu_core.WGxWARP_SEMANTICS][op] = rule
 
 
 def _binary_boolean_op_lowering_rule_wg(
     ctx: LoweringRuleContext, x, y, *, impl
 ):
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if any(aval_in.shape for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
   x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   return impl(x, y)
 
@@ -2464,10 +2489,12 @@ for op, impl in [
     (lax.or_p, arith_dialect.ori),
     (lax.xor_p, arith_dialect.xori),
 ]:
-  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = partial(
+  rule = partial(
       _binary_boolean_op_lowering_rule_wg,
       impl=impl,
   )
+  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = rule
+  mosaic_lowering_rules[gpu_core.WGxWARP_SEMANTICS][op] = rule
 
 CmpIPred = arith_dialect.CmpIPredicate
 CmpFPred = arith_dialect.CmpFPredicate
@@ -2475,6 +2502,10 @@ CmpFPred = arith_dialect.CmpFPredicate
 def _comparison_lowering_rule_wg(
     ctx: LoweringRuleContext, x, y, *, si_pred, ui_pred, f_pred
 ):
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if any(aval_in.shape for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering.")
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   if jnp.issubdtype(x_aval, jnp.signedinteger):
@@ -2497,12 +2528,14 @@ for op, si_pred, ui_pred, f_pred in [
     (lax.gt_p, CmpIPred.sgt, CmpIPred.ugt, CmpFPred.OGT),
     (lax.ge_p, CmpIPred.sge, CmpIPred.uge, CmpFPred.OGE),
 ]:
-  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = partial(
+  rule = partial(
       _comparison_lowering_rule_wg,
       si_pred=si_pred,
       ui_pred=ui_pred,
       f_pred=f_pred,
   )
+  mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][op] = rule
+  mosaic_lowering_rules[gpu_core.WGxWARP_SEMANTICS][op] = rule
 
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Warpgroup)
@@ -3037,6 +3070,7 @@ def block_id_to_grid_id(ctx: LoweringRuleContext,
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.axis_index_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.axis_index_p, *gpu_core.WGxWARP_SEMANTICS)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if axis_name == ctx.module_ctx.warp_axis_name:
@@ -3097,6 +3131,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
 @register_lowering_rule(
     debugging.debug_print_p, mgpu.LoweringSemantics.Warpgroup
 )
+@register_lowering_rule(debugging.debug_print_p, *gpu_core.WGxWARP_SEMANTICS)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3465,6 +3500,7 @@ def _lower_jaxpr_to_for_loop(
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.scan_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.scan_p, *gpu_core.WGxWARP_SEMANTICS)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3558,6 +3594,7 @@ def _lower_while_via_fori(
 @register_lowering_rule(lax.while_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.while_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.while_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.while_p, *gpu_core.WGxWARP_SEMANTICS)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3637,6 +3674,7 @@ def _while_lowering_rule(
 @register_lowering_rule(lax.cond_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.cond_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.cond_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.cond_p, *gpu_core.WGxWARP_SEMANTICS)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
                         **params):
   if params:
@@ -3745,7 +3783,90 @@ def _optimization_barrier_lowering_wg(ctx: LoweringRuleContext, *args):
   return (result,) if len(ctx.avals_in) == 1 else result
 
 
+def _closed_over_values(block: ir.Block) -> list[ir.Value]:
+  """Returns a list of unique values used within `block` that are defined outside of `block`."""
+  def _closed_over_values_inner(
+      block: ir.Block, vals_in_block: set[ir.Value]
+  ) -> list[ir.Value]:
+    closed_over_values = []
+    for arg in block.arguments:
+      vals_in_block.add(arg)
+    for op in block.operations:
+      for o in op.operands:
+        if o not in vals_in_block:
+          closed_over_values.append(o)
+      for r in op.regions:
+        for b in r.blocks:
+          closed_over_values.extend(_closed_over_values_inner(b, vals_in_block))
+      for r in op.results:
+        vals_in_block.add(r)
+    return closed_over_values
+  result = _closed_over_values_inner(block, set())
+  # Remove duplicates while preserving order.
+  return list(dict.fromkeys(result))
+
+
+def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
+  """Replaces all uses of the `old` value with the `new` value in `block`."""
+
+  def is_contained_within_block(operand: ir.OpOperand, block: ir.Block) -> bool:
+    current_op = operand.owner.operation
+    while (parent := current_op.parent) is not None:
+      if current_op.block == block:
+        return True
+      current_op = parent
+    return False
+
+  for use in old.uses:
+    if is_contained_within_block(use, block):
+      use.owner.operands[use.operand_number] = new
+
+
+def _isolate_from_above(op: ir.Operation) -> ir.Operation:
+  """Makes `op` conform to the `IsolatedFromAbove` trait.
+
+  This replaces all captured values with new op operands.
+  """
+  if len(op.regions) != 1:
+    raise NotImplementedError("Only support ops with one region.")
+  if len(op.regions[0].blocks) != 1:
+    raise NotImplementedError("Only support ops with one block.")
+
+  block = op.regions[0].blocks[0]
+  captures = _closed_over_values(block)
+  if not captures:
+    return op
+
+  # 1. Create the new operation shell with the expanded operands.
+  new_op = ir.Operation.create(
+      name=op.name,
+      results=[res.type for res in op.results],
+      operands=list(op.operands) + captures,
+      attributes=dict(op.attributes),
+      regions=1,
+  )
+
+  # 2. Move the block from the old op to the new op.
+  block.append_to(new_op.regions[0])
+
+  # 3. Create new block arguments for the captured values.
+  new_args = []
+  for capture in captures:
+    new_args.append(block.add_argument(capture.type, capture.location))
+
+  # 4. Redirect all references from captured values to the newly created
+  # block's arguments.
+  for capture, new_arg in zip(captures, block.arguments[-len(captures) :]):
+    _replace_uses_in_block(capture, new_arg, block)
+
+  # 5. Clean up the now-empty old operation.
+  op.erase()
+
+  return new_op
+
+
 @register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Warpgroup)
 def _core_map_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -3773,22 +3894,35 @@ def _core_map_lowering_rule(
         "Can only close over scalars and Refs when using core_map with "
         f"WarpMesh. Found array of shape {aval_in}."
       )
-  # We allow the warps to schedule async copies without synchronizing with
-  # other warps, so we need to add a barrier here to make sure all reads and
-  # writes have completed.
-  if ctx.module_ctx.auto_barriers:
-    mgpu.warpgroup_barrier()
-  _ = lower_jaxpr_to_mosaic_gpu(
-      module_ctx,
-      ctx.launch_ctx,
-      jaxpr,
-      args=(),
-      consts=args,
-  )
-  if ctx.module_ctx.auto_barriers:
-    # We need to ensure that any effects produced by one warp
-    # (e.g. async copies) are observable by all other warps.
-    mgpu.warpgroup_barrier()
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    # We allow the warps to schedule async copies without synchronizing with
+    # other warps, so we need to add a barrier here to make sure all reads and
+    # writes have completed.
+    if ctx.module_ctx.auto_barriers:
+      mgpu.warpgroup_barrier()
+    _ = lower_jaxpr_to_mosaic_gpu(
+        module_ctx,
+        ctx.launch_ctx,
+        jaxpr,
+        args=(),
+        consts=args,
+    )
+    if ctx.module_ctx.auto_barriers:
+      # We need to ensure that any effects produced by one warp
+      # (e.g. async copies) are observable by all other warps.
+      mgpu.warpgroup_barrier()
+  else:
+    # TODO(allanrenucci): Remove the pyrefly annotation when .pyi files are updated.
+    warp_map_op = mgpu.dialect.WarpMapOp(operands=[])  # pyrefly: ignore[missing-attribute]
+    with ir.InsertionPoint(warp_map_op.body):
+      _ = lower_jaxpr_to_mosaic_gpu(
+          module_ctx,
+          ctx.launch_ctx,
+          jaxpr,
+          args=(),
+          consts=args,
+      )
+    _isolate_from_above(warp_map_op)
   return []
 
 

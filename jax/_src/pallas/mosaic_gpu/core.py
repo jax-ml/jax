@@ -220,6 +220,8 @@ LANExWARP_SEMANTICS = (
     mgpu.LoweringSemantics.Lane, PrimitiveSemantics.Warp)
 WGxWG_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
+WGxWARP_SEMANTICS = (
+    mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warp)
 
 
 # TODO(justinfu): Reconcile with pl.kernel.

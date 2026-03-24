@@ -24,7 +24,7 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, assert_never, cast
 
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -52,14 +52,30 @@ from . import wgmma
 @dataclasses.dataclass()
 class LoweringContext:
   launch_context: lc.LaunchContext | None
+  _single_thread_per_warp_predicate: ir.Value | None
+  _single_thread_per_warpgroup_predicate: ir.Value | None
   single_thread_per_block_predicate: ir.Value | None
-  single_thread_per_warpgroup_predicate: ir.Value | None
   single_warp_per_block_predicate: ir.Value | None
   auto_barriers: bool
   smem_requested_bytes: int
   is_collective_kernel: bool | None = dataclasses.field(
       init=False, default=None
   )
+  thread_semantics: Literal[
+      utils.ThreadSubset.WARPGROUP, utils.ThreadSubset.WARP
+  ] = utils.ThreadSubset.WARPGROUP
+
+  @property
+  def single_lane_predicate(self) -> ir.Value:
+    match self.thread_semantics:
+      case utils.ThreadSubset.WARPGROUP:
+        assert self._single_thread_per_warpgroup_predicate is not None
+        return self._single_thread_per_warpgroup_predicate
+      case utils.ThreadSubset.WARP:
+        assert self._single_thread_per_warp_predicate is not None
+        return self._single_thread_per_warp_predicate
+      case _:
+        assert_never(self.thread_semantics)  # pytype: disable=wrong-arg-types
 
   def check_collective(self, op: ir.OpView) -> None:
     """Checks that the collective attribute is consistent across operations.
@@ -85,6 +101,12 @@ class LoweringContext:
       raise NotImplementedError(f"Missing lowering rule for {op}")
 
     lowering_rule = _lowerings[name]
+
+    if (
+        self.thread_semantics == utils.ThreadSubset.WARP
+        and name not in _supported_warp_lowerings
+    ):
+      raise NotImplementedError(f"Op {name} does not support warp semantics.")
 
     # TODO(bchetioui): make sure all layouts are set here.
     if inference_utils.should_have_layout(
@@ -249,14 +271,19 @@ def unwrap_transformed_memref(
 
   return result
 
+_supported_warp_lowerings: set[str] = set()
+
 
 def _register_lowering(
-    op: str | type[ir.OpView] | None
+    op: str | type[ir.OpView] | None,
+    support_warp_semantics: bool = False,
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
     if op is not None:
       op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
       _lowerings[op_name] = f
+      if support_warp_semantics:
+        _supported_warp_lowerings.add(op_name)
     return f
 
   return wrapper
@@ -985,12 +1012,12 @@ def _gmem_slice_and_predicate(
     op: mgpu.AsyncLoadOp | mgpu.AsyncPrefetchOp | mgpu.AsyncStoreOp,
 ) -> tuple[
     tuple[ir.Value | fa.FragmentedArray | utils.DynamicSlice, ...],
-    dict[str, ir.Value | None],
+    dict[str, ir.Value],
 ]:
   """Returns the GMEM slice and predicate for the given async op."""
   gmem_slice: list[ir.Value | fa.FragmentedArray | utils.DynamicSlice]
   gmem_slice = []
-  predicate = dict(predicate=ctx.single_thread_per_warpgroup_predicate)
+  predicate = dict(predicate=ctx.single_lane_predicate)
   for idx, size in zip(op.indices, op.slice_lengths, strict=True):
     if isinstance(idx.type, ir.IntegerType):
       idx_int = arith.index_cast(ir.IndexType.get(), idx)
@@ -1066,7 +1093,7 @@ def _mgpu_async_load_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.AsyncPrefetchOp)
+@_register_lowering(mgpu.AsyncPrefetchOp, support_warp_semantics=True)
 def _mgpu_async_prefetch_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
 ) -> Sequence[ir.Value]:
@@ -1087,7 +1114,7 @@ def _mgpu_async_prefetch_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.AsyncStoreOp)
+@_register_lowering(mgpu.AsyncStoreOp, support_warp_semantics=True)
 def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
@@ -1153,7 +1180,7 @@ if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
     [in_layout_attr] = inference_utils.in_tmem_layouts(op)
     tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
     smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
-    with utils.when(ctx.single_thread_per_warpgroup_predicate):
+    with utils.when(ctx.single_lane_predicate):
       tcgen05.async_copy_scales_smem_to_tmem(
         smem_ref, tmem_ref, collective=bool(op.collective)
       )
@@ -1167,7 +1194,7 @@ def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
   [in_layout_attr] = inference_utils.in_tmem_layouts(op)
   tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
   smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
-  with utils.when(ctx.single_thread_per_warpgroup_predicate):
+  with utils.when(ctx.single_lane_predicate):
     tcgen05.async_copy_sparse_metadata_smem_to_tmem(
       smem_ref, tmem_ref, collective=bool(op.collective)
     )
@@ -1190,7 +1217,7 @@ def _async_copy_smem_to_tmem_lowering_rule(
 
   [in_layout_attr] = inference_utils.in_tmem_layouts(op)
   tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
-  with utils.when(ctx.single_thread_per_warpgroup_predicate):
+  with utils.when(ctx.single_lane_predicate):
     tcgen05.async_copy_smem_to_tmem(
         smem_ref, tmem_ref, swizzle, collective=bool(op.collective)
     )
@@ -1544,7 +1571,7 @@ def _mgpu_arrive_op_lowering_rule(
     # TODO(b/415721295): At the moment we assume that there is a single arrival
     # per warpgroup. If we need to support also Warp-level semantics we will
     # need to use a warp-level predicate.
-    predicate = ctx.single_thread_per_warpgroup_predicate
+    predicate = ctx.single_lane_predicate
     arrival_count = utils.WARPGROUP_SIZE
   else:
     # Each thread arrives once.
@@ -1573,7 +1600,7 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
     tx_bytes = utils.c(num_bytes // utils.WARPGROUP_SIZE, i32)
   else:
     tx_bytes = arith.select(
-        ctx.single_thread_per_warpgroup_predicate,
+        ctx.single_lane_predicate,
         utils.c(num_bytes, i32),
         utils.c(0, i32),
     )
@@ -1701,7 +1728,7 @@ def _tile_transform_offsets(
   return new_static_offsets, new_dynamic_offsets
 
 
-@_register_lowering(memref.SubViewOp)
+@_register_lowering(memref.SubViewOp, support_warp_semantics=True)
 def _memref_subview_op_lowering_rule(
     ctx: LoweringContext, op: memref.SubViewOp
 ) -> Sequence[ir.Value]:
@@ -2141,7 +2168,7 @@ def _tcgen05_mma_op_lowering_rule(
     a_swizzle = b_swizzle
     b_ref = unwrap_transformed_memref(op.b, b_transforms)
 
-  with utils.when(ctx.single_thread_per_warpgroup_predicate):
+  with utils.when(ctx.single_lane_predicate):
     tcgen05.mma(
         acc_ref,
         a_ref,
@@ -2188,7 +2215,7 @@ def _async_store_tmem_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.CustomPrimitiveOp)
+@_register_lowering(mgpu.CustomPrimitiveOp, support_warp_semantics=True)
 def _mgpu_custom_primitive_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.CustomPrimitiveOp
 ) -> Sequence[ir.Value]:
@@ -2212,6 +2239,33 @@ def _mgpu_custom_primitive_op_lowering_rule(
     raise ValueError("A custom return op must terminate the block.")
 
   return return_op.operands
+
+
+# TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "WarpMapOp"):
+  @_register_lowering(mgpu.WarpMapOp)
+  def _mgpu_warp_map_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.WarpMapOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.WarpMapOp."""
+    for a, o in zip(op.body.arguments, op.operands, strict=True):
+      a.replace_all_uses_with(o)
+    warp_ctx = dataclasses.replace(ctx, thread_semantics=utils.ThreadSubset.WARP)
+    # We allow the warps to schedule async copies without synchronizing with
+    # other warps, so we need to add a barrier here to make sure all reads and
+    # writes have completed.
+    if ctx.auto_barriers:
+      utils.warpgroup_barrier()
+    with ir.InsertionPoint.current as ip:
+      for op in op.body.operations:
+        op.detach_from_parent()
+        ip.insert(op)
+        warp_ctx.lower_op(op)
+    # We need to ensure that any effects produced by one warp (e.g. async copies)
+    # are observable by all other warps.
+    if ctx.auto_barriers:
+      utils.warpgroup_barrier()
+    return []
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
@@ -2321,7 +2375,7 @@ def _move_scf_block_to_block_with_flattened_arguments(
   return out_template
 
 
-@_register_lowering(scf.ForOp)
+@_register_lowering(scf.ForOp, support_warp_semantics=True)
 def _for_op_lowering_rule(
     ctx: LoweringContext, for_op: scf.ForOp
 ) -> MlirLoweringRuleResult:
@@ -2442,7 +2496,7 @@ def _infer_flat_result_types(
   return result_types
 
 
-@_register_lowering(scf.IfOp)
+@_register_lowering(scf.IfOp, support_warp_semantics=True)
 def _if_op_lowering_rule(
     ctx: LoweringContext, if_op: scf.IfOp
 ) -> MlirLoweringRuleResult:
@@ -2452,7 +2506,7 @@ def _if_op_lowering_rule(
   raise NotImplementedError
 
 
-@_register_lowering(scf.IndexSwitchOp)
+@_register_lowering(scf.IndexSwitchOp, support_warp_semantics=True)
 def _index_switch_op_lowering_rule(
     ctx: LoweringContext, switch_op: scf.IndexSwitchOp
 ) -> MlirLoweringRuleResult:
@@ -2525,28 +2579,25 @@ def _lowering_context(
   """Returns a `LoweringContext` for the given `LaunchContext`."""
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
-    return LoweringContext(None, None, None, None, auto_barriers, 10**9)
+    return LoweringContext(None, None, None, None, None, auto_barriers, 10**9)
 
   gpu_launch_op = _gpu_launch_op(module)
   with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
-    block_predicate = utils.single_thread_predicate(
-        scope=utils.ThreadSubset.BLOCK
-    )
-    warpgroup_predicate = utils.single_thread_predicate(
-        scope=utils.ThreadSubset.WARPGROUP
-    )
     eq = arith.CmpIPredicate.eq
     i32 = ir.IntegerType.get_signless(32)
-    warp_predicate = arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
+    single_warp_per_block_predicate = arith.cmpi(
+        eq, utils.warp_idx(sync=False), utils.c(0, i32)
+    )
     smem_size = gpu_launch_op.dynamicSharedMemorySize
     assert smem_size is not None
     assert isinstance(smem_size.owner, arith.ConstantOp)
     smem_size = ir.IntegerAttr(smem_size.owner.value).value
     return LoweringContext(
         launch_context,
-        block_predicate,
-        warpgroup_predicate,
-        warp_predicate,
+        utils.single_thread_predicate(scope=utils.ThreadSubset.WARP),
+        utils.single_thread_predicate(scope=utils.ThreadSubset.WARPGROUP),
+        utils.single_thread_predicate(scope=utils.ThreadSubset.BLOCK),
+        single_warp_per_block_predicate,
         auto_barriers,
         smem_size,  # pyrefly: ignore[bad-argument-type]
     )

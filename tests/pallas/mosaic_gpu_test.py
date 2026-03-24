@@ -41,7 +41,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -3097,7 +3096,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
     super().setUp()
-    self.skip_if_wg_semantics()
+    # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
+    if not hasattr(mgpu.dialect, "WarpMapOp"):
+      self.skip_if_wg_semantics()
 
   def test_axis_index(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
@@ -3320,6 +3321,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   @parameterized.parameters(False, True)
   def test_copy_gmem_to_smem_from_different_warps(self,
                                                   wait_smem_to_gmem_in_warp):
+    self.skip_if_wg_semantics()  # copy_gmem_to_smem lowering not implemented
     # In this test, we issue a copy from from warp 0 and await it in warp 1.
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
@@ -3349,6 +3351,13 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     np.testing.assert_array_equal(result, x[32:64])
 
 
+class PallasCallWarpPrimitiveSemanticsWGTest(
+    PallasCallWarpPrimitiveSemanticsTest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
+
+
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
@@ -3373,7 +3382,6 @@ class PallasCallWGTest(
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
-        pallas_core.core_map_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)

@@ -193,6 +193,9 @@ jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 @lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -767,12 +770,9 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 
 
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
-@lowering.register_lowering_rule(
-    async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS
-)
-@lowering.register_lowering_rule(
-    async_prefetch_p, mgpu.LoweringSemantics.Warpgroup
-)
+@lowering.register_lowering_rule(async_prefetch_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(async_prefetch_p, *gpu_core.WGxWARP_SEMANTICS)
 def _async_prefetch_lowering(
     ctx: lowering.LoweringRuleContext,
     ref,
@@ -997,6 +997,7 @@ jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 @lowering.register_lowering_rule(
     barrier_wait_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(barrier_wait_p, *gpu_core.WGxWARP_SEMANTICS)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -2928,89 +2929,8 @@ def _populate_custom_primitive_op_block(
     mgpu.dialect.ReturnOp(operands_=ir_ret)
 
 
-def _closed_over_values(block: ir.Block) -> list[ir.Value]:
-  """Returns a list of values used within `block` that are defined outside of `block`."""
-  def _closed_over_values_inner(
-      block: ir.Block, vals_in_block: set[ir.Value]
-  ) -> list[ir.Value]:
-    closed_over_values = []
-    for arg in block.arguments:
-      vals_in_block.add(arg)
-    for op in block.operations:
-      for o in op.operands:
-        if o not in vals_in_block:
-          closed_over_values.append(o)
-      for r in op.regions:
-        for b in r.blocks:
-          closed_over_values.extend(_closed_over_values_inner(b, vals_in_block))
-      for r in op.results:
-        vals_in_block.add(r)
-    return closed_over_values
-  return _closed_over_values_inner(block, set())
-
-
-def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
-  """Replaces all uses of the `old` value with the `new` value in `block`."""
-
-  def is_contained_within_block(operand: ir.OpOperand, block: ir.Block) -> bool:
-    current_op = operand.owner.operation
-    while (parent := current_op.parent) is not None:
-      if current_op.block == block:
-        return True
-      current_op = parent
-    return False
-
-  for use in old.uses:
-    if is_contained_within_block(use, block):
-      use.owner.operands[use.operand_number] = new
-
-
-def _isolate_from_above(op: ir.Operation) -> ir.Operation:
-  """Makes `op` conform to the `IsolatedFromAbove` trait.
-
-  This replaces all captured values with new op operands.
-  """
-  if len(op.regions) != 1:
-    raise NotImplementedError("Only support ops with one region.")
-  if len(op.regions[0].blocks) != 1:
-    raise NotImplementedError("Only support ops with one block.")
-
-  block = op.regions[0].blocks[0]
-  captures = _closed_over_values(block)
-  if not captures:
-    return op
-
-  # 1. Create the new operation shell with the expanded operands.
-  new_op = ir.Operation.create(
-      name=op.name,
-      results=[res.type for res in op.results],
-      operands=list(op.operands) + captures,
-      attributes=dict(op.attributes),
-      regions=1,
-  )
-
-  # 2. Move the block from the old op to the new op.
-  block.append_to(new_op.regions[0])
-
-  # 3. Create new block arguments for the captured values.
-  new_args = []
-  for capture in captures:
-    new_args.append(block.add_argument(capture.type, capture.location))
-
-  # 4. Redirect all references from captured values to the newly created
-  # block's arguments.
-  for capture, new_arg in zip(
-      captures, block.arguments[-len(captures) :], strict=True
-  ):
-    _replace_uses_in_block(capture, new_arg, block)
-
-  # 5. Clean up the now-empty old operation.
-  op.erase()
-
-  return new_op
-
-
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(inline_mgpu_p, *gpu_core.WGxWARP_SEMANTICS)
 def _inline_mgpu_lowering_rule_wg_semantics(
     ctx: lowering.LoweringRuleContext,
     *flat_args_and_transforms,
@@ -3022,6 +2942,14 @@ def _inline_mgpu_lowering_rule_wg_semantics(
     pytree_ret_ty,
 ):
   del pytree_ret_ty
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    for r in flat_ret_ty:
+      if isinstance(r, ShapeDtypeStruct) and r.shape:
+        raise ValueError(
+            "inline_mgpu in a single-warp context only supports scalar return"
+            f" types. Got shape={r.shape}."
+        )
+
   flat_transformed_args = _inline_mgpu_flat_transformed_args(
       ctx,
       flat_args_and_transforms,
@@ -3059,7 +2987,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
   # We need to ensure that the block doesn't capture any values from the context
   # and uses args for everything instead. E.g. `LaunchContext.tma_descriptors`
   # will be captured when calling `ctx.async_copy`.
-  custom_op = _isolate_from_above(custom_op)
+  custom_op = lowering._isolate_from_above(custom_op)
 
   return custom_op.results
 
