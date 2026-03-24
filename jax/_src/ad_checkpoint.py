@@ -17,41 +17,48 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import logging
-from typing import Any
 import types
-
-import numpy as np
+from typing import Any
 
 from jax._src import ad_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import deprecations
 from jax._src import dtypes
-from jax._src import linear_util as lu
 from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src import api_util
-from jax._src import custom_derivatives
+from jax._src.hijax import VJPHiPrimitive
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
-from jax._src.hijax import VJPHiPrimitive
-from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
+from jax._src.lax import lax as lax_internal
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, Partial)
+    FlatTree,
+    Partial,
+    PyTreeDef,
+    broadcast_prefix,
+    tree_flatten,
+    tree_leaves,
+    tree_map,
+    tree_structure,
+    tree_unflatten,
+)
 from jax._src.typing import DeprecatedArg
-from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists, weakref_lru_cache)
+from jax._src.util import ( merge_lists, partition_list, safe_map,
+                           safe_zip, split_list,unzip2, weakref_lru_cache, wraps)
+import numpy as np
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -483,7 +490,10 @@ def _trace_to_jaxpr(fun: Callable,
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
   try:
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fun, FlatTree.flatten_args(*in_avals), debug_info=debug
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -806,9 +816,9 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
-  transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
-      transposed_wrapped, in_avals)
-  transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
+  transposed_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed_wrapped, FlatTree.flatten_args(*in_avals), debug_info=dbg
+  )
   return transposed_jaxpr, cell.in_cts_zero  # type: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):

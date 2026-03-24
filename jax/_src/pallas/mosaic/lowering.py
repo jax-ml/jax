@@ -1234,7 +1234,10 @@ def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
         f, params,
         debug_info=api_util.debug_info("mosaic lower_fun", f,
                                        args, {}))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_fun, tree_util.FlatTree.flatten_args(*ctx.avals_in)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     if consts:
       raise NotImplementedError
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)

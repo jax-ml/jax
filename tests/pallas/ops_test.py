@@ -38,6 +38,7 @@ from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
 from jax.interpreters import partial_eval as pe
+from jax._src.tree_util import FlatTree
 import jax.numpy as jnp
 import numpy as np
 
@@ -2852,8 +2853,10 @@ class PallasPrimitivesTest(PallasBaseTest):
     def body(x_ref):
       x = pallas_primitives.load(x_ref, expr())
       return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+    in_avals = (state.shaped_array_ref((4, 3, 2), jnp.int32),)
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        body, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", body, in_avals, {}))
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2869,8 +2872,10 @@ class PallasPrimitivesTest(PallasBaseTest):
           x_ref, expr(), pallas_primitives.load(x_ref, expr())
       )
       return []
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+    in_avals = (state.shaped_array_ref((4, 3, 2), jnp.int32),)
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        body, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", body, in_avals, {}))
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2891,8 +2896,10 @@ class PallasPrimitivesTest(PallasBaseTest):
           x_ref, expr(), pallas_primitives.load(x_ref, expr())
       )
       return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+    in_avals = (state.shaped_array_ref((4, 3, 2), jnp.int32),)
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        body, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", body, in_avals, {}))
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.product(approx=[False, True], full_range=[False, True])

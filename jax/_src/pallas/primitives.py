@@ -709,7 +709,10 @@ def run_scoped(
   # are not in the invars of an operation so we just put them all
   # there.
   with config.mutable_array_checks(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fun, tree_util.FlatTree.flatten_args(*avals)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out = run_scoped_p.bind(*consts, jaxpr=jaxpr, collective_axes=collective_axes)
   return tree_util.tree_unflatten(out_tree_thunk(), out)
 

@@ -136,7 +136,10 @@ def trace_fun(
       lu.wrap_init(fun, debug_info=debug_info), in_tree
   )
   del out_tree_thunk
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fn, flat_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fn, jax.tree_util.FlatTree.flatten_args(*flat_avals)
+  )
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   ref_effects = [
       eff for eff in jaxpr.effects if isinstance(eff, state_types.RefEffect)
   ]

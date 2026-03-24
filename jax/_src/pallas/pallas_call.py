@@ -373,9 +373,13 @@ def _batch_block_mapping(
                    debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()),
       tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
-    block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
         block_mapping_flat_fn,
-        idx_avals)
+        tree_util.FlatTree.flatten_args(*idx_avals),
+        debug_info=block_mapping_flat_fn.debug_info,
+    )
+    block_mapping_jaxpr = closed_jaxpr.jaxpr
+    consts = closed_jaxpr.consts
   new_index_map_out_tree = out_tree_thunk()
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
@@ -884,9 +888,10 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
       jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.typeof, flat_args)
-    traced_loop, _, consts = pe.trace_to_jaxpr_dynamic(
-        wrapped_loop, list(avals_in))
-    traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
+    closed_traced_loop, _ = pe.trace_to_jaxpr(
+        wrapped_loop, tree_util.FlatTree.flatten_args(*avals_in)
+    )
+    traced_loop = closed_traced_loop
   out_error, _ = checkify.checkify_jaxpr(
       traced_loop, checkify.index_checks, error, flat_args)
   return out_error
@@ -998,8 +1003,11 @@ def pallas_call_checkify_rule(error: checkify.Error,
       lu.wrap_init(checked_kernel_fn, debug_info=debug_info), jaxpr_in_tree)
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
-    final_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrapped_kernel_with_err, jaxpr_flat_avals)
+    closed_final_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_kernel_with_err,
+        tree_util.FlatTree.flatten_args(*jaxpr_flat_avals),
+    )
+    final_jaxpr = closed_final_jaxpr.jaxpr
 
   # Prepare pallas_call inputs. We need to create new block specs
   # for the new error inputs and outputs.
@@ -1067,9 +1075,10 @@ def _trace_kernel_to_jaxpr(
   )
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-          wrapped_kernel_fun, kernel_avals
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          wrapped_kernel_fun, tree_util.FlatTree.flatten_args(*kernel_avals)
       )
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
       jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars),
                               instantiate=True)
     if consts:
@@ -1310,18 +1319,21 @@ def _pallas_call_state_discharge_rule(
           ],
       )
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body,
-                   debug_info=jaxpr.debug_info.with_unknown_names()),
-      [
-          *index_map_avals,
-          *ref_avals,
-          *jaxpr_in_avals,
-          *ref_avals,
-          *jaxpr_out_avals,
-          *jaxpr_rest_avals,
-      ],
+  avals_in = [
+      *index_map_avals,
+      *ref_avals,
+      *jaxpr_in_avals,
+      *ref_avals,
+      *jaxpr_out_avals,
+      *jaxpr_rest_avals,
+  ]
+  closed_new_jaxpr, _ = pe.trace_to_jaxpr(
+      lu.wrap_init(
+          _rewritten_body, debug_info=jaxpr.debug_info.with_unknown_names()
+      ),
+      tree_util.FlatTree.flatten_args(*avals_in),
   )
+  new_jaxpr, consts = closed_new_jaxpr.jaxpr, closed_new_jaxpr.consts
   out_flat = pallas_call_p.bind(
       *consts,
       *dynamic_grid_bounds,

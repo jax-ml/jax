@@ -38,9 +38,9 @@ from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import frozen_dict
 from jax._src import hashable_array
-from jax._src import literals
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
 from jax._src import source_info_util
@@ -49,8 +49,8 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_mlir_ext
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
@@ -61,6 +61,7 @@ from jax._src.sharding_impls import ( AUTO, NamedSharding,
                                      SdyArray, SdyArrayList,
                                      modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
+from jax._src.tree_util import FlatTree
 from jax._src.typing import ArrayLike
 from jax._src.util import foreach
 import numpy as np
@@ -2492,8 +2493,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     wrapped_fun = lu.wrap_init(f, params,
         debug_info=api_util.debug_info("lower_fun", fun, args, {}))
 
-    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
-        wrapped_fun, ctx.avals_in, lower=True)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_fun,
+        FlatTree.flatten_args(*ctx.avals_in),
+        debug_info=wrapped_fun.debug_info,
+    )
+    jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pytype: disable=import-error

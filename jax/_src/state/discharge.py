@@ -87,7 +87,12 @@ def discharge_state(
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
                             debug_info=jaxpr.debug_info.with_unknown_names())
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals, lower=True)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      eval_jaxpr,
+      tree_util.FlatTree.flatten_args(*in_avals),
+      debug_info=eval_jaxpr.debug_info,
+  )
+  new_jaxpr, new_consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   return new_jaxpr, new_consts
 
 # TODO(mattjj): migrate callers to discharge_state2 for caching
@@ -830,7 +835,10 @@ def _initial_style_jaxpr(fun: Callable,
   fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug),
       tree_util.treedef_tuple((in_tree,)))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      fun_, tree_util.FlatTree.flatten_args(*in_avals), debug_info=debug
+  )
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   return jaxpr, consts, out_tree_thunk()
 
 

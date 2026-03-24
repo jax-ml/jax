@@ -140,9 +140,13 @@ def asarray(x: ArrayLike) -> Array:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
 @overload
+
+
 def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
 
 @overload
+
+
 def broadcast_shapes(*shapes: tuple[int | core.Tracer, ...]
                      ) -> tuple[int | core.Tracer, ...]: ...
 
@@ -1747,7 +1751,13 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               debug_info: core.DebugInfo):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fun,
+      tree_util.FlatTree.flatten_args(*in_avals),
+      debug_info=flat_fun.debug_info,
+  )
+  jaxpr = closed_jaxpr.jaxpr
+  consts = closed_jaxpr.consts
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "
@@ -3013,7 +3023,13 @@ def _reduction_jaxpr(computation: Callable,
       comp,
       debug_info=api_util.debug_info("reduction_jaxpr", computation,
                                      (aval, aval), {}))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      comp_wrapped,
+      tree_util.FlatTree.flatten_args(aval, aval),
+      debug_info=comp_wrapped.debug_info,
+  )
+  jaxpr = closed_jaxpr.jaxpr
+  consts = closed_jaxpr.consts
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -3029,7 +3045,13 @@ def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
   comp = lu.wrap_init(computation, debug_info=debug_info)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_comp,
+      tree_util.FlatTree.flatten_args(*flat_in_avals),
+      debug_info=flat_comp.debug_info,
+  )
+  jaxpr = closed_jaxpr.jaxpr
+  consts = closed_jaxpr.consts
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -3260,10 +3282,14 @@ def reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 @overload
+
+
 def sort(operand: Array, dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array: ...
 
 @overload
+
+
 def sort(operand: Sequence[Array], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
 

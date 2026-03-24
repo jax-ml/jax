@@ -45,8 +45,12 @@ def fused(*, out_spaces):
 def _trace_to_jaxpr(fun, in_tree, in_avals, dbg):
   f = lu.wrap_init(fun, debug_info=dbg)
   f, out_tree = flatten_fun_nokwargs(f, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+  from jax._src.tree_util import FlatTree
+
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      f, FlatTree.flatten_args(*in_avals), debug_info=f.debug_info
+  )
+  return core.ClosedJaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts), out_tree()
 
 fused_p = core.Primitive('fused_call')
 fused_p.multiple_results = True
@@ -152,7 +156,13 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
     cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  wrapped_fun = lu.wrap_init(transposed, debug_info=dbg)
+  from jax._src.tree_util import FlatTree
+
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun,
+      FlatTree.flatten_args(*in_avals),
+      debug_info=wrapped_fun.debug_info,
+  )
+  return core.ClosedJaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts), cell.out_tree  # type: ignore
 ad.primitive_transposes[fused_p] = _fused_transpose

@@ -124,8 +124,12 @@ def _trace_index_map_to_jaxpr(
   flat_fun, _ = api_util.flatten_fun(
       lu.wrap_init(index_map, debug_info=debug_info), index_map_tree
   )
-  index_map_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, index_map_avals
+  closed_index_map_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fun, pallas_core.tree_util.FlatTree.flatten_args(*index_map_avals)
+  )
+  index_map_jaxpr, consts = (
+      closed_index_map_jaxpr.jaxpr,
+      closed_index_map_jaxpr.consts,
   )
   return jax_core.ClosedJaxpr(index_map_jaxpr, consts)
 
@@ -270,10 +274,7 @@ def lower_pipelined_jaxpr_into_module(
     return ()  # ``wrap_init`` does not support functions returning None.
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
+    avals = (
         util.merge_lists(
             is_semaphore,
             [
@@ -284,8 +285,16 @@ def lower_pipelined_jaxpr_into_module(
             ],
             [bm.transformed_block_aval for bm in sem_block_mappings],
         )
-        + jaxpr.in_avals[grid_mapping.slice_scratch_ops],
+        + jaxpr.in_avals[grid_mapping.slice_scratch_ops]
     )
+    closed_new_jaxpr, _ = pe.trace_to_jaxpr(
+        lu.wrap_init(
+            pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()
+        ),
+        pallas_core.tree_util.FlatTree.flatten_args(*avals),
+    )
+    new_jaxpr = closed_new_jaxpr.jaxpr
+    new_consts = closed_new_jaxpr.consts
     assert not new_consts
 
   parallel_index_map_avals, parallel_index_map_tree = tree_util.tree_flatten(

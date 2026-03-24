@@ -910,9 +910,11 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     ]
     debug_info = api_util.debug_info("parallel_loop", body, flat_avals, {})
     check_no_transformed_refs_args(lambda: debug_info, flat_carries)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(wrapped, debug_info=debug_info), flat_avals
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        lu.wrap_init(wrapped, debug_info=debug_info),
+        pallas_core.tree_util.FlatTree.flatten_args(*flat_avals),
     )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
         jaxpr.effects

@@ -27,6 +27,9 @@ def make_jaxpr(f, *args, **kwargs):
   flat_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(f, debug_info=debug_info), in_tree
   )
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fun, tree_util.FlatTree.flatten_args(*flat_avals)
+  )
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out_tree = out_tree_thunk()
   return jaxpr, consts, in_tree, out_tree
