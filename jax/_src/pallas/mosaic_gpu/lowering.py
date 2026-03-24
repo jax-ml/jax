@@ -3912,8 +3912,7 @@ def _core_map_lowering_rule(
       # (e.g. async copies) are observable by all other warps.
       mgpu.warpgroup_barrier()
   else:
-    # TODO(allanrenucci): Remove the pyrefly annotation when .pyi files are updated.
-    warp_map_op = mgpu.dialect.WarpMapOp(operands=[])  # pyrefly: ignore[missing-attribute]
+    warp_map_op = mgpu.dialect.WarpMapOp(operands=[])
     with ir.InsertionPoint(warp_map_op.body):
       _ = lower_jaxpr_to_mosaic_gpu(
           module_ctx,

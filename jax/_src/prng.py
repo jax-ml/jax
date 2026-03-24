@@ -325,7 +325,7 @@ class PRNGKeyArray(Array):
     out._consumed = self._consumed  # TODO(jakevdp): is this correct?
     return out
 
-  __hash__ = None  # type: ignore[assignment]
+  __hash__ = None
   __array_priority__ = 100
 
   def __array__(self, dtype: np.dtype | None = None, context: None = None,

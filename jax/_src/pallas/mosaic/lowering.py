@@ -1160,7 +1160,7 @@ def lower_jaxpr_to_transform_func(
   body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   try:
     body.func_op.verify()
-  except ir.MLIRError as e:  # pyrefly: ignore[missing-attribute]
+  except ir.MLIRError as e:
     raise error_handling.mlir_error_to_verification_error(e) from e
   return body.func_op
 
@@ -1222,7 +1222,7 @@ def lower_jaxpr_to_func(
     return body.func_op
   try:
     body.func_op.verify()
-  except ir.MLIRError as e:  # pyrefly: ignore[missing-attribute]
+  except ir.MLIRError as e:
     raise error_handling.mlir_error_to_verification_error(e) from e
   return body.func_op
 

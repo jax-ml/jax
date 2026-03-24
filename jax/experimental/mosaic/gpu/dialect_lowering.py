@@ -208,7 +208,6 @@ def _fragmented_array_from_ir(
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
-  # pyrefly: ignore[bad-assignment]
   reg_ty: ir.Type = producer_layout.registers_element_type(vector_ty.element_type)
 
   conversion_cast, converted_outputs = _undo_conversion_cast(
@@ -2197,8 +2196,8 @@ def _tcgen05_mma_op_lowering_rule(
         b_ref,
         a_swizzle=a_swizzle,
         b_swizzle=b_swizzle,
-        a_scale=a_scale,  # pyrefly: ignore[bad-argument-type]
-        b_scale=b_scale,  # pyrefly: ignore[bad-argument-type]
+        a_scale=a_scale,
+        b_scale=b_scale,
         accumulate=op.accumulate,
         collective=op.collective.value,
         a_sparse_metadata=a_sparse_metadata,
@@ -2510,7 +2509,6 @@ def _infer_flat_result_types(
       continue
     vec_type = ir.VectorType(r.type)
     layout = layouts_lib.from_layout_attr(next(out_layouts_it))
-    # pyrefly: ignore[bad-assignment]
     reg_type: ir.Type = layout.registers_element_type(vec_type.element_type)
     result_types.extend(
         [reg_type] * math.prod(layout.registers_shape(tuple(vec_type.shape)))
