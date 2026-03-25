@@ -2139,7 +2139,7 @@ def _store(
     *,
     cache_modifier: str | None = None,
     eviction_policy: str | None = None,
-) -> ir.Value:
+) -> None:
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
@@ -2181,7 +2181,7 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  return tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
 
 
 @register_lowering(primitives.swap_p)

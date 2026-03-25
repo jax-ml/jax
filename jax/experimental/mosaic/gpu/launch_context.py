@@ -21,11 +21,12 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import cast, Any, ClassVar, Literal
+from typing import cast, Any, ClassVar, Literal, TypeVar
 
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
@@ -38,6 +39,8 @@ import numpy as np
 from . import fragmented_array as fa
 from . import profiler
 from . import utils
+
+_OpT = TypeVar("_OpT", bound=ir.OpView)
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
@@ -402,7 +405,7 @@ class Scratch:
              : (!llvm.array<256 x i8>) -> !llvm.ptr
 
   """
-  def __init__(self, gpu_launch_op: gpu.LaunchOp):
+  def __init__(self, gpu_launch_op: _gpu_ops_gen.LaunchOp):
     self.next_offset: int = 0
     self.host_init: list[Callable[[ir.Value], None]] = []
     self._ops_created = False
@@ -412,21 +415,23 @@ class Scratch:
     # find the gpu.launch op from there when needed.
     op = gpu_launch_op
     while op.name != "builtin.module":
+      assert op.parent is not None
       op = op.parent.opview
     assert op is not None
-    self._module_op = op
+    self._module_op = cast(builtin.ModuleOp, op)
 
   def _find_first_op(
-      self, op_name: str, block: ir.Block, tag_attribute_name: str | None = None
-  ) -> ir.OpView | None:
+      self, op_type: type[_OpT], block: ir.Block, tag_attribute_name: str | None = None
+  ) -> _OpT | None:
+    op_name = getattr(op_type, "OPERATION_NAME", None)
     for op in block:
       if op.name == op_name and (
           tag_attribute_name is None or tag_attribute_name in op.attributes
       ):
-        return op
+        return cast(_OpT, op)
       for region in op.regions:
         for block in region:
-          child_op = self._find_first_op(op_name, block, tag_attribute_name)
+          child_op = self._find_first_op(op_type, block, tag_attribute_name)
           if child_op is not None:
             return child_op
     return None
@@ -436,10 +441,7 @@ class Scratch:
       return
     self._ops_created = True
 
-    gpu_launch_op = cast(
-        gpu.LaunchOp | None,
-        self._find_first_op("gpu.launch", self._module_op.body),  # pyrefly: ignore[bad-argument-type]
-    )
+    gpu_launch_op = self._find_first_op(gpu.LaunchOp, self._module_op.body)
     assert gpu_launch_op is not None
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -465,7 +467,7 @@ class Scratch:
       self._create_ops()
 
     alloc_op = self._find_first_op(
-        "llvm.alloca", self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR  # pyrefly: ignore[bad-argument-type]
+        llvm.AllocaOp, self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR
     )
     assert alloc_op is not None
     [alloc_user] = alloc_op.result.uses
@@ -474,7 +476,7 @@ class Scratch:
     [load_op_user] = load_op.result.uses
     device_ptr = load_op_user.owner
     assert device_ptr.operation.name == "builtin.unrealized_conversion_cast"
-    return alloc_op, load_op, device_ptr.result
+    return alloc_op, load_op, device_ptr.result  # pyrefly: ignore[bad-return]
 
   def device_ptr(self) -> ir.Value:
     _, _, device_ptr = self._find_alloc_load_and_device_ptr()
@@ -503,9 +505,7 @@ class _DefaultPredicate:
   pass
 
 
-def _find_kernel_argument_for_gmem_ref(
-    gmem_ref: ir.Value,
-) -> builtin.UnrealizedConversionCastOp:
+def _find_kernel_argument_for_gmem_ref(gmem_ref: ir.Value) -> ir.Value:
   """Returns the kernel argument value for a given gmem_ref.
 
   The kernel argument is expected to be an unrealized conversion cast. This
@@ -660,7 +660,7 @@ class LaunchContext:
     gep = llvm.GEPOp(
         ptr_ty, self.scratch.device_ptr(), [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
-    gep.move_after(self.scratch.device_ptr().owner)
+    gep.move_after(self.scratch.device_ptr().owner)  # pyrefly: ignore[bad-argument-type]
     return device_init(gep.result)
 
   def _recompute_peer_id(
@@ -689,7 +689,8 @@ class LaunchContext:
       new_op = ir.Operation.create(
           op.OPERATION_NAME, result_types, new_operands, new_attributes
       )
-      return new_op.results if len(new_op.results) > 1 else new_op.result  # pytype: disable=bad-return-type
+      assert len(new_op.results) == 1
+      return new_op.result
 
     # nvshmem_my_pe queries the device id of the current process and works on
     # both the host and the device.

@@ -296,6 +296,7 @@ def build_kernel(
         ctx.await_async_copy(0)
 
       scf.yield_([])
+    assert if_compute.else_block is not None
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
       with single_thread(scope=ThreadSubset.WARPGROUP):

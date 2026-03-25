@@ -825,7 +825,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
   i32 = ir.IntegerType.get_signless(32)
-  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols
+  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols  # pyrefly: ignore[bad-return]
 
 
 def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:

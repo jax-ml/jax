@@ -144,7 +144,7 @@ def _attach_xla_metadata_to_op(
     # Combine with existing mhlo.frontend_attributes
     for attr in op.attributes:
       if attr == "mhlo.frontend_attributes":
-        for a in op.attributes[attr]:
+        for a in ir.DictAttr(op.attributes[attr]):
           existing_attributes[a.name] = a.attr
     op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
         ctx_attributes | existing_attributes

@@ -158,6 +158,7 @@ class HypothesisShardedTestLoader(JaxTestLoader):
   def shardTestCaseNames(self, iterator, ordered_names, shard_index):
     if issubclass(self._current_test_class, HypothesisShardedTestCase):
       return ordered_names
+    # pyrefly: ignore[missing-attribute]
     return super().shardTestCaseNames(iterator, ordered_names, shard_index)
 
 

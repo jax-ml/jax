@@ -42,7 +42,9 @@ def main():
     stubgen = importlib.util.module_from_spec(spec)
     sys.modules["stubgen"] = stubgen
     spec.loader.exec_module(stubgen)
-    stubgen.main(["-m", args.module, "-r", "-O", args.output])
+    stubgen.main(
+        ["-m", args.module, "-r", "--include-private", "-O", args.output]
+    )
 
 
 if __name__ == "__main__":

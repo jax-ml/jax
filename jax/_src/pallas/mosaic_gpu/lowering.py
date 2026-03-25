@@ -3824,7 +3824,9 @@ def _replace_uses_in_block(old: ir.Value, new: ir.Value, block: ir.Block):
       use.owner.operands[use.operand_number] = new
 
 
-def _isolate_from_above(op: ir.Operation) -> ir.Operation:
+def _isolate_from_above(
+    op: ir.Operation | ir.OpView
+) -> ir.Operation | ir.OpView:
   """Makes `op` conform to the `IsolatedFromAbove` trait.
 
   This replaces all captured values with new op operands.

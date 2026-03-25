@@ -547,6 +547,7 @@ _constraint_system_derivation_rules: dict[
 def _add_constraint_system_derivation_rule(op: type[ir.OpView]):
   def wrapper(rule: ConstraintSystemDerivationRule):
     if op is not None:
+      assert hasattr(op, "OPERATION_NAME")
       _constraint_system_derivation_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
     return rule
 
@@ -1033,7 +1034,7 @@ def _vector_broadcast_constraint_system(
   if isinstance(op.source.type, ir.ShapedType):
     raise NotImplementedError("Only vector broadcasts from scalars are supported.")
   out_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
-  layout = cs.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))
+  layout = cs.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))  # pyrefly: ignore[missing-attribute]
   return (
       cs.ConstraintSystem(assignments={out_variable: layout}),
       {out_variable: [out_variable.key]},
@@ -1085,7 +1086,7 @@ def _broadcast_in_dim_constraint_system(
   src_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
   dst_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
   src_shape = tuple(op.operand.type.shape)  # pyrefly: ignore[missing-attribute]
-  dst_shape = tuple(op.result.type.shape)
+  dst_shape = tuple(op.result.type.shape)  # pyrefly: ignore[missing-attribute]
 
   # Map destination index -> source index
   dst_to_src = {dst: src for src, dst in enumerate(op.broadcast_dimensions)}
@@ -2086,11 +2087,11 @@ def producer_result(operand: ValueSite) -> ValueSite:
   value = operand.value
   producer = value.owner
   if isinstance(producer, ir.OpView):
-    index = list(producer.results).index(value)
+    index = list[ir.Value](producer.results).index(value)
     return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
-    index = list(producer.arguments).index(value)  # pytype: disable=attribute-error
+    index = list[ir.Value](producer.arguments).index(value)  # pytype: disable=attribute-error
     region_index = list(producer.owner.regions).index(producer.region)  # pytype: disable=attribute-error
     return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)  # pytype: disable=attribute-error
 
