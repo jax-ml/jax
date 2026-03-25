@@ -887,19 +887,21 @@ else:
 
 class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
-  __slots__ = ['__weakref__', '_trace', '_line_info']
+  __slots__ = ['__weakref__', '_trace', '_line_info', 'aval']
   __hash__ = None
 
   _trace: TraceType
   _line_info: source_info_util.SourceInfo | None
+  aval: AbstractValue
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
 
-  def __init__(self, trace: TraceType):
+  def __init__(self, trace: TraceType, aval: AbstractValue):
     self._trace = trace
+    self.aval = aval
 
   def _error_repr(self):
     if self.aval is None:
@@ -986,10 +988,6 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     if not hasattr(self.aval, "at"):
       raise TypeError(f"Value of type {type(self)} does not support at().")
     return self.aval.at.fget(self)
-
-  @property
-  def aval(self) -> AbstractValue:
-    raise NotImplementedError("must override")
 
   def get_referent(self) -> Any:
     return self  # Override for object equivalence checking

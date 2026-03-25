@@ -205,13 +205,9 @@ class JetTracer(core.Tracer['JetTrace']):
 
   def __init__(self, trace, primal, terms):
     assert type(terms) in (ZeroSeries, list, tuple)
-    self._trace = trace
+    super().__init__(trace, core.typeof(primal))
     self.primal = primal
     self.terms = terms
-
-  @property
-  def aval(self):
-    return core.typeof(self.primal)
 
   def full_lower(self):
     if self.terms is zero_series or all(t is zero_term for t in self.terms):
