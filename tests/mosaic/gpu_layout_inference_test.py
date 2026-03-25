@@ -15,6 +15,7 @@
 """Layout inference tests for the Mosaic GPU MLIR dialect."""
 
 # pylint: disable=g-complex-comprehension
+import dataclasses
 
 from absl.testing import parameterized
 import jax
@@ -43,6 +44,12 @@ from jax.experimental.mosaic.gpu import test_util as mtu
 import numpy as np
 
 config.parse_flags_with_absl()
+
+
+@dataclasses.dataclass(frozen=True)
+class MockVariableKey:
+  idx: int
+  shape: tuple[int, ...]
 
 
 def _make_ir_context():
@@ -771,7 +778,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_find_assignments_for_is_transferable_constraints_is_deterministic(
       self,
   ):
-    v0 = V(0)
+    v0 = V(MockVariableKey(idx=0, shape=(128, 128)))
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
     constraint = cs.IsTransferable(
         v0, cs.TMEMLayout(tmem_layout), shape=(128, 128), bitwidth=32

@@ -453,9 +453,12 @@ def find_assignments_for(
           "Layout inference failed to find a solution. Consider adding layout "
           "annotations to your program to guide the search."
       )
-    # Trying one assignment consumes fuel.
-    fuel -= 1
     variable, expr = assignment
+    assert isinstance(expr, cs.Constant)
+    if not is_valid_assignment(variable.key.shape, expr):
+      continue
+    # Trying one valid assignment consumes fuel.
+    fuel -= 1
     new_constraint_system = (
         cs.ConstraintSystem(assignments={variable: expr}) & constraint_system
     )
@@ -2228,6 +2231,20 @@ def is_valid_tmem_layout_assignment(
   except ValueError:
     return False
   return True
+
+
+def is_valid_assignment(shape: tuple[int, ...], layout: cs.Constant) -> bool:
+  match layout:
+    case cs.RegisterLayout(value=reg_layout):
+      return is_valid_register_layout_assignment(shape, reg_layout)
+    case cs.TMEMLayout(value=tmem_layout):
+      return is_valid_tmem_layout_assignment(shape, tmem_layout)
+    case cs.SMEMTiling(value=tiling_or_none):
+      if tiling_or_none is None:
+        return True
+      return is_valid_smem_layout_assignment(shape, tiling_or_none)
+    case _:
+      raise ValueError(f"Unsupported layout type: {type(layout)}")
 
 
 def check_layout_assignment(v: ValueSite, layout: cs.Constant) -> None:
