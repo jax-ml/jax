@@ -253,6 +253,36 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_matmul_unreduced_vjp(self, mesh):
+    np_inp1 = np.arange(8.).reshape(2, 4)
+    np_inp2 = np.arange(8.).reshape(4, 2)
+    arr1 = jax.device_put(np_inp1, P(None, 'y'))
+    arr2 = jax.device_put(np_inp2, P('y', None))
+
+    @jax.jit
+    @shard_map(in_specs=(P(None, 'y'), P('y', None)),
+               out_specs=P(None, None, unreduced={'y'}))
+    def f(a, b):
+      c = jnp.einsum('ab,bc->ac', a, b)
+      self.assertEqual(c.aval.vma, {'y'})
+      return c
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'y'})))
+
+    # Test backward pass with vjp
+    cotangent = jax.sharding.reshard(
+        jnp.ones((2, 2)), P(None, None, reduced={'y'}))
+    _, vjp_fn = jax.vjp(f, arr1, arr2)
+    grad1, grad2 = vjp_fn(cotangent)
+    self.assertEqual(grad1.sharding,
+                     NamedSharding(mesh, P(None, 'y')))
+    self.assertEqual(grad2.sharding,
+                     NamedSharding(mesh, P('y', None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_matmul_unreduced_error(self, mesh):
     np_inp1 = np.arange(8.).reshape(2, 4)
     np_inp2 = np.arange(8.).reshape(4, 2)
