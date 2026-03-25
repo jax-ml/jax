@@ -22,7 +22,6 @@ from sphinx.util.docutils import SphinxDirective
 logger = logging.getLogger(__name__)
 
 _deprecations = (
-  'jax_default_dtype_bits', # an experiment that we never documented, but we can't remove it because Keras depends on its existing broken behavior
   'jax_serialization_version'
 )
 
