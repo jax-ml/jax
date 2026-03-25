@@ -83,6 +83,33 @@ static FailureOr<APFloat> convertFloatValue(
   return sourceValue;
 }
 
+std::optional<CoreType> getRefCoreType(TypedValue<MemRefType> value) {
+  auto space = dyn_cast_if_present<tpu::MemorySpaceAttr>(
+      value.getType().getMemorySpace());
+  if (!space) {
+    return std::nullopt;
+  }
+  if (space.getCoreType().has_value()) {
+    return *space.getCoreType();
+  }
+  Operation* parent_op = value.getParentBlock()->getParentOp();
+  if (auto core_type = TPUDialect::GetCoreTypeAttr(parent_op)) {
+    return *core_type;
+  }
+  return GetCoreTypeOfParentOp(*parent_op);
+}
+
+CoreType getTargetCore(Operation* op, std::optional<CoreType> target_core_attr,
+                       TypedValue<MemRefType> target_ref) {
+  if (target_core_attr.has_value()) {
+    return *target_core_attr;
+  }
+  if (auto ref_core = getRefCoreType(target_ref)) {
+    return *ref_core;
+  }
+  return GetCoreTypeOfParentOp(*op);
+}
+
 template <typename OpTy>
 LogicalResult verifyPackOp(OpTy op, int32_t max_size) {
   if (op.getSources().empty()) {
@@ -1362,9 +1389,15 @@ LogicalResult SemaphoreSignalOp::verify() {
     return emitOpError("Semaphore reference must be rank 0");
   }
 
-  CoreType issuing_core_type = GetCoreTypeOfParentOp(**this);
-  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+  CoreType target_core_type =
+      getTargetCore(getOperation(), getCoreType(), getSemaphore());
+  if (getRefCoreType(getSemaphore()).value_or(target_core_type) !=
+      target_core_type) {
+    return emitOpError(
+        "core type mismatch between the attr and the semaphore ref");
+  }
 
+  CoreType issuing_core_type = GetCoreTypeOfParentOp(**this);
   if (getCoreId() == nullptr && getDeviceId() == nullptr) {
     if (target_core_type != issuing_core_type) {
       return emitOpError(
@@ -1448,10 +1481,17 @@ LogicalResult EnqueueDMAOp::verify() {
     return emitOpError(
         "Not implemented: non-zero priority is not supported for remote DMA");
   }
-  CoreType issuing_core = GetCoreTypeOfParentOp(**this);
   // If the target core_type is different from the issuing core_type,
   // the specific core_id must be provided. The device_id is irrelevant here.
-  CoreType target_core = getCoreType().value_or(issuing_core);
+  auto target_core = getTargetCore(getOperation(), getCoreType(), getTarget());
+  if (getRefCoreType(getTarget()).value_or(target_core) != target_core) {
+    return emitOpError("Target core and target ref core type mismatched");
+  }
+  if (getRefCoreType(getTargetSemaphore()).value_or(target_core) !=
+      target_core) {
+    return emitOpError("Target semaphore and target ref core type mismatched");
+  }
+  auto issuing_core = GetCoreTypeOfParentOp(**this);
   if (target_core != issuing_core && getCoreId() == nullptr) {
     return emitOpError(
         absl::StrFormat("Core id must be specified when target core type (%v) "
@@ -1672,6 +1712,12 @@ LogicalResult WaitDMA2Op::verify() {
   if (sem_type.getRank() != 0) {
     return emitOpError("DMA wait semaphore must be rank 0");
   }
+
+  auto target_core = getTargetCore(getOperation(), getCoreType(), getDst());
+  if (getRefCoreType(getDst()).value_or(target_core) != target_core) {
+    return emitOpError("Target core and target ref core type mismatched");
+  }
+
   return success();
 }
 
@@ -2368,6 +2414,12 @@ LogicalResult FetchAndAddSyncOp::verify() {
              << getCoreType();
   }
   MemRefType base_type = getBase().getType();
+  CoreType target_core =
+      getTargetCore(getOperation(), getCoreType(), getBase());
+  if (getRefCoreType(getBase()).value_or(target_core) != target_core) {
+    return emitOpError("Base core and target core type mismatched");
+  }
+
   if (base_type.getRank() != getIndices().size()) {
     return emitOpError("Number of indices (")
            << getIndices().size() << ") must match memref rank ("
