@@ -2217,6 +2217,51 @@ class PipelineTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
+  def test_gather_with_emit(self):
+    self.skip_if_tc_tiling()
+    sc_mesh = sc_core.VectorSubcoreMesh(
+        core_axis_name="core",
+        num_cores=self.sc_info.num_cores,
+        num_subcores=2,
+        subcore_axis_name="subcore",
+    )
+    sc_cm_size = sc_mesh.num_cores * sc_mesh.num_subcores
+
+    batch_size = 32
+    num_steps = 4
+    num_indices = 8 * sc_cm_size * num_steps
+    data = jnp.arange(batch_size * 128).reshape(batch_size, 128)
+    indices = jax.random.randint(
+        jax.random.key(0), (num_indices,), 0, batch_size, jnp.int32
+    )
+
+    @jax.jit
+    def gather_emit(x, indices):
+      num_indices = indices.shape[0]
+      indices = indices.reshape((1, num_indices))
+
+      @self.kernel(
+          out_shape=jax.ShapeDtypeStruct((num_indices, 128), x.dtype),
+          mesh=sc_mesh,
+      )
+      def kernel(x_hbm, i_hbm, o_hbm):
+        def body(i_vmem, o_vmem):
+          pltpu.sync_copy(x_hbm.at[i_vmem.at[0]], o_vmem)  # The gather op
+
+        pltpu.emit_pipeline(
+            body,
+            grid=(num_indices // 8,),
+            in_specs=[pl.BlockSpec((1, 8), lambda i: (0, i))],
+            out_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+            core_axis_name="subcore",
+            dimension_semantics=(pltpu.PARALLEL,),
+        )(i_hbm, o_hbm)
+
+      return kernel(x, indices)
+
+    y = gather_emit(data, indices)
+    np.testing.assert_array_equal(y, jnp.take(data, indices, axis=0))
+
   def test_explicit_sc_tiling_1d(self):
     self.skip_if_tc_tiling("The test uses SC tiling.")
 
