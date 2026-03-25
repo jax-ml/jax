@@ -103,16 +103,15 @@ def _construct_fusion_jaxpr(
   return new_jaxpr, new_values, in_type, out_type, out_tree
 
 
-def construct_fusion(
-    candidate_values, jaxpr: jax_core.Jaxpr, outvars, *invars, **kwargs
+def construct_input_fusion(
+    candidate_values, jaxpr: jax_core.Jaxpr, outvars
 ) -> fusion_lib.Fusion:
   new_jaxpr, new_values, in_type, out_type, out_tree = _construct_fusion_jaxpr(
-      candidate_values, jaxpr, outvars, *invars, **kwargs
+      candidate_values, jaxpr, outvars,
   )
 
-  def _fn(*args, **kwargs):
-    flat_args, _ = tree_util.tree_flatten((args, kwargs))
-    out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values, *flat_args)
+  def _fn():
+    out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
   return fusion_lib.Fusion(_fn, in_type, out_type)
@@ -288,7 +287,7 @@ def fuse_jaxpr(
 
   # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [
-      construct_fusion(
+      construct_input_fusion(
           candidate_values,
           jaxpr.replace(
               eqns=jaxpr.eqns[:fusion_eqn_index],
