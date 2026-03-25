@@ -5403,7 +5403,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_vjp3_dont_want_bilinear(self):
     def f(x, y):
-      return x * y 
+      return x * y
     x = y = jnp.arange(3.)
     z, f_vjp = jax.vjp(f, x, y)
     f_vjp = f_vjp.with_refs(api.DontWant(), api.GradValue())
