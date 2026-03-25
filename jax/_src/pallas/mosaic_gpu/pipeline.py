@@ -76,12 +76,12 @@ def _get_block_shape(spec: pallas_core.BlockSpec):
 
 
 map_brefs = functools.partial(
-    jax.tree.map, is_leaf=lambda x: isinstance(x, BufferedRef)
+    jax.tree.map, is_leaf=lambda x: isinstance(x, PipelineRef)
 )
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
-class BufferedRef:
+class PipelineRef:
   spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
   is_index_invariant: bool = dataclasses.field(metadata={"static": True})
   gmem_ref: state.AbstractRef
@@ -310,14 +310,14 @@ def emit_pipeline(
   def scoped_pipeline(
       *, in_gmem_refs, out_gmem_refs, in_smem_refs, out_smem_refs, barrier_ref
   ):
-    in_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)
+    in_brefs: Sequence[PipelineRef] = [
+        PipelineRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)
         for spec, gmem_ref, smem_ref in zip(
             in_specs, in_gmem_refs, in_smem_refs
         )
     ]
-    out_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)
+    out_brefs: Sequence[PipelineRef] = [
+        PipelineRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)
         for spec, gmem_ref, smem_ref in zip(
             out_specs, out_gmem_refs, out_smem_refs
         )
@@ -798,14 +798,14 @@ def emit_pipeline_warp_specialized(
       in_smem_barrier_ref,
       flat_consumed_barrier_refs,
   ):
-    flat_in_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
+    flat_in_brefs: Sequence[PipelineRef] = [
+        PipelineRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             flat_in_specs, in_spec_has_seq_axis, flat_in_gmem_refs, flat_in_smem_refs
         )
     ]
-    flat_out_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
+    flat_out_brefs: Sequence[PipelineRef] = [
+        PipelineRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             flat_out_specs, out_spec_has_seq_axis, flat_out_gmem_refs, flat_out_smem_refs
         )

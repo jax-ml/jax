@@ -204,6 +204,27 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     expected = x + jnp.tile(y, (1, 4))
     np.testing.assert_allclose(out, expected)
 
+  def test_emit_pipeline_passthrough(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+      )(x_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )(x)
+    np.testing.assert_allclose(out, x)
+
   @parameterized.product(
       no_pipelining=[False, True],
   )
@@ -771,11 +792,11 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     blk_m, blk_n, blk_k = 128, 128, 128
     nm, nn, nk = M // blk_m, N // blk_n, K // blk_k
     inner_allocs = [
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((blk_m, blk_k), lambda n, m, k: (m, k)), jnp.float32),
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((blk_k, blk_n), lambda n, m, k: (k, n)), jnp.float32),
-        pltpu.BufferedRef.input_output(
+        pltpu.PipelineRef.input_output(
             pl.BlockSpec((blk_m, blk_n), lambda n, m, k: (m, n)), jnp.float32),
         ]
 
@@ -852,11 +873,11 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
     inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
-        pltpu.BufferedRef.accumulator(
+        pltpu.PipelineRef.accumulator(
             pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
         ]
 
@@ -1144,11 +1165,11 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
     inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
-        pltpu.BufferedRef.accumulator(
+        pltpu.PipelineRef.accumulator(
             pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
         ]
 
@@ -1391,16 +1412,16 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
       rs_accum_scratch_ref[...] = out_ref[...]
 
     inner_allocs = [
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
-        pltpu.BufferedRef.accumulator(
+        pltpu.PipelineRef.accumulator(
             pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
         # only used for final addition of fwd + bwd streams.
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype),
-        pltpu.BufferedRef.accumulator(
+        pltpu.PipelineRef.accumulator(
             pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype),
         ]
 
@@ -1673,11 +1694,11 @@ class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
     inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
-        pltpu.BufferedRef.input(
+        pltpu.PipelineRef.input(
             pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
-        pltpu.BufferedRef.accumulator(
+        pltpu.PipelineRef.accumulator(
             pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
         ]
 

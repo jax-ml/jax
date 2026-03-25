@@ -35,8 +35,8 @@ from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_int
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
-from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
-from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
+from jax._src.pallas.mosaic.pipeline import PipelineRef as PipelineRef
+from jax._src.pallas.mosaic.pipeline import PipelineRefBase as PipelineRefBase
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule as get_pipeline_schedule
