@@ -76,6 +76,7 @@ UNDOCUMENTED_APIS = {
 # A list of modules to skip entirely, either because they cannot be imported
 # or because they are not expected to be documented.
 MODULES_TO_SKIP = [
+  "jax.ad",
   "jax.api_util",  # internal tools, not documented.
   "jax.cloud_tpu_init",  # deprecated in JAX v0.8.1
   "jax.collect_profile",  # fails when xprof is not available.

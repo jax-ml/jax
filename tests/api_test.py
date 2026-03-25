@@ -5381,32 +5381,34 @@ class APITest(jtu.JaxTestCase):
       return x + y
 
     out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
-    out1, out2 = f_vjp.with_refs(api.DontWant(), api.DontWant())(jnp.ones((8,)))
-    self.assertIsInstance(out1, api.DidntWant)
-    self.assertIsInstance(out2, api.DidntWant)
+    out1, out2 = f_vjp.with_refs(jax.ad.DontWant(), jax.ad.DontWant()
+                                 )(jnp.ones((8,)))
+    self.assertIsInstance(out1, jax.ad.DidntWant)
+    self.assertIsInstance(out2, jax.ad.DidntWant)
 
     out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
     new_ref = jax.new_ref(jnp.zeros((8,)))
-    out1, out2 = f_vjp.with_refs(new_ref, api.DontWant())(jnp.ones((8,)))
+    out1, out2 = f_vjp.with_refs(new_ref, jax.ad.DontWant())(jnp.ones((8,)))
     self.assertIsInstance(out1, api.GradRef)
-    self.assertIsInstance(out2, api.DidntWant)
+    self.assertIsInstance(out2, jax.ad.DidntWant)
     self.assertArraysEqual(new_ref[...], jnp.ones((8,)))
 
     out, f_vjp = jax.vjp(f, jnp.arange(8.), jnp.arange(8.))
-    out1, out2 = f_vjp.with_refs(api.GradValue(), api.DontWant())(jnp.ones((8,)))
+    out1, out2 = f_vjp.with_refs(jax.ad.GradValue(), jax.ad.DontWant()
+                                 )(jnp.ones((8,)))
     self.assertArraysEqual(out1, jnp.ones((8,)))
-    self.assertIsInstance(out2, api.DidntWant)
+    self.assertIsInstance(out2, jax.ad.DidntWant)
 
   def test_vjp3_dont_want_bilinear(self):
     def f(x, y):
       return x * y
     x = y = jnp.arange(3.)
     z, f_vjp = jax.vjp(f, x, y)
-    f_vjp = f_vjp.with_refs(api.DontWant(), api.GradValue())
+    f_vjp = f_vjp.with_refs(jax.ad.DontWant(), jax.ad.GradValue())
     ones = jnp.ones_like(z)
     g = jax.jit(lambda: f_vjp(ones))
     x_grad, y_grad = g()
-    self.assertEqual(x_grad, api.DidntWant())
+    self.assertEqual(x_grad, jax.ad.DidntWant())
     self.assertAllClose(y_grad, x)
     self.assertLen(g.trace().jaxpr.eqns, 1)
 

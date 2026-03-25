@@ -190,6 +190,12 @@ from jax import tree_util as tree_util
 # Also circular dependency.
 from jax._src.array import Shard as Shard
 
+from types import SimpleNamespace
+import jax._src.api as jax_api
+ad = SimpleNamespace(DontWant=jax_api.DontWant, DidntWant=jax_api.DidntWant,
+                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue)
+del jax_api, SimpleNamespace
+
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
