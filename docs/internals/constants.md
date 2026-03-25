@@ -24,7 +24,7 @@ def f(x):
 ```
 
 We describe below the **future** internal implementation details for
-constants. As of July 2025, this is not yet the default implementation;
+constants. As of March 2026, this is not yet the default implementation;
 it is enabled by the environment variable `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=True`.
 See further [below](#previous-implementation) for the details of the previous
 implementation, including its drawbacks.

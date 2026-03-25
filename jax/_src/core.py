@@ -569,11 +569,19 @@ class Literal:
 # end up as `constvars`.
 literalable_types: set[type] = set()
 
-def is_literalable(x: Any) -> bool:
+def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # See https://docs.jax.dev/en/latest/internals/constants.html
+  # for_ad: we want to preserve under AD
+  if config.use_simplified_jaxpr_constants.value:
+    from jax._src.array import ArrayImpl  # type: ignore
+    do_lit_array = not for_ad
+    if isinstance(x, ArrayImpl):
+      return do_lit_array
+  else:
+    do_lit_array = False
   for t in type(x).__mro__:
     if t in literalable_types:
-      return (not np.shape(x) or config.use_simplified_jaxpr_constants.value)
+      return (not np.shape(x) or do_lit_array)
   return False
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
