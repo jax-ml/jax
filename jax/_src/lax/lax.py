@@ -2411,8 +2411,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike,
              preferred_element_type=preferred_element_type, out_sharding=out_sharding)
 
 
-# TODO(jakevdp): replace `*args`` with `*` in v0.10.0
-def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
+def dot(lhs: ArrayLike, rhs: ArrayLike, *,
         dimension_numbers: DotDimensionNumbers | None = None,
         precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None,
@@ -2466,14 +2465,6 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
   .. _stablehlo.dot_general: https://openxla.org/stablehlo/spec#dot_general
   .. _DotGeneral: https://www.openxla.org/xla/operation_semantics#dotgeneral
   """
-  if args:
-    raise TypeError(
-      f"dot() takes 2 positional arguments but {2 + len(args)} were given."
-      " Passing precision or preferred_element_type by position is not allowed"
-      " as of JAX v0.9.0; pass them by keyword instead."
-    )
-  del args
-
   lhs_shape = np.shape(lhs)
   lhs_ndim = len(lhs_shape)
 
