@@ -28,6 +28,7 @@ from jax import numpy as jnp
 from jax._src import array
 from jax._src.layout import Format
 from jax._src import typing
+from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 import tensorstore as ts
 
@@ -324,7 +325,7 @@ async def _transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
       m.kind == "pinned_host" for m in shard.device.addressable_memories())
   if has_pinned_host:
     # If available, transfer to pinned host memory
-    sharding = jax.sharding.SingleDeviceSharding(shard.device,
+    sharding = make_single_device_sharding(shard.device,
         memory_kind="pinned_host")
     data = jax.device_put(data, sharding)
   else:
@@ -556,7 +557,7 @@ async def async_deserialize(
     if out.dtype == jnp.int4:
       out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
-        out, Format(layout, jax.sharding.SingleDeviceSharding(device)))
+        out, Format(layout, make_single_device_sharding(device)))
     if byte_limiter is not None:
       # NB: `out` actually might not be ready for garbage collection by the
       # time we call release_bytes . Thus peak memory usage still might grow

@@ -1488,14 +1488,14 @@ def _pjit_batcher_for_sharding(
           s.mesh, pxla.batch_spec(s.spec, dim, spmd_axis_name))
     if isinstance(s, NamedSharding):
       mesh = s.mesh
-    if mesh.empty:
+    if mesh.empty or mesh.is_scalar:
       raise ValueError(
           'If you are using spmd_axis_name parameter of jax.vmap,'
           ' please make sure to run your jitted function inside the mesh'
           ' context manager. Only `jax.lax.with_sharding_constraint` with'
           ' `jax.sharding.NamedSharding` as an input can be transformed with'
           ' spmd_axis_name batching rules outside of an explicit mesh context'
-          f' manager scope{s!r}')
+          f' manager scope {s!r}')
     spec = parse_flatten_op_sharding(hlo_s, mesh)[0]
     return NamedSharding(
         mesh, pxla.batch_spec(spec, dim, spmd_axis_name))
@@ -2105,7 +2105,7 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
             'Target sharding contains a `jax.sharding.AbstractMesh` which'
             ' requires the input passed should be a `jax.Array`. Got'
             f' {type(x)} with shape {aval.str_short()}')
-      if not isinstance(x.sharding, NamedSharding):
+      if not isinstance(x.sharding, NamedSharding) or x.sharding.mesh.is_scalar:  # type: ignore[missing-attribute]
         raise TypeError(
             'The sharding on the input must be a `NamedSharding` since the'
             ' target sharding has an `AbstractMesh` in it. Got sharding type'

@@ -1122,7 +1122,9 @@ def _pspec_mhlo_attrs(spec, aval: core.AbstractValue) -> str:
 
 def get_mesh_from_args(args_flat, mesh):
   for a in args_flat:
-    if hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding):
+    if (hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding)
+        and not a.sharding.mesh.is_scalar):  # type: ignore[missing-attribute]
+
       if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
         aval = core.shaped_abstractify(a)
         raise ValueError(

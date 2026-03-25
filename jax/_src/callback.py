@@ -171,7 +171,10 @@ def _callback_op_sharding(
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     if sharding is not None:
-      if not isinstance(sharding, SingleDeviceSharding):
+      if (isinstance(sharding, sharding_impls.NamedSharding) and
+          sharding.mesh.is_scalar):  # type: ignore[missing-attribute]
+        pass
+      elif not isinstance(sharding, SingleDeviceSharding):
         raise NotImplementedError(
             "pure_callback only supports SingleDeviceSharding, but got"
             f" {type(sharding)}"

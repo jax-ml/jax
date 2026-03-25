@@ -3706,7 +3706,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         'If you are using spmd_axis_name parameter of jax.vmap, please'
         ' make sure to run your jitted function inside the mesh context'
-        ' manager.*SingleDeviceSharding'):
+        ' manager.*' + type(s).__name__):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
 
   def test_no_output_multiple_devices(self):

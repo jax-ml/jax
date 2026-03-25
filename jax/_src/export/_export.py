@@ -685,6 +685,11 @@ def to_named_sharding_with_abstract_mesh(
   if isinstance(s, sharding_impls.UnspecifiedValue):
     return None
   if isinstance(s, sharding_impls.NamedSharding):
+    if isinstance(s.mesh, mesh_lib.Mesh) and s.mesh.is_scalar:
+      return sharding_impls.NamedSharding(
+          s.mesh.abstract_mesh,
+          sharding_impls.PartitionSpec(*([None] *aval.ndim)),
+          memory_kind=s.memory_kind)
     return sharding_impls.NamedSharding(s.mesh.abstract_mesh,
                                         s.spec, memory_kind=s.memory_kind)
   if isinstance(s, sharding_impls.SingleDeviceSharding):

@@ -286,9 +286,14 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     self.devices.flags.writeable = False
     self.axis_names = axis_names
     self.axis_types = axis_types
-    self._size = math.prod(self.shape.values()) if self.devices.ndim else 0
+    empty = not axis_names and list(devices.flat)[0] is None
+    self._size = math.prod(self.shape.values()) if not empty else 0
     _mesh_object_dict[key] = self
     return self
+
+  @property
+  def is_scalar(self):
+    return self._size == 1 and not self.axis_names
 
   def __reduce__(self):
     return (_unpicke_mesh, (self.devices, self.axis_names, self.axis_types))
@@ -432,6 +437,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
+    if len(self.axis_names) == 0:
+      return empty_abstract_mesh
     d = self.devices.flat[0]
     if d is None:
       abstract_device = None

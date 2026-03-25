@@ -52,7 +52,7 @@ import jax.numpy as jnp
 
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
-from jax.sharding import SingleDeviceSharding
+from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 import tensorstore as ts
 # pylint: enable=g-importing-member
@@ -709,7 +709,7 @@ class TransferShardTest(jtu.JaxTestCase):
   @jtu.skip_on_devices('cpu')
   def test_transfer_shard_to_host(self):
     np_inp = np.arange(16).reshape((4, 4))
-    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind='device')
+    sharding = make_single_device_sharding(jax.devices()[0], memory_kind='device')
     arr = jax.device_put(np_inp, sharding)
     shard = arr.addressable_shards[0]
 
@@ -834,7 +834,7 @@ class UserPytreeAPITest(UserAPITestCase):
   def setUp(self):
     super().setUp()
     global _DEFAULT_SHARDING
-    _DEFAULT_SHARDING = SingleDeviceSharding(jax.devices()[0])
+    _DEFAULT_SHARDING = make_single_device_sharding(jax.devices()[0])
     self.tempdirs = []
 
   def tearDown(self):

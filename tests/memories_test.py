@@ -237,11 +237,10 @@ class DevicePutTest(jtu.JaxTestCase):
     dev2 = jax.devices()[2]
     out_hbm1 = jax.device_put(
         out_host0, make_single_device_sharding(dev2, memory_kind="device"))
-    self.assertEqual(out_hbm1.sharding.memory_kind, "device")
-    self.assertEqual(out_hbm1.sharding._device, dev2)
-    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding._device, dev2)
-    self.assertEqual(
-        out_hbm1.addressable_shards[0].data.sharding.memory_kind, "device")
+    self.assertEqual(out_hbm1.sharding,
+        make_single_device_sharding(dev2, memory_kind="device"))
+    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding,
+        make_single_device_sharding(dev2, memory_kind="device"))
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_different_device_and_memory_hbm_to_host(
@@ -258,10 +257,11 @@ class DevicePutTest(jtu.JaxTestCase):
     out_host1 = jax.device_put(
         out_hbm0, make_single_device_sharding(
             dev2, memory_kind=host_memory_kind))
-    self.assertEqual(out_host1.sharding.memory_kind, host_memory_kind)
-    self.assertEqual(out_host1.sharding._device, dev2)
-    self.assertEqual(out_host1.addressable_shards[0].data.sharding._device,
-                     dev2)
+    self.assertEqual(out_host1.sharding, make_single_device_sharding(
+            dev2, memory_kind=host_memory_kind))
+    self.assertEqual(out_host1.addressable_shards[0].data.sharding,
+                     make_single_device_sharding(
+                         dev2, memory_kind=host_memory_kind))
     self.assertEqual(
         out_host1.addressable_shards[0].data.sharding.memory_kind,
         host_memory_kind)
