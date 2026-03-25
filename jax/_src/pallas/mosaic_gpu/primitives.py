@@ -2070,12 +2070,6 @@ def _tcgen05_mma_lowering_wg(
     scaled: bool,
     sparse: bool,
 ):
-  del a_scale_transforms_tree, b_scale_transforms_tree
-  if scaled:
-    raise NotImplementedError(
-        "Scaled MMAs not supported for WG semantics."
-    )
-
   (
       acc_aval,
       a_aval,
@@ -2099,8 +2093,10 @@ def _tcgen05_mma_lowering_wg(
   if scaled:
     # Scales are not supported for WG semantics, but we still need to unpack them
     # if they are present in the leaves/avals to get to the transforms.
-    _, _, leaves = leaves[0], leaves[1], leaves[2:]
-    _, _, avals = avals[0], avals[1], avals[2:]
+    a_scale_ref, b_scale_ref, leaves = leaves[0], leaves[1], leaves[2:]
+    a_scale_ref_aval, b_scale_ref_aval, avals = avals[0], avals[1], avals[2:]
+  else:
+    a_scale_ref = b_scale_ref = a_scale_ref_aval = b_scale_ref_aval = None
 
   if sparse:
     a_sparse_metadata_ref, leaves = leaves[0], leaves[1:]
@@ -2113,6 +2109,8 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_tree,
       b_transforms_tree,
       barrier_transforms_tree,
+      a_scale_transforms_tree,
+      b_scale_transforms_tree,
       a_sparse_metadata_transforms_tree,
   )
   ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
@@ -2124,6 +2122,8 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_leaves,
       b_transforms_leaves,
       barrier_transforms_leaves,
+      a_scale_transforms_leaves,
+      b_scale_transforms_leaves,
       a_sparse_metadata_transforms_leaves,
   ) = transforms_leaves_lists
 
@@ -2132,6 +2132,8 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_leaves_avals,
       b_transforms_leaves_avals,
       _,
+      a_scale_transforms_leaves_avals,
+      b_scale_transforms_leaves_avals,
       a_sparse_metadata_transforms_leaves_avals,
   ) = transforms_avals_lists
 
@@ -2191,6 +2193,22 @@ def _tcgen05_mma_lowering_wg(
     if base_index is not None:
       barrier_ref = barrier_ref[base_index]
 
+  a_scale_ref = handle_transforms_and_get_ref(
+      a_scale_transforms_tree,
+      a_scale_transforms_leaves,
+      a_scale_transforms_leaves_avals,
+      a_scale_ref,
+      a_scale_ref_aval,
+  )
+
+  b_scale_ref = handle_transforms_and_get_ref(
+      b_scale_transforms_tree,
+      b_scale_transforms_leaves,
+      b_scale_transforms_leaves_avals,
+      b_scale_ref,
+      b_scale_ref_aval,
+  )
+
   predicate_ctx: contextlib.AbstractContextManager[None]
   if collective_axis is not None:
     predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
@@ -2210,6 +2228,8 @@ def _tcgen05_mma_lowering_wg(
         b_ref,
         accumulate=accumulate,
         collective=collective,
+        a_scale=a_scale_ref,
+        b_scale=b_scale_ref,
         a_sparse_metadata=a_sparse_metadata_ref,
     )
     if arrive:
