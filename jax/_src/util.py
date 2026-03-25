@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
-import dataclasses
 import functools
 from functools import partial
 import itertools as it
@@ -31,7 +30,6 @@ import numpy as np
 
 from jax._src import config
 from jax._src.lib import pytree as lib_pytree
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
@@ -362,162 +360,39 @@ def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
 weakref_cache_key_types: set[Type] = set()
 
 
-if jaxlib_extension_version >= 414 or TYPE_CHECKING:
-  _multi_weakref_registry = lib_pytree.PyTreeRegistry(
-      enable_none=False,
-      enable_tuple=True,
-      enable_namedtuple=False,
-      enable_list=False,
-      enable_dict=True,
+_multi_weakref_registry = lib_pytree.PyTreeRegistry(
+    enable_none=False,
+    enable_tuple=True,
+    enable_namedtuple=False,
+    enable_list=False,
+    enable_dict=True,
+)
+
+
+def multi_weakref_lru_cache(
+    call: Callable,
+    *,
+    maxsize: int | None = 2048,
+    trace_context_in_key: bool = True,
+):
+  """Least recently used cache decorator with weakref support.
+
+  Similar to `weakref_lru_cache`, except that it keeps weak references
+  to all positional and keyword arguments for which
+  `is_weakref_cache_key_type()` is true, and strong references to
+  other arguments. The cache entry is removed if any of the weakref
+  arguments dies.
+  """
+  cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(  # type: ignore
+      config.trace_context if trace_context_in_key else _ignore,
+      call,
+      maxsize,
+      explain=None,
+      registry=_multi_weakref_registry,
+      weak_types=weakref_cache_key_types,
   )
-
-  def multi_weakref_lru_cache(
-      call: Callable, *,
-      maxsize: int | None = 2048,
-      trace_context_in_key: bool = True):
-    """
-    Least recently used cache decorator with weakref support.
-
-    Similar to `weakref_lru_cache`, except that it keeps weak references
-    to all positional and keyword arguments for which
-    `is_weakref_cache_key_type()` is true, and strong references to
-    other arguments. The cache entry is removed if any of the weakref
-    arguments dies.
-    """
-    cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(  # type: ignore
-        config.trace_context if trace_context_in_key else _ignore,
-        call, maxsize, explain=None, registry=_multi_weakref_registry,
-        weak_types=weakref_cache_key_types
-    )
-    register_cache(cached_call, str(call))
-    return cached_call
-
-else:
-  @dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
-  class MultiWeakRefCacheKey:
-    weakrefs: tuple[weakref.ref, ...]  # Used only when len(weakrefs) >= 2
-
-
-  class MultiWeakRefPlaceholder:
-    # Stands for an arg/kwarg that was replaced with a weakref
-    pass
-  _multi_weakref_placeholder = MultiWeakRefPlaceholder()
-
-  def is_weakref_cache_key_type(v):
-    return callable(v) or (type(v) in weakref_cache_key_types)
-
-
-  def multi_weakref_lru_cache(
-        call: Callable, *,
-        maxsize=2048,
-        trace_context_in_key: bool = True):
-      """
-      Least recently used cache decorator with weakref support.
-
-      Similar to `weakref_lru_cache`, except that it keeps weak references
-      to all positional and keyword arguments for which
-      `is_weakref_cache_key_type()` is true, and strong references to
-      other arguments. The cache entry is removed if any of the weakref
-      arguments dies.
-      """
-      # Keep strong references to the MultiWeakRefCacheKeys that resulted in
-      # cache misses, and are cache keys. Indexed by id. Only keys with all
-      # included weakrefs live are present.
-      id_to_key: dict[int, MultiWeakRefCacheKey] = {}
-      # For each `wr: weakref.ref` present in `key: MultiWeakRefCacheKey` we have
-      # `id(key) in weakref_to_key_ids[wr]`.
-      weakref_to_key_ids: dict[weakref.ref, set[int]] = {}
-
-      def remove_weakref(wr: weakref.ref):
-        key_ids = weakref_to_key_ids.get(wr, set())
-        for key_id in key_ids:
-          try:
-            del id_to_key[key_id]
-          except KeyError:
-            pass
-        try:
-          del weakref_to_key_ids[wr]
-        except KeyError:
-          pass
-
-      def weakrefs_to_sentinel(v, acc: list[Any]):
-        if type(v) is tuple:
-          return tuple(weakrefs_to_sentinel(v1, acc) for v1 in v)
-        elif type(v) is dict:
-          return {k: weakrefs_to_sentinel(v1, acc) for k, v1 in v.items()}
-        elif is_weakref_cache_key_type(v):
-          acc.append(v)
-          return _multi_weakref_placeholder
-        else:
-          return v
-
-      def sentinel_to_referrents(v,
-                                it: Iterator[weakref.ref],
-                                key_id: int | None):
-        # key_id is not None iff we use a MultiWeakRefCacheKey (>= 2 weakrefs)
-        if type(v) is tuple:
-          return tuple(sentinel_to_referrents(v1, it, key_id) for v1 in v)
-        elif type(v) is dict:
-          return {k: sentinel_to_referrents(v1, it, key_id)
-                  for k, v1 in v.items()}
-        elif v is _multi_weakref_placeholder:
-          wr = next(it)
-          if key_id is not None:
-            weakref_to_key_ids.setdefault(wr, set()).add(key_id)
-          return wr()
-        else:
-          return v
-
-      def cache_miss(key: MultiWeakRefCacheKey | MultiWeakRefPlaceholder | Any,
-                    *args, **kwargs):
-        if isinstance(key, MultiWeakRefCacheKey):  # had at least 2 weakrefs
-          # We know `key` is in `cached_call` cache, so store strong references
-          key_id = id(key)
-          id_to_key[key_id] = key
-          orig_args, orig_kwargs = sentinel_to_referrents(
-              (args, kwargs), iter(key.weakrefs), key_id)
-        elif key is _multi_weakref_placeholder:  # had 0 weakrefs
-          orig_args = args
-          orig_kwargs = kwargs
-        else:  # had 1 weakref, we had put it first as the `key`
-          orig_args, orig_kwargs = sentinel_to_referrents(
-              (args, kwargs), iter([weakref.ref(key)]), None)
-        return call(*orig_args, **orig_kwargs)
-
-
-      cached_call = lib_weakref_lru_cache.weakref_lru_cache(
-          config.trace_context if trace_context_in_key else _ignore,
-          cache_miss, maxsize
-      )
-      register_cache(cached_call, str(call))
-
-      @functools.wraps(call)
-      def wrapper(*orig_args, **orig_kwargs):
-        acc_weakrefs: list[Any] = []
-        args, kwargs = weakrefs_to_sentinel((orig_args, orig_kwargs),
-                                            acc_weakrefs)
-        nr_weakrefs = len(acc_weakrefs)
-        if nr_weakrefs == 0:
-          return cached_call(_multi_weakref_placeholder,
-                            *orig_args, **orig_kwargs)
-        elif nr_weakrefs == 1:
-          # Put the single weakref first, and skip the MultiWeakRefCacheKey
-          return cached_call(acc_weakrefs[0],
-                            *args, **kwargs)
-        else:
-          value_to_weakref = {v: weakref.ref(v, remove_weakref)
-                              for v in set(acc_weakrefs)}
-          key = MultiWeakRefCacheKey(weakrefs=tuple(value_to_weakref[v]
-                                                    for v in acc_weakrefs))
-          return cached_call(key, *args, **kwargs)
-
-      wrapper = cast(Any, wrapper)  # avoids missing-attribute typing errors
-      wrapper.cache_info = cached_call.cache_info
-      wrapper.cache_clear = cached_call.cache_clear
-      wrapper.cache_keys = cached_call.cache_keys
-      wrapper._multi_weakref_id_to_key = id_to_key  # stays alive as long as wrapper
-      wrapper._multi_weakref_to_key_ids = weakref_to_key_ids
-      return wrapper
+  register_cache(cached_call, str(call))
+  return cached_call
 
 
 class Unhashable:

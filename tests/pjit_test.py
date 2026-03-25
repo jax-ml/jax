@@ -64,8 +64,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -830,8 +828,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     pjit(lambda x: x, in_shardings=None, out_shardings=None)(key)
 
   def test_lower_with_wrapper_error(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
-      self.skipTest("Requires libtpu >= 2026.3.15")
     @jax.jit
     def f(x):
       return x
@@ -10205,8 +10201,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
-      self.skipTest("Requires libtpu >= 2026.3.15")
 
     inp1 = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
     inp2 = jax.device_put(np.arange(8).reshape(2, 4), P('y', None))
@@ -10223,8 +10217,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_split_reduced_concat_unreduced(self, mesh):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
-      self.skipTest("Requires libtpu >= 2026.3.15")
 
     x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
     w = jax.device_put(np.arange(64.).reshape(4, 16), P(reduced={'x'}))
@@ -10452,12 +10444,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_replicated_to_sharded_unreduced(self, mesh):
-    if jaxlib_extension_version < 411:
-      self.skipTest('Requires jaxlib_extension_version >= 411')
-    if ifrt_version < 50:
-      self.skipTest('Requires ifrt_version >= 50')
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skipTest('Requires a newer libtpu')
 
     inp = jnp.arange(16).reshape(8, 2)
     arr = jax.reshard(inp, P('x', unreduced={'y'}))
@@ -10909,10 +10895,7 @@ class UtilTest(jtu.JaxTestCase):
   )
   def testHloShardingV3ToPartitionSpec(
       self, mesh_shape, mesh_names, hlo_sharding_str, expected_pspec):
-    if jaxlib_extension_version < 417:
-      self.skipTest(
-          'HloSharding v3 to PartitionSpec conversion requires jaxlib extension'
-          ' version 417 or higher.')
+
     mesh = jtu.create_mesh(mesh_shape, mesh_names)
     parsed_hlo_sharding = xc.HloSharding.from_string(hlo_sharding_str)
     recovered_spec = parse_flatten_op_sharding(parsed_hlo_sharding, mesh)[0]

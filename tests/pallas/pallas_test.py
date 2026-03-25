@@ -360,9 +360,9 @@ class PallasCallTest(ptu.PallasTest):
           dict(shape=(5, 128), block_shape=(8, 128)),
       ]
   )
-  def test_block_spec_valid_block_shapes(
-      self, *, shape, block_shape, dtype=np.int32
-  ):
+  def test_block_spec_valid_block_shapes(self, *,
+                                         shape, block_shape,
+                                         dtype=np.int32):
     if not jtu.is_device_tpu_at_least(4) and (
         (shape == (1024,) and block_shape == (128,) and dtype == np.int32)
         or (shape == (1024,) and block_shape == (256,) and dtype == np.int16)

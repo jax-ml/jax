@@ -353,8 +353,6 @@ class CoreMapTest(jtu.JaxTestCase):
       core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]
   )
   def test_capture_scalar(self, core_type, use_tc_tiling_on_sc):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
-      self.skipTest("Requires libtpu >= 2026.3.15")
     match core_type:
       case pltpu.CoreType.TC:
         mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)

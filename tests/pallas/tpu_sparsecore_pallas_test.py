@@ -2120,16 +2120,10 @@ class ScalarSubcoreTestWithTCTiling(ScalarSubcoreTest):
 class MpmdMapTest(PallasSCTest):
 
   def setUp(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 21):
-      self.skipTest("Requires a newer libtpu")
-
     super().setUp()
 
   @parameterized.product(use_tc_tiling=[False, True])
   def test_parallel_subkernels(self, use_tc_tiling):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skipTest("Need a newer libtpu")
-
     if use_tc_tiling:
       # When using TC tiling
       #

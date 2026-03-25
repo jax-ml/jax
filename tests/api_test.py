@@ -62,7 +62,6 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import version as jaxlib_version
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name
@@ -1585,7 +1584,6 @@ class JitTest(jtu.BufferDonationTestCase):
         f()  # crash
     f()  # no crash
 
-  @unittest.skipIf(jaxlib_version <= (0, 9, 1), "requires jaxlib > 0.9.1 fix")
   def test_sum_of_closed_over_bools(self, N=32):
     # Regression test for https://github.com/jax-ml/jax/issues/35762
     mask = jnp.ones(N, dtype=jnp.bool_)

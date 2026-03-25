@@ -51,7 +51,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -3776,9 +3775,7 @@ def _reciprocal_lowering_rule(
     raise ValueError("Only float32 is supported.")
   if (
       TYPE_CHECKING
-      or jaxlib_extension_version < 415
       or ctx.forward_compatible
-      or ctx.is_cloud_tpu_older_than(2026, 3, 10)
   ):
     return tpu.reciprocal(x, approx=approx)
   else:

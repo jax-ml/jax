@@ -14,16 +14,13 @@
 
 from __future__ import annotations
 
-import numpy as np
 import threading
-from typing import TYPE_CHECKING
-import weakref
+import numpy as np
 
 from jax._src import config
 from jax._src import core
 from jax._src import literals
 from jax._src import dtypes
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache
 
 from jax._src import traceback_util
@@ -142,44 +139,11 @@ core.literalable_types.update(literals.typed_scalar_types)
 _ndarray_dtype_cache = {}
 _ndarray_dtype_cache_lock = threading.Lock()
 
-if jaxlib_extension_version < 420 and not TYPE_CHECKING:
-  # This is a temporary shim implementation of a weakly-keyed, weakly value
-  # cache that should go away after jaxlib 0.9.2 is the minimum.
-  def _canonicalize_ndarray_dtype(x):
-    x_id = id(x)
-    with _ndarray_dtype_cache_lock:
-      entry = _ndarray_dtype_cache.get(x_id)
-      if entry is not None:
-        xref, ansref = entry
-        ans = ansref()
-        if xref() is x and ans is not None:
-          return ans
 
-    dtype = dtypes.canonicalize_dtype(x.dtype)
-    ans = literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
-
-    def clear_cache(wr, key=x_id):
-      with _ndarray_dtype_cache_lock:
-        val = _ndarray_dtype_cache.get(key)
-        if val is not None and (val[0] is wr or val[1] is wr):
-          del _ndarray_dtype_cache[key]
-
-    xref = weakref.ref(x, clear_cache)
-    ansref = weakref.ref(ans, clear_cache)
-    with _ndarray_dtype_cache_lock:
-      _ndarray_dtype_cache[x_id] = (xref, ansref)
-    return ans
-
-else:
-  # We use a weakly-keyed, weakly-valued cache to memoize the result of
-  # canonicalizing ndarray dtypes. The goal is that as long as both the key
-  # and the value are alive, we will produce the same object from dtype
-  # canonicalization. This avoids duplication of large constants when forming
-  # a jaxpr.
-  @weakref_lru_cache.weak_key_weak_value_cache
-  def _canonicalize_ndarray_dtype(x):
-    dtype = dtypes.canonicalize_dtype(x.dtype)
-    return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
+@weakref_lru_cache.weak_key_weak_value_cache
+def _canonicalize_ndarray_dtype(x):
+  dtype = dtypes.canonicalize_dtype(x.dtype)
+  return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
 
 dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 

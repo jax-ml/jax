@@ -146,9 +146,6 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
 class TPUPipelineModeRevisitTest(ptu.PallasTPUTest):
 
   def test_block_reduction_with_non_immediate_revisit(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 20):
-      self.skipTest('Requires a newer libtpu')
-
     # Accumulator mode enables accumulating into an output even if we don't
     # revisit immediately.
     def body(x_ref, o_ref):
@@ -2867,8 +2864,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       ((8, 5, 8, 10),),
   ])
   def test_bool_transpose_last_two_dims(self, input_shape):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
 
     rank = len(input_shape)
     transpose_axes = tuple(range(rank - 2)) + (rank - 1, rank - 2)
@@ -3041,8 +3036,6 @@ class PallasScalarIOpsTest(ptu.PallasTPUTest):
 class PallasCallUnsignedIntegerTest(ptu.PallasTPUTest):
 
   def test_pow_unsigned_exponent(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest("Needs a newer libTPU")
 
     def kernel(x_ref, exp_ref, y_ref):
       y_ref[...] = lax.pow_p.bind(x_ref[...], exp_ref[...])
@@ -3998,8 +3991,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_minor_dim_to_R3(self, q, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
     if n % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
 
@@ -4040,8 +4031,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_minor_dim_to_R4(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
     if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
 
@@ -4069,10 +4058,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_last_dim_to_two_minor_dims_change_major_dim(
       self, input_output_major_dims, output_minor_dims, dtype
   ):
-    if output_minor_dims[1] % 128 != 0 and (
-        not jtu.is_cloud_tpu_at_least(2026, 3, 17)
-        or not jtu.is_device_tpu_at_least(5)
-    ):
+    if output_minor_dims[1] % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
     input_major_dims, output_major_dims = input_output_major_dims
     input_minor_dims = (math.prod(output_minor_dims),)
@@ -4160,8 +4146,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_to_R2_padded_last_dim(self, q, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 16):
-      self.skipTest('Test requires a newer libTPU.')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4198,8 +4182,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_two_minor_dims_to_R3_padded_last_dim(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 16):
-      self.skipTest('Test requires a newer libTPU.')
     if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
         dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
     ):
@@ -4231,9 +4213,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_two_minor_dims_to_last_dim_change_major_dim(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 17):
-      self.skipTest('Test requires a newer libTPU.')
-
     input_major_dims, output_major_dims = input_output_major_dims
     output_minor_dims = (math.prod(input_minor_dims),)
     input_shape = input_major_dims + input_minor_dims

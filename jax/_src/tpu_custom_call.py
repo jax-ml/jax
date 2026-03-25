@@ -30,7 +30,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -72,20 +71,11 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 _FWD_COMPAT_VERSION = 9
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  # TODO(apaszke): remove the forward compatibility check after 2025-4-1.
   if (
       ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2026, 3, 1, backend)
   ):
     return _FWD_COMPAT_VERSION
-  # TODO(tlongeri): remove the forward compatibility check after 2025-4-12.
-  if (
-      ctx.is_forward_compat()
-      or backend is None
-      or is_cloud_tpu_older_than(2026, 3, 12, backend)
-  ):
-    return 10
   return None
 
 

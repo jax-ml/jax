@@ -23,7 +23,6 @@ import functools
 import math
 from typing import cast, Any, ClassVar, Literal, TypeVar
 
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import _gpu_ops_gen
@@ -62,7 +61,7 @@ TMAReductionOp = Literal[
 # Fixed size of the collective metadata structure in XLA.
 # Stores rank, param_to_peers_ptrs and multicast_buffer_ptr.
 # Plus alignment to 16 bytes.
-COLLECTIVE_METADATA_SIZE = 4 if jaxlib_extension_version >= 419 else 3
+COLLECTIVE_METADATA_SIZE = 4
 
 # Attribute used to merk the module which uses collective metadata.
 COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"

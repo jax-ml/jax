@@ -20,12 +20,10 @@ import dataclasses
 import enum
 import functools
 import math
-import typing
 from typing import Any, Literal, overload
 
 import jax
 from jax import numpy as jnp
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 from jax.interpreters import mlir
 from jaxlib.mlir import ir
@@ -437,10 +435,7 @@ def single_thread_predicate(scope: ThreadSubset = ThreadSubset.BLOCK):
       example, if the scope is BLOCK, only one thread per block will be
       selected.
   """
-  if typing.TYPE_CHECKING or jaxlib_extension_version >= 412:
-    elected = nvvm.elect_sync()
-  else:
-    elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  elected = nvvm.elect_sync()
   if scope == ThreadSubset.WARP:
     return elected
   warp = warp_idx()
@@ -1058,7 +1053,6 @@ class BarrierRef:
       orders_tensor_core: bool = False,
       predicate: ir.Value | None = None,
   ):
-    i64 = ir.IntegerType.get_signless(64)
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
       if predicate is not None:
@@ -1085,10 +1079,7 @@ class BarrierRef:
             "Predicate not supported for no-complete arrive"
         )
       count = c(arrival_count, ir.IntegerType.get_signless(32))
-      if typing.TYPE_CHECKING or jaxlib_extension_version >= 412:
-        nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
-      else:
-        nvvm.mbarrier_arrive_nocomplete(i64, self.get_ptr(), count)
+      nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
@@ -1814,10 +1805,7 @@ def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore
   extra_kwargs = {}
   if kind == ReductionKind.FMAX or kind == ReductionKind.FMIN:
     extra_kwargs = dict(nan=True)
-  if typing.TYPE_CHECKING or jaxlib_extension_version >= 412:
-    return nvvm.redux_sync(x, kind, mask, **extra_kwargs)
-  else:
-    return nvvm.redux_sync(x.type, x, kind, mask, **extra_kwargs)
+  return nvvm.redux_sync(x, kind, mask, **extra_kwargs)
 
 
 def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):

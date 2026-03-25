@@ -34,7 +34,6 @@ from jax._src import mesh_utils
 from jax._src.mesh import (
     Mesh, AbstractMesh, AxisType, empty_abstract_mesh, empty_concrete_mesh,
     get_abstract_mesh, get_concrete_mesh)
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
@@ -544,7 +543,7 @@ def parse_flatten_op_sharding(
     return [PartitionSpec()]
   elif hlo_sharding.is_maximal() and mesh.size == 1:
     return [PartitionSpec()]
-  elif jaxlib_extension_version >= 417 and hlo_sharding.is_hlo_sharding_v3():
+  elif hlo_sharding.is_hlo_sharding_v3():
     return [_hlo_sharding_v3_to_pspec(hlo_sharding, mesh)]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-import unittest
 from functools import partial
 
 from absl.testing import absltest
@@ -576,10 +575,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   @jtu.skip_on_devices('cpu', 'gpu')
-  @unittest.skipIf(
-      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
-      'Crashes with libtpu==0.3.5 for TPU v7 due to changed tiling.',
-  )
   def test_layout_donation_mismatching_in_and_out_fails(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))

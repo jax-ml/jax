@@ -487,7 +487,6 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.int32, jnp.int16, jnp.int8],
   )
   def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
-
     if (
         any(dtypes.itemsize_bits(ty) <= 16 for ty in (msk_dtype, dtype))
         and jtu.get_tpu_version() < 5
@@ -842,10 +841,6 @@ class OpsTest(ptu.PallasTPUTest):
     if packed_dtype == jnp.int2:
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
-      if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-        raise self.skipTest(
-            "int2 is only supported for tpu at least 03/01/2026"
-        )
       if (shape[-2] % (8 * 16)) or (shape[-1] % 128):
         raise self.skipTest(
             "int2 is only supported for shapes with vreg alignment"
@@ -954,8 +949,6 @@ class OpsTest(ptu.PallasTPUTest):
       jnp.bfloat16,
   )
   def test_sigmoid(self, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 15):
-      self.skipTest("requires a newer libTPU")
 
     shape = (32, 128)
     x = jax.random.normal(jax.random.key(42), shape, dtype=dtype)
@@ -1044,9 +1037,6 @@ class OpsTest(ptu.PallasTPUTest):
       ],
   )
   def test_1d_concatenate(self, dtype, shapes_and_out):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 16):
-      self.skipTest("Requires a new libtpu")
-
     packing = 32 // jnp.iinfo(dtype).bits
     x_shape, y_shape, out_shape = shapes_and_out
     data_is_aligned = (
