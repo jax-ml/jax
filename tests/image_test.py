@@ -112,14 +112,20 @@ class ImageTest(jtu.JaxTestCase):
                             atol=3e-5)
 
   @jtu.sample_product(
+    [dict(antialias=False, align_corners=False),
+     dict(antialias=False, align_corners=True),
+     dict(antialias=True, align_corners=False)],
     dtype=[np.float32],
     target_shape=_PIL_SHAPES,
     image_shape=_PIL_SHAPES,
-    antialias=[False, True],
+    torch_mode=["bilinear", "bicubic"],
   )
-  def testResizeAgainstPyTorch(self, dtype, image_shape, target_shape, antialias):
-    if torch is None:
-      raise unittest.SkipTest("PyTorch not available")
+  @unittest.skipIf(torch is None, "PyTorch not available")
+  def testResizeAgainstPyTorch(self, dtype, image_shape, target_shape, antialias, torch_mode, align_corners):
+    jax_method = {
+        "bilinear": "linear",
+        "bicubic": "bicubic-pytorch",
+    }[torch_mode]
 
     rng = jtu.rand_uniform(self.rng())
     args_maker = lambda: (rng(image_shape, dtype),)
@@ -128,13 +134,47 @@ class ImageTest(jtu.JaxTestCase):
       t = torch.from_numpy(x)
       t = t[None, None]  # Add N and C dimensions: (1, 1, H, W)
       res = torch.nn.functional.interpolate(
-          t, size=target_shape, mode='bicubic', align_corners=False,
+          t, size=target_shape, mode=torch_mode, align_corners=align_corners,
           antialias=antialias
       )
       return res[0, 0].numpy()
 
-    jax_fn = partial(image.resize, shape=target_shape, method="bicubic-pytorch",
-                     antialias=antialias)
+    if align_corners:
+      # It is not clear that PyTorch's align_corners=True, antialias=True
+      # behavior is meaningful: I cannot make sense of the half pixel behavior
+      # Should it turn out to be sensible, here is how we can match it:
+      # 1. In jax_fn, use `t = -0.5 * s` instead of `t = 0.5 * (1 - s)`.
+      # 2. PyTorch appears to require an extra +0.5 pixel offset to
+      #    `expanded_indices` in compute_weight_mat., before evaluating the
+      #    kernel.
+      # 3. Do not zero weights for indices outside `[0, input_size)` in
+      #    `compute_weight_mat`. PyTorch appears to allow points whose center
+      #    is outside the input image to contribute to the result.
+      #
+      # For the moment, we're just implementing the antialias=False case here.
+      def jax_fn(x):
+        scales = []
+        translations = []
+        for i in range(len(image_shape)):
+          m = image_shape[i]
+          n = target_shape[i]
+          if m > 1 and n > 1:
+            s = (n - 1) / (m - 1)
+            t = 0.5 * (1 - s)
+          else:
+            s = n / m
+            t = 0.0
+          scales.append(s)
+          translations.append(t)
+
+        return image.scale_and_translate(
+            x, target_shape, list(range(len(image_shape))),
+            jnp.array(scales, dtype=jnp.float32),
+            jnp.array(translations, dtype=jnp.float32),
+            jax_method, antialias=antialias)
+    else:
+      jax_fn = partial(image.resize, shape=target_shape, method=jax_method,
+                       antialias=antialias)
 
     self._CheckAgainstNumpy(torch_fn, jax_fn, args_maker, check_dtypes=True,
                             atol=1e-4)
