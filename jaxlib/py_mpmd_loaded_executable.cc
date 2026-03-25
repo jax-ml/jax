@@ -143,7 +143,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(
 }
 
 absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
-    nb::sequence args, nb::dict kwargs) {
+    nb::args args, nb::kwargs kwargs) {
   jax::CallSignature call_signature;
   absl::InlinedVector<nb::object, 2> flat_args;
   ParseArguments(args, kwargs, call_signature.arg_signature, flat_args);
@@ -315,7 +315,7 @@ PyMpmdLoadedExecutable::GetOutputLayouts() {
 }
 
 void PyMpmdLoadedExecutable::ParseArguments(
-    nb::sequence args, nb::dict kwargs, jax::ArgumentSignature& arg_signature,
+    nb::args args, nb::kwargs kwargs, jax::ArgumentSignature& arg_signature,
     absl::InlinedVector<nb::object, 2>& flat_args) {
   size_t num_positional_args = nb::len(args);
   size_t num_keyword_args = kwargs ? kwargs.size() : 0;
