@@ -35,7 +35,6 @@ from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dtypes
 from jax._src import linear_util as lu
-from jax._src import literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import prng
@@ -1390,8 +1389,7 @@ def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> Any:
   if isinstance(val, KeyScalarBundle):
     # TODO(slebedev): Drop this branch and change the return type to ir.Value.
     return val
-  elif isinstance(val, (np.generic, np.ndarray, int, float,
-                        literals.TypedNdArray)):
+  elif isinstance(val, (np.generic, np.ndarray, int, float)):
     return ir_constant(val, _dtype_to_ir_type(aval.dtype))
   else:
     raise RuntimeError(
@@ -1440,7 +1438,7 @@ def _swap_lowering_rule(
 
 
 def _make_index(s):
-  if isinstance(s, (int, np.ndarray, literals.TypedNdArray)):
+  if isinstance(s, (int, np.ndarray)):
     return ir_constant(s, ir.IndexType.get())
   if s.type == ir.IndexType.get():
     return s

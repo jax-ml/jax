@@ -26,7 +26,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
-from jax._src import literals
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src.sharding import Sharding
@@ -167,7 +166,7 @@ class PRNGKeyArray(Array):
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
-    if isinstance(key_data, (np.ndarray, literals.TypedNdArray)):
+    if isinstance(key_data, np.ndarray):
       aval = core.typeof(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(

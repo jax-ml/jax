@@ -24,7 +24,6 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import make_single_device_sharding
@@ -116,7 +115,7 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
           for x in args]
 
 
-_arraylike_types = (np.ndarray, Array, literals.TypedNdArray)
+_arraylike_types = (np.ndarray, Array)
 
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, _arraylike_types) or

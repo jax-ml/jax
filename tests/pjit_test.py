@@ -33,9 +33,9 @@ from jax import reshard
 from jax._src import core
 from jax._src import config
 from jax._src import dispatch
-from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src import dtypes
+from jax._src import literals
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
@@ -3720,8 +3720,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = literals.TypedNdArray(
-        np.arange(8, dtype=np.float32), weak_type=False)
+    const = literals.TypedNdArray(np.arange(8, dtype=np.float32),
+                                  weak_type=False)
 
     @jax.jit
     def f(x):

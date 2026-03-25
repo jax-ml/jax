@@ -32,8 +32,8 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
-from jax._src import literals
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import state

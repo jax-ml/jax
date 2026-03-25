@@ -304,7 +304,6 @@ pytype_strict_library(
     srcs = ["basearray.py"],
     pytype_srcs = ["basearray.pyi"],
     deps = [
-        ":literals",
         ":named_sharding",
         ":partition_spec",
         ":sharding",
@@ -468,7 +467,6 @@ py_library_providing_imports_info(
         ":effects",
         ":ffi",
         ":hijax",
-        ":literals",
         ":mesh",
         ":mlir",
         ":named_sharding",
@@ -564,6 +562,8 @@ pytype_strict_library(
     name = "literals",
     srcs = ["literals.py"],
     deps = [
+        ":core",
+        ":dtypes",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -715,7 +715,6 @@ pytype_strict_library(
     ],
     deps = [
         ":config",
-        ":literals",
         ":traceback_util",
         ":typing",
         ":util",
@@ -1369,7 +1368,6 @@ py_library_providing_imports_info(
         ":hijax",
         ":indexing",
         ":lax",
-        ":literals",
         ":mesh",
         ":sharding",
         ":sharding_impls",
@@ -1581,7 +1579,6 @@ pytype_strict_library(
         ":dtypes",
         ":ffi",
         ":lax",
-        ":literals",
         ":mesh",
         ":mlir",
         ":numpy",
