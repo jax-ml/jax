@@ -2078,49 +2078,23 @@ class DialectLoweringTest(MosaicGpuTest):
         tuple(tiled_strides), expected_tile_strides + expected_tiling_strides
     )
 
-  def _tile_shape_type_inference_test_base(self, shape, tiling, layout=None):
-    i32 = ir.IntegerType.get_signless(32)
-    with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(
-          shape, i32, memory_space=mgpu_utils.smem(), layout=layout
-      )
-      [smem] = undefs(ref_ty)
-      mgpu.dialect.tile_shape(smem, tiling)
-
-  def test_tile_shape_raises_on_invalid_tiling(self):
-    with self.assertRaisesRegex(
-        ir.MLIRError, "must be a multiple of the tile size"
-    ):
-      self._tile_shape_type_inference_test_base((128, 128), (16, 33))
-
-  def test_tile_shape_raises_on_invalid_layout(self):
-    with self.assertRaisesRegex(ir.MLIRError, "must have a strided layout"):
-      layout = ir.AffineMapAttr.get(ir.AffineMap.get_permutation((1, 0)))
-      self._tile_shape_type_inference_test_base((128, 128), (16, 32), layout)
-
-  def test_tile_shape_raises_on_invalid_tiling_rank(self):
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "must have at least as many dimensions as the tiling",
-    ):
-      self._tile_shape_type_inference_test_base((128,), (16, 32))
-
-  def test_tile_shape_infers_tiled_shape_type(self):
+  def test_transform_type_produces_tiled_shape_type(self):
     i32 = ir.IntegerType.get_signless(32)
     shape, tiling = (256, 128, 128), (16, 32)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
-      [smem] = undefs(ref_ty)
-      tiled_smem = mgpu.dialect.tile_shape(smem, tiling)
+      tiled_ty = lowering.transform_type(ref_ty, (launch_context.TileTransform(tiling),))
+      [smem, tiled_smem] = undefs(ref_ty, tiled_ty)
       tile_then_transpose = mgpu_utils.memref_transpose(
           tiled_smem, (0, 2, 1, 4, 3)
       )
       transposed_smem = mgpu_utils.memref_transpose(smem, (0, 2, 1))
-      transpose_then_tile = mgpu.dialect.tile_shape(transposed_smem, tiling[::-1])
+      transpose_then_tile_ty = lowering.transform_type(
+          transposed_smem.type, (launch_context.TileTransform(tiling[::-1]),))
     self.assertEqual(tuple(tiled_smem.type.shape), (256, 8, 4, 16, 32))
     self.assertEqual(tuple(tile_then_transpose.type.shape), (256, 4, 8, 32, 16))
     # Check that everything in the type is identical (especially the strides).
-    self.assertEqual(tile_then_transpose.type, transpose_then_tile.type)
+    self.assertEqual(tile_then_transpose.type, transpose_then_tile_ty)
 
 
 if hp is not None:
@@ -2171,23 +2145,6 @@ if hp is not None:
         self.assertEqual(tuple(tiled_type.shape), expected_shape)
         self.assertEqual(offset, 0)
         self.assertEqual(tuple(strides), tuple(expected_strides))
-      run()
-
-    def test_transform_type_matches_tile_shape_inference(self):
-      @hp.given(shape_permutation_and_tiling())
-      def run(args):
-        shape, permutation, tiling = args
-        i32 = ir.IntegerType.get_signless(32)
-        with ir.InsertionPoint(self.module.body):
-          ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
-          [smem] = undefs(ref_ty)
-          transposed_smem = mgpu_utils.memref_transpose(smem, permutation)
-          tiled_smem = mgpu.dialect.tile_shape(transposed_smem, tiling)
-        transforms = (launch_context.TileTransform(tiling),)
-        self.assertEqual(
-            lowering.transform_type(transposed_smem.type, transforms),
-            tiled_smem.type,
-        )
       run()
 
 
