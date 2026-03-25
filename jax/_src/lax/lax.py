@@ -5696,8 +5696,10 @@ def get_algorithm_compute_types(
   return lhs_dtype, rhs_dtype, out_type
 
 
-def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr:
-  if isinstance(accuracy, AccuracyMode):
+def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
+  if accuracy is None:
+    return None
+  elif isinstance(accuracy, AccuracyMode):
     return hlo.ResultAccuracyAttr.get(0.0, 0.0, int(0), str(accuracy.name))
   elif isinstance(accuracy, Tolerance):
     return hlo.ResultAccuracyAttr.get(
@@ -5706,6 +5708,7 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr:
         ulps=accuracy.ulps,
         mode='TOLERANCE',
     )
+  raise NotImplementedError(f"Accuracy {accuracy} not supported")
 
 def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):

@@ -20,7 +20,7 @@ import ctypes
 from collections import defaultdict
 import functools
 import itertools
-from typing import Any, Callable, Mapping, TypeGuard
+from typing import cast, Any, Callable, Mapping, TypeGuard
 import weakref
 
 import jax
@@ -113,14 +113,15 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   init_env = {}
   name_source = itertools.count()
   value_names: Mapping[ir.Value, int] = defaultdict(lambda: next(name_source))
-  op: Any
   for op in block.operations:
+    op = cast(Any, op)
     if _is_custom_call(op, "AllocateBuffer"):
+      result_type = ir.ShapedType(op.result.type)
       def allocate_torch_buffer(
           env,
           device,
-          _shape=op.result.type.shape,
-          _dtype=_mlir_to_torch_dtype(torch, op.result.type.element_type),
+          _shape=result_type.shape,
+          _dtype=_mlir_to_torch_dtype(torch, result_type.element_type),
           _result_name=value_names[op.result],
       ):
         env[_result_name] = torch.empty(_shape, dtype=_dtype, device=device)
@@ -156,7 +157,8 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     elif op.name == "stablehlo.broadcast_in_dim":
       if op.broadcast_dimensions:
         raise ValueError("Only scalar broadcasts are supported")
-      target_shape = tuple(op.result.type.shape)
+      result_type = ir.ShapedType(op.result.type)
+      target_shape = tuple(result_type.shape)
       result_name = value_names[op.result]
       operand_name = value_names[op.operand]
       dtype = torch.int32

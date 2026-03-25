@@ -2174,10 +2174,11 @@ def get_arch() -> Arch:
   op = block.owner
   while op is not None:
     if op.name == "builtin.module":
-      return Arch(
-          op.attributes["mosaic_gpu.arch_major"].value,  # pytype: disable=attribute-error
-          op.attributes["mosaic_gpu.arch_minor"].value,  # pytype: disable=attribute-error
-      )
+      arch_major = op.attributes["mosaic_gpu.arch_major"]
+      arch_minor = op.attributes["mosaic_gpu.arch_minor"]
+      assert isinstance(arch_major, ir.IntegerAttr)
+      assert isinstance(arch_minor, ir.IntegerAttr)
+      return Arch(arch_major.value, arch_minor.value)  # pyrefly: ignore[bad-argument-type]
     op = op.parent
   raise ValueError("Cannot retrieve the architecture: no module found")
 

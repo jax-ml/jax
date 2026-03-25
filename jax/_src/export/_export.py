@@ -1262,8 +1262,8 @@ def _check_module(mod: ir.Module, *,
     check_op(op)
     for region in op.operation.regions:
       for block in region:
-        for op in block:
-          walk_operations(op.operation)
+        for block_op in block:
+          walk_operations(block_op.operation)
 
   walk_operations(mod.operation)
   if disallowed_custom_call_ops:
@@ -1550,6 +1550,7 @@ call_exported_p.def_impl(_call_exported_impl)
 def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
+  # pyrefly: ignore[missing-attribute]
   mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)  # pytype: disable=attribute-error
   axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
@@ -1706,7 +1707,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
                                           callee_platform_idx)
 
-    submodule_args.append(callee_platform_idx)
+    submodule_args.append(callee_platform_idx.result)
   else:
     assert len(lowering_platforms) == 1
 

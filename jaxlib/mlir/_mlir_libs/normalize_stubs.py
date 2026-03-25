@@ -41,7 +41,13 @@ def normalize(content: str, *, jaxlib_build: bool = False) -> str:
   )
 
   # Shorten `mlir.ir.<NAME>` to `ir.<NAME>`.
-  content = re.sub(r"mlir\.ir\.([a-zA-Z0-9_]+)", r"ir.\1", content)
+  content = re.sub(
+      r"(?:jaxlib\.)?mlir\.ir\.([a-zA-Z0-9_]+)", r"ir.\1", content
+  )
+
+  # Remove `import _mlir` if it's not needed.
+  if "_mlir." not in content:
+    content = re.sub(r"^import _mlir\n", "", content, flags=re.MULTILINE)
 
   return content
 

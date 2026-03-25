@@ -14,7 +14,12 @@
 
 """Build rules for generating .pyi type stubs for nanobind extension modules."""
 
-def py_stubgen(name, module, outs = None, stubgen = "//jaxlib/mlir/_mlir_libs:stubgen", normalize = "//jaxlib/mlir/_mlir_libs:normalize_stubs"):
+def py_stubgen(
+        name,
+        module,
+        outs = None,
+        stubgen = "//jaxlib/mlir/_mlir_libs:stubgen",
+        normalize = "//jaxlib/mlir/_mlir_libs:normalize_stubs"):
     if outs == None:
         _, _, basename = module.rpartition(".")
         outs = [basename + ".pyi"]

@@ -3562,6 +3562,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
     else:
       out = jaxpr_subcomp(lowering_context, branches[1].jaxpr, *args)
     scf.yield_(out)
+  assert if_op.else_block is not None
   with ir.InsertionPoint(if_op.else_block):
     out = jaxpr_subcomp(lowering_context, branches[0].jaxpr, *args)
     scf.yield_(out)

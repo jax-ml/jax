@@ -93,6 +93,7 @@ class LoweringContext:
     if not _should_lower(op):
       return
 
+    # pyrefly: ignore[missing-attribute]
     if (name := op.OPERATION_NAME) not in _lowerings:  # pytype: disable=attribute-error
       raise NotImplementedError(f"Missing lowering rule for {op}")
 
@@ -123,7 +124,7 @@ RECURSED = Recursed()
 
 MlirLoweringRuleResult = Sequence[ir.Value] | Recursed
 MlirLoweringRule = Callable[
-    [LoweringContext, ir.Operation | ir.OpView], MlirLoweringRuleResult
+    [LoweringContext, Any], MlirLoweringRuleResult
 ]
 
 
@@ -151,14 +152,11 @@ def _undo_conversion_cast(
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
-  converted_outputs = builtin.unrealized_conversion_cast(
+  cast_op = builtin.UnrealizedConversionCastOp(
       [operand.type for operand in conversion_cast.operands],
       conversion_cast.results,
   )
-  if isinstance(converted_outputs, ir.OpResultList):
-    converted_outputs = list(converted_outputs)
-  elif not isinstance(converted_outputs, list):
-    converted_outputs = [converted_outputs]
+  converted_outputs: Sequence[ir.Value] = cast_op.results
 
   for v, t in zip(converted_outputs, expected_types, strict=True):
     if v.type != t:
@@ -219,7 +217,10 @@ def _fragmented_array_from_ir(
     reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
   registers = np.array(list(converted_outputs)).reshape(
-    [attr.value for attr in conversion_cast.attributes["registers_shape"]]
+    [
+        attr.value  # pyrefly: ignore[missing-attribute]
+        for attr in ir.ArrayAttr(conversion_cast.attributes["registers_shape"])
+    ]
   )
 
   if isinstance(conversion_cast.outputs[0].type.element_type, ir.IntegerType):
@@ -275,7 +276,7 @@ def _register_lowering(
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
     if op is not None:
-      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
+      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
       _lowerings[op_name] = f
       if support_warp_semantics:
         _supported_warp_lowerings.add(op_name)
@@ -356,7 +357,7 @@ def _arith_constant_op_lowering_rule(
           fa.FragmentedArray.splat(
               arith.constant(ty.element_type, value.get_splat_value()),
               tuple(ty.shape),
-              layouts_lib.from_layout_attr(op.attributes["out_layouts"][0]),
+              layouts_lib.from_layout_attr(op.attributes["out_layouts"][0]),  # pyrefly: ignore[bad-index]
               is_signed=is_signed,
           ),
           op.result.type,
@@ -646,7 +647,7 @@ def _vector_broadcast_op_lowering_rule(
       op.source,
       tuple(out_vec_ty.shape),
       layouts_lib.from_layout_attr(
-          op.attributes["out_layouts"][0]
+          op.attributes["out_layouts"][0]  # pyrefly: ignore[bad-index]
       ),
       is_signed=_default_is_signed(out_vec_ty.element_type),
   )
@@ -1259,7 +1260,7 @@ def _conversion_op_lowering_rule(
   if in_layout != layout:
     raise ValueError("Layout mismatch")
 
-  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
+  target_ty = op.result.type.element_type  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
   operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
   converted = operand.astype(target_ty, is_signed=target_is_signed)
   return [fragmented_array_to_ir(converted, op.result.type)]
@@ -2243,18 +2244,18 @@ def _mgpu_custom_primitive_op_lowering_rule(
   """Lowering rule for mgpu.CustomPrimitiveOp."""
   del ctx
   block = op.body.blocks[0]
-  for arg, op in zip(block.arguments, op.operands, strict=True):
-    arg.replace_all_uses_with(op)
+  for arg, operand in zip(block.arguments, op.operands, strict=True):
+    arg.replace_all_uses_with(operand)
 
   return_op = None
   ip = ir.InsertionPoint.current
-  for op in block.operations:
-    if isinstance(op.opview, mgpu.ReturnOp):
+  for block_op in block.operations:
+    if isinstance(block_op.opview, mgpu.ReturnOp):
       assert return_op is None
-      return_op = op.opview
+      return_op = block_op.opview
       continue
-    op.detach_from_parent()
-    ip.insert(op)
+    block_op.detach_from_parent()
+    ip.insert(block_op)
 
   if return_op is None:
     raise ValueError("A custom return op must terminate the block.")
@@ -2572,6 +2573,7 @@ def _traverse_op_lowering_rule(
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
+      # pyrefly: ignore[missing-attribute]
       op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
       or inference_utils.should_have_transforms(op)

@@ -1004,7 +1004,7 @@ def _select_and_gather_add_lowering(
     assert select_prim is lax.ge_p or select_prim is lax.le_p
     cmp_op = "GE" if select_prim is lax.ge_p else "LE"
     out = hlo.SelectOp(mlir.compare_hlo(fst(x), fst(y), cmp_op), x, y)
-    return out
+    return out.results
 
   res, = mlir.reduce_window(ctx,
       reducer_name="reduce_window_select_and_gather_add",

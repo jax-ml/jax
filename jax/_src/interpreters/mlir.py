@@ -2160,6 +2160,7 @@ def _cached_lowering(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     outs = jax_mlir_ext.inlined_func_call(
+        # pyrefly: ignore[bad-argument-type]
         cache_entry.func, args, ir.InsertionPoint.current.block)
   else:
     outs = func_dialect.CallOp(
@@ -2528,16 +2529,12 @@ def _lower_jaxpr_to_fun_cached(
     # Cacheable.
     key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
     try:
-      func_op, _, _ = ctx.cached_primitive_lowerings[key]
+      func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
           in_avals=in_avals, arg_names=arg_names, result_names=result_names)
-      ctx.cached_primitive_lowerings[key] = (
-          func_op,
-          func_op.name.value,
-          func_op.type.results,
-      )
+      ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects,

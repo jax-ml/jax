@@ -597,7 +597,7 @@ _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME = "pjrt_rendezvous"
 
 def send_to_host(
     channel: int,
-    token: hlo.TokenType,
+    token: ir.Value[hlo.TokenType],
     operand: Any,
     name: str | None = None,
     *,
@@ -633,7 +633,7 @@ def send_to_host(
 
 def receive_from_host(
     channel: int,
-    token: hlo.TokenType,
+    token: ir.Value[hlo.TokenType],
     out_aval: core.ShapedArray,
     name: str | None = None,
     *,
