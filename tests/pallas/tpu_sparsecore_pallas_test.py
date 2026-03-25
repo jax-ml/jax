@@ -1997,6 +1997,27 @@ class VectorSubcoreTest(PallasSCTest):
     ):
       kernel(x)
 
+  @parameterized.parameters(65, 128)
+  def test_large_grid_mul(self, grid):
+    """Regression test: SC pipeline with grid > 64 previously deadlocked."""
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
+      self.skipTest("Needs newer libtpu")
+    self.skip_if_tc_tiling()
+    n = self.num_lanes * grid
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((n,), jnp.float32),
+        grid=(grid,),
+        in_specs=[pl.BlockSpec([self.num_lanes], lambda i: i)],
+        out_specs=pl.BlockSpec([self.num_lanes], lambda i: i),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = 2.0 * x_ref[...]
+
+    x = jnp.ones(n, dtype=jnp.float32)
+    got = jax.block_until_ready(kernel(x))
+    np.testing.assert_allclose(got, 2.0 * x, rtol=1e-5)
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
