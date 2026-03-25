@@ -34,6 +34,7 @@ from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.tree_util import FlatTree
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
 from jax._src.state import discharge as state_discharge
@@ -923,13 +924,13 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       pl.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(kernel, 2),
-        [
-            state.shaped_array_ref((8,), jnp.float32),
-            state.shaped_array_ref((8,), jnp.float32),
-        ],
+    in_avals = (
+        state.shaped_array_ref((8,), jnp.float32),
+        state.shaped_array_ref((8,), jnp.float32),
     )
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        kernel, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", kernel, in_avals, {}))
     expected_effects = {state.ReadEffect(1), state.WriteEffect(0)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
@@ -1088,7 +1089,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
-    stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2), in_avals)
+    stateful_jaxpr, out_avals = pe.trace_to_jaxpr(
+        f, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", f, tuple(in_avals), {}))
     discharged_jaxpr, _ = state_discharge.discharge_state(
         stateful_jaxpr, consts=(), should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)
@@ -3701,13 +3704,13 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
       )
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 2),
-        [
-            state.shaped_array_ref((2, 8, 128), jnp.int32),
-            jax.core.ShapedArray((), jnp.int32),
-        ],
+    in_avals = (
+        state.shaped_array_ref((2, 8, 128), jnp.int32),
+        jax.core.ShapedArray((), jnp.int32),
     )
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        body, FlatTree.flatten_args(*in_avals),
+        debug_info=api_util.debug_info("state_test", body, in_avals, {}))
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 

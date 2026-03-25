@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
-from functools import update_wrapper, reduce, partial, wraps
+from functools import partial, reduce, update_wrapper, wraps
 from typing import Any, Generic, TypeVar
 
 from jax._src import config
@@ -26,25 +26,43 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
-from jax._src.ad_util import (
-    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval, p2tz)
+from jax._src.ad_util import ( SymbolicZero, Zero, p2tz,
+    stop_gradient_p, zeros_like_aval)
 from jax._src.api_util import (
-  argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
-  prepend_static_args, debug_info, fun_signature,
-  infer_argnums_and_argnames)
+  argnums_partial, debug_info, flatten_fun_nokwargs, fun_signature,
+  infer_argnums_and_argnames,
+  prepend_static_args, resolve_kwargs)
 from jax._src.errors import UnexpectedTracerError
-from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.batching import not_mapped
+from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
-    register_pytree_node_class, tree_leaves, tree_flatten_with_path,
-    tree_leaves_with_path, keystr, treedef_children, tree_structure, PyTreeDef)
-from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
-                           weakref_lru_cache)
+    FlatTree,
+    PyTreeDef,
+    keystr,
+    register_pytree_node_class,
+    tree_flatten,
+    tree_flatten_with_path,
+    tree_leaves,
+    tree_leaves_with_path,
+    tree_map,
+    tree_structure,
+    tree_unflatten,
+    treedef_children,
+    treedef_is_leaf,
+    treedef_tuple,
+)
+from jax._src.util import (
+    cache,
+    safe_map,
+    safe_zip,
+    split_list,
+    unzip2,
+    weakref_lru_cache,
+)
 
 
 traceback_util.register_exclusion(__file__)
@@ -58,8 +76,10 @@ zip = safe_zip
 def _initial_style_jaxpr(fun: lu.WrappedFun,
                          in_avals: Sequence[core.AbstractValue]
                          ) -> tuple[core.Jaxpr, Sequence[Any]]:
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-  return jaxpr, consts
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      fun, FlatTree.flatten_args(*in_avals), debug_info=fun.debug_info
+  )
+  return closed_jaxpr.jaxpr, closed_jaxpr.consts
 
 def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
   return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
@@ -1192,7 +1212,10 @@ def custom_gradient(fun):
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
                                                       debug_info=debug_fwd), out_tree)
     ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        rule, FlatTree.flatten_args(*ans_avals), debug_info=debug_fwd
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
   def bwd(res, cts):
@@ -1321,7 +1344,10 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
                                debug_info: core.DebugInfo):
   wrapped_fun, out_tree = flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun, FlatTree.flatten_args(*in_avals), debug_info=debug_info
+  )
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out_tree = out_tree()
 
   (closure_consts, const_args), merge = partition_list(_maybe_perturbed, consts)
@@ -1650,8 +1676,12 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.typeof(x) for x in args_flat]
-    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
-                                                     in_avals)
+    closed_fwd_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fwd.with_unknown_names(),
+        FlatTree.flatten_args(*in_avals),
+        debug_info=flat_fwd.debug_info.with_unknown_names(),
+    )
+    fwd_jaxpr, consts = closed_fwd_jaxpr.jaxpr, closed_fwd_jaxpr.consts
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
@@ -1664,7 +1694,12 @@ def optimize_remat_of_custom_vjp_fwd(
 
     @pe._memoize
     def fun_jaxpr_thunk():
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      closed_fun_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun,
+          FlatTree.flatten_args(*in_avals),
+          debug_info=flat_fun.debug_info,
+      )
+      jaxpr, consts = closed_fun_jaxpr.jaxpr, closed_fun_jaxpr.consts
       return jaxpr, consts
 
     out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),

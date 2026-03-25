@@ -18,23 +18,27 @@ import dataclasses
 from functools import partial
 from typing import Any
 
-import numpy as np
-
 from jax._src import config
 from jax._src import core
-from jax._src.core import typeof
-from jax._src import source_info_util
 from jax._src import linear_util as lu
-from jax._src.partition_spec import PartitionSpec as P
 from jax._src import mesh as mesh_lib
-from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
-from jax._src.core import Trace, Tracer, TraceTag
+from jax._src import source_info_util
+from jax._src.ad_util import SymbolicZero, Zero, add_jaxvals, add_jaxvals_p
+from jax._src.core import Trace, TraceTag, Tracer
+from jax._src.core import typeof
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef)
+from jax._src.partition_spec import PartitionSpec as P
+from jax._src.tree_util import (
+    FlatTree,
+    PyTreeDef,
+    tree_flatten,
+    tree_unflatten,
+)
 from jax._src.typing import Array
-from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                           canonicalize_axis, moveaxis, memoize,
-                           weakref_lru_cache, tuple_insert)
+from jax._src.util import (
+                           canonicalize_axis, memoize, moveaxis, safe_map, safe_zip, split_list, tuple_insert,unzip2,
+                           weakref_lru_cache)
+import numpy as np
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -420,8 +424,10 @@ def _batch_jaxpr2(
           mt = aval.mt.update(varying=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
           aval = aval.update(manual_type=mt)  # type: ignore
       avals_in2.append(aval)
-  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+  closed_jaxpr_out, _ = pe.trace_to_jaxpr(
+      f, FlatTree.flatten_args(*avals_in2), debug_info=f.debug_info
+  )
+  return closed_jaxpr_out, out_axes()
 
 def batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -453,8 +459,10 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
                                  axis_data.explicit_mesh_axis)
               if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
-  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
+  closed_jaxpr_out, _ = pe.trace_to_jaxpr(
+      f, FlatTree.flatten_args(*avals_in), debug_info=f.debug_info
+  )
+  return closed_jaxpr_out, out_batched()
 
 @lu.transformation_with_aux2
 def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):

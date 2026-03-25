@@ -160,7 +160,16 @@ class WrappedFun:
     in_type: optional input type
     debug_info: debugging info about the function being wrapped.
   """
-  __slots__ = ("f", "f_transformed", "transforms", "stores", "params", "in_type", "debug_info")
+  __slots__ = (
+      "f",
+      "f_transformed",
+      "transforms",
+      "stores",
+      "params",
+      "in_type",
+      "debug_info",
+      "__weakref__",
+  )
 
   f: Callable
   f_transformed: Callable
@@ -211,6 +220,9 @@ class WrappedFun:
     """Calls the transformed function"""
     return self.f_transformed(*args, **kwargs)
 
+  def __call__(self, *args, **kwargs):
+    return self.call_wrapped(*args, **kwargs)
+
   def __repr__(self):
     def transform_to_str(x):
       i, (gen, args) = x
@@ -223,6 +235,8 @@ class WrappedFun:
                  self.debug_info))
 
   def __eq__(self, other):
+    if not isinstance(other, WrappedFun):
+      return NotImplemented
     return (self.f == other.f and self.transforms == other.transforms and
             self.params == other.params and self.in_type == other.in_type and
             self.debug_info == other.debug_info)

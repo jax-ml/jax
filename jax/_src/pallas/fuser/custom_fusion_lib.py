@@ -118,7 +118,10 @@ class custom_fusion:
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
         lu.wrap_init(self.fun, debug_info=debug_fun.with_unknown_names()),
         in_tree)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fun, pallas_core.tree_util.FlatTree.flatten_args(*in_avals)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
 
     # if a Pallas implementation was provided, get its jaxpr
     if self.pallas_impl is not None:
@@ -130,8 +133,14 @@ class custom_fusion:
           in_tree)
       # TODO(jburnim): Error if out_tree() and kernel_out_tree() are different?
       del pallas_out_tree
-      pallas_jaxpr, _, pallas_consts = (
-          pe.trace_to_jaxpr_dynamic(flat_pallas_impl, in_avals))
+      closed_pallas_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_pallas_impl,
+          pallas_core.tree_util.FlatTree.flatten_args(*in_avals),
+      )
+      pallas_jaxpr, pallas_consts = (
+          closed_pallas_jaxpr.jaxpr,
+          closed_pallas_jaxpr.consts,
+      )
     else:
       pallas_jaxpr = None
       pallas_consts = []

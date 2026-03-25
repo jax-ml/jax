@@ -450,7 +450,10 @@ def lower_fun(
         fn, params,
         debug_info=api_util.debug_info("pallas triton lower_fun", fun,
                                        args, params))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_fun, tree_util.FlatTree.flatten_args(*ctx.avals_in)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
@@ -517,8 +520,12 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
                                          body, (args, args), {})),
       in_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, in_avals
+  closed_combine_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fun, tree_util.FlatTree.flatten_args(*in_avals)
+  )
+  combine_jaxpr, consts = (
+      closed_combine_jaxpr.jaxpr,
+      closed_combine_jaxpr.consts,
   )
   out_tree = out_tree_thunk()
   del out_tree  # Not needed
@@ -2409,9 +2416,11 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
                                          body, (a, a), {})),
       in_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, [*mapped_avals, *mapped_avals]
+  avals = [*mapped_avals, *mapped_avals]
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      flat_fun, pallas_core.tree_util.FlatTree.flatten_args(*avals)
   )
+  combine_jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out_tree = out_tree_thunk()
   del out_tree  # Not needed
   if consts:

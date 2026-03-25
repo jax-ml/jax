@@ -152,14 +152,17 @@ def _uses_arguments(
   if not num_args:
     return ()
 
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+  avals = (core.ShapedArray((), jnp.int32),) * num_args
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
       lu.wrap_init(
           index_map,
-          debug_info=api_util.debug_info("pallas index_map",
-                                         index_map,
-                                         (0,) * num_args, {})),
-      (core.ShapedArray((), jnp.int32),) * num_args
+          debug_info=api_util.debug_info(
+              "pallas index_map", index_map, (0,) * num_args, {}
+          ),
+      ),
+      pallas_core.tree_util.FlatTree.flatten_args(*avals),
   )
+  jaxpr = closed_jaxpr.jaxpr
   _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
   return used_inputs
 

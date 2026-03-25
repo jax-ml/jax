@@ -864,8 +864,13 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
+  closed_trans_jaxpr, _ = pe.trace_to_jaxpr(
+      lu.wrap_init(transposed, debug_info=dbg),
+      FlatTree.flatten_args(*in_avals),
+      debug_info=dbg,
+  )
+  trans_jaxpr = closed_trans_jaxpr.jaxpr
+  consts = closed_trans_jaxpr.consts
   return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
 
 

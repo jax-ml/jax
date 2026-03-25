@@ -837,15 +837,18 @@ def lower_pipelined_jaxpr_to_module(
     )(*refs)
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
-        [
-            gpu_core.GMEM(
-                bm.array_aval.shape, bm.array_aval.dtype
-            ).get_ref_aval()
-            for bm in block_mappings
-        ],
+    avals = [
+        gpu_core.GMEM(bm.array_aval.shape, bm.array_aval.dtype).get_ref_aval()
+        for bm in block_mappings
+    ]
+    closed_new_jaxpr, _ = pe.trace_to_jaxpr(
+        lu.wrap_init(
+            pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()
+        ),
+        tree_util.FlatTree.flatten_args(*avals),
     )
+    new_jaxpr = closed_new_jaxpr.jaxpr
+    new_consts = closed_new_jaxpr.consts
     assert not new_consts
 
   axis_names = (
@@ -1331,7 +1334,10 @@ def _lower_fun(
             "Pallas Mosaic GPU lower_fun", fun, args, params
         ),
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_fun, tree_util.FlatTree.flatten_args(*ctx.avals_in)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, args, consts
     )
@@ -1597,7 +1603,11 @@ def _lower_fn_with_avals(f, avals_in):
     flat_args, in_tree_ = tree_util.tree_flatten(args)
     flat_avals, in_tree = tree_util.tree_flatten(avals_in)
     fun, out_tree_thunk = api_util.flatten_fun_nokwargs(f_, in_tree)
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, flat_avals)
+    closed_jaxpr, out_avals_flat_tree = pe.trace_to_jaxpr(
+        fun, tree_util.FlatTree.flatten_args(*flat_avals)
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
+    out_avals = out_avals_flat_tree.vals
     out_tree = out_tree_thunk()
     out_flat = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts

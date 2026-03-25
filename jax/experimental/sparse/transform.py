@@ -454,7 +454,18 @@ def sparsify_raw(f):
                                            in_tree.unflatten([True] * len(in_avals_flat)),
                                            {})),
         in_tree)
-    jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+    from jax._src.tree_util import FlatTree
+
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped_fun,
+        FlatTree.flatten_args(*in_avals_flat),
+        debug_info=wrapped_fun.debug_info,
+    )
+    jaxpr, out_avals_flat, consts = (
+        closed_jaxpr.jaxpr,
+        closed_jaxpr.out_avals,
+        closed_jaxpr.consts,
+    )
     result = eval_sparse(jaxpr, consts, spvalues_flat, spenv)
     if len(out_avals_flat) != len(result):
       raise Exception("Internal: eval_sparse does not return expected number of arguments. "
@@ -754,9 +765,16 @@ def _sparsify_jaxpr(spenv: SparsifyEnv,
   args = spvalues_to_arrays(spenv, spvalues)
   args_flat, in_tree = tree_flatten(args)
   avals_flat = [core.typeof(arg) for arg in args_flat]
-  sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(wrapped, debug_info=jaxpr.jaxpr.debug_info.with_unknown_names()), avals_flat)
-  sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
+  wrapped_fun = lu.wrap_init(
+      wrapped, debug_info=jaxpr.jaxpr.debug_info.with_unknown_names()
+  )
+  from jax._src.tree_util import FlatTree
+
+  sp_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun,
+      FlatTree.flatten_args(*avals_flat),
+      debug_info=wrapped_fun.debug_info,
+  )
   assert out_tree is not None
   return sp_jaxpr, out_tree
 

@@ -598,9 +598,14 @@ class BlockSpec:
         lu.wrap_init(index_map_func, debug_info=debug_info), index_map_tree
     )
     with tracing_grid_env(grid, vmapped_dims):
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_index_map_fun,
+          tree_util.FlatTree.flatten_args(*index_map_avals),
+          debug_info=flat_index_map_fun.debug_info,
       )
+      jaxpr = closed_jaxpr.jaxpr
+      out_avals = [v.aval for v in jaxpr.outvars]
+      consts = closed_jaxpr.consts
     index_map_out_tree = index_map_out_tree_thunk()
     unflat_avals = tree_util.tree_unflatten(index_map_out_tree, out_avals)
 
@@ -1476,7 +1481,10 @@ def core_map(
         jax_core.extend_axis_env_nd(mesh.shape.items()),
         config._check_vma(False),
     ):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun, tree_util.FlatTree.flatten_args(*ref_avals)
+      )
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
 
     out_tree = out_tree_thunk()
     if out_tree != tree_util.tree_structure(None):

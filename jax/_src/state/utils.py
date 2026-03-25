@@ -13,13 +13,13 @@
 # limitations under the License.
 """Utilities for tracing stateful functions."""
 
-from functools import partial
 from collections.abc import Callable
-
+from functools import partial
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.state.primitives import ref_get
@@ -73,11 +73,18 @@ def hoist_consts_to_refs(
     ]
     return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
 
-  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info.with_unknown_names()),
-      in_avals)
-  assert not consts, "All consts should have been converted to refs"
-  return hoisted_jaxpr
+  wrapped_fun = lu.wrap_init(
+      _hoist, debug_info=jaxpr.debug_info.with_unknown_names()
+  )
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun,
+      tree_util.FlatTree.flatten_args(*in_avals),
+      debug_info=wrapped_fun.debug_info,
+  )
+  assert (
+      not closed_jaxpr.consts
+  ), "All consts should have been converted to refs"
+  return closed_jaxpr.jaxpr
 
 
 def bitcast(x, dtype: DTypeLike):

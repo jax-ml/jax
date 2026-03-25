@@ -336,8 +336,10 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
   wrapped = lu.wrap_init(interp_fun, debug_info=jaxpr.debug_info)
-  new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-      wrapped, kernel_avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped, pallas_core.tree_util.FlatTree.flatten_args(*kernel_avals)
+  )
+  new_jaxpr, new_consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   return new_jaxpr, new_consts
 
 

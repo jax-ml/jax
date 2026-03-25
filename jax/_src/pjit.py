@@ -1893,9 +1893,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
     cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  closed_trans_jaxpr, _ = pe.trace_to_jaxpr(
+      lu.wrap_init(transposed, debug_info=dbg),
+      tree_util.FlatTree.flatten_args(*in_avals),
+      debug_info=dbg,
+  )
+  return closed_trans_jaxpr, cell.out_tree  # type: ignore
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache

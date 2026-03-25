@@ -64,7 +64,10 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
           lu.wrap_init(wrapped, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.typeof(x) for x in flat_args]
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun, tree_util.FlatTree.flatten_args(*flat_avals)
+      )
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
       out_tree = out_tree_thunk()
       out = fusible_p.bind(
           *consts,

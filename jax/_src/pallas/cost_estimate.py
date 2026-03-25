@@ -97,7 +97,10 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
                                                   args, {})),
       treedef)
   avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun, pallas_core.tree_util.FlatTree.flatten_args(*avals)
+  )
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   estimate = cost_estimate_jaxpr(jax_core.ClosedJaxpr(jaxpr, consts))
   input_bytes = sum(
       math.prod(a.shape) * a.dtype.itemsize for a in flattened_args)

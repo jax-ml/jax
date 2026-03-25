@@ -317,9 +317,12 @@ def _mpmd_map(
           lu.wrap_init(fn, debug_info=debug_info), kernel_in_tree
       )
       with jax_core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(False):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-            flat_fun, flat_kernel_avals
+        closed_jaxpr, _ = pe.trace_to_jaxpr(
+            flat_fun,
+            tree_util.FlatTree.flatten_args(*flat_kernel_avals),
+            debug_info=debug_info,
         )
+        jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
       fun_out_tree = out_tree_thunk()
       if fun_out_tree != tree_util.tree_structure(None):
         raise ValueError(

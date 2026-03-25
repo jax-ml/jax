@@ -148,10 +148,14 @@ def _transpose_jaxpr(jaxpr, in_avals, in_tree):
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
     cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  dbg = debug_info('_transpose_jaxpr', transposed, (), {})
+  wrapped_fun = lu.wrap_init(transposed, debug_info=dbg)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      wrapped_fun,
+      FlatTree.flatten_args(*in_avals),
+      debug_info=wrapped_fun.debug_info,
+  )
+  return core.ClosedJaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts), cell.out_tree  # type: ignore
 
 def _xla_metadata_call_transpose(cts_in, *primals_in, jaxpr, **meta):
   in_flat, in_tree = tree_flatten((primals_in, cts_in))

@@ -17,29 +17,34 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import contextlib
 import functools
-import itertools as it
 from functools import partial
+import itertools as it
 from typing import Any
 
 from jax._src import config
-from jax._src import linear_util as lu
-from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_flatten, tree_unflatten,
-                                register_pytree_node, PyTreeDef)
-from jax._src import mesh as mesh_lib
 from jax._src import core
+from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import source_info_util
-from jax._src.ad_util import (
-    add_jaxvals, replace_internal_symbolic_zeros,
-    replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero,
-    add_jaxvals_p, p2tz, p2cz)  # noqa: F401
-from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
-from jax._src.core import (Trace, Tracer, typeof, call_p, Primitive, Literal)
+from jax._src.ad_util import ( SymbolicZero, Zero,
+    add_jaxvals,
+    add_jaxvals_p, p2cz, p2tz, replace_internal_symbolic_zeros,
+    replace_rule_output_symbolic_zeros, zeros_like_aval)  # noqa: F401
+from jax._src.api_util import debug_info, flatten_fun, flatten_fun_nokwargs
+from jax._src.core import ( Literal, Primitive,Trace, Tracer, call_p, typeof)
 from jax._src.dtypes import dtype, float0
+from jax._src.interpreters import partial_eval as pe
 from jax._src.state.types import AbstractRef
-from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                           weakref_lru_cache, partition_list, subs_list2,
-                           foreach)
+from jax._src.tree_util import (
+    FlatTree,
+    PyTreeDef,
+    register_pytree_node,
+    tree_flatten,
+    tree_unflatten,
+)
+from jax._src.util import (
+                           foreach, partition_list, safe_map, safe_zip, split_list, subs_list2,unzip2,
+                           weakref_lru_cache)
 
 Array = Any
 Ref = Any
@@ -1257,9 +1262,10 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   tangent_avals = [aval.to_tangent_aval()
                    for aval, nz in zip(jaxpr.in_aval_qdds, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_aval_qdds, tangent_avals))
-  jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(
-      f_jvp, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
+  closed_jaxpr_out, _ = pe.trace_to_jaxpr(
+      f_jvp, FlatTree.flatten_args(*avals_in), debug_info=f_jvp.debug_info
+  )
+  return closed_jaxpr_out, out_nonzeros()
 
 @lu.transformation_with_aux2
 def f_jvp_traceable(f, store, nonzeros, *primals_and_nztangents):
