@@ -73,7 +73,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_structure, treedef_children,
     PyTreeDef, none_leaf_registry as none_lr, tree_map, FlatTree)
-from jax._src.typing import ArrayLike
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
@@ -1407,7 +1407,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
-def const_args_shardings(const_args: Sequence[ArrayLike]) -> Sequence[PjitSharding]:
+def const_args_shardings(const_args: Sequence[Array | np.ndarray]) -> Sequence[PjitSharding]:
   const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_shardings(
       const_args_types, (sharding_impls.UNSPECIFIED,) * len(const_args))

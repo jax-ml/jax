@@ -21,7 +21,6 @@ import sys
 from typing import Any, Union
 import warnings
 
-from jax._src import literals
 from jax._src.lib import xla_client as xc
 from jax._src.util import use_cpp_class
 import numpy as np
@@ -208,7 +207,6 @@ ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
   StaticScalar,  # valid scalars
-  literals.TypedNdArray,  # Typed array type
 ]
 
 if sys.version_info[:2] < (3, 14):
