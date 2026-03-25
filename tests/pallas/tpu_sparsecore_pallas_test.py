@@ -2323,6 +2323,83 @@ class PipelineTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
+  def test_manual(self):
+    num_subcores = 16
+    sc_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=2
+    )
+    chunk_size = self.num_lanes
+    core_map_size = num_subcores * sc_mesh.num_cores
+
+    num_steps = 8      # Num of pipeline steps
+    num_buffers = 3
+    window_size = 128  # Size of one VMEM copy
+    x_shape = (core_map_size, 128 * num_steps)
+    x = jnp.arange(np.prod(x_shape), dtype=jnp.int32).reshape(core_map_size, -1)
+
+    @jax.jit
+    @pl.kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype),
+        mesh=sc_mesh,
+        scratch_shapes=[
+            pltpu.VMEM((num_buffers, window_size), jnp.int32),
+            pltpu.VMEM((num_buffers, window_size), jnp.int32),
+            pltpu.SemaphoreType.DMA((sc_mesh.num_cores, num_buffers)),
+            pltpu.SemaphoreType.DMA((sc_mesh.num_cores, num_buffers)),
+        ],
+    )
+    def add_one_kernel(x_hbm, o_hbm, x_vmem, o_vmem, in_sem, out_sem):
+      core_id = jax.lax.axis_index("core")
+      subcore_id = jax.lax.axis_index("subcore")
+      idx = core_id * sc_mesh.num_subcores + subcore_id
+
+      def copy_in(iter_idx, buf_idx):
+        ds = pl.ds(iter_idx * window_size, window_size)
+        return pltpu.make_async_copy(
+            x_hbm.at[idx, ds],
+            x_vmem.at[buf_idx],
+            in_sem.at[core_id, buf_idx],
+        )
+
+      def copy_out(iter_idx, buf_idx):
+        ds = pl.ds(iter_idx * window_size, window_size)
+        return pltpu.make_async_copy(
+            o_vmem.at[buf_idx],
+            o_hbm.at[idx, ds],
+            out_sem.at[core_id, buf_idx],
+        )
+
+      def compute(x_vmem, o_vmem, cur_buf):
+        @pl.loop(0, window_size, step=chunk_size)
+        def _reg_loop(c):
+          indices = (cur_buf, pl.ds(c, chunk_size))
+          o_vmem.at[indices][...] = x_vmem.at[indices][...] + 1
+
+      def loop_body(i, _):
+        cur_buf = i % num_buffers
+        # wait current copy-in
+        copy_in(i, cur_buf).wait()
+        # wait last copy-out on this buffer
+        @pl.when(i >= num_buffers)
+        def _():
+          copy_out(i - num_buffers, cur_buf).wait()
+        compute(x_vmem, o_vmem, cur_buf)  # Using x and o's cur_buf slot
+        # start current copy-out
+        copy_out(i, cur_buf).start()
+        # start next copy-in on this buffer
+        @pl.when(i + num_buffers < num_steps)
+        def _():
+          copy_in(i + num_buffers, cur_buf).start()
+
+      for i in range(num_buffers):
+        copy_in(i, i).start()
+      jax.lax.fori_loop(0, num_steps, loop_body, None)
+      for i in range(num_buffers):
+        copy_out(num_steps - num_buffers + i, i).wait()
+
+    y = add_one_kernel(x)
+    np.testing.assert_array_equal(y, x + 1)
+
 
 class PipelineTestWithTCTiling(PipelineTest):
   USE_TC_TILING = True
