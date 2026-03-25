@@ -25,6 +25,7 @@ from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
+from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
@@ -1578,6 +1579,69 @@ ir.MLIRError,
         "Response memref must be in SMEM.",
     ):
       self.module.operation.verify()
+
+  def test_contiguous_reinterpret_cast_of_slice_smem_is_folded(self):
+    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
+      self.skipTest("ReinterpretCastOp is not available.")
+
+    shape, new_shape = (4, 8), (16, 2)
+    ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu_utils.smem())
+    new_ty = ir.MemRefType.get(
+        new_shape,
+        ty.element_type,
+        layout=ir.StridedLayoutAttr.get(0, [1, 16]),
+        memory_space=ty.memory_space,
+    )
+    with ir.InsertionPoint(self.module.body):
+      fn = func.FuncOp("test_fn", ir.FunctionType.get([], [new_ty]))
+      block = fn.add_entry_block()
+      with ir.InsertionPoint(block):
+        ref = mgpu.dialect.slice_smem(
+            ty, offset=mgpu_utils.c(0, ir.IntegerType.get_signless(32)),
+        )
+        result = mgpu.dialect.reinterpret_cast(new_ty, ref)
+        func.ReturnOp([result])
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    [slice_smem_op] = find_if(
+        self.module,
+        lambda op: op.name == mgpu.dialect.SliceSMEMOp.OPERATION_NAME,
+    )
+    self.assertEqual(slice_smem_op.result.type, new_ty)
+
+  def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
+    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
+      self.skipTest("ReinterpretCastOp is not available.")
+
+    bf16 = ir.BF16Type.get()
+    smem = mgpu_utils.smem()
+    ty = ir.MemRefType.get((4, 8), bf16, memory_space=smem)
+    ty1 = ir.MemRefType.get((32,), bf16, memory_space=smem)
+    ty2 = ir.MemRefType.get((2, 16), bf16, memory_space=smem)
+    with ir.InsertionPoint(self.module.body):
+      fn = func.FuncOp("test_fn", ir.FunctionType.get([ty], [ty2]))
+      block = fn.add_entry_block()
+      with ir.InsertionPoint(block):
+        cast1 = mgpu.dialect.reinterpret_cast(ty1, block.arguments[0])
+        cast2 = mgpu.dialect.reinterpret_cast(ty2, cast1)
+        func.ReturnOp([cast2])
+
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+
+    [reinterpret_cast_op] = find_if(
+        self.module,
+        lambda op: op.name == mgpu.dialect.ReinterpretCastOp.OPERATION_NAME,
+    )
+    self.assertEqual(reinterpret_cast_op.result.type, ty2)
 
 
 class DialectLoweringTest(MosaicGpuTest):
