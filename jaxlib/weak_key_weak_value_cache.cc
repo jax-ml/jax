@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <exception>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
