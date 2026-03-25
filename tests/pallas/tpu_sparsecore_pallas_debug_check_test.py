@@ -152,14 +152,25 @@ class DebugCheckTest(jtu.JaxTestCase):
     compiled_kernel = jax.jit(
         kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
     )
-    # We expect this to fail with a runtime error from the bounds checker.
-    with self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
-        "Trying to perform an indexed vector load from out of bounds address.",
-    ):
+
+    with pl.enable_debug_checks(), self.assertRaises(
+        jax.errors.JaxRuntimeError
+    ) as error:
       jax.block_until_ready(compiled_kernel(x, indices))
 
+    # TODO(b/479427406): Remove this once the bug is fixed.
+    if not (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
+      # We expect this to fail with a runtime error from the bounds checker.
+      self.assertIn(
+          "Trying to perform an indexed vector load from out of bounds"
+          " address.",
+          str(error.exception),
+      )
+
   def test_no_out_of_bounds(self):
+    # TODO(b/479427406): Remove this once the bug is fixed.
+    if (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
+      self.skipTest("Skip on v7+")
     size = plsc.get_sparse_core_info().num_lanes
     x = jnp.arange(size, dtype=jnp.int32)
     indices = jnp.arange(size, dtype=jnp.int32)
