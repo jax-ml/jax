@@ -200,21 +200,11 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Remove in v0.10.0
-  "array_ref": (
-    "jax.array_ref was removed in JAX v0.9.0; use jax.new_ref instead.",
-    None,
-  ),
-  "ArrayRef": (
-    "jax.ArrayRef was removed in JAX v0.9.0; use jax.Ref instead.",
-    None
-  ),
   # Added for v0.8.1
   "device_put_replicated": (
     "jax.device_put_replicated is deprecated; use jax.device_put instead.",
     _deprecated_device_put_replicated
   ),
-  # Added for v0.8.1
   "device_put_sharded": (
     "jax.device_put_sharded is deprecated; use jax.device_put instead.",
     _deprecated_device_put_sharded
