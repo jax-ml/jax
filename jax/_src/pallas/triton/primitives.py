@@ -700,6 +700,6 @@ def _max_contiguous_rule(
   lowering._set_attr(
       x,
       "tt.contiguity",
-      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
+      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),  # pyrefly: ignore[no-matching-overload]
   )
   return x

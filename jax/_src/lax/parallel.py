@@ -933,7 +933,7 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
   # Uneven replica groups are padded with -1.
   groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
                     dtype=np.int64).T
-  return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))
+  return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))  # pyrefly: ignore[no-matching-overload]
 
 def _allreduce_impl(prim, pos_reducer, arg, *, axes, axis_index_groups):
   assert axis_index_groups is None
@@ -2263,7 +2263,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       axis_context.manual_axes and
       axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
     if axis_env.sizes[axis_pos] == 1:
-      return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
+      return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))  # pyrefly: ignore[no-matching-overload]
     def f():
       return axis_index_p.bind(axis_name=axis_name)
     return mlir.lower_fun(

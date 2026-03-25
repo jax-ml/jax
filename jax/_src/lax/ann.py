@@ -297,7 +297,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
   iota = mlir.iota(ctx, core.ShapedArray(ctx.avals_in[0].shape, np.int32),
                    dimension=reduction_dimension)
 
-  init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))
+  init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))  # pyrefly: ignore[no-matching-overload]
   init_val_array = _get_init_val_literal(ctx.avals_in[0].dtype, is_max_k)
   init_vals = mlir.flatten_ir_values(
       [mlir.ir_constant(init_val_array.reshape(()))
