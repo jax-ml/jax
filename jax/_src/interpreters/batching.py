@@ -634,6 +634,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
   if all(core.definitely_equal_shape(shape, x.shape) and d == dim
          for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
+    args = core.standard_insert_pvary(*args)
     out = prim.bind(*args, **params)
     return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
   else:
@@ -644,6 +645,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
             for x, d in zip(args, dims)]
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
+    args = core.standard_insert_pvary(*args)
     out = prim.bind(*args, **params)
     return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
 
@@ -651,10 +653,8 @@ def _handle_scalar_broadcasting(nd, x, d):
   # Callers of this utility, via broadcast_batcher() or defbroadcasting(),
   # must be in a context where lax is importable.
   from jax import lax  # pytype: disable=import-error
-  if d is not_mapped or nd == np.ndim(x):
-    return x
-  else:
-    return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
+  return (x if d is not_mapped or nd == np.ndim(x) else
+          lax.expand_dims(x, tuple(range(np.ndim(x), nd))))
 
 def defreducer(prim):
   fancy_primitive_batchers[prim] = partial(reducer_batcher, prim)
@@ -706,15 +706,7 @@ def broadcast(x, sz, axis, mesh_axis):
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
-    x = lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
-    if config._check_vma.value:
-      # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
-      spmd_names = core.get_axis_env().spmd_axis_names
-      if len(spmd_names) > 1:
-        raise NotImplementedError
-      if spmd_names:
-        x = core.pvary(x, tuple(spmd_names))
-    return x
+    return lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
 
 def matchaxis2(axis_data, src, dst, x, sum_match=False):
   return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,

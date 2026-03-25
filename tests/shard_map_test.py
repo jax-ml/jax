@@ -5171,6 +5171,29 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(w_bar.sharding,
                      NamedSharding(mesh, P(None, None, 'z', unreduced={'x', 'y'})))
 
+  @parameterized.parameters([AxisType.Explicit, AxisType.Auto])
+  def test_vmap_shmap_spmd_axis_name_scalar(self, axis_type):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(axis_type,) * 2)
+    with jax.set_mesh(mesh):
+      arr = jax.device_put(jnp.ones((2, 4)), P('x', 'y'))
+      arr2 = jax.device_put(jnp.ones((2,)), P())
+
+      @jax.jit
+      @partial(jax.vmap, in_axes=(0, None), spmd_axis_name='x')
+      @shard_map(in_specs=(P('y'), P()), out_specs=P('y'))
+      def f(x, y):
+        return x * y
+
+      f(arr, arr2)  # doesn't crash
+
+      @jax.jit
+      @partial(jax.vmap, spmd_axis_name='x')
+      @shard_map(in_specs=P('y'), out_specs=P('y'))
+      def g(x):
+        return x * 2
+
+      g(arr)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
