@@ -899,6 +899,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mesh",
     srcs = ["mesh.py"],
+    visibility = [
+        "//jax:internal",
+        "//third_party/py/qwix/_src/providers:__pkg__",
+    ],
     deps = [
         ":config",
         ":util",
