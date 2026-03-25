@@ -532,7 +532,7 @@ ValueSitesForVariable = dict[cs.Variable, list[ValueSite]]
 # and each identifier in the mapping must be keyed by exactly one variable.
 # Lastly, the mapping must only refer to variables and
 # operands/results/arguments that correspond to the given operation.
-ConstraintSystemDerivationRuleResult = cs.Unsatisfiable | tuple[
+ConstraintSystemDerivationRuleResult = tuple[
     cs.ConstraintSystem, ValueSitesForVariable
 ]
 ConstraintSystemDerivationRule = Callable[
@@ -914,9 +914,11 @@ def _layout_cast_constraint_system(
   result = ValueSite(op, VariableType.RESULT, 0)
   variable = cs.Variable(operand)
   out_layout = layouts_lib.from_layout_attr(op.new_layout)
-  # TODO(bchetioui): think about raising a better error here.
   if not is_valid_register_layout_assignment(operand.shape, out_layout):
-    return cs.Unsatisfiable()
+    raise ValueError(
+        f"Cannot cast to layout {out_layout}: the layout is not compatible"
+        f" with the operand shape {operand.shape} in {op}."
+    )
   return (
       cs.ConstraintSystem(
           assignments={variable: cs.RegisterLayout(out_layout)}
@@ -973,7 +975,11 @@ def _wgmma_constraint_system(
   acc_layout = fa.WGMMA_LAYOUT
   assignments[acc_var] = cs.RegisterLayout(acc_layout)
   if not is_valid_register_layout_assignment(acc_out.shape, acc_layout):
-    return cs.Unsatisfiable()
+    raise ValueError(
+        f"Cannot assign layout {acc_layout} to the accumulator of a wgmma op:"
+        f" the layout is not compatible with the accumulator shape"
+        f" {acc_out.shape}."
+    )
   value_sites_for_variable[acc_var] = [acc_in, acc_out]
 
   b = ValueSite(op, VariableType.OPERAND, 2)
@@ -1006,9 +1012,11 @@ def _wgmma_constraint_system(
     else:
       layout = fa.WGMMA_LAYOUT
     assignments[a_var] = cs.RegisterLayout(layout)
-    # TODO(bchetioui): raise a better error here.
     if not is_valid_register_layout_assignment(a.shape, layout):
-      return cs.Unsatisfiable()
+      raise ValueError(
+          f"Cannot assign layout {layout} to the 'a' operand of WGMMAOp: the"
+          f" layout is not compatible with the operand shape {a.shape}."
+      )
 
   value_sites_for_variable[a_var] = [a]
   return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
@@ -1306,7 +1314,10 @@ def _tmem_layout_cast_constraint_system(
   result = ValueSite(op, VariableType.RESULT, 0)
   tmem_layout = _tmem_layout_from_layout_attr(op.new_layout)
   if not is_valid_tmem_layout_assignment(operand.shape, tmem_layout):
-    return cs.Unsatisfiable()
+    raise ValueError(
+        f"Cannot cast to TMEM layout {tmem_layout}: the layout is not"
+        f" compatible with the operand shape {operand.shape} in {op}."
+    )
   out_layout = cs.TMEMLayout(tmem_layout)
   return (
       cs.ConstraintSystem(assignments={variable: out_layout}),
@@ -1358,9 +1369,12 @@ def _tcgen05_mma_constraint_system(
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
   acc_is_valid = is_valid_tmem_layout_assignment(acc.shape, acc_layout)
-  # TODO(bchetioui): think about raising a better error here.
   if not acc_is_valid:
-    return cs.Unsatisfiable()
+    raise ValueError(
+        f"Cannot assign TMEM layout {acc_layout} to the accumulator of"
+        f" a tcgen05 MMA op: the layout is not compatible with the accumulator"
+        f" shape {acc.shape}."
+    )
   operands_for_variable[acc_variable] = [acc]
 
   element_type_bitwidth = utils.bitwidth(op.b.type.element_type)  # pyrefly: ignore[missing-attribute]
@@ -1401,9 +1415,12 @@ def _tcgen05_mma_constraint_system(
     assignments[a_var] = cs.TMEMLayout(a_layout)
     operands_for_variable[a_var] = [a]
     a_is_valid = is_valid_tmem_layout_assignment(a.shape, a_layout)
-    # TODO(bchetioui): think about raising a better error here.
     if not a_is_valid:
-      return cs.Unsatisfiable()
+      raise ValueError(
+          f"Cannot assign TMEM layout {a_layout} to the 'a' operand of"
+          f" a tcgen05 MMA op: the layout is not compatible with the operand"
+          f" shape {a.shape}."
+      )
   else:
     assert _is_smem_ref(op.a)
     a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
@@ -1423,7 +1440,11 @@ def _tcgen05_mma_constraint_system(
     sparse_meta_layout = tcgen05.sparse_meta_layout()
     assignments[sparse_meta_var] = cs.TMEMLayout(sparse_meta_layout)
     if not is_valid_tmem_layout_assignment(sparse_meta.shape, sparse_meta_layout):
-      return cs.Unsatisfiable()
+      raise ValueError(
+          f"Cannot assign TMEM layout {sparse_meta_layout} to the"
+          f" 'a_sparse_metadata' operand of a tcgen05 MMA op: the layout is not"
+          f" compatible with the operand shape {sparse_meta.shape}."
+      )
     operands_for_variable[sparse_meta_var] = [sparse_meta]
 
   if (scaled := op.a_scale is not None) != (op.b_scale is not None):
@@ -1778,9 +1799,11 @@ def _with_transforms_constraint_system(
   # pyrefly: ignore[bad-argument-type]
   tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
   if tiling.value is not None:
-    # TODO(bchetioui): think about raising a better error here.
     if not is_valid_smem_layout_assignment(source.shape, tiling.value):
-      return cs.Unsatisfiable()
+      raise ValueError(
+          f"Cannot apply tiling {tiling.value} to memref with shape"
+          f" shape {source.shape}."
+      )
   assignments: dict[cs.Variable, cs.Constant] = {var: tiling}
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
 
@@ -2276,9 +2299,6 @@ def infer_layout(
       raise NotImplementedError(f"No layout inference rule defined for {op}")
     rule_result = rule(ctx, op)
     nonlocal global_constraint_system
-    if isinstance(rule_result, cs.Unsatisfiable):
-      global_constraint_system = cs.Unsatisfiable()
-      return
     constraint_system, mapping = rule_result
     global_constraint_system &= constraint_system
     ctx.update(mapping)

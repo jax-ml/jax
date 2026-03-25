@@ -2026,18 +2026,18 @@ class LayoutInferenceTest(parameterized.TestCase):
           mgpu.dialect.TileTransformAttr.get((32, 16)),
           mgpu.dialect.SwizzleTransformAttr.get(32),
       ])
-
-      if annotate_input:
-        in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
-
       out_ref = memref.subview(
           in_ref, offsets=[1, 0, 0], sizes=[2, 64, 8], strides=[1, 1, 1]
       )
 
-      if not annotate_input:
+      if annotate_input:
+        mgpu.dialect.with_transforms(in_ref, transforms)
+        failure_str = "Failed to infer"
+      else:
         mgpu.dialect.with_transforms(out_ref, transforms)
+        failure_str = "Cannot apply tiling"
 
-    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+    with self.assertRaisesRegex(ValueError, failure_str):
       mgpu.infer_layout(self.module)
 
   @parameterized.parameters([False, True])
@@ -2053,17 +2053,18 @@ class LayoutInferenceTest(parameterized.TestCase):
       layout = tcgen05.tmem_default_layout(packing=1)
       layout_attr = layouts.to_layout_attr(layout)
 
-      if annotate_input:
-        in_ref = mgpu.dialect.tmem_layout_cast(in_ref, layout_attr)
-
       out_ref = memref.subview(
           in_ref, offsets=[1, 0], sizes=[2, 64], strides=[1, 1]
       )
 
-      if not annotate_input:
+      if annotate_input:
+        mgpu.dialect.tmem_layout_cast(in_ref, layout_attr)
+        failure_str = "Failed to infer"
+      else:
         mgpu.dialect.tmem_layout_cast(out_ref, layout_attr)
+        failure_str = "Cannot cast to TMEM layout"
 
-    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+    with self.assertRaisesRegex(ValueError, failure_str):
       mgpu.infer_layout(self.module)
 
   @parameterized.parameters([False, True])
@@ -2619,7 +2620,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       [vec] = undefs(ir.VectorType.get((4, 4), ir.BF16Type.get()))
       mgpu.dialect.layout_cast(vec, layouts.to_layout_attr(fa.WGMMA_LAYOUT))
     with self.assertRaisesRegex(
-        ValueError, "Failed to infer a possible set of layouts"
+        ValueError, "Cannot cast to layout"
     ):
       mgpu.infer_layout(self.module)
 
@@ -2632,7 +2633,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           ref, layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
       )
     with self.assertRaisesRegex(
-        ValueError, "Failed to infer a possible set of layouts"
+        ValueError, "Cannot cast to TMEM layout"
     ):
       mgpu.infer_layout(self.module)
 
@@ -2646,7 +2647,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ])
       mgpu.dialect.with_transforms(ref, transforms)
     with self.assertRaisesRegex(
-        ValueError, "Failed to infer a possible set of layouts"
+        ValueError, "Cannot apply tiling"
     ):
       mgpu.infer_layout(self.module)
 
