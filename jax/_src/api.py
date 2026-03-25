@@ -2086,14 +2086,8 @@ def pspec_to_sharding(name, val):
       raise ValueError(
           "Please set a mesh via `jax.set_mesh` if a PartitionSpec is"
           f" passed to {name}")
-    out = NamedSharding(mesh, val)
-  else:
-    out = val
-  if isinstance(out, NamedSharding) and out.spec.unreduced:
-    raise NotImplementedError(
-        "device_put with unreduced is not implemented. Please use"
-        f" `jax.reshard`. Got {out}")
-  return out
+    return NamedSharding(mesh, val)
+  return val
 
 
 def device_put(
