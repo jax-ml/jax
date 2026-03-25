@@ -880,14 +880,15 @@ class InterpretDistributedTest(jtu.JaxTestCase):
 
       # --- Body ---
       def inner_kernel(input_ref, accum_ref):
-        # We do not explicitly use += because we set should_accumulate_out=True.
-        accum_ref[...] = input_ref[...]
+        # TODO(levskaya): if we want this test to actually work again we need to
+        # do manual accumulation correctly, zero'ing out accum_ref on init.
+        # tha old automatic emit_pipeline accumulation behavior is gone.
+        accum_ref[...] += input_ref[...]
 
       accum_pipeline = pltpu.emit_pipeline(
         inner_kernel,
         in_specs=[inner_block_spec],
         out_specs=inner_block_spec,
-        should_accumulate_out=True,
         grid=inner_grid,
       )
 

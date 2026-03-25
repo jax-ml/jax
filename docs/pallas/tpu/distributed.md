@@ -436,13 +436,13 @@ def semaphore_signal(
     device_id_type: DeviceIdType
 ) -> None:
   ... # Increments the semaphore `sem` on the target device `device_id` by `inc`.
-  
+
 def semaphore_wait(
     semaphore: Ref[SemaphoreType],
     value: int,
 ) -> None:
   ... # Blocks until the locally allocated copy of `sem` reaches `value`, then decrement by `value` and proceed.
-    
+
 def semaphore_read(
     sem: Ref[SemaphoreType],
 ) -> jax.Array:
@@ -525,7 +525,7 @@ def kernel(...):
     device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
-  
+
   local_copy_op.wait()
   # ... do work on local_scratch while waiting for async_copy_op to finish.
   remote_copy_op.wait()
@@ -1167,11 +1167,13 @@ Our new kernel replaces it with the following `emit_pipeline` call:
 
 ```python
 def inner_kernel(input_ref, accum_ref):
-  accum_ref[...] = input_ref[...]
+  @pl.when(pl.program_id(1) == 0)
+  def _():
+    accum_ref[...] = jnp.zeros_like(accum_ref)
+  accum_ref[...] += input_ref[...]
 accum_pipeline = pltpu.emit_pipeline(inner_kernel,
                                      in_specs=[inner_block_spec],
                                      out_specs=inner_block_spec,
-                                     should_accumulate_out=True,
                                      grid=inner_grid)
 @pl.when(~last_iteration)
 def _():
@@ -1332,14 +1334,15 @@ def reduce_scatter_kernel(
 
   # --- Body ---
   def inner_kernel(input_ref, accum_ref):
-    # We do not explicitly use += because we set should_accumulate_out=True.
-    accum_ref[...] = input_ref[...]
+    @pl.when(pl.program_id(1) == 0)
+    def _():
+      accum_ref[...] = jnp.zeros_like(accum_ref)
+    accum_ref[...] += input_ref[...]
 
   accum_pipeline = pltpu.emit_pipeline(
       inner_kernel,
       in_specs=[inner_block_spec],
       out_specs=inner_block_spec,
-      should_accumulate_out=True,
       grid=inner_grid,
   )
 

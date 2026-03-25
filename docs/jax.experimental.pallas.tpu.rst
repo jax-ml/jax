@@ -48,9 +48,6 @@ Pipelining
    BufferedRefBase
    emit_pipeline
    emit_pipeline_with_allocations
-   get_pipeline_schedule
-   make_pipeline_allocations
-
 
 Pseudorandom Number Generation
 ------------------------------
