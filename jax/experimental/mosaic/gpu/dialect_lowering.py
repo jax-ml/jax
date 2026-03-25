@@ -1563,10 +1563,6 @@ def _mgpu_arrive_op_lowering_rule(
   if orders_tc:
     # Only one thread arrives, so make sure it ups the arrival count for the
     # whole warpgroup.
-    #
-    # TODO(b/415721295): At the moment we assume that there is a single arrival
-    # per warpgroup. If we need to support also Warp-level semantics we will
-    # need to use a warp-level predicate.
     predicate = ctx.single_lane_predicate
     arrival_count = utils.WARPGROUP_SIZE
   else:
