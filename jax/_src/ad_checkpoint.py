@@ -737,9 +737,8 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
 
 def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   # TODO(mattjj): avoid round-tripping into UndefinedPrimals
-  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.ValAccum) else x
+  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
            for x in args]
-  if any(isinstance(x, ad.GradAccum) for x in args_): raise NotImplementedError
 
   assert not jaxpr.constvars
   in_linear = [ad.is_undefined_primal(x) for x in args_]
@@ -756,7 +755,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
                            prevent_cse=prevent_cse, **params)
   in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
   for x in args:
-    if isinstance(x, ad.ValAccum) and not next(in_zeros_):
+    if isinstance(x, ad.GradAccum) and not next(in_zeros_):
       x.accum(next(in_cts_nz_))
 ad.fancy_transposes[remat_p] = remat_transpose
 
