@@ -281,6 +281,15 @@ def scale_and_translate(image, shape: core.Shape,
   the input boundaries then the value for the output location will be set to
   zero.
 
+  This function can be used to imitate the behavior of
+  ``torch.nn.functional.interpolate`` with ``align_corners=True`` by setting::
+
+      scale = (n - 1) / (m - 1)
+      translation = 0.5 * (1 - scale)
+
+  where ``m`` is the input size and ``n`` is the output size for a given
+  dimension.
+
   The ``method`` argument expects one of the following resize methods:
 
   ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``,
@@ -430,6 +439,10 @@ def resize(image, shape: core.Shape, method: str | ResizeMethod,
   .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation
   .. _Cubic interpolation: https://en.wikipedia.org/wiki/Bicubic_interpolation
   .. _Lanczos resampling: https://en.wikipedia.org/wiki/Lanczos_resampling
+
+  This function does not support an ``align_corners`` argument like
+  ``torch.nn.functional.interpolate``. That behavior can be emulated using
+  :func:`scale_and_translate`.
 
   Args:
     image: a JAX array.
