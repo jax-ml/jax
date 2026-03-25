@@ -738,10 +738,9 @@ def _select_and_scatter_lower(
       operand,
       source,
       init_value,
-      window_dimensions=mlir.dense_int_array(window_dimensions),
-      window_strides=mlir.dense_int_array(window_strides),
-      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
-                                          shape=(len(padding), 2)))
+      window_dimensions=mlir.i64_array_attr(window_dimensions),
+      window_strides=mlir.i64_array_attr(window_strides),
+      padding=mlir.i64_array_attr(padding, shape=(len(padding), 2)))
   select = op.select.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(select):
     if select_jaxpr.effects:

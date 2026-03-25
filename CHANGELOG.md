@@ -35,11 +35,19 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
       `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
       `Unstacked`, `spec_to_indices`.
+
 * Changes:
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
     replaced with `.manual_type.varying`.
   * Removed experimental {func}`jax.experimental.custom_dce.custom_dce`
+
+* Deprecations:
+  * {func}`jax.interpreters.mlir.dense_int_elements` and
+    {func}`jax.interpreters.mlir.dense_int_array` are deprecated. Use
+    {func}`jax.interpreters.mlir.i32_array_attr` and
+    {func}`jax.interpreters.mlir.i64_array_attr` instead.
+
 
 ## JAX 0.9.2 (March 18, 2026)
 

@@ -26,6 +26,7 @@ from jax._src import effects
 from jax._src import lax
 from jax._src import state
 from jax._src import tree_util
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -36,9 +37,7 @@ from jax._src.pallas.triton import lowering
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax.interpreters import mlir
 import jax.numpy as jnp
-import numpy as np
 
 
 Ref: TypeAlias = state.AbstractRef | state.TransformedRef
@@ -697,9 +696,5 @@ def _max_contiguous_rule(
 ):
   [x_aval] = ctx.avals_in
   assert len(x_aval.shape) == len(values)
-  lowering._set_attr(
-      x,
-      "tt.contiguity",
-      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
-  )
+  lowering._set_attr(x, "tt.contiguity", mlir.i32_array_attr(values))
   return x

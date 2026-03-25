@@ -133,7 +133,7 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
     raise NotImplementedError("Shape polymorphism for FFT with non-constant fft_length is not implemented for TPU and GPU")
   return [
       hlo.FftOp(x, hlo.FftTypeAttr.get(fft_type.name),
-                mlir.dense_int_array(fft_lengths)).result
+                mlir.i64_array_attr(fft_lengths)).result
   ]
 
 

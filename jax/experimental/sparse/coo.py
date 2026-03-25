@@ -246,7 +246,7 @@ def _coo_todense_gpu_lowering(ctx, data, row, col, *, spinfo, target_name_prefix
   result = _lowerings.coo_todense_gpu_lowering(
       sub_ctx, data, row, col, shape=shape, target_name_prefix=target_name_prefix)
   return (
-      [hlo.transpose(result, mlir.dense_int_array([1, 0]))]
+      [hlo.transpose(result, mlir.i64_array_attr([1, 0]))]
       if transpose else [result])
 
 

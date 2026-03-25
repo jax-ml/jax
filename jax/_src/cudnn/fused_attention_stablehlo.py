@@ -637,12 +637,12 @@ def _dot_product_attention_fwd_cuda_lowering(
     B, N, T, qk_H = query_shape
     _, _, S, v_H = value_shape
     output_layout = (3, 2, 1, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
+    output_transpose_perm = mlir.i64_array_attr((0, 1, 2, 3))
   else:
     B, T, N, qk_H = query_shape
     _, S, _, v_H = value_shape
     output_layout = (3, 1, 2, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+    output_transpose_perm = mlir.i64_array_attr((0, 2, 1, 3))
 
   max_seg_per_batch = get_max_seg_per_batch(ir.RankedTensorType(q_offsets.type))
   is_paged_attention = check_is_paged_attention(ir.RankedTensorType(page_table_k.type))
@@ -719,12 +719,12 @@ def _dot_product_attention_bwd_cuda_lowering(
     B, q_N, T, qk_H = query_shape
     _, v_N, S, v_H = value_shape
     grad_layout = (3, 2, 1, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
+    grad_transpose_perm = mlir.i64_array_attr((0, 1, 2, 3))
   else:
     B, T, q_N, qk_H = query_shape
     _, S, v_N, v_H = value_shape
     grad_layout = (3, 1, 2, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+    grad_transpose_perm = mlir.i64_array_attr((0, 2, 1, 3))
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)
@@ -1400,12 +1400,12 @@ def _dot_product_attention_fp8_fwd_cuda_lowering(
     B, N, T, H = query_shape
     _, _, S, _ = key_shape
     output_layout = (3, 2, 1, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
+    output_transpose_perm = mlir.i64_array_attr((0, 1, 2, 3))
   else:
     B, T, N, H = query_shape
     _, S, _, _ = key_shape
     output_layout = (3, 1, 2, 0)
-    output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+    output_transpose_perm = mlir.i64_array_attr((0, 2, 1, 3))
 
   output_shape = (B, N, T, H)
   softmax_stat_shape = (B, N, T)
@@ -1473,12 +1473,12 @@ def _dot_product_attention_fp8_bwd_cuda_lowering(
     B, q_N, T, H = query_shape
     _, k_N, S, _ = key_shape
     grad_layout = (3, 2, 1, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 1, 2, 3))
+    grad_transpose_perm = mlir.i64_array_attr((0, 1, 2, 3))
   else:
     B, T, q_N, H = query_shape
     _, S, k_N, _ = key_shape
     grad_layout = (3, 1, 2, 0)
-    grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
+    grad_transpose_perm = mlir.i64_array_attr((0, 2, 1, 3))
 
   workspace_shape = (0,)
   workspace_type = ir.IntegerType.get_unsigned(8)

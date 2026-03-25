@@ -390,7 +390,7 @@ def lower_jaxpr_into_module(
   sym_tab.insert(func_op)
   assert mosaic_grid_mapping.grid is not None
   assert all(isinstance(d, int) for d in mosaic_grid_mapping.grid)
-  func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(
+  func_op.attributes["iteration_bounds"] = mlir.i64_array_attr(
       cast(tuple[int, ...], mosaic_grid_mapping.grid)
   )
   func_op.attributes["dimension_semantics"] = (
@@ -419,7 +419,7 @@ def lower_jaxpr_into_module(
 
     block_shape = list(pallas_core._get_block_shape(bm.block_shape))
     block_params = dict(
-        window_bounds=ir.DenseI64ArrayAttr.get(block_shape),
+        window_bounds=mlir.i64_array_attr(block_shape),
         transform_indices=ir.FlatSymbolRefAttr.get(func_name),
     )
     window_params.append(ir.DictAttr.get(block_params))

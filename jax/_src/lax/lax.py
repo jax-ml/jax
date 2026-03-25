@@ -6359,7 +6359,7 @@ def _ragged_dot_general_lower(
       _, rhs_aval, _ = ctx.avals_in
       perm = list(range(rhs_aval.ndim))
       perm[-2], perm[-1] = perm[-1], perm[-2]
-      rhs = hlo.transpose(rhs, mlir.dense_int_array(perm))
+      rhs = hlo.transpose(rhs, mlir.i64_array_attr(perm))
       rhs_contracting = (1,)
   ragged_dot_dnums = chlo.RaggedDotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
@@ -7298,7 +7298,7 @@ def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
 def _reshape_lower(ctx, x, new_sizes, dimensions, sharding):
   aval_out, = ctx.avals_out
   if dimensions is not None:
-    x = hlo.transpose(x, mlir.dense_int_array(dimensions))
+    x = hlo.transpose(x, mlir.i64_array_attr(dimensions))
   out = mlir.reshape(ctx, x, aval_out)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
@@ -7350,7 +7350,7 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
-  out = hlo.reverse(x, mlir.dense_int_array(dimensions))
+  out = hlo.reverse(x, mlir.i64_array_attr(dimensions))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 mlir.register_lowering(rev_p, _rev_lower)
 
@@ -7386,7 +7386,7 @@ def _transpose_lower(ctx, x, *, permutation):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
-  out = hlo.transpose(x, mlir.dense_int_array(permutation))
+  out = hlo.transpose(x, mlir.i64_array_attr(permutation))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
@@ -7701,7 +7701,7 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                    operands, init_values, mlir.dense_int_array(dimensions))
+                    operands, init_values, mlir.i64_array_attr(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
@@ -7967,7 +7967,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
   dtype = aval_out.dtype
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
                     [mlir.ir_constant(unit_factory(aval_out.dtype))],
-                    mlir.dense_int_array(axes))
+                    mlir.i64_array_attr(axes))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
@@ -8259,7 +8259,7 @@ def _top_k_lower(ctx, operand, k, axis):
   if axis != ndim - 1:
     perm = list(range(ndim))
     perm[axis], perm[-1] = perm[-1], perm[axis]
-    operand = hlo.transpose(operand, mlir.dense_int_array(perm))
+    operand = hlo.transpose(operand, mlir.i64_array_attr(perm))
   else:
     perm = None
 
@@ -8280,7 +8280,7 @@ def _top_k_lower(ctx, operand, k, axis):
 
   # Move last dimension back into place
   if perm is not None:
-    results = [hlo.transpose(result, mlir.dense_int_array(perm))
+    results = [hlo.transpose(result, mlir.i64_array_attr(perm))
                for result in results]
   return results
 

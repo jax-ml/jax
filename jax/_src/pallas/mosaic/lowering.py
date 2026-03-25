@@ -925,7 +925,7 @@ def lower_jaxpr_into_module(
       # remaining physical dtype.
       block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))  # pytype: disable=wrong-arg-types
       block_shape = dynamic_shape_replacement_fn(block_shape)
-      window_shape = ir.DenseI64ArrayAttr.get(block_shape)
+      window_shape = mlir.i64_array_attr(block_shape)
       block_params: dict[str, ir.Attribute] = dict(
           window_bounds=window_shape,
           transform_indices=ir.FlatSymbolRefAttr.get(func_name),
@@ -997,7 +997,7 @@ def lower_jaxpr_into_module(
         MLIR_DYNAMIC if b is pallas_core.dynamic_grid_dim else b for b in grid
     ]
     static_grid = dynamic_shape_replacement_fn(static_grid)
-    func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(static_grid)
+    func_op.attributes["iteration_bounds"] = mlir.i64_array_attr(static_grid)
   func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
       ir.IntegerType.get_signless(64), len(mosaic_grid_mapping.scalar_prefetch_types))
   func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(

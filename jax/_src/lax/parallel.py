@@ -933,7 +933,7 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
   # Uneven replica groups are padded with -1.
   groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
                     dtype=np.int64).T
-  return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))
+  return mlir.i64_array_attr(groups)
 
 def _allreduce_impl(prim, pos_reducer, arg, *, axes, axis_index_groups):
   assert axis_index_groups is None
@@ -1110,7 +1110,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
       ctx, axis_name=axis_name, perm=perm, op_name="ppermute"
   )
   return hlo.CollectivePermuteOp(
-      x, mlir.dense_int_elements(full_perm), **other_args).results
+      x, mlir.i64_array_attr(full_perm), **other_args).results
 
 
 def _ppermute_transpose_rule(t, x, perm, axis_name):
@@ -1176,7 +1176,7 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   send_op = hlo.SendOp(
       [x],
       token,
-      source_target_pairs=mlir.dense_int_elements(full_perm),
+      source_target_pairs=mlir.i64_array_attr(full_perm),
       **other_args,
   )
   axis_ctx = ctx.module_context.axis_context
@@ -1219,7 +1219,7 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   recv_op = hlo.RecvOp(
       [mlir.aval_to_ir_type(out_shape), token.type],
       token,
-      source_target_pairs=mlir.dense_int_elements(full_perm),
+      source_target_pairs=mlir.i64_array_attr(full_perm),
       **other_args,
   )
   axis_ctx = ctx.module_context.axis_context
@@ -1766,7 +1766,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
-        mlir.dense_int_array(broadcast_dimensions))
+        mlir.i64_array_attr(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
   if is_spmd:
@@ -2263,7 +2263,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       axis_context.manual_axes and
       axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
     if axis_env.sizes[axis_pos] == 1:
-      return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
+      return hlo.constant(mlir.i32_array_attr(np.int32(0)))
     def f():
       return axis_index_p.bind(axis_name=axis_name)
     return mlir.lower_fun(

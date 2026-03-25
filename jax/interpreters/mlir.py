@@ -33,14 +33,14 @@ from jax._src.interpreters.mlir import (
   aval_to_ir_type as aval_to_ir_type,
   aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
-  dense_int_array as dense_int_array,
-  dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
   flatten_ir_types as flatten_ir_types,
   flatten_ir_values as flatten_ir_values,
   unflatten_ir_values_like_types as unflatten_ir_values_like_types,
   i32_attr as i32_attr,
+  i32_array_attr as i32_array_attr,
   i64_attr as i64_attr,
+  i64_array_attr as i64_array_attr,
   ir as ir,
   ir_attribute as ir_attribute,
   ir_constant as ir_constant,
@@ -76,6 +76,15 @@ from jax._src.callback import (
 )
 
 _deprecations = {
+    # Added Mar 25 2026
+    "dense_int_array": (
+        "mlir.dense_int_array is deprecated; use mlir.i64_array_attr instead.",
+        i64_array_attr,
+    ),
+    "dense_int_elements": (
+        "mlir.dense_int_elements is deprecated; use mlir.i64_array_attr instead.",
+        i64_array_attr,
+    ),
     # Added Apr 7 2025
     "custom_call": (
         (
@@ -89,7 +98,7 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  pass
+  dense_int_array = dense_int_elements = i64_array_attr
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 

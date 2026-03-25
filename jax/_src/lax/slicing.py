@@ -2357,7 +2357,7 @@ def _gather_lower(ctx, operand, indices, *,
     out = mlir.full_like_aval(ctx, 0, aval_out)
     return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
   else:
-    out = hlo.gather(operand, indices, dnums, mlir.dense_int_array(slice_sizes),
+    out = hlo.gather(operand, indices, dnums, mlir.i64_array_attr(slice_sizes),
                      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))
     return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 

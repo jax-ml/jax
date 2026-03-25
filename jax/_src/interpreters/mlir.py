@@ -77,11 +77,15 @@ Value = ir.Value
 
 IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
+def i32_array_attr(xs, **kwargs) -> ir.DenseIntElementsAttr:
+  return ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
+      np.ascontiguousarray(xs, np.int32), **kwargs
+  )
 
-def dense_int_elements(xs) -> ir.DenseElementsAttr:
-  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
-
-dense_int_array = ir.DenseI64ArrayAttr.get
+def i64_array_attr(xs, **kwargs) -> ir.DenseIntElementsAttr:
+  return ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
+      np.ascontiguousarray(xs, np.int64), **kwargs
+  )
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
@@ -309,7 +313,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic,
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val),
-        dense_int_array(other_axes))  # type: ignore
+        i64_array_attr(other_axes))  # type: ignore
     return out
   else:
     return _numpy_array_constant(val)
@@ -361,14 +365,14 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   x = np.ascontiguousarray(x)
   try:
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # pyrefly: ignore[no-matching-overload]
   except ValueError:
     # Backwards compatibility fallback for old MLIR versions.
     # Delete once minimum supported jaxlib version is 0.9.1.
     if x.dtype != np.bool_:
       raise
     x = np.ascontiguousarray(np.packbits(x, bitorder='little'))
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # pyrefly: ignore[no-matching-overload]
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -2697,14 +2701,14 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       out = hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
-          dense_int_array(broadcast_dimensions),
+          i64_array_attr(broadcast_dimensions),
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
       out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
-          dense_int_array(broadcast_dimensions))
+          i64_array_attr(broadcast_dimensions))
     wrap_compute_type_in_place(ctx, _get_owner(out))
     return out
 
@@ -2770,9 +2774,9 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
         x, start_indices, limit_indices, strides)
     else:
       return hlo.slice(x,
-                       dense_int_array(start_indices),
-                       dense_int_array(limit_indices),
-                       dense_int_array(strides))
+                       i64_array_attr(start_indices),
+                       i64_array_attr(limit_indices),
+                       i64_array_attr(strides))
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
@@ -2805,7 +2809,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
         shape_tensor([1] * len(start_indices))
     )
   else:
-    return hlo.dynamic_slice(x, start_indices, dense_int_array(slice_sizes))
+    return hlo.dynamic_slice(x, start_indices, i64_array_attr(slice_sizes))
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
@@ -2828,9 +2832,9 @@ def pad(ctx: LoweringRuleContext, aval_out,
   if all(core.is_constant_shape(s) for s in (padding_low,
                                              padding_high, padding_interior)):
     return hlo.pad(x, padding_value,
-                   dense_int_array(padding_low),
-                   dense_int_array(padding_high),
-                   dense_int_array(padding_interior))
+                   i64_array_attr(padding_low),
+                   i64_array_attr(padding_high),
+                   i64_array_attr(padding_interior))
   else:
     padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
@@ -3210,9 +3214,9 @@ def custom_call(
     # We add the result_shapes at the end of the operands, and must pass
     # the indices_of_output_operands attribute. This attribute is not yet
     # accepted by the CustomCall constructor, so we use build_generic
-    attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(
-        np.asarray(list(range(len(operands), len(operands) + len(result_shapes))),
-                   dtype=np.int64))
+    attributes["indices_of_shape_operands"] = i64_array_attr(
+        list(range(len(operands), len(operands) + len(result_shapes)))
+    )
     if operand_layouts is not None:
       assert len(operand_layouts) == len(operands), (operand_layouts, operands)
       operand_layouts = list(operand_layouts) + [(0,)] * len(result_shapes)
@@ -3220,18 +3224,16 @@ def custom_call(
 
   if operand_layouts is not None:
     attributes["operand_layouts"] = ir.ArrayAttr.get([
-        ir.DenseIntElementsAttr.get(
-            np.atleast_1d(np.asarray(l, dtype=np.int64)),
-            type=ir.IndexType.get()) for l in operand_layouts
+        i64_array_attr(np.atleast_1d(l), type=ir.IndexType.get())
+        for l in operand_layouts
     ])
   if result_layouts is not None:
     assert result_layouts is not None
     assert len(result_layouts) == len(result_types), (
         result_layouts, result_types)
     attributes["result_layouts"] = ir.ArrayAttr.get([
-        ir.DenseIntElementsAttr.get(
-            np.atleast_1d(np.asarray(l, dtype=np.int64)),
-            type=ir.IndexType.get()) for l in result_layouts
+        i64_array_attr(np.atleast_1d(l), type=ir.IndexType.get())
+        for l in result_layouts
     ])
 
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
@@ -3292,12 +3294,11 @@ def reduce_window(
     rw = hlo.ReduceWindowOp(
         list(map(aval_to_ir_type, out_avals)),
         operands, init_values,
-        dense_int_array(window_dimensions),
-        window_strides=dense_int_array(window_strides),
-        base_dilations=dense_int_array(base_dilation),
-        window_dilations=dense_int_array(window_dilation),
-        padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
-                                            shape=[len(padding), 2]))
+        i64_array_attr(window_dimensions),
+        window_strides=i64_array_attr(window_strides),
+        base_dilations=i64_array_attr(base_dilation),
+        window_dilations=i64_array_attr(window_dilation),
+        padding=i64_array_attr(padding, shape=[len(padding), 2]))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):
       hlo.return_(reducer_body(reducer))

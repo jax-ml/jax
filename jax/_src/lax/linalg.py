@@ -2385,7 +2385,7 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   if (use_jacobi or use_polar) and compute_uv:
     vt = hlo.transpose(
         vt,
-        mlir.dense_int_array(tuple(range(nb)) + (nb + 1, nb)))
+        mlir.i64_array_attr(tuple(range(nb)) + (nb + 1, nb)))
     if np.issubdtype(operand_aval.dtype, np.complexfloating):
       vt = hlo.complex(hlo.real(vt), hlo.negate(hlo.imag(vt)))
     if not full_matrices and not econ:

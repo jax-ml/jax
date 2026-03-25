@@ -682,7 +682,7 @@ def _bcsr_dot_general_gpu_lowering(
   elif rhs_aval.ndim == 2:
     dot_general_fn = _lowerings._csr_spmm_gpu_lowering
     if rhs_contract[0] == 1:
-      rhs = hlo.transpose(rhs, permutation=mlir.dense_int_array([1, 0]))
+      rhs = hlo.transpose(rhs, permutation=mlir.i64_array_attr([1, 0]))
       *avals_in, rhs_aval = sub_ctx.avals_in
       rhs_aval = core.ShapedArray(
           shape=(rhs_aval.shape[1], rhs_aval.shape[0]), dtype=rhs_aval.dtype)

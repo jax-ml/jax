@@ -290,7 +290,7 @@ class TestUtilTest(TestCase):
           reg = vector.extract(
               source=vec_reg,
               dynamic_position=[],
-              static_position=ir.DenseI64ArrayAttr.get([j]),
+              static_position=mlir.i64_array_attr([j]),
           )
           memref.store(
               reg, dst, [gpu.thread_id(gpu.Dimension.x), c(2 * i + j, index)]
