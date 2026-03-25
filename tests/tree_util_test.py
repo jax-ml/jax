@@ -18,6 +18,7 @@ import dataclasses
 import functools
 import pickle
 import re
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,8 +26,10 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.tree_util import (
-    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
+    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef,
+    default_registry, dispatch_registry)
 import jax.numpy as jnp
 
 # Easier to read.
@@ -1184,6 +1187,26 @@ class StaticTest(parameterized.TestCase):
     )
     self.assertEqual(tree_structure, new_structure)
 
+  @unittest.skipIf(jaxlib_extension_version < 424,
+                   "Requires jaxlib_extension_version >= 424")
+  def test_compare_pytreedef_with_registries(self):
+    class MyCustomType:
+      def __init__(self, x):
+        self.x = x
+
+    tree_util.register_pytree_node(
+        MyCustomType,
+        lambda o: ((o.x,), None),
+        lambda _, xs: MyCustomType(xs[0])
+    )
+
+    obj = MyCustomType(1)
+
+    leaves1, treedef1 = default_registry.flatten(obj)
+    leaves2, treedef2 = dispatch_registry.flatten(obj)
+
+    self.assertEqual(treedef1, treedef2)
+    self.assertEqual(leaves1, leaves2)
 
 class RavelUtilTest(jtu.JaxTestCase):
 

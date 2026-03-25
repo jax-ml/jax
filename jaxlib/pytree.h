@@ -391,8 +391,11 @@ class PyTreeDef {
 
 template <typename H>
 H AbslHashValue(H h, const PyTreeDef::Node& n) {
-  h = H::combine(std::move(h), n.kind, n.arity, n.custom);
-  return h;
+  if (n.kind == PyTreeKind::kCustom && n.custom != nullptr) {
+    return H::combine(std::move(h), n.kind, n.arity,
+                      n.custom->type.ptr(), n.custom->from_iterable.ptr());
+  }
+  return H::combine(std::move(h), n.kind, n.arity, n.custom);
 }
 
 template <typename H>

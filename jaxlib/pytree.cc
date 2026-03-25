@@ -279,9 +279,18 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
     const Node& b = other.traversal_[i];
     if (a.kind != b.kind || a.arity != b.arity ||
         (a.node_data.ptr() == nullptr) != (b.node_data.ptr() == nullptr) ||
-        (a.sorted_dict_keys.size() != b.sorted_dict_keys.size()) ||
-        a.custom != b.custom) {
+        (a.sorted_dict_keys.size() != b.sorted_dict_keys.size())) {
       return false;
+    }
+    if (a.kind == PyTreeKind::kCustom) {
+      if ((a.custom != nullptr) != (b.custom != nullptr)) {
+        return false;
+      }
+      if (a.custom != nullptr &&
+          (a.custom->from_iterable.ptr() != b.custom->from_iterable.ptr() ||
+           a.custom->type.ptr() != b.custom->type.ptr())) {
+        return false;
+      }
     }
     try {
       if (a.node_data && a.node_data.not_equal(b.node_data)) {
