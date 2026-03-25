@@ -22,7 +22,6 @@ from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
-from jax import lax
 from jax._src import hijax
 from jax._src import hypothesis_test_util as htu
 from jax._src import state
@@ -48,23 +47,6 @@ hp.settings.load_profile('deterministic')
 
 
 jax.config.parse_flags_with_absl()
-P = jax.sharding.PartitionSpec
-partial = functools.partial
-
-
-def mod(a, n):
-  return lax.rem(a + n, n)
-
-
-def make_ds(idx, stride):
-  return pl.ds(pl.multiple_of(idx * stride, stride), stride)
-
-
-def _grid_size(grid):
-  size = jnp.array(1, jnp.int32)
-  for dim in grid:
-    size *= dim
-  return size
 
 
 @jax.named_scope('compute')
@@ -835,7 +817,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
 
 
-@partial(jax.jit, static_argnames=['bm', 'bk', 'bn'])
+@functools.partial(jax.jit, static_argnames=['bm', 'bk', 'bn'])
 def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
 
   m, k = x.shape
@@ -847,7 +829,9 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
 
     def run(acc_scratch_ref):
       pltpu.emit_pipeline(
-          partial(basic_matmul_kernel, acc_scratch_ref=acc_scratch_ref, k=k),
+          functools.partial(
+              basic_matmul_kernel, acc_scratch_ref=acc_scratch_ref, k=k
+          ),
           in_specs=[
               pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
               pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
