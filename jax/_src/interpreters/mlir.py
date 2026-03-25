@@ -78,7 +78,7 @@ IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
-  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
+  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))  # pyrefly: ignore[no-matching-overload]
 
 dense_int_array = ir.DenseI64ArrayAttr.get
 
@@ -360,14 +360,14 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   x = np.ascontiguousarray(x)
   try:
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # pyrefly: ignore[no-matching-overload]
   except ValueError:
     # Backwards compatibility fallback for old MLIR versions.
     # Delete once minimum supported jaxlib version is 0.9.1.
     if x.dtype != np.bool_:
       raise
     x = np.ascontiguousarray(np.packbits(x, bitorder='little'))
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # pyrefly: ignore[no-matching-overload]
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -3203,7 +3203,7 @@ def custom_call(
     # We add the result_shapes at the end of the operands, and must pass
     # the indices_of_output_operands attribute. This attribute is not yet
     # accepted by the CustomCall constructor, so we use build_generic
-    attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(
+    attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
         np.asarray(list(range(len(operands), len(operands) + len(result_shapes))),
                    dtype=np.int64))
     if operand_layouts is not None:
@@ -3213,7 +3213,7 @@ def custom_call(
 
   if operand_layouts is not None:
     attributes["operand_layouts"] = ir.ArrayAttr.get([
-        ir.DenseIntElementsAttr.get(
+        ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
             np.atleast_1d(np.asarray(l, dtype=np.int64)),
             type=ir.IndexType.get()) for l in operand_layouts
     ])
@@ -3222,7 +3222,7 @@ def custom_call(
     assert len(result_layouts) == len(result_types), (
         result_layouts, result_types)
     attributes["result_layouts"] = ir.ArrayAttr.get([
-        ir.DenseIntElementsAttr.get(
+        ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
             np.atleast_1d(np.asarray(l, dtype=np.int64)),
             type=ir.IndexType.get()) for l in result_layouts
     ])
@@ -3289,7 +3289,7 @@ def reduce_window(
         window_strides=dense_int_array(window_strides),
         base_dilations=dense_int_array(base_dilation),
         window_dilations=dense_int_array(window_dilation),
-        padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+        padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),  # pyrefly: ignore[no-matching-overload]
                                             shape=[len(padding), 2]))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):

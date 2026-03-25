@@ -51,7 +51,7 @@ rocm_plugin_extension = None
 try:
   from importlib.metadata import distributions
   for dist in distributions():
-    name = dist.metadata.get('Name', '')
+    name = dist.metadata.get('Name', '')  # pyrefly: ignore[missing-attribute]
     if name.startswith('jax-rocm') and name.endswith('-plugin'):
       module_name = name.replace('-', '_')
       try:
