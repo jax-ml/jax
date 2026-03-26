@@ -3493,50 +3493,6 @@ def around(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
 
 @export
 @api.jit
-def fix(x: ArrayLike, out: None = None) -> Array:
-  """Round input to the nearest integer towards zero.
-
-  JAX implementation of :func:`numpy.fix`.
-
-  .. warning::
-
-     :func:`jax.numpy.fix` is deprecated and will be removed
-     in JAX v0.10.0. Use :func:`jax.numpy.trunc` instead.
-
-  Args:
-    x: input array.
-    out: unused by JAX.
-
-  Returns:
-    An array with same shape and dtype as ``x`` containing the rounded values.
-
-  See also:
-    - :func:`jax.numpy.trunc`: Rounds the input to nearest integer towards zero.
-    - :func:`jax.numpy.ceil`: Rounds the input up to the nearest integer.
-    - :func:`jax.numpy.floor`: Rounds the input down to the nearest integer.
-
-  Examples:
-    >>> key = jax.random.key(0)
-    >>> x = jax.random.uniform(key, (3, 3), minval=-5, maxval=5)
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...     print(x)
-    [[ 4.48  4.79 -1.68]
-     [-0.31  0.7  -3.34]
-     [-1.9   1.89  2.47]]
-    >>> jnp.fix(x)  # doctest: +SKIP
-    Array([[ 4.,  4., -1.],
-           [-0.,  0., -3.],
-           [-1.,  1.,  2.]], dtype=float32)
-  """
-  x = util.ensure_arraylike("fix", x)
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
-  zero = lax._const(x, 0)
-  return where(lax.ge(x, zero), ufuncs.floor(x), ufuncs.ceil(x))
-
-
-@export
-@api.jit
 def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
                posinf: ArrayLike | None = None,
                neginf: ArrayLike | None = None) -> Array:

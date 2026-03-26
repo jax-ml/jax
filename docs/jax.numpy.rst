@@ -172,7 +172,6 @@ namespace; they are listed below.
     fabs
     fill_diagonal
     finfo
-    fix
     flatnonzero
     flexible
     flip
