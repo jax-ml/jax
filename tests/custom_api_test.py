@@ -3410,13 +3410,6 @@ class CustomVJP3Test(CustomVJPTest):
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
 
-def transpose_unary(f, x_example):
-  def transposed(y):
-    x, = api.linear_transpose(f, x_example)(y)
-    return x
-  return transposed
-
-
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):

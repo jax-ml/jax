@@ -4031,15 +4031,6 @@ def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
   return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
-def _ensure_ir_value_device_id(device_id: Any) -> Any:
-  ensure_i32 = functools.partial(_ensure_ir_value, dtype=jnp.int32)
-  if isinstance(device_id, tuple):
-    return tuple(map(ensure_i32, device_id))
-  if isinstance(device_id, dict):
-    return {k: ensure_i32(v) for k, v in device_id.items()}
-  return ensure_i32(device_id)
-
-
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
     device_id_type: primitives.DeviceIdType,

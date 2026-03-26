@@ -58,25 +58,6 @@ PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
 
 
-def _broadcast_pytree_to(from_pytree, to_pytree):
-  """Broadcast a prefix pytree to a given full tree."""
-  proxy = object()
-  treedef = tree_util.tree_structure(to_pytree)
-  broadcast_leaves = []
-  def add_leaves(i, x):
-    broadcast_leaves.extend(
-        [i] * tree_util.tree_structure(x).num_leaves)
-  try:
-    tree_util.tree_map(add_leaves, from_pytree, to_pytree,
-                       is_leaf=lambda x: x is None)
-  except ValueError:
-    raise ValueError(f"Cannot broadcast tree {from_pytree} "
-                     f"to full tree structure {treedef}.") from None
-  broadcast_leaves = [None if a is proxy else a for a in broadcast_leaves]
-  assert len(broadcast_leaves) == treedef.num_leaves
-  return tree_util.tree_unflatten(treedef, broadcast_leaves)
-
-
 def _round_up_to_nearest_multiple(
     s: int | jax.Array, multiple: int
 ) -> int | jax.Array:

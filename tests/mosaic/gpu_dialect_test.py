@@ -2110,18 +2110,6 @@ if hp is not None:
     )
     return shape, tiling
 
-  @hps.composite
-  def shape_permutation_and_tiling(draw):
-    shape, tiling = draw(shape_and_tiling())
-    # We can't permute tiled dimensions with untiled dimensions.
-    rank, tiling_rank = len(shape), len(tiling)
-    untiled_permutation = draw(hps.permutations(range(rank - tiling_rank)))
-    tiled_permutation = draw(hps.permutations(range(tiling_rank)))
-    permutation = untiled_permutation + [
-        rank - tiling_rank + i for i in tiled_permutation
-    ]
-    return shape, permutation, tiling
-
   class HypothesisTest(MosaicGpuTest):
 
     def test_transform_type_tiles_contiguous_type_correctly(self):
