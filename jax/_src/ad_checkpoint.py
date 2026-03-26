@@ -26,7 +26,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
@@ -350,15 +349,15 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  # TODO(jakevdp): Remove the concrete argument in JAX v0.11.0.
   if not isinstance(concrete, DeprecatedArg):
     concrete_msg = (
-        "The `concrete` option to `jax.checkpoint` has been deprecated."
+        "The `concrete` option to `jax.checkpoint` was deprecated in JAX"
+        " v0.8.2, and removed in JAX v0.10.0."
         " In its place please use `static_argnums`; for details refer to"
         " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
     )
-    deprecations.warn("jax-checkpoint-concrete", concrete_msg, stacklevel=2)
-    if concrete:
-      raise NotImplementedError(concrete_msg)
+    raise NotImplementedError(concrete_msg)
 
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,

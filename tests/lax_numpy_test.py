@@ -46,7 +46,6 @@ from jax._src import array
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -4955,16 +4954,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       (0, 5, 1+1j),
   )
   def testArangeComplex(self, *args):
-    dep_id = "jax-numpy-arange-complex"
-    msg = "Passing complex start/stop/step to jnp.arange is deprecated"
-    if deprecations.is_accelerated(dep_id):
-      with self.assertRaisesRegex(ValueError, msg):
-        jax_result = jnp.arange(*args)
-    else:
-      with self.assertWarnsRegex(DeprecationWarning, msg):
-        jax_result = jnp.arange(*args)
-      np_result = np.arange(*args)
-      self.assertArraysEqual(jax_result, np_result)
+    msg = "Passing complex start/stop/step to jnp.arange is no longer supported"
+    with self.assertRaisesRegex(ValueError, msg):
+      _ = jnp.arange(*args)
 
   @parameterized.parameters(int, float, np.int32, np.float32)
   def testArangeTransferGuard(self, typ):
