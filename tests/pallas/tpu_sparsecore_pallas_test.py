@@ -2138,9 +2138,10 @@ class MpmdMapTest(PallasSCTest):
 
     x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
 
-    def vector_subcore_fn(x_hbm_ref, out_hbm_ref):
+    def vector_subcore_fn(x_hbm_ref, out_hbm_ref, *, scratch_vmem_shd_ref):
+      pltpu.sync_copy(x_hbm_ref, scratch_vmem_shd_ref)
       scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
-      pltpu.sync_copy(x_hbm_ref, scratch_ref)
+      pltpu.sync_copy(scratch_vmem_shd_ref, scratch_ref)
 
       @pl.loop(0, x.size, step=self.num_lanes)
       def _(i):
@@ -2149,7 +2150,8 @@ class MpmdMapTest(PallasSCTest):
 
       pltpu.sync_copy(scratch_ref, out_hbm_ref.at[:x.size])
 
-    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref):
+    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref, *, scratch_vmem_shd_ref):
+      del scratch_vmem_shd_ref
       scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.SMEM)
       pltpu.sync_copy(x_hbm_ref, scratch_ref)
 
@@ -2162,6 +2164,8 @@ class MpmdMapTest(PallasSCTest):
     out = mpmd.mpmd_map(
         [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
         out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
+        scratch_shapes=dict(
+            scratch_vmem_shd_ref=pltpu.VMEM_SHARED(x.shape, x.dtype)),
         compiler_params=pltpu.CompilerParams(
             use_tc_tiling_on_sc=use_tc_tiling,
         ),

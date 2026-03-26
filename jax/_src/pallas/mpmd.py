@@ -274,6 +274,8 @@ def _mpmd_map(
     jaxprs = []
     grid_mappings = []
 
+    flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(scratch_shapes)
+
     for mesh, fn in meshes_and_fns:
       grid_spec = pallas_core.GridSpec(
           grid=tuple(mesh.shape.items()),  # pyrefly: ignore[bad-argument-type]
@@ -293,7 +295,7 @@ def _mpmd_map(
               )
               for aval in flat_out_avals
           ),
-          scratch_shapes=scratch_shapes,
+          scratch_shapes=flat_scratch_shapes,
       )
       kernel_args, grid_mapping = pallas_core.get_grid_mapping(
           grid_spec,
@@ -304,16 +306,23 @@ def _mpmd_map(
           out_tree,
           out_origins,
       )
-      flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(kernel_args)
+      if isinstance(scratch_shapes, dict):
+        kernel_args, scratch_args = util.split_list(
+            kernel_args, [len(kernel_args) - len(flat_scratch_shapes)])
+        kwargs = scratch_tree.unflatten(scratch_args)
+        kernel_args_kwargs = (kernel_args, kwargs)
+      else:
+        kernel_args_kwargs = (kernel_args, {})
+      flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(
+          kernel_args_kwargs)
       debug_info = api_util.debug_info(
           "mpmd_map",
           fn,
-          kernel_in_tree.unflatten(flat_kernel_avals),
-          {},
+          *kernel_args_kwargs,
       )
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
-      flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_in_tree
       )
       with jax_core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(False):
