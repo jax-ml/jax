@@ -10,9 +10,11 @@ bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "2.13.6")
 bazel_dep(name = "rules_cc", version = "0.2.9")
 bazel_dep(name = "rules_python", version = "1.8.4")
+bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
@@ -134,7 +136,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     python_version = python_version,
     requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
     whl_modifications = {
-        "@//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+        "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
 ) for python_version in [
     "3.11",
