@@ -894,7 +894,7 @@ def _dma_start_lowering_rule(
       src_sem_transforms,
       device_id,
   ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, src_sem_aval, _, _ = (
+  src_aval, _, dst_aval, _, sem_aval, _, src_sem_aval, _, device_id_aval = (
       tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
@@ -919,7 +919,7 @@ def _dma_start_lowering_rule(
   if indirect_offsets is None:
     if device_id is not None:
       device_id, _ = tc_lowering._device_id_to_logical(
-          ctx, device_id, device_id_type
+          ctx, device_id, device_id_type, device_id_aval
       )
     tpu.enqueue_dma(
         src_ref,
@@ -961,7 +961,7 @@ def _dma_wait_lowering_rule(
       _,
       device_id,
   ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, _, _, _ = (
+  src_aval, _, dst_aval, _, sem_aval, _, _, _, device_id_aval = (
       tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
@@ -974,7 +974,7 @@ def _dma_wait_lowering_rule(
   if indirect_offsets is None:
     if device_id is not None:
       device_id, _ = tc_lowering._device_id_to_logical(
-          ctx, device_id, device_id_type
+          ctx, device_id, device_id_type, device_id_aval
       )
     tpu.wait_dma2(sem, src_ref, dst_ref, device_id=device_id)
     return []

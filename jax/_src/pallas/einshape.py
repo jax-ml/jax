@@ -660,5 +660,4 @@ def _einshape_lo_lowering_rule(
           assert_is_tile_preserving=assert_is_tile_preserving,
           **dict(sizes),
       ),
-      multiple_results=False,
   )(ctx, x)

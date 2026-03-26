@@ -236,12 +236,20 @@ def _copy_smem_to_gmem_lowering(
   src_transform_avals = src_transforms_treedef.unflatten(
       ctx.avals_in[2 : 2 + src_transforms_treedef.num_leaves]
   )
+  dst_transform_avals = dst_transforms_treedef.unflatten(
+      ctx.avals_in[
+          2
+          + src_transforms_treedef.num_leaves : 2
+          + src_transforms_treedef.num_leaves
+          + dst_transforms_treedef.num_leaves
+      ]
+  )
   src, src_aval, src_transforms = lowering._handle_transforms(
       ctx, src_aval, src, src_transform_avals, src_transforms,
       handle_transposes=handle_transposes
   )
   copy_params = {
-      **_extract_gmem_copy_params(ctx, dst_transforms, supports_multicast=True),
+      **_extract_gmem_copy_params(ctx, dst_transforms, dst_transform_avals, supports_multicast=True),
       **_extract_smem_copy_params(src_aval, src_transforms),
   }
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
@@ -310,24 +318,24 @@ def _split_gmem_slice(gmem_slice):
   return indices, slice_lengths
 
 
-def _extract_gmem_copy_params(ctx, transforms, supports_multicast=False):
+def _extract_gmem_copy_params(
+    ctx, transforms, transform_avals, supports_multicast=False
+):
   if not transforms:
     return {}
   peer_id = None
   indexers = []
-  for transform in transforms:
+  for transform, transform_aval in zip(
+      transforms, transform_avals, strict=True
+  ):
     if isinstance(transform, gpu_core.PeerMemRef):
-      peer_id, other_axes = pallas_primitives.device_id_to_logical(
-          ctx.module_ctx.mesh_info,
-          lowering._ensure_ir_value_device_id(transform.device_id),
+      peer_id = lowering._device_id_to_logical(
+          ctx,
+          transform.device_id,
           transform.device_id_type,
-          lambda name: lowering._axis_index_rule(ctx, axis_name=name),
+          transform_aval.device_id,
       )
-      if other_axes:
-        raise ValueError(
-            "Only JAX mesh axes can be used to obtain peer references, but"
-            f" got {other_axes}"
-        )
+      peer_id = lowering._ensure_ir_value(peer_id, jnp.int32)
       continue
     elif isinstance(transform, gpu_core.MulticastRef):
       if not supports_multicast:
@@ -521,7 +529,7 @@ def _copy_gmem_to_smem_lowering(
           ],
       )
   )
-  _, flat_dst_transforms_avals, _ = (
+  flat_src_transforms_avals, flat_dst_transforms_avals, _ = (
       util.split_list(
           ctx.avals_in[3:],
           [
@@ -529,6 +537,9 @@ def _copy_gmem_to_smem_lowering(
               dst_transforms_treedef.num_leaves,
           ],
       )
+  )
+  src_transform_avals = src_transforms_treedef.unflatten(
+      flat_src_transforms_avals
   )
   src_ref_aval = ctx.avals_in[0]
   dst_ref_aval = ctx.avals_in[1]
@@ -551,7 +562,7 @@ def _copy_gmem_to_smem_lowering(
 
   copy_params = {
       **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
-      **_extract_gmem_copy_params(ctx, src_transforms),
+      **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
   }
   base_index = _extract_barrier_slice_base(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
@@ -785,7 +796,10 @@ def _async_prefetch_lowering(
     leader_tracked,
 ):
   ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
-  copy_params = _extract_gmem_copy_params(ctx, ref_transforms)
+  ref_transform_avals = ref_transforms_treedef.unflatten(ctx.avals_in[1:])
+  copy_params = _extract_gmem_copy_params(
+      ctx, ref_transforms, ref_transform_avals
+  )
   collective = None
   if collective_axes is not None:
     collective = tuple(
@@ -3751,7 +3765,7 @@ def _semaphore_signal_lowering_rule(
   sems, transforms, values, device_ids = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem_avals, transform_avals, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem_avals, transform_avals, value_avals, device_id_avals = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   transformed_sems = []
   for sem, sem_aval, sem_transform_avals, sem_transforms in zip(
       sems, sem_avals, transform_avals, transforms, strict=True
@@ -3764,18 +3778,13 @@ def _semaphore_signal_lowering_rule(
       raise NotImplementedError(f"Unhandled transforms for semaphore_signal_parallel: {sem_transforms}")
     transformed_sems.append(sem)
   del sems, transforms  # Use transformed_sems instead.
-  for sem, value, device_id in zip(transformed_sems, values, device_ids, strict=True):
+  for sem, value, device_id, device_id_aval in zip(
+      transformed_sems, values, device_ids, device_id_avals, strict=True
+  ):
     if device_id is not None:
-      device_id, other_axes = pallas_primitives.device_id_to_logical(
-          ctx.module_ctx.mesh_info,
-          device_id,
-          pallas_primitives.DeviceIdType.MESH,
-          lambda name: lowering._axis_index_rule(ctx, axis_name=name),
+      device_id = lowering._device_id_to_logical(
+          ctx, device_id, pallas_primitives.DeviceIdType.MESH, device_id_aval
       )
-      if other_axes:
-        raise NotImplementedError(
-            f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
-        )
       device_id = lowering._ensure_ir_value(device_id, jnp.int32)
       sem = ctx.launch_ctx.to_remote(sem, device_id)
     val = lowering._ir_constant(value, i32)

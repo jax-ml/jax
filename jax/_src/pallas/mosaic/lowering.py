@@ -1225,23 +1225,48 @@ def lower_jaxpr_to_func(
   return body.func_op
 
 
-def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
+def lower_fun(
+    fun: Callable,
+    *,
+    in_avals: Any | None = None,
+) -> Callable:
+  """Converts a traceable JAX function `fun` into a lowering rule.
+
+  Can handle PyTree arguments if `in_avals` is provided dynamically, otherwise
+  assumes flat arguments matching `ctx.avals_in`.
+  """
+
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(
-        f, params,
-        debug_info=api_util.debug_info("mosaic lower_fun", f,
-                                       args, {}))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    flat_args, in_tree = tree_util.tree_flatten(args)
+    if in_avals is None:
+      flat_avals = ctx.avals_in
+      sub_block_shapes = ctx.block_shapes
+    else:
+      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
+      if in_tree != aval_tree:
+        raise ValueError(
+            "args and in_avals pytrees mismatch:\\nargs tree:"
+            f" {in_tree}\\navals tree: {aval_tree}\\nargs: {args}\\navals:"
+            f" {in_avals}"
+        )
+      sub_block_shapes = [None] * len(flat_args)
+    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+        lu.wrap_init(
+            fun,
+            params,
+            debug_info=api_util.debug_info("mosaic lower_fun", fun, args, {}),
+        ),
+        in_tree,
+    )
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals)
     if consts:
-      raise NotImplementedError
+      raise NotImplementedError("lower_fun should not capture constvars")
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-    lowering_context = ctx.lowering_context.replace(
-        block_shapes=ctx.block_shapes)
-    out = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
-    if not multiple_results:
-      return out[0]
-    return out
+    sub_lowering_ctx = ctx.lowering_context.replace(
+        block_shapes=sub_block_shapes
+    )
+    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *consts, *flat_args)
+    return tree_util.tree_unflatten(out_tree_thunk(), out)
 
   return f_lowered
 
@@ -2037,8 +2062,7 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
         # Squeeze lowers to vector.ExtractOp which will place the final
         # value in a scalar register.
         return jnp.squeeze(val)
-      proxy_lowering = lower_fun(
-          _proxy_fun, multiple_results=False)
+      proxy_lowering = lower_fun(_proxy_fun)
       return proxy_lowering(ctx, x, axes=axes)
 
     if jnp.issubdtype(x_aval.dtype, jnp.floating):
@@ -2114,8 +2138,7 @@ def _reduce_and_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
     # instead.
     float_arg = jnp.where(arg, 1.0, 0.0)
     return jnp.min(float_arg, axis=axes) > 0.0
-  proxy_lowering = lower_fun(
-      _proxy_reduce, multiple_results=False)
+  proxy_lowering = lower_fun(_proxy_reduce)
   return proxy_lowering(ctx, x, axes=axes)
 
 
@@ -2128,8 +2151,7 @@ def _reduce_or_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
     # instead.
     float_arg = jnp.where(arg, 1.0, 0.0)
     return jnp.max(float_arg, axis=axes) > 0.0
-  proxy_lowering = lower_fun(
-      _proxy_reduce, multiple_results=False)
+  proxy_lowering = lower_fun(_proxy_reduce)
   return proxy_lowering(ctx, x, axes=axes)
 
 
@@ -2480,8 +2502,9 @@ def _convert_element_type_lowering_rule(
   elif old_dtype == jnp.bool_ and _to(integer):
     # bool is either 0 or 1 in integer representation hence unsigned.
     return arith.extui(out_type, x)
-  return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
-                   multiple_results=False)(ctx, x)
+  return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype))(
+      ctx, x
+  )
 
 
 @register_lowering_rule(lax.reshape_p, kernel_types=[*tpu_core.CoreType])
@@ -2552,7 +2575,7 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
                                 dimension=1,
                                 sharding=sharding)
       return iota_2d[0]
-    return lower_fun(_1d_iota_helper, multiple_results=False)(ctx)
+    return lower_fun(_1d_iota_helper)(ctx)
   out_type = ctx.aval_to_ir_type(ctx.avals_out[0])
   return tpu.iota(out_type, dimensions=[dimension])
 
@@ -2948,13 +2971,13 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
       return (x != 0).astype(x.dtype)
     raise ValueError(f"Unsupported dtype for sign: {x.dtype}")
 
-  return lower_fun(_lower_fun, multiple_results=False)(ctx, x)
+  return lower_fun(_lower_fun)(ctx, x)
 
 
 @register_lowering_rule(lax.nextafter_p)
 def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
   return lower_fun(
-      pallas_utils.nextafter_lowering_helper, multiple_results=False,
+      pallas_utils.nextafter_lowering_helper,
   )(ctx, x, y)
 
 
@@ -3010,8 +3033,7 @@ def _pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 @register_lowering_rule(lax.integer_pow_p)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, *, y):
-  return lower_fun(lax_internal._integer_pow, multiple_results=False)(
-      ctx, x, y=y)
+  return lower_fun(lax_internal._integer_pow)(ctx, x, y=y)
 
 
 @register_lowering_rule(lax.exp2_p, ensure_mlir_values=False)
@@ -3023,7 +3045,6 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
     # here.
     return lower_fun(
         lambda x: jnp.exp(jnp.astype(np.log(2), x.dtype) * x),
-        multiple_results=False,
     )(ctx, x)
   return mlir_math.exp2(x)
 
@@ -3237,7 +3258,6 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
   if jnp.issubdtype(dtype, jnp.bool_):
     return lower_fun(
         functools.partial(_cmp_boolean_lowering_helper, primitive),
-        multiple_results=False,
     )(ctx, x, y)
 
   if jnp.issubdtype(dtype, jnp.integer):
@@ -3334,7 +3354,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
         avals_out=[pred_aval.update(dtype=np.bool_)],
         block_shapes=[None],
     )
-    pred = lower_fun(lambda x: x != 0, multiple_results=False)(lower_ctx, pred)
+    pred = lower_fun(lambda x: x != 0)(lower_ctx, pred)
   if not args:
     return x
   # Assume x and y, which we check above.
@@ -3350,7 +3370,7 @@ def _clamp(min, operand, max):
 @register_lowering_rule(lax.clamp_p)
 def _clamp_lowering_rule(ctx: LoweringRuleContext, min, operand, max):
   """Compute minimum_p(maximum_p(min, operand), max)."""
-  return lower_fun(_clamp, multiple_results=False)(ctx, min, operand, max)
+  return lower_fun(_clamp)(ctx, min, operand, max)
 
 
 def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
@@ -3761,7 +3781,7 @@ def _shift_right_logical_lowering_rule(ctx: LoweringRuleContext, x, d):
 @register_lowering_rule(lax.erf_inv_p)
 def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
   return lower_fun(
-      pallas_utils.erf_inv_lowering_helper, multiple_results=False,
+      pallas_utils.erf_inv_lowering_helper,
   )(ctx, x)
 
 
@@ -3926,26 +3946,30 @@ def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
 
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
-    device_id_type: primitives.DeviceIdType):
-  logical_device_id, non_mesh_axes = primitives.device_id_to_logical(
-      ctx.lowering_context.mesh_context,
-      device_id,
-      device_id_type,
-      lambda name: _axis_index_rule(ctx, axis_name=name),
-  )
-  core_index = None
-  if non_mesh_axes and (grid_names := ctx.lowering_context.grid_names):
-    if len(grid_names) > 1:
-      raise NotImplementedError(
-          "Unable to determine core axis name if len(grid_names) > 1"
-      )
-    core_axis_name = grid_names[0]
-    core_index = non_mesh_axes.pop(core_axis_name, None)
-  if non_mesh_axes:
-    raise ValueError(
-        f"Unrecognized axes in device_id: {non_mesh_axes}"
+    device_id_type: primitives.DeviceIdType,
+    device_id_aval: Any):
+  def jax_fn(device_id_val):
+    logical_device_id, non_mesh_axes = primitives.device_id_to_logical(
+        ctx.lowering_context.mesh_context,
+        device_id_val,
+        device_id_type,
+        lambda name: lax.axis_index(name),
     )
-  return logical_device_id, core_index
+    core_index = None
+    if non_mesh_axes and (grid_names := ctx.lowering_context.grid_names):
+      if len(grid_names) > 1:
+        raise NotImplementedError(
+            "Unable to determine core axis name if len(grid_names) > 1"
+        )
+      core_axis_name = grid_names[0]
+      core_index = non_mesh_axes.pop(core_axis_name, None)
+    if non_mesh_axes:
+      raise ValueError(
+          f"Unrecognized axes in device_id: {non_mesh_axes}"
+      )
+    return logical_device_id, core_index
+
+  return lower_fun(jax_fn, in_avals=(device_id_aval,))(ctx, device_id)
 
 
 @register_lowering_rule(
@@ -3982,13 +4006,15 @@ def _semaphore_signal_lowering_rule(
     args_tree,
     device_id_type: primitives.DeviceIdType,
 ):
-  sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem_aval, _, _, device_id_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
       args_tree, args
   )
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   if device_id is not None:
-    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval
+    )
     if core_id is not None:
       if core_index is not None:
         raise ValueError(
@@ -4034,7 +4060,7 @@ def _dma_start_lowering_rule(
       src_sem_transforms,
       device_id,
   ) = tree_util.tree_unflatten(tree, args)
-  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
+  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, device_id_aval) = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
   if src_ref_aval.dtype == jnp.bool_:
@@ -4054,7 +4080,7 @@ def _dma_start_lowering_rule(
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
   core_id = None
   if device_id is not None:
-    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type, device_id_aval)
   tpu.enqueue_dma(
       src_ref,
       dst_ref,
@@ -4081,7 +4107,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       _,
       device_id,
   ) = tree_util.tree_unflatten(tree, args)
-  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+  (src_aval, _, dst_aval, _, sem_aval, _, _, _, device_id_aval) = tree_util.tree_unflatten(
       tree, ctx.avals_in
   )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
@@ -4092,7 +4118,9 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
 
   core_id = None
   if device_id is not None:
-    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
+    device_id, core_id = _device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval
+    )
 
   if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 27):
     tpu.wait_dma2(sem, src, dst, core_id=core_id)
@@ -4256,7 +4284,7 @@ def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
 
 @register_lowering_rule(prng.random_seed_p)
 def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
-  seed_lowering = lower_fun(impl.seed, multiple_results=False)
+  seed_lowering = lower_fun(impl.seed)
   return seed_lowering(ctx, seeds)
 
 
@@ -4272,7 +4300,7 @@ def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape):
       key = jax.random.key_data(key).astype(jnp.uint32)
       return impl.random_bits(key, bit_width, shape)
     _proxy_fn = new_lowering
-  bits_lowering = lower_fun(_proxy_fn, multiple_results=False)
+  bits_lowering = lower_fun(_proxy_fn)
   return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
 
 
@@ -4281,7 +4309,7 @@ def random_fold_in_lowering(ctx: LoweringRuleContext, keys, msgs):
   keys_aval, msgs_aval = ctx.avals_in
   assert isinstance(keys_aval.dtype, prng.KeyTy)
   impl = keys_aval.dtype._impl
-  fold_in_lowering = lower_fun(impl.fold_in, multiple_results=False)
+  fold_in_lowering = lower_fun(impl.fold_in)
   if pl_random.is_pallas_impl(impl):
     return fold_in_lowering(ctx, keys, msgs)
   else:
@@ -4366,7 +4394,7 @@ def _threefry2x32_lowering(ctx: LoweringRuleContext, k1, k2, m1, m2):
       res = prng._threefry2x32_lowering(k1, k2, m1, m2, use_rolled_loops=False)
     return res
 
-  threefry_lowering = lower_fun(_lower_fun, multiple_results=True)
+  threefry_lowering = lower_fun(_lower_fun)
   return threefry_lowering(ctx, k1, k2, m1, m2)
 
 
@@ -4388,7 +4416,7 @@ def _iota_2x32_shape_lowering(ctx: LoweringRuleContext, *, shape):
     counts_hi = jnp.zeros(shape, dtype=jnp.int32)
     return counts_hi, iota_data
 
-  iota_lowering = lower_fun(_lower_fun, multiple_results=True)
+  iota_lowering = lower_fun(_lower_fun)
   return iota_lowering(ctx, shape=shape)
 
 

@@ -1318,26 +1318,44 @@ def _program_id(
 
 
 def _lower_fun(
-    fun: Callable[..., Any], *, multiple_results: bool
-) -> Callable[..., Any]:
+    fun: Callable,
+    *,
+    in_avals: Any | None = None,
+) -> Callable:
 
-  def lowering_rule(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(
-        fun
-        if multiple_results
-        else lambda *args, **params: (fun(*args, **params),),
-        params,
-        debug_info=api_util.debug_info(
-            "Pallas Mosaic GPU lower_fun", fun, args, params
+  def f_lowered(ctx: LoweringRuleContext, *args, **params):
+    is_leaf = lambda x: isinstance(
+        x, (mgpu.FragmentedArray, mgpu.WGMMAAccumulator)
+    )
+    flat_args, in_tree = tree_util.tree_flatten(args, is_leaf=is_leaf)
+    if in_avals is None:
+      flat_avals = ctx.avals_in
+    else:
+      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
+      if in_tree != aval_tree:
+        raise ValueError(
+            "args and in_avals pytrees mismatch:\nargs tree:"
+            f" {in_tree}\navals tree: {aval_tree}\nargs: {args}\navals:"
+            f" {in_avals}"
+        )
+    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+        lu.wrap_init(
+            fun,
+            params,
+            debug_info=api_util.debug_info("mosaic_gpu lower_fun", fun, args, {}),
         ),
+        in_tree,
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals)
+    if consts:
+      raise NotImplementedError("lower_fun should not capture constvars")
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
     out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, args, consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts
     )
-    return out if multiple_results else out[0]
+    return tree_util.tree_unflatten(out_tree_thunk(), out)
 
-  return lowering_rule
+  return f_lowered
 
 def _handle_dtype_bitcast(
     ref: ir.Value, src_dtype: ir.Type, dst_dtype: ir.Type
@@ -1723,17 +1741,10 @@ def _handle_transforms(
         # pyrefly: ignore[bad-assignment]
         ref_aval = t_aval.transform_type(ref_aval)
       case gpu_core.PeerMemRef(device_id, device_id_type):
-        peer_device_id, other_axes = primitives.device_id_to_logical(
-            ctx.module_ctx.mesh_info,
-            _ensure_ir_value_device_id(device_id),
-            device_id_type,
-            lambda name: _axis_index_rule(ctx, axis_name=name),
+        assert isinstance(t_aval, gpu_core.PeerMemRef)
+        peer_device_id = _device_id_to_logical(
+            ctx, device_id, device_id_type, t_aval.device_id
         )
-        if other_axes:
-          raise ValueError(
-              "Only JAX mesh axes can be used to obtain peer references, but"
-              f" got {other_axes}"
-          )
       case gpu_core.MulticastRef(_):
         if not allow_multicast_refs:
           raise NotImplementedError(
@@ -2378,9 +2389,11 @@ mosaic_lowering_rules[gpu_core.LANExWARP_SEMANTICS].update({
 })
 
 mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS].update({
-    lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
+    lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x)),
     lax.not_p: _lower_fun(
-        lambda x: jnp.astype(jnp.bitwise_xor(jnp.astype(x, int), -1), jnp.dtype(x)), multiple_results=False,
+        lambda x: jnp.astype(
+            jnp.bitwise_xor(jnp.astype(x, int), -1), jnp.dtype(x)
+        )
     ),
 })
 
@@ -2542,7 +2555,7 @@ for op, si_pred, ui_pred, f_pred in [
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   [x_aval] = ctx.avals_in
   if y == -1:
-    return _lower_fun(lambda x: 1 / x, multiple_results=False)(ctx, x)
+    return _lower_fun(lambda x: 1 / x)(ctx, x)
   if y <= 1:
     raise NotImplementedError
 
@@ -2568,9 +2581,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 @register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Warpgroup)
 def _clamp_lowering_rule(ctx: LoweringRuleContext, l, x, u):
-  return _lower_fun(
-      lambda l, x, u: lax.min(lax.max(x, l), u), multiple_results=False
-  )(ctx, l, x, u)
+  return _lower_fun(lambda l, x, u: lax.min(lax.max(x, l), u))(ctx, l, x, u)
 
 
 @register_lowering_rule(lax.square_p, mgpu.LoweringSemantics.Lane)
@@ -2624,10 +2635,10 @@ def _logistic(x, accuracy):
 
 
 mosaic_lowering_rules[gpu_core.LANExWG_SEMANTICS][lax.logistic_p] = _lower_fun(
-    _logistic, multiple_results=False
+    _logistic
 )
-mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][lax.logistic_p] = (
-    _lower_fun(_logistic, multiple_results=False)
+mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS][lax.logistic_p] = _lower_fun(
+    _logistic
 )
 
 
@@ -2784,7 +2795,7 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
       return (x != 0).astype(x.dtype)
     raise ValueError(f"Unsupported dtype for sign: {x.dtype}")
 
-  return _lower_fun(sign, multiple_results=False)(ctx, x)
+  return _lower_fun(sign)(ctx, x)
 
 
 @register_lowering_rule(lax.erf_p, mgpu.LoweringSemantics.Lane)
@@ -4029,6 +4040,24 @@ def _ensure_ir_value_device_id(device_id: Any) -> Any:
   return ensure_i32(device_id)
 
 
+def _device_id_to_logical(
+    ctx: LoweringRuleContext, device_id,
+    device_id_type: primitives.DeviceIdType,
+    device_id_aval: Any):
+  def jax_fn(device_id_val):
+    logical_device_id, non_mesh_axes = primitives.device_id_to_logical(
+        ctx.module_ctx.mesh_info,
+        device_id_val,
+        device_id_type,
+        lambda name: _axis_index_rule(ctx, axis_name=name),
+    )
+    if non_mesh_axes:
+        raise ValueError(f"Unrecognized axes in device_id: {non_mesh_axes}")
+    return logical_device_id
+
+  return _lower_fun(jax_fn, in_avals=(device_id_aval,))(ctx, device_id)
+
+
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(
       v, (np.number, np.ndarray, int, float, jax_literals.TypedNdArray)
@@ -4206,7 +4235,7 @@ def _semaphore_signal_lowering_rule(
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem_aval, transform_avals, *_ = tree_util.tree_unflatten(
+  sem_aval, transform_avals, _, device_id_aval, _ = tree_util.tree_unflatten(
       args_tree, ctx.avals_in
   )
   if core_index is not None:
@@ -4219,17 +4248,11 @@ def _semaphore_signal_lowering_rule(
   if transforms:
     raise NotImplementedError(f"Unhandled transforms for semaphore_signal: {transforms}")
   if device_id is not None:
-    device_id, other_axes = primitives.device_id_to_logical(
-        ctx.module_ctx.mesh_info,
-        _ensure_ir_value_device_id(device_id),
-        device_id_type,
-        lambda name: _axis_index_rule(ctx, axis_name=name),
+    device_id = _device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval
     )
-    if other_axes:
-      raise NotImplementedError(
-          f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
-      )
     assert device_id is not None
+    device_id = _ensure_ir_value(device_id, jnp.int32)
     sem = ctx.launch_ctx.to_remote(sem, device_id)
 
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.

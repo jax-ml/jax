@@ -319,6 +319,116 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       expected = jnp.concatenate([x[8:], x[:8]])
     np.testing.assert_allclose(y, expected)
 
+  def test_device_id_dict_implicit_axis(self):
+    if jax.device_count() < 2:
+      self.skipTest('Only >=2 devices are supported.')
+
+    def kernel(x_ref, y_ref):
+      def body(ready_sem, send_sem, recv_sem):
+        my_x = lax.axis_index('x')
+        num_devices = lax.axis_size('x')
+        neighbor_x = lax.rem(my_x + 1, num_devices)
+
+        # 'y' should be held constant
+        device_id = {'x': neighbor_x}
+
+        pl.semaphore_signal(ready_sem, device_id=device_id)
+        pl.semaphore_wait(ready_sem)
+        copy_done = pltpu.async_remote_copy(
+            x_ref, y_ref, send_sem, recv_sem, device_id=device_id
+        )
+        copy_done.wait_send()
+        copy_done.wait_recv()
+
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
+
+    if jax.device_count() % 2 != 0:
+      self.skipTest('Requires an even number of devices.')
+    axis_size = jax.device_count() // 2
+    if axis_size < 1:
+      self.skipTest('Requires at least 2 devices for 2D mesh.')
+    x = jnp.arange(axis_size * 8 * 128).reshape((axis_size * 8, 128))
+
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=x,
+      )(x)
+
+    device_mesh = mesh_utils.create_device_mesh(
+        (2, axis_size), jax.devices()
+    )
+    mesh = jax.sharding.Mesh(device_mesh, ['y', 'x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P('x', None),
+            out_specs=P('x', None),
+            check_vma=False,
+        )
+    )(x)
+    expected = jnp.concatenate([x[-8:], x[:-8]])
+    np.testing.assert_allclose(y, expected)
+
+  def test_device_id_dict_joint_axis_non_pow2(self):
+    if jax.device_count() < 3:
+      self.skipTest('Requires at least 3 devices to form a (1, 3) mesh.')
+
+    def kernel(x_ref, y_ref):
+      def body(ready_sem, send_sem, recv_sem):
+        my_id = lax.axis_index(('y', 'x'))
+        num_devices = lax.axis_size(('y', 'x'))
+        neighbor = lax.rem(my_id + 1, num_devices)
+
+        device_id = {('y', 'x'): neighbor}
+
+        pl.semaphore_signal(ready_sem, device_id=device_id)
+        pl.semaphore_wait(ready_sem)
+        copy_done = pltpu.async_remote_copy(
+            x_ref, y_ref, send_sem, recv_sem, device_id=device_id
+        )
+        copy_done.wait_send()
+        copy_done.wait_recv()
+
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
+
+    x = jnp.arange(3 * 8 * 128).reshape((3 * 8, 128))
+
+    def body(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=x,
+      )(x)
+
+    device_mesh = np.array(jax.devices()[:3]).reshape((1, 3))
+    mesh = jax.sharding.Mesh(device_mesh, ['y', 'x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P('x', None),
+            out_specs=P('x', None),
+            check_vma=False,
+        )
+    )(x)
+    expected = jnp.concatenate([x[-8:], x[:-8]])
+    np.testing.assert_allclose(y, expected)
+
   def test_barrier_semaphore(self):
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
