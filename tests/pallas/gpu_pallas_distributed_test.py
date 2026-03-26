@@ -20,6 +20,7 @@ import os
 import tempfile
 import types
 from typing import ClassVar
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -44,14 +45,14 @@ partial = functools.partial
 
 
 # We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
-# monkey patch the functions in `pl` and `plgpu`.
+# monkey patch the functions in `pl` and `plgpu`.
 def do_not_call_me_directly(*args, **kwargs):
   raise RuntimeError(
       "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
   )
 
 # Clone the modules locally because the functions are called from other
-# modules.
+# other test files in OSS and the tests are not isolated.
 pl = types.ModuleType("_pl_local")
 pl.__dict__.update(_pl.__dict__)
 
@@ -70,6 +71,24 @@ def is_nvshmem_used():
   return (
       "XLA_FLAGS" in os.environ
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
+
+
+def get_reduction_impl(reduction):
+  match reduction:
+    case "add":
+      return jnp.add
+    case "min":
+      return jnp.minimum
+    case "max":
+      return jnp.maximum
+    case "and":
+      return jnp.bitwise_and
+    case "or":
+      return jnp.bitwise_or
+    case "xor":
+      return jnp.bitwise_xor
+    case _:
+      raise ValueError(reduction)
 
 
 _TestCaseBase = (jt_multiprocess.MultiProcessTest
@@ -97,6 +116,11 @@ class PallasTestMetaclass(type(_TestCaseBase)):
 
 class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
+  # We track whether we called monkey patched APIs for every test.
+  # In tearDown, we verify that the test actually called the monkey-patched APIs.
+  # This is not a perfect way of ensuring we do not call plgpu.kernel and
+  # plgpu.pallas_call, but is a helpful safeguard.
+  monkey_patched_api_was_used: bool
 
   def setUp(self):
     if jtu.test_device_matches(["rocm"]):
@@ -113,7 +137,11 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
+    self.monkey_patched_api_was_used = False
     super().setUp()
+
+  def tearDown(self):
+    self.assertTrue(self.monkey_patched_api_was_used)
 
   def is_wg_semantics(self):
     return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
@@ -127,14 +155,25 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
         kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    return _pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    result = _pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    self.monkey_patched_api_was_used = True
+    return result
 
   def kernel(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
         kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    return _kernel(*args, compiler_params=compiler_params, **kwargs)
+    result = _kernel(*args, compiler_params=compiler_params, **kwargs)
+    self.monkey_patched_api_was_used = True
+    return result
+
+  def skipTest(self, msg):
+    # Setting `monkey_patched_api_was_used` to true for skipped tests to prevent
+    # the assertion failure on teardown.
+    self.monkey_patched_api_was_used = True
+    super().skipTest(msg)
+
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
@@ -549,9 +588,11 @@ class PallasCallRemoteDMATest(TestCase):
   def test_semaphore_signal_collective_axes(self):
     # TODO(b/476264413): Support multimem in multi-thread mode.
     if jax.local_device_count() > 1:
+      self.monkey_patched_api_was_used = True
       return  # Multimem not supported in multi-thread mode yet.
 
     if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
@@ -655,7 +696,6 @@ class PallasCallRemoteDMATest(TestCase):
 
 
 class PallasCallMultimemTest(TestCase):
-
   def setUp(self):
     if jax.local_device_count() > 1:
       self.skipTest("Multimem not supported in multi-thread mode yet.")
@@ -670,23 +710,6 @@ class PallasCallMultimemTest(TestCase):
     ):
       self.skipTest("Not all local devices support multicast")
     super().setUp()
-
-  def _get_reduction_impl(self, reduction):
-    match reduction:
-      case "add":
-        return jnp.add
-      case "min":
-        return jnp.minimum
-      case "max":
-        return jnp.maximum
-      case "and":
-        return jnp.bitwise_and
-      case "or":
-        return jnp.bitwise_or
-      case "xor":
-        return jnp.bitwise_xor
-      case _:
-        raise ValueError(reduction)
 
   def test_multimem_store_regs(self):
     # TODO(bchetioui): support for multimem store.
@@ -853,11 +876,33 @@ class PallasCallMultimemTest(TestCase):
         )
     )(x_local)
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
     np.testing.assert_array_equal(
         y.astype(jnp.float32),
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
+
+
+@jtu.thread_unsafe_test_class()
+class PallasCallMultimemThreadUnsafeTest(TestCase):
+  """
+  This class is thread-unsafe because the tests monkey patch loaded modules.
+  """
+
+  def setUp(self):
+    if jax.local_device_count() > 1:
+      self.skipTest("Multimem not supported in multi-thread mode yet.")
+    if jax.device_count() < 2:
+      self.skipTest("Needs at least two devices")
+    # TODO(belitskiy): Remove the hasattr guard once JAX 0.9.2 is released.
+    if not hasattr(cuda_versions, "cuda_supports_multicast"):
+      self.skipTest("Multicast not yet supported")
+    if any(
+      not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
+      for d in jax.local_devices()
+    ):
+      self.skipTest("Not all local devices support multicast")
+    super().setUp()
 
   def _test_reduce_scatter(
       self,
@@ -869,6 +914,7 @@ class PallasCallMultimemTest(TestCase):
       vec_size=None,
       num_blocks=None,
   ):
+    self.skip_if_wg_semantics()  # Support multimem_load_reduce under WG.
     if jax.process_index() > 2:
       return
 
@@ -891,14 +937,19 @@ class PallasCallMultimemTest(TestCase):
       )
 
     spec = P(*([None] * scatter_dimension), "x")
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu.plgpu,
+        "kernel",
+        self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
 
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
 
     split_idx = x.shape[scatter_dimension] // 2
     slices_first = [slice(None)] * len(shape)
@@ -973,6 +1024,7 @@ class PallasCallMultimemTest(TestCase):
       num_blocks=None,
   ):
     """Helper function to test all-reduce functionality."""
+    self.skip_if_wg_semantics()  # Support multimem_load_reduce under WG.
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     x = jax.random.normal(jax.random.key(42), (2, *shape), dtype)
@@ -989,13 +1041,18 @@ class PallasCallMultimemTest(TestCase):
       )
 
     spec = P("x")
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu.plgpu,
+        "kernel",
+        new=self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
     expected = np_reduction(x[0], x[1])
     tol = 1e-5 if reduction == "add" else 0
     for ys in y:
@@ -1013,6 +1070,7 @@ class PallasCallMultimemTest(TestCase):
       vec_size=None,
       num_blocks=None,
   ):
+    self.skip_if_wg_semantics()  # Support multimem_store under WG.
     if jax.process_index() > 2:
       return
 
@@ -1034,11 +1092,16 @@ class PallasCallMultimemTest(TestCase):
     spec = P(*([None] * gather_dimension), "x")
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.all_gather_mgpu.plgpu,
+        "kernel",
+        self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
     y = multihost_utils.process_allgather(y, tiled=True)
     repeats = [1] * len(x.shape)
     repeats[gather_dimension] = 2
@@ -1090,6 +1153,13 @@ class PallasCallMultimemTest(TestCase):
 
 class PallasCallRemoteDMAWGTest(
     PallasCallRemoteDMATest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
+
+
+class PallasCallMultimemThreadUnsafeWGTest(
+    PallasCallMultimemThreadUnsafeTest,
     lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
 ):
   ...
