@@ -251,16 +251,20 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_add_one_block_specs(self):
     num_steps = 4
-    x = jnp.arange(num_steps * self.num_lanes, dtype=jnp.int32)
+    size = 128 if self.USE_TC_TILING else self.num_lanes
+    x = jnp.arange(num_steps * size, dtype=jnp.int32)
 
     @self.vector_subcore_kernel(
         out_shape=x,
         grid=(num_steps,),
-        out_specs=pl.BlockSpec([self.num_lanes], lambda i: i),
-        in_specs=[pl.BlockSpec([self.num_lanes], lambda i: i)],
+        out_specs=pl.BlockSpec([size], lambda i: i),
+        in_specs=[pl.BlockSpec([size], lambda i: i)],
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...] + 1
+      @pl.loop(0, x_ref.size, step=self.num_lanes)
+      def _(i):
+        s = pl.ds(i, self.num_lanes)
+        o_ref[s] = x_ref[s] + 1
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
@@ -497,11 +501,14 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
+      self.skipTest("Needs a newer libtpu")
+
     x = jnp.arange(1024)
     indices = jax.random.permutation(jax.random.key(42), x)
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=[1, *x.shape], dtype=x.dtype),
+        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype),
         in_specs=(
             pl.BlockSpec(memory_space=pltpu.HBM),
             pl.BlockSpec(memory_space=pltpu.VMEM),
@@ -510,13 +517,7 @@ class VectorSubcoreTest(PallasSCTest):
     def kernel(x_hbm_ref, indices_ref, o_ref):
       pltpu.sync_copy(x_hbm_ref.at[indices_ref], o_ref)
 
-    # We have to expand the arrays to 2D to ensure that the pipeline stage
-    # dimension does not get tiled when using TC tiling.
-    # TODO(b/488280660): Remove this once the bug is fixed.
-    result = jnp.squeeze(
-        kernel(jnp.expand_dims(x, 0), jnp.expand_dims(indices, 0))
-    )
-    np.testing.assert_array_equal(result, x[indices])
+    np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_gather_1d_with_indexing(self):
     self.skip_if_tc_tiling("Small 1d gather does not work on TC tiling.")
@@ -1450,6 +1451,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), expected)
 
   def test_parallel_loop_with_carry(self):
+    self.skip_if_tc_tiling("The test assumes SC tiling")
+
     chunk_size = self.num_lanes
     nchunks = 4
     per_step_increment = 10
