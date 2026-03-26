@@ -3966,6 +3966,43 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         result, np.transpose(x.reshape(mid_shape), axes=(1, 0, 2))
     )
 
+  # (m*n) -> (m, n)
+  @parameterized.parameters(
+      (m, n, dtype)
+      for (m, n), dtype in itertools.product(
+          [
+              (5, 512),
+              (9, 256),
+              (11, 128),
+              (1, 64),
+              (200, 1),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_unfold_minor_dim_to_R2(self, m, n, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 31):
+      self.skipTest('Test requires a newer libTPU.')
+    if (
+        n == 1
+        and dtype in (jnp.bfloat16, jnp.int8)
+        and not jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest(
+          'Insert singleton minor-most dimension for packed types is only'
+          ' supported on TPU v6+.'
+      )
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(y_ref.shape)
+
+    x = np.arange(m * n, dtype=dtype)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([m, n]))
+
   # (q, m*n) -> (q, m, n)
   @parameterized.parameters(
       (q, m, n, dtype)
@@ -4074,6 +4111,44 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
     )(x)
     np.testing.assert_array_equal(out, x.reshape(output_shape))
+
+  # (m, n) -> (m * n)
+  @parameterized.parameters(
+      (m, n, dtype)
+      for (m, n), dtype in itertools.product(
+          [
+              (5, 512),
+              (9, 256),
+              (11, 128),
+              (1, 64),
+              (200, 1),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_two_minor_dims_to_R1(self, m, n, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 31):
+      self.skipTest('Test requires a newer libTPU.')
+    if dtype == jnp.int8 and n % 512 != 0:
+      self.skipTest('Requires 8-bit iota support.')
+    if (
+        dtype == jnp.bfloat16
+        and n % 256 != 0
+        and not jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('16-bit iota support requires TPU v6+.')
+    if n == 1 and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Sublane gather requires TPU v5+.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(x_ref.shape[0] * x_ref.shape[1])
+
+    x = np.arange(m * n, dtype=dtype).reshape(m, n)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m * n,), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([m * n]))
 
   # (q, m, n) -> (q, m * n) where n % 128 == 0
   @parameterized.parameters(
