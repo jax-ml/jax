@@ -2025,6 +2025,170 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
+    m=(128,),
+    n=(64, 128, 192, 256),
+    scale_jax_dtype=(jnp.float8_e8m0fnu,),
+  )
+  def test_mma_block_scaled_collective_m128(self, m, n, scale_jax_dtype):
+    in_jax_dtype = jnp.float8_e5m2
+    out_jax_dtype = jnp.float32
+    scale_block = 32
+    swizzle = 128
+    k_steps = 2
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    swizzle_elems = 8 * swizzle // bitwidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
+    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+
+    def kernel(ctx, lhs, rhs, lhs_scales_gmem, rhs_scales_gmem, out, scratch):
+      (
+          lhs_smem, rhs_smem, lhs_scales_smem, rhs_scales_smem,
+          barriers, mma_barrier, acc, lhs_scales, rhs_scales
+      ) = scratch
+      ctx.async_copy(
+          src_ref=lhs,
+          dst_ref=lhs_smem,
+          barrier=barriers[0],
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(lhs_tiling),
+          collective=gpu.Dimension.x,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
+      )
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          barrier=barriers[1],
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(rhs_tiling),
+          collective=gpu.Dimension.x,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
+      )
+      ctx.async_copy(
+          src_ref=lhs_scales_gmem,
+          dst_ref=lhs_scales_smem,
+          barrier=barriers[2],
+          collective=gpu.Dimension.x,
+          leader_tracked=mgpu.CopyPartition.PARTITIONED(0),
+      )
+      ctx.async_copy(
+          src_ref=rhs_scales_gmem,
+          dst_ref=rhs_scales_smem,
+          barrier=barriers[3],
+          collective=gpu.Dimension.x,
+          leader_tracked=mgpu.CopyPartition.REPLICATED,
+      )
+
+      is_leader_thread = single_thread_predicate()
+      index = ir.IndexType.get()
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
+      with when(arith.andi(is_first_block, is_leader_thread)):
+        for i in range(4):
+          barriers[i].wait()
+        tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales, collective=True)
+        tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales, collective=True)
+        tcgen05.mma(
+            acc,
+            lhs_smem,
+            mgpu.memref_transpose(rhs_smem, (1, 0, 3, 2)),
+            a_swizzle=swizzle,
+            b_swizzle=swizzle,
+            accumulate=False,
+            collective=True,
+            a_scale=lhs_scales,
+            b_scale=rhs_scales,
+        )
+        tcgen05.commit_arrive(mma_barrier, collective=True, ctx=ctx)
+      mma_barrier.wait(orders_tensor_core=True)
+
+      m_block_tile = m // 2
+      m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
+      acc.load().store_untiled(memref_slice(out, m_slice), optimized=False)
+
+    x_shape = (m, k)
+    x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
+    y_shape = (n, k)
+    y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+
+    m_block = m // 2
+
+    def format_a_scales(scales):
+      mn, kk = scales.shape
+      assert mn % 32 == 0 and kk % 4 == 0, scales.shape
+      scales = scales.reshape(2, m_block, kk)
+      # Each CTA only has m_block=64, so groups 2 and 3 are padded for the
+      # async copy to TMEM.
+      scales = jnp.pad(scales, ((0, 0), (0, 128 - m_block), (0, 0)))
+      return (
+          scales.reshape(2, 4, 32, kk // 4, 4)
+          .transpose(0, 3, 2, 1, 4)
+          .reshape(2, kk // 4, 32, 16)
+      )
+
+    def format_b_scales(scales):
+      # Each column holds scale values for 32 N columns. The TMEM layout
+      # requires us to split N into two chunks, and pad each chunk to
+      # 64x16 so that it occupies exactly 4 TMEM columns for async copy.
+      mn, kk = scales.shape
+      assert mn % 64 == 0 and kk % 4 == 0, scales.shape
+      columns_per_cta = mn // 64
+      return jnp.pad(
+          scales.reshape(2, columns_per_cta, 32, kk // 4, 4)
+          .transpose(3, 0, 2, 1, 4)
+          .reshape(1, kk // 4, 64, columns_per_cta * 4),
+          ((0, 0), (0, 0), (0, 0), (0, 16 - columns_per_cta * 4)),
+      )
+
+    n_block = n // 2
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(
+            tile_shape((m_block, k), lhs_tiling), in_jax_dtype
+        ),
+        jax.ShapeDtypeStruct(
+            tile_shape((n_block, k), rhs_tiling), in_jax_dtype
+        ),
+        jax.ShapeDtypeStruct(
+            ((m_block + 127) // 128, k // (scale_block * 4), 32, 16), scale_jax_dtype
+        ),
+        jax.ShapeDtypeStruct(
+            (1, k // (scale_block * 4), 64, 16), scale_jax_dtype
+        ),
+        mgpu.TMABarrier(4),
+        mgpu.Barrier(1),
+        mgpu.TMEM((m_block, n), out_jax_dtype, collective=True),
+        mgpu.TMEM(
+            (128, k // scale_block),
+            scale_jax_dtype,
+            layout=tcgen05.scales_layout(),
+            collective=True,
+        ),
+        mgpu.TMEM(
+            (256, k // scale_block),
+            scale_jax_dtype,
+            layout=tcgen05.b_scales_m64_collective_layout(),
+            collective=True,
+        ),
+    ]
+
+    a_scales, b_scales = self._sample_scales(m, k, n, scale_block, scale_jax_dtype)
+
+    a_gpu_scales = format_a_scales(a_scales)
+    b_gpu_scales = format_b_scales(b_scales)
+    args = (x, y, a_gpu_scales, b_gpu_scales)
+    z = mgpu.as_gpu_kernel(
+        kernel, (2, 1, 1), (128, 1, 1), args, out_shape, scratch_shape, cluster=(2, 1, 1),
+    )(*args)
+
+    x32, y32 = x.astype(np.float32), y.astype(np.float32)
+    a_logical_scales = jnp.repeat(a_scales, scale_block, axis=1).astype(jnp.float32)
+    b_logical_scales = jnp.repeat(b_scales, scale_block, axis=1).astype(jnp.float32)
+    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
+
+  @parameterized.product(
     m=(256,),
     n=(64, 128, 192, 256),
     scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),

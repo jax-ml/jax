@@ -142,6 +142,8 @@ def _debug_scalar_ty_format(arg):
     return "%llu", arg
   if isinstance(arg.type, ir.F32Type):
     return "%f", arg
+  if isinstance(arg.type, ir.Float8E8M0FNUType):
+    return "%u", arith.extui(ir.IntegerType.get_signless(32), arith.bitcast(ir.IntegerType.get_signless(8), arg))
   if isinstance(arg.type, ir.BF16Type) or isinstance(arg.type, ir.F16Type):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
