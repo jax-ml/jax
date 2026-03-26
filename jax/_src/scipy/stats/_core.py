@@ -139,7 +139,6 @@ def invert_permutation(i: Array) -> Array:
   """Helper function that inverts a permutation array."""
   return jnp.empty_like(i).at[i].set(jnp.arange(i.size, dtype=i.dtype))
 
-
 @api.jit(static_argnames=["method", "axis", "nan_policy"])
 def rankdata(
   a: ArrayLike,

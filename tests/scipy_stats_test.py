@@ -2023,7 +2023,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
     tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
     tol = jtu.tolerance(dtype, tol_spec)
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
 
