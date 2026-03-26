@@ -102,9 +102,6 @@ class DebugCheckTest(jtu.JaxTestCase):
   def test_vector_debug_check(self):
     x = jnp.arange(8)
 
-    if jtu.is_device_tpu(5, "p"):
-      self.skipTest("TODO(b/486978782): Hangs on v5p")
-
     @functools.partial(
         pl.pallas_call,
         out_shape=x,
@@ -131,8 +128,6 @@ class DebugCheckTest(jtu.JaxTestCase):
       )
 
   def test_trigger_bounds_checker(self):
-    if jtu.is_device_tpu(5, "p"):
-      self.skipTest("TODO(b/486978782): Hangs on v5p")
 
     size = plsc.get_sparse_core_info().num_lanes
     x = jnp.arange(size, dtype=jnp.int32)
