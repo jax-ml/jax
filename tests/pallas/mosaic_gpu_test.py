@@ -3332,8 +3332,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.try_cluster_cancel_p,
-        mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
     }
@@ -5291,7 +5289,10 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       (0, (2, 1,), False),
   )
   def test_cluster_launch_control(self, dim, cluster, with_indexing):
-    self.skip_if_wg_semantics()
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skip_if_wg_semantics()
+
     # We attempt to schedule 1 more CTA than can be scheduled at once. Only
     # one CTA will succeed in stealing the last block, and the others will
     # fail. Therefore we test that there is exactly 1 stolen block and the
@@ -7265,9 +7266,10 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling(self, grid, cluster):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
-    # query_cluster_cancel_p and try_cluster_cancel_p are not yet supported
-    # with WG semantics.
-    self.skip_if_wg_semantics()
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skip_if_wg_semantics()
+
     grid_names = tuple(str(i) for i in range(len(grid)))
     cluster_names = tuple("c"+str(i) for i in range(len(cluster)))
     def body(out_gmem, _):
@@ -7309,9 +7311,10 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling_with_carry(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
-    # query_cluster_cancel_p and try_cluster_cancel_p are not yet supported
-    # with WG semantics.
-    self.skip_if_wg_semantics()
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skip_if_wg_semantics()
+
     # In this test we make SM 0 run a the dynamic scheduling loop while all
     # other SMs spin. This means SM 0 should steal all of the work and we
     # keep track of the number of stolen blocks in the carry.

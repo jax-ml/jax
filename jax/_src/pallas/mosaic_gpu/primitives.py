@@ -3812,14 +3812,12 @@ def _try_cluster_cancel_abstract_eval(*args, **params):
 
   return (), {gpu_core._memory_effect}
 
-@lowering.register_lowering_rule(
-    try_cluster_cancel_p, mgpu.LoweringSemantics.Lane
-)
-
+@lowering.register_lowering_rule(try_cluster_cancel_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(try_cluster_cancel_p, mgpu.LoweringSemantics.Warpgroup)
 def try_cluster_cancel_lowering(
     ctx: lowering.LoweringRuleContext,
     result_ref,
-    barrier: mgpu.BarrierRef,
+    barrier,
     *transforms_leaves,
     result_transforms_tree,
     barrier_transforms_tree,
@@ -3862,12 +3860,6 @@ def try_cluster_cancel_lowering(
   is_first_wg = arith_dialect.cmpi(
       arith_dialect.CmpIPredicate.eq, mgpu.warpgroup_idx(), mgpu.c(0, i32)
   )
-  is_leader_thread = arith_dialect.andi(
-      ctx.module_ctx.single_lane_predicate, is_first_wg
-  )
-
-  bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
-  barrier.arrive_expect_tx(bytes)
 
   is_first_cta = mgpu.c(1, i1)
   for dim in gpu_dialect.Dimension:
@@ -3880,11 +3872,34 @@ def try_cluster_cancel_lowering(
         ),
     )
 
-  mgpu.try_cluster_cancel(
-      result_ref,
-      barrier,
-      predicate=arith_dialect.andi(is_leader_thread, is_first_cta),
-  )
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      raise NotImplementedError("TryClusterCancelOp is not available.")
+
+    # TODO(b/415721295): Check whether this is slower than doing
+    # arrive_expect_tx(select(is_first_wg, 16, 0)) and if so then implement
+    # support for ir.Value in arrive_expect_tx in the MGPU dialect (right now
+    # the tx_bytes is an attribute, not an operand).
+    with mgpu.utils.when(is_first_wg):
+      barrier.arrive_expect_tx(16)
+    with mgpu.utils.when(arith_dialect.xori(is_first_wg, mgpu.c(1, i1))):
+      barrier.arrive()
+    mgpu.dialect.try_cluster_cancel(
+        result_ref,
+        barrier.as_barrier_memref(),
+        predicate=arith_dialect.andi(is_first_cta, is_first_wg))
+  else:
+    is_leader_thread = arith_dialect.andi(
+        ctx.module_ctx.single_lane_predicate, is_first_wg
+    )
+    bytes = arith_dialect.select(is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32))
+    barrier.arrive_expect_tx(bytes)
+    mgpu.try_cluster_cancel(
+        result_ref,
+        barrier,
+        predicate=arith_dialect.andi(is_leader_thread, is_first_cta),
+    )
 
   return []
 
@@ -3950,9 +3965,8 @@ def _query_cluster_cancel_abstract_eval(try_cancel_buffer,
   )
 
 
-@lowering.register_lowering_rule(
-    query_cluster_cancel_p, mgpu.LoweringSemantics.Lane
-)
+@lowering.register_lowering_rule(query_cluster_cancel_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(query_cluster_cancel_p, mgpu.LoweringSemantics.Warpgroup)
 def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
                                   result_ref,
                                   *transforms_leaves,
@@ -3975,7 +3989,14 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
   if bits != 128:
     raise TypeError(f"Response to decode must be 128 bits, but is {bits} bits.")
 
-  x, y, z, success = mgpu.query_cluster_cancel(result_ref)
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
+      raise NotImplementedError("QueryClusterCancelOp is not available.")
+    x, y, z, success = mgpu.dialect.query_cluster_cancel(result_ref)
+  else:
+    x, y, z, success = mgpu.query_cluster_cancel(result_ref)
+
   cta_grid = [x, y, z]
   i32 = ir.IntegerType.get_signless(32)
   # Divide out the cluster dimensions.
