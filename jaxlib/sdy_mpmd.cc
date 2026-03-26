@@ -152,8 +152,7 @@ absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
 // `PyMpmdLoadedExecutable` for the compiled MPMD program.
 //
 // Requires GIL.
-absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>>
-CompileMpmd(
+absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
     nb::object backend_py, MlirModule c_module, nb::sequence devices_py,
     const std::vector<nb::object> out_avals,
     std::optional<const std::vector<nb::object>> out_shardings,
@@ -161,8 +160,8 @@ CompileMpmd(
     const absl::flat_hash_map<std::string, nb::handle>&
         loaded_executable_bindings) {
   auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
-  auto devices = nb::cast<std::vector<jax::nb_class_ptr<jax::PyDevice>>>(
-      devices_py);
+  auto devices =
+      nb::cast<std::vector<jax::nb_class_ptr<jax::PyDevice>>>(devices_py);
 
   // Get IFRT client and construct an IFRT device list.
   xla::ifrt::Client* client = backend->ifrt_client();
@@ -296,9 +295,6 @@ NB_MODULE(_sdy_mpmd, m) {
         if (partitioning_options) {
           options = mlir::mpmd::ParsePartitioningOptions(*partitioning_options);
         }
-        // TODO: b/483036036 - This check should be able to be removed once
-        // jaxlib and openxla versions are properly synced
-#if SHARDY_MPMD_JAXLIB_VERSION >= 1
         MpmdProgram program{.module = unwrap(c_module),
                             .func_name = func_name,
                             .options = std::move(options),
@@ -309,17 +305,6 @@ NB_MODULE(_sdy_mpmd, m) {
                             .donate_argnums = donate_argnums,
                             .fragment_merge_rules = fragment_merge_rules,
                             .fragment_schedule_rules = fragment_schedule_rules};
-#else
-        MpmdProgram program{.module = unwrap(c_module),
-                            .func_name = func_name,
-                            .options = std::move(options),
-                            .named_meshes = named_meshes,
-                            .assignment = GetCppUserAssignmentMap(assignment),
-                            .input_meshes = input_meshes,
-                            .output_meshes = output_meshes,
-                            .donate_argnums = donate_argnums,
-                            .fragment_merge_rules = fragment_merge_rules};
-#endif
 
         PartitioningResult partitioning_result =
             program.ApplyPartitioning(phases);
@@ -413,59 +398,47 @@ NB_MODULE(_sdy_mpmd, m) {
           return out;
         });
 
-  m.def("compile_mpmd",
-        xla::ValueOrThrowWrapper(CompileMpmd),
-        nb::arg("backend"),
-        nb::arg("ifrt_mlir_module"),
-        nb::arg("devices"),
-        nb::arg("out_avals"),
-        nb::arg("out_shardings"),
-        nb::arg("xla_compile_options"),
-        nb::arg("loaded_executable_bindings")
-  );
+  m.def("compile_mpmd", xla::ValueOrThrowWrapper(CompileMpmd),
+        nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
+        nb::arg("out_avals"), nb::arg("out_shardings"),
+        nb::arg("xla_compile_options"), nb::arg("loaded_executable_bindings"));
 
   nb::class_<xla::ifrt::IfrtIrProgramMemoryStats>(m, "IfrtIrProgramMemoryStats")
-      .def_ro(
-          "argument_size_in_bytes",
-          &xla::ifrt::IfrtIrProgramMemoryStats::argument_size_in_bytes)
+      .def_ro("argument_size_in_bytes",
+              &xla::ifrt::IfrtIrProgramMemoryStats::argument_size_in_bytes)
       .def_ro("output_size_in_bytes",
-                    &xla::ifrt::IfrtIrProgramMemoryStats::output_size_in_bytes)
-      .def_ro(
-          "device_to_peak_bytes_used",
-          &xla::ifrt::IfrtIrProgramMemoryStats::device_to_peak_bytes_used)
+              &xla::ifrt::IfrtIrProgramMemoryStats::output_size_in_bytes)
+      .def_ro("device_to_peak_bytes_used",
+              &xla::ifrt::IfrtIrProgramMemoryStats::device_to_peak_bytes_used)
       .def_ro("device_to_min_memory_bytes_available",
-                    &xla::ifrt::IfrtIrProgramMemoryStats::
-                        device_to_min_memory_bytes_available)
-      .def_ro(
-          "host_argument_size_in_bytes",
-          &xla::ifrt::IfrtIrProgramMemoryStats::host_argument_size_in_bytes)
-      .def_ro(
-          "host_output_size_in_bytes",
-          &xla::ifrt::IfrtIrProgramMemoryStats::host_output_size_in_bytes);
+              &xla::ifrt::IfrtIrProgramMemoryStats::
+                  device_to_min_memory_bytes_available)
+      .def_ro("host_argument_size_in_bytes",
+              &xla::ifrt::IfrtIrProgramMemoryStats::host_argument_size_in_bytes)
+      .def_ro("host_output_size_in_bytes",
+              &xla::ifrt::IfrtIrProgramMemoryStats::host_output_size_in_bytes);
 
   auto mpmd_executable =
       nb::class_<PyMpmdLoadedExecutable>(m, "MpmdLoadedExecutable");
   mpmd_executable.def(
-      "execute",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::Execute),
+      "execute", xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::Execute),
       nb::arg("args"));
   mpmd_executable.def(
       "execute_fastpath",
       xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::ExecuteFastpath));
-  mpmd_executable.def("setup_fastpath",
-                      &PyMpmdLoadedExecutable::SetupFastpath);
-  mpmd_executable.def("input_shardings",
-                      xla::ValueOrThrowWrapper(
-                          &PyMpmdLoadedExecutable::GetParameterShardings));
-  mpmd_executable.def("output_shardings",
-                      xla::ValueOrThrowWrapper(
-                          &PyMpmdLoadedExecutable::GetOutputShardings));
-  mpmd_executable.def("input_layouts",
-                      xla::ValueOrThrowWrapper(
-                          &PyMpmdLoadedExecutable::GetParameterLayouts));
-  mpmd_executable.def("output_layouts",
-                      xla::ValueOrThrowWrapper(
-                          &PyMpmdLoadedExecutable::GetOutputLayouts));
+  mpmd_executable.def("setup_fastpath", &PyMpmdLoadedExecutable::SetupFastpath);
+  mpmd_executable.def(
+      "input_shardings",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterShardings));
+  mpmd_executable.def(
+      "output_shardings",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputShardings));
+  mpmd_executable.def(
+      "input_layouts",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterLayouts));
+  mpmd_executable.def(
+      "output_layouts",
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputLayouts));
   mpmd_executable.def(
       "get_compiled_memory_stats",
       [](PyMpmdLoadedExecutable& exec)
@@ -477,8 +450,8 @@ NB_MODULE(_sdy_mpmd, m) {
         }
         absl::flat_hash_map<std::string, nb::object> py_stats;
         for (const auto& [atom_program_name, memory_stats] : stats) {
-          py_stats[atom_program_name] = nb::steal<nb::object>(
-              nb::cast(memory_stats).release().ptr());
+          py_stats[atom_program_name] =
+              nb::steal<nb::object>(nb::cast(memory_stats).release().ptr());
         }
         return py_stats;
       });
@@ -486,10 +459,9 @@ NB_MODULE(_sdy_mpmd, m) {
       "get_ifrt_ir_program_memory_stats",
       xla::ValueOrThrowWrapper(
           &PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats));
-  mpmd_executable.def(
-      "get_ifrt_ir_program_xprof_url",
-      xla::ValueOrThrowWrapper(
-          &PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl));
+  mpmd_executable.def("get_ifrt_ir_program_xprof_url",
+                      xla::ValueOrThrowWrapper(
+                          &PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl));
   mpmd_executable.def(
       "hlo_modules",
       [](PyMpmdLoadedExecutable& exec)
