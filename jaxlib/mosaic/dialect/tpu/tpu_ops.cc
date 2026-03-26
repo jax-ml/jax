@@ -2122,14 +2122,13 @@ LogicalResult AllReduceOp::verify() {
   auto in_ty = getInput().getType();
   auto in_bitwidth = getElementTypeBitwidth(in_ty);
   auto out_ty = getOutput().getType();
-  auto out_bitwidth = getElementTypeBitwidth(out_ty);
   auto kind = getKind();
 
   if (in_bitwidth == 1) {
     // For mask vectors, the single (semantically scalar) result is broadcast
     // into a vector of 32-bit ints of whatever shape the target supports (not
     // necessarily the same as the input).
-    if (out_bitwidth != 32) {
+    if (!out_ty.getElementType().isSignlessInteger(32)) {
       return emitOpError("Vector mask all-reduce must have i32 output");
     }
     switch (kind) {
