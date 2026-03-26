@@ -31,7 +31,13 @@ from jax._src import hijax
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
-def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
+def fuse(
+    f=None,
+    *,
+    resolve_fusion_dtypes: bool = True,
+    debug: bool = False,
+    strict_mode: bool = True,
+):
   """Fuses a function into a single fusible.
 
   Args:
@@ -39,6 +45,8 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
     resolve_fusion_dtypes: (experimental) whether or not to resolve fusion
       dtypes (which don't correspond to physical dtypes)
     debug: Whether to print debug information.
+    strict_mode: Whether to verify block index map equality in collisions during
+      block spec propagations.
 
   There should be a single call to a `fusible` inside the body of `f`. `fuse`
   returns a transformed function that will fuse the surrounding computation into
@@ -58,7 +66,8 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
         print("Jaxpr before fusion:")
         print(jaxpr)
       out_tree = out_tree_thunk()
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
+      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
+                            strict_mode=strict_mode)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
     if resolve_fusion_dtypes:
@@ -153,6 +162,8 @@ def _construct_output_fusions(
     fusion_eqn_outvars,  # Flat list of vars output by the fusible eqn
     fusion_eqn_out_tree,  # Tree structure of the fusible eqn outputs
     output_fusion_prefix,  # Pytree defining output groups
+    *,
+    strict_mode: bool = True,
 ):
   # 1. Create jaxpr_out: represents computation *after* the fusible
   #    Inputs: fusion_eqn_outvars
@@ -242,6 +253,7 @@ def _construct_output_fusions(
         fn,
         (in_type, {}),
         out_type,
+        strict_mode=strict_mode,
     )
     output_fusions.append(fusion)
 
@@ -254,7 +266,8 @@ def _construct_output_fusions(
 
 
 def fuse_jaxpr(
-    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
+    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
+    strict_mode: bool = True,
 ):
   # Collect input fusions
   for i, eqn in enumerate(jaxpr.eqns):
@@ -307,6 +320,7 @@ def fuse_jaxpr(
       fusion_eqn.outvars,
       fusible.out_tree,
       fusible.output_fusion_prefix,
+      strict_mode=strict_mode,
   )
   out = fusible.func(*in_fusions, output_fusions)
   flat_out = jax.tree.leaves(out)
