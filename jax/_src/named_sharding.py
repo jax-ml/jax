@@ -18,9 +18,9 @@ from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
-from typing import Any, Union, overload
+from typing import Any, Union
 
-from jax._src.util import use_cpp_class, cache, use_cpp_method
+from jax._src.util import use_cpp_class, cache, use_cpp_method, unzip3
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
@@ -285,22 +285,7 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
-
-@overload
-def get_array_mapping(axis_resources: PartitionSpec) -> ArrayMapping:
-  ...
-
-@overload
-def get_array_mapping(axis_resources: AUTO) -> AUTO:
-  ...
-
-@overload
-def get_array_mapping(axis_resources: UnspecifiedValue) -> UnspecifiedValue:
-  ...
-
-def get_array_mapping(
-    axis_resources: PartitionSpec | AUTO | UnspecifiedValue
-) -> ArrayMappingOrAutoOrUnspecified:
+def get_array_mapping(axis_resources):
   if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
   d = collections.OrderedDict()
@@ -393,24 +378,43 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
                     replicated_axes=replicated_axes)
   return sdy_sharding
 
+def non_one_sized_spec(spec, mesh) -> PartitionSpec:
+  new_spec: list[Any] = []
+  for s in spec:
+    if s is None or s is PartitionSpec.UNCONSTRAINED:
+      new_spec.append(s)
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
+    else:
+      new_spec.append(None if mesh.shape[s] == 1 else s)
+  unreduced = frozenset(u for u in spec.unreduced if mesh.shape[u] != 1)
+  reduced = frozenset(r for r in spec.reduced if mesh.shape[r] != 1)
+  return PartitionSpec(*new_spec, unreduced=unreduced, reduced=reduced)
+
+def get_non_one_sized_mesh_spec(mesh, spec):
+  spec = non_one_sized_spec(spec, mesh)
+  axis_sizes, axis_names, axis_types = unzip3(
+      [(s, n, t) for s, n, t in zip(mesh.axis_sizes, mesh.axis_names, mesh.axis_types)
+      if s != 1])
+  mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names, axis_types)
+  return mesh, spec
 
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
-  mesh_shape = self.mesh.shape
-  array_mapping = get_array_mapping(self.spec)
-  mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
+  mesh, spec = get_non_one_sized_mesh_spec(self.mesh, self.spec)
+  mesh_shape = mesh.shape
+  array_mapping = get_array_mapping(spec)
+  mesh_axis_pos = {name: i for i, name in enumerate(mesh.axis_names)}
 
   special_axes = {}
-  manual_axes = frozenset(self.mesh.manual_axes)
-  if manual_axes:
-    axis_names = self.mesh.axis_names
+  if (manual_axes := frozenset(mesh.manual_axes)):
+    axis_names = mesh.axis_names
     for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
 
-  unreduced_axes = self.spec.unreduced
-  if unreduced_axes:
-    axis_names = self.mesh.axis_names
+  if (unreduced_axes := spec.unreduced):
+    axis_names = mesh.axis_names
     for u in unreduced_axes:
       special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
 
@@ -459,7 +463,7 @@ def named_sharding_to_xla_hlo_sharding(
   #     transpose_perm = [3, 1, 2, 0]  # 'a' is replicated hence 0 is at the end
   #     subgroup_types = [xc.OpSharding.Type.REPLICATED]
   dims = new_mesh_shape
-  reshape_dims = self.mesh.axis_sizes
+  reshape_dims = mesh.axis_sizes
   if self._logical_device_ids is None:
     return xc.HloSharding.iota_tile(
         dims=dims, reshape_dims=reshape_dims, transpose_perm=mesh_permutation,

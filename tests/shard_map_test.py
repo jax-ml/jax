@@ -252,6 +252,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
+  @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
+  def test_matmul_full_unreduced_out(self, mesh):
+    arr1 = jax.device_put(np.ones((8, 4)), P(None, 'x'))
+    arr2 = jax.device_put(np.ones((4, 6)), P('x', None))
+
+    @jax.jit
+    @shard_map(out_specs=P(unreduced={'x'}))
+    def f(a, b):
+      c = jnp.dot(a, b)
+      self.assertEqual(c.aval.mt.varying, {'x'})
+      return c
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_matmul_unreduced_error(self, mesh):
     np_inp1 = np.arange(8.).reshape(2, 4)
