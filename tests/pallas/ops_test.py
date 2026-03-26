@@ -1889,14 +1889,29 @@ class OpsTest(PallasBaseTest):
   @parameterized.parameters(
       ((32,), jnp.int32, 0),
       ((8, 4), jnp.int32, 0),
+      ((8, 4), jnp.int32, 1),
+      ((256,), jnp.int16, 0),
+      ((8, 4), jnp.int16, 0),
+      ((8, 4), jnp.int16, 1),
       ((8, 16), jnp.float32, 1),
       ((8, 16, 2), jnp.int8, 1),
   )
   def test_iota(self, shape, dtype, dimension):
     self.skip_if_mosaic_gpu()
 
-    if jtu.test_device_matches(["tpu"]) and dtype != jnp.int32:
-      self.skipTest("Only 32-bit integer iota supported")
+    if jtu.test_device_matches(["tpu"]):
+      if dtype not in (jnp.int32, jnp.int16):
+        self.skipTest("Only 32-bit and 16-bit integer iota supported")
+      if dtype == jnp.int16:
+        if len(shape) > 1:
+          if not jtu.is_device_tpu_at_least(
+              6
+          ) and not jtu.is_cloud_tpu_at_least(2026, 4, 1):
+            self.skipTest("Requires newer libTPU")
+          if dimension == 0 and not jtu.is_device_tpu_at_least(4):
+            self.skipTest("Hardware vpackc requires TPUv4+")
+        if len(shape) == 1 and not jtu.is_device_tpu_at_least(6):
+          self.skipTest("i16 addition not supported before TPUv6")
 
     f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
 
@@ -2435,7 +2450,7 @@ class OpsTest(PallasBaseTest):
         self.skipTest("argmin/argmax on TPU only supports float32")
       if dtype == "bfloat16":
         if jtu.get_tpu_version() < 6:
-          self.skipTest("require 16-bit iota")
+          self.skipTest("require 16-bit cmpi sge/slt")
       if jtu.get_tpu_version() < 5 and axis == 1:
         self.skipTest("sublane gather not supported on old TPUs")
 

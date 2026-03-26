@@ -1050,9 +1050,7 @@ class OpsTest(ptu.PallasTPUTest):
         self.skipTest("Requires TPU v5+")
     if packing >= 2:
       if not data_is_aligned and not jtu.is_device_tpu_at_least(version=6):
-        self.skipTest(
-            "Requires 16-bit iota, supported on TPU v6+, see b/356344569"
-        )
+        self.skipTest("Requires 16-bit cmpi sge/slt")
       if not jtu.is_device_tpu_at_least(version=4):
         self.skipTest("Requires TPU v4+")
 
