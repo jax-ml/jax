@@ -243,22 +243,6 @@ class PyArray : public nanobind::object {
 
   xla::ifrt::Array* ifrt_array() const { return GetStorage().ifrt_array.get(); }
 
-  // Short-term escape hatch to get PjRtBuffers from PyArray.
-  // TODO(hyeontaek): Migrate all users of this method to be agnostic of PjRt.
-  absl::Span<const std::shared_ptr<xla::PjRtBuffer>> pjrt_buffers() const {
-    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
-    if (ifrt_array_ptr == nullptr) {
-      return {};
-    }
-    auto* arr =
-        llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(ifrt_array_ptr);
-    if (arr == nullptr) {
-      throw xla::XlaRuntimeError(
-          "This operation is implemented for a PjRt-compatible backend only.");
-    }
-    return arr->pjrt_buffers();
-  }
-
   int num_addressable_shards() const {
     xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
     if (ifrt_array_ptr == nullptr) {
