@@ -1763,6 +1763,21 @@ def _memref_load_store_op_constraint_system(
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
+# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+if hasattr(mgpu, "TryClusterCancelOp") and hasattr(mgpu, "QueryClusterCancelOp"):
+  @_add_constraint_system_derivation_rule(mgpu.TryClusterCancelOp)
+  # pyrefly: ignore[missing-attribute]
+  @_add_constraint_system_derivation_rule(mgpu.QueryClusterCancelOp)
+  def _cluster_launch_control_ops_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.TryClusterCancelOp | mgpu.QueryClusterCancelOp,  # pyrefly: ignore[missing-attribute]
+  ) -> ConstraintSystemDerivationRuleResult:
+    ref = ValueSite(op, VariableType.OPERAND, 0)
+    var = ctx.producer_ref(ref)
+    assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+    return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
+
+
 def _extract_smem_tiling_from_custom_transform_attrs(
     ref_type: ir.MemRefType,
     transform_attrs: ir.ArrayAttr,

@@ -7914,6 +7914,127 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     # Verification
     np.testing.assert_array_equal(result, src[indices.astype(jnp.int32)])
 
+  @parameterized.parameters(
+      (0, (1, 1, 1)),
+      (1, (1, 1, 1)),
+      (2, (1, 1, 1)),
+      (0, (1, 1, 2)),
+      (0, (1, 2, 1)),
+      (0, (2, 1, 1)),
+  )
+  def test_cluster_launch_control(self, dim, cluster):
+    # Let's say we have 148 SMs in our gpu. The cluster size is either 1 or 2.
+    # We attempt to schedule exactly one more cluster than what fits on the GPU.
+    # So either 149 clusters if the cluster size is 1, or 75 if the cluster size
+    # is 2. Only one cluster will succeed in stealing the extra cluster's work,
+    # and the others will fail. Therefore we test that there is exactly 1 stolen
+    # cluster and the others fail and return -1.
+
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu_dialect, "QueryClusterCancelOp"):
+      self.skipTest("QueryClusterCancelOp is not available.")
+
+    num_sms = jax.devices()[0].core_count
+    cluster_size = math.prod(cluster)
+    assert num_sms % cluster_size == 0
+
+    grid = [1, 1, 1]
+    grid[dim] = num_sms // cluster_size + 1
+    grid = tuple(g * c for g, c in zip(grid, cluster))
+
+    # Encode the last CTA ID as a single int xxxyyyzzz.
+    last_cta_id = (
+        (grid[0] - cluster[0]) * 1000000
+        + (grid[1] - cluster[1]) * 1000
+        + (grid[2] - cluster[2])
+    )
+
+    def single_wg_predicate():
+      wg_indx_in_cta = utils.warpgroup_idx()
+      wg_type = wg_indx_in_cta.type
+      return arith.cmpi(arith.CmpIPredicate.eq, wg_indx_in_cta, c(0, wg_type))
+
+    def single_cta_predicate():
+      is_first_cta = c(1, ir.IntegerType.get_signless(1))
+      index_type = ir.IndexType.get()
+      for dim in gpu.Dimension:
+        is_first_cta = arith.andi(
+            is_first_cta,
+            arith.cmpi(arith.CmpIPredicate.eq, utils.cluster_idx(dim), c(0, index_type)),
+        )
+      return is_first_cta
+
+    def body(
+        ctx: launch_context.LaunchContext,
+        out_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      cancel_result_ref, barrier, _ = smem
+
+      idx_type = ir.IndexType.get()
+      i32 = ir.IntegerType.get_signless(32)
+
+      single_wg = single_wg_predicate()
+      if_op = scf.IfOp(single_wg, has_else=True)
+      with ir.InsertionPoint(if_op.then_block):
+        barrier.arrive_expect_tx(16)
+        scf.YieldOp([])
+      with ir.InsertionPoint(if_op.else_block):
+        barrier.arrive_expect_tx(0)
+        scf.YieldOp([])
+
+      single_cta_and_wg = arith.andi(single_cta_predicate(), single_wg)
+      mgpu_dialect.try_cluster_cancel(
+          cancel_result_ref,
+          barrier.as_barrier_memref(),
+          predicate=single_cta_and_wg)
+      barrier.wait()
+
+      x, y, z, success = mgpu_dialect.query_cluster_cancel(cancel_result_ref)
+      # Encode x, y, and z into one int xxxyyyzzz in order to compare with the
+      # expected result.
+      cta_id = z
+      cta_id = arith.addi(cta_id, arith.muli(c(1000, i32), y))
+      cta_id = arith.addi(cta_id, arith.muli(c(1000000, i32), x))
+
+      minus_one = arith.constant(i32, -1)
+      value = arith.select(success, cta_id, minus_one)
+
+      idx_i32 = arith.index_cast(i32, gpu.block_id(gpu.Dimension.x))
+      idy_i32 = arith.index_cast(i32, gpu.block_id(gpu.Dimension.y))
+      idz_i32 = arith.index_cast(i32, gpu.block_id(gpu.Dimension.z))
+
+      grid_y = c(grid[1], i32)
+      grid_z = c(grid[2], i32)
+
+      idx_yz = arith.addi(arith.muli(idy_i32, grid_z), idz_i32)
+      grid_idx = arith.addi(arith.muli(idx_i32, arith.muli(grid_y, grid_z)), idx_yz)
+      grid_idx_index = arith.index_cast(idx_type, grid_idx)
+
+      memref.store(value, out_gmem_ref, [grid_idx_index])
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=grid,
+        cluster=cluster,
+        block=(256, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct((num_sms,), jnp.int32),
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct((16,), jnp.int8),
+            mgpu.Barrier(2),
+            # Requesting SMEM close to the 228kb limit to ensure that each SM
+            # only schedules 1 block.
+            jax.ShapeDtypeStruct((220 * 1024,), jnp.int8),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    result = np.sort(kernel())
+    expected = np.array([-1] * (num_sms - cluster_size) + [last_cta_id] * cluster_size)
+    np.testing.assert_equal(result, expected)
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

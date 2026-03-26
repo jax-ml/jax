@@ -2548,6 +2548,29 @@ def _index_switch_op_lowering_rule(
     )
   return _unflatten_ir_values(new_switch_op.results, results_template)
 
+# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+if hasattr(mgpu, "TryClusterCancelOp"):
+  @_register_lowering(mgpu.TryClusterCancelOp)
+  def _try_cluster_cancel_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TryClusterCancelOp
+  ) -> Sequence[ir.Value]:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+    predicate = ctx.single_lane_predicate
+    if op.predicate is not None:
+      predicate = arith.andi(predicate, op.predicate)
+    utils.try_cluster_cancel(op.cancellation_result, barrier.barrier_ref, predicate)
+    return []
+
+
+# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+if hasattr(mgpu, "QueryClusterCancelOp"):
+  @_register_lowering(mgpu.QueryClusterCancelOp)
+  def _query_cluster_cancel_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.QueryClusterCancelOp
+  ) -> Sequence[ir.Value]:
+    del ctx
+    return utils.query_cluster_cancel(op.cancellation_result)
+
 
 @_register_lowering(func.FuncOp)
 @_register_lowering(gpu.LaunchOp)

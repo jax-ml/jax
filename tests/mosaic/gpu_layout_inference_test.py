@@ -1687,6 +1687,38 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(op), [transforms]
     )
 
+  def test_infer_transforms_for_try_cluster_cancel_op(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
+      self.skipTest("TryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      result, barrier = undefs(
+          ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()),
+          ir.Type.parse("!mosaic_gpu.barrier"),
+      )
+      op = mgpu.dialect.try_cluster_cancel(result, barrier)
+
+    mgpu.infer_layout(self.module)
+
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertEmpty(in_transform)
+
+  def test_infer_transforms_for_query_cluster_cancel_op(self):
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
+      self.skipTest("QueryClusterCancelOp is not available.")
+
+    with ir.InsertionPoint(self.module.body):
+      result, = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()))
+      op_results = mgpu.dialect.query_cluster_cancel(result)
+      op = op_results[0].owner
+
+    mgpu.infer_layout(self.module)
+
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertEmpty(in_transform)
+
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
   def test_infer_transforms_for_async_load_store_raises_on_unaligned_tiles(self, op_type):
     shape = (64, 64)
