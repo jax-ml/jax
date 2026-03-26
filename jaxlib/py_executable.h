@@ -248,19 +248,6 @@ class PyLoadedExecutable {
     return ifrt_loaded_executable_.get();
   }
 
-  // Short-term escape hatch to get xla::PjRtLoadedExecutable from PyExecutable.
-  // TODO(hyeontaek): Migrate all users of this method to be agnostic of PjRt.
-  std::shared_ptr<xla::PjRtLoadedExecutable> shared_ptr_pjrt_executable() {
-    auto* exec =
-        llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleLoadedExecutable>(
-            ifrt_loaded_executable_.get());
-    if (exec == nullptr) {
-      throw xla::XlaRuntimeError(
-          "This operation is implemented for a PjRt-compatible backend only.");
-    }
-    return exec->shared_ptr_pjrt_loaded_executable();
-  }
-
   // Returns a template of execute options to pass to
   // `ifrt_executable()->Execute()`. Note that the caller may need to override
   // some options such as `launch_id` that change at each execution.
