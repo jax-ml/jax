@@ -116,7 +116,7 @@ def _xla_metadata_value_lowering_rule(
   xla_metadata = dict(xla_metadata_kvs)
   op_to_attach_metadata = _target_op_to_attach_metadata(val)
   if op_to_attach_metadata is not None:
-    _attach_xla_metadata_to_op(xla_metadata, op_to_attach_metadata)
+    attach_xla_metadata_to_op(xla_metadata, op_to_attach_metadata)
   return [val]
 
 
@@ -134,7 +134,7 @@ def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
   return op.operation
 
 
-def _attach_xla_metadata_to_op(
+def attach_xla_metadata_to_op(
     xla_metadata: dict[str, Any], op: ir.Operation
 ) -> None:
   if xla_metadata:
