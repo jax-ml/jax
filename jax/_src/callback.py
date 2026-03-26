@@ -39,7 +39,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
-from jax._src.typing import Array, DeprecatedArg
+from jax._src.typing import Array
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -263,7 +263,6 @@ def pure_callback(
     result_shape_dtypes: Any,
     *args: Any,
     sharding: SingleDeviceSharding | None = None,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
     vmap_method: str | None = None,
     **kwargs: Any,
 ):
@@ -302,8 +301,7 @@ def pure_callback(
   * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
     inputs are tiled to the expected batched shape.
 
-  If necessary, the legacy behavior provided by the removed ``vectorized=True``
-  argument can be recovered using ``vmap_method="legacy_vectorized"``.
+
 
   The current default behavior is to use ``vmap_method="sequential"`` when
   not specified, but this behavior is deprecated, and in the future, the
@@ -372,11 +370,7 @@ def pure_callback(
 
   .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
   """
-  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
-  if not isinstance(vectorized, DeprecatedArg):
-    raise ValueError(
-        "The 'vectorized' argument of jax.pure_callback was removed in JAX "
-        "v0.6.0. Use 'vmap_method' instead.")
+
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:

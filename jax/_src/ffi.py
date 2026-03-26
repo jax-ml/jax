@@ -37,8 +37,7 @@ from jax._src.layout import Layout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
-                             Shape)
+from jax._src.typing import Array, ArrayLike, DuckTypedArray, Shape
 
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | Layout | None
@@ -387,7 +386,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array]:
   ...
 
@@ -404,7 +402,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Sequence[Array]]:
   ...
 
@@ -420,7 +417,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = None,
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
@@ -481,11 +477,7 @@ def ffi_call(
     to execute the FFI handler. Any keyword arguments are passed as named
     attributes to the FFI handler using XLA's FFI interface.
   """
-  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
-  if not isinstance(vectorized, DeprecatedArg):
-    raise ValueError(
-        "The 'vectorized' argument of jax.ffi.ffi_call was removed in JAX "
-        "v0.6.0. Use 'vmap_method' instead.")
+
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
