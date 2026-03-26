@@ -135,8 +135,6 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     shape=[(4,), (num_samples, 4)],
   )
   def testRotationAsQuatScalarFirst(self, shape, dtype):
-    if scipy_version < (1, 14, 0):
-      self.skipTest("Scipy 1.14.0 added the `scalar_first` arg.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda q: jsp_Rotation.from_quat(q).as_quat(scalar_first=True)

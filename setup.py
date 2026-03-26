@@ -65,7 +65,7 @@ setup(
         'ml_dtypes>=0.5.0',
         'numpy>=2.0',
         'opt_einsum',
-        'scipy>=1.13',
+        'scipy>=1.14',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.

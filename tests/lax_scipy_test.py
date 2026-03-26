@@ -111,8 +111,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
-    if jnp.issubdtype(dtype, jnp.complexfloating) and scipy_version < (1, 13, 0):
-      self.skipTest("logsumexp of complex input uses scipy 1.13.0 semantics.")
     if use_b and scipy_version >= (1, 15) and scipy_version < (1, 15, 3):
       self.skipTest(
           "TODO(https://github.com/scipy/scipy/issues/22903): logsumexp with a"

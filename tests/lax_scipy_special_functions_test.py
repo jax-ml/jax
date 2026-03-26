@@ -354,13 +354,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       # will be available
       a_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
       b_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
-    elif jtu.parse_version(scipy.__version__) >= (1, 12):
+    else:
       # disabled samples that contradict with scipy/scipy#22425
       a_samples = [nan, -0.5, 0.5]
       b_samples = [nan, -0.5, 0.5]
-    else:
-      a_samples = [-0.5, 0.5]
-      b_samples = [-0.5, 0.5]
     x_samples = [nan, -0.5, 0, 0.5, 1, 1.5]
 
     a_samples = np.array(a_samples, dtype=dtype)

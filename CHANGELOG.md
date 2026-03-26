@@ -35,7 +35,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
       `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
       `Unstacked`, `spec_to_indices`.
+
 * Changes:
+  * The minimum supported SciPy version is now 1.14.
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
     replaced with `.manual_type.varying`.
