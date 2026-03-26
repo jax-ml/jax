@@ -2218,15 +2218,17 @@ def get_manual_type(mt, mesh):
     return mt
 
   axis_env = get_axis_env()
+  in_axis_env = lambda i: axis_env.axis_exists(i) and i not in mesh._name_to_type
   for i in it.chain(mt.varying, mt.unreduced, mt.reduced):
-    if axis_env.axis_exists(i) and i not in mesh._name_to_type:
+    if in_axis_env(i):
       continue
     if mesh._name_to_type[i] != AxisType.Manual:
       raise ValueError(
           "Axes mentioned in `mt` field of ShapedArray should be of type"
           f" `Manual`. Got {mt=} with axis: {i} of type {mesh._name_to_type[i]}")
   if config.remove_size_one_mesh_axis_from_type.value:
-    varying = frozenset(i for i in mt.varying if mesh.shape[i] != 1)
+    varying = frozenset(i for i in mt.varying
+                        if in_axis_env(i) or mesh.shape[i] != 1)
     return mt.update(varying=varying)
   return mt
 
