@@ -7215,7 +7215,8 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
 def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):
   op_unreduced = getu(operand)
   if op_unreduced:
-    if sharding is not None and op_unreduced != sharding.spec.unreduced:
+    if (sharding is not None and
+        operand.sharding.spec.unreduced != sharding.spec.unreduced):  # Explicit mode
       raise ValueError(
           'out_sharding passed to reshape must be unreduced over the same mesh'
           f' axes as operand. Got out_sharding: {sharding.spec} and operand'
@@ -7229,7 +7230,8 @@ def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):
 def _reshape_reduced_rule(operand, *, new_sizes, dimensions, sharding):
   op_reduced = getr(operand)
   if op_reduced:
-    if sharding is not None and op_reduced != sharding.spec.reduced:
+    if (sharding is not None and
+        operand.sharding.spec.reduced != sharding.spec.reduced):  # Explicit mode
       raise ValueError(
           'out_sharding passed to reshape must be reduced over the same mesh'
           f' axes as operand. Got out_sharding: {sharding.spec} and operand'

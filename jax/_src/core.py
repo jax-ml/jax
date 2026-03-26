@@ -2105,6 +2105,7 @@ def getu(aval):
     return aval.sharding.spec.unreduced
   # Revise this after partial manual unreduced is supported
   assert not aval.mt.unreduced
+  assert not aval.sharding.spec.unreduced
   return frozenset()
 
 def getr(aval):
@@ -2114,6 +2115,7 @@ def getr(aval):
     return aval.sharding.spec.reduced
   # Revise this after partial manual reduced is supported
   assert not aval.mt.reduced
+  assert not aval.sharding.spec.reduced
   return frozenset()
 
 def _make_lengths_same(sharding, ndim):

@@ -5237,6 +5237,37 @@ class ShardMapTest(jtu.JaxTestCase):
     out = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshape_reduced_fwd_unreduced_bwd(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      out = jnp.reshape(x, (4, 2))
+      self.assertEqual(out.aval.mt.reduced, {'x'})
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, reduced={'x'})))
+    self.assertArraysEqual(out, np.arange(8.).reshape(4, 2))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+    for s, es in zip(out_g.addressable_shards, [np.ones((8,)), np.zeros((8,))]):
+      self.assertArraysEqual(s.data, es, check_dtypes=False)
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def g(x):
+      return jnp.reshape(x, (4, 2))
+
+    arr2 = jax.device_put(np.arange(8.), P())
+    expected_out = jax.jit(jax.grad(lambda x: g(x).sum()))(arr2)
+    self.assertArraysEqual(jax.reshard(out_g, P()), expected_out)
+
 
 class FunSpec(NamedTuple):
   name: str
