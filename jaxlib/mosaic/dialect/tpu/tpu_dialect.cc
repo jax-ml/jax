@@ -59,7 +59,7 @@ limitations under the License.
 // that this overload is found via argument-dependent lookup.
 namespace xla {
 
-llvm::hash_code hash_value(const ::xla::Tile &p) { return absl::HashOf(p); }
+llvm::hash_code hash_value(const ::xla::Tile& p) { return absl::HashOf(p); }
 
 }  // namespace xla
 
@@ -86,13 +86,13 @@ void TPUDialect::initialize() {
       >();
 }
 
-Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
+Operation* TPUDialect::materializeConstant(OpBuilder& builder, Attribute value,
                                            Type type, Location loc) {
   return arith::ConstantOp::materialize(builder, value, type, loc);
 }
 
 /* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(
-    Operation *op) {
+    Operation* op) {
   Attribute attr = op->getAttr(GetCoreTypeKey());
   if (attr == nullptr) {
     return std::nullopt;
@@ -230,13 +230,13 @@ absl::StatusOr<func::FuncOp> GetFuncWithCoreType(ModuleOp module,
       core_type));
 }
 
-void VectorLayoutAttr::print(AsmPrinter &printer) const {
+void VectorLayoutAttr::print(AsmPrinter& printer) const {
   printer << '<';
   printer << getLayout();
   printer << '>';
 }
 
-Attribute VectorLayoutAttr::parse(AsmParser &parser, Type type) {
+Attribute VectorLayoutAttr::parse(AsmParser& parser, Type type) {
   if (failed(parser.parseLess())) {
     return {};
   }
@@ -247,9 +247,9 @@ Attribute VectorLayoutAttr::parse(AsmParser &parser, Type type) {
   return {};
 }
 
-void TiledLayoutAttr::print(AsmPrinter &printer) const {
+void TiledLayoutAttr::print(AsmPrinter& printer) const {
   printer << '<';
-  for (const xla::Tile &tile : getTiles()) {
+  for (const xla::Tile& tile : getTiles()) {
     printer << tile.ToString();
   }
   printer << ",[";
@@ -262,14 +262,14 @@ void TiledLayoutAttr::print(AsmPrinter &printer) const {
   printer << "]>";
 }
 
-Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
+Attribute TiledLayoutAttr::parse(AsmParser& parser, Type type) {
   if (failed(parser.parseLess())) {
     return {};
   }
   SmallVector<xla::Tile, 2> tiles;
   int64_t size;
   while (succeeded(parser.parseOptionalLParen())) {
-    xla::Tile &tile = tiles.emplace_back();
+    xla::Tile& tile = tiles.emplace_back();
     bool first = true;
     while (!succeeded(parser.parseOptionalRParen())) {
       if (!first) {
@@ -597,7 +597,7 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   return false;
 }
 
-DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
                                                 bool transpose_lhs,
                                                 bool transpose_rhs) {
   return tpu::DotDimensionNumbersAttr::get(
@@ -629,8 +629,8 @@ struct CommsAnalysisState {
   explicit operator bool() { return has_communication && has_custom_barrier; }
 };
 
-void analyzeCrossChipCommunication(mlir::Operation *op,
-                                   CommsAnalysisState *state) {
+void analyzeCrossChipCommunication(mlir::Operation* op,
+                                   CommsAnalysisState* state) {
   if (auto dma = dyn_cast<tpu::EnqueueDMAOp>(op)) {
     state->has_communication |= dma.getDeviceId() != nullptr;
   } else if (auto signal = dyn_cast<tpu::SemaphoreSignalOp>(op)) {
@@ -638,9 +638,9 @@ void analyzeCrossChipCommunication(mlir::Operation *op,
   } else if (auto barrier = dyn_cast<tpu::GetBarrierSemaphoreOp>(op)) {
     state->has_custom_barrier = true;
   }
-  for (Region &region : op->getRegions()) {
-    for (Block &block : region.getBlocks()) {
-      for (Operation &op : block.getOperations()) {
+  for (Region& region : op->getRegions()) {
+    for (Block& block : region.getBlocks()) {
+      for (Operation& op : block.getOperations()) {
         analyzeCrossChipCommunication(&op, state);
         if (*state) {
           return;
@@ -652,7 +652,7 @@ void analyzeCrossChipCommunication(mlir::Operation *op,
 
 }  // namespace
 
-std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation *op) {
+std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation* op) {
   CommsAnalysisState state;
   analyzeCrossChipCommunication(op, &state);
   return std::make_pair(state.has_communication, state.has_custom_barrier);

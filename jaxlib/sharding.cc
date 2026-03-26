@@ -259,7 +259,6 @@ SingleDeviceSharding::SingleDeviceSharding(nb_class_ptr<PyClient> client,
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
 }
 
-
 GSPMDSharding::GSPMDSharding(nb_class_ptr<PyDeviceList> devices,
                              xla::HloSharding op_sharding,
                              nb::object memory_kind)
@@ -314,7 +313,6 @@ void RegisterSharding(nb::module_& m) {
       .def_prop_ro("_internal_device_list",
                    &SingleDeviceSharding::internal_device_list);
   SingleDeviceSharding::InitializeType();
-
 
   nb::class_<GSPMDSharding, Sharding>(m, "GSPMDSharding", nb::dynamic_attr())
       // NOTE: We explicitly list the two PyDeviceList ctors first since they

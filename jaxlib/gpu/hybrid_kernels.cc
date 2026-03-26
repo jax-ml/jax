@@ -385,10 +385,10 @@ class PivotingQrFactorizationMagma {
 
     auto maybe_expert_ptr = FindMagmaSymbol(MagmaGeqp3<DataType>::expert_name);
     if (!maybe_expert_ptr.ok()) return maybe_expert_ptr.status();
-    using ExpertFn = int(int m, int n, ValueType* dA, int ldda, int* jpvt,
-                         ValueType* tau, void* host_work, int* lwork_host,
-                         void* device_work, int* lwork_device, int* info,
-                         void* queue);
+    using ExpertFn =
+        int(int m, int n, ValueType* dA, int ldda, int* jpvt, ValueType* tau,
+            void* host_work, int* lwork_host, void* device_work,
+            int* lwork_device, int* info, void* queue);
     auto* expert_fn = reinterpret_cast<ExpertFn*>(*maybe_expert_ptr);
 
     int lwork_host = -1;

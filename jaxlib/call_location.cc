@@ -61,7 +61,7 @@ RuntimeTracebackMode GetRuntimeTracebackMode() {
 static absl::Mutex shared_data_mu;
 
 static absl::NoDestructor<std::vector<std::string>> exclude_paths_from_python
-  ABSL_GUARDED_BY(shared_data_mu);
+    ABSL_GUARDED_BY(shared_data_mu);
 
 static absl::NoDestructor<absl::flat_hash_map<std::string, bool>>
     known_code_objects ABSL_GUARDED_BY(shared_data_mu);

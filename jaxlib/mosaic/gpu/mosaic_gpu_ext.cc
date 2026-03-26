@@ -73,8 +73,8 @@ void callback_request(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
   *maxNumRecords = 0;
 }
 
-void callback_complete(CUcontext context, uint32_t streamId,
-                       uint8_t* buffer, size_t size, size_t validSize) {
+void callback_complete(CUcontext context, uint32_t streamId, uint8_t* buffer,
+                       size_t size, size_t validSize) {
   // take ownership of the buffer once CUPTI is done using it
   absl::Cleanup cleanup = [buffer]() {
     operator delete[](buffer, std::align_val_t(8));

@@ -1045,8 +1045,7 @@ mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
   }
 
   // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
-  if (auto parent_cast =
-          getSource().getDefiningOp<ReinterpretCastOp>()) {
+  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
     getSourceMutable().assign(parent_cast.getSource());
     return getResult();
   }
@@ -1063,8 +1062,7 @@ struct FoldMGPUReinterpretCastOfSliceSMEM
   using OpRewritePattern::OpRewritePattern;
 
   mlir::LogicalResult matchAndRewrite(
-      ReinterpretCastOp op,
-      mlir::PatternRewriter& rewriter) const override {
+      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
     auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
     if (!slice_op) {
       return mlir::failure();

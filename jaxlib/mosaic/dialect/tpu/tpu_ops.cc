@@ -72,7 +72,7 @@ llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
 // Attempts to convert `sourceValue` to an APFloat value with
 // `targetSemantics` and `roundingMode`, without any information loss.
 static FailureOr<APFloat> convertFloatValue(
-    APFloat sourceValue, const llvm::fltSemantics &targetSemantics,
+    APFloat sourceValue, const llvm::fltSemantics& targetSemantics,
     llvm::RoundingMode roundingMode = llvm::RoundingMode::NearestTiesToEven) {
   bool losesInfo = false;
   auto status = sourceValue.convert(targetSemantics, roundingMode, &losesInfo);
@@ -126,7 +126,7 @@ LogicalResult verifyPackOp(OpTy op, int32_t max_size) {
 }  // namespace
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
-                                            PatternRewriter &rewriter) {
+                                            PatternRewriter& rewriter) {
   RollVectorsOp roll_op = op.getOperand().getDefiningOp<RollVectorsOp>();
   if (!roll_op) {
     return failure();
@@ -742,7 +742,7 @@ mlir::InFlightDiagnostic MemRefBitcastOp::verifyTiling() {
 }
 
 LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
-                                            PatternRewriter &rewriter) {
+                                            PatternRewriter& rewriter) {
   auto src_ty = op.getInput().getType();
   auto dst_ty = op.getType();
   if (src_ty == dst_ty) {
@@ -752,10 +752,9 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
   return failure();
 }
 
-
 template <typename Op>
-LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
-                              VectorType vector_ty, int64_t min_stride) {
+LogicalResult verifyStridedOp(Op op, MemRefType memref_ty, VectorType vector_ty,
+                              int64_t min_stride) {
   auto indices = op.getIndices();
   auto strides = op.getStrides();
   if (memref_ty.getRank() != indices.size()) {
@@ -775,8 +774,8 @@ LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
   }
   for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
     if (strides[i] < min_stride) {
-      op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= "
-          << min_stride;
+      op.emitError("Strides[")
+          << i << "]=" << strides[i] << " must be >= " << min_stride;
       return failure();
     }
   }
@@ -829,7 +828,6 @@ LogicalResult VectorStoreOp::verify() {
   return verifyStoreOp(*this);
 }
 
-
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
@@ -868,7 +866,6 @@ LogicalResult VectorLoadOp::verify() {
   return verifyLoadOp(*this);
 }
 
-
 LogicalResult VectorLoadIdxOp::verify() {
   VectorType value_ty = getResult().getType();
   MemRefType ref_ty = getBase().getType();
@@ -888,7 +885,6 @@ LogicalResult VectorLoadIdxOp::verify() {
   }
   return verifyLoadOp(*this);
 }
-
 
 LogicalResult VectorStoreIdxOp::verify() {
   VectorType value_ty = getValueToStore().getType();
@@ -913,7 +909,6 @@ LogicalResult VectorStoreIdxOp::verify() {
   }
   return verifyStoreOp(*this);
 }
-
 
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
@@ -992,9 +987,9 @@ LogicalResult DynamicRotateOp::verify() {
 }
 
 LogicalResult ScanCountOp::inferReturnTypes(
-    MLIRContext *context, std::optional<Location> location,
+    MLIRContext* context, std::optional<Location> location,
     ScanCountOp::Adaptor adaptor,
-    ::llvm::SmallVectorImpl<Type> &inferredReturnTypes) {
+    ::llvm::SmallVectorImpl<Type>& inferredReturnTypes) {
   inferredReturnTypes.push_back(adaptor.getInMask().getType());
   inferredReturnTypes.push_back(VectorType::get(
       cast<VectorType>(adaptor.getValues().getType()).getShape(),
@@ -1022,7 +1017,7 @@ template <typename AddOp>
 class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
   using OpRewritePattern<AddOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(AddOp op, PatternRewriter &rewriter) const {
+  LogicalResult matchAndRewrite(AddOp op, PatternRewriter& rewriter) const {
     auto try_canonicalize = [&](Value maybe_matmul, Value maybe_acc) {
       auto matmul = dyn_cast_if_present<MatmulOp>(maybe_matmul.getDefiningOp());
       if (!matmul || !matmul->hasOneUse()) {
@@ -1033,7 +1028,7 @@ class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
           const_acc.getValue() == rewriter.getZeroAttr(const_acc.getType())) {
         IRMapping remap;
         remap.map(matmul.getAcc(), maybe_acc);
-        Operation *new_matmul = rewriter.clone(*matmul, remap);
+        Operation* new_matmul = rewriter.clone(*matmul, remap);
         rewriter.replaceOp(op, new_matmul->getResult(0));
         return success();
       }
@@ -1143,8 +1138,8 @@ LogicalResult MatmulOp::verify() {
     std::vector<bool> seen_dims_lhs(lhs_rank, false);
     std::vector<bool> seen_dims_rhs(rhs_rank, false);
 
-    auto check_and_mark_dims = [&](const std::vector<int64_t> &dims,
-                                   std::vector<bool> &seen_dims,
+    auto check_and_mark_dims = [&](const std::vector<int64_t>& dims,
+                                   std::vector<bool>& seen_dims,
                                    const std::string_view operand) {
       for (int64_t dim : dims) {
         if (seen_dims[dim]) {
@@ -1248,8 +1243,8 @@ LogicalResult MatmulOp::verify() {
   return success();
 }
 
-void MatmulOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
-                                           MLIRContext *context) {
+void MatmulOp::getCanonicalizationPatterns(RewritePatternSet& patterns,
+                                           MLIRContext* context) {
   patterns.add<CanonicalizeAddOfMatmul<arith::AddFOp>,
                CanonicalizeAddOfMatmul<arith::AddIOp>>(context);
 }
@@ -1358,7 +1353,7 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
-void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
+void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
                               Value semaphore, Value amount, Value device_id,
                               Value core_id) {
   build(builder, state, semaphore, amount, device_id, core_id,
@@ -1496,7 +1491,6 @@ LogicalResult EnqueueDMAOp::verify() {
   }
   return success();
 }
-
 
 LogicalResult EnqueueIndirectDMAOp::verifyGather(
     MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
@@ -1675,7 +1669,7 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
                        /*operand_ty=*/target_ty);
 }
 
-void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
+void WaitDMA2Op::build(OpBuilder& builder, OperationState& state,
                        Value semaphore, Value src, Value dst) {
   build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
         /*core_id=*/nullptr, /*core_type=*/nullptr);
@@ -1695,7 +1689,6 @@ LogicalResult WaitDMA2Op::verify() {
   return success();
 }
 
-
 FailureOr<bool> WaitIndirectDMAOp::isGather() {
   const MemRefType source_ty = getMemRefType(getSrc());
   const MemRefType target_ty = getMemRefType(getDst());
@@ -1714,7 +1707,6 @@ LogicalResult WaitIndirectDMAOp::verify() {
   }
   return isGather();
 }
-
 
 LogicalResult RegionOp::verify() {
   for (auto result_type : getResultTypes()) {
@@ -1744,7 +1736,7 @@ LogicalResult ShuffledLoadOp::verify() {
 }
 
 LogicalResult ShuffledLoadOp::canonicalize(ShuffledLoadOp op,
-                                           PatternRewriter &rewriter) {
+                                           PatternRewriter& rewriter) {
   bool can_convert_to_simple_load = true;
   for (int i = 0; i < op.getSublaneOffsets().size(); ++i) {
     if (op.getSublaneOffsets()[i] != i) {
@@ -1783,7 +1775,7 @@ LogicalResult ShuffledStoreOp::verify() {
 }
 
 LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
-                                            PatternRewriter &rewriter) {
+                                            PatternRewriter& rewriter) {
   bool can_convert_to_simple_store = true;
   for (int i = 0; i < op.getSublaneOffsets().size(); ++i) {
     if (op.getSublaneOffsets()[i] != i) {
@@ -1800,7 +1792,7 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
   return success();
 }
 
-LogicalResult FPToSIOp::canonicalize(FPToSIOp op, PatternRewriter &rewriter) {
+LogicalResult FPToSIOp::canonicalize(FPToSIOp op, PatternRewriter& rewriter) {
   if (auto round_op = op.getIn().getDefiningOp<mlir::math::RoundEvenOp>()) {
     rewriter.replaceOpWithNewOp<tpu::FPToSIOp>(
         op, op.getType(), round_op.getOperand(),
@@ -2042,16 +2034,14 @@ LogicalResult PackMaskOp::verify() {
 }
 
 namespace {
-LogicalResult verifyElementwisePacking(Operation *op, Type unpacked_ty,
+LogicalResult verifyElementwisePacking(Operation* op, Type unpacked_ty,
                                        Type packed_ty) {
   if (unpacked_ty.isF32() && !packed_ty.isBF16()) {
     return op->emitOpError(
         "Only packing/unpacking between f32 and bf16 is supported for floats");
   }
-  if (unpacked_ty.isSignlessInteger(32) &&
-      !packed_ty.isSignlessInteger(16) &&
-      !packed_ty.isSignlessInteger(8) &&
-      !packed_ty.isSignlessInteger(4)) {
+  if (unpacked_ty.isSignlessInteger(32) && !packed_ty.isSignlessInteger(16) &&
+      !packed_ty.isSignlessInteger(8) && !packed_ty.isSignlessInteger(4)) {
     return op->emitOpError(
         "Only packing/unpacking between i32 and i16/i8/i4 is supported for "
         "integers");
@@ -2128,9 +2118,9 @@ LogicalResult DynamicGatherOp::verify() {
 }
 
 /*static*/ LogicalResult DynamicGatherOp::inferReturnTypes(
-    MLIRContext *context, std::optional<Location> location, ValueRange operands,
+    MLIRContext* context, std::optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
-    SmallVectorImpl<Type> &inferredReturnTypes) {
+    SmallVectorImpl<Type>& inferredReturnTypes) {
   VectorType source_vty = cast<VectorType>(operands[0].getType());
   VectorType indices_vty = cast<VectorType>(operands[1].getType());
   inferredReturnTypes.push_back(
@@ -2175,12 +2165,14 @@ LogicalResult AllReduceOp::verify() {
     case ReductionKind::kArgMax:
     case ReductionKind::kArgMin:
       if (in_ty.getShape() != out_ty.getShape()) {
-        return emitOpError("Arg_max and arg_min "
-                           "must have the same input and output shape");
+        return emitOpError(
+            "Arg_max and arg_min "
+            "must have the same input and output shape");
       }
       if (!in_ty.getElementType().isF32()) {
-        return emitOpError("Not Implemented: Only f32 input is supported for "
-                           "arg_max and arg_min");
+        return emitOpError(
+            "Not Implemented: Only f32 input is supported for "
+            "arg_max and arg_min");
       }
       if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
         return emitOpError(absl::StrFormat(
@@ -2200,17 +2192,17 @@ LogicalResult ReduceIndexOp::verify() {
   auto bitwidth = getElementTypeBitwidth(in_ty);
   auto axis = getAxis();
   auto kind = getKind();
-  if (kind != ReductionKind::kArgMax &&
-      kind != ReductionKind::kArgMin) {
+  if (kind != ReductionKind::kArgMax && kind != ReductionKind::kArgMin) {
     return emitOpError("Reduction kind must be arg_max or arg_min");
   }
   if (!in_ty.getElementType().isF32()) {
-    return emitOpError("Not Implemented: Only f32 input is supported for "
-                       "arg_max and arg_min");
+    return emitOpError(
+        "Not Implemented: Only f32 input is supported for "
+        "arg_max and arg_min");
   }
   if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
-    return emitOpError(absl::StrFormat(
-        "Arg_max and arg_min must have i%d output", bitwidth));
+    return emitOpError(
+        absl::StrFormat("Arg_max and arg_min must have i%d output", bitwidth));
   }
 
   auto in_shape = in_ty.getShape();
@@ -2233,9 +2225,11 @@ LogicalResult ReduceIndexOp::verify() {
     }
     if (in_shape[i] != out_shape[out_dim]) {
       return emitOpError(
-          "Output shape must match input shape on non-reduction dimensions. ")
-          << "Output shape (" << out_shape << ") does not match input shape ("
-          << in_shape << ") at input dimension " << i;
+                 "Output shape must match input shape on non-reduction "
+                 "dimensions. ")
+             << "Output shape (" << out_shape
+             << ") does not match input shape (" << in_shape
+             << ") at input dimension " << i;
     }
     out_dim++;
   }
@@ -2300,11 +2294,11 @@ LogicalResult SublaneShuffleOp::verify() {
 
 OpFoldResult TruncFOp::fold(FoldAdaptor adaptor) {
   auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
-  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  const llvm::fltSemantics& targetSemantics = resElemType.getFloatSemantics();
   return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
                          FloatAttr::ValueType, /*PoisonAttr=*/void>(
       adaptor.getOperands(), getType(),
-      [this, &targetSemantics](const APFloat &a, bool &castStatus) {
+      [this, &targetSemantics](const APFloat& a, bool& castStatus) {
         llvm::RoundingMode llvmRoundingMode =
             convertTpuRoundingModeToLLVMIR(getRoundingMode());
         FailureOr<APFloat> result =
@@ -2319,11 +2313,11 @@ OpFoldResult TruncFOp::fold(FoldAdaptor adaptor) {
 
 OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
   auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
-  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  const llvm::fltSemantics& targetSemantics = resElemType.getFloatSemantics();
   return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
                          FloatAttr::ValueType, /*PoisonAttr=*/void>(
       adaptor.getOperands(), getType(),
-      [&targetSemantics](const APFloat &a, bool &castStatus) {
+      [&targetSemantics](const APFloat& a, bool& castStatus) {
         FailureOr<APFloat> result = convertFloatValue(a, targetSemantics);
         if (failed(result)) {
           castStatus = false;
@@ -2404,7 +2398,6 @@ LogicalResult FetchAndAddSyncOp::verify() {
   // in its dimension semantics.
   return success();
 }
-
 
 }  // namespace tpu
 }  // namespace mlir

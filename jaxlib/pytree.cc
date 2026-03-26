@@ -1852,9 +1852,8 @@ void BuildPytreeSubmodule(nb::module_& m) {
               "Returns None if a leaf-pytree, else (type, node_data)",
               nb::sig("def node_data(self) -> tuple[type, Any] | None"));
   treedef.def_static(
-      "from_node_data_and_children",
-      &PyTreeDef::FromNodeDataAndChildren, nb::arg("registry"),
-      nb::arg("node_data").none(), nb::arg("children"),
+      "from_node_data_and_children", &PyTreeDef::FromNodeDataAndChildren,
+      nb::arg("registry"), nb::arg("node_data").none(), nb::arg("children"),
       "Reconstructs a pytree from `node_data()` and `children()`.",
       nb::sig(
           // clang-format off
@@ -1864,8 +1863,8 @@ void BuildPytreeSubmodule(nb::module_& m) {
         "node_data: tuple[type, Any] | None, "
         "children: typing.Iterable[PyTreeDef]"
         ") -> PyTreeDef"
-        // clang-format on
-      ));
+          // clang-format on
+          ));
   treedef.def("__getstate__", &PyTreeDef::ToPickle);
   treedef.def("__setstate__", [](PyTreeDef& t, nb::object o) {
     nb::tuple pickle = nb::cast<nb::tuple>(o);

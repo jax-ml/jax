@@ -36,26 +36,26 @@ VectorType getNativeVregOrVmaskType(Type elem_ty, int8_t layout_bitwidth,
 VectorType getNativeVregType(Type elem_ty, std::array<int64_t, 2> target_shape);
 
 // Returns a zero constant of the same type as `vty`.
-TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder& builder,
                                       VectorType vty);
 // Same as above, but takes a `vec` as input.
-TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder& builder,
                                           TypedValue<VectorType> vec);
 
 // Returns a constant of the same type as `vty` with the given `value`.
-TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder& builder,
                                      VectorType vty, Attribute value);
 // Same as above, but takes a `vec` as input.
-TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder& builder,
                                          TypedValue<VectorType> vec,
                                          Attribute value);
 
 // Same as above, but takes a `loc` as input, in case of an OpBuilder.
-TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+TypedValue<VectorType> getFullVector(OpBuilder& builder, Location loc,
                                      VectorType vty, Attribute value);
 
 // Same as above, but takes a `vec` as input.
-TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+TypedValue<VectorType> getFullLikeVector(OpBuilder& builder, Location loc,
                                          TypedValue<VectorType> vec,
                                          Attribute value);
 
@@ -73,15 +73,15 @@ TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
 // TODO(b/385204135): Unify with getVmaskByPaddingEnd in tpu_rotate_rule, and
 // improve the codegen.
 FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
-    ImplicitLocOpBuilder &builder, int64_t padding,
+    ImplicitLocOpBuilder& builder, int64_t padding,
     std::array<int64_t, 2> target_shape, int64_t dim);
 
 // Masks out the padding in the bottom and right of the vregs. vregs are
 // expected to have native tiling, and the masked vregs are mutated in
 // `vregs`. `padding_bottom` and `padding_right` is the number of elements to
 // pad in the bottom and right.
-LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
-                                    xla::Array<Value> &vregs,
+LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
+                                    xla::Array<Value>& vregs,
                                     std::array<int64_t, 2> target_shape,
                                     int64_t padding_bottom,
                                     int64_t padding_right);
@@ -89,7 +89,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
 // Broadcasts the subelement at `subelement_idx` within each packed word.
 // subelement_idx must be between 0 and packing.
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
-    ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
+    ImplicitLocOpBuilder& builder, TypedValue<VectorType> vec,
     int subelement_idx, std::array<int64_t, 2> target_shape);
 
 }  // namespace mlir::tpu

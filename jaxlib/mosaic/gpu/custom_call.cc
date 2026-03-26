@@ -483,8 +483,9 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
                  MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, bool is_multimem_used, std::string object_file,
-                 std::string host_func_name, std::string init_func_name)
+                 bool is_nvshmem_used, bool is_multimem_used,
+                 std::string object_file, std::string host_func_name,
+                 std::string init_func_name)
       : lljit(std::move(lljit)),
         host_launch(host_launch),
         init(init),
@@ -859,19 +860,26 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
     CUdevice device;
     CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
     int supports_multicast;
-    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(&supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
+    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
+        &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
     int nvshmem_world_size = NvshmemApi::Default().n_pes();
-    // multimem instructions require multicast memory; mgpu will emit device-side calls
-    // to nvshmemx_mc_ptr to translate unicast->multicast addresses, which will return
-    // nullptr and lead to memory errors if multicast is not supported on the device
+    // multimem instructions require multicast memory; mgpu will emit
+    // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
+    // addresses, which will return nullptr and lead to memory errors if
+    // multicast is not supported on the device
     // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
     // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
     // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
     if (supports_multicast == 0) {
-      return absl::FailedPreconditionError("System does not support multicast memory; multimem instructions cannot be used.");
+      return absl::FailedPreconditionError(
+          "System does not support multicast memory; multimem instructions "
+          "cannot be used.");
     } else if (nvshmem_world_size == 1) {
-      // There is only one device, so NVSHMEM will not configure multicast mappings and nvshmemx_mc_ptr will return nullptr.
-      return absl::FailedPreconditionError("Multicast memory mappings are not configured with only one device; multimem instructions cannot be used.");
+      // There is only one device, so NVSHMEM will not configure multicast
+      // mappings and nvshmemx_mc_ptr will return nullptr.
+      return absl::FailedPreconditionError(
+          "Multicast memory mappings are not configured with only one device; "
+          "multimem instructions cannot be used.");
     }
   }
   void* module_ptr = nullptr;
@@ -1234,8 +1242,8 @@ absl::Status MosaicGpuInitialize(
 
     se::DeviceAddressBase barrier_signal_buffer_address =
         device_state.barrier_signal_buffer_handle.address();
-    TF_RETURN_IF_ERROR(stream->MemZero(
-        &barrier_signal_buffer_address, barrier_signal_buffer_address.size()));
+    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
+                                       barrier_signal_buffer_address.size()));
   }
 
   if (device_state.barrier_signal_value_buffer_handle.address().is_null()) {
@@ -1245,9 +1253,9 @@ absl::Status MosaicGpuInitialize(
             xla::gpu::GetMultiGpuBarrierSignalValueSize())};
     se::DeviceAddressBase barrier_signal_value_buffer_address =
         device_state.barrier_signal_value_buffer_handle.address();
-    TF_RETURN_IF_ERROR(stream->MemZero(
-        &barrier_signal_value_buffer_address,
-        barrier_signal_value_buffer_address.size()));
+    TF_RETURN_IF_ERROR(
+        stream->MemZero(&barrier_signal_value_buffer_address,
+                        barrier_signal_value_buffer_address.size()));
   }
 
   // It's important to zero the buffer synchronously to avoid the situation

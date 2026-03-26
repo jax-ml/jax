@@ -18,8 +18,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
-#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/gpu/handle_pool.h"
+#include "jaxlib/gpu/vendor.h"
 
 namespace jax {
 

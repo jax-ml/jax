@@ -47,12 +47,12 @@ struct SerdePass : public jaxlib::mlir::Pass<SerdePass, mlir::ModuleOp> {
     target_version = options.target_version;
   }
 
-  SerdePass(const SerdePass &other) {
+  SerdePass(const SerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
   }
 
-  SerdePass &operator=(const SerdePass &other) {
+  SerdePass& operator=(const SerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
     return *this;
@@ -70,15 +70,13 @@ inline std::unique_ptr<::mlir::Pass> createSerdePass() {
   return std::make_unique<SerdePass>();
 }
 
-inline std::unique_ptr<::mlir::Pass> createSerdePass(
-    SerdePassOptions options) {
+inline std::unique_ptr<::mlir::Pass> createSerdePass(SerdePassOptions options) {
   return std::make_unique<SerdePass>(std::move(options));
 }
 
 inline void registerSerdePass() {
-  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
-    return createSerdePass();
-  });
+  ::mlir::registerPass(
+      []() -> std::unique_ptr<::mlir::Pass> { return createSerdePass(); });
 }
 
 }  // namespace mosaic::gpu

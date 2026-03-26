@@ -60,7 +60,7 @@ struct TpuTilingFlags {
   bool use_x4_large_second_minor = false;
 };
 
-std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
+std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 // Creates a pass that infers the layout of memrefs in the given function.
 //
@@ -93,7 +93,7 @@ MemRefType getMemRefType(Value value);
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 128);
 
-DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
                                                 bool transpose_lhs,
                                                 bool transpose_rhs);
 

@@ -51,9 +51,7 @@ nb::dict Registrations() {
   return dict;
 }
 
-NB_MODULE(_solver, m) {
-  m.def("registrations", &Registrations);
-}
+NB_MODULE(_solver, m) { m.def("registrations", &Registrations); }
 
 }  // namespace
 }  // namespace JAX_GPU_NAMESPACE

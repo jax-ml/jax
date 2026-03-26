@@ -681,7 +681,7 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
   }
 
   if (ifrt_array->sharding().devices()->devices().front()->client() !=
-          to_device->client()) {
+      to_device->client()) {
     return HandleNumpyArray(obj.attr("_value"), client, to_device,
                             to_memory_kind, options);
   }
@@ -1113,7 +1113,8 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   if (src_shards.size() != dst_devices->size()) {
     return xla::InvalidArgument(
         "Number of input shards does not match the number of destination "
-        "devices: %d vs. %d", src_shards.size(), dst_devices->size());
+        "devices: %d vs. %d",
+        src_shards.size(), dst_devices->size());
   }
 
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, DtypeToIfRtDType(dtype));
@@ -1123,16 +1124,14 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   std::vector<ShardFn> shard_fns;
   shard_fns.reserve(src_shards.size());
   for (int i = 0; i < src_shards.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(
-        ShardFn shard,
-        MakeShardFn(src_shards[i], ifrt_client,
-                    dst_devices->devices()[i], ifrt_memory_kind, options));
+    TF_ASSIGN_OR_RETURN(ShardFn shard, MakeShardFn(src_shards[i], ifrt_client,
+                                                   dst_devices->devices()[i],
+                                                   ifrt_memory_kind, options));
     shard_fns.push_back(std::move(shard));
   }
 
   ifrt::ShardingRef ifrt_sharding;
-  TF_ASSIGN_OR_RETURN(ifrt_sharding,
-                      GetIfrtHloSharding(sharding, ifrt_shape));
+  TF_ASSIGN_OR_RETURN(ifrt_sharding, GetIfrtHloSharding(sharding, ifrt_shape));
   // Fully-replicated shardings enable additional optimizations of using a
   // single host buffer.
   // TODO(hyeontaek): Enable a similar optimization for partially replicated

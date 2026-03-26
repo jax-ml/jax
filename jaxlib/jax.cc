@@ -218,9 +218,7 @@ void register_runtime_error_bindings(nb::module_& m) {
   exc.attr("error_code_string") = property_type(get_error_code_string);
 
   auto get_error_code = nb::cpp_function(
-      [](nb::object self) {
-        return nb::cast<int>(self.attr("_error_code"));
-      },
+      [](nb::object self) { return nb::cast<int>(self.attr("_error_code")); },
       nb::is_method());
   exc.attr("error_code") = property_type(get_error_code);
 

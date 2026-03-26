@@ -73,7 +73,7 @@ struct VRegDataBounds {
   // Args:
   //   generation: The target TPU generation.
   virtual FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder &builder, Location loc, int generation,
+      OpBuilder& builder, Location loc, int generation,
       std::array<int64_t, 2> target_shape) const = 0;
 
   // Constructs a DenseBoolArrayAttr containing a sublane mask for the vreg.
@@ -82,7 +82,7 @@ struct VRegDataBounds {
   // useful data, but having an unmasked sublane doesn't imply that all bits
   // in that sublane are used to represent data (relevant for packed layouts).
   virtual DenseBoolArrayAttr getSublaneMask(
-      MLIRContext *ctxt, std::array<int64_t, 2> target_shape) const = 0;
+      MLIRContext* ctxt, std::array<int64_t, 2> target_shape) const = 0;
 };
 
 // VectorLayout describes a mapping of an arbitrarily sized values into vregs.
@@ -220,7 +220,7 @@ class VectorLayout {
   }
 
   int8_t bitwidth() const { return bitwidth_; }
-  const LayoutOffsets &offsets() const { return offsets_; }
+  const LayoutOffsets& offsets() const { return offsets_; }
   LayoutOffsets getCanonicalOffsets(const ArrayRef<int64_t> shape) const {
     // For (1, n) tiling with a single row, 2nd minor replication does not
     // change anything about the layout - it is equivalent to an offset of 0.
@@ -230,14 +230,14 @@ class VectorLayout {
         (tiling_[0] == 1 && tiled_ishape[0] == 1) ? std::nullopt : offsets_[0],
         offsets_[1]};
   }
-  const std::array<int64_t, 2> &tiling() const { return tiling_; }
+  const std::array<int64_t, 2>& tiling() const { return tiling_; }
   ImplicitDim implicit_dim() const { return implicit_dim_; }
   int packing() const { return 32 / bitwidth_; }
   int num_implicit_dims() const { return num_implicit_dims(implicit_dim_); }
   int layout_rank() const { return layout_rank(implicit_dim_); }
 
-  bool operator==(const VectorLayout &other) const;
-  bool operator!=(const VectorLayout &other) const { return !(*this == other); }
+  bool operator==(const VectorLayout& other) const;
+  bool operator!=(const VectorLayout& other) const { return !(*this == other); }
 
   static int64_t tilesPerVreg(const std::array<int64_t, 2> target_shape,
                               const int8_t bitwidth,
@@ -279,7 +279,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void insertImplicit(SmallVectorImpl<T> &vec, T value) const {
+  void insertImplicit(SmallVectorImpl<T>& vec, T value) const {
     CHECK_GE(vec.size(), layout_rank());
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -297,7 +297,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void eraseImplicit(SmallVectorImpl<T> &vec) const {
+  void eraseImplicit(SmallVectorImpl<T>& vec) const {
     CHECK_GE(vec.size(), 2);
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -389,7 +389,7 @@ class VectorLayout {
                           SmallVector<int64_t>(shape), target_shape);
   }
   SmallVector<int64_t> tileArrayShape(
-      bool src_is_implicit, bool res_is_implicit, SmallVector<int64_t> &&shape,
+      bool src_is_implicit, bool res_is_implicit, SmallVector<int64_t>&& shape,
       std::array<int64_t, 2> target_shape) const;
 
   SmallVector<int64_t> tileArrayImplicitShape(
@@ -418,11 +418,11 @@ class VectorLayout {
   //   A TargetTuple of slices, indicating the span of useful data within the
   //   tile selected by idx.
   std::unique_ptr<VRegDataBounds> tileDataBounds(
-      MLIRContext *mlir_ctxt, ArrayRef<int64_t> full_shape,
+      MLIRContext* mlir_ctxt, ArrayRef<int64_t> full_shape,
       ArrayRef<int64_t> idxs, std::array<int64_t, 2> target_shape,
       std::array<bool, 2> allow_replicated) const;
   std::unique_ptr<VRegDataBounds> tileDataBounds(
-      MLIRContext *mlir_ctxt, ArrayRef<int64_t> full_shape,
+      MLIRContext* mlir_ctxt, ArrayRef<int64_t> full_shape,
       ArrayRef<int64_t> idxs, std::array<int64_t, 2> target_shape,
       bool allow_replicated = false) const {
     return tileDataBounds(mlir_ctxt, full_shape, idxs, target_shape,
@@ -467,7 +467,7 @@ class VectorLayout {
   //     is, if generalizes(other) then also generalizes(other, shape) for any
   //     shape, but that implication does not hold the other way around for some
   //     shapes.
-  bool generalizes(const VectorLayout &other, ArrayRef<int64_t> shape,
+  bool generalizes(const VectorLayout& other, ArrayRef<int64_t> shape,
                    std::array<int64_t, 2> target_shape) const;
 
   // Returns True if the two layouts are equivalent.
@@ -481,7 +481,7 @@ class VectorLayout {
   //   shape: An optional shape of the vector to which both layouts apply. More
   //     layouts are considered equivalent when the shape is specified. Also see
   //     the docstring of the generalizes method.
-  bool equivalentTo(const VectorLayout &other, const ArrayRef<int64_t> shape,
+  bool equivalentTo(const VectorLayout& other, const ArrayRef<int64_t> shape,
                     const std::array<int64_t, 2> target_shape) const {
     return generalizes(other, shape, target_shape) &&
            other.generalizes(*this, shape, target_shape);
@@ -491,11 +491,11 @@ class VectorLayout {
   void print(std::ostream& os) const;
   void print(mlir::Diagnostic& diag) const;
 
-  static std::optional<VectorLayout> join(const VectorLayout &l,
-                                          const VectorLayout &r,
+  static std::optional<VectorLayout> join(const VectorLayout& l,
+                                          const VectorLayout& r,
                                           ArrayRef<int64_t> shape);
 
-  static std::optional<VectorLayout> parse(StringRef *data);
+  static std::optional<VectorLayout> parse(StringRef* data);
 
   // Check conditions that depend on the target shape. Invariants that are
   // independent of it are checked in the constructor.
@@ -521,7 +521,7 @@ class VectorLayout {
              int8_t, ImplicitDim>
   as_tuple() const;
 
-  friend llvm::hash_code hash_value(const VectorLayout &layout);
+  friend llvm::hash_code hash_value(const VectorLayout& layout);
 
   LayoutOffsets offsets_;
   std::array<int64_t, 2> tiling_;
@@ -639,19 +639,19 @@ class SingleRowVRegBounds : public VRegDataBounds {
 using Layout = std::optional<VectorLayout>;
 extern const Layout kNoLayout;
 
-std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim);
-llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+std::ostream& operator<<(std::ostream& os, VectorLayout::ImplicitDim dim);
+llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
+                              VectorLayout::ImplicitDim dim);
+mlir::Diagnostic& operator<<(mlir::Diagnostic& diag,
                              VectorLayout::ImplicitDim dim);
-mlir::Diagnostic &operator<<(mlir::Diagnostic &diag,
-                             VectorLayout::ImplicitDim dim);
 
-std::ostream &operator<<(std::ostream &os, const Layout &v);
-llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
-mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
+std::ostream& operator<<(std::ostream& os, const Layout& v);
+llvm::raw_ostream& operator<<(llvm::raw_ostream& os, const Layout& v);
+mlir::Diagnostic& operator<<(mlir::Diagnostic& diag, const Layout& v);
 
-llvm::hash_code hash_value(const VectorLayout &layout);
+llvm::hash_code hash_value(const VectorLayout& layout);
 
-std::optional<Layout> parseLayout(mlir::AsmParser &parser);
+std::optional<Layout> parseLayout(mlir::AsmParser& parser);
 
 }  // namespace mlir::tpu
 

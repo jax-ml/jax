@@ -188,9 +188,9 @@ LogicalResult wait_dma2_upgrade(Operation* op, int version, bool&) {
              << op->getNumOperands();
     }
     op->setAttr(
-      OpTrait::AttrSizedOperandSegments<
-          EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-      mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0, 0}));
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+        mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0, 0}));
   }
   return success();
 }
@@ -198,8 +198,8 @@ LogicalResult wait_dma2_upgrade(Operation* op, int version, bool&) {
 LogicalResult wait_dma2_downgrade(Operation* op, int version, bool&) {
   if (version < 7) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
-      OpTrait::AttrSizedOperandSegments<
-          EnqueueDMAOp>::getOperandSegmentSizeAttr());
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
     if (!operands || operands.size() != 5) {
       return op->emitError("Missing or invalid AttrSizedOperandSegments");
     }

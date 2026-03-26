@@ -517,7 +517,7 @@ std::ostream& operator<<(std::ostream& os, VectorLayout::ImplicitDim dim) {
 }
 
 llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
-                             VectorLayout::ImplicitDim dim) {
+                              VectorLayout::ImplicitDim dim) {
   return printImplicitDim(os, dim);
 }
 

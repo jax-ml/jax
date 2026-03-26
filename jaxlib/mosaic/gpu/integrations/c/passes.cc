@@ -19,8 +19,5 @@ limitations under the License.
 
 extern "C" {
 
-void mlirMosaicGpuRegisterSerdePass() {
-  mosaic::gpu::registerSerdePass();
-}
-
+void mlirMosaicGpuRegisterSerdePass() { mosaic::gpu::registerSerdePass(); }
 }

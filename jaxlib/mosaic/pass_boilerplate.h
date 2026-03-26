@@ -30,10 +30,10 @@ template <typename Derived, typename Op = void>
 class Pass : public ::mlir::OperationPass<Op> {
  public:
   Pass() : ::mlir::OperationPass<Op>(::mlir::TypeID::get<Derived>()) {}
-  Pass(const Pass &other) : ::mlir::OperationPass<Op>(other) {}
-  Pass &operator=(const Pass &) = delete;
-  Pass(Pass &&) = delete;
-  Pass &operator=(Pass &&) = delete;
+  Pass(const Pass& other) : ::mlir::OperationPass<Op>(other) {}
+  Pass& operator=(const Pass&) = delete;
+  Pass(Pass&&) = delete;
+  Pass& operator=(Pass&&) = delete;
   ~Pass() = default;
 
   static constexpr ::llvm::StringLiteral getArgumentName() {
@@ -45,13 +45,13 @@ class Pass : public ::mlir::OperationPass<Op> {
     return ::llvm::StringLiteral(Derived::kPassName);
   }
   ::llvm::StringRef getName() const override { return getPassName(); }
-  static bool classof(const ::mlir::Pass *pass) {
+  static bool classof(const ::mlir::Pass* pass) {
     return pass->getTypeID() == ::mlir::TypeID::get<Derived>();
   }
   std::unique_ptr<::mlir::Pass> clonePass() const override {
-    return std::make_unique<Derived>(*static_cast<const Derived *>(this));
+    return std::make_unique<Derived>(*static_cast<const Derived*>(this));
   }
-  void getDependentDialects(::mlir::DialectRegistry &registry) const override {}
+  void getDependentDialects(::mlir::DialectRegistry& registry) const override {}
 
  private:
   using This =

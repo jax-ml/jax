@@ -36,7 +36,7 @@ class PartitionSpec {
   bool operator==(const PartitionSpec& other) const;
 
   bool Eq(const nanobind::object& other) const;  // Python __eq__
-  Py_hash_t Hash() const;  // Python __hash__
+  Py_hash_t Hash() const;                        // Python __hash__
 
   static void Register(nanobind::module_& m);
 

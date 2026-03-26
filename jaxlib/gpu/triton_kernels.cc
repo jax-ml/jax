@@ -129,10 +129,10 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   struct KeyHash {
     using is_transparent = void;
 
-    size_t operator()(const KeyType &v) const {
+    size_t operator()(const KeyType& v) const {
       return absl::Hash<KeyType>{}(v);
     }
-    size_t operator()(const LookupKeyType &v) const {
+    size_t operator()(const LookupKeyType& v) const {
       return absl::Hash<LookupKeyType>{}(v);
     }
   };
@@ -140,17 +140,17 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   struct KeyEq {
     using is_transparent = void;
 
-    bool operator()(const KeyType &a, const KeyType &b) const { return a == b; }
-    bool operator()(const KeyType &a, const LookupKeyType &b) const {
+    bool operator()(const KeyType& a, const KeyType& b) const { return a == b; }
+    bool operator()(const KeyType& a, const LookupKeyType& b) const {
       return a == b;
     }
-    bool operator()(const LookupKeyType &a, const KeyType &b) const {
+    bool operator()(const LookupKeyType& a, const KeyType& b) const {
       return a == b;
     }
   };
 
   static absl::Mutex mutex;
-  static auto &module_images =
+  static auto& module_images =
       *new absl::flat_hash_map<KeyType, std::unique_ptr<ModuleImage>, KeyHash,
                                KeyEq>
           ABSL_GUARDED_BY(mutex);
@@ -219,9 +219,9 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   auto key = KeyType{kernel_name, shared_mem_bytes, ptx, compute_capability};
   // the `key` object must be created before we move kernel_name below.
   auto [it2, success] = module_images.insert(
-      {std::move(key), std::make_unique<ModuleImage>(std::move(kernel_name),
-                                                     std::move(module_image),
-                                                     shared_mem_bytes)});
+      {std::move(key),
+       std::make_unique<ModuleImage>(
+           std::move(kernel_name), std::move(module_image), shared_mem_bytes)});
   CHECK(success);
   return it2->second.get();
 }

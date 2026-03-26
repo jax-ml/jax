@@ -137,7 +137,6 @@ class SingleDeviceSharding : public Sharding {
   static PyObject* type_;
 };
 
-
 class GSPMDSharding : public Sharding {
  public:
   GSPMDSharding(nanobind::sequence devices, xla::OpSharding op_sharding,

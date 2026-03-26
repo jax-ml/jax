@@ -65,8 +65,8 @@ limitations under the License.
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
-#include "jaxlib/util.h"
 #include "jaxlib/traceback.h"
+#include "jaxlib/util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -412,12 +412,12 @@ PyClient::CompileAndLoadIfrtProgram(
     nb::gil_scoped_release gil_release;
 #if JAX_IFRT_VERSION_NUMBER >= 47
     auto ifrt_loaded_executable_fut =
-        client->ifrt_client_->GetDefaultCompiler()
-            ->CompileAndLoad(std::move(ifrt_program), std::move(ifrt_options));
+        client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
+            std::move(ifrt_program), std::move(ifrt_options));
     auto ready_future = ifrt_loaded_executable_fut.GetReadyFuture();
     BlockUntilReadyWithCancel(ready_future);
     TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
-            std::move(ifrt_loaded_executable_fut).Await());
+                        std::move(ifrt_loaded_executable_fut).Await());
 #else
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,

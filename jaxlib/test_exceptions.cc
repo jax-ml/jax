@@ -29,9 +29,8 @@ static absl::StatusOr<int> StatusTest() {
 NB_MODULE(test_exceptions, m) {
   m.def("returns_status", xla::ValueOrThrowWrapper(StatusTest));
 
-  m.def("throws_string", []() {
-    throw xla::XlaRuntimeError("we are testing a string");
-  });
+  m.def("throws_string",
+        []() { throw xla::XlaRuntimeError("we are testing a string"); });
 }
 
 }  // namespace jax

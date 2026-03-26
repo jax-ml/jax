@@ -812,9 +812,8 @@ absl::Status PyArray::set_arrays(nb::object obj) {
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto ifrt_sharding,
-      GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
+  TF_ASSIGN_OR_RETURN(auto ifrt_sharding,
+                      GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
   TF_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
@@ -1423,13 +1422,11 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
     ifrt_devices.push_back(device->device());
   }
   ifrt::Client* ifrt_client = py_device_list->py_client()->ifrt_client();
-  TF_ASSIGN_OR_RETURN(
-      xla::ifrt::DeviceListRef ifrt_device_list,
-      ifrt_client->MakeDeviceList(ifrt_devices));
-  TF_ASSIGN_OR_RETURN(
-      DevicePutResult device_put_result,
-      DevicePutWithSharding(args, ifrt_device_list, ifrt_client, dtype, shape,
-                            sharding, options));
+  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_device_list,
+                      ifrt_client->MakeDeviceList(ifrt_devices));
+  TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
+                      DevicePutWithSharding(args, ifrt_device_list, ifrt_client,
+                                            dtype, shape, sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(),

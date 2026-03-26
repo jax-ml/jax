@@ -51,12 +51,12 @@ struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
     target_version = options.target_version;
   }
 
-  MosaicSerdePass(const MosaicSerdePass &other) {
+  MosaicSerdePass(const MosaicSerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
   }
 
-  MosaicSerdePass &operator=(const MosaicSerdePass &other) {
+  MosaicSerdePass& operator=(const MosaicSerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
     return *this;

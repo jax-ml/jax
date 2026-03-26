@@ -55,7 +55,7 @@ int mlirTritonPointerTypeGetAddressSpace(MlirType pointerType) {
 MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
                                               int axis) {
   auto opEncoding = unwrap(operandEncoding);
-  mlir::Dialect &dialect = opEncoding.getDialect();
+  mlir::Dialect& dialect = opEncoding.getDialect();
   auto inferLayoutInterface =
       llvm::dyn_cast<mlir::triton::DialectInferLayoutInterface>(&dialect);
   mlir::Attribute retEncoding;

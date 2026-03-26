@@ -122,7 +122,8 @@ bool CudaSupportsMulticast(int device) {
   int supports_multicast;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
       &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device)));
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&supports_multicast, sizeof supports_multicast);
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&supports_multicast,
+                                      sizeof supports_multicast);
   return supports_multicast;
 }
 
@@ -140,6 +141,5 @@ int CudaDeviceCount() {
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&device_count, sizeof device_count);
   return device_count;
 }
-
 
 }  // namespace jax::cuda
