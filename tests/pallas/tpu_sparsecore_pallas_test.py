@@ -588,7 +588,7 @@ class VectorSubcoreTest(PallasSCTest):
       pid = pl.program_id(0)  # Always zero.
       num_indices = pid + indices_ref.size // 2
       pltpu.sync_copy(
-          x_hbm_ref.at[indices_ref.at[pl.ds(0, num_indices)]],
+          x_hbm_ref.at[indices_ref.at[pl.ds(num_indices)]],
           o_ref.at[pl.ds(0, num_indices)],
       )
 
