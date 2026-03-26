@@ -3227,6 +3227,7 @@ def custom_call(
             type=ir.IndexType.get()) for l in result_layouts
     ])
 
+  # pyrefly: ignore[bad-argument-type]
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
                                       attributes=attributes)
   if isinstance(backend_config, dict):
