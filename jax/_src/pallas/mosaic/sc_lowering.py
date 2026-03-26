@@ -244,13 +244,11 @@ def lower_pipelined_jaxpr_into_module(
           program_ids=program_ids_template,
       )
 
-    tiling = None
-    if use_tc_tiling is not None:
-      tiling = (
-          tpu_info.Tiling.COMPACT
-          if use_tc_tiling
-          else tpu_info.Tiling.SPARSE_CORE
-      )
+    tiling = (
+        tpu_info.Tiling.COMPACT
+        if use_tc_tiling
+        else tpu_info.Tiling.SPARSE_CORE
+    )
     make_block_spec = functools.partial(
         _block_spec_from_block_mapping,
         which_parallel=which_parallel,
