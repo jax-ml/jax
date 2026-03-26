@@ -3885,7 +3885,7 @@ def try_cluster_cancel_lowering(
       barrier.arrive_expect_tx(16)
     with mgpu.utils.when(arith_dialect.xori(is_first_wg, mgpu.c(1, i1))):
       barrier.arrive()
-    mgpu.dialect.try_cluster_cancel(
+    mgpu.dialect.try_cluster_cancel(  # pyrefly: ignore[missing-attribute]
         result_ref,
         barrier.as_barrier_memref(),
         predicate=arith_dialect.andi(is_first_cta, is_first_wg))
@@ -3993,7 +3993,7 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
     # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
     if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
       raise NotImplementedError("QueryClusterCancelOp is not available.")
-    x, y, z, success = mgpu.dialect.query_cluster_cancel(result_ref)
+    x, y, z, success = mgpu.dialect.query_cluster_cancel(result_ref)  # pyrefly: ignore[missing-attribute]
   else:
     x, y, z, success = mgpu.query_cluster_cancel(result_ref)
 
