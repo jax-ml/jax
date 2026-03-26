@@ -761,9 +761,9 @@ def _shard_map_staging(
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     in_avals_flat_tree = FlatTree.flatten((in_avals_, {}))
-    jaxpr, out_data = pe.trace_to_jaxpr(f, in_avals_flat_tree, debug_info,
-                                        fun_returns_flat_tree=True,
-                                        requires_low=trace.requires_low)
+    jaxpr, out_data = pe.trace_to_jaxpr(
+        f, in_avals_flat_tree, debug_info, fun_returns_flat_tree=True,
+        requires_low=trace.requires_low)
   out_avals_ft, out_specs = out_data.unpack_aux()
   _check_names(out_specs, out_avals_ft)
   if check_vma:
@@ -1677,6 +1677,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   debug_info = debug_info.with_unknown_names()
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
+  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   def f_lin(*primals):
     res, ans_aux, lin_data = ad.linearize_subtrace_2(
@@ -1692,8 +1693,6 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
            for x in res]
     res_and_primal = FlatTree.pack((FlatTree.flatten(res), primals_out))
     return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)  # type: ignore
-
-  all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   fwd_params = dict(
       mesh=mesh, in_specs=in_specs,

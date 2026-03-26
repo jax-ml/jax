@@ -9588,14 +9588,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
-        "Inputs cannot be sharded on the same axes that another input is "
-        "reduced on"):
+        'Inputs cannot be sharded/varying on the same axes that another input'
+        ' is reduced on'):
       f(arr1, arr2)
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
-        "Inputs cannot be sharded on the same axes that another input is "
-        "reduced on"):
+        'Inputs cannot be sharded/varying on the same axes that another input'
+        ' is reduced on'):
       f(arr2, arr1)
 
   @jtu.with_explicit_mesh((2,), 'x')

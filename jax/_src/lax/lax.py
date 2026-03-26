@@ -140,11 +140,13 @@ def asarray(x: ArrayLike) -> Array:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
 @overload
-def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
+def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]:
+  ...
 
 @overload
 def broadcast_shapes(*shapes: tuple[int | core.Tracer, ...]
-                     ) -> tuple[int | core.Tracer, ...]: ...
+                     ) -> tuple[int | core.Tracer, ...]:
+  ...
 
 @export
 def broadcast_shapes(*shapes):
@@ -3252,11 +3254,13 @@ def reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
 
 @overload
 def sort(operand: Array, dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> Array: ...
+         is_stable: bool = True, num_keys: int = 1) -> Array:
+  ...
 
 @overload
 def sort(operand: Sequence[Array], dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
+         is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]:
+  ...
 
 def sort(operand: Array | Sequence[Array], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array | tuple[Array, ...]:
@@ -4018,10 +4022,12 @@ def broadcasting_sharding_rule(name, *avals):
                 f'{", ".join(map(str, map(tuple, specs)))}.')
   return NamedSharding(mesh, P(*result_specs))
 
-def replicated_axes(sh, mesh):
-  flat_spec = frozenset(s for s in flatten_spec(sh.spec) if s is not None)
+def replicated_axes(aval, mesh):
+  spec = aval.sharding.spec
+  flat_spec = frozenset(s for s in flatten_spec(spec) if s is not None)
   return frozenset(mesh.axis_names) - (
-      flat_spec | sh.spec.unreduced | sh.spec.reduced)
+      flat_spec | spec.unreduced | spec.reduced | aval.mt.varying |
+      aval.mt.unreduced | aval.mt.reduced)
 
 def default_nary_reduced_rule(*avals, **params):
   cur_mesh = get_abstract_mesh()
@@ -4033,19 +4039,17 @@ def default_nary_reduced_rule(*avals, **params):
   reduced_s, = reduced_spec if reduced_spec else (frozenset(),)
   if reduced_s:
     for a in avals:
-      # TODO(yashkatariya): Generalize this for manual mode
-      s = a.sharding.spec
-      flat_spec = flatten_spec(s)
-      if replicated_axes(a.sharding, cur_mesh) & reduced_s:
+      if replicated_axes(a, cur_mesh) & reduced_s:
         raise core.ShardingTypeError(
             'Inputs cannot be replicated on the same axes that another input'
-            f' is reduced on. Got input spec: {s} and reduced spec: {reduced_s}')
-      if frozenset(flat_spec) & reduced_s:
+            f' is reduced on. Got input type: {a} and reduced spec: {reduced_s}')
+      if (frozenset(flatten_spec(a.sharding.spec)) | a.mt.varying) & reduced_s:
         raise core.ShardingTypeError(
-            'Inputs cannot be sharded on the same axes that another input is'
-            ' reduced on. Reshard the input which is reduced to be sharded on'
-            ' the mesh axes it is reduced on via `jax.sharding.reshard(inp,'
-            f' jax.P(...))`. Got input spec: {s} and reduced spec: {reduced_s}')
+            'Inputs cannot be sharded/varying on the same axes that another'
+            ' input is reduced on. Reshard the input which is reduced to be'
+            ' sharded on the mesh axes it is reduced on via'
+            f' `jax.sharding.reshard(inp, jax.P(...))`. Got input type: {a} and'
+            f' reduced spec: {reduced_s}')
   return reduced_s
 
 def nary_ur_rule(name, *avals, **params):
@@ -4701,13 +4705,13 @@ def _mul_ur_rule(x, y):
           'lhs and rhs to `mul` cannot be unreduced since mul is bilinear. '
           f'Got lhs={x_ur}, rhs={y_ur}')
   elif x_ur and not y_ur:
-    if x_ur != y.sharding.spec.reduced:
+    if x_ur != getr(y):
       raise core.ShardingTypeError(
           'RHS should be reduced along the same axes LHS is unreduced on. Got'
           f' lhs={x} and rhs={y}')
     out_unreduced = x_ur
   elif not x_ur and y_ur:
-    if x.sharding.spec.reduced != y_ur:
+    if getr(x) != y_ur:
       raise core.ShardingTypeError(
           'LHS should be reduced along the same axes RHS is unreduced on. Got'
           f' lhs={x} and rhs={y}')

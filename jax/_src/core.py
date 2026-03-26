@@ -2294,6 +2294,10 @@ class ManualAxisType:
   def empty(self):
     return not self.varying and not self.unreduced and not self.reduced
 
+  def invarying(self, mesh) -> frozenset:
+    return frozenset(mesh.axis_names) - (
+        self.varying | self.unreduced | self.reduced)
+
 
 class ShapedArray(AbstractValue):
   # inherits slots from parent
@@ -2414,7 +2418,8 @@ class ShapedArray(AbstractValue):
     sh_names = order_wrt_mesh(mesh, self.mt.varying) if check_vma else all_names
     u_names = self.mt.unreduced if check_vma else frozenset()
     r_names = self.mt.reduced if check_vma else frozenset()
-    return P(sh_names, unreduced=u_names, reduced=r_names) if sh_names else P()
+    return (P(sh_names, unreduced=u_names, reduced=r_names) if sh_names else
+            P(unreduced=u_names, reduced=r_names))
 
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)

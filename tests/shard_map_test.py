@@ -5194,6 +5194,33 @@ class ShardMapTest(jtu.JaxTestCase):
 
       g(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mul_shmap_unreduced(self, mesh):
+    arr = jax.device_put(jnp.arange(8.), P(unreduced={'x'}))
+    arr2 = jax.device_put(jnp.arange(8.), P(reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(x, y):
+      out = x * y
+      return out.sum()
+
+    out1, out2 = jax.jit(jax.grad(f, argnums=(0, 1)))(arr, arr2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_residual_reduced_preserved_via_nospec(self, mesh):
+    arr = jax.device_put(jnp.arange(8.), P(reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def g(x):
+      return jax.lax.sin(x).sum()
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
 
 class FunSpec(NamedTuple):
   name: str
