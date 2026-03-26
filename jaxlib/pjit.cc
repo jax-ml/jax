@@ -549,7 +549,6 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-
     if (sharding_num_devices != num_global_devices) {
       CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,
                            shard_arg_fallback, num_args_arrays,
@@ -985,17 +984,18 @@ void PjitFunction::PopulateCacheEntry(PjitCacheEntry& cache_entry,
 
 // Helper function used by the tp_clear GC method.
 void PjitFunction::ClearPythonReferences() {
-  // TODO(mattjj): phawkins@ observed that the PyTreeRegistry
-  // pytree_registry_ attribute of PjitFunction could in principle also have
-  // python references to clear
   nb::callable cache_miss;
   std::optional<nb::callable> fun;
   nb::callable shard_arg_fallback;
+  nb::object global_cache_key;
+  nb_class_ptr<PyTreeRegistry> pytree_registry;
   // Swap values for nulls before they are destroyed. See the Python
   // Py_CLEAR() documentation for a discussion of this topic.
   std::swap(cache_miss_, cache_miss);
   std::swap(fun_, fun);
   std::swap(shard_arg_fallback_, shard_arg_fallback);
+  std::swap(global_cache_key_, global_cache_key);
+  std::swap(pytree_registry_, pytree_registry);
 }
 
 struct PjitFunctionObject {
@@ -1144,9 +1144,6 @@ void PjitFunction_tp_dealloc(PyObject* self) {
 }
 
 int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-  // TODO(mattjj): phawkins@ observed that the PyTreeRegistry
-  // pytree_registry_ attribute of PjitFunction could in principle also have
-  // python references to visit
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
   Py_VISIT(Py_TYPE(self));
@@ -1159,6 +1156,8 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 #endif  // PY_VERSION_HEX < 0x030C0000
   Py_VISIT(o->fun.cache_miss().ptr());
   Py_VISIT(o->fun.shard_arg_fallback().ptr());
+  Py_VISIT(o->fun.global_cache_key().ptr());
+  Py_VISIT(o->fun.pytree_registry().ptr());
   if (o->fun.fun()) {
     Py_VISIT(o->fun.fun()->ptr());
   }
@@ -1406,14 +1405,10 @@ void BuildPjitSubmodule(nb::module_& m) {
       },
       nb::is_method());
   cfun.attr("__signature__") = xla::nb_property_readonly(
-      [](nb::handle self) {
-        return AsPjitFunction(self)->PythonSignature();
-      },
+      [](nb::handle self) { return AsPjitFunction(self)->PythonSignature(); },
       nb::sig("def __signature__(self) -> inspect.Signature"));
-  cfun.attr("_cache_miss") =
-      xla::nb_property_readonly([](nb::handle self) {
-        return AsPjitFunction(self)->cache_miss();
-      });
+  cfun.attr("_cache_miss") = xla::nb_property_readonly(
+      [](nb::handle self) { return AsPjitFunction(self)->cache_miss(); });
   // All private members are only for testing/debugging purposes
   cfun.attr("_cache_size") = nb::cpp_function(
       [](nb::handle self) -> int {
@@ -1444,8 +1439,8 @@ void BuildPjitSubmodule(nb::module_& m) {
       nb::arg("static_argnums"), nb::arg("static_argnames"),
       nb::arg("global_cache_key"), nb::arg("pytree_registry"),
       nb::arg("shard_arg_fallback"), nb::arg("cache").none() = nb::none(),
-    nb::sig(
-      // clang-format off
+      nb::sig(
+          // clang-format off
       "def pjit("
       "function_name: str, "
       "fun: Callable[..., Any] | None, "
@@ -1457,8 +1452,8 @@ void BuildPjitSubmodule(nb::module_& m) {
       "shard_arg_fallback: Callable[..., Any], "
       "cache: PjitFunctionCache | None = ..."
       ") -> PjitFunction"
-      // clang-format on
-    ));
+          // clang-format on
+          ));
 }
 
 }  // namespace jax
