@@ -24,9 +24,11 @@ from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
+from jax._src import tree_util
 from jax._src.hijax import VJPHiPrimitive
 from jax._src.lax import control_flow
 from jax._src.lax import lax
+from jax._src.numpy import util
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
@@ -161,6 +163,124 @@ class SearchSorted(VJPHiPrimitive):
   def vjp_bwd_retval(self, res: Any, g: Any):
     return (ad_util.zeros_like_aval(self.in_avals[0]),
             ad_util.zeros_like_aval(self.in_avals[1]))
+
+
+class Nonzero(VJPHiPrimitive):
+  """HiJAX primitive for nonzero."""
+
+  size: int
+  axes: tuple[int, ...]
+  out_dtype: np.dtype
+
+  def __init__(
+      self,
+      a_aval: core.ShapedArray,
+      *,
+      size: int,
+      axes: tuple[int, ...],
+      out_dtype: np.dtype):
+    size = operator.index(size)
+    if size < 0:
+      raise ValueError(f"size must be a positive integer; got {size=}")
+    if not dtypes.issubdtype(out_dtype, np.integer):
+      raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
+    if not all(0 <= ax < a_aval.ndim for ax in axes):
+      raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
+    if len(axes) != len(set(axes)):
+      raise ValueError(f"duplicate axes are not allowed: {axes=}")
+    self.in_avals = (a_aval,)
+
+    # Evaluate shape to set out_aval
+    self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
+        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype), a_aval))
+
+    self.params = dict(
+        size=size,
+        axes=axes,
+        out_dtype=out_dtype,
+    )
+    super().__init__()
+
+  def expand(self, a: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
+    return _nonzero_impl(a, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
+
+  def batch(
+      self,
+      axis_data: Any,
+      args: tuple[Array],
+      dims: tuple[int | None]
+  ) -> tuple[tuple[Array, ...], int | tuple[int, ...] | None]:
+    del axis_data  # unused
+    a, = args
+    d, = dims
+
+    if d is None:
+      return self(a), None
+
+    # Adjust axes for the inserted batch dimension d at the front/elsewhere
+    new_axes = tuple(ax + 1 if ax >= d else ax for ax in self.axes)
+
+    batched_prim = Nonzero(
+        core.typeof(a),
+        size=self.size,
+        axes=new_axes,
+        out_dtype=self.out_dtype,
+    )
+
+    batch_axes = [ax for ax in range(a.ndim) if ax not in new_axes]
+    out_bdim = batch_axes.index(d)
+
+    out_dims = (out_bdim,) * len(new_axes)
+    return batched_prim(a), out_dims
+
+  def jvp(self, primals: tuple[Array], tangents: Any) -> tuple[tuple[Array, ...], tuple[Array | np.ndarray, ...]]:
+    del tangents  # unused
+    primal_out = self(*primals)
+    tangents_out = tuple(np.empty(p.shape, dtype=dtypes.float0) for p in primal_out)
+    return primal_out, tangents_out
+
+  def vjp_fwd(self, nzs_in: Any, *args: Array) -> tuple[tuple[Array, ...], None]:
+    return (self(*args), None)
+
+  def vjp_bwd_retval(self, res: Any, g: Any):
+    return (ad_util.zeros_like_aval(self.in_avals[0]),)
+
+
+def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
+  """Main implementation of nonzero primitive."""
+  a = jnp.asarray(a)
+  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "nonzero")
+  axes = tuple(sorted(axes))
+
+  if not axes:
+    return ()
+
+  batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
+  if a.size == 0 or size == 0:
+    return tuple(jnp.empty((*batch_axes, size), dtype=out_dtype)
+                 for _ in axes)
+
+  transposed_a = jnp.transpose(a, (*batch_axes, *axes))
+
+  batch_shape = transposed_a.shape[:len(batch_axes)]
+  sub_shape = transposed_a.shape[len(batch_axes):]
+  strides = np.cumprod(sub_shape[::-1])[::-1] // sub_shape
+  strides = tuple(strides.tolist())
+
+  flattened_a = transposed_a.reshape(*batch_shape, -1)
+  mask = flattened_a if flattened_a.dtype == bool else (flattened_a != 0)
+  cs_mask = jnp.cumsum(mask, axis=-1)
+
+  bincount = jnp.zeros((*batch_shape, size), dtype=cs_mask.dtype)
+  mesh_dims = jnp.ogrid[tuple(slice(None, sz) for sz in batch_shape)]
+  mesh_dims = [lax.expand_dims(m, [m.ndim]) for m in mesh_dims]
+  bincount = bincount.at[(*mesh_dims, cs_mask)].add(1, mode='drop')
+  flat_indices = jnp.cumsum(bincount, axis=-1)
+
+  out = [(flat_indices // stride) % sz for stride, sz in zip(strides, sub_shape)]
+  counts = mask.sum(axis=-1, keepdims=True)
+  fill_mask = lax.expand_dims(jnp.arange(size), range(counts.ndim - 1)) >= counts
+  return tuple(lax.convert_element_type(jnp.where(fill_mask, 0, entry), out_dtype) for entry in out)
 
 
 def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: int,
@@ -333,3 +453,38 @@ def searchsorted_via_expand(
     out_dtype=out_dtype,
   )
   return prim.expand(sorted_arr, query)
+
+
+def nonzero(
+    a: ArrayLike,
+    /,
+    *,
+    size: int,
+    axes: tuple[int, ...] | None = None,
+    dtype: DTypeLike = 'int32',
+) -> tuple[Array, ...]:
+  """Return indices of nonzero elements.
+
+  This is a batch-aware implementation of :func:`numpy.nonzero` built on a
+  HiJAX primitive.
+
+  Args:
+    a: N-dimensional array.
+    size: static integer specifying the number of nonzero entries to return.
+    axes: optional tuple of integers specifying the axes to compute the result over.
+      Defaults to None (all axes).
+    dtype: optional datatype for the returned indices. Defaults to int32.
+
+  Returns:
+    Tuple of length ``len(axes)`` containing the indices of each nonzero value.
+  """
+  a, = core.standard_insert_pvary(a)
+  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "nonzero")
+  axes = util.canonicalize_axis_tuple(axes, np.ndim(a))
+  prim = Nonzero(
+    core.typeof(a),
+    size=size,
+    axes=axes,
+    out_dtype=out_dtype,
+  )
+  return prim(a)

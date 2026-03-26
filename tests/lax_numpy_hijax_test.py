@@ -103,7 +103,61 @@ def searchsorted_reference(
 
   # Base case: batched query handled by numpy.
   assert sorted_arr.ndim == 1
+
   return np.searchsorted(sorted_arr, query, side=side).astype(dtype)
+
+def nonzero_reference(
+    a: np.ndarray,
+    size: int, *,
+    axes: tuple[int, ...] | None = None,
+    dtype: np.dtype | str = 'int32',
+) -> tuple[np.ndarray, ...]:
+  """Reference implementation for hijax.nonzero in terms of np.nonzero.
+
+  Args:
+    a: n-dimensional array
+    size: integer specifying size of output
+    axes: optional set of axes over which to compute the indices.
+      Defaults to range(a.ndim).
+
+  Returns:
+    A tuple of indices corresponding to axes
+  """
+  a = np.asarray(a)
+  if axes is None:
+    axes = tuple(range(a.ndim))
+  else:
+    axes = tuple(sorted(ax % a.ndim for ax in axes))
+
+  batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
+  transposed_a = np.transpose(a, (*batch_axes, *axes))
+  batch_dims = transposed_a.shape[:len(batch_axes)]
+
+  res = []
+  for idx in np.ndindex(batch_dims):
+    sub_a = transposed_a[idx]
+    nz = np.nonzero(sub_a)
+
+    true_size = len(nz[0])
+    nz_padded = []
+    for axis_nz in nz:
+      if true_size >= size:
+        nz_padded.append(axis_nz[:size])
+      else:
+        # Pad with zeros
+        nz_padded.append(np.pad(axis_nz, (0, size - true_size), mode='constant'))
+    res.append(nz_padded)
+
+  out = []
+  for axis_idx in range(len(axes)):
+    axis_res = [r[axis_idx] for r in res]
+    if batch_dims:
+      axis_res_array = np.array(axis_res).reshape(*batch_dims, size)
+    else:
+      axis_res_array = np.array(axis_res).reshape(size)
+    out.append(axis_res_array.astype(dtype))
+
+  return tuple(out)
 
 
 class SearchsortedTest(jtu.JaxTestCase):
@@ -410,6 +464,74 @@ class SearchsortedTest(jtu.JaxTestCase):
           sorted_arr, query, batch_dims=1, dimension=1
       )
 
+
+class NonzeroTest(jtu.JaxTestCase):
+
+  def test_1D_against_numpy(self):
+    a = self.rng().randint(0, 2, size=(100,))
+    expected = tuple(i.astype('int32') for i in np.nonzero(a))
+    actual = hijax.nonzero(a, size=np.sum(a != 0))
+
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  @jtu.sample_product(
+      axes=[None, (0,), (1,), (0, 1)],
+  )
+  def test_2D_against_reference(self, axes):
+    a = self.rng().randint(0, 2, size=(10, 20))
+    size = 5
+    expected = nonzero_reference(a, size=size, axes=axes)
+    actual = hijax.nonzero(a, size=size, axes=axes)
+
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_vmap(self):
+    a = self.rng().randint(0, 2, size=(3, 4, 5))
+    size = 2
+
+    def f(x):
+      return hijax.nonzero(x, size=size, axes=(1,))[0]
+
+    vmapped = jax.vmap(f)(a)
+
+    expected = []
+    for sub_a in a:
+      expected.append(nonzero_reference(sub_a, size=size, axes=(1,))[0])
+    expected = np.array(expected)
+
+    self.assertArraysEqual(expected, vmapped)
+
+  def test_jit(self):
+    a = self.rng().randint(0, 2, size=(10,))
+    size = 2
+
+    @jax.jit
+    def f(x):
+      return hijax.nonzero(x, size=size)
+
+    actual = f(a)
+    expected = nonzero_reference(a, size=size)
+
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_autodiff(self):
+    a = jax.numpy.array([0.0, 1.0, 0.0, 1.0])
+    size = 2
+
+    def f(x):
+      return hijax.nonzero(x, size=size)[0]
+
+    primal_out, tangent_out = jax.jvp(f, (a,), (jax.numpy.ones_like(a),))
+    self.assertEqual(tangent_out.dtype, jax.dtypes.float0)
+
+    _, f_vjp = jax.vjp(f, a)
+    tangent_in = f_vjp(jax.numpy.ones_like(primal_out))
+    self.assertArraysEqual(tangent_in[0], jax.numpy.zeros_like(a))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
