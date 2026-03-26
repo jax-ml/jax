@@ -2124,18 +2124,8 @@ class MpmdMapTest(PallasSCTest):
 
   @parameterized.product(use_tc_tiling=[False, True])
   def test_parallel_subkernels(self, use_tc_tiling):
-    if use_tc_tiling:
-      # When using TC tiling
-      #
-      #   * infer-memref-layout chooses T(256) for `out_hbm_ref`,
-      #   * making the `x.size`-shaped slices non-tile-unaligned,
-      #   * so we need to realize the DMA as a stream,
-      #   * but SMEM->HBM on the scalar subcore must be a DMA,
-      #   * and we get a compilation error.
-      #
-      # TODO(slebedev): Remove the skip once infer-memref-layout chooses
-      # T(128) for 1D refs.
-      self.skipTest("Needs a change in infer-memref-layout to allow TC tiling")
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
+      self.skipTest("Needs a newer libtpu")
 
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core",

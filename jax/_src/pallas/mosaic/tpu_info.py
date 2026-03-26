@@ -24,7 +24,6 @@ from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
 from jax._src.interpreters import pxla
-from jax._src.pallas import utils as pallas_utils
 
 
 class ChipVersionBase:
@@ -552,11 +551,9 @@ def infer_tiling(
     tiling = Tiling.COMPACT
   tiling_rank = len(tiling.shape)
   if len(shape) == 1 and tiling == Tiling.COMPACT:
-    sublane_count, lane_count = tiling.shape
-    src_sublane = pallas_utils.cdiv(shape[0], lane_count)
-    max_tiling = max(sublane_count, packing)
-    factor = _get_tiling_factor(src_sublane, max_tiling, packing)
-    return (factor * lane_count,)
+    _, lane_count = tiling.shape
+    tpu_generation = get_tpu_info().generation
+    return ((1 + int(tpu_generation < 4)) * packing * lane_count,)
   if len(shape) < tiling_rank:
     raise ValueError(
         f"Shape must have at least {tiling_rank} dimensions: {shape=}"
