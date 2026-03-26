@@ -313,9 +313,7 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise InternalFloatingPointError(name, "inf")
 
-def _device_put_reshard(x):
-  """Top level function wrapped with `jit` for resharding."""
-  return x
+def _device_put_reshard(x): return x
 
 
 @util.cache(max_size=2048, trace_context_in_key=False)
@@ -457,6 +455,12 @@ def _device_put_sharding_impl(
     if (getattr(x, 'sharding', None) == s and getattr(x, '_committed', False)
         and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
+
+    if isinstance(s, NamedSharding) and s.spec.unreduced:
+      # TODO(mattjj,yashkatariya): handle donation
+      # TODO(mattjj,yahskatariya): out_sharding doesn't work!
+      # return api.jit(_device_put_reshard, out_shardings=s)(x)
+      return pjit.reshard(x, s)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
@@ -601,11 +605,7 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[ArrayCopySemantics],
     dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
-
-  # Used to batch transfers when _device_put_impl returns a _DeferredShardArg.
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
-  # Used to batch transfers when _device_put_impl returns a
-  # _DeferredCrossHostTransferArg.
   dca_indices, dca_xs, dca_shardings, dca_device_lists, dca_copy_semantics = \
     [], [], [], [], []
 
@@ -625,11 +625,7 @@ def _batched_device_put_impl(
       dca_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
-  # Batch shard_arg / batched_copy_array_to_devices_with_sharding calls. Helps
-  # improve efficiency for backends that support efficient batch transfer.
   if dsa_xs:
-    # device_put handles `Format` via a different path, so just pass `None` as
-    # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)
     for i, shard_arg_result in zip(dsa_indices, shard_arg_results):

@@ -9708,6 +9708,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s, inp_s in zip(out2.addressable_shards, inp.addressable_shards):
       self.assertArraysEqual(s.data, inp_s.data)
 
+    out = jax.device_put(inp, P(unreduced={'x'}))
+    expected_out = [inp, jnp.array(0)]
+    for s, ex_out in zip(out.addressable_shards, expected_out):
+      self.assertArraysEqual(s.data, ex_out)
+
   @parameterized.parameters(
       ((4,), P(None), P(None, unreduced={'x'})),
       ((4,), P(None), P(None, unreduced={'y'})),
@@ -10035,32 +10040,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return g(x)
 
     f(np.arange(8))  # doesn't crash
-
-  @jtu.with_explicit_mesh((2,), 'x')
-  def test_device_put_unreduced_error(self, mesh):
-    with self.assertRaisesRegex(
-        NotImplementedError, "device_put with unreduced is not implemented"):
-      jax.device_put(np.arange(8), P(unreduced={'x'}))
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "device_put with unreduced is not implemented"):
-      jax.device_put(np.arange(8), NamedSharding(mesh, P(unreduced={'x'})))
-
-    arr_unreduced = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
-    with self.assertRaisesRegex(
-        NotImplementedError, "device_put with unreduced is not implemented"):
-      jax.device_put(arr_unreduced, P())
-
-    out = jax.device_put(np.arange(8), P(reduced={'x'}))
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
-    self.assertEqual(out.aval.sharding,
-                     NamedSharding(mesh.abstract_mesh, P(None, reduced={'x'})))
-
-    arr_reduced = jax.reshard(jnp.arange(8), P(reduced={'x'}))
-    out = jax.device_put(arr_reduced, P())
-    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
-    self.assertEqual(out.aval.sharding,
-                     NamedSharding(mesh.abstract_mesh, P(None)))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vjp_unreduced_zeros(self, mesh):
