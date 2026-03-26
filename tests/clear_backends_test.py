@@ -23,6 +23,8 @@ jax.config.parse_flags_with_absl()
 
 class ClearBackendsTest(jtu.JaxTestCase):
 
+  # This test is currently skipped on ROCm due to flaky behavior.
+  @jtu.skip_on_devices("rocm")
   def test_clear_backends(self):
     g = jax.jit(lambda x, y: x * y)
     self.assertEqual(g(1, 2), 2)

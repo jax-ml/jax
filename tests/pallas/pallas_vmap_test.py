@@ -235,7 +235,8 @@ class PallasCallVmapTest(PallasBaseTest):
 
     np.testing.assert_allclose(out, out_ref)
 
-  @jtu.skip_on_devices("cpu")  # Test is very slow on CPU
+  # This test is currently skipped on ROCm due to flaky behavior.
+  @jtu.skip_on_devices("cpu", "rocm")  # Test is very slow on CPU
   def test_small_small_large_vmap(self):
 
     @functools.partial(

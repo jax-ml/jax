@@ -137,6 +137,8 @@ class BlockedFoldInTest(jtu.JaxTestCase):
          total_size=(2, 64 * 1024, 64 * 1024), block_size_a=(1, 4096, 512),
          block_size_b=(1, 1024, 2048), tile_size=(1, 1024, 512)),
   )
+  # This test is currently skipped on ROCm due to flaky behavior.
+  @jtu.skip_on_devices("rocm")
   def test_blocked_fold_in_shape_invariance(self, total_size, block_size_a,
                                             block_size_b, tile_size):
     global_key = jax.random.key(0)

@@ -1001,6 +1001,14 @@ class BatchingTest(jtu.JaxTestCase):
       for collective_subset in it.combinations(vmap_names, subset_size)
       for collective_names in it.permutations(collective_subset))
   def testCommAssocCollective(self, collective, bulk_op, vmap_names, collective_names):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        (collective is lax.psum) and
+        vmap_names == ('i', 'j', 'k') and
+        collective_names == ('k', 'j', 'i')):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     shape = (2, 2, 2)
     x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
 

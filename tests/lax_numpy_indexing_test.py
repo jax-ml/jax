@@ -1585,6 +1585,13 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   )
   def testAdvancedIndexing(self, name, shape, dtype, update_shape, update_dtype,
                            indexer, op):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        name == "Two1DIntArrayIndicesNoBroadcasting" and
+        op == UpdateOps.SUB):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)

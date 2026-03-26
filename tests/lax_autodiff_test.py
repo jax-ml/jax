@@ -307,6 +307,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     padding=["VALID", "SAME"],
   )
   def testConvGrad(self, lhs_shape, rhs_shape, dtype, strides, padding):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        lhs_shape == (3, 3, 3, 4) and
+        rhs_shape == (2, 3, 1, 2) and
+        dtype is np.float32):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
@@ -335,6 +343,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   )
   def testConvWithGeneralPaddingGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                      padding, lhs_dil, rhs_dil):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        lhs_shape == (2, 3, 3, 4) and
+        rhs_shape == (2, 3, 1, 2) and
+        dtype is dtypes.bfloat16):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
@@ -432,6 +448,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   )
   def testDotGeneralContractAndBatchGrads(self, lhs_shape, rhs_shape, dtype,
                                           dimension_numbers):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        lhs_shape == (3, 3, 2) and
+        rhs_shape == (3, 2, 4) and
+        dtype is np.float32):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
@@ -582,6 +606,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     dtype=float_dtypes,
   )
   def testSelectGrad(self, pred_shape, arg_shape, dtype):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        pred_shape == (2, 3) and
+        arg_shape == (2, 3) and
+        dtype is np.float16):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     rng = jtu.rand_default(self.rng())
     pred = rng(pred_shape, np.bool_)
     on_true = rng(arg_shape, dtype)

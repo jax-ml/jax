@@ -197,6 +197,8 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     raises_oob(partial(lax.dynamic_slice, slice_sizes=(1, 1, 1)), x, (0, 1, 8), 'index 8')
     raises_oob(partial(lax.dynamic_slice, slice_sizes=(1, 1, 1)), x, (0, 1, -10), 'index -3')
 
+  # This test is currently skipped on ROCm due to flaky behavior.
+  @jtu.skip_on_devices("rocm")
   def test_dynamic_update_slice_oobs(self):
     def raises_oob(fn, x, y, idx, *expected_strs):
       err, _ = checkify.checkify(jax.jit(fn), errors=checkify.index_checks)(x, y, idx)

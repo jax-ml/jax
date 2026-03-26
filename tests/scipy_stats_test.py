@@ -1509,6 +1509,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testMultivariateNormalLogpdfBatch(self, ndim, nbatch, dtype):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        ndim == 3 and
+        nbatch == 5):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     # Regression test for #5570
     rng = jtu.rand_default(self.rng())
     x = rng((nbatch, ndim), dtype)

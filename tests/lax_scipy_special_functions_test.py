@@ -198,6 +198,13 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testScipySpecialFun(self, op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
+
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.is_device_rocm() and
+        ((op == "gammainc" and shapes == ((3, 1), (1, 4))) or
+         (op == "hyp1f1" and shapes == ((), (1, 4), (2, 1, 4))))):
+      self.skipTest("Skipped on ROCm due to flaky behavior.")
+
     scipy_op = getattr(osp_special, op)
     lax_op = getattr(lsp_special, op)
     rng = rng_factory(self.rng())

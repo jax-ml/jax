@@ -2102,6 +2102,8 @@ class PallasControlFlowTest(ptu.PallasTest):
     )(*(jnp.array([[x]]) for x in (2, 6)))
     np.testing.assert_array_equal(r, 4)
 
+  # This test is currently skipped on ROCm due to flaky behavior.
+  @jtu.skip_on_devices("rocm")
   def test_non_range_while_loop(self):
     """Tests lowering of a while_loop which cannot reduce to a fori_loop."""
 

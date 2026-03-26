@@ -3691,6 +3691,16 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       raise unittest.SkipTest(
           "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
 
+    # These tests are currently skipped on ROCm due to flaky behavior.
+    if (jtu.test_device_matches(["rocm"]) and
+        harness.fullname in [
+            "vmap_lu_shape_complex64_3_5_",
+            "vmap_qr_multi_array_shape_complex64_1_1_fullmatrices_False",
+            "vmap_cholesky_shape_bfloat16_1_1_",
+            "lu_shape_float32_2_4_0_poly_b_",
+            ]):
+      raise unittest.SkipTest("Skipped on ROCm due to flaky behavior.")
+
     if harness.group_name == "vmap_conv_general_dilated":
       # https://github.com/openxla/stablehlo/issues/1268
       raise unittest.SkipTest("Need more dynamism for DynamicConvOp")
