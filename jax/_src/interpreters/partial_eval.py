@@ -382,12 +382,17 @@ class JaxprTracer(Tracer[JaxprTrace]):
   def __init__(self, trace: JaxprTrace, pval: PartialVal,
                recipe: JaxprTracerRecipe | None):
     assert isinstance(pval, PartialVal)
-    super().__init__(trace, pval.get_aval())
+    pv, const = pval
+    self._trace = trace
     self.pval = pval
     self.recipe = recipe
 
   def __repr__(self):
     return f'Traced<{self.aval}:{self._trace}>'
+
+  @property
+  def aval(self) -> AbstractValue:
+    return self.pval.get_aval()
 
   @property
   def parents(self) -> Sequence[JaxprTracer]:
@@ -1509,7 +1514,7 @@ def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
 
 
 class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
-  __slots__ = ['val', 'mutable_qdd', 'parent', '_debug_info']
+  __slots__ = ['_aval', 'val', 'mutable_qdd', 'parent', '_debug_info']
 
   _trace: DynamicJaxprTrace
 
@@ -1521,14 +1526,14 @@ class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
     # TODO(dougalm): Remove aval. It's redundant now that we have val.
     if isinstance(aval, core.AvalQDD):
       assert aval.qdd is not None
-      aval_val, qdd = aval.aval, aval.qdd
+      aval, qdd = aval.aval, aval.qdd
     else:
       assert not aval.has_qdd
       qdd = None
-      aval_val = aval
-    super().__init__(trace, aval_val)
+    self._trace = trace
     self._line_info = line_info
     self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
+    self._aval = aval
     self.val = val
     self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
     self.parent = parent
@@ -1538,6 +1543,10 @@ class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
 
   def cur_qdd(self):
     return self.mutable_qdd.cur_val
+
+  @property
+  def aval(self):
+    return self._aval
 
   @property
   def aval_mutable_qdd(self):

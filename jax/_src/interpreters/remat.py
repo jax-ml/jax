@@ -62,9 +62,13 @@ class RematTracer(core.Tracer['RematTrace']):
   _trace: RematTrace
 
   def __init__(self, trace, x, jaxpr_tracer):
-    super().__init__(trace, core.typeof(x))  # pytype: disable=name-error
+    self._trace = trace  # pytype: disable=name-error
     self.val = x
     self.tracer = jaxpr_tracer
+
+  @property
+  def aval(self):
+    return core.typeof(self.val)
 
 class RematTrace(core.Trace):
   def __init__(self, parent_trace, jaxpr_trace, tag, policy):

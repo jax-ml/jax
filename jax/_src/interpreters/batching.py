@@ -137,36 +137,37 @@ class BatchTracer(Tracer['BatchTrace']):
 
   def __init__(self, trace: BatchTrace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):
-    from jax._src import hijax  # pytype: disable=import-error
-
-    aval = core.typeof(val)
     if config.enable_checks.value:
       # assert type(batch_dim) in (NotMapped, int)
       if type(batch_dim) is int:
+        aval = core.typeof(val)
         assert 0 <= batch_dim < len(aval.shape)
-
-    if trace.axis_data.spmd_name is not None:
-      if config._check_vma.value:
-        mt = aval.mt.update(
-            varying=aval.vma - frozenset(trace.axis_data.spmd_name))
-        aval = aval.update(manual_type=mt)
-    if batch_dim is not_mapped:
-      aval = aval
-    elif type(batch_dim) is int:
-      aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
-    elif isinstance(aval, hijax.HiType):
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
-      aval = aval.dec_rank(trace.axis_data.size, batch_dim)
-    else:
-      raise Exception("batch dim should be int or `not_mapped`")
-
-    super().__init__(trace, aval)
+    self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
     self.source_info = source_info
 
   def _short_repr(self):
-    return f"VmapTracer(aval={self.aval}, batched={core.typeof(self.val)})"
+    return f"VmapTracer(aval={self.aval}, batched={typeof(self.val)})"
+
+  @property
+  def aval(self):
+    from jax._src import hijax  # pytype: disable=import-error
+    aval = core.typeof(self.val)
+    if self._trace.axis_data.spmd_name is not None:
+      if config._check_vma.value:
+        mt = aval.mt.update(
+            varying=aval.vma - frozenset(self._trace.axis_data.spmd_name))
+        aval = aval.update(manual_type=mt)
+    if self.batch_dim is not_mapped:
+      return aval
+    elif type(self.batch_dim) is int:
+      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+    elif isinstance(aval, hijax.HiType):
+      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+      return aval.dec_rank(self._trace.axis_data.size, self.batch_dim)
+    else:
+      raise Exception("batch dim should be int or `not_mapped`")
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
