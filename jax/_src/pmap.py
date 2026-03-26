@@ -52,6 +52,7 @@ traceback_util.register_exclusion(__file__)
 
 AxisName = Hashable
 
+
 @partial(api_boundary, repro_api_name="jax.pmap")
 def pmap(
     fun: Callable,
@@ -821,10 +822,10 @@ def host_local_array_to_global_array(
       if typ is prng.PRNGKeyArray:
         prng_impl = arr.dtype._impl  # pylint: disable=protected-access
         arr = arr._base_array  # pylint: disable=protected-access
+      arr = np.asarray(arr)
       dtype = arr.dtype
       if dtype == dtypes.float0:
         arr = np.zeros(arr.shape, dtype=bool)
-      arr = np.asarray(arr)
       if dtype != dtypes.canonicalize_dtype(dtype):
         arr = dtypes.canonicalize_value(arr)
     shape, dtype = arr.shape, arr.dtype

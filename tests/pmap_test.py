@@ -35,6 +35,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import pmap as pmap_lib
 from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import test_util as jtu
@@ -2663,6 +2664,46 @@ class PmapShmapMergeTest(jtu.JaxTestCase):
     result = jax.pmap(lambda x: x * 2)(np_input)
     expected = np_input * 2
     self.assertAllClose(result, expected)
+
+  def test_int_arg_with_in_axes_none(self):
+    """Regression test: int arg with in_axes=None must not raise AttributeError.
+
+    When a plain Python int is passed as a non-mapped (in_axes=None) argument,
+    host_local_array_to_global_array must handle it without crashing on
+    'int' object has no attribute 'dtype'.
+    """
+    n = jax.device_count()
+    devices = jax.devices()[:n]
+    mesh = jax.sharding.Mesh(np.array(devices), ('i',))
+
+    pspec_mapped = jax.P('i')
+    pspec_unmapped = jax.P()
+
+    in_local_shardings = [
+        jax.NamedSharding(mesh, pspec_mapped),
+        jax.NamedSharding(mesh, pspec_unmapped),
+    ]
+    in_global_shardings = [
+        jax.NamedSharding(mesh, pspec_mapped),
+        jax.NamedSharding(mesh, pspec_unmapped),
+    ]
+
+    class FakeCached:
+      pass
+    cached = FakeCached()
+    cached.in_local_shardings = in_local_shardings
+    cached.in_global_shardings = in_global_shardings
+    cached.in_specs_flat = (pspec_mapped, pspec_unmapped)
+    cached.mesh = mesh
+
+    x = np.arange(n, dtype=np.float32)
+    scale = 3
+    dyn_args_flat = [x, scale]
+    donated_invars = (False, False)
+
+    pmap_lib.host_local_array_to_global_array(
+        dyn_args_flat, cached, True, donated_invars
+    )
 
 
 if __name__ == '__main__':
