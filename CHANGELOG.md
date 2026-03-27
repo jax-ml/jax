@@ -42,6 +42,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
     replaced with `.manual_type.varying`.
   * Removed experimental {func}`jax.experimental.custom_dce.custom_dce`
+  * {func}`jax.scipy.linalg.cho_solve`, {func}`jax.scipy.linalg.lu_solve`, and
+    {func}`jax.scipy.linalg.solve_triangular` now show a deprecation warning for
+    batched 1D solves with `b.ndim > 1`. In the future these will be treated as
+    batched 2D solves.
 
 ## JAX 0.9.2 (March 18, 2026)
 
