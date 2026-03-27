@@ -4360,8 +4360,6 @@ def _multimem_store_lowering_rule(
         f" ({mesh_info.axis_names}) axes are supported, but got"
         f" {collective_axes}"
     )
-  if not isinstance(value, mgpu.FragmentedArray):
-    raise TypeError(f"Can only store arrays (got {value}).")
   if transforms_tree is not None:
     transforms = tree_util.tree_unflatten(transforms_tree, transforms_leaves)
     local_ref_aval = ctx.avals_in[1]
@@ -4375,8 +4373,8 @@ def _multimem_store_lowering_rule(
           f"Unhandled transforms for multimem_store: {transforms}"
       )
   multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
-  if not ctx.avals_in[0].shape:
-    multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_out[0].dtype), [])
+  if not ctx.avals_in[0].shape:  # scalar case
+    multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_in[0].dtype), [])
   else:
     value.store_untiled(multi_ref, optimized=False)
   if ctx.module_ctx.auto_barriers:

@@ -743,6 +743,35 @@ class PallasCallMultimemTest(TestCase):
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
+  def test_multimem_store_scalar(self):
+    self.skip_if_wg_semantics()  # multimem_store
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        plgpu.multimem_store(1, y_ref.at[0], 'x')
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        compiler_params=plgpu.CompilerParams(),
+    )
+    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P('x'), check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.array((1,), jnp.int32)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0), strict=True)
+
   def test_multimem_store_tma(self):
     # TODO(bchetioui): support for multimem store.
     self.skip_if_wg_semantics()
