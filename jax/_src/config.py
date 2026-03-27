@@ -1826,6 +1826,15 @@ disable_bwd_checks = bool_state(
     upgrade=True,
     help='Disables all bwd pass checks')
 
+jax_use_rgv3 = bool_state(
+    name='jax_use_rgv3',
+    default=True,
+    help=(
+        'Whether to use StableHLO RGV3 (mesh-axes based replica groups) during'
+        ' shard_map lowering.'
+    ),
+)
+
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
@@ -2083,7 +2092,6 @@ optional_enum_state(
     update_global_hook=lambda logging_level: \
       logging_config.update_logging_level_global(logging_level=logging_level)
 )
-
 
 
 use_shardy_partitioner = bool_state(
