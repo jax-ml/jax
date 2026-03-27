@@ -1060,7 +1060,7 @@ def _trace_kernel_to_jaxpr(
     kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
-  wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+  wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(fun, debug_info=debug_info), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
@@ -1418,8 +1418,9 @@ def pallas_call(
     A function that can be called on a number of positional array arguments to
     invoke the Pallas kernel.
   """
+  flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(scratch_shapes)
   if grid_spec is None:
-    grid_spec = pallas_core.GridSpec(grid, in_specs, out_specs, scratch_shapes)
+    grid_spec = pallas_core.GridSpec(grid, in_specs, out_specs, flat_scratch_shapes)
   else:
     if grid:
       raise ValueError(
@@ -1442,6 +1443,7 @@ def pallas_call(
       kernel,
       out_shape,
       grid_spec=grid_spec,
+      scratch_tree=scratch_tree,
       input_output_aliases=input_output_aliases,
       debug=debug,
       interpret=interpret,
@@ -1458,6 +1460,7 @@ def _pallas_call(
     out_shape: Any,
     *,
     grid_spec: pallas_core.GridSpec,
+    scratch_tree: tree_util.PyTreeDef,
     mesh: pallas_core.Mesh | None = None,
     input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
@@ -1509,7 +1512,15 @@ def _pallas_call(
         out_origins,
         debug,
     )
-    flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(kernel_args)
+    kernel_args, scratch_args = split_list(
+        kernel_args, [len(kernel_args) - scratch_tree.num_leaves])
+    scratch_args = scratch_tree.unflatten(scratch_args)
+    if isinstance(scratch_args, dict):
+      kernel_args_kwargs = (kernel_args, scratch_args)
+    else:
+      kernel_args_kwargs = (kernel_args + list(scratch_args), {})
+    flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(
+        kernel_args_kwargs)
     flat_kernel_avals = tuple(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
@@ -1524,7 +1535,7 @@ def _pallas_call(
         for x in flat_kernel_args
     )
     kernel_dbg = api_util.debug_info("pallas_call kernel", kernel,
-                                      kernel_args, {})
+                                      *kernel_args_kwargs)
     if name is not None:
       kernel_dbg = kernel_dbg.replace_func_name(mlir.sanitize_name(name))
     jaxpr, consts = _trace_kernel_to_jaxpr(

@@ -306,13 +306,13 @@ def _mpmd_map(
           out_tree,
           out_origins,
       )
-      if isinstance(scratch_shapes, dict):
-        kernel_args, scratch_args = util.split_list(
-            kernel_args, [len(kernel_args) - len(flat_scratch_shapes)])
-        kwargs = scratch_tree.unflatten(scratch_args)
-        kernel_args_kwargs = (kernel_args, kwargs)
+      kernel_args, scratch_args = util.split_list(
+          kernel_args, [len(kernel_args) - scratch_tree.num_leaves])
+      scratch_args = scratch_tree.unflatten(scratch_args)
+      if isinstance(scratch_args, dict):
+        kernel_args_kwargs = (kernel_args, scratch_args)
       else:
-        kernel_args_kwargs = (kernel_args, {})
+        kernel_args_kwargs = (kernel_args + list(scratch_args), {})
       flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(
           kernel_args_kwargs)
       debug_info = api_util.debug_info(

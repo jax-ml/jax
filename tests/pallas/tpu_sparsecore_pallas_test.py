@@ -1674,12 +1674,13 @@ class VectorSubcoreTest(PallasSCTest):
             pl.BlockSpec(shape, lambda *_: (0, 0), memory_space=pltpu.HBM),
             pl.BlockSpec(shape[1:], lambda _: (0,)),
         ],
-        scratch_shapes=[
-            pltpu.VMEM_SHARED(shape[1:], dtype),
-            pltpu.VMEM(shape[1:], dtype),
-        ],
+        scratch_shapes=dict(
+            shared_scratch_ref=pltpu.VMEM_SHARED(shape[1:], dtype),
+            scratch_refs=[pltpu.VMEM(shape[1:], dtype)],
+        ),
     )
-    def kernel(x_ref, indices_ref, o_ref, shared_scratch_ref, scratch_ref):
+    def kernel(x_ref, indices_ref, o_ref, *, shared_scratch_ref, scratch_refs):
+      [scratch_ref] = scratch_refs
       subcore_id = pl.program_id(0)
       pltpu.sync_copy(x_ref.at[subcore_id], scratch_ref)
       # Subcore 0 to init shared scratch.
@@ -2125,8 +2126,9 @@ class MpmdMapTest(PallasSCTest):
   def setUp(self):
     super().setUp()
 
-  @parameterized.product(use_tc_tiling=[False, True])
-  def test_parallel_subkernels(self, use_tc_tiling):
+  @parameterized.product(use_tc_tiling=[False, True],
+                         scratch_structure=[tuple, dict])
+  def test_parallel_subkernels(self, use_tc_tiling, scratch_structure):
     if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
       self.skipTest("Needs a newer libtpu")
 
@@ -2141,8 +2143,11 @@ class MpmdMapTest(PallasSCTest):
 
     x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
 
-    def vector_subcore_fn(x_hbm_ref, out_hbm_ref, *, scratch_vmem_shd_ref):
+    def vector_subcore_fn(x_hbm_ref, out_hbm_ref,
+                          scratch_vmem_shd_ref, nested_in_dict):
       pltpu.sync_copy(x_hbm_ref, scratch_vmem_shd_ref)
+      # TODO: Why can't we put this in scalar_subcore_fn?
+      pltpu.sync_copy(x_hbm_ref, nested_in_dict["vmshd"])
       scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
       pltpu.sync_copy(scratch_vmem_shd_ref, scratch_ref)
 
@@ -2153,8 +2158,9 @@ class MpmdMapTest(PallasSCTest):
 
       pltpu.sync_copy(scratch_ref, out_hbm_ref.at[:x.size])
 
-    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref, *, scratch_vmem_shd_ref):
-      del scratch_vmem_shd_ref
+    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref,
+                          scratch_vmem_shd_ref, nested_in_dict):
+      del scratch_vmem_shd_ref, nested_in_dict
       scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.SMEM)
       pltpu.sync_copy(x_hbm_ref, scratch_ref)
 
@@ -2164,11 +2170,17 @@ class MpmdMapTest(PallasSCTest):
 
       pltpu.sync_copy(scratch_ref, out_hbm_ref.at[x.size:])
 
+    if scratch_structure is dict:
+      scratch_shapes = dict(
+          scratch_vmem_shd_ref=pltpu.VMEM_SHARED(x.shape, x.dtype),
+          nested_in_dict=dict(vmshd=pltpu.VMEM_SHARED(x.shape, x.dtype)))
+    else:
+      scratch_shapes = (pltpu.VMEM_SHARED(x.shape, x.dtype),
+                        dict(vmshd=pltpu.VMEM_SHARED(x.shape, x.dtype)))
     out = mpmd.mpmd_map(
         [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
         out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
-        scratch_shapes=dict(
-            scratch_vmem_shd_ref=pltpu.VMEM_SHARED(x.shape, x.dtype)),
+        scratch_shapes=scratch_shapes,
         compiler_params=pltpu.CompilerParams(
             use_tc_tiling_on_sc=use_tc_tiling,
         ),
