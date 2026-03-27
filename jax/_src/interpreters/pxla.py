@@ -1148,8 +1148,6 @@ def lower_sharding_computation(
       module_name,
       module,
       const_args,
-      donated_invars,
-      platforms,
       compiler_options_kvs,
       device_list,
       global_in_avals=global_in_avals,
@@ -1198,15 +1196,12 @@ class MeshComputation(stages.Lowering):
 
   def __init__(self, name: str, hlo: ir.Module,
                const_args: list[ArrayLike],
-               donated_invars: Sequence[bool], platforms: Sequence[str],
                compiler_options_kvs: tuple[tuple[str, Any], ...],
                device_assignment: xc.DeviceList | tuple[xc.Device, ...] | None,
                **compile_args):
     self._name = name
     self._hlo = hlo
     self.const_args = const_args
-    self._donated_invars = donated_invars
-    self._platforms = platforms
     self._compiler_options_kvs = compiler_options_kvs
     self._device_list = _create_device_list(device_assignment)
     self.compile_args = compile_args

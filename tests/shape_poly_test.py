@@ -3620,7 +3620,6 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
                                jax.vmap(h.dyn_fun, in_axes=0, out_axes=0),
                                arg_descriptors=new_args,
                                polymorphic_shapes=["b, ..."] * len(new_args))
-    vmap_harness.original_harness = h
     res.append(vmap_harness)
   return res
 
