@@ -7015,7 +7015,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         out_shape=jax_shape,
         smem_scratch_shape=[
             jax_shape,
-            mgpu.Barrier(1),
+            mgpu.Barrier(1, orders_tensor_core=True),
             mgpu.TMEM(shape, dtype, packing=1),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
@@ -7071,7 +7071,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         out_shape=jax_shape,
         smem_scratch_shape=[
             jax.ShapeDtypeStruct(shape, dtype),
-            mgpu.Barrier(1),
+            mgpu.Barrier(1, orders_tensor_core=True),
             mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
             mgpu.TMEM(shape, dtype, collective=True, packing=1),
         ],
@@ -7170,7 +7170,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(a_shape, ab_type) if not a_in_tmem else None,
         jax.ShapeDtypeStruct(b_shape, ab_type),
         core.TMABarrier(1),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM(a_shape, ab_type, packing=a_packing) if a_in_tmem else None,
     ]
@@ -7270,7 +7270,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(b_shape, ab_type),
         jax.ShapeDtypeStruct(meta_shape, sparse_meta_dtype),
         core.TMABarrier(1),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM((m, k // 2), sparse_meta_dtype),
     ]
@@ -7422,7 +7422,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(b_block_shape, ab_type),
         jax.ShapeDtypeStruct(meta_block_shape, sparse_meta_dtype),
         core.TMABarrier(1),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM(acc_block_shape, acc_type, collective=True),
         mgpu.TMEM((m // 2, k // 2), sparse_meta_dtype, collective=True),
@@ -7582,7 +7582,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(a_block_shape, ab_type) if not a_in_tmem else None,
         jax.ShapeDtypeStruct(b_block_shape, ab_type),
         core.TMABarrier(1),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM(acc_block_shape, acc_type, collective=True),
         mgpu.TMEM(a_block_shape, ab_type, collective=True, packing=a_packing)
@@ -7698,7 +7698,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         jax.ShapeDtypeStruct(scale_shape_a, scale_type),
         jax.ShapeDtypeStruct(scale_shape_b, scale_type),
         core.TMABarrier(1),
-        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM((m, k_scales), scale_type),
         mgpu.TMEM((n, k_scales), scale_type),

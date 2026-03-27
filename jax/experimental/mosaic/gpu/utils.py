@@ -1129,7 +1129,8 @@ class DialectBarrierRef:
   @staticmethod
   def initialize(
       barrier_memref: ir.Value,
-      arrival_count: int = 1,
+      arrival_count: int,
+      orders_tensor_core: bool,
   ) -> "DialectBarrierRef":
     barrier_ty = ir.MemRefType(barrier_memref.type)
     [num_barriers] = barrier_ty.shape

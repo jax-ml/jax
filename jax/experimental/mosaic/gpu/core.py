@@ -301,6 +301,7 @@ class TMABarrier:
 class Barrier:
   arrival_count: int
   num_barriers: int = 1
+  orders_tensor_core: bool = False
 
   def __post_init__(self):
     if self.arrival_count < 1:
@@ -464,14 +465,20 @@ def _construct_smem_reftree(
 
       case TMABarrier(num_barriers):
         init_fn: Callable[..., Any] = (
-            utils.DialectBarrierRef.initialize
+            functools.partial(
+                utils.DialectBarrierRef.initialize,
+                orders_tensor_core=False,
+            )
             if lowering_semantics == LoweringSemantics.Warpgroup
             else utils.BarrierRef.initialize
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
-      case Barrier(arrival_count, num_barriers):
+      case Barrier(arrival_count, num_barriers, orders_tensor_core):
         init_fn = (
-            utils.DialectBarrierRef.initialize
+            functools.partial(
+                utils.DialectBarrierRef.initialize,
+                orders_tensor_core=orders_tensor_core,
+            )
             if lowering_semantics == LoweringSemantics.Warpgroup
             else utils.BarrierRef.initialize
         )
@@ -547,8 +554,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
         size += max(_smem_tree_size(s) for s in members)
       case (
           TMABarrier(num_barriers)
-          | ClusterBarrier(_, _, num_barriers=num_barriers)
-          | Barrier(_, num_barriers=num_barriers)
+          | ClusterBarrier(num_barriers=num_barriers)
+          | Barrier(num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError(
