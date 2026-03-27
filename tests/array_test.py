@@ -1514,10 +1514,16 @@ class ShardingTest(jtu.JaxTestCase):
       jax.P((('a', 'b'), 'c'))
 
   def test_pspec_subclass_error(self):
-
     with self.assertRaisesRegex(TypeError, "prohibits subclassing"):
       class MyP(jax.P):
         pass
+
+  def test_abstract_mesh_is_equivalent_to(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    s1 = NamedSharding(mesh.abstract_mesh, P('x'))
+    s2 = NamedSharding(mesh.abstract_mesh, P('x'))
+    self.assertTrue(s1 == s2)
+    self.assertTrue(s1.is_equivalent_to(s2, 2))
 
 
 class RngShardingTest(jtu.JaxTestCase):

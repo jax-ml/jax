@@ -26,7 +26,7 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
-from jax._src import sharding as JSharding
+from jax._src import sharding as jsharding
 import numpy as np
 
 Shape = tuple[int, ...]
@@ -84,7 +84,7 @@ def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):
 
 
 @use_cpp_class(xc.NamedSharding)
-class NamedSharding(JSharding.Sharding):
+class NamedSharding(jsharding.Sharding):
   r"""A :class:`NamedSharding` expresses sharding using named axes.
 
   A :class:`NamedSharding` is a pair of a :class:`Mesh` of devices and
@@ -253,6 +253,13 @@ class NamedSharding(JSharding.Sharding):
         memory_kind=kwargs.pop("memory_kind", self.memory_kind),
         _logical_device_ids=kwargs.pop("_logical_device_ids",
                                        self._logical_device_ids))
+
+  def is_equivalent_to(self, other, ndim: int) -> bool:
+    if (isinstance(self.mesh, mesh_lib.AbstractMesh) and
+        isinstance(other.mesh, mesh_lib.AbstractMesh)):
+      return jsharding.common_is_equivalent_to(self, other, ndim,
+                                               check_devices=False)
+    return jsharding.common_is_equivalent_to(self, other, ndim)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
