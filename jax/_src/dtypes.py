@@ -1075,7 +1075,6 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   dtype, weak_type = lattice_result_type(*(default_float_dtype() if arg is None else arg for arg in args))
   if weak_type:
     dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
-  # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:

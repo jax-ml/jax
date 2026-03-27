@@ -1783,10 +1783,9 @@ def update_aval_with_sharding(aval, sharding, manual_type=None):
 # their own separate implementation. Now they're effectively the same, with the
 # following differences:
 #
-# - typeof is like abstractify, but also accepts tracers.
+# - typeof returns avals for valid array-like objects, including tracers.
 # - shaped_abstractify is like typeof, but also accepts duck-typed arrays.
 #
-# TODO(jakevdp): can these be unified further?
 
 def shaped_abstractify(x):
   typ = type(x)
@@ -1834,9 +1833,6 @@ def typeof(x: Any) -> Any:
         ' using jax.numpy.array(), or register your object as a pytree.'
     )
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
-
-# TODO(phawkins): remove this alias
-get_aval = typeof
 
 def is_concrete(x):
   return to_concrete_value(x) is not None

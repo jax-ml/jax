@@ -39,7 +39,7 @@ from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import xla_metadata_lib
 from jax._src.core import (
-    Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
+    Trace, Tracer, TraceTag, Jaxpr, Literal, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
     get_referent, JaxprEqnContext, typeof)
 from jax._src.lib import _jax
@@ -105,7 +105,7 @@ class PartialVal(tuple):
     """Get AbstractValue directly (if unknown) or from the constant (known)."""
     known = self.get_known()
     if known is not None:
-      return get_aval(known)
+      return typeof(known)
     else:
       return self[0]
 
@@ -138,11 +138,11 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, PartialVal.known(val), None)
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
-    aval = get_aval(val)
+    aval = typeof(val)
     return JaxprTracer(self, PartialVal.unknown(aval), Literal(val, aval))
 
   def new_instantiated_const(self, val) -> JaxprTracer:
-    aval = get_aval(val)
+    aval = typeof(val)
     return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(val))
 
   def new_arg(self, pval: PartialVal) -> JaxprTracer:
@@ -1902,7 +1902,7 @@ class DynamicJaxprTrace(core.Trace):
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
       if aval is None:
-        aval = get_aval(c)
+        aval = typeof(c)
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace or core.eval_trace):
           aval = core.AvalQDD(aval, core.cur_qdd(c))  # type: ignore
@@ -2007,7 +2007,7 @@ class DynamicJaxprTrace(core.Trace):
                    params, /):
     source_info = source_info_util.current()
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
-    in_type = (tuple(get_aval(t) for t in in_tracers) if f.in_type is None
+    in_type = (tuple(typeof(t) for t in in_tracers) if f.in_type is None
                else f.in_type)
     f.in_type = None
     assert in_type is not None
