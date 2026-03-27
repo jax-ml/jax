@@ -10557,6 +10557,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(jax.sharding.get_mesh(), mesh)
     self.assertEqual(jax.sharding.get_abstract_mesh(), mesh.abstract_mesh)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_topk(self, mesh):
+    arr = jnp.ones((4, 32, 32), out_sharding=P('x', None, None))
+
+    @jax.jit
+    def f(w):
+      vals, _ = jax.lax.top_k(w, 6)
+      self.assertEqual(vals.aval.sharding.spec, P('x', None, None))
+      return vals
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, None)))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).mean()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x', None, None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

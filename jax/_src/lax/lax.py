@@ -8209,11 +8209,16 @@ def _top_k_abstract_eval(operand, *, k, axis):
     pass
   else:
     if too_large:
-      raise ValueError("top_k returns int32 indices, which will overflow for array dimensions "
-                       f"larger than the maximum int32 ({int32_max}). Got {operand.shape=}")
+      raise ValueError(
+          'top_k returns int32 indices, which will overflow for array'
+          f' dimensions larger than the maximum int32 ({int32_max}). Got'
+          f' {operand.shape=}')
   shape[axis] = k
-  return (operand.update(shape=shape, dtype=operand.dtype,
-                         weak_type=operand.weak_type),
+  if operand.sharding.spec[axis] is not None:
+    raise core.ShardingTypeError(
+        'The input should be unsharded over the axis along which to compute the'
+        f' top_k values. Got input type={operand} and axis={axis}')
+  return (operand.update(shape=shape),
           operand.update(shape=shape, dtype=np.dtype(np.int32)))
 
 def _top_k_jvp(primals, tangents, *, k, axis):
@@ -8234,8 +8239,7 @@ def _top_k_jvp(primals, tangents, *, k, axis):
         collapsed_slice_dims=(axis,),
         operand_batching_dims=tuple(i for i in range(rank) if i != axis),
         start_indices_batching_dims=tuple(i for i in range(rank) if i != axis),
-        start_index_map=(axis,),
-    )
+        start_index_map=(axis,))
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
   return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
@@ -8250,6 +8254,7 @@ top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
+
 def _top_k_lower(ctx, operand, k, axis):
   # Move axis to last dimension:
   ndim = len(ctx.avals_in[0].shape)
@@ -8275,13 +8280,15 @@ def _top_k_lower(ctx, operand, k, axis):
         operands=[operand, k_value],
     ).results
 
+  results = [mlir.lower_with_sharding_in_types(ctx, r, aval)
+             for r, aval in zip(results, ctx.avals_out)]
   # Move last dimension back into place
   if perm is not None:
     results = [hlo.transpose(result, mlir.dense_int_array(perm))
                for result in results]
   return results
-
 mlir.register_lowering(top_k_p, _top_k_lower)
+
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
