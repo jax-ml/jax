@@ -335,7 +335,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   out_vma = core.standard_vma_rule('linear_solve', *args_to_raise)
   if any(core.getu(a) or core.getr(a) for a in args_to_raise):
     raise NotImplementedError
-  return (tuple(a.update(manual_type=a.mt.update(varying=out_vma))
+  return (tuple(a.update(manual_axis_type=a.mat.update(varying=out_vma))
                 for a in args_to_raise),
           jaxprs.solve.effects)
 

@@ -123,7 +123,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
                       f"be equal to fft_lengths {fft_lengths}")
     shape = x.shape
     dtype = x.dtype
-  if x.mt.unreduced or x.mt.reduced:
+  if x.mat.unreduced or x.mat.reduced:
     raise NotImplementedError
   return x.update(shape=shape, dtype=dtype)
 

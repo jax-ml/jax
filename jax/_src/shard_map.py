@@ -315,7 +315,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
         if isinstance(spec, P):
           val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).vma))
           aval = typeof(val)
-          unreduced = spec.unreduced - aval.mt.unreduced
+          unreduced = spec.unreduced - aval.mat.unreduced
           if unreduced:
             axes = order_wrt_mesh(aval.sharding.mesh, unreduced)
             return lax_parallel.vary_unreduced_cast(val, axes)
@@ -823,22 +823,23 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   new_sharding = aval.sharding.update(
       mesh=manual_mesh,
       spec=core.modify_spec_for_auto_manual(aval.sharding.spec, manual_mesh))
-  vma = (_spec_to_vma(spec) if check_vma else frozenset()) | aval.mt.varying
+  vma = (_spec_to_vma(spec) if check_vma else frozenset()) | aval.mat.varying
   unreduced = aval.sharding.spec.unreduced if check_vma else frozenset()
   reduced = aval.sharding.spec.reduced if check_vma else frozenset()
-  mt = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced)
-  return aval.update(shape=new_shape, sharding=new_sharding, manual_type=mt)
+  mat = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced)
+  return aval.update(shape=new_shape, sharding=new_sharding,
+                     manual_axis_type=mat)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
 def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
                           ) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
-  if check_vma and spec.unreduced != aval.mt.unreduced:
+  if check_vma and spec.unreduced != aval.mat.unreduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the unreduced"
         f" present on the out_aval. Got out_specs={spec} and"
         f" out_aval={aval.str_short(True)}")
-  if check_vma and spec.reduced != aval.mt.reduced:
+  if check_vma and spec.reduced != aval.mat.reduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the reduced present"
         f" on the out_aval. Got out_specs={spec} and"
@@ -871,8 +872,9 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
   manual_axes = set(new_mesh.manual_axes)
   vma = frozenset(v for v in aval.vma if v in manual_axes)
   # TODO(yashkatariya): Handle partial manual unreduced/reduced.
-  out_mt = core.ManualAxisType(varying=vma)
-  return aval.update(shape=new_shape, sharding=new_sharding, manual_type=out_mt)
+  out_mat = core.ManualAxisType(varying=vma)
+  return aval.update(shape=new_shape, sharding=new_sharding,
+                     manual_axis_type=out_mat)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -1147,11 +1149,11 @@ def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
                    for p in (s if isinstance(s, tuple) else (s,)))
 
-def _mt_to_spec(mesh, mt):
+def _mat_to_spec(mesh, mt):
   return P(order_wrt_mesh(mesh, mt.varying), unreduced=mt.unreduced,
            reduced=mt.reduced)
 
-def _spec_to_mt(spec) -> core.ManualAxisType:
+def _spec_to_mat(spec) -> core.ManualAxisType:
   return core.ManualAxisType(varying=_spec_to_vma(spec),
                              unreduced=spec.unreduced, reduced=spec.reduced)
 
@@ -1165,43 +1167,43 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
   cur_mesh = get_abstract_mesh()
   args_ = map(partial(_unmatch_spec, mesh, check_vma, cur_mesh, manual_axes),
               in_specs, args)
-  in_mt = map(_spec_to_mt, in_specs)
-  outs, out_specs, out_mt = _run_shmap(fun, mesh, manual_axes, args_, in_mt,
-                                       check_vma)
+  in_mat = map(_spec_to_mat, in_specs)
+  outs, out_specs, out_mat = _run_shmap(fun, mesh, manual_axes, args_, in_mat,
+                                        check_vma)
   out_avals = outs.map(lambda x: core.mapped_aval(x.shape[0], 0, core.typeof(x)))
   _check_names(out_specs, out_avals)
   if check_vma:
     _check_vmas(mesh, out_specs, out_avals)
-    src_pspecs = tuple(_mt_to_spec(mesh, m) for m in out_mt)
+    src_pspecs = tuple(_mat_to_spec(mesh, m) for m in out_mat)
   else:
     src_pspecs = tuple(P(order_wrt_mesh(mesh, manual_axes))
-                       for _ in range(len(out_mt)))
+                       for _ in range(len(out_mat)))
   dst_pspecs = out_specs
   return outs.map3(partial(_match_spec, mesh, check_vma, manual_axes),
                    src_pspecs, dst_pspecs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-def _run_shmap_lu(f, mesh, manual_axes, args, mts, check_vma):
+def _run_shmap_lu(f, mesh, manual_axes, args, mats, check_vma):
   assert not mesh.manual_axes
   trace = ShardMapTrace(mesh, manual_axes, check_vma)
-  in_tracers = map(partial(ShardMapTracer, trace), mts, args)
+  in_tracers = map(partial(ShardMapTracer, trace), mats, args)
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, manual_axes),
         use_abstract_mesh(inner_mesh), config._check_vma(check_vma)):
     ans = f.call_wrapped(*in_tracers)
-    outs, out_mt = unzip2(map(trace.to_val_mt_pair, ans))
-  return outs, out_mt
+    outs, out_mat = unzip2(map(trace.to_val_mat_pair, ans))
+  return outs, out_mat
 
-def _run_shmap(f, mesh, manual_axes, args, mts, check_vma):
+def _run_shmap(f, mesh, manual_axes, args, mats, check_vma):
   assert not mesh.manual_axes
   trace = ShardMapTrace(mesh, manual_axes, check_vma)
-  in_tracers = map(partial(ShardMapTracer, trace), mts, args)
+  in_tracers = map(partial(ShardMapTracer, trace), mats, args)
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, manual_axes),
         use_abstract_mesh(inner_mesh), config._check_vma(check_vma)):
     ans, out_specs = f(*in_tracers).unpack_aux()
-    outs, outs_mt = ans.map(trace.to_val_mt_pair).unzip2()
-  return outs, out_specs, list(outs_mt)
+    outs, outs_mat = ans.map(trace.to_val_mat_pair).unzip2()
+  return outs, out_specs, list(outs_mat)
 
 def _unmatch_spec2(mesh, prev_manual, spec, x) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
@@ -1304,9 +1306,9 @@ class ShardMapTrace(core.Trace):
     self.check = check
     self.amesh = mesh.abstract_mesh
 
-  def to_val_mt_pair(self, val):
+  def to_val_mat_pair(self, val):
     if isinstance(val, ShardMapTracer):
-      return val.val, val.mt
+      return val.val, val.mat
     elif isinstance(val, Tracer):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
@@ -1315,15 +1317,15 @@ class ShardMapTrace(core.Trace):
       return val_, core.ManualAxisType()
 
   def process_primitive(self, prim, tracers, params, /):
-    in_vals, in_mt = unzip2(map(self.to_val_mt_pair, tracers))
+    in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
     if self.check:
       out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
       out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
-      out_mt = tree_map(lambda a: a.mt, out_avals)
-      in_specs  = tuple(map(partial(_mt_to_spec, self.mesh), in_mt))
-      out_specs = tree_map(partial(_mt_to_spec, self.mesh), out_mt)
+      out_mat = tree_map(lambda a: a.mat, out_avals)
+      in_specs  = tuple(map(partial(_mat_to_spec, self.mesh), in_mat))
+      out_specs = tree_map(partial(_mat_to_spec, self.mesh), out_mat)
     else:
-      out_mt = core.ManualAxisType()
+      out_mat = core.ManualAxisType()
       in_specs = out_specs = P(order_wrt_mesh(self.mesh, self.manual_axes))
 
     eager_rule = eager_rules.get(prim)
@@ -1338,10 +1340,10 @@ class ShardMapTrace(core.Trace):
         out_vals = api.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
-      out_mt = (out_mt if isinstance(out_mt, (list, tuple))
-                else [out_mt] * len(out_vals))
-      return map(partial(ShardMapTracer, self), out_mt, out_vals)
-    return ShardMapTracer(self, out_mt, out_vals)
+      out_mat = (out_mat if isinstance(out_mat, (list, tuple))
+                else [out_mat] * len(out_vals))
+      return map(partial(ShardMapTracer, self), out_mat, out_vals)
+    return ShardMapTracer(self, out_mat, out_vals)
 
   def process_shard_map(self, prim, fun, args, mesh, in_specs,
                         check_vma, manual_axes, debug_info):
@@ -1354,8 +1356,8 @@ class ShardMapTrace(core.Trace):
       raise Exception
     del check_vma
 
-    in_vals, in_mts = unzip2(map(self.to_val_mt_pair, args))
-    if any(m.unreduced or m.reduced for m in in_mts):
+    in_vals, in_mats = unzip2(map(self.to_val_mat_pair, args))
+    if any(m.unreduced or m.reduced for m in in_mats):
       raise NotImplementedError(
           "Eager shard_map + unreduced/reduced + partial manual is not"
           " implemented. Please wrap your shard_map in `jax.jit`.")
@@ -1363,21 +1365,22 @@ class ShardMapTrace(core.Trace):
     in_vals_ = [_unmatch_spec2(self.mesh, self.manual_axes, spec, x)
                 for x, spec in zip(in_vals, in_specs)]
     # TODO(yashkatariya): Handle unreduced/reduced correctly.
-    in_mts_ = [core.ManualAxisType(varying=mt.varying | _spec_to_vma(s))
-               for mt, s in zip(in_mts, in_specs)]
-    in_tracers = map(partial(ShardMapTracer, trace), in_mts_, in_vals_)
+    in_mats_ = [core.ManualAxisType(varying=mt.varying | _spec_to_vma(s))
+                for mt, s in zip(in_mats, in_specs)]
+    in_tracers = map(partial(ShardMapTracer, trace), in_mats_, in_vals_)
     inner_mesh = _as_manual_mesh(self.mesh, manual_axes | self.manual_axes)
     with (core.set_current_trace(trace), _extend_axis_env(self.mesh, manual_axes),
           use_abstract_mesh(inner_mesh)):
       ans_aux = fun(*in_tracers)
       ans, out_specs = ans_aux.unpack_aux()
-      out_vals_, out_mts_ = ans.map(trace.to_val_mt_pair).unzip2()
+      out_vals_, out_mats_ = ans.map(trace.to_val_mat_pair).unzip2()
     out_vals = out_vals_.map2(
         lambda x, spec: _match_spec2(self.mesh, self.manual_axes, spec, x), out_specs)
     # TODO(yashkatariya): Handle unreduced/reduced correctly.
-    out_mts = [core.ManualAxisType(varying=mt.varying - _spec_to_vma(spec))
-               for mt, spec in zip(out_mts_, out_specs)]
-    return out_vals.map2(lambda val, vma: ShardMapTracer(self, vma, val), out_mts)
+    out_mats = [core.ManualAxisType(varying=mt.varying - _spec_to_vma(spec))
+                for mt, spec in zip(out_mats_, out_specs)]
+    return out_vals.map2(lambda val, vma: ShardMapTracer(self, vma, val),
+                         out_mats)
 
   def process_call(self, call_primitive, fun, tracers, params, /):
     raise NotImplementedError(
@@ -1389,10 +1392,10 @@ class ShardMapTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros
-    in_vals, in_mt = unzip2(map(self.to_val_mt_pair, tracers))
-    out_vals, out_mt = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
-                                     in_mt, self.check)
-    return map(partial(ShardMapTracer, self), out_mt, out_vals)
+    in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
+    out_vals, out_mat = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
+                                      in_mat, self.check)
+    return map(partial(ShardMapTracer, self), out_mat, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, /, *, out_trees,
                               symbolic_zeros):
@@ -1402,34 +1405,34 @@ class ShardMapTrace(core.Trace):
              "https://github.com/jax-ml/jax/issues")
       raise NotImplementedError(msg)
     del prim, fwd, bwd, out_trees, symbolic_zeros
-    in_vals, in_mt = unzip2(map(self.to_val_mt_pair, tracers))
-    out_vals, out_mt = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
-                                     in_mt, self.check)
-    return map(partial(ShardMapTracer, self), out_mt, out_vals)
+    in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
+    out_vals, out_mat = _run_shmap_lu(fun, self.mesh, self.manual_axes, in_vals,
+                                      in_mat, self.check)
+    return map(partial(ShardMapTracer, self), out_mat, out_vals)
 
 
 class ShardMapTracer(core.Tracer[ShardMapTrace]):
   mt: core.ManualAxisType
   val: JaxType
 
-  def __init__(self, trace, mt, val):
+  def __init__(self, trace, mat, val):
     self._trace = trace
-    assert isinstance(mt, core.ManualAxisType)
-    self.mt = mt
+    assert isinstance(mat, core.ManualAxisType)
+    self.mat = mat
     self.val = val
 
   @property
   def aval(self):
     aval = core.typeof(self.val)
-    mt = (self.mt if self._trace.check else
+    mt = (self.mat if self._trace.check else
           core.ManualAxisType(varying=self._trace.manual_axes))
     size = prod(self._trace.mesh.shape[n] for n in mt.varying)
     out = core.mapped_aval(size, 0, aval)
     manual_mesh = _as_manual_mesh(self._trace.amesh, self._trace.manual_axes)
     spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
     new_sharding = NamedSharding(manual_mesh, spec)
-    mt = self.mt if config._check_vma.value else core.ManualAxisType()
-    return out.update(sharding=new_sharding, manual_type=mt)
+    mat = self.mat if config._check_vma.value else core.ManualAxisType()
+    return out.update(sharding=new_sharding, manual_axis_type=mat)
 
   def to_concrete_value(self):
     if self._trace.check and self.vma == frozenset():

@@ -261,7 +261,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(out_specs=P(unreduced={'x'}))
     def f(a, b):
       c = jnp.dot(a, b)
-      self.assertEqual(c.aval.mt.varying, {'x'})
+      self.assertEqual(c.aval.mat.varying, {'x'})
       return c
 
     out = f(arr1, arr2)
@@ -2638,11 +2638,11 @@ class ShardMapTest(jtu.JaxTestCase):
                  out_specs=P(None, None, reduced={'seq'}))
       def ag(a):
         self.assertEqual(a.aval.vma, {'seq'})
-        self.assertEqual(a.aval.mt.unreduced, frozenset())
+        self.assertEqual(a.aval.mat.unreduced, frozenset())
         out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
         self.assertEqual(out.aval.vma, frozenset())
-        self.assertEqual(out.aval.mt.unreduced, frozenset())
-        self.assertEqual(out.aval.mt.reduced, {'seq'})
+        self.assertEqual(out.aval.mat.unreduced, frozenset())
+        self.assertEqual(out.aval.mat.reduced, {'seq'})
         return out
 
       y2 = ag(y)
@@ -2658,20 +2658,20 @@ class ShardMapTest(jtu.JaxTestCase):
                  out_specs=P('seq', None, unreduced={'data'}))
       def rs(a):
         self.assertEqual(a.aval.vma, frozenset())
-        self.assertEqual(a.aval.mt.unreduced, {'data', 'seq'})
+        self.assertEqual(a.aval.mat.unreduced, {'data', 'seq'})
         out = lax.psum_scatter(a, axis_name='seq', tiled=True)
         self.assertEqual(out.aval.vma, {'seq'})
-        self.assertEqual(out.aval.mt.unreduced, {'data'})
+        self.assertEqual(out.aval.mat.unreduced, {'data'})
         return out
 
       @shard_map(in_specs=P('seq', None, unreduced={'data'}),
                  out_specs=P('seq', None))
       def ar(a):
         self.assertEqual(a.aval.vma, {'seq'})
-        self.assertEqual(a.aval.mt.unreduced, {'data'})
+        self.assertEqual(a.aval.mat.unreduced, {'data'})
         out = lax.psum(a, axis_name='data')
         self.assertEqual(out.aval.vma, {'seq'})
-        self.assertEqual(out.aval.mt.unreduced, frozenset())
+        self.assertEqual(out.aval.mat.unreduced, frozenset())
         return out
 
       x_bar = jnp.einsum('btf,df->btd', g, y, out_sharding=P('data', 'seq', None))
@@ -2711,23 +2711,23 @@ class ShardMapTest(jtu.JaxTestCase):
                out_specs=P('seq', None, reduced={'data'}))
     def preduced(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.mt.unreduced, frozenset())
+      self.assertEqual(a.aval.mat.unreduced, frozenset())
       out = jax.lax.pcast(a, axis_name='data', to='reduced')
       self.assertEqual(out.aval.vma, {'seq'})
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
-      self.assertEqual(out.aval.mt.reduced, {'data'})
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.reduced, {'data'})
       return out
 
     @shard_map(in_specs=P('seq', None, reduced={'data'}),
                out_specs=P(None, None, reduced={'seq', 'data'}))
     def ag(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.mt.unreduced, frozenset())
-      self.assertEqual(a.aval.mt.reduced, {'data'})
+      self.assertEqual(a.aval.mat.unreduced, frozenset())
+      self.assertEqual(a.aval.mat.reduced, {'data'})
       out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
-      self.assertEqual(out.aval.mt.reduced, {'seq', 'data'})
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.reduced, {'seq', 'data'})
       return out
 
     @jax.jit
@@ -2766,10 +2766,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P())
     def ar(x):
       self.assertEqual(x.aval.vma, frozenset())
-      self.assertEqual(x.aval.mt.unreduced, {'x'})
+      self.assertEqual(x.aval.mat.unreduced, {'x'})
       out = jax.lax.psum(x, 'x')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
       return out
 
     @jax.jit
@@ -2801,12 +2801,12 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(), out_specs=P(reduced={'x'}))
     def pr(x):
       self.assertEqual(x.aval.vma, frozenset())
-      self.assertEqual(x.aval.mt.unreduced, frozenset())
-      self.assertEqual(x.aval.mt.reduced, frozenset())
+      self.assertEqual(x.aval.mat.unreduced, frozenset())
+      self.assertEqual(x.aval.mat.reduced, frozenset())
       out = jax.lax.pcast(x, 'x', to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
-      self.assertEqual(out.aval.mt.reduced, {'x'})
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.reduced, {'x'})
       return out
 
     @jax.jit
@@ -2836,11 +2836,11 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P('seq', None), out_specs=P(None, None, reduced={'seq'}))
     def ag(a):
       self.assertEqual(a.aval.vma, {'seq'})
-      self.assertEqual(a.aval.mt.unreduced, frozenset())
+      self.assertEqual(a.aval.mat.unreduced, frozenset())
       out = lax.all_gather(a, axis_name='seq', tiled=True, to='reduced')
       self.assertEqual(out.aval.vma, frozenset())
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
-      self.assertEqual(out.aval.mt.reduced, {'seq'})
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.reduced, {'seq'})
       return out
 
     @jax.jit
@@ -2873,10 +2873,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P('x', None))
     def rs(a):
       self.assertEqual(a.aval.vma, frozenset())
-      self.assertEqual(a.aval.mt.unreduced, {'x'})
+      self.assertEqual(a.aval.mat.unreduced, {'x'})
       out = lax.psum_scatter(a, axis_name='x', tiled=True)
       self.assertEqual(out.aval.vma, {'x'})
-      self.assertEqual(out.aval.mt.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
       return out
 
     @jax.jit
@@ -4692,7 +4692,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x, y):
       self.assertEqual(x.vma, {'x', 'y'})
       self.assertEqual(y.vma, {'y'})
-      self.assertEqual(y.aval.mt.reduced, {'x'})
+      self.assertEqual(y.aval.mat.reduced, {'x'})
       z = jnp.dot(x, y)
       self.assertEqual(z.vma, {'x', 'y'})
       return jax.lax.psum(z, axis_name='y')
@@ -4720,9 +4720,9 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.shard_map(in_specs=(P('x', None), P(None, None, reduced={'x'})),
                    out_specs=P('x', None))
     def dot(inputs, params):
-      self.assertEqual(params.aval.mt.reduced, {'x'})
+      self.assertEqual(params.aval.mat.reduced, {'x'})
       params = params.astype(jnp.bfloat16)
-      self.assertEqual(params.aval.mt.reduced, {'x'})
+      self.assertEqual(params.aval.mat.reduced, {'x'})
       return jnp.dot(inputs.astype(jnp.bfloat16), params)
 
     @jax.jit
@@ -5003,7 +5003,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(in_specs=P(unreduced={'x'}), out_specs=P(), check_vma=False)
     def g(x):
-      self.assertEqual(x.aval.mt.unreduced, frozenset())
+      self.assertEqual(x.aval.mat.unreduced, frozenset())
       return x
 
     out2 = g(out)
@@ -5245,7 +5245,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.shard_map(out_specs=P(reduced={'x'}))
     def f(x):
       out = jnp.reshape(x, (4, 2))
-      self.assertEqual(out.aval.mt.reduced, {'x'})
+      self.assertEqual(out.aval.mat.reduced, {'x'})
       return out
 
     out = f(arr)

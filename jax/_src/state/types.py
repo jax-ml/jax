@@ -383,8 +383,8 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update_manual_type(self, mt):
-    return self.update(inner_aval=self.inner_aval.update_manual_type(mt))
+  def update_manual_axis_type(self, mat):
+    return self.update(inner_aval=self.inner_aval.update_manual_axis_type(mat))
 
   def update(self, inner_aval=None, memory_space=None, kind=None):  # pyrefly: ignore[bad-override]
     inner_aval = self.inner_aval if inner_aval is None else inner_aval

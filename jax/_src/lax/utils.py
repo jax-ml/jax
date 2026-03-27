@@ -189,13 +189,13 @@ def standard_abstract_eval(
     out_shape, out_dtype, out_sharding = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, ur_rule, False,
         *avals, **kwargs)
-    out_mt = manual_rule(prim, vma_rule, ur_rule, False, *avals, **kwargs)
+    out_mat = manual_rule(prim, vma_rule, ur_rule, False, *avals, **kwargs)
     out_mem_space = (_default_memory_space_rule(prim, *avals, **kwargs)
                      if memory_space_rule is None else
                      memory_space_rule(*avals, **kwargs))
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-        manual_type=out_mt, memory_space=out_mem_space)
+        manual_axis_type=out_mat, memory_space=out_mem_space)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   else:
@@ -213,15 +213,15 @@ def standard_multi_result_abstract_eval(
     out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, ur_rule, True,
         *avals, **kwargs)
-    out_mts = manual_rule(prim, vma_rule, ur_rule, True, *avals, **kwargs)
+    out_mats = manual_rule(prim, vma_rule, ur_rule, True, *avals, **kwargs)
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
-                                  manual_type=mt, memory_space=ms)
-                 for s, d, weak_type, sh, mt, ms in zip(
+                                  manual_axis_type=mat, memory_space=ms)
+                 for s, d, weak_type, sh, mat, ms in zip(
                      out_shapes, out_dtypes, weak_types, out_shardings,
-                     out_mts, out_mem_spaces)]
+                     out_mats, out_mem_spaces)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
   else:

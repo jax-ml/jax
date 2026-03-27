@@ -83,7 +83,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           out_shape=jax.ShapeDtypeStruct(
               (8, 128),
               jnp.float32,
-              manual_type=jax.sharding.ManualAxisType(varying={'x'}),
+              manual_axis_type=jax.sharding.ManualAxisType(varying={'x'}),
           ),
       )(x)
 
@@ -140,7 +140,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     )
     with self.assertRaisesRegex(
         ValueError,
-        'When `check_vma=True` on `jax.shard_map`, `manual_type` on'
+        'When `check_vma=True` on `jax.shard_map`, `manual_axis_type` on'
         ' `jax.ShapeDtypeStruct` must not be `None`'):
       f(x)
 

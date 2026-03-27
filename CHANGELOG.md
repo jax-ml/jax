@@ -41,8 +41,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes:
   * The minimum supported SciPy version is now 1.14.
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
-    `manual_type: jax.sharding.ManualAxisType`. The `.vma` property has been
-    replaced with `.manual_type.varying`.
+    `manual_axis_type: jax.sharding.ManualAxisType`. The `.vma` property has
+    been replaced with `.manual_axis_type.varying`.
   * Removed experimental {func}`jax.experimental.custom_dce.custom_dce`
   * {func}`jax.scipy.linalg.cho_solve`, {func}`jax.scipy.linalg.lu_solve`, and
     {func}`jax.scipy.linalg.solve_triangular` now show a deprecation warning for

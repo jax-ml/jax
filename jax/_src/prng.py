@@ -186,7 +186,7 @@ class PRNGKeyArray(Array):
 
   @property
   def aval(self):
-    mt = self._base_array.aval.mt
+    mt = self._base_array.aval.mat
     return keys_shaped_array(self._impl, self.shape, self.sharding, mt)
 
   @property
@@ -376,9 +376,9 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
   return random_seed(seed, impl=impl)
 
 
-def keys_shaped_array(impl, shape, sharding, mt):
+def keys_shaped_array(impl, shape, sharding, mat):
   aval = core.ShapedArray(shape, KeyTy(impl))
-  return core.update_aval_with_sharding(aval, sharding, manual_type=mt)
+  return core.update_aval_with_sharding(aval, sharding, mat=mat)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -572,7 +572,7 @@ batching.defvectorized(random_seed_p)
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
   return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
-                           seeds_aval.mt)
+                           seeds_aval.mat)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
@@ -611,7 +611,7 @@ def random_split_abstract_eval(keys_aval, *, shape):
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           out_sharding, keys_aval.mt)
+                           out_sharding, keys_aval.mat)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -652,9 +652,9 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   sharding = lax.broadcasting_sharding_rule(
       'random_fold_in', keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
-  out_mt = core.ManualAxisType(varying=vma)
+  out_mat = core.ManualAxisType(varying=vma)
   return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
-                          manual_type=out_mt)
+                          manual_axis_type=out_mat)
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
@@ -699,7 +699,7 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
   return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                          manual_type=keys_aval.mt)
+                          manual_axis_type=keys_aval.mat)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
@@ -756,7 +756,7 @@ ad.defjvp_zero(random_wrap_p)
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
   sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
-  return keys_shaped_array(impl, shape, sharding, base_arr_aval.mt)
+  return keys_shaped_array(impl, shape, sharding, base_arr_aval.mat)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):

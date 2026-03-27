@@ -1750,7 +1750,7 @@ class VectorSubcoreTest(PallasSCTest):
           out_shape=jax.ShapeDtypeStruct(
               x.shape,
               x.dtype,
-              manual_type=jax.sharding.ManualAxisType(varying={"x"}),
+              manual_axis_type=jax.sharding.ManualAxisType(varying={"x"}),
           ),
           mesh=plsc.VectorSubcoreMesh(
               core_axis_name="core", subcore_axis_name="subcore", num_cores=1

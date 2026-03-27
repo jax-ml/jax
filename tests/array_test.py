@@ -1341,13 +1341,15 @@ class ShardingTest(jtu.JaxTestCase):
         axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Manual))
 
     s = NamedSharding(mesh, P(unreduced={'a'}, reduced={'b'}))
-    aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
-                                manual_type=core.ManualAxisType(varying={'c'}))
+    aval = jax.core.ShapedArray(
+      (1, 1, 1, 1), np.float32, sharding=s,
+      manual_axis_type=core.ManualAxisType(varying={'c'}))
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c, U:a, R:b}')
 
     s = NamedSharding(mesh, P(unreduced={'a'}))
-    aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
-                                manual_type=core.ManualAxisType(varying={'c'}))
+    aval = jax.core.ShapedArray(
+      (1, 1, 1, 1), np.float32, sharding=s,
+      manual_axis_type=core.ManualAxisType(varying={'c'}))
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c, U:a}')
 
     s = NamedSharding(mesh, P(unreduced={'a'}))
@@ -1355,14 +1357,15 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{U:a}')
 
     s = NamedSharding(mesh, P())
-    aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
-                                manual_type=core.ManualAxisType(varying={'c'}))
+    aval = jax.core.ShapedArray(
+      (1, 1, 1, 1), np.float32, sharding=s,
+      manual_axis_type=core.ManualAxisType(varying={'c'}))
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{V:c}')
 
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32)
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]')
 
-  def test_manual_type_frozen(self):
+  def test_manual_axis_type_frozen(self):
     mt = core.ManualAxisType(varying={'x'})
     with self.assertRaisesRegex(RuntimeError, "Cannot reassign attributes"):
       mt.varying = {'y'}

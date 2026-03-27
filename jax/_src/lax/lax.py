@@ -4026,8 +4026,8 @@ def replicated_axes(aval, mesh):
   spec = aval.sharding.spec
   flat_spec = frozenset(s for s in flatten_spec(spec) if s is not None)
   return frozenset(mesh.axis_names) - (
-      flat_spec | spec.unreduced | spec.reduced | aval.mt.varying |
-      aval.mt.unreduced | aval.mt.reduced)
+      flat_spec | spec.unreduced | spec.reduced | aval.mat.varying |
+      aval.mat.unreduced | aval.mat.reduced)
 
 def default_nary_reduced_rule(*avals, **params):
   cur_mesh = get_abstract_mesh()
@@ -4043,7 +4043,7 @@ def default_nary_reduced_rule(*avals, **params):
         raise core.ShardingTypeError(
             'Inputs cannot be replicated on the same axes that another input'
             f' is reduced on. Got input type: {a} and reduced spec: {reduced_s}')
-      if (frozenset(flatten_spec(a.sharding.spec)) | a.mt.varying) & reduced_s:
+      if (frozenset(flatten_spec(a.sharding.spec)) | a.mat.varying) & reduced_s:
         raise core.ShardingTypeError(
             'Inputs cannot be sharded/varying on the same axes that another'
             ' input is reduced on. Reshard the input which is reduced to be'
@@ -6541,9 +6541,10 @@ def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
       x, shape=shape, broadcast_dimensions=broadcast_dimensions,
       sharding=sharding)
   new_vma = core.standard_vma_rule('broadcast_in_dim', x)
-  out_mt = x.mt.update(varying=new_vma)
+  out_mat = x.mat.update(varying=new_vma)
   out_aval = core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                              manual_type=out_mt, memory_space=x.memory_space)
+                              manual_axis_type=out_mat,
+                              memory_space=x.memory_space)
   core.check_avals_context_mesh([out_aval], 'broadcast_in_dim')
   return out_aval
 

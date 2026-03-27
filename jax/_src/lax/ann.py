@@ -246,10 +246,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
         f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
         " should be `None`.")
   return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type, manual_type=operand.mt,
-                         sharding=operand_s),
+                         weak_type=operand.weak_type,
+                         manual_axis_type=operand.mat, sharding=operand_s),
           operand.update(shape=dims, dtype=np.dtype(np.int32),
-                         manual_type=operand.mt, sharding=operand_s))
+                         manual_axis_type=operand.mat, sharding=operand_s))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)

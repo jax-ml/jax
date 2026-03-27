@@ -379,7 +379,7 @@ def _reduce_window_abstract_eval_rule(
   if any(core.getu(a) or core.getr(a) for a in operand_avals):
     raise NotImplementedError
   return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
-                           manual_type=op.mt.update(varying=vma))
+                           manual_axis_type=op.mat.update(varying=vma))
                for op in operand_avals)
 
 

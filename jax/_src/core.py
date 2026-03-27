@@ -1695,7 +1695,7 @@ class AbstractValue:
   def update_weak_type(self, weak_type):
     return self
 
-  def update_manual_type(self, mt):
+  def update_manual_axis_type(self, mat):
     return self
 
   def strip_weak_type(self) -> AbstractValue:
@@ -1769,14 +1769,14 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def update_aval_with_sharding(aval, sharding, manual_type=None):
+def update_aval_with_sharding(aval, sharding, mat=None):
   if isinstance(sharding, NamedSharding):
     s = NamedSharding(sharding.mesh.abstract_mesh,
                       sharding.spec._normalized_spec_for_aval(aval.ndim))
     return aval.update(
-        sharding=s, manual_type=aval.mt if manual_type is None else manual_type,
+        sharding=s, manual_axis_type=(aval.mat if mat is None else mat),
         memory_space=mem_kind_to_space(sharding.memory_kind))
-  return aval if manual_type is None else aval.update(manual_type=manual_type)
+  return (aval if mat is None else aval.update(manual_axis_type=mat))
 
 
 # We have two flavors of abstractification APIs here which each used to have
@@ -1970,7 +1970,7 @@ def physical_aval(aval):
     from jax._src.sharding_impls import physical_sharding  # pytype: disable=import-error
     return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
                        sharding=physical_sharding(aval, aval.sharding),
-                       manual_type=aval.mt)
+                       manual_axis_type=aval.mat)
   return aval
 
 def physical_shape(logical_shape, dtype):
@@ -2096,21 +2096,21 @@ def get_cur_mesh_sharding(spec=None):
 
 def getu(aval):
   if aval.sharding.mesh.are_all_axes_manual:
-    return aval.mt.unreduced
+    return aval.mat.unreduced
   if aval.sharding.mesh.are_all_axes_explicit:
     return aval.sharding.spec.unreduced
   # Revise this after partial manual unreduced is supported
-  assert not aval.mt.unreduced
+  assert not aval.mat.unreduced
   assert not aval.sharding.spec.unreduced
   return frozenset()
 
 def getr(aval):
   if aval.sharding.mesh.are_all_axes_manual:
-    return aval.mt.reduced
+    return aval.mat.reduced
   if aval.sharding.mesh.are_all_axes_explicit:
     return aval.sharding.spec.reduced
   # Revise this after partial manual reduced is supported
-  assert not aval.mt.reduced
+  assert not aval.mat.reduced
   assert not aval.sharding.spec.reduced
   return frozenset()
 
@@ -2210,25 +2210,26 @@ def get_sharding(sharding, shape):
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def get_manual_type(mt, mesh):
+def get_mat(mat, mesh):
   if mesh.empty:
-    assert mt.empty(), mt
-    return mt
+    assert mat.empty(), mat
+    return mat
 
   axis_env = get_axis_env()
   in_axis_env = lambda i: axis_env.axis_exists(i) and i not in mesh._name_to_type
-  for i in it.chain(mt.varying, mt.unreduced, mt.reduced):
+  for i in it.chain(mat.varying, mat.unreduced, mat.reduced):
     if in_axis_env(i):
       continue
     if mesh._name_to_type[i] != AxisType.Manual:
       raise ValueError(
-          "Axes mentioned in `mt` field of ShapedArray should be of type"
-          f" `Manual`. Got {mt=} with axis: {i} of type {mesh._name_to_type[i]}")
+          "Axes mentioned in `manual_axis_type` field of ShapedArray should be"
+          f" of type `Manual`. Got manual_axis_type={mat} with axis: {i} of"
+          f" type {mesh._name_to_type[i]}")
   if config.remove_size_one_mesh_axis_from_type.value:
-    varying = frozenset(i for i in mt.varying
+    varying = frozenset(i for i in mat.varying
                         if in_axis_env(i) or mesh.shape[i] != 1)
-    return mt.update(varying=varying)
-  return mt
+    return mat.update(varying=varying)
+  return mat
 
 
 def get_memory_space(memory_space):
@@ -2286,7 +2287,7 @@ class ManualAxisType:
       kwargs['reduced'] = self.reduced
     return ManualAxisType(**kwargs)
 
-  def to_ct_mt(self):
+  def to_ct_mat(self):
     return self.update(unreduced=self.reduced, reduced=self.unreduced)
 
   def empty(self):
@@ -2299,21 +2300,21 @@ class ManualAxisType:
 
 class ShapedArray(AbstractValue):
   # inherits slots from parent
-  __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'manual_type',
+  __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'manual_axis_type',
                'memory_space']
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               manual_type: ManualAxisType = ManualAxisType(),
+               manual_axis_type: ManualAxisType = ManualAxisType(),
                memory_space: MemorySpace = MemorySpace.Device):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     # The ShapedArray.sharding.memory_kind is always None; use memory_space.
     self.sharding = get_sharding(sharding, self.shape)
-    # short for manual_type. See docs at
+    # short for manual_axis_type. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
-    self.manual_type = get_manual_type(manual_type, self.sharding.mesh)
+    self.manual_axis_type = get_mat(manual_axis_type, self.sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     self.memory_space = get_memory_space(memory_space)
 
@@ -2322,12 +2323,12 @@ class ShapedArray(AbstractValue):
   def lo_ty(self): return [self]
 
   @property
-  def mt(self):
-    return self.manual_type
+  def mat(self):
+    return self.manual_axis_type
 
   @property
   def vma(self):
-    return self.mt.varying
+    return self.mat.varying
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -2338,8 +2339,8 @@ class ShapedArray(AbstractValue):
       weak_type = self.weak_type
     if 'sharding' not in kwargs:
       kwargs['sharding'] = self.sharding
-    if 'manual_type' not in kwargs:
-      kwargs['manual_type'] = self.manual_type
+    if 'manual_axis_type' not in kwargs:
+      kwargs['manual_axis_type'] = self.manual_axis_type
     if 'memory_space' not in kwargs:
       kwargs['memory_space'] = self.memory_space
     return ShapedArray(shape, dtype, weak_type, **kwargs)
@@ -2359,7 +2360,7 @@ class ShapedArray(AbstractValue):
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
             and self.sharding == other.sharding
-            and self.mt == other.mt
+            and self.mat == other.mat
             and self.memory_space == other.memory_space)
 
   def __hash__(self):
@@ -2367,7 +2368,7 @@ class ShapedArray(AbstractValue):
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.mt, self.memory_space))
+                 self.mat, self.memory_space))
 
   def __ne__(self, other):
     return not self == other
@@ -2383,21 +2384,21 @@ class ShapedArray(AbstractValue):
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, sharding=self.sharding, manual_type=self.mt,
+        self.weak_type, sharding=self.sharding, manual_axis_type=self.mat,
         memory_space=self.memory_space)
 
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
-    ct_mt = self.mt.to_ct_mt()
+    ct_mat = self.mat.to_ct_mat()
     return ShapedArray(
-        self.shape, dtype, self.weak_type, sharding=sharding, manual_type=ct_mt,
-        memory_space=self.memory_space)
+        self.shape, dtype, self.weak_type, sharding=sharding,
+        manual_axis_type=ct_mat, memory_space=self.memory_space)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.mt, self.memory_space, short_dtypes, mesh_axis_types)
+        self.mat, self.memory_space, short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:
@@ -2405,17 +2406,18 @@ class ShapedArray(AbstractValue):
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
-  def update_manual_type(self, mt):
-    return self.update(manual_type=mt)
+  def update_manual_axis_type(self, mat):
+    return self.update(manual_axis_type=mat)
 
   def update_weak_type(self, weak_type):
     return self.update(weak_type=weak_type)
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
-    sh_names = order_wrt_mesh(mesh, self.mt.varying) if check_vma else all_names
-    u_names = self.mt.unreduced if check_vma else frozenset()
-    r_names = self.mt.reduced if check_vma else frozenset()
+    sh_names = (order_wrt_mesh(mesh, self.mat.varying)
+                if check_vma else all_names)
+    u_names = self.mat.unreduced if check_vma else frozenset()
+    r_names = self.mat.reduced if check_vma else frozenset()
     return (P(sh_names, unreduced=u_names, reduced=r_names) if sh_names else
             P(unreduced=u_names, reduced=r_names))
 
@@ -2449,13 +2451,13 @@ def _axis_types_dict(mesh):
     d[t].append(n)
   return {t: tuple(n) for t, n in d.items()}
 
-def str_short_aval(shape, dtype, mesh, spec, mt, memory_space,
+def str_short_aval(shape, dtype, mesh, spec, mat, memory_space,
                    short_dtypes=False, mesh_axis_types=False) -> str:
   dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(mt, spec.unreduced, spec.reduced, mesh)
+  vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, mesh)
   ms_str = ("" if memory_space == MemorySpace.Device else
             f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
@@ -2468,11 +2470,11 @@ def _create_str(x, prefix):
 def order_wrt_mesh(mesh, x):
   return tuple(a for a in mesh.axis_names if a in x)
 
-def _vma_ur_str(mt, spec_unreduced, spec_reduced, mesh):
-  vma = mt.varying
+def _vma_ur_str(mat, spec_unreduced, spec_reduced, mesh):
+  vma = mat.varying
   # TODO(yashkatariya): Diff between explicit unreduced and manual unreduced
-  unreduced = mt.unreduced | spec_unreduced
-  reduced = mt.reduced | spec_reduced
+  unreduced = mat.unreduced | spec_unreduced
+  reduced = mat.reduced | spec_reduced
   if not vma and not unreduced and not reduced:
     return ''
   vma_str = _create_str(order_wrt_mesh(mesh, vma), 'V') if vma else ''
@@ -2535,11 +2537,11 @@ def check_unreduced_args(args, axes, name):
   axes = axes if isinstance(axes, (tuple, list)) else (axes,)
   axes = set(axes)
   for a in args:
-    if a.mt.unreduced & axes:
+    if a.mat.unreduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are unreduced. Got"
           f" {a.str_short(True)} and axes={axes}")
-    if a.mt.reduced & axes:
+    if a.mat.reduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are reduced. Got"
           f" {a.str_short(True)} and axes={axes}")
@@ -2551,7 +2553,7 @@ def standard_insert_pvary(*args):
     return args
   in_vma = [aval.vma if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
-  in_reduced = [aval.mt.reduced
+  in_reduced = [aval.mat.reduced
                 if isinstance(aval := typeof(a), ShapedArray) else frozenset()
                 for a in args]
   out_vma = frozenset.union(*in_vma)
@@ -3174,7 +3176,7 @@ def _map_shaped_array(
       spec=aval_s.spec.update(partitions=tuple_delete(aval_s.spec, axis)))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding,
-                     manual_type=aval.mt, memory_space=aval.memory_space)
+                     manual_axis_type=aval.mat, memory_space=aval.memory_space)
 
 def _unmap_shaped_array(
     size: int, axis: int | None, explicit_mesh_axis, aval: ShapedArray
@@ -3187,7 +3189,8 @@ def _unmap_shaped_array(
         aval_s.spec, axis, explicit_mesh_axis)))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,
-                       manual_type=aval.mt, memory_space=aval.memory_space)
+                       manual_axis_type=aval.mat,
+                       memory_space=aval.memory_space)
   else:
     raise TypeError(axis)
 
@@ -3276,8 +3279,8 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
     return True
   elif isinstance(t1, ShapedArray) and isinstance(t2, ShapedArray):
     if no_dtype_check:
-      return cmp_shape_shd_mt_memsp(t1, t2)
-    return t1.dtype == t2.dtype and cmp_shape_shd_mt_memsp(t1, t2)
+      return cmp_shape_shd_mat_memsp(t1, t2)
+    return t1.dtype == t2.dtype and cmp_shape_shd_mat_memsp(t1, t2)
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
     # TODO(slebedev): Remove these aliases once we migrate off pytype.
@@ -3289,7 +3292,7 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
   else:
     return False
 
-def cmp_shape_shd_mt_memsp(t1, t2):
+def cmp_shape_shd_mat_memsp(t1, t2):
   # TODO(yashkatariya): Expand this to Manual and Auto mode.
   # See https://github.com/jax-ml/jax/issues/26474
   t1_mesh, t2_mesh = t1.sharding.mesh, t2.sharding.mesh
@@ -3301,7 +3304,7 @@ def cmp_shape_shd_mt_memsp(t1, t2):
   else:
     shd_eq = True
   return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and
-          t1.mt == t2.mt and t1.memory_space == t2.memory_space)
+          t1.mat == t2.mat and t1.memory_space == t2.memory_space)
 
 def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
   assert not typematch(a1, a2)
@@ -3601,10 +3604,10 @@ class ShapeDtypeStruct:
     sharding: (optional) a :class:`jax.Sharding` object
   """
   __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type",
-               "manual_type", "is_ref"]
+               "manual_axis_type", "is_ref"]
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
-               manual_type=None, is_ref=False):
+               manual_axis_type=None, is_ref=False):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -3625,11 +3628,14 @@ class ShapeDtypeStruct:
     _check_sharding(self._sharding, self.shape)
     self._dll = sharding.layout if isinstance(sharding, Format) else None
     self.weak_type = weak_type
-    if manual_type is not None and not isinstance(manual_type, ManualAxisType):
+    if (manual_axis_type is not None
+        and not isinstance(manual_axis_type, ManualAxisType)):
       raise TypeError(
-          "`manual_type` argument passed to ShapeDtypeStruct should be of type"
-          f" `jax.sharding.ManualAxisType`. Got type {type(manual_type)}")
-    self.manual_type = None if manual_type is None else manual_type
+          "`manual_axis_type` argument passed to ShapeDtypeStruct should be of"
+          " type `jax.sharding.ManualAxisType`. Got type"
+          f" {type(manual_axis_type)}")
+    self.manual_axis_type = (None if manual_axis_type is None
+                             else manual_axis_type)
     self.is_ref = is_ref
 
   size = property(lambda self: math.prod(self.shape))
@@ -3664,10 +3670,11 @@ class ShapeDtypeStruct:
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
     l = f", format={self._dll}" if self._dll is not None else ""
     wt = f", weak_type={self.weak_type}" if self.weak_type else ""
-    mt = f", manual_type={self.manual_type}" if self.manual_type else ""
+    mat = (f", manual_axis_type={self.manual_axis_type}"
+           if self.manual_axis_type else "")
     is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l}{wt}{mt}{is_ref})")
+            f"dtype={self.dtype.name}{sh}{l}{wt}{mat}{is_ref})")
 
   __str__ = __repr__
 
@@ -3676,15 +3683,15 @@ class ShapeDtypeStruct:
       return False
     else:
       return ((self.shape, self.dtype, self.sharding, self._dll,
-               self.weak_type, self.manual_type, self.is_ref) ==
+               self.weak_type, self.manual_axis_type, self.is_ref) ==
               (other.shape, other.dtype, other.sharding, other._dll,
-               other.weak_type, other.manual_type, other.is_ref))
+               other.weak_type, other.manual_axis_type, other.is_ref))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self._dll,
-                 self.weak_type, self.manual_type, self.is_ref))
+                 self.weak_type, self.manual_axis_type, self.is_ref))
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
@@ -3714,7 +3721,7 @@ class ShapeDtypeStruct:
         dtype=kwargs.pop('dtype', self.dtype),
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type),
-        manual_type=kwargs.pop('manual_type', self.manual_type),
+        manual_axis_type=kwargs.pop('manual_axis_type', self.manual_axis_type),
         is_ref=kwargs.pop('is_ref', self.is_ref))
 
 
@@ -3722,7 +3729,7 @@ def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
-  aval = update_aval_with_sharding(aval, x.sharding, manual_type=x.manual_type)
+  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pytype: disable=import-error
     return AbstractRef(aval)
