@@ -623,7 +623,10 @@ def _do_mma(
   i32 = ir.IntegerType.get_signless(32)
   a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
   b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
-  assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))
+  assert all(
+      s % 16 == 0   # pyrefly: ignore[unsupported-operation]
+      for s in itertools.chain(a_k_strides or (), b_k_strides)
+  )
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
@@ -759,9 +762,9 @@ def _do_mma(
       assert not isinstance(a_desc_or_addr, ir.Value)
       assert a_k_idx_tiling is not None and a_k_strides is not None
       a_enc_addr_base, a_offset = a_desc_or_addr
-      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)
+      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
     b_enc_addr_base, b_offset = b_desc
-    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)
+    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(

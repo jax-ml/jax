@@ -3694,7 +3694,7 @@ def _roll_lowering_rule(
         ctx.aval_to_ir_type(out_aval),
         x,
         shift,
-        axis,
+        axis,  # pyrefly: ignore[bad-argument-count]
         stride=stride,
         stride_dimension=stride_axis,
     )

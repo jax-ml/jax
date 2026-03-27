@@ -1256,7 +1256,7 @@ def device_id_to_logical(
       return None, non_mesh_axes
     return sum(a * b for a, b in zip(device_ids, mesh_strides)), non_mesh_axes
   elif device_id_type is DeviceIdType.LOGICAL:
-    return device_id, non_mesh_axes  # pyrefly: ignore[bad-return]
+    return device_id, non_mesh_axes
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
 

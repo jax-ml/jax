@@ -126,15 +126,15 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces):
       mlir.flatten_ir_values(args))
 
   if compute_type.startswith("gpu_stream:"):
-    dict_attr = {
-      "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
-      "inlineable": ir.StringAttr.get("false"),
-    }
+    dict_attr = ir.DictAttr.get({
+        "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
+        "inlineable": ir.StringAttr.get("false"),
+    })
   else:
-    dict_attr = {
+    dict_attr = ir.DictAttr.get({
         "_xla_compute_type": ir.StringAttr.get(mlir.map_compute_type(compute_type))
-    }
-  call.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+    })
+  call.operation.attributes["mhlo.frontend_attributes"] = dict_attr
 
   out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])

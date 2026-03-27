@@ -377,7 +377,8 @@ class BufferedRefBase:
     block_indices = self.compute_index(*grid_indices)
     return tuple(
         _make_block_slice(bi, bs, ss, t)
-        for bi, bs, ss, t in zip(  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+        for bi, bs, ss, t in zip(
+            # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
             block_indices, self.block_shape, src_shape, tiling, strict=True
         )
     )
@@ -385,7 +386,7 @@ class BufferedRefBase:
   def _to_window_slice(self, dma_slice):
     return tuple(
         pl.ds(0, s.size)
-        for s, bd in zip(dma_slice, self.block_shape)  # pyrefly: ignore[no-matching-overload]
+        for s, bd in zip(dma_slice, self.block_shape)  # pyrefly: ignore[bad-argument-type]
         if not (bd is None or isinstance(bd, pl.Squeezed))
     )
 
@@ -602,7 +603,7 @@ class BufferedRef(BufferedRefBase):
           _wait_out_slot_reg=None,
           next_fetch_smem=[
               SMEM((1,), jnp.int32)
-              for _ in range(grid_rank)  # pyrefly: ignore[no-matching-overload]
+              for _ in range(grid_rank)  # pyrefly: ignore[bad-argument-type]
           ]
           if use_lookahead
           else None,
@@ -942,7 +943,6 @@ class BufferedRef(BufferedRefBase):
       return self.window_ref.at[pl.ds(slot * n, n)]
     assert len(window_slice) == 1
     return self.window_ref.at[
-        # pyrefly: ignore[attribute-error]
         pl.ds(slot * n + window_slice[0].start, window_slice[0].size)
     ]
 
@@ -1239,7 +1239,7 @@ class Scheduler:
     if self._explicit_indices:
       return contextlib.nullcontext()
     return pallas_core.grid_env(
-        list(map(pallas_core.GridAxis, self.indices, self.grid)))  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+        list(map(pallas_core.GridAxis, self.indices, self.grid)))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
 
   def out_of_fetch(self, buffered_ref):
     """Returns whether there are no more blocks to fetch."""
@@ -1565,7 +1565,7 @@ def _partition_grid(
     offsets = jax_util.tuple_update(
         (0,) * len(grid),
         first_divisible_dimension,
-        partitioned_dim_offset,  # pyrefly: ignore[bad-argument-type]
+        partitioned_dim_offset,
     )
     return new_grid, offsets
 
@@ -1618,7 +1618,7 @@ def _partition_grid(
   offsets = jax_util.tuple_update(
       (0,) * len(grid),
       partition_dimension,
-      grid_offset,  # pyrefly: ignore[bad-argument-type]
+      grid_offset,
   )
   return new_grid, offsets  # type: ignore[return-value]
 

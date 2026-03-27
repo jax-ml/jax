@@ -1780,7 +1780,7 @@ class UnloadedMeshExecutable:
 
     mesh = None
     if auto_spmd_lowering:
-      for i in it.chain(in_shardings, out_shardings):  # pyrefly: ignore[bad-argument-type]
+      for i in it.chain(in_shardings, out_shardings):
         if isinstance(i, AUTO):
           mesh = i.mesh
           break

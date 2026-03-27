@@ -189,7 +189,7 @@ def call_tf(
       checked_res_tf_flat = [
           check_tf_result(i, r_tf, r_aval)
           for i, (r_tf, r_aval) in enumerate(
-              zip(res_tf_flat,  # pyrefly: ignore[bad-argument-type]
+              zip(res_tf_flat,
                   (output_avals
                    if output_avals is not None
                    else (None,) * len(res_tf_flat))))]
