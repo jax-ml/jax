@@ -456,7 +456,7 @@ class Scratch:
       alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
       load_op = llvm.LoadOp(empty_arr_ty, alloc_op)
 
-    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
+    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):  # pytype: disable=attribute-error
       builtin.unrealized_conversion_cast([ptr_ty], [load_op])
 
   def _find_alloc_load_and_device_ptr(

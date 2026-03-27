@@ -454,7 +454,7 @@ def find_assignments_for(
       )
     variable, expr = assignment
     assert isinstance(expr, cs.Constant)
-    if not is_valid_assignment(variable.key.shape, expr):
+    if not is_valid_assignment(variable.key.shape, expr):  # pytype: disable=name-error
       continue
     # Trying one valid assignment consumes fuel.
     fuel -= 1
@@ -516,7 +516,7 @@ class DerivationContext:
 
   def producer_ref(self, operand: ValueSite) -> cs.Variable:
     """Returns the producer reference variable for the given operand."""
-    return self.variable_for_value_site[producer_result(operand)]
+    return self.variable_for_value_site[producer_result(operand)]  # pytype: disable=name-error
 
 
 ValueSitesForVariable = dict[cs.Variable, list[ValueSite]]
@@ -573,7 +573,7 @@ def _pointwise_op_constraint_system(
     op: ir.OpView,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
-  all_value_sites = vector_value_sites(op)
+  all_value_sites = vector_value_sites(op)  # pytype: disable=name-error
   variable = cs.Variable(all_value_sites[-1])
   return cs.ConstraintSystem(), {variable: all_value_sites}
 

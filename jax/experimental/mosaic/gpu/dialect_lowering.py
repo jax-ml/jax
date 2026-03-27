@@ -218,7 +218,7 @@ def _fragmented_array_from_ir(
 
   registers = np.array(list(converted_outputs)).reshape(
     [
-        attr.value  # pyrefly: ignore[missing-attribute]
+        attr.value  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
         for attr in ir.ArrayAttr(conversion_cast.attributes["registers_shape"])
     ]
   )
