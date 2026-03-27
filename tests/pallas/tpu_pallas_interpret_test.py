@@ -788,6 +788,31 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x)
     self.assertFalse(mosaic_interpret.races.races_found)
 
+  def test_grid_names(self):
+    def kernel(x, y):
+      y[:] = (x[:] + 10.0 * jax.lax.axis_index('foo').astype(x.dtype)
+              + jax.lax.axis_index('bar').astype(x.dtype))
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+        kernel,
+        grid_spec=pl.GridSpec(
+            grid=(('foo', 2), ('bar', 4)),
+            in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+            out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+        ),
+        out_shape=jax.ShapeDtypeStruct((2 * 8, 4 * 128), jnp.float32),
+        interpret=pltpu.InterpretParams(),
+    )(x)
+
+    x = jnp.zeros((2 * 8, 4 * 128), dtype=jnp.float32)
+    y = f(x)
+    self.assertArraysEqual(
+        jnp.array([[0.0, 1.0, 2.0, 3.0],
+                   [10.0, 11.0, 12.0, 13.0]], dtype=jnp.float32),
+        y[::8, ::128])
+
   @parameterized.product(
       slow_core=[0, 1],
       dma_execution_mode=['eager', 'on_wait'],
