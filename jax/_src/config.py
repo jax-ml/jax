@@ -957,6 +957,12 @@ axis_env_state = config_ext.Config(
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
+scan_env_state = config_ext.Config(
+    'scan_env_state',
+    (),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 mesh_context_manager = config_ext.Config(
     'mesh_context_manager',
     (),

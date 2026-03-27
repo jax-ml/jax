@@ -1295,12 +1295,22 @@ class AxisEnv:
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
 
+@dataclass(frozen=True)
+class ScanEnv:
+  length: int
+  idx: Tracer | None = None
+  def as_hashable_key(self):
+    return (self.length, self.idx is None)
+
 eval_trace = EvalTrace()
 top_axis_env = AxisEnv({}, set(), frozenset())
+top_scan_env = None
+
 
 class TracingContext(threading.local):
   trace: Trace | None
-  axis_env : AxisEnv
+  axis_env: AxisEnv
+  scan_env: ScanEnv | None
 
   def __init__(self):
     self.reset()
@@ -1308,6 +1318,7 @@ class TracingContext(threading.local):
   def reset(self):
     self.trace = eval_trace
     self.axis_env = top_axis_env
+    self.scan_env = top_scan_env
 
   def is_top_level(self) -> bool:
     return (self.trace is eval_trace and
@@ -1321,6 +1332,10 @@ class TracingContext(threading.local):
   def set_axis_env(self, axis_env):
     self.axis_env = axis_env
     config.axis_env_state.set_local(axis_env.as_hashable_key())
+
+  def set_scan_env(self, scan_env):
+    self.scan_env = scan_env
+    config.scan_env_state.set_local(scan_env and scan_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
     ts = self.trace._weakref if self.trace is not None else None
@@ -1383,6 +1398,46 @@ class ExtendAxisEnvNdContextManager:
     trace_ctx.set_axis_env(self.prev)
 
 extend_axis_env_nd = ExtendAxisEnvNdContextManager
+
+
+@contextmanager
+def set_scan_env(length, *maybe_idx):
+  prev = trace_ctx.scan_env
+  trace_ctx.set_scan_env(ScanEnv(length, *maybe_idx))
+  try: yield
+  finally: trace_ctx.set_scan_env(prev)
+
+@contextmanager
+def reset_scan_env():
+  prev = trace_ctx.scan_env
+  trace_ctx.set_scan_env(None)
+  try: yield
+  finally: trace_ctx.set_scan_env(prev)
+
+def scan_env():
+  return trace_ctx.scan_env
+
+# class SetScanEnvContextManager:
+#   __slots__ = ['prev', 'payload']
+#   def __init__(self, *payload):
+#     self.payload = payload
+#   def __enter__(self):
+#     self.prev = trace_ctx.scan_env
+#     trace_ctx.set_scan_env(ScanEnv(*self.payload))
+#   def __exit__(self, exc_type, exc_value, traceback):
+#     trace_ctx.set_scan_env(self.prev)
+# set_scan_env = SetScanEnvContextManager
+
+# class ResetScanEnvContextManager:
+#   __slots__ = ['prev']
+#   def __init__(self):
+#     pass
+#   def __enter__(self):
+#     self.prev = trace_ctx.scan_env
+#     trace_ctx.set_scan_env(None)
+#   def __exit__(self, exc_type, exc_value, traceback):
+#     trace_ctx.set_scan_env(self.prev)
+# reset_scan_env = ResetScanEnvContextManager
 
 
 class AddSpmdAxisNamesContextManager:
@@ -1665,6 +1720,8 @@ def definitely_equal(x, y):
 class AbstractValue:
   __slots__: list[str] = []
 
+  # hi types
+
   @property
   def is_high(self) -> bool:
     return False
@@ -1672,6 +1729,24 @@ class AbstractValue:
   @property
   def has_qdd(self) -> bool:
     return False
+
+  @property
+  def is_writer(self) -> bool:
+    return False
+
+  def lower_val(self, *_):  # type: ignore
+    raise NotImplementedError("must override")
+
+  def raise_val(self, *_):  # type: ignore
+    raise NotImplementedError("must override")
+
+  def lo_ty(self):  # type: ignore
+    raise NotImplementedError("must override")
+
+  def lo_ty_qdd(self, qdd):
+    raise NotImplementedError("avals with qdd must override")
+
+  # lo types
 
   def to_tangent_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
@@ -1704,12 +1779,6 @@ class AbstractValue:
 
   def update(self, **kwargs):
     raise NotImplementedError("must override")
-
-  def lo_ty(self):
-    return [self]
-
-  def lo_ty_qdd(self, qdd):
-    raise NotImplementedError("avals with qdd must override")
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
@@ -1897,15 +1966,19 @@ class MutableQuasiDynamicData:
     return f'MutableQuasiDynamicData(init_val={self.init_val}, cur_val={self.cur_val})'
 
 class QuasiDynamicData:
-  pass
+  def inc_rank(self, length):
+    raise NotImplementedError("must override")
+
+  def to_tangent_qdd(self):
+    raise NotImplementedError("must override")
 
 @dataclass(frozen=True)
 class AvalQDD:
   is_high = True
   aval: AbstractValue
   qdd: QuasiDynamicData | None # immutable
-
   has_qdd = True
+
   def lo_ty(self):
     return self.aval.lo_ty_qdd(self.qdd)
 
@@ -1937,6 +2010,15 @@ def cur_aval_qdd(x):
   aval = typeof(x)
   qdd = cur_qdd(x) if aval.has_qdd else None
   return AvalQDD(aval, qdd)
+
+def aval_qdd_from_current_val(aval, x) -> AbstractValue | AvalQDD:
+  if aval.has_qdd:
+    if not aval.is_writer:
+      return AvalQDD(aval, cur_qdd(x))
+    else:
+      return AvalQDD(aval, aval.empty_qdd())
+  else:
+    return aval
 
 ### Extended dtypes
 #
@@ -2324,9 +2406,9 @@ class ShapedArray(AbstractValue):
     # See description of https://github.com/jax-ml/jax/pull/30556
     self.memory_space = get_memory_space(memory_space)
 
-  def lower_val(self, val): return [val]
-  def raise_val(self, val): return val
-  def lo_ty(self): return [self]
+  def lower_val(self, val): return [val]  # type: ignore
+  def raise_val(self, val): return val  # type: ignore
+  def lo_ty(self): return [self]  # type: ignore
 
   @property
   def mat(self):

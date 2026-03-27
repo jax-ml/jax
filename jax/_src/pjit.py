@@ -500,9 +500,7 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-    args_ft)
+  in_type = avals_ft.map2(core.aval_qdd_from_current_val, args_ft)
   assert avals_ft is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
@@ -882,6 +880,14 @@ def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 jit_p.is_high = _is_high
 
+def lo_vals(a: core.AbstractValue | core.AvalQDD, x):
+  if not a.has_qdd:
+    return a.lower_val(x)  # type: ignore
+  elif a.aval.is_writer:  # type: ignore
+    return []
+  else:
+    return a.read_loval(x)  # type: ignore
+
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
   jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
@@ -896,11 +902,11 @@ def _to_lojax(*hi_args, jaxpr, **params):
 
   # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
+             for lo_val in lo_vals(aval, x)]
 
   # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
+  with core.reset_scan_env():
+    lo_jaxpr = pe.lower_jaxpr(jaxpr)
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
@@ -1310,10 +1316,21 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     out_tracers = trace.default_process_primitive(
         jit_p, args, params, source_info=source_info)
     # TODO(mattjj): handle qdd in the presence of refs
-    for v, x in zip(it.chain(jaxpr.constvars, jaxpr.invars), it.chain(jaxpr.consts, args)):
-      if v.initial_qdd:
-        assert core.cur_qdd(x) == v.initial_qdd
-        x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
+    vars = list(it.chain(jaxpr.constvars, jaxpr.invars))
+    vals = list(it.chain(jaxpr.consts, args))
+    for v, x in zip(vars, vals):
+      if v.aval.has_qdd:
+        if v.aval.is_writer:
+          assert v.initial_qdd == v.aval.empty_qdd()
+          if (env := core.scan_env()):
+            final_qdd = v.final_qdd.inc_rank(env.length)
+          else:
+            final_qdd = v.final_qdd
+          new_qdd = v.aval.extend_qdd(core.cur_qdd(x), final_qdd)
+          x.aval_mutable_qdd.mutable_qdd.update(new_qdd)
+        else:
+          assert core.cur_qdd(x) == v.initial_qdd
+          x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
   return out_tracers
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 

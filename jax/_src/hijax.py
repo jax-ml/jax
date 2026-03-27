@@ -99,7 +99,7 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
   # define lowering from hijax value to lojax values and back (like pytrees)
-  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj); not lovals
+  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # type: ignore
     assert False, "must override"
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
     assert False, "must override"
