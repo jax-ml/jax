@@ -18,13 +18,15 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import gc
+import logging
 import threading
 from typing import Any, Callable, Literal
 
-from absl import logging
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class Semaphore:
@@ -71,7 +73,7 @@ class Semaphore:
     return self.shared_memory.dma_execution_mode
 
   def _log(self, message: str):
-    """Logs a message to `absl.logging`. To be called while holding the lock on `self.cv`."""
+    """Logs a message. To be called while holding the lock on `self.cv`."""
     # Log every line separately to make sure `absl.logging` adds the correct
     # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
     # `message`. This should not lead to mangled output within the logging for
@@ -80,7 +82,7 @@ class Semaphore:
     # interleaved with logging from other semaphores or from the global
     # `SharedMemory` object.
     for msg in message.split("\n"):
-      logging.info(msg)
+      logger.info(msg)
 
   def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
     return self.shared_memory.get_global_core_id(device_id, local_core_id)
@@ -356,13 +358,13 @@ class SharedMemory:
     )
 
   def _log(self, message: str):
-    """Logs a message to `absl.logging`. To be called while holding `self.lock`."""
+    """Logs a message. To be called while holding `self.lock`."""
     # Log every line separately to make sure `absl.logging` adds the correct
     # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
     # `message`. This should not lead to mangled output as `self.lock` is
     # expected to be held whenever this method is called.
     for msg in message.split("\n"):
-      logging.info(msg)
+      logger.info(msg)
 
   def append_semaphore_task(
       self,

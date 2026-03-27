@@ -74,7 +74,6 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
     ] + py_deps([
-        "absl/logging",
         "numpy",
     ]),
 )
