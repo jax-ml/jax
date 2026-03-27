@@ -4235,19 +4235,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArgsort(self, dtype, shape, axis, use_method):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    kwds = {} if axis is NO_VALUE else {'axis': axis}
+    kwds = {'stable': True}
+    if axis is not NO_VALUE:
+      kwds['axis'] = axis
 
     @jtu.with_jax_dtype_defaults
     def np_fun(arr):
       # Note: numpy sort fails on NaN and Inf values with bfloat16
       if arr.dtype == jnp.bfloat16:
         arr = arr.astype('float32')
-      # TODO(jakevdp): switch to stable=True when supported by numpy.
-      return np.argsort(arr, kind='stable', **kwds)
+      return np.argsort(arr, **kwds)
     if use_method:
-      jnp_fun = lambda x: jnp.asarray(x).argsort(stable=True, **kwds)
+      jnp_fun = lambda x: jnp.asarray(x).argsort(**kwds)
     else:
-      jnp_fun = partial(jnp.argsort, stable=True, **kwds)
+      jnp_fun = partial(jnp.argsort, **kwds)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
