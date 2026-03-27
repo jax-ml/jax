@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import dataclasses
 import re
 import os
 from typing import Any
@@ -68,16 +67,6 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
-
-
-## Helper functions for matching OpMetadata in TF graphs
-@dataclasses.dataclass(order=True, frozen=True)
-class OpMetadataGraph:
-  tf_type: str  # The standard Tf.Operation.type
-  op_type: str  # The rest are OpMetadata fields from _Xla... attributes
-  op_name: str
-  source_file: str
-  source_line: str
 
 
 def SaveAndLoadModel(model: tf.Module,

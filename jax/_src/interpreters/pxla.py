@@ -67,12 +67,6 @@ from jax._src.util import (safe_map, safe_zip, partition_list,
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.typing import ArrayLike
 
-
-# Built in Python lists don't support weak refs but subclasses of lists do.
-class WeakRefList(list):
-  pass
-
-
 unsafe_map, map = map, safe_map
 zip, unsafe_zip = safe_zip, zip
 

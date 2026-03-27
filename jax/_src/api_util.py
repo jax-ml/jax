@@ -721,16 +721,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
                for name, x in ordered_args
                for path, l in generate_key_paths(x) if l is not static)
 
-
-class _HashableByObjectId:
-  __slots__ = ['val']
-  def __init__(self, val):
-    self.val = val
-  def __hash__(self):
-    return id(self.val)
-  def __eq__(self, other):
-    return self.val is other.val
-
 # TODO(mattjj): make this function faster
 def check_no_aliased_ref_args(dbg_fn: Callable[[], core.DebugInfo],
                               maybe_avals, args) -> None:

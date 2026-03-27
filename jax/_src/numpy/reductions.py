@@ -18,7 +18,7 @@ import builtins
 from collections.abc import Callable, Sequence
 import math
 import operator
-from typing import overload, Any, Literal, Protocol, Union
+from typing import overload, Any, Literal, Union
 
 import numpy as np
 
@@ -2014,11 +2014,6 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
   return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof,
                          keepdims=keepdims, where=where, mean=mean))
-
-
-class CumulativeReduction(Protocol):
-  def __call__(self, a: ArrayLike, axis: Axis = None,
-               dtype: DTypeLike | None = None, out: None = None) -> Array: ...
 
 
 def _cumulative_reduction(

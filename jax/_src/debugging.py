@@ -23,7 +23,6 @@ import logging
 import string
 import sys
 from typing import Any, Union
-import weakref
 
 import numpy as np
 
@@ -628,13 +627,7 @@ def _inspect_sharding_jvp_rule(primals, _, **params):
   return inspect_sharding_p.bind(*primals, **params), []
 ad.primitive_jvps[inspect_sharding_p] = _inspect_sharding_jvp_rule
 
-sharding_callbacks = weakref.WeakValueDictionary()
 _INSPECT_SHARDING_CALL_NAME = "InspectSharding"
-
-class ShardingCallbackInfo:
-  def __init__(self, callback, module_context):
-    self.callback = callback
-    self.module_context = module_context
 
 def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                                     callback):
