@@ -269,10 +269,14 @@ class CustomCallBackendConfig:
           config.write(b",")
         else:
           config.write(b', "output_memory_space_colors": [')
-        config.write(f'{{"color":{memory_space.color}'.encode("ascii"))
         if is_tuple:
-          config.write(f',"shape_index":[{i}]'.encode("ascii"))
-        config.write(b"}")
+          config.write(
+              f'{{"color":{memory_space.color},"shape_index":[{i}]}}'.encode(
+                  "ascii"
+              )
+          )
+        else:
+          config.write(f'{{"color":{memory_space.color}}}'.encode("ascii"))
         comma = True
       if comma:
         config.write(b"]")
