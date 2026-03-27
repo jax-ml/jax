@@ -15,8 +15,6 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.interpreters import batching as _src_batching
-
 from jax._src.interpreters.batching import (
   axis_primitive_batchers as axis_primitive_batchers,
   bdim_at_front as bdim_at_front,
@@ -33,18 +31,17 @@ from jax._src.interpreters.batching import (
 
 
 _deprecations = {
-  # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
+  # Deprecated in JAX v0.7.1; removed in JAX v0.10.0.
+  # TODO(jakevdp):remove this for JAX v0.11.0
   "NotMapped": (
     "jax.interpreters.batching.NotMapped is deprecated.",
-    _src_batching.NotMapped,
+    None,
   ),
 }
 
 
 import typing as _typing
-if _typing.TYPE_CHECKING:
-  NotMapped = _src_batching.NotMapped
-else:
+if not _typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
