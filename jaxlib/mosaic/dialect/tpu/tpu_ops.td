@@ -526,7 +526,7 @@ def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let hasVerifier = 1;
 }
 
-def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
+def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
     I32:$amount,
