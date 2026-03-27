@@ -4745,7 +4745,7 @@ class APITest(jtu.JaxTestCase):
         add(inp)
       tracing_add_count = 0
       for m in cm.output:
-        if 'Finished tracing + transforming add for pjit' in m:
+        if 'Finished tracing add for jit' in m:
           tracing_add_count += 1
       self.assertEqual(tracing_add_count, 2)
 

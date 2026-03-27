@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
+import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
@@ -511,9 +512,12 @@ def _trace_for_jit(
 
   qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 
-  with dispatch.log_elapsed_time(
-      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
-      fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT):
+  elapsed_time_ctx = (
+      dispatch.log_elapsed_time(
+          "Finished tracing {fun_name} for jit in {elapsed_time:.9f} sec",
+          fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT)
+      if core.trace_state_clean() else contextlib.nullcontext())
+  with elapsed_time_ctx:
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
