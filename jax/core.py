@@ -69,20 +69,26 @@ from jax._src.core import (
 
 _deprecations = {
   # Deprecated in v0.8.2; finalized in v0.10.0.
-  # TODO(jakevdp) remove entry in v0.11.0.
+  # TODO(jakevdp) remove entries in v0.11.0.
   "get_aval": (
     "jax.core.get_aval was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
     " use jax.typeof instead.",
+    None,
+  ),
+  "mapped_aval": (
+    "jax.core.mapped_aval was deprecated in JAX v0.8.2 and removed in JAX"
+    " v0.10.0. Use jax.extend.core.mapped_aval.",
+    None,
+  ),
+  "unmapped_aval": (
+    "jax.core.unmapped_aval was deprecated in JAX v0.8.2 and removed in JAX"
+    " v0.10.0. Use jax.extend.core.unmapped_aval.",
     None,
   ),
   # Deprecated in v0.8.2
   "call_impl": (
     "jax.core.call_impl is deprecated.",
     _src_core.call_impl,
-  ),
-  "mapped_aval": (
-    "jax.core.mapped_aval is deprecated. Use jax.extend.core.mapped_aval.",
-    _src_core.mapped_aval,
   ),
   "set_current_trace": (
     "jax.core.set_current_trace is deprecated.",
@@ -100,10 +106,6 @@ _deprecations = {
     "jax.core.traverse_jaxpr_params is deprecated.",
     _src_core.traverse_jaxpr_params,
   ),
-  "unmapped_aval": (
-    "jax.core.unmapped_aval is deprecated. Use jax.extend.core.unmapped_aval.",
-    _src_core.unmapped_aval,
-  ),
   "AbstractToken": (
     "jax.core.AbstractToken is deprecated.",
     _src_core.AbstractToken,
@@ -117,13 +119,10 @@ _deprecations = {
 import typing as _typing
 if _typing.TYPE_CHECKING:
   call_impl = _src_core.call_impl
-  get_aval = _src_core.typeof
-  mapped_aval = _src_core.mapped_aval
   subjaxprs = _src_core.subjaxprs
   set_current_trace = _src_core.set_current_trace
   take_current_trace = _src_core.take_current_trace
   traverse_jaxpr_params = _src_core.traverse_jaxpr_params
-  unmapped_aval = _src_core.unmapped_aval
   AbstractToken = _src_core.AbstractToken
   TraceTag = _src_core.TraceTag
 else:
