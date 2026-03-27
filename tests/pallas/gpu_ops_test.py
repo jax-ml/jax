@@ -18,6 +18,11 @@ import sys
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
+# TODO(ROCm): Disable command buffers on ROCm
+if os.path.isdir("/opt/rocm"):
+  xla_flags = os.environ.get("XLA_FLAGS", "")
+  os.environ["XLA_FLAGS"] = xla_flags + " --xla_gpu_enable_command_buffer=''"
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
