@@ -69,7 +69,7 @@ std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 // * 2D -- (sublane count, lane count) TensorCore tiling.
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation, absl::Span<const int64_t> target_shape,
-    const TpuTilingFlags& tpu_tiling_flags, bool align = true);
+    const TpuTilingFlags& tpu_tiling_flags);
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
