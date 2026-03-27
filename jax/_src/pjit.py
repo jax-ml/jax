@@ -20,7 +20,6 @@ from dataclasses import dataclass, replace
 from functools import partial
 import inspect
 import itertools as it
-import logging
 import weakref
 from typing import NamedTuple, Any, Union
 import warnings
@@ -88,8 +87,6 @@ PjitSharding = Union[GSPMDSharding, UnspecifiedValue, AUTO]
 PjitShardingMinusUnspecified = Union[GSPMDSharding, AUTO]
 MeshSharding = Union[NamedSharding, UnspecifiedValue, AUTO]
 MeshShardingMinusUnspecified = Union[NamedSharding, AUTO]
-
-logger = logging.getLogger(__name__)
 
 
 class PjitInfo(NamedTuple):
