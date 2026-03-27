@@ -124,6 +124,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=2e-7)
 
   def test_mosaic_semaphore_dma(self):
+    # TODO(slebedev): Update to use a current op
+    self.skipTest("Skipped until a current op is substituted.")
     if not (jtu.test_device_matches(["tpu"]) and
             jtu.is_device_tpu_at_least(4)):
       # TODO: crashes during compilation on TPU v4
