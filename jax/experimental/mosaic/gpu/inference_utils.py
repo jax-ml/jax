@@ -114,14 +114,6 @@ def should_have_tmem_layout(op: MlirOperation) -> bool:
   return should_have_in_tmem_layout(op) or should_have_out_tmem_layout(op)
 
 
-def has_in_tmem_layouts_set(op: MlirOperation) -> bool:
-  return "in_tmem_layouts" in op.attributes
-
-
-def has_out_tmem_layouts_set(op: MlirOperation) -> bool:
-  return "out_tmem_layouts" in op.attributes
-
-
 def should_have_in_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation operands should be assigned a layout."""
   return any(isinstance(v.type, ir.VectorType) for v in op.operands)
@@ -147,10 +139,6 @@ def has_out_layouts_set(op: MlirOperation) -> bool:
 
 def has_any_layout_set(op: MlirOperation) -> bool:
   return has_in_layouts_set(op) or has_out_layouts_set(op)
-
-
-def has_in_transforms_set(op: MlirOperation) -> bool:
-  return "in_transforms" in op.attributes
 
 
 def has_out_transforms_set(op: MlirOperation) -> bool:

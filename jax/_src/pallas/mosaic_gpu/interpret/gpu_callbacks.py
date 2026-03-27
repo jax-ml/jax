@@ -54,12 +54,6 @@ def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace | None) -> int:
   return IDX_BY_GPU_MEMORY_SPACE[space]
 
 
-def is_smem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
-  if space is None:
-    return True
-  return space == mosaic_gpu_core.MemorySpace.SMEM
-
-
 def is_gmem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
   return space == mosaic_gpu_core.MemorySpace.GMEM
 
