@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     PyTorch's bicubic resize ({jax-issue}`#15768`).
 
 * Breaking changes:
+  * JAX CPU devices now report their names as `cpu:0`, `cpu:1`, etc. instead of
+    `TFRT_CPU_0`, `TFRT_CPU_1`.
   * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
     will now always use the new implementation that wraps
     `jax.jit(jax.shard_map)`. Please see

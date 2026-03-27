@@ -50,7 +50,9 @@ class DeviceTest(jtu.JaxTestCase):
     elif jtu.test_device_matches(['tpu']):
       self.assertEqual(str(device), 'TPU_0(process=0,(0,0,0,0))')
     elif jtu.test_device_matches(['cpu']):
-      self.assertEqual(str(device), 'TFRT_CPU_0')
+      # TODO(phawkins): remove TFRT_CPU_0 once jaxlib 0.10 is the minimum
+      # version.
+      self.assertIn(str(device), ['cpu:0', 'TFRT_CPU_0'])
 
 
 if __name__ == '__main__':
