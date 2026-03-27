@@ -283,33 +283,6 @@ def get_compile_options(
 
 
 @profiler.annotate_function
-def backend_compile(
-    backend: xc.Client,
-    module: ir.Module,
-    executable_devices: xc.DeviceList,
-    options: xc.CompileOptions,
-) -> xc.Executable:
-  sym_name = module.operation.attributes['sym_name']
-  module_name = ir.StringAttr(sym_name).value
-  if (options.executable_build_options.fdo_profile is not None
-      and len(options.executable_build_options.fdo_profile)):
-    logger.debug(
-        "Compiling module %s with FDO profile of length %d",
-        module_name,
-        len(options.executable_build_options.fdo_profile),
-    )
-
-  try:
-    return backend.compile(module, executable_devices, options)
-  except _jax.JaxRuntimeError as e:
-    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
-      handler_result = error_handler(e)
-      if handler_result is not None:
-        raise handler_result from e
-    raise e
-
-
-@profiler.annotate_function
 def backend_compile_and_load(
     backend: xc.Client,
     module: ir.Module,
