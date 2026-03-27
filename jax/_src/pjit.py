@@ -721,7 +721,7 @@ def _create_sharding_with_device_backend(device, backend):
         xb.get_backend(backend).local_devices()[0])
   else:
     raise AssertionError('Unreachable!')
-  out._device_backend = True  # pyrefly: ignore[missing-attribute]
+  out._device_backend = True
   return out
 
 

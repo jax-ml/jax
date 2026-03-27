@@ -347,7 +347,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
     idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
-      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
     # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
@@ -357,8 +357,8 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
       outs = f(*in_tracers)
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals, out_dim_srcs = unzip2(
-          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-              range(len(outs)), outs, out_dim_dests))
+          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),
+              range(len(outs)), outs, out_dim_dests))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   return out_vals, out_dim_srcs, trace
 
 ### API for batching functions with jaxpr type inputs and outputs
@@ -371,7 +371,7 @@ def batch_subtrace_2(f, tag, axis_data, in_dims, in_vals):
     with core.set_current_trace(trace):
       in_dims = in_dims() if callable(in_dims) else in_dims
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       outs = f(*in_tracers)
     out_vals, out_dims = outs.map(trace.to_batch_info).unzip2()
   return out_vals, list(out_dims)
@@ -383,7 +383,7 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
     with core.set_current_trace(trace):
       in_dims = in_dims() if callable(in_dims) else in_dims
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       outs = f(*in_tracers)
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   store.store(out_dims)
@@ -495,7 +495,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
 def _batch_jaxpr_outer(f, axis_data, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   tag = TraceTag()
   return f(tag, in_dims, *in_vals)
 

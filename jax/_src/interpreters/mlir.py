@@ -249,7 +249,7 @@ def ir_constant(
     A representation of the constant as an IR value or sequence of IR values.
   """
   if const_lowering is not None:
-    # pyrefly: ignore[no-matching-overload]
+    # pyrefly: ignore[bad-argument-type]
     if np.shape(val) and (c_val := const_lowering.get((id(val), aval))) is not None:
       return c_val
   for t in type(val).__mro__:
@@ -1790,8 +1790,8 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]
-                                   unconstrained_variants):
+    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,
+                                   unconstrained_variants):  # pyrefly: ignore[bad-argument-type]
       if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
@@ -1865,8 +1865,8 @@ def lower_jaxpr_to_fun(
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
-          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 arg_shardings)
+          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+                                 arg_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
 
     _, token_args, _, unflattened_args = util.split_list(
@@ -1898,8 +1898,8 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None:
       temp_flat_outputs = []
-      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                  output_avals, unconstrained_variants):
+      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,
+                                  output_avals, unconstrained_variants):  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
         if (s is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
@@ -1930,8 +1930,8 @@ def lower_jaxpr_to_fun(
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
               (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
-          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-                                 result_shardings)
+          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+                                 result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
 
     func_dialect.return_(flat_outputs)
@@ -1949,8 +1949,9 @@ def wrap_with_memory_kind(
     result_type = typ
   op = custom_call("annotate_device_placement", result_types=[result_type],
                    operands=[x], has_side_effect=True, api_version=1)
-  dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
-  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get({
+      "_xla_buffer_placement": ir.StringAttr.get(memory_kind)
+  })
   return op.result
 
 
@@ -2052,7 +2053,7 @@ def jaxpr_subcomp(
     tokens_in = tokens.subset(ordered_effects)
 
     eqn_name_stack = name_stack + eqn.source_info.name_stack
-    traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback  # pyrefly: ignore[unsupported-operation]
+    traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback
     loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
@@ -3137,7 +3138,7 @@ def custom_call(
     operand_layouts: Sequence[Sequence[int]] | None = None,
     result_layouts: Sequence[Sequence[int]] | None = None,
     extra_attributes: dict[str, ir.Attribute] | None = None,
-) -> ir.Operation:
+) -> hlo.CustomCallOp:
   """Helper function for building an hlo.CustomCall.
 
   Args:
@@ -3227,7 +3228,6 @@ def custom_call(
             type=ir.IndexType.get()) for l in result_layouts
     ])
 
-  # pyrefly: ignore[bad-argument-type]
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
                                       attributes=attributes)
   if isinstance(backend_config, dict):

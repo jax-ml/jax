@@ -2543,7 +2543,6 @@ class FragmentedArray:
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
         out_reg = vector.broadcast(
-            # pyrefly: ignore[missing-attribute]
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
@@ -3317,7 +3316,7 @@ class FragmentedArray:
       raise NotImplementedError(
           f"Unsupported element type for atomic stores: {element_type}"
       )
-    [vec_len] = vreg.type.shape  # pyrefly: ignore[missing-attribute]
+    [vec_len] = vreg.type.shape
     if element_bitwidth == 16:
       if vec_len % 2 != 0:
         raise NotImplementedError(
@@ -4105,7 +4104,7 @@ def optimization_barrier(*arrays):
     reg_constraints += [reg_constraint] * len(array_regs)
   ptx = ""
   all_reg_constraints = ",".join(
-      # pyrefly: ignore[no-matching-overload]  # pyrefly#2854
+      # pyrefly: ignore[bad-argument-type]  # pyrefly#2854
       [*("=" + c for c in reg_constraints), *map(str, range(len(reg_constraints)))]
   )
 

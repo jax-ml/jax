@@ -1900,9 +1900,9 @@ def vector_concat(
   if vty.rank != 1:
     raise NotImplementedError("Only 1D vectors are supported")
   for v in vectors:
-    if v.type.element_type != vty.element_type:  # pyrefly: ignore[missing-attribute]
+    if v.type.element_type != vty.element_type:
       raise ValueError("Cannot concatenate vectors of different element types")
-    if v.type.rank != 1:  # pyrefly: ignore[missing-attribute]
+    if v.type.rank != 1:
       raise ValueError("Can only concatenate 1D vectors")
   return _vector_concat_rec(vectors)
 
@@ -2169,7 +2169,7 @@ def get_arch() -> Arch:
       arch_minor = op.attributes["mosaic_gpu.arch_minor"]
       assert isinstance(arch_major, ir.IntegerAttr)
       assert isinstance(arch_minor, ir.IntegerAttr)
-      return Arch(arch_major.value, arch_minor.value)  # pyrefly: ignore[bad-argument-type]
+      return Arch(arch_major.value, arch_minor.value)
     op = op.parent
   raise ValueError("Cannot retrieve the architecture: no module found")
 

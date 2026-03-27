@@ -435,7 +435,7 @@ def _tpu_custom_call_lowering(
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
-  metadata_dict = {}
+  metadata_dict: dict[str, ir.Attribute] = {}
   if metadata is not None:
     metadata_dict["kernel_metadata"] = ir.StringAttr.get(
         _compact_json_object(**metadata)

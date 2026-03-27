@@ -200,7 +200,7 @@ def build_ffi_lowering_function(
     backend_config: Mapping[str, ir.Attribute] | str | None = None,
     skip_ffi_layout_processing: bool = False,
     **lowering_args: Any,
-) -> Callable[..., ir.Operation]:
+) -> Callable[..., ir.OpView]:
   """Build a lowering op for an foreign function interface (FFI) target.
 
   By default, this lowering rule can use the input and output abstract values to
@@ -229,8 +229,8 @@ def build_ffi_lowering_function(
   """
 
   def _lowering_op(
-    ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
-  ) -> ir.Operation:
+      ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> ir.OpView:
     kwargs = dict(lowering_args)
     kwargs.setdefault("api_version", 4)
     if kwargs["api_version"] >= 4:

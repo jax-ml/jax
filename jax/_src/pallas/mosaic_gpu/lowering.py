@@ -1048,8 +1048,7 @@ def lower_jaxpr_to_module(
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
   scoped_semaphores_shape = []
-  # pyrefly: ignore[no-matching-overload]
-  for collective_axes in sorted(rs.scoped_gmem_semaphores):
+  for collective_axes in sorted(rs.scoped_gmem_semaphores):  # pyrefly: ignore[bad-specialization]
     num_sems = rs.scoped_gmem_semaphores[collective_axes]
     # TODO(justinfu): Compute axis_size for general collective_axes.
     # axis_size computes axis_size(all_axes - collective_axes)

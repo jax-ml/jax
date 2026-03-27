@@ -1098,9 +1098,13 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   if config.enable_checks.value: core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
-  new_params = dict(eqn.params, num_consts=sum(used_consts),
-                    num_carry=sum(used_carry_in), linear=tuple(new_linear),
-                    jaxpr=ClosedJaxpr(jaxpr_dce, jaxpr.consts))
+  new_params = dict[str, Any](
+      eqn.params,
+      num_consts=sum(used_consts),
+      num_carry=sum(used_carry_in),
+      linear=tuple(new_linear),
+      jaxpr=ClosedJaxpr(jaxpr_dce, jaxpr.consts)
+  )
   # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   new_outvars = [v for v, used in zip(eqn.outvars, used_outputs) if used]

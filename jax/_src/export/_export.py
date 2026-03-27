@@ -1002,7 +1002,7 @@ def _wrap_main_func(
     try:
       new_arg_attrs = []
       for idx in new_main_arg_indices:
-        new_arg_attr = {}
+        new_arg_attr: dict[str, ir.Attribute] = {}
         for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]  # pytype: disable=attribute-error
           if attr.name == "tf.aliasing_output":
             i = new_main_result_indices.index(attr.attr.value)

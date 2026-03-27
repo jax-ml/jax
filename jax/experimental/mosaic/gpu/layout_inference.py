@@ -114,7 +114,6 @@ class ValueSite:
   @property
   def shape(self) -> tuple[int, ...]:
     """Returns the shape of the underlying value."""
-    # pyrefly: ignore[missing-attribute]
     return tuple(self.value.type.shape)  # pytype: disable=attribute-error
 
   @property
@@ -650,7 +649,6 @@ def _vector_load_constraint_system(
     shape = tuple(ir.MemRefType(op.source.type).shape)
     constraints.append(
         cs.IsTransferable(
-            # pyrefly: ignore[missing-attribute]
             source_var, dest_var, shape, utils.bitwidth(op.source.type.element_type)
         )
     )
@@ -678,7 +676,6 @@ def _vector_store_constraint_system(
     shape = tuple(ir.MemRefType(op.destination.type).shape)
     constraints.append(
         cs.IsTransferable(
-            # pyrefly: ignore[missing-attribute]
             value_var, dest_var, shape, utils.bitwidth(op.destination.type.element_type)
         )
     )
@@ -988,7 +985,7 @@ def _wgmma_constraint_system(
 
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
-  input_bitwidth = utils.bitwidth(op.b.type.element_type)  # pyrefly: ignore[missing-attribute]
+  input_bitwidth = utils.bitwidth(op.b.type.element_type)
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
   constraints: list[cs.Constraint]
   if b_is_transposed:
@@ -1011,7 +1008,7 @@ def _wgmma_constraint_system(
       constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
     a_var = cs.Variable(a)
-    if utils.bitwidth(op.a.type.element_type) == 8:  # pyrefly: ignore[missing-attribute]
+    if utils.bitwidth(op.a.type.element_type) == 8:
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT
@@ -1037,7 +1034,7 @@ def _vector_broadcast_constraint_system(
   if isinstance(op.source.type, ir.ShapedType):
     raise NotImplementedError("Only vector broadcasts from scalars are supported.")
   out_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
-  layout = cs.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))  # pyrefly: ignore[missing-attribute]
+  layout = cs.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))
   return (
       cs.ConstraintSystem(assignments={out_variable: layout}),
       {out_variable: [out_variable.key]},
@@ -1088,8 +1085,8 @@ def _broadcast_in_dim_constraint_system(
   del ctx
   src_variable = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
   dst_variable = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
-  src_shape = tuple(op.operand.type.shape)  # pyrefly: ignore[missing-attribute]
-  dst_shape = tuple(op.result.type.shape)  # pyrefly: ignore[missing-attribute]
+  src_shape = tuple(op.operand.type.shape)
+  dst_shape = tuple(op.result.type.shape)
 
   # Map destination index -> source index
   dst_to_src = {dst: src for src, dst in enumerate(op.broadcast_dimensions)}
@@ -1196,7 +1193,6 @@ def _extract_strided_slice_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   result = ValueSite(op, VariableType.RESULT, 0)
   variable = cs.Variable(operand)
-  # pyrefly: ignore[bad-argument-type]
   offsets: tuple[int, ...] = tuple(ir.IntegerAttr(o).value for o in op.offsets)
   constraints = [
       cs.Divides(variable, offsets),
@@ -1221,7 +1217,7 @@ def _vector_extract_constraint_system(
   if not isinstance(op.result.type, ir.VectorType):  # scalar result
     operand = ValueSite(op, VariableType.OPERAND, 0)
     variable = cs.Variable(operand)
-    layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))  # pyrefly: ignore[missing-attribute]
+    layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))
     # We only support indexing for splat layout.
     assignments: dict[cs.Variable, cs.Constant] = {
         variable: cs.RegisterLayout(layout)
@@ -1381,7 +1377,7 @@ def _tcgen05_mma_constraint_system(
     )
   operands_for_variable[acc_variable] = [acc]
 
-  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)  # pyrefly: ignore[missing-attribute]
+  element_type_bitwidth = utils.bitwidth(op.b.type.element_type)
   b = ValueSite(op, VariableType.OPERAND, 2)
   b_var = ctx.producer_ref(b)
   operands_for_variable[b_var] = [b]
@@ -1393,10 +1389,10 @@ def _tcgen05_mma_constraint_system(
     constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
 
   # SMEM
-  M = op.accumulator.type.shape[0]  # pyrefly: ignore[missing-attribute]
+  M = op.accumulator.type.shape[0]
   if M == 64 and not op.collective.value:
     # We can't split N into groups if we would partition it below the tile size.
-    N = op.b.type.shape[1]  # pyrefly: ignore[missing-attribute]
+    N = op.b.type.shape[1]
     n_lane_groups = 2
     max_swizzle_elems = next(
         8 * s // element_type_bitwidth
@@ -1491,7 +1487,7 @@ def _async_load_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),  # pyrefly: ignore[missing-attribute]
+      utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1508,7 +1504,7 @@ def _async_async_store_smem_to_tmem_constraint_system(
   source_variable = ctx.producer_ref(source)
   destination = ValueSite(op, VariableType.OPERAND, 1)
   destination_variable = ctx.producer_ref(destination)
-  bitwidth = utils.bitwidth(op.destination.type.element_type)  # pyrefly: ignore[missing-attribute]
+  bitwidth = utils.bitwidth(op.destination.type.element_type)
   packing = 32 // bitwidth
   return (
       cs.ConstraintSystem(
@@ -1603,7 +1599,7 @@ def _async_store_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),  # pyrefly: ignore[missing-attribute]
+      utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1766,11 +1762,10 @@ def _memref_load_store_op_constraint_system(
 # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
 if hasattr(mgpu, "TryClusterCancelOp") and hasattr(mgpu, "QueryClusterCancelOp"):
   @_add_constraint_system_derivation_rule(mgpu.TryClusterCancelOp)
-  # pyrefly: ignore[missing-attribute]
   @_add_constraint_system_derivation_rule(mgpu.QueryClusterCancelOp)
   def _cluster_launch_control_ops_constraint_system(
       ctx: DerivationContext,
-      op: mgpu.TryClusterCancelOp | mgpu.QueryClusterCancelOp,  # pyrefly: ignore[missing-attribute]
+      op: mgpu.TryClusterCancelOp | mgpu.QueryClusterCancelOp,
   ) -> ConstraintSystemDerivationRuleResult:
     ref = ValueSite(op, VariableType.OPERAND, 0)
     var = ctx.producer_ref(ref)
@@ -1815,7 +1810,6 @@ def _with_transforms_constraint_system(
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   var = ctx.producer_ref(source)
-  # pyrefly: ignore[bad-argument-type]
   tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
   if tiling.value is not None:
     if not is_valid_smem_layout_assignment(source.shape, tiling.value):
@@ -2155,7 +2149,6 @@ def derive_relayout_constraints(
       if value_site.memory_space != MemorySpace.REG:
         continue
 
-      # pyrefly: ignore[missing-attribute]
       elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)  # pytype: disable=attribute-error
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)

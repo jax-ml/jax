@@ -254,7 +254,6 @@ def unwrap_transformed_memref(
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
 
   _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
-  # pyrefly: ignore[bad-argument-type]
   transformed_type = transform_type(ref.type, transforms)
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
@@ -297,11 +296,10 @@ def _initialize_barrier_op_lowering_rule(
   i32 = ir.IntegerType.get_signless(32)
   lowered_barrier_type = _lowered_barrier_type()
 
-  for i in range(op.num_barriers.value):  # pyrefly: ignore[no-matching-overload]
+  for i in range(op.num_barriers.value):
     nvvm.mbarrier_init(
         utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
         utils.c(
-            # pyrefly: ignore[unsupported-operation]
             op.arrival_count.value * utils.WARPGROUP_SIZE,
             i32,
         ),
@@ -631,7 +629,7 @@ def _broadcasted_iota_op_lowering_rule(
   a = fa.FragmentedArray.broadcasted_iota(
       result_type.element_type,
       tuple(result_type.shape),
-      op.dimension.value,  # pyrefly: ignore[bad-argument-type]
+      op.dimension.value,
       layouts_lib.from_layout_attr(layout),
       is_signed=_default_is_signed(result_type.element_type),
   )
@@ -682,7 +680,6 @@ def _vector_extract_strided_slice_op_lowering_rule(
   a = _fragmented_array_from_ir(op.source, in_layout)
   indices = tuple(
       utils.DynamicSlice(
-          # pyrefly: ignore[bad-argument-type]
           ir.IntegerAttr(offset).value, ir.IntegerAttr(length).value
       )
       for offset, length in zip(op.offsets, op.sizes, strict=True)
@@ -738,13 +735,13 @@ def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp
 ) -> Sequence[ir.Value]:
   [layout] = inference_utils.in_layouts(op)
-  element_type = op.vector.type.element_type  # pyrefly: ignore[missing-attribute]
+  element_type = op.vector.type.element_type
   scratch = _slice_smem(
       ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
       arith.constant(None, op.attributes["offset"]),  # pyrefly: ignore[bad-argument-type]
       ctx.smem_requested_bytes,
   )
-  axes = range(op.vector.type.rank)  # pyrefly: ignore[missing-attribute]
+  axes = range(op.vector.type.rank)
   op_kind = _combining_kind(op.kind)
   is_signed = _is_reduction_signed(op_kind)
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
@@ -786,8 +783,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   reduced_dim = src.layout.tiling.tile_dimension(op.reduction_dims[0])
   if any(reduced_dim[d] for d in src.layout.partitioned_warp_dims):
     # cross-warp reductions require scratch space.
-    dtype = op.source.type.element_type  # pyrefly: ignore[missing-attribute]
-    # pyrefly: ignore[unsupported-operation]
+    dtype = op.source.type.element_type
     allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
@@ -1260,7 +1256,7 @@ def _conversion_op_lowering_rule(
   if in_layout != layout:
     raise ValueError("Layout mismatch")
 
-  target_ty = op.result.type.element_type  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
   operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
   converted = operand.astype(target_ty, is_signed=target_is_signed)
   return [fragmented_array_to_ir(converted, op.result.type)]
@@ -1492,7 +1488,7 @@ def _mgpu_wgmma_op_lowering_rule(
   assert out_layout == layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
   # s8/i8 WGMMA expects signed integer accumulator.
-  element_type = wgmma_op.a.type.element_type  # pyrefly: ignore[missing-attribute]
+  element_type = wgmma_op.a.type.element_type
   is_signed = True if isinstance(element_type, ir.IntegerType) else None
   # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
   # The associated fence could be a little expensive and is not needed if the
@@ -1582,7 +1578,6 @@ def _mgpu_arrive_op_lowering_rule(
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
-  # pyrefly: ignore[bad-assignment]
   num_bytes: int = arrive_expect_tx_op.expect_tx.value
   i32 = ir.IntegerType.get_signless(32)
   num_lanes = (
@@ -1908,7 +1903,7 @@ def _memref_transpose_op_lowering_rule(
   in_transforms = inference_utils.in_transforms(op)[0]
   unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
-  if in_transformed_ty.rank == op.in_.type.rank:  # pyrefly: ignore[missing-attribute]
+  if in_transformed_ty.rank == op.in_.type.rank:
     new_permutation = op.permutation
   elif in_transformed_ty.rank == 4:
     if op.permutation == _permutation_to_affine_map_attr([0, 1]):
@@ -1951,8 +1946,8 @@ def _memref_expand_shape_op_lowering_rule(
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   out_transformed_ty = transform_type(ir.MemRefType(op.result.type), transforms)
 
-  reassociation: list[ir.ArrayAttr] = list(op.reassociation)  # pyrefly: ignore[no-matching-overload]
-  num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)  # pyrefly: ignore[missing-attribute]
+  reassociation = cast(list[ir.ArrayAttr], list(op.reassociation))
+  num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
 
   # We don't currently allow expanding tiled dimensions. So to compute the
   # reassociation on the lowered types, we just need to backfill the original
@@ -2035,7 +2030,6 @@ def _tmem_alloc_op_lowering_rule(
   ctx.check_collective(op)
 
   output_shape = ir.MemRefType(op.result.type).shape
-  # pyrefly: ignore[unsupported-operation]
   ncols = output_shape[1] // op.packing.value
 
   with utils.when(ctx.single_warp_per_block_predicate):
@@ -2072,7 +2066,6 @@ def _tmem_dealloc_op_lowering_rule(
   i32 = ir.IntegerType.get_signless(32)
   conversion_cast, [tmem_addr] = _undo_conversion_cast(op.tmem_ref, [i32])
   collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
-  # pyrefly: ignore[bad-assignment]
   packing: int = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
   output_shape = ir.MemRefType(op.tmem_ref.type).shape
@@ -2640,7 +2633,7 @@ def _lowering_context(
         utils.single_thread_predicate(scope=utils.ThreadSubset.BLOCK),
         single_warp_per_block_predicate,
         auto_barriers,
-        smem_size,  # pyrefly: ignore[bad-argument-type]
+        smem_size,
     )
 
 

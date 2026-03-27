@@ -1003,11 +1003,12 @@ def _shard_map_lowering_shardy(
       output_types, mlir.flatten_ir_values(args), in_shardings, out_shardings,
       sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
 
-  dim_var_types = [mlir.aval_to_ir_type(
-      core.ShapedArray((), dtypes.default_int_dtype()))] * num_dim_vars
+  dim_var_types = mlir.flatten_ir_types(
+    [mlir.aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))]
+  ) * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
-  const_arg_types = map(mlir.aval_to_ir_type, const_avals)
-  in_types = map(mlir.aval_to_ir_type, in_avals_)
+  const_arg_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_type, const_avals))
+  in_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_type, in_avals_))
   block = ir.Block.create_at_start(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))

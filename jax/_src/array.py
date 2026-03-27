@@ -1129,7 +1129,7 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
   removed_dims: list[int] = []
 
   tuple_idx = idx if isinstance(idx, tuple) else (idx,)
-  for dim, sub_idx in enumerate(tuple_idx):  # pyrefly: ignore[bad-argument-type]
+  for dim, sub_idx in enumerate(tuple_idx):
     if isinstance(sub_idx, int):
       start_indices[dim] = sub_idx
       limit_indices[dim] = sub_idx + 1

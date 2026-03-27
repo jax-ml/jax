@@ -416,7 +416,7 @@ def lower_jaxpr_into_module(
     sym_tab.insert(mlir_func)
 
     block_shape = list(pallas_core._get_block_shape(bm.block_shape))
-    block_params = dict(
+    block_params = dict[str, ir.Attribute](
         window_bounds=ir.DenseI64ArrayAttr.get(block_shape),
         transform_indices=ir.FlatSymbolRefAttr.get(func_name),
     )
@@ -525,7 +525,7 @@ def lower_jaxpr_to_func(
       func_op.arguments[num_grid : len(func_op.arguments) - num_scratch],
       mosaic_grid_mapping.block_mappings,
   ):
-    d = {}
+    d: dict[str, ir.Attribute] = {}
     if (
         str(arg.type.memory_space) == "#tpu.memory_space<hbm>"
         or str(arg.type.memory_space) == "#tpu.memory_space<semaphore_mem>"
