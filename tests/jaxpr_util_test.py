@@ -20,6 +20,7 @@ from absl.testing import absltest
 
 import jax
 from jax import jit, make_jaxpr, numpy as jnp
+from jax import lax
 from jax._src import config
 from jax._src import jaxpr_util
 from jax._src import test_util as jtu
@@ -108,6 +109,23 @@ class JaxprStatsTest(jtu.JaxTestCase):
     self.assertSetEqual(
         {"sampleType", "sample", "stringTable", "location", "function"},
         set(profile.keys()))
+
+  def test_count_eqns(self):
+    # Test a simple flat jaxpr
+    def f(x):
+      return x + 2
+    jaxpr = make_jaxpr(f)(42)
+    # Check that accessing the property works on the ClosedJaxpr
+    self.assertEqual(jaxpr_util.count_eqns(jaxpr), 1)
+
+    # Test a higher-order jaxpr (contains nested subjaxprs)
+    def g(x):
+      return lax.cond(x > 0, lambda x: x + 2, lambda x: x - 2, x)
+    jaxpr_nested = make_jaxpr(g)(42)
+
+    # Verify the property resolves successfully and aggregates the nested equations
+    # (should be > 1 due to the condition and branch eqns)
+    self.assertEqual(jaxpr_util.count_eqns(jaxpr_nested), 5)
 
 
 if __name__ == "__main__":

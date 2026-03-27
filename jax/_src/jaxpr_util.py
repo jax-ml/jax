@@ -64,6 +64,12 @@ def collect_eqns(jaxpr: core.Jaxpr, key: Callable):
     d[key(eqn)].append(eqn)
   return dict(d)
 
+@util.weakref_lru_cache
+def count_eqns(
+    jaxpr: core.Jaxpr, revisit_inner_jaxprs: bool = True
+) -> int:
+  return sum(1 for _ in all_eqns(jaxpr, revisit_inner_jaxprs=revisit_inner_jaxprs))
+
 def histogram(jaxpr: core.Jaxpr, key: Callable,
               key_fmt: Callable = lambda x: x):
   d = collect_eqns(jaxpr, key)
