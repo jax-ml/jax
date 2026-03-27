@@ -1640,6 +1640,39 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+     for lhs_shape, rhs_shape in [
+       # batched lu, unbatched b (vector)
+       ((3, 4, 4), (4,)),
+       # batched lu, unbatched b (matrix)
+       ((3, 8, 8), (8, 4)),
+       # unbatched lu, batched b (matrix) — broadcast lu -> batch
+       ((4, 4), (3, 4, 2)),
+     ]
+    ],
+    trans=[0, 1, 2],
+    dtype=float_types + complex_types,
+  )
+  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testLuSolveBroadcast(self, lhs_shape, rhs_shape, dtype, trans):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.lu_solve batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    lu_factor_vec = np.vectorize(osp.linalg.lu_factor,
+                                  signature="(n,n)->(n,n),(n)")
+
+    def args_maker():
+      a = rng(lhs_shape, dtype)
+      lu, piv = lu_factor_vec(a) if a.ndim > 2 else osp.linalg.lu_factor(a)
+      return [lu, piv, rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [
         ((1, 1), (1, 1)),
         ((4, 4), (4,)),
@@ -1675,7 +1708,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
         ((4, 4), (4,)),
         ((4, 4), (4, 3)),
-        ((2, 8, 8), (2, 8, 10)),
       ]
     ],
     lower=[False, True],
@@ -1698,20 +1730,48 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       a = l
     a = a if lower else T(a)
 
-    inv = np.linalg.inv(T(a) if transpose_a else a).astype(a.dtype)
-    if len(lhs_shape) == len(rhs_shape):
-      np_ans = np.matmul(inv, b)
-    else:
-      np_ans = np.einsum("...ij,...j->...i", inv, b)
+    osp_fun = partial(osp.linalg.solve_triangular, trans=1 if transpose_a else 0,
+                      lower=lower, unit_diagonal=unit_diagonal)
+    jsp_fun = partial(jsp.linalg.solve_triangular, trans=1 if transpose_a else 0,
+                      lower=lower, unit_diagonal=unit_diagonal)
+    args_maker = lambda: [a, b]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            rtol={np.float32: 1e-4, np.float64: 1e-11})
+    self._CompileAndCheck(jsp_fun, args_maker)
 
-    # The standard scipy.linalg.solve_triangular doesn't support broadcasting.
-    # But it seems like an inevitable extension so we support it.
-    ans = jsp.linalg.solve_triangular(
-        l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
-        unit_diagonal=unit_diagonal)
-
-    self.assertAllClose(np_ans, ans,
-                        rtol={np.float32: 1e-4, np.float64: 1e-11})
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+        # matching batch dims
+        ((2, 8, 8), (2, 8, 10)),
+        # batched a, unbatched b (vector) — broadcast b
+        ((3, 4, 4), (4,)),
+        # batched a, unbatched b (matrix)
+        ((3, 4, 4), (4, 2)),
+        # unbatched a, batched b (matrix) — broadcast a
+        ((4, 4), (3, 4, 2)),
+      ]
+    ],
+    lower=[False, True],
+    dtype=float_types,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testSolveTriangularBroadcast(self, lower, lhs_shape, rhs_shape, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.solve_triangular batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    k = rng(lhs_shape, dtype)
+    l = np.linalg.cholesky(
+        np.matmul(k, T(k)) + lhs_shape[-1] * np.eye(lhs_shape[-1]))
+    l = l.astype(k.dtype)
+    a = l if lower else T(l)
+    b = rng(rhs_shape, dtype)
+    osp_fun = partial(osp.linalg.solve_triangular, lower=lower)
+    jsp_fun = partial(jsp.linalg.solve_triangular, lower=lower)
+    args_maker = lambda: [a, b]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            rtol={np.float32: 1e-4, np.float64: 1e-11})
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(left_side=left_side, a_shape=a_shape, b_shape=b_shape)
@@ -2094,6 +2154,38 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             args_maker, tol=1e-3)
 
   @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+          # batched c, unbatched b (vector)
+          [(3, 4, 4), (4,)],
+          # batched c, unbatched b (matrix)
+          [(3, 4, 4), (4, 2)],
+          # batched c, batched b
+          [(3, 4, 4), (3, 4, 2)],
+          # unbatched c, batched b (broadcast c -> batch)
+          [(4, 4), (3, 4, 2)],
+      ]
+    ],
+    dtype=float_types,
+    lower=[True, False],
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testChoSolveBroadcast(self, lhs_shape, rhs_shape, dtype, lower):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.cho_solve batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      b = rng(rhs_shape, dtype)
+      if lower:
+        L = np.tril(rng(lhs_shape, dtype))
+        return [(L, lower), b]
+      else:
+        U = np.triu(rng(lhs_shape, dtype))
+        return [(U, lower), b]
+    self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
+                            args_maker, tol=1e-3)
+
+  @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
     dtype=float_types + complex_types,
   )
@@ -2185,6 +2277,53 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         osp.linalg.rsf2csf, jsp.linalg.rsf2csf, args_maker, tol=tol
     )
     self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
+
+  @jtu.sample_product(
+    [dict(t_shape=t_shape, z_shape=z_shape)
+     for t_shape, z_shape in [
+       # batched T and Z
+       ((3, 4, 4), (3, 4, 4)),
+       # batched T, unbatched Z — broadcast Z
+       ((3, 4, 4), (4, 4)),
+       # unbatched T, batched Z — broadcast T
+       ((4, 4), (3, 4, 4)),
+     ]
+    ],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testRsf2csfBroadcast(self, t_shape, z_shape, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.rsf2csf batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(t_shape, dtype), rng(z_shape, dtype)]
+    self._CheckAgainstNumpy(osp.linalg.rsf2csf, jsp.linalg.rsf2csf,
+                            args_maker, tol=3e-5)
+    self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, side=side)
+     for shape, side in [
+       ((4, 4), 'right'),  # square, side='right' (m >= n)
+       ((5, 3), 'right'),  # tall, side='right' (m > n)
+       ((3, 5), 'left'),   # wide, side='left' (m < n, qdwh constraint)
+     ]
+    ],
+    batch=[3],
+    dtype=float_types,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testPolarBatch(self, batch, shape, side, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.polar batch support requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((batch,) + shape, dtype)]
+    self._CheckAgainstNumpy(
+        partial(osp.linalg.polar, side=side),
+        partial(jsp.linalg.polar, side=side),
+        args_maker, tol=1e-4)
+    self._CompileAndCheck(partial(jsp.linalg.polar, side=side), args_maker)
 
   @jtu.sample_product(
     shape=[(1, 1), (5, 5), (20, 20), (50, 50)],
@@ -2425,6 +2564,48 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     C = rng(shape=(n, n), dtype=dtype)
     sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-5)
     self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
+
+  @jtu.sample_product(
+    [dict(a_shape=a_shape, b_shape=b_shape, c_shape=c_shape)
+     for a_shape, b_shape, c_shape in [
+       # unbatched A,B; batched C — broadcast A,B to batch
+       ((3, 3), (4, 4), (2, 3, 4)),
+       # batched A; unbatched B, C
+       ((2, 3, 3), (4, 4), (3, 4)),
+       # all batched
+       ((2, 3, 3), (2, 4, 4), (2, 3, 4)),
+     ]
+    ],
+    dtype=float_types,
+    method=["schur", "eigen"],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def test_solve_sylvester_broadcast(self, a_shape, b_shape, c_shape, dtype, method):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.solve_sylvester batch broadcasting requires scipy >= 1.16")
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+      self.skipTest("Schur not supported on GPU.")
+    tol = {np.float32: 5e-2, np.float64: 1e-9}
+    rng = jtu.rand_default(self.rng())
+
+    def args_maker():
+      A = rng(a_shape, dtype)
+      B = rng(b_shape, dtype)
+      # Compute the broadcast batch shape to construct a valid C
+      batch = np.broadcast_shapes(a_shape[:-2], b_shape[:-2], c_shape[:-2])
+      A_bc = np.broadcast_to(A, batch + a_shape[-2:])
+      B_bc = np.broadcast_to(B, batch + b_shape[-2:])
+      X_true = rng(batch + c_shape[-2:], dtype)
+      C = np.einsum("...ij,...jk->...ik", A_bc, X_true) + \
+          np.einsum("...ij,...jk->...ik", X_true, B_bc)
+      # Return un-broadcast A, B so JAX must do the broadcasting itself
+      return [A, B, C]
+
+    jnp_fun = partial(jsp.linalg.solve_sylvester, method=method)
+    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
 
 class LaxLinalgTest(jtu.JaxTestCase):
