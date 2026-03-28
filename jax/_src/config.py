@@ -2196,3 +2196,16 @@ jax_pallas_verbose_errors = bool_flag(
     default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
     help="If True, print verbose error messages for Pallas kernels.",
 )
+
+jax_closure_capture_warning_threshold_bytes = int_state(
+    name='jax_closure_capture_warning_threshold_bytes',
+    default=100 * 1024 * 1024,  # 100 MB
+    help=(
+        'Threshold in bytes for warning about large arrays captured in '
+        'function closures during JAX compilation. When a jit/pmap/shard_map '
+        'function captures arrays from its enclosing scope, these arrays are '
+        'replicated to all devices, which can cause out-of-memory errors for '
+        'large arrays like model parameters. '
+        'Set to 0 to disable the warning. Default is 100 MB (104857600 bytes).'
+    ),
+)

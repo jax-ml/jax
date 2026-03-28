@@ -24,6 +24,7 @@ import itertools as it
 import logging
 import math
 from typing import Any, NamedTuple, Union
+import warnings
 
 import numpy as np
 
@@ -865,6 +866,66 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
+def _warn_large_closure_constants(
+    consts: Sequence[Any],
+    fun_name: str,
+) -> None:
+  """Warn if closure captures large arrays that will be replicated to devices.
+  
+  When a JAX function captures arrays from its enclosing scope (closure),
+  these arrays become constants in the compiled computation. For large arrays
+  (e.g., model parameters), this can cause unexpected memory usage.
+  
+  Args:
+    consts: The constant values captured in the closure (from closed_jaxpr.consts).
+    fun_name: Name of the function being compiled.
+  """
+  threshold = config.jax_closure_capture_warning_threshold_bytes.value
+  if threshold <= 0:
+    return
+  
+  # Find constants that exceed the threshold
+  large_consts = []
+  for const in consts:
+    if hasattr(const, 'nbytes') and const.nbytes > threshold:
+      large_consts.append(const)
+  
+  if not large_consts:
+    return
+  
+  # Calculate total size
+  total_bytes = sum(c.nbytes for c in large_consts)
+  total_mb = total_bytes / (1024 * 1024)
+  
+  # Get device count for memory impact estimate
+  try:
+    num_devices = len(xb.local_devices())
+  except Exception:
+    num_devices = 1
+  
+  # Build detailed warning message
+  const_descriptions = []
+  for const in large_consts:
+    size_mb = const.nbytes / (1024 * 1024)
+    shape = getattr(const, 'shape', 'unknown')
+    dtype = getattr(const, 'dtype', 'unknown')
+    const_descriptions.append(
+        f"  - shape={shape}, dtype={dtype}, size={size_mb:.1f} MB"
+    )
+  
+  warning_msg = (
+      f"JAX compilation of '{fun_name}' captures {len(large_consts)} large "
+      f"constant(s) totaling {total_mb:.1f} MB in closure:\n"
+      + "\n".join(const_descriptions) + "\n"
+      f"These will be embedded in the compiled program and may be replicated "
+      f"across {num_devices} device(s).\n"
+      f"To avoid this, pass large arrays as explicit function arguments.\n"
+      f"To silence this warning, set "
+      f"JAX_CLOSURE_CAPTURE_WARNING_THRESHOLD_BYTES=0"
+  )
+  
+  warnings.warn(warning_msg, UserWarning, stacklevel=8)
+ 
 
 def hoist_constants_as_args(
     closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
@@ -902,6 +963,7 @@ def hoist_constants_as_args(
 
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
           kept_var_idx, inout_aliases, mut, all_args_info)
+ 
 
 
 @util.cache(max_size=1024, trace_context_in_key=False)
@@ -990,6 +1052,9 @@ def lower_sharding_computation(
   jaxpr = closed_jaxpr.jaxpr
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
+
+  if closed_jaxpr.consts:
+    _warn_large_closure_constants(closed_jaxpr.consts, fun_name)
 
   if lowering_parameters.hoist_constants_as_args:
     (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
