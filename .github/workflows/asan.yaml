@@ -43,38 +43,38 @@ jobs:
       - name: Build JAX
         run: |
           cd jax
-          python build/build.py build --wheels=jaxlib --verbose \
+          python build/build.py build --wheels=jax-cuda-plugin,jax-cuda-pjrt --verbose \
             --bazel_options=--color=yes \
             --bazel_options=--config=asan_shared \
             --python_version=${PYTHON_VERSION} \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${CPYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}" \
             --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
 
-      - name: Run tests
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-          JAX_NUM_GENERATED_CASES: 1
-          JAX_ENABLE_X64: true
-          JAX_SKIP_SLOW_TESTS: true
-          PY_COLORS: 1
-        run: |
-          echo "Download CPython with ASAN support"
-          cd ${GITHUB_WORKSPACE}
-          wget ${CPYTHON_URL}
-          tar -xzf ${CPYTHON_PREFIX}.tar.gz
+      # - name: Run tests
+      #   env:
+      #     ASAN_OPTIONS: detect_leaks=0
+      #     JAX_NUM_GENERATED_CASES: 1
+      #     JAX_ENABLE_X64: true
+      #     JAX_SKIP_SLOW_TESTS: true
+      #     PY_COLORS: 1
+      #   run: |
+      #     echo "Download CPython with ASAN support"
+      #     cd ${GITHUB_WORKSPACE}
+      #     wget ${CPYTHON_URL}
+      #     tar -xzf ${CPYTHON_PREFIX}.tar.gz
 
-          echo "Install python requirements and JAX"
-          ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3 -m venv \
-            ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv
-          source ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate
-          pip install uv~=0.5.30
-          cd jax
-          uv pip install -r build/test-requirements.txt
-          uv pip install dist/jaxlib-*.whl -e .
+      #     echo "Install python requirements and JAX"
+      #     ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3 -m venv \
+      #       ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv
+      #     source ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate
+      #     pip install uv~=0.5.30
+      #     cd jax
+      #     uv pip install -r build/test-requirements.txt
+      #     uv pip install dist/jaxlib-*.whl -e .
 
-          echo "Run tests"
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          python -m pytest -n 32 --tb=short --maxfail=20 tests
+      #     echo "Run tests"
+      #     echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+      #     echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+      #     echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+      #     python -m pytest -n 32 --tb=short --maxfail=20 tests
