@@ -827,7 +827,7 @@ def _dot_product_attention_fwd_batcher(
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
   if has_bias and batch_dims[3] is not None:
-    bias = jnp.reshape(bias, (B, N, T, S))
+    bias = jnp.reshape(bias, (B,) + bias.shape[-3:])
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
@@ -874,7 +874,7 @@ def _dot_product_attention_bwd_batcher(
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
   if has_bias and batch_dims[3] is not None:
-    bias = jnp.reshape(bias, (B, N, T, S))
+    bias = jnp.reshape(bias, (B,) + bias.shape[-3:])
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
