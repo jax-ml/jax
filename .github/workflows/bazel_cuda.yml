@@ -115,7 +115,7 @@ jobs:
       - name: Checkout specific commit
         run: |
           git config --global --add safe.directory '*'
-          git checkout 8842cf88d251ffd4b16a56c5e9104a6cfbcc885b
+          git checkout 3f1d12f3cbd3875db6634ecd2a5d43cf51fe4c99
       - name: Download JAX CUDA wheels
         if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-cuda-wheels
