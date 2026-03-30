@@ -166,7 +166,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
       )
@@ -190,7 +190,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
       )
@@ -214,7 +214,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
@@ -239,7 +239,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.IntegerType.get_signless(32),
       )
       mgpu.dialect.async_load(
@@ -262,7 +262,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.IntegerType.get_signless(32),
       )
       mgpu.dialect.async_load(
@@ -286,7 +286,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           i32,
       )
       mgpu.dialect.async_load(
@@ -313,7 +313,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           i32,
           ir.VectorType.get([4], i32),
       )
@@ -338,7 +338,7 @@ class DialectTest(MosaicGpuTest):
       source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
           ir.VectorType.get([4], i32),
           ir.VectorType.get([4], i32),
       )
@@ -1554,7 +1554,7 @@ ir.MLIRError,
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
           ir.MemRefType.get([8], ir.IntegerType.get_signless(8)),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
       )
       mgpu.dialect.try_cluster_cancel(result, barrier)
     with self.assertRaisesRegex(
@@ -1585,7 +1585,7 @@ ir.MLIRError,
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
           ir.MemRefType.get([16], ir.IntegerType.get_signless(8)),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
       )
       mgpu.dialect.try_cluster_cancel(result, barrier)
     with self.assertRaisesRegex(

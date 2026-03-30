@@ -1630,7 +1630,7 @@ def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   ref_ty = ir.MemRefType(op.result.type)
-  if ref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
+  if isinstance(ref_ty.element_type, mgpu.BarrierType):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
     return [_slice_smem(ref_ty, op.offset, ctx.smem_requested_bytes)]
@@ -1655,7 +1655,7 @@ def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
   )
   offset = arith.index_cast(ir.IndexType.get(), offset)
   lowered_result_type = result
-  if result.element_type == ir.Type.parse("!mosaic_gpu.barrier"):
+  if isinstance(result.element_type, mgpu.BarrierType):
     lowered_result_type = ir.MemRefType.get(
         result.shape, _lowered_barrier_type(), memory_space=utils.smem()
     )

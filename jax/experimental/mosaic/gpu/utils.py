@@ -526,7 +526,7 @@ def bitwidth_impl(ty: ir.Type):
     return ir.IntegerType(ty).width
   if isinstance(ty, ir.FloatType):
     return ir.FloatType(ty).width
-  if dialect is not None and ty == ir.Type.parse("!mosaic_gpu.barrier"):
+  if dialect is not None and isinstance(ty, dialect.BarrierType):
     return MBARRIER_BYTES * 8
   if isinstance(ty, ir.VectorType):
     vty = ir.VectorType(ty)
@@ -1189,7 +1189,7 @@ class DialectBarrierRef:
   def as_barrier_memref(self) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    memref_type = ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier"))
+    memref_type = ir.MemRefType.get(shape, dialect.BarrierType.get())
     result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
     assert isinstance(result, ir.Value)
     return result
@@ -1198,8 +1198,8 @@ class DialectBarrierRef:
   def from_barrier_memref(cls, barrier: ir.Value):
     """Creates a DialectBarrierRef from a memref of a dialect barrier."""
     memref_type = ir.MemRefType(barrier.type)
-    if memref_type.rank > 1 or memref_type.element_type != ir.Type.parse(
-        "!mosaic_gpu.barrier"
+    if memref_type.rank > 1 or not isinstance(
+        memref_type.element_type, dialect.BarrierType
     ):
       raise ValueError(
           "Expected a memref with rank 0 or 1 and element type "

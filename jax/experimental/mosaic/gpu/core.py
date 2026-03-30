@@ -430,7 +430,7 @@ def _construct_smem_reftree(
       nonlocal dynamic_smem_offset
       barrier_ty = ir.MemRefType.get(
           (num_barriers,),
-          ir.Type.parse("!mosaic_gpu.barrier")
+          dialect.BarrierType.get()
           if lowering_semantics == LoweringSemantics.Warpgroup
           else i64,
           memory_space=utils.smem(),

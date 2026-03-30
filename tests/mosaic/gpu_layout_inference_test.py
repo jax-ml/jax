@@ -1655,7 +1655,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
       smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      barrier_ty = mgpu.dialect.BarrierType.get()
       gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
 
       transforms = ir.ArrayAttr.get([
@@ -1695,7 +1695,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
           ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()),
-          ir.Type.parse("!mosaic_gpu.barrier"),
+          mgpu.dialect.BarrierType.get(),
       )
       op = mgpu.dialect.try_cluster_cancel(result, barrier)
 
@@ -1727,7 +1727,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
       smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      barrier_ty = mgpu.dialect.BarrierType.get()
       gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
 
       transforms = ir.ArrayAttr.get(
@@ -2007,7 +2007,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
       smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      barrier_ty = mgpu.dialect.BarrierType.get()
       [gmem_ref, smem_ref, barrier] = undefs(gmem_ty, smem_ty, barrier_ty)
 
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
@@ -2561,7 +2561,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
       gmem_ty = ir.MemRefType.get(gmem_shape, elt_ty)
       smem_ty = ir.MemRefType.get(smem_shape, elt_ty, memory_space=mgpu.utils.smem())
-      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      barrier_ty = mgpu.dialect.BarrierType.get()
 
       gmem_ref, smem_ref, barrier, scalar_idx, vec_idx = undefs(
           gmem_ty, smem_ty, barrier_ty, i32, vec_ty
@@ -2786,7 +2786,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       args_ty = (
           ir.MemRefType.get(shape, i32, memory_space=mgpu.utils.smem()),
           ir.MemRefType.get(shape, i32),
-          ir.Type.parse("!mosaic_gpu.barrier"),
+          mgpu.dialect.BarrierType.get(),
       )
       args = undefs(*args_ty)
       transforms = ir.ArrayAttr.get([

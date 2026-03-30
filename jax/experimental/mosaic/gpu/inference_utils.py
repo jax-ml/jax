@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Union
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
 from . import fragmented_array as fa
@@ -211,11 +212,10 @@ def should_have_transforms(op: ir.OpView) -> bool:
 
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
-  barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
   return (
       isinstance(v.type, ir.MemRefType)
       # barriers have no business being transformed
-      and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
+      and not isinstance(v.type.element_type, mgpu.BarrierType)
       and utils.is_smem_ref(v)
   )
 
