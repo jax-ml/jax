@@ -12,10 +12,12 @@
   Literal
   Primitive
   Token
+  TraceTag
   Var
   array_types
   jaxpr_as_fun
   primitives
   mapped_aval
+  set_current_trace
   take_current_trace
   unmapped_aval

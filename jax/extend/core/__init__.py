@@ -27,8 +27,10 @@ from jax._src.core import (
   mapped_aval as mapped_aval,
   Literal as Literal,
   Primitive as Primitive,
+  set_current_trace as set_current_trace,
   take_current_trace as take_current_trace,
   Token as Token,
+  TraceTag as TraceTag,
   unmapped_aval as unmapped_aval,
   Var as Var,
 )
