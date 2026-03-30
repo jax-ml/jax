@@ -2888,7 +2888,7 @@ class PallasCallTest(ptu.PallasTPUTest):
     def kernel(x_ref, y_ref):
       x = x_ref[...]
       # Check that vma is removed before entering the kernel.
-      assert x.vma == frozenset()
+      assert x.mat.varying == frozenset()
       y_ref[...] = x_ref[...]
 
     num_devices = jax.local_device_count()

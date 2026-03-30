@@ -929,7 +929,7 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
 def _insert_pvary(basis, leaf):
   if not config._check_vma.value:
     return basis
-  return core.pvary(basis, tuple(core.typeof(leaf).vma))
+  return core.pvary(basis, tuple(core.typeof(leaf).mat.varying))
 
 def _std_basis(pytree):
   import jax.numpy as jnp  # pytype: disable=import-error
@@ -1554,13 +1554,14 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
         extra_msg = ''
         if (isinstance(primal_aval, core.ShapedArray) and
             isinstance(tangent_aval, core.ShapedArray) and
-            primal_aval.vma != tangent_aval.vma):
+            primal_aval.mat != tangent_aval.mat):
+          # TODO(yashkatariya): Tweak error.
           pvary_applications = []
-          if left := tangent_aval.vma - primal_aval.vma:
+          if left := tangent_aval.mat.varying - primal_aval.mat.varying:
             pvary_applications.append(
                 f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
                 " the primal value passed to `jax.linearize`")
-          if left := primal_aval.vma - tangent_aval.vma:
+          if left := primal_aval.mat.varying - tangent_aval.mat.varying:
             pvary_applications.append(
                 f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
                 " the tangent value passed to the callable `f_jvp` returned by"

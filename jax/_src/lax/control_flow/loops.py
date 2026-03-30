@@ -436,14 +436,16 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                      + f'  * {diffs[-1]}.\n')
 
+    # TODO(rdyro): extend this to also cover reduced and unreduced.
     pvary_applications = [
-        f'applying `jax.lax.pcast(..., {tuple(out_aval.vma - in_aval.vma)},'
-        " to='varying')` to the initial carry value corresponding to"
-        f' {component(path)}'
+        f'applying `jax.lax.pcast(..., '
+        f"{tuple(out_aval.mat.varying - in_aval.mat.varying)}, to='varying')`, "
+        f'to the initial carry value corresponding to {component(path)}'
         for path, in_aval, out_aval in zip(in_carry.paths, in_carry, out_carry)
         if not core.typematch(in_aval, out_aval) and
         isinstance(in_aval, ShapedArray) and isinstance(out_aval, ShapedArray)
-        and in_aval.vma != out_aval.vma and out_aval.vma - in_aval.vma]
+        and in_aval.mat.varying != out_aval.mat.varying
+        and out_aval.mat.varying - in_aval.mat.varying]
 
     if not pvary_applications:
       pvary_msg = ''
@@ -570,9 +572,9 @@ def _empty_array(prefix, length_spec, aval):
   # lax.empty will also need to take a memory_space argument.
   # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding,
   #                   memory_space=aval.memory_space)
-  # return core.pvary(empty, tuple(aval.vma))
+  # return core.pvary(empty, tuple(aval.mat.varying))
   empty = core.pvary(lax.empty2(aval.dtype, memory_space=aval.memory_space),
-                     tuple(aval.vma))
+                     tuple(aval.mat.varying))
   with use_abstract_mesh(sharding.mesh):
     out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
   return out
@@ -597,7 +599,7 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                      "of jaxpr arguments: {len(args)} vs {len(jaxpr.in_avals)}")
   out_carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   _, in_carry_avals, _ = split_list(args, [num_consts, num_carry])
-  if [i.vma for i in in_carry_avals] != [o.vma for o in out_carry_avals]:
+  if [i.mat for i in in_carry_avals] != [o.mat for o in out_carry_avals]:
     raise ValueError(
         'Scan carry input and output got mismatched varying manual axes '
         f'{in_carry_avals} and {out_carry_avals}. Please open an '

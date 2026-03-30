@@ -374,14 +374,17 @@ def _check_branch_outputs(
       differences = ('\n'.join(f'  * {d};' for d in diffs[:-1])
                      + f'\n  * {diffs[-1]}.\n')
 
+    # TODO(rdyro): extend this to also cover reduced and unreduced.
     pvary_applications = [
-        f"applying `jax.lax.pcast(..., {tuple(a1.vma - a2.vma)}, to='varying')` "
-        f"to the output of {n}{component(p)}"
+        f"applying `jax.lax.pcast(..., "
+        f"{tuple(a1.mat.varying - a2.mat.varying)}, to='varying')` to the"
+        f" output of {n}{component(p)}"
         for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
         for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
         if not core.typematch(a1, a2) and
         isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
-        and a1.vma != a2.vma and a2.vma - a1.vma]
+        and a1.mat.varying != a2.mat.varying
+        and a2.mat.varying - a1.mat.varying]
 
     if not pvary_applications:
       pvary_msg = ''
@@ -424,12 +427,12 @@ def _cond_abstract_eval(*avals: core.AbstractValue,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
-  b0_vma = [o.vma for o in branches[0].out_avals]
+  b0_mat = [o.mat for o in branches[0].out_avals]
   for branch in branches[1:]:
-    b_vma = [o.vma for o in branch.out_avals]
-    if b0_vma != b_vma:
+    b_mat = [o.mat for o in branch.out_avals]
+    if b0_mat != b_mat:
       raise Exception("The branches of cond produced mismatched varying manual "
-                      f"axes. Got {b0_vma} and {b_vma}. Please open an issue "
+                      f"axes. Got {b0_mat} and {b_mat}. Please open an issue "
                       "at https://github.com/jax-ml/jax/issues, and as a "
                       "temporary workaround pass the check_vma=False argument "
                       "to `jax.shard_map`")

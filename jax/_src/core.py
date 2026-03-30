@@ -2559,7 +2559,7 @@ def standard_insert_pvary(*args):
     return args
   if not args:
     return args
-  in_vma = [aval.vma if isinstance(aval := typeof(a), ShapedArray)
+  in_vma = [aval.mat.varying if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
   in_reduced = [aval.mat.reduced
                 if isinstance(aval := typeof(a), ShapedArray) else frozenset()
@@ -2586,7 +2586,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   avals = tuple(a for a in avals if a is not abstract_token)
   if not avals:
     return frozenset()
-  vma, *vmas = (a.vma for a in avals)
+  vma, *vmas = (a.mat.varying for a in avals)
   if not all(vma == vma_ for vma_ in vmas):
     raise ValueError(
         f'Primitive {prim_name} requires varying manual axes '
@@ -3322,8 +3322,8 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
       mismatches.append('the dtypes do not match')
     if a1.shape != a2.shape:
       mismatches.append('the shapes do not match')
-    if a1.vma != a2.vma:
-      mismatches.append('the varying manual axes do not match')
+    if a1.mat != a2.mat:
+      mismatches.append('the manual axis types do not match')
     # TODO(yashkatariya,mattjj): add check for sharding-in-types mismatch
 
     if len(mismatches) == 0:

@@ -332,7 +332,7 @@ def _searchsorted_scan_impl(
     go_left = op(query, sorted_arr[mid])
     return (lax.select(go_left, low, mid), lax.select(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(n + 1)))
-  vma = tuple(core.typeof(sorted_arr).vma)
+  vma = tuple(core.typeof(sorted_arr).mat.varying)
   init = (core.pvary(unsigned_dtype(0), vma), core.pvary(unsigned_dtype(n), vma))
   carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
                                unroll=n_levels if unrolled else 1)
