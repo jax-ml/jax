@@ -2143,7 +2143,7 @@ def get_cluster_ref(
       ir.StridedLayoutAttr.get(0, strides),
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
-  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+  if not is_smem_ref(ref_ty):
     raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
