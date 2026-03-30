@@ -1065,7 +1065,8 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
         dim_var_values=ctx.dim_var_values,
         const_lowering=ctx.const_lowering,
         arg_names=map(_pspec_mhlo_attrs, in_specs, in_avals_),
-        result_names=map(_pspec_mhlo_attrs, out_specs, out_avals_))
+        result_names=map(_pspec_mhlo_attrs, out_specs, out_avals_),
+        attributes={"inlineable": ir.StringAttr.get("false")})
   ctx.set_tokens_out(tokens_out)
   return map(partial(_xla_unshard, ctx, mesh, manual_axes), out_specs,
              out_avals_, ctx.avals_out, out_nodes_)
