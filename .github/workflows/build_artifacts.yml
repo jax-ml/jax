@@ -134,7 +134,7 @@ jobs:
       - name: Checkout specific commit
         run: |
           git config --global --add safe.directory '*'
-          git checkout 3f1d12f3cbd3875db6634ecd2a5d43cf51fe4c99
+          git checkout 590ed66e69e4b0d072b87494e52df5eff5801f3f
       - name: Configure Build Environment
         shell: bash
         run: |
