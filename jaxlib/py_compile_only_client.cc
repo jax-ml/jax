@@ -21,20 +21,19 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
-#include "llvm/Support/Casting.h"
+#include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/py_client.h"
+#include "jaxlib/py_device_list.h"
+#include "jaxlib/py_executable.h"
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/Bindings/Python/NanobindAdaptors.h" // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/nb_class_ptr.h"
-#include "jaxlib/py_client.h"
-#include "jaxlib/py_device_list.h"
-#include "jaxlib/py_executable.h"
+#include "nanobind/stl/string_view.h" // IWYU pragma: keep
+#include "nanobind/stl/vector.h"      // IWYU pragma: keep
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"
@@ -49,17 +48,20 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/xla_data.pb.h"
+#include "llvm/Support/Casting.h"
 
 namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 
 namespace jax {
 
-nb_class_ptr<PyClient> CompileOnlyPyClient::Make(
-    std::shared_ptr<xla::ifrt::PjRtTopology> topology) {
+nb_class_ptr<PyClient>
+CompileOnlyPyClient::Make(std::shared_ptr<xla::ifrt::PjRtTopology> topology,
+                          xla::ifrt::Client *autotuning_client) {
   auto client =
       nb::borrow<nb_class_ptr<PyClient>>(make_nb_class<CompileOnlyPyClient>(
-          std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology))));
+          std::make_unique<xla::CompileOnlyIfRtClient>(std::move(topology),
+                                                       autotuning_client)));
   CompileOnlyPyClient::Initialize(client);
   return client;
 }
@@ -73,7 +75,7 @@ absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
   ifrt::ExecutableRef ifrt_executable;
   {
     nb::gil_scoped_release gil_release;
-    auto* ifrt_client =
+    auto *ifrt_client =
         llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(this->ifrt_client());
     CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
                           "xla::CompileOnlyIfRtClient";
@@ -103,12 +105,12 @@ void CompileOnlyPyClient::Initialize(nb_class_ptr<PyClient> client) {
   PyClient::Initialize(client);
 }
 
-void CompileOnlyPyClient::Register(nb::module_& m) {
+void CompileOnlyPyClient::Register(nb::module_ &m) {
   nb::class_<CompileOnlyPyClient, PyClient>(m, "CompileOnlyPyClient")
       .def(
           "compile",
-          [](CompileOnlyPyClient& self, MlirModule mlir_module,
-             PyDeviceList& py_executable_devices, xla::CompileOptions options,
+          [](CompileOnlyPyClient &self, MlirModule mlir_module,
+             PyDeviceList &py_executable_devices, xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
@@ -132,4 +134,4 @@ void CompileOnlyPyClient::Register(nb::module_& m) {
               ));
 }
 
-}  // namespace jax
+} // namespace jax

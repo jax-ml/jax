@@ -1385,6 +1385,16 @@ persistent_cache_enable_xla_caches = optional_string_state(
           'which XLA caching methods will be enabled.'),
 )
 
+cross_compile_autotuning_backend = optional_string_state(
+    name='jax_cross_compile_autotuning_backend',
+    default=None,
+    help=('When cross-compiling with a compile-only client (fake topology), '
+          'specifies the name of a real backend (e.g. "cuda", "tpu") to use '
+          'for XLA kernel autotuning. The real device must be the same '
+          'generation as the target topology. When None, cross-compilation '
+          'runs without autotuning (deviceless mode).'),
+)
+
 compilation_cache_include_metadata_in_key = bool_state(
     name='jax_compilation_cache_include_metadata_in_key',
     default=False,

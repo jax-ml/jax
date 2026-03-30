@@ -36,24 +36,23 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
-#include "nanobind/nanobind.h"
-#include "nanobind/nb_defs.h"
-#include "nanobind/stl/function.h"  // IWYU pragma: keep
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // IWYU pragma: keep
-#include "nanobind/stl/set.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/ffi.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
 #include "jaxlib/py_values.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/nb_defs.h"
+#include "nanobind/stl/function.h"      // IWYU pragma: keep
+#include "nanobind/stl/optional.h"      // IWYU pragma: keep
+#include "nanobind/stl/pair.h"          // IWYU pragma: keep
+#include "nanobind/stl/set.h"           // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"    // IWYU pragma: keep
+#include "nanobind/stl/string.h"        // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"   // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"    // IWYU pragma: keep
+#include "nanobind/stl/unordered_map.h" // IWYU pragma: keep
+#include "nanobind/stl/variant.h"       // IWYU pragma: keep
+#include "nanobind/stl/vector.h"        // IWYU pragma: keep
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/cpu/cpu_client.h"
@@ -74,7 +73,8 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/pjrt_ifrt/transfer_server_interface.h"
 #include "xla/python/version.h"
-#include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
+#include "xla/tsl/python/lib/core/numpy.h" // NOLINT
+#include "llvm/Support/Casting.h"
 
 #if defined(__linux__)
 #include "gloo/transport/tcp/attr.h"
@@ -84,13 +84,13 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/gloo_kv_store.h"
 #elif defined(__APPLE__)
 #include "gloo/transport/uv/device.h"
-#include "xla/backends/cpu/collectives/gloo_collectives.h"  // NOLINT
-#include "xla/backends/cpu/collectives/gloo_kv_store.h"  // NOLINT
-#endif  // defined(__linux__)
+#include "xla/backends/cpu/collectives/gloo_collectives.h" // NOLINT
+#include "xla/backends/cpu/collectives/gloo_kv_store.h"    // NOLINT
+#endif                                                     // defined(__linux__)
 
 #if !defined(_WIN32) && !defined(PLATFORM_GOOGLE)
 #include "xla/backends/cpu/collectives/mpi_collectives.h"
-#endif  // !_WIN32 && !PLATFORM_GOOGLE
+#endif // !_WIN32 && !PLATFORM_GOOGLE
 
 #include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
@@ -114,6 +114,7 @@ limitations under the License.
 #include "jaxlib/sharding.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/xla_compiler.h"
+#include "tsl/platform/platform.h"
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -124,14 +125,13 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
-#include "xla/python/logging.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/logging.h"               // IWYU pragma: keep
+#include "xla/python/nb_absl_flat_hash_map.h" // IWYU pragma: keep
+#include "xla/python/nb_absl_span.h"          // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/platform.h"
 
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 
@@ -145,15 +145,15 @@ bool IsOptimizedBuild() {
   return true;
 #else
   return false;
-#endif  // NDEBUG
+#endif // NDEBUG
 }
 
 // Is*san reports whether the build is under that particular sanitizer.
 bool IsAsan() {
 #if defined(__SANITIZE_ADDRESS__)
-  return true;  // GCC and newer MSVC
+  return true; // GCC and newer MSVC
 #elif defined(__has_feature) && __has_feature(address_sanitizer)
-  return true;  // Clang
+  return true; // Clang
 #else
   return false;
 #endif
@@ -161,9 +161,9 @@ bool IsAsan() {
 
 bool IsMsan() {
 #if defined(__has_feature) && __has_feature(memory_sanitizer)
-  return true;  // Clang (MSan is typically Clang-only)
+  return true; // Clang (MSan is typically Clang-only)
 #elif defined(__SANITIZE_MEMORY__)
-  return true;  // GCC (rare, but future-proof)
+  return true; // GCC (rare, but future-proof)
 #else
   return false;
 #endif
@@ -171,9 +171,9 @@ bool IsMsan() {
 
 bool IsTsan() {
 #if defined(__SANITIZE_THREAD__)
-  return true;  // GCC
+  return true; // GCC
 #elif defined(__has_feature) && __has_feature(thread_sanitizer)
-  return true;  // Clang
+  return true; // Clang
 #else
   return false;
 #endif
@@ -186,7 +186,7 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 // tied to the module it's registered in.
 nb::handle jax_runtime_error_type;
 
-void register_runtime_error_bindings(nb::module_& m) {
+void register_runtime_error_bindings(nb::module_ &m) {
   if (jax_runtime_error_type.is_valid()) {
     return;
   }
@@ -214,7 +214,7 @@ void register_runtime_error_bindings(nb::module_& m) {
       },
       nb::is_method());
 
-  nb::object property_type = nb::borrow((PyObject*)&PyProperty_Type);
+  nb::object property_type = nb::borrow((PyObject *)&PyProperty_Type);
   exc.attr("error_code_string") = property_type(get_error_code_string);
 
   auto get_error_code = nb::cpp_function(
@@ -243,14 +243,14 @@ void register_runtime_error_bindings(nb::module_& m) {
   jax_runtime_error_type = exc;
 }
 
-void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
+void translate_xla_runtime_error(const std::exception_ptr &p, void *) {
   try {
     // It's a bit silly, but the only real way to cast an exception pointer is
     // to rethrow it and catch the concrete type we want.
     if (p) {
       std::rethrow_exception(p);
     }
-  } catch (const xla::XlaRuntimeError& e) {
+  } catch (const xla::XlaRuntimeError &e) {
     if (!jax_runtime_error_type.is_valid()) {
       PyErr_SetString(PyExc_RuntimeError,
                       "JaxRuntimeError type not initialized in translator");
@@ -270,7 +270,7 @@ void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
 
       // Set the current Python error to this new exception instance.
       PyErr_SetObject(jax_runtime_error_type.ptr(), exc_inst.ptr());
-    } catch (nb::python_error& py_err) {
+    } catch (nb::python_error &py_err) {
       // If creating the Python exception fails, restore the Python error
       // state from the nanobind exception.
       py_err.restore();
@@ -278,13 +278,13 @@ void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
   }
 }
 
-}  // namespace
+} // namespace
 
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
 #ifndef PLATFORM_GOOGLE
   xla::InitializeAbslLogging();
-#endif  // PLATFORM_GOOGLE
+#endif // PLATFORM_GOOGLE
 
   // We seem to get a fair number of leak warnings from nanobind. It's unclear
   // whether these are false positives or not.
@@ -312,21 +312,21 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::PjRtLayout>(m, "PjRtLayout")
       .def("__str__", &xla::PjRtLayout::ToString)
       .def("__eq__",
-           [](const xla::PjRtLayout& layout, nb::object other) {
+           [](const xla::PjRtLayout &layout, nb::object other) {
              return nb::isinstance<xla::PjRtLayout>(other) &&
-                    layout == nb::cast<const xla::PjRtLayout&>(other);
+                    layout == nb::cast<const xla::PjRtLayout &>(other);
            })
       .def("__hash__",
-           [](const xla::PjRtLayout& layout) { return absl::HashOf(layout); })
+           [](const xla::PjRtLayout &layout) { return absl::HashOf(layout); })
       .def("_xla_layout", &xla::PjRtLayout::xla_layout)
       .def("__getstate__",
-           [](const xla::PjRtLayout& layout) -> nb::tuple {
+           [](const xla::PjRtLayout &layout) -> nb::tuple {
              absl::StatusOr<std::string> serialized = layout.Serialize();
              xla::ThrowIfError(serialized.status());
              return nb::make_tuple(
                  nb::bytes(serialized->data(), serialized->size()));
            })
-      .def("__setstate__", [](xla::PjRtLayout* self, nb::tuple t) {
+      .def("__setstate__", [](xla::PjRtLayout *self, nb::tuple t) {
         nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
         absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout =
             xla::PjRtLayout::Deserialize(
@@ -338,10 +338,10 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::cpu::CpuCollectives> cpu_collectives(m, "CpuCollectives");
   cpu_collectives
       .def("Init",
-           [](xla::cpu::CpuCollectives*) {
+           [](xla::cpu::CpuCollectives *) {
              throw std::runtime_error("Init is not implemented");
            })
-      .def("Finalize", [](xla::cpu::CpuCollectives*) {
+      .def("Finalize", [](xla::cpu::CpuCollectives *) {
         throw std::runtime_error("Finalize is not implemented");
       });
 
@@ -388,10 +388,10 @@ NB_MODULE(_jax, m) {
         auto uv_device = gloo::transport::uv::CreateDevice(uv_attrs);
         return std::make_shared<xla::cpu::GlooCollectives>(
             std::move(gloo_kv_store), std::move(uv_device));
-#else   // defined(__linux__)
+#else  // defined(__linux__)
         throw xla::XlaRuntimeError(
             "make_gloo_tcp_collectives only implemented for linux and macos");
-#endif  // defined(__linux__)
+#endif // defined(__linux__)
       },
       nb::arg("distributed_client"), nb::arg("hostname").none() = std::nullopt,
       nb::arg("interface").none() = std::nullopt);
@@ -405,13 +405,13 @@ NB_MODULE(_jax, m) {
         []() -> std::shared_ptr<xla::cpu::MpiCollectives> {
           return std::make_shared<xla::cpu::MpiCollectives>();
         });
-#else   // !_WIN32 && !PLATFORM_GOOGLE
+#else  // !_WIN32 && !PLATFORM_GOOGLE
   m.def("make_mpi_collectives",
         []() -> std::shared_ptr<xla::cpu::CpuCollectives> {
           throw xla::XlaRuntimeError(
               "make_mpi_collectives is not implemented for Windows");
         });
-#endif  // !_WIN32 && !PLATFORM_GOOGLE
+#endif // !_WIN32 && !PLATFORM_GOOGLE
 
   m.def(
       "get_tfrt_cpu_client",
@@ -471,7 +471,7 @@ NB_MODULE(_jax, m) {
       nb::arg("get_global_topology_timeout_minutes").none() = std::nullopt,
       nb::arg("transfer_server_factory").none() = std::nullopt);
   m.def("pjrt_plugin_loaded", [](std::string platform_name) -> bool {
-    absl::StatusOr<const PJRT_Api*> pjrt_api = pjrt::PjrtApi(platform_name);
+    absl::StatusOr<const PJRT_Api *> pjrt_api = pjrt::PjrtApi(platform_name);
     return pjrt_api.ok();
   });
   m.def(
@@ -479,9 +479,9 @@ NB_MODULE(_jax, m) {
       [](std::string platform_name, std::optional<std::string> library_path,
          std::optional<nb::capsule> c_api) -> nb::capsule {
         if (library_path.has_value()) {
-          const PJRT_Api* api = xla::ValueOrThrow(
+          const PJRT_Api *api = xla::ValueOrThrow(
               pjrt::LoadPjrtPlugin(platform_name, *library_path));
-          return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
+          return nb::capsule(absl::bit_cast<void *>(api), "pjrt_c_api");
         }
         if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw nb::value_error(
@@ -489,7 +489,7 @@ NB_MODULE(_jax, m) {
               "capsule.");
         }
         xla::ThrowIfError(pjrt::SetPjrtApi(
-            platform_name, static_cast<const PJRT_Api*>(c_api->data())));
+            platform_name, static_cast<const PJRT_Api *>(c_api->data())));
         return *c_api;
       },
       nb::arg("platform_name"), nb::arg("library_path").none() = std::nullopt,
@@ -504,7 +504,7 @@ NB_MODULE(_jax, m) {
   m.def(
       "get_c_api_client",
       [](std::string platform_name,
-         const absl::flat_hash_map<std::string, xla::PjRtValueType>& options,
+         const absl::flat_hash_map<std::string, xla::PjRtValueType> &options,
          std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
          std::optional<xla::ifrt::TransferServerInterfaceFactory>
              transfer_server_factory,
@@ -551,33 +551,33 @@ NB_MODULE(_jax, m) {
   // standard registration.
   m.def("get_default_c_api_topology",
         [](std::string platform_name, std::string topology_name,
-           const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
+           const absl::flat_hash_map<std::string, xla::PjRtValueType> &options)
             -> std::shared_ptr<xla::ifrt::Topology> {
           return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
               xla::GetCApiTopology(platform_name, topology_name, options)));
         });
   m.def("get_c_api_topology",
         [](nb::capsule c_api, std::string topology_name,
-           const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
+           const absl::flat_hash_map<std::string, xla::PjRtValueType> &options)
             -> std::shared_ptr<xla::ifrt::Topology> {
           if (std::string_view(c_api.name()) != "pjrt_c_api") {
             throw nb::value_error(
                 "Argument to get_c_api_topology was not a pjrt_c_api capsule.");
           }
           return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
-              xla::GetCApiTopology(static_cast<const PJRT_Api*>(c_api.data()),
+              xla::GetCApiTopology(static_cast<const PJRT_Api *>(c_api.data()),
                                    topology_name, options)));
         });
   m.def("get_topology_for_devices",
-        [](const std::vector<nb_class_ptr<PyDevice>>& py_devices) {
+        [](const std::vector<nb_class_ptr<PyDevice>> &py_devices) {
           if (py_devices.empty()) {
             throw nb::value_error(
                 "get_topology_for_devices requires >= 1 devices.");
           }
           auto client = py_devices[0]->client();
-          absl::InlinedVector<xla::ifrt::Device*, 1> ifrt_devices;
+          absl::InlinedVector<xla::ifrt::Device *, 1> ifrt_devices;
           ifrt_devices.reserve(py_devices.size());
-          for (const auto& py_device : py_devices) {
+          for (const auto &py_device : py_devices) {
             if (py_device->client().get() != client.get()) {
               throw nb::value_error(
                   "devices passed to get_topology_for_devices come from "
@@ -617,8 +617,8 @@ NB_MODULE(_jax, m) {
       .def_rw("host_temp_size_in_bytes",
               &xla::CompiledMemoryStats::host_temp_size_in_bytes)
       .def_prop_ro("serialized_buffer_assignment_proto",
-                   [](const xla::CompiledMemoryStats& cms) -> nb::bytes {
-                     const std::string& s = cms.serialized_buffer_assignment;
+                   [](const xla::CompiledMemoryStats &cms) -> nb::bytes {
+                     const std::string &s = cms.serialized_buffer_assignment;
                      return nb::bytes(s.data(), s.size());
                    })
       .def_rw("peak_memory_in_bytes",
@@ -640,7 +640,7 @@ NB_MODULE(_jax, m) {
         nb::arg("buffer"), nb::arg("stream").none() = nb::none());
   m.def(
       "dlpack_managed_tensor_to_buffer",
-      [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
+      [](const nb::capsule &tensor, nb_class_ptr<PyDevice> device,
          std::optional<std::intptr_t> stream, std::optional<bool> copy) {
         return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream, copy));
@@ -685,25 +685,25 @@ NB_MODULE(_jax, m) {
   RegisterFfiApis(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
-#endif  // defined(__linux__)
+#endif // defined(__linux__)
 
   nb::class_<xla::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");
   preemption_sync_manager
       .def(
           "initialize",
-          [](xla::PreemptionSyncManager& manager,
-             xla::DistributedRuntimeClient* client) {
-            xla::CoordinationServiceAgent* agent =
+          [](xla::PreemptionSyncManager &manager,
+             xla::DistributedRuntimeClient *client) {
+            xla::CoordinationServiceAgent *agent =
                 xla::ValueOrThrow(client->GetCoordinationServiceAgent());
             xla::ThrowIfError(manager.Initialize(agent));
           },
           nb::arg("distributed_client"))
       .def("reached_sync_point",
-           [](xla::PreemptionSyncManager& manager, int step_counter) {
+           [](xla::PreemptionSyncManager &manager, int step_counter) {
              return manager.ReachedSyncPoint(step_counter);
            })
-      .def("shutdown", [](xla::PreemptionSyncManager& manager) {
+      .def("shutdown", [](xla::PreemptionSyncManager &manager) {
         nb::gil_scoped_release gil_release;
         manager.Shutdown();
       });
@@ -719,12 +719,12 @@ NB_MODULE(_jax, m) {
       m, "DistributedRuntimeClient");
   distributed_runtime_client
       .def("connect",
-           [](xla::DistributedRuntimeClient& self) {
+           [](xla::DistributedRuntimeClient &self) {
              nb::gil_scoped_release gil_release;
              xla::ThrowIfError(self.Connect());
            })
       .def("shutdown",
-           [](xla::DistributedRuntimeClient& self) {
+           [](xla::DistributedRuntimeClient &self) {
              nb::gil_scoped_release gil_release;
              xla::ThrowIfError(self.Shutdown());
            })
@@ -733,7 +733,7 @@ NB_MODULE(_jax, m) {
       // Python bytes object as its value.
       .def(
           "blocking_key_value_get",
-          [](xla::DistributedRuntimeClient& client, std::string key,
+          [](xla::DistributedRuntimeClient &client, std::string key,
              int64_t timeout_in_ms) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.BlockingKeyValueGet(
@@ -744,7 +744,7 @@ NB_MODULE(_jax, m) {
       // values explicitly.
       .def(
           "blocking_key_value_get_bytes",
-          [](xla::DistributedRuntimeClient& client, std::string key,
+          [](xla::DistributedRuntimeClient &client, std::string key,
              int64_t timeout_in_ms) -> nb::bytes {
             std::string result;
             {
@@ -757,14 +757,14 @@ NB_MODULE(_jax, m) {
           nb::arg("key"), nb::arg("timeout_in_ms"))
       .def(
           "key_value_try_get",
-          [](xla::DistributedRuntimeClient& client, std::string key) {
+          [](xla::DistributedRuntimeClient &client, std::string key) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.KeyValueTryGet(key));
           },
           nb::arg("key"))
       .def(
           "key_value_try_get_bytes",
-          [](xla::DistributedRuntimeClient& client,
+          [](xla::DistributedRuntimeClient &client,
              std::string key) -> nb::bytes {
             std::string result;
             {
@@ -776,7 +776,7 @@ NB_MODULE(_jax, m) {
           nb::arg("key"))
       .def(
           "key_value_increment",
-          [](xla::DistributedRuntimeClient& client, std::string key,
+          [](xla::DistributedRuntimeClient &client, std::string key,
              int64_t increment) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.KeyValueIncrement(key, increment));
@@ -784,7 +784,7 @@ NB_MODULE(_jax, m) {
           nb::arg("key"), nb::arg("increment"))
       .def(
           "wait_at_barrier",
-          [](xla::DistributedRuntimeClient& client, std::string barrier_id,
+          [](xla::DistributedRuntimeClient &client, std::string barrier_id,
              int64_t timeout_in_ms,
              std::optional<std::vector<int32_t>> process_ids) {
             nb::gil_scoped_release gil_release;
@@ -795,7 +795,7 @@ NB_MODULE(_jax, m) {
           nb::arg("process_ids") = std::nullopt)
       .def(
           "get_live_nodes",
-          [](xla::DistributedRuntimeClient& client,
+          [](xla::DistributedRuntimeClient &client,
              std::vector<int32_t> process_ids) {
             nb::gil_scoped_release gil_release;
             // Python doesn't understand the IncarnationId type, so we convert
@@ -804,7 +804,7 @@ NB_MODULE(_jax, m) {
                 xla::ValueOrThrow(
                     client.GetLiveNodesWithIncarnations(process_ids));
             absl::flat_hash_map<int32_t, uint64_t> py_nodes;
-            for (const auto& [task_id, incarnation_id] : nodes) {
+            for (const auto &[task_id, incarnation_id] : nodes) {
               py_nodes[task_id] = incarnation_id.value();
             }
             return py_nodes;
@@ -818,7 +818,7 @@ NB_MODULE(_jax, m) {
       // `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set",
-          [](xla::DistributedRuntimeClient& client, std::string_view key,
+          [](xla::DistributedRuntimeClient &client, std::string_view key,
              std::string_view value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(key, value, allow_overwrite));
@@ -829,7 +829,7 @@ NB_MODULE(_jax, m) {
       // Use `key_value_set_bytes()` and `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set_bytes",
-          [](xla::DistributedRuntimeClient& client, std::string_view key,
+          [](xla::DistributedRuntimeClient &client, std::string_view key,
              nb::bytes value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(
@@ -840,7 +840,7 @@ NB_MODULE(_jax, m) {
       // Assumes that all values in the directory are Python strings.
       .def(
           "key_value_dir_get",
-          [](xla::DistributedRuntimeClient& client, std::string_view key) {
+          [](xla::DistributedRuntimeClient &client, std::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.KeyValueDirGet(key));
           },
@@ -850,7 +850,7 @@ NB_MODULE(_jax, m) {
       // explicitly.
       .def(
           "key_value_dir_get_bytes",
-          [](xla::DistributedRuntimeClient& client, std::string_view key)
+          [](xla::DistributedRuntimeClient &client, std::string_view key)
               -> std::vector<std::pair<std::string, nb::bytes>> {
             std::vector<std::pair<std::string, std::string>> result;
             {
@@ -860,7 +860,7 @@ NB_MODULE(_jax, m) {
             // Convert std::string values to nb::bytes.
             std::vector<std::pair<std::string, nb::bytes>> kvs;
             kvs.reserve(result.size());
-            for (auto& kv : result) {
+            for (auto &kv : result) {
               kvs.push_back(
                   std::pair(std::move(kv.first),
                             nb::bytes(kv.second.data(), kv.second.size())));
@@ -870,7 +870,7 @@ NB_MODULE(_jax, m) {
           nb::arg("key"))
       .def(
           "key_value_delete",
-          [](xla::DistributedRuntimeClient& client, std::string_view key) {
+          [](xla::DistributedRuntimeClient &client, std::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ThrowIfError(client.KeyValueDelete(key));
           },
@@ -966,36 +966,45 @@ NB_MODULE(_jax, m) {
 
   CompileOnlyPyClient::Register(m);
   nb::class_<xla::ifrt::Topology>(m, "DeviceTopology")
-      .def("_make_compile_only_devices",
-           [](std::shared_ptr<xla::ifrt::Topology> topology) {
-             if (!llvm::isa<xla::ifrt::PjRtTopology>(*topology)) {
-               throw xla::XlaRuntimeError("Only PjRtTopologies are supported.");
-             }
-             return CompileOnlyPyClient::Make(
-                        std::dynamic_pointer_cast<xla::ifrt::PjRtTopology>(
-                            topology))
-                 ->Devices();
-           })
+      .def(
+          "_make_compile_only_devices",
+          [](std::shared_ptr<xla::ifrt::Topology> topology,
+             nb::object py_autotuning_client) {
+            if (!llvm::isa<xla::ifrt::PjRtTopology>(*topology)) {
+              throw xla::XlaRuntimeError("Only PjRtTopologies are supported.");
+            }
+            xla::ifrt::Client *autotuning_client = nullptr;
+            if (!py_autotuning_client.is_none()) {
+              autotuning_client =
+                  nb::cast<PyClient *>(py_autotuning_client)->ifrt_client();
+            }
+            return CompileOnlyPyClient::Make(
+                       std::dynamic_pointer_cast<xla::ifrt::PjRtTopology>(
+                           topology),
+                       autotuning_client)
+                ->Devices();
+          },
+          nb::arg("autotuning_client") = nb::none())
       .def_prop_ro("platform",
-                   [](xla::ifrt::Topology& topology) {
+                   [](xla::ifrt::Topology &topology) {
                      return topology.platform_name();
                    })
       .def_prop_ro("platform_version",
-                   [](xla::ifrt::Topology& topology) {
+                   [](xla::ifrt::Topology &topology) {
                      return topology.platform_version();
                    })
       .def("fingerprint",
-           [](xla::ifrt::Topology& topology) -> uint64_t {
+           [](xla::ifrt::Topology &topology) -> uint64_t {
              return xla::ValueOrThrow(topology.Fingerprint());
            })
       .def("__getattr__",
-           [](xla::ifrt::Topology& topology,
+           [](xla::ifrt::Topology &topology,
               std::string_view name) -> nb::object {
              auto value =
                  topology.Attributes().Get<xla::ifrt::AttributeMap::Value>(
                      std::string(name));
              if (value.ok()) {
-               return std::visit([](auto&& v) { return nb::cast(v.value); },
+               return std::visit([](auto &&v) { return nb::cast(v.value); },
                                  *value);
              }
              throw nb::attribute_error(
@@ -1013,7 +1022,7 @@ NB_MODULE(_jax, m) {
   m.def(
       "batched_device_put",
       [](nb::object aval, nb::object sharding, std::vector<nb::object> xs,
-         std::vector<const PyDevice*> dst_devices, bool committed,
+         std::vector<const PyDevice *> dst_devices, bool committed,
          bool force_copy,
          xla::PjRtClient::HostBufferSemantics host_buffer_semantics,
          std::optional<bool> enable_x64) -> nb::object {
@@ -1060,6 +1069,6 @@ NB_MODULE(_jax, m) {
   m.def("set_typed_float_type", &SetTypedFloatType);
   m.def("set_typed_complex_type", &SetTypedComplexType);
   m.def("set_typed_ndarray_type", &SetTypedNdArrayType);
-}  // NOLINT(readability/fn_size)
+} // NOLINT(readability/fn_size)
 
-}  // namespace jax
+} // namespace jax

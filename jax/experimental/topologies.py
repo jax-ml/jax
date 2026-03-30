@@ -14,14 +14,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import jax
-from jax.experimental import mesh_utils
-from jax._src.lib import _jax
+from jax._src import config
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
+from jax.experimental import mesh_utils
 
 Device = _jax.Device
+
+logger = logging.getLogger(__name__)
 
 
 class TopologyDescription:
@@ -33,18 +37,33 @@ def get_attached_topology(platform=None) -> TopologyDescription:
   return TopologyDescription(jax.devices(backend=platform))
 
 
+def _get_autotuning_client():
+  """Returns a real backend client for kernel autotuning during cross-compilation."""
+  backend_name = config.cross_compile_autotuning_backend.value
+  if backend_name is None:
+    return None
+  try:
+    return xb.get_backend(backend_name)
+  except Exception:
+    logger.warning(
+        "Could not get autotuning backend %r; cross-compiling without "
+        "autotuning.", backend_name)
+    return None
+
+
 def get_topology_desc(
     topology_name: str = "", platform: str | None = None, **kwargs
 ) -> TopologyDescription:
+  autotuning_client = _get_autotuning_client()
   if platform == "tpu" or platform is None:
     return TopologyDescription(
         xb.make_pjrt_tpu_topology(
             topology_name, **kwargs
-        )._make_compile_only_devices()
+        )._make_compile_only_devices(autotuning_client=autotuning_client)
     )
   try:
     topology = xb.make_pjrt_topology(platform, topology_name, **kwargs)
-    return TopologyDescription(topology._make_compile_only_devices())  # pytype: disable=attribute-error
+    return TopologyDescription(topology._make_compile_only_devices(autotuning_client=autotuning_client))  # pytype: disable=attribute-error
   except _jax.JaxRuntimeError as e:
     msg, *_ = e.args
     if msg.startswith("UNIMPLEMENTED"):

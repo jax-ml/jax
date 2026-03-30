@@ -286,5 +286,50 @@ class JaxAotTest(jtu.JaxTestCase):
     result = compiled(input)
     self.assertEqual(result, 14.)
 
+  @jtu.run_on_devices('gpu')
+  def test_cross_compile_with_autotuning_client(self):
+    """Test that cross-compilation can use a real GPU for autotuning."""
+    target_config = xc.get_topology_for_devices(jax.devices()).target_config
+    gpu_platform = jax.devices()[0].platform
+
+    # Set autotuning backend before creating topology so the compile-only
+    # client is initialized with the real GPU client for kernel autotuning.
+    with config.cross_compile_autotuning_backend(gpu_platform):
+      topology = topologies.get_topology_desc(
+          platform=gpu_platform,
+          target_config=target_config,
+          topology="1x1x1",
+      )
+      assert topology.devices[0].client.runtime_type == "compile_only_runtime"
+      mesh = topologies.make_mesh(
+          topo=topology, mesh_shape=(1,), axis_names=("x",)
+      )
+      x = jax.ShapeDtypeStruct(
+          shape=(2, 2),
+          dtype=jnp.float32,
+          sharding=jax.sharding.NamedSharding(
+              mesh, jax.sharding.PartitionSpec("x")
+          ),
+      )
+      compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+
+    serialized_executable, _, _ = serialize(compiled)
+
+    _, in_tree = jax.tree.flatten(((0,), {}))
+    _, out_tree = jax.tree.flatten(0)
+    compiled = deserialize_and_load(
+        serialized_executable,
+        in_tree,
+        out_tree,
+        backend=gpu_platform,
+        execution_devices=jax.devices()[:1],
+    )
+    input = jnp.array(
+        [[0., 1.], [2., 3.]], dtype=jnp.float32, device=jax.devices()[0]
+    )
+    result = compiled(input)
+    self.assertEqual(result, 14.)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

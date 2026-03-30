@@ -20,11 +20,12 @@ limitations under the License.
 
 // placeholder for index annotation headers
 #include "absl/status/statusor.h"
-#include "mlir-c/IR.h"
-#include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
+#include "mlir-c/IR.h"
+#include "nanobind/nanobind.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/xla_data.pb.h"
@@ -42,22 +43,24 @@ class PyExecutable;
 // (except it will raise errors if you try to run it, which is what we want for
 // AOT environments).
 class CompileOnlyPyClient : public PyClient {
- public:
+public:
   using PyClient::PyClient;
 
-  static nb_class_ptr<PyClient> Make(
-      std::shared_ptr<xla::ifrt::PjRtTopology> topology);
+  static nb_class_ptr<PyClient>
+  Make(std::shared_ptr<xla::ifrt::PjRtTopology> topology,
+       xla::ifrt::Client *autotuning_client = nullptr);
 
-  absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
-      MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
-      xla::CompileOptions options);
+  absl::StatusOr<nb_class_ptr<PyExecutable>>
+  CompileUnloaded(MlirModule mlir_module,
+                  xla::ifrt::DeviceListRef executable_devices,
+                  xla::CompileOptions options);
 
-  static void Register(nanobind::module_& m);
+  static void Register(nanobind::module_ &m);
 
- private:
+private:
   static void Initialize(nb_class_ptr<PyClient> client);
 };
 
-}  // namespace jax
+} // namespace jax
 
-#endif  // JAXLIB_PY_COMPILE_ONLY_CLIENT_H_
+#endif // JAXLIB_PY_COMPILE_ONLY_CLIENT_H_
