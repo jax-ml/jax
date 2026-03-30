@@ -643,16 +643,17 @@ def _spec_divisibility_error(
   return msg
 
 def _inout_vma_error(f: Callable, mesh: Mesh | AbstractMesh, tree: PyTreeDef,
-                     specs: Specs, fails: list[set | NoFail]) -> str:
+                     specs: Specs, fails: list[core.ManualAxisType | NoFail]
+                     ) -> str:
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
-  for (spec_key, spec), (fail_key, vma) in _iter_paths(tree, specs, fails):
+  for (spec_key, spec), (fail_key, mat) in _iter_paths(tree, specs, fails):
     unmentioned = _unmentioned(mesh, spec)
     if len(unmentioned) > 1:
       need_vma = ','.join(map(str, order_wrt_mesh(mesh, _spec_to_vma(spec))))
-      got_vma = ','.join(map(str, order_wrt_mesh(mesh, vma)))
+      got_vma = ','.join(map(str, order_wrt_mesh(mesh, mat.varying)))
       diff = ','.join(map(str, order_wrt_mesh(
-          mesh, [n for n in unmentioned if n in vma])))
+          mesh, [n for n in unmentioned if n in mat.varying])))
       msgs.append(
           f"* out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is only varying across mesh axes "
@@ -679,8 +680,8 @@ def _inout_vma_error(f: Callable, mesh: Mesh | AbstractMesh, tree: PyTreeDef,
   return msg
 
 def _unmentioned(mesh: Mesh | AbstractMesh, spec) -> list[AxisName]:
-  vma_set = _spec_to_vma(spec)
-  return [n for n in mesh.axis_names if n not in vma_set]
+  vur = _spec_to_mat(spec).vur
+  return [n for n in mesh.axis_names if n not in vur]
 
 
 def _try_infer_args(f, tree):
@@ -767,7 +768,7 @@ def _shard_map_staging(
   out_avals_ft, out_specs = out_data.unpack_aux()
   _check_names(out_specs, out_avals_ft)
   if check_vma:
-    _check_vmas(mesh, out_specs, out_avals_ft)
+    _check_mats(mesh, out_specs, out_avals_ft)
   out_avals = [unshard_aval(mesh, check_vma, spec, aval)
                for spec, aval in zip(out_specs, out_avals_ft)]
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
@@ -891,7 +892,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
     core.check_jaxpr(jaxpr)
   if check_vma:
     for v, os in zip(jaxpr.outvars, out_specs):
-      if isinstance(os, P) and not _valid_repeats(mesh, v.aval.vma, os):
+      if isinstance(os, P) and not _valid_repeats(mesh, v.aval.mat, os):
         raise core.JaxprTypeError(
             "shard_map can't prove output is sufficiently replicated")
   out_avals_sharded = [x.aval for x in jaxpr.outvars]
@@ -902,9 +903,10 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
 
-def _valid_repeats(mesh: Mesh, vma: Set[AxisName], spec) -> bool:
+def _valid_repeats(mesh: Mesh, mat: core.ManualAxisType, spec) -> bool:
   um = set(_unmentioned(mesh, spec)) - set(mesh.manual_axes)
-  if any(u in vma for u in um):
+  vur = mat.vur
+  if any(u in vur for u in um):
     return False
   return True
 
@@ -1173,7 +1175,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
   out_avals = outs.map(lambda x: core.mapped_aval(x.shape[0], 0, core.typeof(x)))
   _check_names(out_specs, out_avals)
   if check_vma:
-    _check_vmas(mesh, out_specs, out_avals)
+    _check_mats(mesh, out_specs, out_avals)
     src_pspecs = tuple(_mat_to_spec(mesh, m) for m in out_mat)
   else:
     src_pspecs = tuple(P(order_wrt_mesh(mesh, manual_axes))
@@ -1257,8 +1259,8 @@ def _check_names(specs, avals: FlatTree) -> None:
 class _SpecError(Exception):
   pass
 
-def _check_vmas(mesh, specs, avals):
-  fail = [a.vma if isinstance(sp, P) and not _valid_repeats(mesh, a.vma, sp)  # pytype: disable=attribute-error
+def _check_mats(mesh, specs, avals):
+  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)  # pytype: disable=attribute-error
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
     raise _RepError(fail, avals.tree)
@@ -1412,7 +1414,7 @@ class ShardMapTrace(core.Trace):
 
 
 class ShardMapTracer(core.Tracer[ShardMapTrace]):
-  mt: core.ManualAxisType
+  mat: core.ManualAxisType
   val: JaxType
 
   def __init__(self, trace, mat, val):
@@ -1424,9 +1426,9 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
   @property
   def aval(self):
     aval = core.typeof(self.val)
-    mt = (self.mat if self._trace.check else
-          core.ManualAxisType(varying=self._trace.manual_axes))
-    size = prod(self._trace.mesh.shape[n] for n in mt.varying)
+    mat = (self.mat if self._trace.check else
+           core.ManualAxisType(varying=self._trace.manual_axes))
+    size = prod(self._trace.mesh.shape[n] for n in mat.varying)
     out = core.mapped_aval(size, 0, aval)
     manual_mesh = _as_manual_mesh(self._trace.amesh, self._trace.manual_axes)
     spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
@@ -1435,14 +1437,14 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
     return out.update(sharding=new_sharding, manual_axis_type=mat)
 
   def to_concrete_value(self):
-    if self._trace.check and self.vma == frozenset():
+    if self._trace.check and self.mat.vur == frozenset():
       with core.eval_context(), use_abstract_mesh(self._trace.amesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    pb_names = set(self._trace.mesh.axis_names) - self.vma
+    pb_names = set(self._trace.mesh.axis_names) - self.mat.vur
     self = pvary(self, tuple(pb_names))
     with core.eval_context(), use_abstract_mesh(self._trace.amesh):
       blocks = list(self.val)
@@ -1478,7 +1480,7 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 # Batching
 
 def used_axis_names(spec):
-  return _spec_to_vma(spec) | spec.unreduced | spec.reduced
+  return _spec_to_mat(spec).vur
 
 def _shard_map_batch(
     trace: batching.BatchTrace, prim: core.Primitive, fun: Callable,

@@ -2301,6 +2301,10 @@ class ManualAxisType:
     return frozenset(mesh.axis_names) - (
         self.varying | self.unreduced | self.reduced)
 
+  @property
+  def vur(self) -> frozenset:
+    return self.varying | self.unreduced | self.reduced
+
 
 class ShapedArray(AbstractValue):
   # inherits slots from parent
