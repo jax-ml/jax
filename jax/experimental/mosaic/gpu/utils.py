@@ -143,7 +143,10 @@ def _debug_scalar_ty_format(arg):
   if isinstance(arg.type, ir.F32Type):
     return "%f", arg
   if isinstance(arg.type, ir.Float8E8M0FNUType):
-    return "%u", arith.extui(ir.IntegerType.get_signless(32), arith.bitcast(ir.IntegerType.get_signless(8), arg))
+    return "%u", arith.extui(
+        ir.IntegerType.get_signless(32),
+        arith.bitcast(ir.IntegerType.get_signless(8), arg),
+    )
   if isinstance(arg.type, ir.BF16Type) or isinstance(arg.type, ir.F16Type):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
@@ -162,8 +165,7 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       vec_ty = ir.VectorType(arg.type)
       if len(vec_ty.shape) > 1:
         raise NotImplementedError(
-            "2D+ vectors are not supported in debug_print:"
-            f" {vec_ty}"
+            f"2D+ vectors are not supported in debug_print: {vec_ty}"
         )
       vec_args = [
           vector.extract(
@@ -310,8 +312,8 @@ def multimem_load_reduce(
   out_reg_struct = llvm.inline_asm(
       asm_out_ty,
       [ptr],
-      f"multimem.ld_reduce.relaxed.sys.global.{reduction}{acc_prec}{vec_mod}.{ptx_ty} {vec_ptx},"
-      f" [${vector_i32_length}];",
+      f"multimem.ld_reduce.relaxed.sys.global.{reduction}{acc_prec}{vec_mod}.{ptx_ty}"
+      f" {vec_ptx}, [${vector_i32_length}];",
       "=r," * vector_i32_length + "l",
       has_side_effects=True,
   )
@@ -670,10 +672,14 @@ def _reshape(ref: ir.Value, sh0: list[int], sh1: list[int]):
 
 
 @overload
-def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value: ...
+def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value:
+  ...
+
 
 @overload
-def memref_reshape(ref: MultimemRef, shape: tuple[int, ...]) -> MultimemRef: ...  # type: ignore[overload-cannot-match]
+def memref_reshape(ref: MultimemRef, shape: tuple[int, ...]) -> MultimemRef:
+  ...  # type: ignore[overload-cannot-match]
+
 
 def memref_reshape(
     ref: ir.Value | MultimemRef, shape: tuple[int, ...]
@@ -745,10 +751,14 @@ def memref_reshape(
 
 
 @overload
-def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value: ...
+def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
+  ...
+
 
 @overload
-def memref_fold(ref: MultimemRef, dim, fold_rank) -> MultimemRef: ...
+def memref_fold(ref: MultimemRef, dim, fold_rank) -> MultimemRef:
+  ...
+
 
 def memref_fold(
     ref: ir.Value | MultimemRef, dim, fold_rank
@@ -1091,9 +1101,7 @@ class BarrierRef:
     elif isinstance(bytes.type, ir.IndexType):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm_mbarrier_arrive_expect_tx(
-        self.get_ptr(), bytes, predicate=predicate
-    )
+    nvvm_mbarrier_arrive_expect_tx(self.get_ptr(), bytes, predicate=predicate)
 
   def complete_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
@@ -1111,7 +1119,8 @@ class BarrierRef:
 
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [self.get_ptr(), bytes] + ([predicate] if predicate is not None else []),
+        [self.get_ptr(), bytes]
+        + ([predicate] if predicate is not None else []),
         f"{pred_ptx} mbarrier.complete_tx.shared::cta.b64 [$0], $1;",
         "l,r" + pred_constraint,
         has_side_effects=True,
@@ -1181,9 +1190,7 @@ class DialectBarrierRef:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
     memref_type = ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier"))
-    result = builtin.unrealized_conversion_cast(
-        [memref_type], [self.get_ptr()]
-    )
+    result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
     assert isinstance(result, ir.Value)
     return result
 
@@ -1629,8 +1636,7 @@ def memref_ptr(memref_arg, memory_space=None):
       packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
         raise ValueError(
-            f"{memref_ty} {static_offset=} is not divisible by"
-            f" {packing=}`"
+            f"{memref_ty} {static_offset=} is not divisible by {packing=}`"
         )
       offset_bytes = c(static_offset // packing, i64)
     else:
@@ -1889,7 +1895,7 @@ def vector_slice(v: ir.Value, s: slice):
 
 
 def vector_concat(
-    vectors: Sequence[ir.Value[ir.VectorType]]
+    vectors: Sequence[ir.Value[ir.VectorType]],
 ) -> ir.Value[ir.VectorType]:
   if not vectors:
     raise ValueError("Cannot concatenate an empty list of vectors")
@@ -2074,9 +2080,7 @@ def nanosleep(nanos: ir.Value):
 
 
 def nvvm_mbarrier_arrive_expect_tx(
-    barrier: ir.Value,
-    expect_tx: ir.Value,
-    predicate: ir.Value | None = None
+    barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None
 ):
   return nvvm.mbarrier_arrive_expect_tx(
       None, barrier, expect_tx, predicate=predicate
@@ -2160,7 +2164,9 @@ class Arch:
 def get_arch() -> Arch:
   ip = ir.InsertionPoint.current
   if ip is None:
-    raise ValueError("Cannot retrieve the architecture without an insertion point")
+    raise ValueError(
+        "Cannot retrieve the architecture without an insertion point"
+    )
   block = ip.block
   op = block.owner
   while op is not None:
