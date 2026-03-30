@@ -132,7 +132,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Checkout specific commit
-        run: git checkout 8842cf88d251ffd4b16a56c5e9104a6cfbcc885b
+        run: |
+          git config --global --add safe.directory '*'
+          git checkout 8842cf88d251ffd4b16a56c5e9104a6cfbcc885b
       - name: Configure Build Environment
         shell: bash
         run: |
