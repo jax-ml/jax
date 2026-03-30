@@ -841,15 +841,7 @@ def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
   carry, carry_tree = tree_flatten(spvalues_to_arrays(spenv, carry_spvalues))
   xs, xs_tree = tree_flatten(spvalues_to_arrays(spenv, xs_spvalues))
 
-  # params['linear'] has one entry per arg; expand it to match the sparsified args.
-  const_linear, carry_linear, xs_linear = split_list(
-    params.pop('linear'), [num_consts, num_carry])
-  sp_linear = (
-    *_duplicate_for_sparse_spvalues(const_spvalues, const_linear),
-    *_duplicate_for_sparse_spvalues(carry_spvalues, carry_linear),
-    *_duplicate_for_sparse_spvalues(xs_spvalues, xs_linear))
-
-  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
+  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr,
                         num_consts=len(consts), num_carry=len(carry), **params)
   carry_out = tree_unflatten(carry_tree, out[:len(carry)])
   xs_out = tree_unflatten(xs_tree, out[len(carry):])
