@@ -522,6 +522,11 @@ _slogdet_small.defjvp(_slogdet_small_jvp)
 
 @custom_jvp
 def _slogdet_lu(a: Array) -> tuple[Array, Array]:
+  """Sign and log(abs(det)) via LU. Custom JVP is required: (1) sign(det) is
+  discontinuous at det=0 so standard autodiff is undefined; we use sign_dot=0
+  for real and a consistent rule for complex. (2) d/dA log|det(A)| = trace(A⁻¹ Ȧ),
+  which we implement explicitly; autodiff through det→abs→log would not yield
+  this formula and is undefined at singular A."""
   dtype = lax.dtype(a)
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
@@ -614,6 +619,8 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
                      "are 'lu' (`None`), and 'qr'.")
 
 def _slogdet_jvp(primals, tangents):
+  """JVP for (sign, logabsdet). Uses d/dA log|det(A)| = trace(A⁻¹ Ȧ); sign_dot
+  is zero for real (sign is not differentiable at 0) and set per complex case."""
   x, = primals
   g, = tangents
   sign, ans = slogdet(x)

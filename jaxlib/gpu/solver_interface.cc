@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
@@ -385,6 +386,92 @@ JAX_GPU_DEFINE_GESVDJ_BATCHED(double, gpusolverDnDgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
 #undef JAX_GPU_DEFINE_GESVDJ_BATCHED
+
+#ifdef JAX_GPU_HIP
+// GESDD (divide-and-conquer SVD) is provided by rocsolver; hipSOLVER does not
+// expose it. rocsolver uses rocblas_handle; on ROCm the solver handle is
+// compatible with rocblas_handle.
+#include "rocm/include/rocsolver/rocsolver.h"
+
+namespace {
+rocblas_svect JobToRocblasSvect(signed char job) {
+  switch (job) {
+    case 'A':
+      return rocblas_svect_all;
+    case 'S':
+      return rocblas_svect_singular;
+    case 'N':
+    default:
+      return rocblas_svect_none;
+  }
+}
+
+absl::Status RocblasStatusToStatus(rocblas_status status, const char* file,
+                                  int line, const char* expr) {
+  if (ABSL_PREDICT_FALSE(status != rocblas_status_success)) {
+    return absl::InternalError(
+        absl::StrFormat("%s:%d: %s failed: rocblas_status %d", file, line, expr,
+                        static_cast<int>(status)));
+  }
+  return absl::OkStatus();
+}
+}  // namespace
+
+#define JAX_GPU_DEFINE_GESDD_REAL(Type, Name)                                  \
+  template <>                                                                  \
+  absl::Status Gesdd<Type>(                                                    \
+      gpusolverDnHandle_t handle, signed char jobu, signed char jobvt,        \
+      int m, int n, Type *a, int lda, RealType<Type>::value *s, Type *u,      \
+      int ldu, Type *v, int ldv, int *info) {                                  \
+    auto h = reinterpret_cast<rocblas_handle>(handle);                        \
+    rocblas_status st = Name(h, JobToRocblasSvect(jobu),                       \
+                             JobToRocblasSvect(jobvt), m, n, a, lda, s, u,    \
+                             ldu, v, ldv, info);                               \
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, #Name);               \
+  }
+
+JAX_GPU_DEFINE_GESDD_REAL(float, rocsolver_sgesdd);
+JAX_GPU_DEFINE_GESDD_REAL(double, rocsolver_dgesdd);
+#undef JAX_GPU_DEFINE_GESDD_REAL
+
+template <>
+absl::Status Gesdd<gpuComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuComplex *a, int lda, float *s, gpuComplex *u, int ldu,
+    gpuComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_cgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_float_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_float_complex*>(u), ldu,
+      reinterpret_cast<rocblas_float_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_cgesdd");
+}
+
+template <>
+absl::Status Gesdd<gpuDoubleComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuDoubleComplex *a, int lda, double *s, gpuDoubleComplex *u,
+    int ldu, gpuDoubleComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_zgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_double_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_double_complex*>(u), ldu,
+      reinterpret_cast<rocblas_double_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_zgesdd");
+}
+
+// Set user-owned workspace for rocsolver/rocblas (two-phase memory model).
+// The kernel uses a formula for workspace size (see solver_kernels_ffi.cc)
+// and calls SetWorkspace before Gesdd.
+absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocblas_set_workspace(h, ptr, size);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocblas_set_workspace");
+}
+
+#endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA
 

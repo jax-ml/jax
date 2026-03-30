@@ -42,10 +42,10 @@ from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import cuda_versions
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -70,6 +70,13 @@ register_module_custom_calls(gpu_linalg)
 register_module_custom_calls(gpu_solver)
 register_module_custom_calls(gpu_sparse)
 register_module_custom_calls(lapack)
+
+
+def _gpu_solver_has_ffi(platform: str, ffi_target: str) -> bool:
+  if not hasattr(gpu_solver, "registrations"):
+    return False
+  targets = gpu_solver.registrations().get(platform, ())
+  return any(name == ffi_target for name, _, _ in targets)
 
 
 # Top-level functions in alphabetical order.
@@ -474,6 +481,7 @@ class SvdAlgorithm(enum.Enum):
   QR = "QR"
   JACOBI = "Jacobi"
   POLAR = "polar"
+  DIVIDE_AND_CONQUER = "divide_and_conquer"
 
 
 @overload
@@ -2228,6 +2236,68 @@ def _svd_computation_attr(compute_uv, full_matrices):
     mode = "S"
   return _char_attr(mode)
 
+
+class _GpuSvdImpl(enum.Enum):
+  """Resolved GPU SVD backend after expanding :class:`SvdAlgorithm` (incl. DEFAULT).
+
+  Lowering maps a single :class:`_GpuSvdImpl` to an FFI target and layout flags,
+  so DEFAULT is not split across separate flag and ``else`` branches.
+  """
+
+  JACOBI = enum.auto()  # gesvdj
+  POLAR = enum.auto()  # gesvdp
+  QR_GESVD = enum.auto()  # explicit gesvd; transpose when m < n
+  GESVD = enum.auto()  # gesvd (CUDA large / ROCm fallback / forward-compat)
+  GESDD = enum.auto()  # divide-and-conquer (ROCm)
+
+
+def _resolve_gpu_svd_implementation(
+    ctx: mlir.LoweringRuleContext,
+    target_name_prefix: str,
+    algorithm: SvdAlgorithm | None,
+    m: core.DimSize,
+    n: core.DimSize,
+) -> _GpuSvdImpl:
+  """Map ``algorithm`` (and DEFAULT) to the concrete GPU SVD implementation."""
+  if algorithm is None:
+    algorithm = SvdAlgorithm.DEFAULT
+
+  if algorithm == SvdAlgorithm.QR:
+    return _GpuSvdImpl.QR_GESVD
+  if algorithm == SvdAlgorithm.JACOBI:
+    return _GpuSvdImpl.JACOBI
+  if algorithm == SvdAlgorithm.POLAR:
+    return _GpuSvdImpl.POLAR
+  if algorithm == SvdAlgorithm.DIVIDE_AND_CONQUER:
+    if target_name_prefix != "hip":
+      raise NotImplementedError(
+          "Divide-and-conquer SVD (SvdAlgorithm.DIVIDE_AND_CONQUER) is only "
+          "supported on AMD (ROCm) GPUs, not on NVIDIA CUDA.")
+    return _GpuSvdImpl.GESDD
+
+  if algorithm != SvdAlgorithm.DEFAULT:
+    raise NotImplementedError(
+        f"Unsupported SVD algorithm on GPU: {algorithm!r}")
+
+  if target_name_prefix == "cu":
+    try:
+      if m <= 1024 and n <= 1024:
+        return _GpuSvdImpl.JACOBI
+    except core.InconclusiveDimensionOperation:
+      pass
+    return _GpuSvdImpl.GESVD
+
+  if target_name_prefix == "hip":
+    if (not ctx.is_forward_compat()
+        and jaxlib_extension_version >= 426
+        and _gpu_solver_has_ffi("ROCM", "hipsolver_gesdd_ffi")):
+      return _GpuSvdImpl.GESDD
+    return _GpuSvdImpl.GESVD
+
+  raise AssertionError(
+      f"Unexpected GPU target_name_prefix for SVD: {target_name_prefix!r}")
+
+
 def _svd_cpu_gpu_lowering(
     ctx,
     operand,
@@ -2258,6 +2328,8 @@ def _svd_cpu_gpu_lowering(
       target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
     elif algorithm == SvdAlgorithm.QR:
       target_name = lapack.prepare_lapack_call("gesvd_ffi", operand_aval.dtype)
+    elif algorithm == SvdAlgorithm.DIVIDE_AND_CONQUER:
+      target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
     else:
       raise NotImplementedError(
           "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
@@ -2312,61 +2384,42 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   m, n = operand_aval.shape[-2:]
   k = core.min_dim(m, n)
 
-  transposed = False
-  kwargs = {}
-
-  # The Jacobi algorithm appears to outperform the default QR algorithm for
-  # small to medium sized matrices. See:
+  # DEFAULT and explicit algorithms: _resolve_gpu_svd_implementation. CUDA
+  # Jacobi for m,n <= 1024 when dimensions are concrete; otherwise GESVD. See
   # https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s9226-fast-singular-value-decomposition-on-gpus-v2.pdf
-  # slide 5. With this in mind, we default to using the Jacobi algorithm for
-  # matrices smaller than 1024x1024.
-  #
-  # Note that the Jacobi algorithm is only used by default for matrices with
-  # concrete matrix dimensions. When using dynamic shapes, we always use the
-  # default QR algorithm, but users can (in principle) override this behavior
-  # by passing `use_jacobi=True`.
-  #
-  # TODO(danfm): Since this was originally implemented, hipSolver appears to
-  # have added support for the Jacobi algorithm, so we should investigate
-  # removing this condition.
-  # TODO(phawkins): Consider making polar decomposition the default.
-  use_jacobi = False
-  use_polar = False
-  if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
-    try:
-      use_jacobi = target_name_prefix in ["cu", "hip"] and \
-                   m <= 1024 and n <= 1024
-    except core.InconclusiveDimensionOperation:
-      use_jacobi = False
-  elif algorithm == SvdAlgorithm.JACOBI:
-    use_jacobi = True
-  elif algorithm == SvdAlgorithm.POLAR:
-    use_polar = True
+  # slide 5.
+  impl = _resolve_gpu_svd_implementation(
+      ctx, target_name_prefix, algorithm, m, n)
 
   column_major = True
-  if use_jacobi:
+  econ = not full_matrices
+  transposed = False
+  kwargs: dict[str, Any] = {}
+
+  if impl == _GpuSvdImpl.JACOBI:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
-    # The gesvdjbatched kernel doesn't support "econ" mode, but it also only
-    # supports matrices up to 32x32, so it's always worth using the batched
-    # version and then slicing afterwards when the matrix is small enough.
+    # gesvdjbatched: no "econ" mode; batched path worthwhile up to 32x32.
     try:
       econ = not full_matrices and m > 32 and n > 32
     except core.InconclusiveDimensionOperation:
       econ = False
-  elif use_polar:
+  elif impl == _GpuSvdImpl.POLAR:
     target_name = f"{target_name_prefix}solver_gesvdp_ffi"
-    econ = not full_matrices
-  else:
+  elif impl == _GpuSvdImpl.GESDD:
+    target_name = f"{target_name_prefix}solver_gesdd_ffi"
+    # The gesdd FFI handler accepts the same attribute schema as gesvd:
+    # (full_matrices, compute_uv, transposed). For gesdd this is always false.
+    kwargs = {"transposed": False}
+  elif impl in (_GpuSvdImpl.QR_GESVD, _GpuSvdImpl.GESVD):
     target_name = f"{target_name_prefix}solver_gesvd_ffi"
-    econ = not full_matrices
-    # Because the base gesvd kernel only supports matrices where m >= n, we
-    # conceptually transpose the matrix if m < n.
     transposed = m < n
     kwargs = {"transposed": transposed}
     if transposed:
       column_major = False
+  else:
+    raise AssertionError(impl)
 
-  if use_jacobi or use_polar:
+  if impl in (_GpuSvdImpl.JACOBI, _GpuSvdImpl.POLAR):
     # When using the Jacobi or polar algorithms, the U and V matrices must
     # always be allocated even if compute_uv is False.
     u_aval = ShapedArray((*batch_dims, m, k if econ else m), u_aval.dtype)
@@ -2382,7 +2435,7 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
                               column_major=column_major)
   _, s, u, vt, info = rule(ctx, operand, full_matrices=not econ,
                            compute_uv=compute_uv, **kwargs)
-  if (use_jacobi or use_polar) and compute_uv:
+  if impl in (_GpuSvdImpl.JACOBI, _GpuSvdImpl.POLAR) and compute_uv:
     vt = hlo.transpose(
         vt,
         mlir.dense_int_array(tuple(range(nb)) + (nb + 1, nb)))

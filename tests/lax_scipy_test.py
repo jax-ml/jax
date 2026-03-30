@@ -31,6 +31,7 @@ from jax import lax
 from jax import scipy as jsp
 from jax._src.scipy import special as lsp_special_internal
 from jax._src import test_util as jtu
+from jax._src.lib import gpu_solver
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
 
@@ -574,6 +575,22 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")
 
+    # polar(method="svd") calls lax.linalg.svd (default algorithm). Any ROCm SVD
+    # FFI (gesvd / gesvdj / gesdd) is sufficient; it does not depend on gesdd.
+    if method == "svd" and jtu.is_device_rocm():
+      rocm_targets = frozenset(
+          name for name, _, _ in gpu_solver.registrations().get("ROCM", []))
+      rocm_svd_ffis = frozenset({
+          "hipsolver_gesvd_ffi",
+          "hipsolver_gesvdj_ffi",
+          "hipsolver_gesdd_ffi",
+      })
+      if not rocm_targets & rocm_svd_ffis:
+        self.skipTest(
+            "polar(method='svd') on ROCm requires a HIPSolver SVD FFI "
+            "(gesvd / gesvdj / gesdd); none registered in this plugin build."
+        )
+
     m, n = shape
     if (method == "qdwh" and ((side == "left" and m >= n) or
                               (side == "right" and m < n))):
@@ -614,8 +631,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     elif side == "left":
       recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
     with self.subTest('Test reconstruction.'):
-      self.assertAllClose(
-        matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+      recon_atol = tol * jnp.linalg.norm(matrix)
+      if method == "svd" and not jtu.test_device_matches(["cpu"]):
+        # SVD-backed polar reconstruction can accumulate error on GPU (e.g. ROCm).
+        recon_atol = max(recon_atol, 6e-5)
+      self.assertAllClose(matrix, recon, atol=recon_atol)
 
   @jtu.sample_product(
     n_obs=[1, 3, 5],

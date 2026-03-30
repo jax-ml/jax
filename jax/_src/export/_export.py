@@ -1167,7 +1167,7 @@ _GPU_FFI_KERNELS = [
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
     "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
-    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi", "hipsolver_gesdd_ffi",
     # tridiagonal on GPU
     "cusolver_sytrd_ffi", "hipsolver_sytrd_ffi",
     # tridiagonal_solve on GPU

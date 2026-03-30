@@ -115,8 +115,11 @@ def svd_algorithms():
   algorithms = [None]
   if jtu.device_under_test() in ["cpu", "gpu"]:
     algorithms.append(lax.linalg.SvdAlgorithm.QR)
+  if jtu.device_under_test() == "cpu":
+    algorithms.append(lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER)
   if jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.JACOBI)
+    algorithms.append(lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER)
   if jtu.device_under_test() == "tpu" or jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.POLAR)
   return algorithms
@@ -927,6 +930,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
+
+    if (not jtu.is_device_rocm() and jtu.device_under_test() == "gpu"
+        and algorithm == lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER):
+      self.skipTest("Divide-and-conquer SVD only supported on AMD (ROCm) GPUs")
 
     if (
         jtu.test_device_matches(["cuda"])

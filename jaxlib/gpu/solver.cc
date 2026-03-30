@@ -38,6 +38,10 @@ nb::dict Registrations() {
   dict[JAX_GPU_PREFIX "solver_gesvdj_ffi"] = EncapsulateFfiHandler(GesvdjFfi);
   dict[JAX_GPU_PREFIX "solver_sytrd_ffi"] = EncapsulateFfiHandler(SytrdFfi);
 
+#ifdef JAX_GPU_HIP
+  dict[JAX_GPU_PREFIX "solver_gesdd_ffi"] = EncapsulateFfiHandler(GesddFfi);
+#endif  // JAX_GPU_HIP
+
 #ifdef JAX_GPU_CUDA
   dict[JAX_GPU_PREFIX "solver_gesvdp_ffi"] = EncapsulateFfiHandler(GesvdpFfi);
   dict[JAX_GPU_PREFIX "solver_csrlsvqr_ffi"] =
