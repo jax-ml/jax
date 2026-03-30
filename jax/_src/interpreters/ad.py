@@ -576,7 +576,7 @@ def accum_typeof(x):
   if isinstance(x, GradAccum):
     return x.aval
   else:
-    return typeof(x)
+    return core.cur_aval_maybe_qdd(x)
 
 # TODO(mattjj): this is for for backward (get it?) compatibility. Remove, maybe.
 def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in):

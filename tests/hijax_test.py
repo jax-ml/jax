@@ -1648,6 +1648,51 @@ class BoxTest(jtu.JaxTestCase):
 
     self.assertAllClose(box.get(), 1024., check_dtypes=False)
 
+  @parameterized.parameters([False, True])
+  def test_scan_extensive(self, jit):
+    def body(_, box: Box):
+      x = box.get()
+      y = (x, 2 * x)
+      box.set(y)
+      return (), ()
+
+    box = Box(jnp.arange(3.))
+    f = lambda: jax.lax.scan(body, (), box, length=3)
+    if jit:
+      f = jax.jit(f)
+    (), () = f()
+    ys = box.get()
+    self.assertAllClose(ys, (jnp.arange(3.), 2 * jnp.arange(3.)))
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing_scan(self, jit):
+    box = Box()
+
+    @jax.custom_vjp
+    def foo(box, x):
+      return x
+    def foo_fwd(box, x):
+      return x, box
+    def foo_bwd(box, g):
+      box.set(g)
+      return None, g
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def body(x, box):
+      x = 2 * x
+      x = foo(box, x)
+      return x, ()
+
+    def f(box, x):
+      x, () = jax.lax.scan(body, x, box, length=3)
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(partial(f, box))(1.0)
+    self.assertAllClose(box.get(), jnp.array([4., 2., 1.]))
+
   def test_cond_box_internally_pure(self):
     @jax.jit
     def doubleit(x):

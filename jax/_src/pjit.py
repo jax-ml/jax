@@ -1296,7 +1296,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
         jit_p, args, params, source_info=source_info)
     # TODO(mattjj): handle qdd in the presence of refs
     for v, x in zip(it.chain(jaxpr.constvars, jaxpr.invars), it.chain(jaxpr.consts, args)):
-      if v.initial_qdd:
+      if v.has_qdd:
         assert core.cur_qdd(x) == v.initial_qdd
         x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
   return out_tracers
