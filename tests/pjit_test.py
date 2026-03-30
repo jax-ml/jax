@@ -525,33 +525,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-  def testShardingConstraintWithArrayOpSharding(self):
-    shape = (8, 8)
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    s = NamedSharding(mesh, P(None))
-    ops = pxla.to_gspmd_sharding(
-        NamedSharding(mesh, P('x', 'y')), len(shape))
-
-    @partial(pjit, in_shardings=s, out_shardings=s)
-    def f(x):
-      y = x + 1
-      y = with_sharding_constraint(y, ops)
-      return y * 2
-
-    x = np.arange(math.prod(shape)).reshape(shape)
-    expected = (x + 1) * 2
-    actual = f(x)
-    self.assertAllClose(actual, expected, check_dtypes=False)
-    self.assertIsInstance(actual, array.ArrayImpl)
-    self.assertLen(actual.addressable_shards, 2)
-    self.assertAllClose(actual, expected, check_dtypes=False)
-
-    hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
-    # Annotation from with_sharding_constraint
-    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    # Annotation from pjit
-    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
-
   def testShardingConstraintPyTreeWithArray(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
 

@@ -55,7 +55,8 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import Sharding as JSharding, IndivisibleError
+from jax._src.sharding import (Sharding as JSharding, IndivisibleError,
+                               common_is_equivalent_to)
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
@@ -656,31 +657,22 @@ def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
 
 class SemanticallyEqualShardings:
 
-  def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
-               avals: Sequence[core.AbstractValue]):
-    gspmd_shardings = [
-        s if (isinstance(s, (UnspecifiedValue, AUTO)) or
-              (isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)))
-        else to_gspmd_sharding(s, a.ndim)  # type: ignore[missing-attribute]
-        for s, a in zip(shardings, avals)]
-    self._gspmd_shardings = gspmd_shardings
+  def __init__(self, shardings, avals):
     self.shardings = shardings
+    self.avals = avals
 
   def __hash__(self):
-    return hash(tuple(
-        (s._hlo_sharding_hash, s.memory_kind)
-        if isinstance(s, GSPMDSharding) else s for s in self._gspmd_shardings))
+    return hash(tuple(s if isinstance(s, (UnspecifiedValue, AUTO)) else
+                      (s._to_xla_hlo_sharding(a.ndim), s.memory_kind)
+                      for s, a in zip(self.shardings, self.avals)))
 
   def __eq__(self, other):
     if not isinstance(other, SemanticallyEqualShardings):
       return False
-    return all(
-        (op_shardings.are_hlo_shardings_equal(s._hlo_sharding, o._hlo_sharding)
-         and s.memory_kind == o.memory_kind)
-        if (isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding))
-        else s == o
-        for s, o in zip(self._gspmd_shardings, other._gspmd_shardings)
-    )
+    is_ua = lambda x: isinstance(x, (UnspecifiedValue, AUTO))
+    return all(common_is_equivalent_to(s, o, a.ndim, check_devices=False)
+               if not is_ua(s) and not is_ua(o) else s == o
+               for s, o, a in zip(self.shardings, other.shardings, self.avals))
 
 
 @weakref_lru_cache
@@ -832,14 +824,6 @@ class AllArgsInfo(NamedTuple):
   """Avals and debug_info for all arguments prior to DCE."""
   in_avals: Sequence[core.ShapedArray]
   debug_info: core.DebugInfo
-
-
-@util.cache(max_size=2048, trace_context_in_key=False)
-def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
-  if isinstance(s, GSPMDSharding):
-    return s
-  return GSPMDSharding(s._internal_device_list, s._to_xla_hlo_sharding(ndim),
-                       memory_kind=s.memory_kind)
 
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
