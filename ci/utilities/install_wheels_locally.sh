@@ -38,7 +38,7 @@ if [[ -n "${WHEELS[@]}" ]]; then
   # Install `uv` if it's not already installed. `uv` is much faster than pip for
   # installing Python packages.
   if ! command -v uv >/dev/null 2>&1; then
-    pip install uv~=0.5.30
+    pip install uv~=0.11.2
   fi
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.
