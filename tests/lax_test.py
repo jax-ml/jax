@@ -135,6 +135,24 @@ class LaxTest(jtu.JaxTestCase):
       tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
+  @parameterized.parameters(itertools.chain.from_iterable(
+      jtu.sample_product_testcases(
+          [dict(op_name=rec.op, rng_factory=rec.rng_factory)],
+          [dict(dtype=dtype, out_dtype=preferred)
+           for dtype, preferred in preferred_type_combinations],
+          shapes=itertools.chain.from_iterable(
+              itertools.combinations_with_replacement(shape_group, rec.nargs)
+              for shape_group in lax_test_util.compatible_shapes))
+      for rec in lax_test_util.lax_out_dtype_ops()))
+  def testOpOutDtype(self, op_name, rng_factory, shapes, dtype, out_dtype):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    op = partial(getattr(lax, op_name), out_dtype=out_dtype)
+    numpy_op = partial(getattr(lax_reference, op_name), out_dtype=out_dtype)
+
+    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+    self._CompileAndCheck(op, args_maker)
+
   @parameterized.parameters(["logistic", "tanh"])
   def testEvenFunctionGrads(self, op_name):
     op = getattr(lax, op_name)

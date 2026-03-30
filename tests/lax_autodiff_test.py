@@ -51,6 +51,11 @@ grad_float_dtypes = jtu.dtypes.floating
 grad_complex_dtypes = jtu.dtypes.complex
 grad_inexact_dtypes = jtu.dtypes.inexact
 
+LAX_GRAD_OPS_WITH_OUT_DTYPE = [
+    grad_test_spec(lax.mul, nargs=2, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
+]
+
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -190,6 +195,28 @@ def check_grads_bilinear(f, args, order,
 
 
 class LaxAutodiffTest(jtu.JaxTestCase):
+
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(op=rec.op, rng_factory=rec.rng_factory, order=rec.order, tol=rec.tol)],
+      shapes=[
+        shapes for shape_group in compatible_shapes
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
+      ],
+      lhs_dtype=rec.dtypes,
+      rhs_dtype=rec.dtypes,
+      out_dtype=rec.dtypes,
+    )
+    for rec in LAX_GRAD_OPS_WITH_OUT_DTYPE
+  ))
+  def testOpGradOutDtype(self, op, rng_factory, shapes, lhs_dtype, rhs_dtype, out_dtype, order, tol):
+    rng = rng_factory(self.rng())
+
+    dtypes = [lhs_dtype, rhs_dtype]
+    bits = min(jtu.num_float_bits(dtype) for dtype in [lhs_dtype, rhs_dtype, out_dtype])
+    tol = jtu.join_tolerance(1.5e-1, tol) if bits == 32 else tol
+    args = tuple(rng(shape, dtype) for shape, dtype in zip(shapes, dtypes))
+    check_grads(partial(op, out_dtype=out_dtype), args, order, ["fwd", "rev"], tol, tol)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(

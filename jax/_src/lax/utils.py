@@ -34,7 +34,9 @@ from jax._src.typing import DimSize, DType, Shape
 zip, unsafe_zip = safe_zip, zip
 
 
-def input_dtype(x, *_, **__):
+def input_dtype(x, *_, out_dtype=None, **__):
+  if out_dtype is not None:
+    return dtypes.canonicalize_dtype(out_dtype)
   return x.dtype
 
 def _argnum_weak_type(*argnums):

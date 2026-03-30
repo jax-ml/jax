@@ -2400,7 +2400,8 @@ mosaic_lowering_rules[gpu_core.WGxWG_SEMANTICS].update({
 })
 
 
-def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
+def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl, out_dtype=None):
+  del out_dtype  # unused here.
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if not all(aval_in.shape == () for aval_in in ctx.avals_in):
       raise NotImplementedError(
@@ -2434,8 +2435,10 @@ for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
   })
 
 def _binary_op_lowering_rule_wg(
-    ctx: LoweringRuleContext, x, y, *, ui_impl, si_impl, f_impl=None
+    ctx: LoweringRuleContext, x, y, *, ui_impl, si_impl, f_impl=None, **kwargs,
 ):
+  if kwargs.get('out_dtype') is not None:
+    raise NotImplementedError("out_dtype argument in binary_op_lowering_rule_wg")
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if any(aval_in.shape for aval_in in ctx.avals_in):
       raise NotImplementedError(
