@@ -61,8 +61,9 @@ ShapedAbstractValue = tc_lowering.ShapedAbstractValue
 LoweringContext = tc_lowering.LoweringContext
 LoweringRuleContext = tc_lowering.LoweringRuleContext
 
-_transform_ref = tc_lowering._transform_ref
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
+_make_index = tc_lowering._make_index
+_transform_ref = tc_lowering._transform_ref
 
 # pylint: disable=protected-access
 
@@ -571,9 +572,12 @@ def _load_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
+  ref_memory_space = tc_lowering._memory_space_to_tpu_memory_space(
+      ref_aval.memory_space, ctx.lowering_context.kernel_type
+  )
   if (
-      (ref_memory_space := ref_aval.memory_space) is MemorySpace.HBM or
-      ref_memory_space is MemorySpace.VMEM_SHARED
+      ref_memory_space is MemorySpace.HBM
+      or ref_memory_space is MemorySpace.VMEM_SHARED
   ):
     raise NotImplementedError(
         f"Get does not support loading from {ref_memory_space!r}."
@@ -610,16 +614,24 @@ def _load_lowering_rule(
         "Get only supports slices with stride 1, got {strides}"
     )
 
-  if not out_aval.ndim:
+  if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
+    message = "Get only supports loading scalars from SMEM."
+    if ref_memory_space is MemorySpace.SMEM:
+      message += " Trying to load an array of shape {out_aval.shape}."
+    elif ref_memory_space is MemorySpace.VMEM:
+      message += (
+          " To load a scalar from VMEM, load an array first and then extract a"
+          " particular element, e.g. ``v = ref[pl.ds(idx, ...)]; v[0]``."
+      )
+    else:
+      message += f" Trying to load a scalar from {ref_memory_space!r}."
+    raise NotImplementedError(message)
+  if out_aval.ndim == 0:
     if mask is not None:
       raise NotImplementedError("Get does not support masked scalar loads")
     return memref.load(ref, starts)
 
-  if ref_memory_space is MemorySpace.SMEM:
-    raise NotImplementedError("Get can only load scalars from SMEM")
-  else:
-    _check_aval_is_supported("Get", out_aval)
-
+  _check_aval_is_supported("Get", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)
   )
@@ -643,9 +655,12 @@ def _store_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
+  ref_memory_space = tc_lowering._memory_space_to_tpu_memory_space(
+      ref_aval.memory_space, ctx.lowering_context.kernel_type
+  )
   if (
-      (ref_memory_space := ref_aval.memory_space) is MemorySpace.HBM or
-      ref_memory_space is MemorySpace.VMEM_SHARED
+      ref_memory_space is MemorySpace.HBM
+      or ref_memory_space is MemorySpace.VMEM_SHARED
   ):
     raise NotImplementedError(
         f"Swap does not support storing to {ref_memory_space!r}."
@@ -681,7 +696,15 @@ def _store_lowering_rule(
         "Swap only supports slices with stride 1, got {strides}"
     )
 
-  if not out_aval.ndim:
+  if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
+    message = "Swap only supports scalars in SMEM."
+    if ref_memory_space is MemorySpace.SMEM:
+      message += " Trying to swap an array of shape {out_aval.shape}."
+    else:
+      message += f" Trying to swap a scalar in {ref_memory_space!r}."
+    raise NotImplementedError(message)
+
+  if out_aval.ndim == 0:
     if mask is not None:
       raise NotImplementedError("Swap does not support masked scalar stores")
     if add:
@@ -692,11 +715,7 @@ def _store_lowering_rule(
     memref.store(val, ref, starts)
     return old_val
 
-  if ref_memory_space is MemorySpace.SMEM:
-    raise NotImplementedError("Swap can only store scalars to SMEM")
-  else:
-    _check_aval_is_supported("Swap", out_aval)
-
+  _check_aval_is_supported("Swap", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)
   )

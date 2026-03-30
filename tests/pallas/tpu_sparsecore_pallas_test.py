@@ -1076,34 +1076,73 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x)[5 : 5 + self.num_lanes : 2], x[2 : 2 + self.num_lanes // 2]
     )
 
-  def test_scalar_load_store(self):
-    @self.vector_subcore_kernel(
-        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
-        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
-        scratch_shapes=(pltpu.VMEM((1,), jnp.int32),),
-    )
-    def kernel(x_ref, o_ref, tmp_ref):
-      pltpu.sync_copy(x_ref, tmp_ref)
-      o_ref[...] = lax.broadcast(tmp_ref[0], o_ref.shape)
+  @parameterized.product(i=[0, 4, 9, 13])
+  def test_scalar_load_emulated(self, i):
+    x = jnp.arange(32, dtype=jnp.int32)
 
-    np.testing.assert_array_equal(
-        kernel(jnp.ones((1,), jnp.int32)), jnp.ones((self.num_lanes,), jnp.int32)
-    )
-
-  def test_scalar_load_hbm(self):
     @self.vector_subcore_kernel(
-        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
-        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(x_ref, o_ref):
+      num_lanes = self.num_lanes
+      x = x_ref[pl.ds(i, num_lanes)]
+      o_ref[pl.ds(i, num_lanes)] = lax.broadcast(x[0], (num_lanes,))
+
+    np.testing.assert_array_equal(kernel(x)[i], lax.full_like(x, x[i]))
+
+  def test_scalar_load_vmem(self):
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.broadcast(x_ref[0], o_ref.shape)
 
     with self.assertRaisesRegex(
-        NotImplementedError, "Get does not support loading from HBM"
+        NotImplementedError, ".*To load a scalar from VMEM"
     ):
-      _ = kernel(jnp.ones((1,), jnp.int32))
+      _ = kernel(x)
+
+  def test_scalar_load_hbm(self):
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.broadcast(x_ref[0], o_ref.shape)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Get does not support .* HBM"
+    ):
+      _ = kernel(x)
+
+  def test_scalar_store_vmem(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+    )
+    def kernel(o_ref):
+      o_ref[0] = 1
+
+    with self.assertRaisesRegex(
+        NotImplementedError, ".*Trying to swap .* in VMEM"
+    ):
+      _ = kernel()
+
+  def test_scalar_store_hbm(self):
+    @self.vector_subcore_kernel(
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+    )
+    def kernel(o_ref):
+      o_ref[0] = 1
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Swap does not support .* HBM"
+    ):
+      _ = kernel()
 
   @parameterized.parameters("mixed", "all_zero", "all_one")
   def test_ffs(self, case):
