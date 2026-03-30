@@ -128,6 +128,8 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: jax-ml/jax
+          ref: 8842cf88d251ffd4b16a56c5e9104a6cfbcc885b
           persist-credentials: false
       - name: Configure Build Environment
         shell: bash
