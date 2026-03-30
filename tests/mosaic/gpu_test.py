@@ -5628,6 +5628,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   def setUp(self):
     if mgpu_dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
+    if not hasattr(mgpu_dialect, "WarpMapOp"):
+      self.skipTest("mgpu.dialect has a backward incompatible change.")
     super().setUp()
 
   @parameterized.product(
@@ -6661,6 +6664,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
+
+  def setUp(self):
+    if mgpu_dialect is None:
+      raise self.skipTest("Test requires Mosaic GPU dialect")
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
+    if not hasattr(mgpu_dialect, "WarpMapOp"):
+      self.skipTest("mgpu.dialect has a backward incompatible change.")
+    super().setUp()
 
   @parameterized.product(
       swizzle=tuple(mgpu_dialect.SwizzlingMode),
@@ -7929,10 +7940,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     # is 2. Only one cluster will succeed in stealing the extra cluster's work,
     # and the others will fail. Therefore we test that there is exactly 1 stolen
     # cluster and the others fail and return -1.
-
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu_dialect, "QueryClusterCancelOp"):
-      self.skipTest("QueryClusterCancelOp is not available.")
 
     num_sms = jax.devices()[0].core_count
     cluster_size = math.prod(cluster)

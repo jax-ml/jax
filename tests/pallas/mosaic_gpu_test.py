@@ -171,6 +171,10 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
+    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
+    # "mgpu.dialect has a backward incompatible change."
+    if not hasattr(mgpu.dialect, "WarpMapOp"):
+      self.skip_if_wg_semantics()
 
     super().setUp()
     self.enter_context(mgpu.core.artificial_shared_memory_limit(artificial_shared_memory_limit))
@@ -3051,9 +3055,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
     super().setUp()
-    # TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu.dialect, "WarpMapOp"):
-      self.skip_if_wg_semantics()
 
   def test_axis_index(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
@@ -5288,10 +5289,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       (0, (2, 1,), False),
   )
   def test_cluster_launch_control(self, dim, cluster, with_indexing):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skip_if_wg_semantics()
-
     # We attempt to schedule 1 more CTA than can be scheduled at once. Only
     # one CTA will succeed in stealing the last block, and the others will
     # fail. Therefore we test that there is exactly 1 stolen block and the
@@ -7265,9 +7262,6 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling(self, grid, cluster):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skip_if_wg_semantics()
 
     grid_names = tuple(str(i) for i in range(len(grid)))
     cluster_names = tuple("c"+str(i) for i in range(len(cluster)))
@@ -7310,9 +7304,6 @@ class HelpersTest(PallasTest):
   def test_dynamic_work_scheduling_with_carry(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100a")
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skip_if_wg_semantics()
 
     # In this test we make SM 0 run a the dynamic scheduling loop while all
     # other SMs spin. This means SM 0 should steal all of the work and we
