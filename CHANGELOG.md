@@ -37,6 +37,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
       `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
       `Unstacked`, `spec_to_indices`.
+  * {func}`jax.scipy.stats.rankdata` now returns floating point values in
+    all cases, following a similar change in the SciPy 1.18 release.
 
 * Changes:
   * The minimum supported SciPy version is now 1.14.
