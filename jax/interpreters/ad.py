@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-from jax._src.interpreters import ad as _src_ad
-
 from jax._src.interpreters.ad import (
   JVPTrace as JVPTrace,
   JVPTracer as JVPTracer,
@@ -44,20 +42,19 @@ from jax._src.interpreters.ad import (
 
 
 _deprecations = {
-    # Deprecated for JAX v0.9.0; finalize in JAX v0.10.0.
+    # Deprecated in v0.9.0; finalized in v0.10.0.
+    # TODO(jakevdp) remove entry in v0.11.0.
     "reducing_transposes": (
         (
-            "jax.interpreters.ad.reducing_transposes is deprecated in JAX v0.9.0."
-            " It has been unused since v0.4.38."
+            "jax.interpreters.ad.reducing_transposes was deprecated in v0.9.0."
+            " and removed in v0.10.0. It has been unused since JAX v0.4.38."
         ),
-        _src_ad.reducing_transposes,
+        None,
     ),
 }
 
 import typing
-if typing.TYPE_CHECKING:
-  reducing_transposes = _src_ad.reducing_transposes
-else:
+if not typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
