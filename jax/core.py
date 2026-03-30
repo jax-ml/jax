@@ -85,34 +85,38 @@ _deprecations = {
     " v0.10.0. Use jax.extend.core.unmapped_aval.",
     None,
   ),
+  "set_current_trace": (
+    "jax.core.set_current_trace was deprecated in JAX v0.8.2 and removed in"
+    " JAX v0.10.0. Use jax.extend.core.set_current_trace.",
+    None,
+  ),
+  "take_current_trace": (
+    "jax.core.take_current_trace was deprecated in JAX v0.8.2 and removed in"
+    " JAX v0.10.0. Use jax.extend.core.take_current_trace.",
+    None,
+  ),
+  "traverse_jaxpr_params": (
+    "jax.core.traverse_jaxpr_params was deprecated in JAX v0.8.2 and removed in"
+    " JAX v0.10.0.",
+    None,
+  ),
+  "TraceTag": (
+    "jax.core.TraceTag was deprecated in JAX v0.8.2 and removed in JAX v0.10.0."
+    " Use jax.extend.core.TraceTag.",
+    None,
+  ),
   # Deprecated in v0.8.2
   "call_impl": (
     "jax.core.call_impl is deprecated.",
     _src_core.call_impl,
   ),
-  "set_current_trace": (
-    "jax.core.set_current_trace is deprecated.",
-    _src_core.set_current_trace,
-  ),
   "subjaxprs": (
     "jax.core.subjaxprs is deprecated.",
     _src_core.subjaxprs,
   ),
-  "take_current_trace": (
-    "jax.core.take_current_trace is deprecated. Use jax.extend.core.take_current_trace.",
-    _src_core.take_current_trace,
-  ),
-  "traverse_jaxpr_params": (
-    "jax.core.traverse_jaxpr_params is deprecated.",
-    _src_core.traverse_jaxpr_params,
-  ),
   "AbstractToken": (
     "jax.core.AbstractToken is deprecated.",
     _src_core.AbstractToken,
-  ),
-  "TraceTag": (
-    "jax.core.TraceTag is deprecated.",
-    _src_core.TraceTag,
   ),
 }
 
@@ -120,11 +124,7 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   call_impl = _src_core.call_impl
   subjaxprs = _src_core.subjaxprs
-  set_current_trace = _src_core.set_current_trace
-  take_current_trace = _src_core.take_current_trace
-  traverse_jaxpr_params = _src_core.traverse_jaxpr_params
   AbstractToken = _src_core.AbstractToken
-  TraceTag = _src_core.TraceTag
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
