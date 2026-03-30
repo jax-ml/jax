@@ -1477,6 +1477,14 @@ def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
   return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
+def _ref_raise_valueerror(*args, **kwargs):
+  raise ValueError(
+      "Eager shard_map cannot return a `jax.Ref`. Please wrap"
+      " your shard_map in `jax.jit`.")
+
+eager_rules[core.ref_p] = _ref_raise_valueerror
+eager_rules[core.empty_ref_p] = _ref_raise_valueerror
+
 # Batching
 
 def used_axis_names(spec):

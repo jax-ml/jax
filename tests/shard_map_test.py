@@ -5268,6 +5268,22 @@ class ShardMapTest(jtu.JaxTestCase):
     expected_out = jax.jit(jax.grad(lambda x: g(x).sum()))(arr2)
     self.assertArraysEqual(jax.reshard(out_g, P()), expected_out)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_eager_shmap_new_ref(self, mesh):
+    x = jax.device_put(np.arange(8), P('x'))
+
+    def f(x):
+      x_ref = jax.new_ref(x)
+      return jax.freeze(x_ref)
+
+    with self.assertRaisesRegex(
+        ValueError, "Eager shard_map cannot return a `jax.Ref`"):
+      jax.shard_map(f, out_specs=P('x'), check_vma=False)(x)
+
+    # This works because `f` is `new_ref + freeze` so it's not returning a ref.
+    out = jax.shard_map(jax.jit(f), out_specs=P('x'), check_vma=False)(x)
+    self.assertArraysEqual(out, x)
+
 
 class FunSpec(NamedTuple):
   name: str

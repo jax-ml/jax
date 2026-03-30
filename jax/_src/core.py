@@ -2675,6 +2675,14 @@ class ArrayRefImpl:
 pytype_aval_mappings[Ref] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
+
+class InternalMutableArrayEffect(effects.Effect):
+  pass
+array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
+effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
+effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
+
+
 def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
@@ -2705,6 +2713,21 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
   return Ref(AbstractRef(val_ty), hival_of_refs)
 ref_p.to_lojax = _ref_to_lojax
 
+@ref_p.def_effectful_abstract_eval
+def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
+          {internal_mutable_array_effect})
+
+@ref_p.def_impl
+def _ref_impl(init_val, *, memory_space: Any, kind: Any):
+  if memory_space is not None:
+    raise NotImplementedError(
+        "array ref with memory space only works inside of a `jit`.")
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
+  aval = AbstractRef(typeof(init_val), kind=kind)
+  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 # TODO(mattjj,dougalm): merge with ref_p
 def empty_ref(ty, memory_space=None):
@@ -2744,29 +2767,6 @@ def _free_ref_abstract_eval(ref_aval):
 @free_ref_p.def_impl
 def _free_ref_impl(ref):
   return ()
-
-
-class InternalMutableArrayEffect(effects.Effect):
-  pass
-array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
-effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
-effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
-
-@ref_p.def_effectful_abstract_eval
-def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
-          {internal_mutable_array_effect})
-
-@ref_p.def_impl
-def _ref_impl(init_val, *, memory_space: Any, kind: Any):
-  if memory_space is not None:
-    raise NotImplementedError(
-        "array ref with memory space only works inside of a `jit`.")
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  aval = AbstractRef(typeof(init_val), kind=kind)
-  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 def freeze(ref: Ref) -> Array:
   """Invalidate a given reference and return its final value.
