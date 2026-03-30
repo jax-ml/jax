@@ -1502,6 +1502,27 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  @parameterized.parameters(mgpu_utils.smem, mgpu_utils.tmem)
+  def test_vector_store_op_dst_not_in_gmem_for_multicast(self, mem_space):
+    with ir.InsertionPoint(self.module.body):
+      src_ty = ir.VectorType.get((8,), ir.BF16Type.get())
+      dst_ty = ir.MemRefType.get((8,), ir.BF16Type.get(), memory_space=mem_space())
+      src, dst = undefs(src_ty, dst_ty)
+      mgpu.dialect.vector_store(src, dst, multimem=True)
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The destination must be in GMEM for multidevice multicast",
+    ):
+      self.module.operation.verify()
+
+  def test_vector_store_op_dst_must_be_in_gmem_for_multicast(self):
+    with ir.InsertionPoint(self.module.body):
+      src_ty = ir.VectorType.get((8,), ir.BF16Type.get())
+      dst_ty = ir.MemRefType.get((8,), ir.BF16Type.get())
+      src, dst = undefs(src_ty, dst_ty)
+      mgpu.dialect.vector_store(src, dst, multimem=True)
+    self.assertTrue(self.module.operation.verify())
+
   def test_broadcasted_iota_op_invalid_dimension(self):
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get((2,), ir.F32Type.get())

@@ -465,13 +465,17 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
     generate an optimized transfer.
 
     If `atomic_type` is set, performs an atomic store-(add|min|...) of the value.
+
+    If `multimem` is true, then the store is performed on all the devices in the
+    underlying mesh using `multimem` instructions.
   }];
 
   let arguments = (ins
     AnyFixedVectorOfNonZeroRank:$valueToStore,
     AnyNon0RankedMemRef:$destination,
     OptionalAttr<BoolAttr>:$optimized,
-    OptionalAttr<MosaicGPU_AtomicOpType>:$atomic_type
+    OptionalAttr<MosaicGPU_AtomicOpType>:$atomic_type,
+    DefaultValuedAttr<BoolAttr, "false">:$multimem
   );
 
   let hasVerifier = 1;

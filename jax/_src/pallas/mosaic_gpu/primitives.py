@@ -20,6 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
+import inspect
 import itertools
 import math
 from typing import Any, Literal, assert_never
@@ -4347,9 +4348,15 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
 
 
 @lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Warpgroup)
 def _multimem_store_lowering_rule(
     ctx: lowering.LoweringRuleContext, value, local_ref, *transforms_leaves, transforms_tree, collective_axes,
 ):
+  # TODO(olechwierowicz): Remove once min version of jaxlib is 0.10.0.
+  multimem_available = "multimem" in inspect.signature(mgpu.dialect.vector_store).parameters
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup and not multimem_available:
+    raise NotImplementedError("_multimem_store_lowering_rule WG lowering not implemented")
+
   if (mesh_info := ctx.module_ctx.mesh_info) is None:
     raise ValueError(
         "JAX device mesh is required by multimem_store, but not defined."
@@ -4372,8 +4379,22 @@ def _multimem_store_lowering_rule(
       raise NotImplementedError(
           f"Unhandled transforms for multimem_store: {transforms}"
       )
-  multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
-  if not ctx.avals_in[0].shape:  # scalar case
+  multicast_ref = lambda r: ctx.launch_ctx.to_remote_multicast(r)
+  scalar = not ctx.avals_in[0].shape
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    val = lowering._ensure_ir_value(value, ctx.avals_in[0].dtype)
+    if scalar:
+      with lowering._wrap_in_custom_primitive_if_wg(ctx, [local_ref, val]) as [local_ref, val]:
+        multicast_ref(local_ref).store(val, indices=[])
+        if ctx.module_ctx.auto_barriers:
+          mgpu.warpgroup_barrier()
+    else:
+      mc_ref = multicast_ref(local_ref).ref
+      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)  # pyrefly: ignore[unexpected-keyword]
+    return ()
+
+  multi_ref = multicast_ref(local_ref)
+  if scalar:
     multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_in[0].dtype), [])
   else:
     value.store_untiled(multi_ref, optimized=False)

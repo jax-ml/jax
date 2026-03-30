@@ -971,6 +971,12 @@ llvm::LogicalResult VectorStoreOp::verify() {
               "got "
            << src_type.getElementType() << " and " << dst_type.getElementType();
   }
+
+  if (getMultimem() && dst_type.getMemorySpace()) {
+    return emitOpError()
+           << "The destination must be in GMEM for multidevice multicast";
+  }
+
   return llvm::success();
 }
 

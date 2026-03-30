@@ -726,7 +726,6 @@ class PallasCallMultimemTest(TestCase):
 
   def test_multimem_store_regs(self):
     # TODO(bchetioui): support for multimem store.
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -757,7 +756,6 @@ class PallasCallMultimemTest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   def test_multimem_store_scalar(self):
-    self.skip_if_wg_semantics()  # multimem_store
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -1112,7 +1110,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       vec_size=None,
       num_blocks=None,
   ):
-    self.skip_if_wg_semantics()  # Support multimem_store under WG.
     if jax.process_index() > 2:
       return
 

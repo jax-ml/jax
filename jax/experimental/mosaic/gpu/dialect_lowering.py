@@ -526,6 +526,9 @@ def _vector_store_op_lowering_rule(
   else:
     atomic = None
 
+  # TODO(olechwierowicz) Remove this check once minimum jaxlib version is 0.10.0
+  multimem = op.multimem.value if hasattr(op, "multimem") else False
+
   [to_store_layout] = inference_utils.in_layouts(op)
   fragmented_array = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
 
@@ -537,6 +540,7 @@ def _vector_store_op_lowering_rule(
   optimized = op.optimized.value if op.optimized is not None else None
 
   if ref_type.memory_space is None:  # GMEM
+    ref = utils.MultimemRef(ref) if multimem else ref
     fragmented_array.store_untiled(
         ref, optimized=bool(optimized), atomic=atomic
     )

@@ -3332,7 +3332,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
     }
 
