@@ -46,7 +46,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
-          pip install uv~=0.5.30
+          pip install uv~=0.11.2
           uv pip install --system .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |

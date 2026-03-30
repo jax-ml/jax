@@ -68,7 +68,7 @@ jobs:
           ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3 -m venv \
             ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv
           source ${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate
-          pip install uv~=0.5.30
+          pip install uv~=0.11.2
           cd jax
           uv pip install -r build/test-requirements.txt
           uv pip install dist/jaxlib-*.whl -e .

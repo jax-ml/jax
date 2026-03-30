@@ -152,7 +152,7 @@ jobs:
           s3_download_uri: ${{ inputs.s3_download_uri }}
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m pip install uv~=0.5.30
+          $JAXCI_PYTHON -m pip install uv~=0.11.2
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
           $JAXCI_PYTHON -m pip install pytest-json-report
       # Halt for testing
