@@ -1317,6 +1317,12 @@ class ShardMapTrace(core.Trace):
       return val_, core.ManualAxisType()
 
   def process_primitive(self, prim, tracers, params, /):
+    if prim.name == 'new_ref':
+        raise TypeError(
+            "Detected `jax.lax.new_ref` inside an eager `shard_map`. "
+            "This is not supported because eager execution cannot discharge "
+            "stateful effects. Please wrap your function in `@jax.jit`."
+        )
     in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
     if self.check:
       out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
