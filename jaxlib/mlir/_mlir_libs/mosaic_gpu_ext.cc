@@ -165,6 +165,19 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     mlirDialectRegistryDestroy(registry);
   });
 
+  auto barrier_type =
+      mlir::python::nanobind_adaptors::mlir_type_subclass(
+          m, "BarrierType", mlirMosaicGpuIsABarrierType,
+          mlirMosaicGpuBarrierTypeGetTypeID);
+  barrier_type.def_staticmethod(
+      "get",
+      [cls = barrier_type.get_class()](MlirContext ctx) {
+        return cls(mlirMosaicGpuBarrierTypeGet(ctx));
+      },
+      nb::arg("context").none() = nb::none(),
+      nb::sig("def get(context: mlir.ir.Context | None = None) -> BarrierType"),
+      "Creates a BarrierType.");
+
   auto tile_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
           m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr);

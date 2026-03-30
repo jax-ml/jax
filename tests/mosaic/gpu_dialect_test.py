@@ -125,6 +125,13 @@ class DialectTest(MosaicGpuTest):
   def test_dialect_module_is_loaded(self):
     self.assertTrue(_cext.globals._check_dialect_module_loaded("mosaic_gpu"))
 
+  def test_barrier_type_bindings(self):
+    barrier_ty = mgpu.dialect.BarrierType.get()
+    self.assertIsInstance(barrier_ty, ir.Type)
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(

@@ -15,9 +15,14 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 
+#include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
+#include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Registration.h"
+#include "mlir/CAPI/Support.h"
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 extern "C" {
@@ -29,6 +34,22 @@ void mlirDialectRegistryInsertMosaicGpuInlinerExtensions(
     MlirDialectRegistry registry) {
   mlir::LLVM::registerInlinerInterface(*unwrap(registry));
   mlir::func::registerInlinerExtension(*unwrap(registry));
+}
+
+//===----------------------------------------------------------------------===//
+// BarrierType
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsABarrierType(MlirType type) {
+  return mlir::isa<mosaic_gpu::BarrierType>(unwrap(type));
+}
+
+MlirType mlirMosaicGpuBarrierTypeGet(MlirContext ctx) {
+  return wrap(mosaic_gpu::BarrierType::get(unwrap(ctx)));
+}
+
+MlirTypeID mlirMosaicGpuBarrierTypeGetTypeID() {
+  return wrap(mosaic_gpu::BarrierType::getTypeID());
 }
 
 }  // extern "C"
