@@ -66,7 +66,9 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
   let arguments = (ins
     LLVM_PointerShared:$base_pointer,
     ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count,
-    ConfinedAttr<I32Attr, [IntPositive]>:$num_barriers);
+    ConfinedAttr<I32Attr, [IntPositive]>:$num_barriers,
+    BoolAttr:$orders_tensor_core
+  );
 }
 
 def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
@@ -962,6 +964,23 @@ def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
   let results = (outs MemRefRankOf<[AnyType], [2]>);
 
   let hasVerifier = 1;
+}
+
+def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arrive", []> {
+  let summary = "Makes the `barrier` object track the completion of all prior async tcgen05 operations.";
+
+  let description = [{
+    Makes the `barrier` object track the completion of all prior async
+    tcgen05 operations.
+
+    if `collective` is `true`, allow signaling on the `barrier` object of
+    multiple CTAs within the cluster.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
 }
 
 def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {

@@ -294,15 +294,13 @@ def _initialize_barrier_op_lowering_rule(
     op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
   i32 = ir.IntegerType.get_signless(32)
-  lowered_barrier_type = _lowered_barrier_type()
-
+  arrival_count = op.arrival_count.value * (
+      utils.WARPGROUP_SIZE if not op.orders_tensor_core.value else 1  # pyrefly: ignore[missing-attribute]
+  )
   for i in range(op.num_barriers.value):
     nvvm.mbarrier_init(
-        utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
-        utils.c(
-            op.arrival_count.value * utils.WARPGROUP_SIZE,
-            i32,
-        ),
+        utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type()),
+        utils.c(arrival_count, i32),
         predicate=ctx.single_thread_per_block_predicate,
     )
 
@@ -1561,20 +1559,13 @@ def _mgpu_arrive_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(arrive_op.barrier)
   orders_tc = arrive_op.orders_tensor_core.value
   if orders_tc:
-    # Only one thread arrives, so make sure it ups the arrival count for the
-    # whole warpgroup.
+    # Barrier expects a single thread arrival.
     predicate = ctx.single_lane_predicate
-    arrival_count = utils.WARPGROUP_SIZE
   else:
-    # Each thread arrives once.
-    arrival_count = 1
+    # Barrier expects each thread arrives once.
     predicate = None
 
-  barrier.barrier_ref.arrive(
-      arrival_count=arrival_count,
-      orders_tensor_core=orders_tc,
-      predicate=predicate,
-  )
+  barrier.barrier_ref.arrive(orders_tensor_core=orders_tc, predicate=predicate)
   return []
 
 
@@ -2228,6 +2219,22 @@ def _async_store_tmem_op_lowering_rule(
   tmem_ref.store(arr)
 
   return []
+
+
+# TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "TcGen05CommitArriveOp"):
+  @_register_lowering(mgpu.TcGen05CommitArriveOp)
+  def _tcgen05_commit_arrive_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TcGen05CommitArriveOp."""
+    ctx.check_collective(op)
+    barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+    with utils.when(ctx.single_lane_predicate):
+      tcgen05.commit_arrive(
+          barrier.barrier_ref, op.collective.value, ctx.launch_context
+      )
+    return []
 
 
 @_register_lowering(mgpu.CustomPrimitiveOp, support_warp_semantics=True)

@@ -138,6 +138,7 @@ class DialectTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=0,
           num_barriers=2,
+          orders_tensor_core=False,
       )
     with self.assertRaisesRegex(ir.MLIRError, "value is positive"):
       self.module.operation.verify()
@@ -148,6 +149,7 @@ class DialectTest(MosaicGpuTest):
           llvm.UndefOp(ir.Type.parse(f"!llvm.ptr<{0}>")),
           arrival_count=1,
           num_barriers=2,
+          orders_tensor_core=False,
       )
     with self.assertRaisesRegex(ir.MLIRError, "pointer in address space 3"):
       self.module.operation.verify()
@@ -158,6 +160,7 @@ class DialectTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
           num_barriers=2,
+          orders_tensor_core=False,
       )
     self.assertTrue(self.module.operation.verify())
 
@@ -1680,6 +1683,7 @@ class DialectLoweringTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
           num_barriers=2,
+          orders_tensor_core=False,
       )
     mgpu.lower_mgpu_dialect(self.module, None)
 
@@ -1697,6 +1701,7 @@ class DialectLoweringTest(MosaicGpuTest):
             llvm.UndefOp(workgroup_ptr_ty()),
             arrival_count=1,
             num_barriers=2,
+            orders_tensor_core=False,
         )
         scf.yield_([])
     mgpu.lower_mgpu_dialect(self.module, None)
@@ -1714,6 +1719,7 @@ class DialectLoweringTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=arrival_count,
           num_barriers=num_barriers,
+          orders_tensor_core=False,
       )
 
     self.assertTrue(self.module.operation.verify())

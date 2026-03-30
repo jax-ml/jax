@@ -1149,7 +1149,9 @@ class DialectBarrierRef:
     address = memref_ptr(
         barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
     )
-    dialect.initialize_barrier(address, arrival_count, num_barriers)
+    dialect.initialize_barrier(
+        address, arrival_count, num_barriers, orders_tensor_core  # pyrefly: ignore[bad-argument-count]
+    )
     i32 = ir.IntegerType.get_signless(32)
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
