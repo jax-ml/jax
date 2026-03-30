@@ -725,9 +725,9 @@ nvidia-nvshmem-cu12==3.5.21 ; sys_platform == "linux" \
     --hash=sha256:0e51b52bbd78f8896a7667701ac40e3e7a4f0f80703ccce75b304c18f359d73f \
     --hash=sha256:f9c815745f8a10567fbf25d5a1d5079f778d67e94276e585a3706fbda9b490bb
     # via -r build/nvidia-requirements.txt
-nvidia-nvshmem-cu13==3.5.21 ; sys_platform == "linux" \
-    --hash=sha256:17b376ca5f91726e3795aa888dc7a2b48e642d7bc210c71354114ddb8493da71 \
-    --hash=sha256:b6c2f7dc8c8f3084e0a23e495b020a30c6cbaf4e1674500860bcb65c79a8cb3d
+nvidia-nvshmem-cu13==3.6.5 ; sys_platform == "linux" \
+    --hash=sha256:4001aabc72ead32ecc3c9add3c6781befcb71adcbe286d7f5956042e68668c70 \
+    --hash=sha256:94aa0149490be658cf95945ce9f16ba90a90edbd6a564366f996ead7496f2f22
     # via -r build/nvidia-requirements.txt
 nvidia-nvvm==13.2.51 ; sys_platform == "linux" \
     --hash=sha256:9c5725d97b1108bdb6c474784f7901c34f570319a2c2a0f279d23190070915f3 \
