@@ -1353,11 +1353,8 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
-void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
-                              Value semaphore, Value amount, Value device_id,
-                              Value core_id) {
-  build(builder, state, semaphore, amount, device_id, core_id,
-        /*core_type=*/nullptr);
+mlir::tpu::CoreType SemaphoreSignalOp::getTargetCoreType() {
+  return getRefCoreType(getSemaphore()).value_or(GetCoreTypeOfParentOp(**this));
 }
 
 LogicalResult SemaphoreSignalOp::verify() {
@@ -1367,12 +1364,7 @@ LogicalResult SemaphoreSignalOp::verify() {
   }
 
   CoreType issuing_core_type = GetCoreTypeOfParentOp(**this);
-  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
-  if (getRefCoreType(getSemaphore()).value_or(issuing_core_type) !=
-      target_core_type) {
-    return emitOpError(
-        "core type mismatch between the attr and the semaphore ref");
-  }
+  CoreType target_core_type = getTargetCoreType();
 
   if (getCoreId() == nullptr && getDeviceId() == nullptr) {
     if (target_core_type != issuing_core_type) {
@@ -1399,12 +1391,9 @@ LogicalResult SemaphoreWaitOp::verify() {
   return success();
 }
 
-void EnqueueDMAOp::build(OpBuilder& builder, OperationState& state,
-                         Value source, Value source_semaphore, Value target,
-                         Value target_semaphore, Value device_id, Value core_id,
-                         uint32_t priority, bool strict_ordering) {
-  build(builder, state, source, source_semaphore, target, target_semaphore,
-        device_id, core_id, /*core_type=*/nullptr, priority, strict_ordering);
+mlir::tpu::CoreType EnqueueDMAOp::getTargetCoreType() {
+  return getRefCoreType(getTargetSemaphore())
+      .value_or(GetCoreTypeOfParentOp(**this));
 }
 
 LogicalResult EnqueueDMAOp::verify() {
@@ -1460,14 +1449,10 @@ LogicalResult EnqueueDMAOp::verify() {
   // If the target core_type is different from the issuing core_type,
   // the specific core_id must be provided. The device_id is irrelevant here.
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
-  CoreType target_core = getCoreType().value_or(issuing_core);
+  CoreType target_core = getTargetCoreType();
   if (getSourceSemaphore() &&
       getRefCoreType(getSourceSemaphore()).value_or(issuing_core) !=
           issuing_core) {
-    return emitOpError("Target semaphore and target ref core type mismatched");
-  }
-  if (getRefCoreType(getTargetSemaphore()).value_or(issuing_core) !=
-      target_core) {
     return emitOpError("Target semaphore and target ref core type mismatched");
   }
   if (target_core != issuing_core && getCoreId() == nullptr) {
@@ -1672,7 +1657,7 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
 void WaitDMA2Op::build(OpBuilder& builder, OperationState& state,
                        Value semaphore, Value src, Value dst) {
   build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
-        /*core_id=*/nullptr, /*core_type=*/nullptr);
+        /*core_id=*/nullptr);
 }
 
 LogicalResult WaitDMA2Op::verify() {
@@ -2369,24 +2354,19 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
 }
 
 LogicalResult FetchAndAddSyncOp::verify() {
-  switch (getCoreType()) {
+  CoreType issuing_core = GetCoreTypeOfParentOp(**this);
+  CoreType target_core = getRefCoreType(getBase()).value_or(issuing_core);
+  switch (target_core) {
     case CoreType::kScVectorSubcore:
       break;
     case CoreType::kScScalarSubcore:
-      // TODO(b/480918210): Remove this once the bug is fixed.
-      [[fallthrough]];
+      return emitOpError("SC scalar subcore target not supported yet");
     default:
       return emitOpError(
                  "Only SC scalar and vector subcores are supported, got ")
-             << getCoreType();
+             << target_core;
   }
   MemRefType base_type = getBase().getType();
-
-  CoreType issuing_core = GetCoreTypeOfParentOp(**this);
-  CoreType target_core = getCoreType();
-  if (getRefCoreType(getBase()).value_or(issuing_core) != target_core) {
-    return emitOpError("Base core and target core type mismatched");
-  }
 
   if (base_type.getRank() != getIndices().size()) {
     return emitOpError("Number of indices (")

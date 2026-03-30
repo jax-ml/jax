@@ -1130,6 +1130,9 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), np.broadcast_to(expected, x.shape))
 
   def test_fetch_and_add(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 5):
+      self.skipTest("Needs a newer libtpu")
+
     n = self.sc_info.num_subcores
     dim = self.num_lanes
 
