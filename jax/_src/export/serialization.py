@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
-import types
+
 from collections.abc import Callable, Iterable
+import dataclasses
 import itertools
 from functools import partial
+import types
 from typing import cast, Any, TypeVar
 
 try:
@@ -67,7 +69,60 @@ SerT = TypeVar("SerT")
 # Version 9, March 17th, 2026, removes HloSharding serialization.
 #   This is another attempt at what Version 7 was supposed to be.
 #   This version is backwards compatible with Version 2 to 8.
-_SERIALIZATION_VERSION = 9
+# Version 10, April 4th, 2026, optimizes serialization of duplicate shardings,
+#   abstract meshes and avals.
+_SERIALIZATION_VERSION = 10
+
+
+@dataclasses.dataclass
+class _SerializedUniques:
+  # Map unique objects to their index in the serialized data.
+  unique_avals: list[core.AbstractValue]
+  avals_map: dict[core.AbstractValue, int]
+  unique_abstract_meshes: list[mesh.AbstractMesh]
+  abstract_meshes_map: dict[mesh.AbstractMesh, int]
+  unique_named_shardings: list[named_sharding.NamedSharding]
+  named_shardings_map: dict[named_sharding.NamedSharding, int]
+
+  @staticmethod
+  def create_from_exported(exp: _export.Exported):
+    uniques = _SerializedUniques([], {}, [], {}, [], {})
+    for aval in itertools.chain(exp.in_avals, exp.out_avals):
+      uniques.add_aval(aval)
+    for sharding in itertools.chain(exp._in_named_shardings,
+                                    exp._out_named_shardings):
+      uniques.add_named_sharding(sharding)
+    return uniques
+
+  @staticmethod
+  def create_from_uniques(unique_avals: list[core.AbstractValue],
+                          unique_abstract_meshes: list[mesh.AbstractMesh],
+                          unique_named_shardings: list[named_sharding.NamedSharding]):
+    uniques = _SerializedUniques([], {}, [], {}, [], {})
+    uniques.unique_avals = unique_avals
+    uniques.avals_map = {a: i for i, a in enumerate(unique_avals)}
+    uniques.unique_abstract_meshes = unique_abstract_meshes
+    uniques.abstract_meshes_map = {m: i for i, m in enumerate(unique_abstract_meshes)}
+    uniques.unique_named_shardings = unique_named_shardings
+    uniques.named_shardings_map = {s: i for i, s in enumerate(unique_named_shardings)}
+    return uniques
+
+  def add_aval(self, aval: core.AbstractValue):
+    if aval not in self.avals_map:
+      self.avals_map[aval] = len(self.unique_avals)
+      self.unique_avals.append(aval)
+
+  def add_named_sharding(self, sharding: named_sharding.NamedSharding | None):
+    if sharding is None:
+      return
+    amesh = sharding.mesh.abstract_mesh
+    if amesh is not None and amesh not in self.abstract_meshes_map:
+      self.abstract_meshes_map[amesh] = len(self.unique_abstract_meshes)
+      self.unique_abstract_meshes.append(amesh)
+    if sharding not in self.named_shardings_map:
+      self.named_shardings_map[sharding] = len(self.unique_named_shardings)
+      self.unique_named_shardings.append(sharding)
+
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serializes an Exported.
@@ -94,19 +149,27 @@ def deserialize(ser: bytearray) -> _export.Exported:
 def _serialize_exported(
     builder: flatbuffers.Builder, exp: _export.Exported, vjp_order: int
 ) -> int:
+  uniques = _SerializedUniques.create_from_exported(exp)
   if not exp._has_named_shardings:
     raise ValueError(
       "Exported being serialized must have named shardings after 3/17/2026.")
   # Serialize bottom-up
   fun_name = builder.CreateString(exp.fun_name)
   in_tree = _serialize_pytreedef(builder, exp.in_tree)
+  # TODO(necula): stop serializing in_avals 1 month after 4/4/26.
   in_avals = _serialize_array(builder, _serialize_aval, exp.in_avals)
+
   out_tree = _serialize_pytreedef(builder, exp.out_tree)
+  # TODO(necula): stop serializing out_avals 1 month after 4/4/26
   out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
+  # TODO(necula): stop serializing in_shardings 1 month after 4/4/26
   in_shardings = _serialize_array(
-      builder, _serialize_sharding, exp._in_named_shardings)
+      builder, partial(_serialize_sharding, uniques=uniques),
+      exp._in_named_shardings)
+  # TODO(necula): stop serializing out_shardings 1 month after 4/4/26
   out_shardings = _serialize_array(
-      builder, _serialize_sharding, exp._out_named_shardings)
+      builder, partial(_serialize_sharding, uniques=uniques),
+      exp._out_named_shardings)
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
   )
@@ -133,6 +196,26 @@ def _serialize_exported(
           "order"
       )
     vjp = _serialize_exported(builder, exp.vjp(), vjp_order - 1)
+
+  unique_avals_offset = _serialize_array(
+      builder, _serialize_aval, uniques.unique_avals)
+  unique_abstract_meshes_offset = _serialize_array(
+      builder, _serialize_abstract_mesh, uniques.unique_abstract_meshes)
+  unique_named_shardings_offset = _serialize_array(
+      builder, partial(_serialize_named_sharding, uniques=uniques),
+      uniques.unique_named_shardings)
+
+  in_aval_idxs = builder.CreateNumpyVector(
+    np.array([uniques.avals_map[a] for a in exp.in_avals], dtype=np.uint32))
+  out_aval_idxs = builder.CreateNumpyVector(
+    np.array([uniques.avals_map[a] for a in exp.out_avals], dtype=np.uint32))
+
+  in_shardings_idxs = builder.CreateNumpyVector(
+    np.array([0 if s is None else 1 + uniques.named_shardings_map[s]
+              for s in exp._in_named_shardings], dtype=np.uint32))
+  out_shardings_idxs = builder.CreateNumpyVector(
+    np.array([0 if s is None else 1 + uniques.named_shardings_map[s]
+              for s in exp._out_named_shardings], dtype=np.uint32))
 
   ser_flatbuf.ExportedStart(builder)
   # TODO(necula): we cannot really store the actual serialization_version
@@ -163,6 +246,17 @@ def _serialize_exported(
   )
   if vjp is not None:
     ser_flatbuf.ExportedAddVjp(builder, vjp)
+
+  ser_flatbuf.ExportedAddUniqueAvals(builder, unique_avals_offset)
+  ser_flatbuf.ExportedAddUniqueAbstractMeshes(builder,
+                                              unique_abstract_meshes_offset)
+  ser_flatbuf.ExportedAddUniqueNamedShardings(builder,
+                                              unique_named_shardings_offset)
+  ser_flatbuf.ExportedAddInAvalsIdxs(builder, in_aval_idxs)
+  ser_flatbuf.ExportedAddOutAvalsIdxs(builder, out_aval_idxs)
+  ser_flatbuf.ExportedAddInShardingsIdxs(builder, in_shardings_idxs)
+  ser_flatbuf.ExportedAddOutShardingsIdxs(builder, out_shardings_idxs)
+
   return ser_flatbuf.ExportedEnd(builder)
 
 
@@ -180,11 +274,31 @@ def _serialize_array(
 
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
+  scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
+
+  unique_avals = [  # type: ignore
+      _deserialize_aval(exp.UniqueAvals(i), scope=scope, sharding=None)
+      for i in range(exp.UniqueAvalsLength())]
+  unique_abstract_meshes = [
+      _deserialize_abstract_mesh(exp.UniqueAbstractMeshes(i))
+      for i in range(exp.UniqueAbstractMeshesLength())
+  ]
+  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # type: ignore
+                                                   unique_abstract_meshes,
+                                                   [])
+  unique_named_shardings = [
+      _deserialize_named_sharding(exp.UniqueNamedShardings(i), uniques=uniques)
+      for i in range(exp.UniqueNamedShardingsLength())
+  ]
+  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # type: ignore
+                                                   unique_abstract_meshes,
+                                                   unique_named_shardings)
+
   fun_name = exp.FunctionName().decode("utf-8")
   in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
-  scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
+
   out_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.OutTree())
   )
@@ -193,53 +307,109 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   # the field "deprecated" once we abandon the old
   # serialization format (6 months after 11/24/2025).
   nr_devices = exp.NrDevices() or exp.NrDevicesShort()
-  in_shardings = _deserialize_tuple(
-      exp.InShardingsLength, exp.InShardings, _deserialize_sharding
-  )
-  out_shardings = _deserialize_tuple(
-      exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
-  )
+  def sharding_by_idx(idx):
+    if idx == 0:
+      return None
+    return uniques.unique_named_shardings[idx - 1]
+
+  if exp.InShardingsIdxsLength() > 0:
+    in_shardings = tuple(
+        sharding_by_idx(exp.InShardingsIdxs(i))
+        for i in range(exp.InShardingsIdxsLength())
+    )
+  elif exp.InShardingsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    in_shardings = tuple(
+        _deserialize_sharding(exp.InShardings(i), uniques=uniques)
+        for i in range(exp.InShardingsLength())
+    )
+  else:
+    in_shardings = ()
+
+  if exp.OutShardingsIdxsLength() > 0:
+    out_shardings = tuple(
+      sharding_by_idx(exp.OutShardingsIdxs(i))
+      for i in range(exp.OutShardingsIdxsLength())
+    )
+  elif exp.OutShardingsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    out_shardings = tuple(
+      _deserialize_sharding(exp.OutShardings(i), uniques=uniques)
+      for i in range(exp.OutShardingsLength())
+    )
+  else:
+    out_shardings = ()
+
   # has_named_sharding will be True for all exports created after 1/15/2026
   # TODO(b/489569164): remove has_named_sharding 6 months after 1/15/2026
   has_named_shardings = not any(isinstance(s, _export.HloSharding)
                                 for s in itertools.chain(in_shardings, out_shardings))
   if has_named_shardings:
-    in_avals = tuple(
-      _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
-      for i in range(exp.InAvalsLength())
-    )
-    out_avals = tuple(
-      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # type: ignore
-      for i in range(exp.OutAvalsLength())
-    )
+    def get_aval_by_idx(idx, sharding: _export.NamedSharding | None):
+      base_aval = uniques.unique_avals[idx]
+      if sharding is None:
+        return base_aval
+      return core.update_aval_with_sharding(base_aval, sharding)
+
+    if exp.InAvalsIdxsLength() > 0:
+      in_avals = tuple(
+          get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # type: ignore
+          for i in range(exp.InAvalsIdxsLength()))
+    elif exp.InAvalsLength() > 0:
+      # TODO(necula): remove 6 months after 4/4/26
+      in_avals = tuple(
+          _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
+          for i in range(exp.InAvalsLength()))
+    else:
+      in_avals = ()
+
+    if exp.OutAvalsIdxsLength() > 0:
+      out_avals = tuple(
+          get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # type: ignore
+                          for i in range(exp.OutAvalsIdxsLength()))
+    elif exp.OutAvalsLength() > 0:
+      # TODO(necula): remove 6 months after 4/4/26
+      out_avals = tuple(
+        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # type: ignore
+        for i in range(exp.OutAvalsLength())
+      )
+    else:
+      out_avals = ()
+
     in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
                              for s, aval in zip(in_shardings, in_avals))
     out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
                              for s, aval in zip(out_shardings, out_avals))
   else:
-    in_avals = _deserialize_tuple(exp.InAvalsLength, exp.InAvals,
-                                  partial(_deserialize_aval, scope=scope, sharding=None))
-    out_avals = _deserialize_tuple(exp.OutAvalsLength, exp.OutAvals,
-                                   partial(_deserialize_aval, scope=scope, sharding=None))
+    # Export from before 1/15/26
+    in_avals = tuple(
+        _deserialize_aval(exp.InAvals(i), scope=scope, sharding=None)
+        for i in range(exp.InAvalsLength())
+    )
+    out_avals = tuple(
+        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=None)
+        for i in range(exp.OutAvalsLength())
+    )
     in_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], in_shardings)
     in_shardings = (None,) * len(in_shardings)
     out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
     out_shardings = (None,) * len(out_shardings)
-  platforms = _deserialize_tuple(
-      exp.PlatformsLength,
-      exp.Platforms,
-      lambda v: v.decode("utf-8"),
+
+  platforms = tuple(
+      exp.Platforms(i).decode("utf-8")
+      for i in range(exp.PlatformsLength())
   )
-  ordered_effects = _deserialize_tuple(
-      exp.OrderedEffectsLength, exp.OrderedEffects, _deserialize_effect
+  ordered_effects = tuple(
+      _deserialize_effect(exp.OrderedEffects(i))
+      for i in range(exp.OrderedEffectsLength())
   )
-  unordered_effects = _deserialize_tuple(
-      exp.UnorderedEffectsLength, exp.UnorderedEffects, _deserialize_effect
+  unordered_effects = tuple(
+      _deserialize_effect(exp.UnorderedEffects(i))
+      for i in range(exp.UnorderedEffectsLength())
   )
-  disabled_safety_checks = _deserialize_tuple(
-      exp.DisabledChecksLength,
-      exp.DisabledChecks,
-      _deserialize_disabled_safety_check,
+  disabled_safety_checks = tuple(
+      _deserialize_disabled_safety_check(exp.DisabledChecks(i))
+      for i in range(exp.DisabledChecksLength())
   )
 
   mlir_module_serialized = exp.MlirModuleSerializedAsNumpy().tobytes()
@@ -274,13 +444,6 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       _get_vjp=_get_vjp,
   )
 
-
-def _deserialize_tuple(
-    get_len: Callable[[], int],
-    get_elem: Callable[[int], SerT],
-    deserialize_one: Callable[[SerT], T],
-) -> tuple[T, ...]:
-  return tuple(deserialize_one(get_elem(i)) for i in range(get_len()))
 
 
 def _serialize_pytreedef(
@@ -563,8 +726,12 @@ def _deserialize_partition_spec(spec: ser_flatbuf.PartitionSpec
 
 
 def _serialize_named_sharding(
-    builder: flatbuffers.Builder, sharding: named_sharding.NamedSharding
+    builder: flatbuffers.Builder, sharding: named_sharding.NamedSharding, *,
+    uniques: _SerializedUniques
 ) -> int:
+  abstract_mesh_idx = uniques.abstract_meshes_map[sharding.mesh.abstract_mesh]
+  # TODO(necula): 1 month after 4/4/26 we can stop serializing the full
+  # abstract_mesh and only serialize the index.
   mesh_offset = _serialize_abstract_mesh(builder, sharding.mesh.abstract_mesh)
   spec_offset = _serialize_partition_spec(builder, sharding.spec)
   memory_kind = builder.CreateString(sharding.memory_kind) if sharding.memory_kind is not None else 0
@@ -574,13 +741,19 @@ def _serialize_named_sharding(
   ser_flatbuf.NamedShardingAddSpec(builder, spec_offset)
   if memory_kind != 0:
     ser_flatbuf.NamedShardingAddMemoryKind(builder, memory_kind)
+  ser_flatbuf.NamedShardingAddAbstractMeshIdx(builder, abstract_mesh_idx)
   return ser_flatbuf.NamedShardingEnd(builder)
 
 
 def _deserialize_named_sharding(
-    s: ser_flatbuf.NamedSharding
+    s: ser_flatbuf.NamedSharding, *, uniques: _SerializedUniques
 ) -> named_sharding.NamedSharding:
-  amesh = _deserialize_abstract_mesh(s.Mesh())
+  if uniques.unique_abstract_meshes:
+    amesh = uniques.unique_abstract_meshes[s.AbstractMeshIdx()]
+  else:
+    # TODO(necula): 6 months after 4/4/26 we can stop deserializing the full
+    # abstract_mesh.
+    amesh = _deserialize_abstract_mesh(s.Mesh())
   spec = _deserialize_partition_spec(s.Spec())
   memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None  # type: ignore
   return named_sharding.NamedSharding(amesh, spec, memory_kind=memory_kind)
@@ -626,11 +799,12 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: _export.NamedSharding | None) -> int:
+    builder: flatbuffers.Builder, s: _export.NamedSharding | None, *,
+    uniques: _SerializedUniques) -> int:
   named_sharding = None
 
   if s is not None:
-    named_sharding = _serialize_named_sharding(builder, s)
+    named_sharding = _serialize_named_sharding(builder, s, uniques=uniques)
 
   ser_flatbuf.ShardingStart(builder)
   if named_sharding is not None:
@@ -638,10 +812,12 @@ def _serialize_sharding(
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | named_sharding.NamedSharding | None:
+def _deserialize_sharding(s: ser_flatbuf.Sharding, *,
+                          uniques: _SerializedUniques) -> _export.HloSharding | named_sharding.NamedSharding | None:
   if (named_sharding_off := s.NamedSharding()) is not None:
     # After 1/15/26 all exports will have named shardings (or None)
-    return _deserialize_named_sharding(named_sharding_off)
+    # TODO(necula): We must keep reading the NamedSharding for 6 months after 4/4/26
+    return _deserialize_named_sharding(named_sharding_off, uniques=uniques)
 
   # TODO(b/489569164): We must keep reading the HloSharding for 6 months after 1/15/2026.
   if not s.HloShardingProtoIsNone():

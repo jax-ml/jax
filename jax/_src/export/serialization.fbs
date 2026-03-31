@@ -126,6 +126,7 @@ table NamedSharding {
   mesh: AbstractMesh;
   spec: PartitionSpec;
   memory_kind: string;
+  abstract_mesh_idx: uint32;  // Index in unique_abstract_meshes (added 4/4/2026, v10)
 }
 
 table AbstractValue {
@@ -194,6 +195,19 @@ table Exported {
 
   vjp: Exported;
   nr_devices: uint32 = 0;  // Added 11/25/2025
+
+  // Added 4/4/2026, v10
+  unique_avals: [AbstractValue];
+  unique_abstract_meshes: [AbstractMesh];
+  unique_named_shardings: [NamedSharding];
+
+  // Indices into unique_avals (added 4/4/2026, v10)
+  in_avals_idxs: [uint32];
+  out_avals_idxs: [uint32];
+
+  // 1-based indices into unique_named_shardings, or 0 if unspecified (added 4/4/2026, v10)
+  in_shardings_idxs: [uint32];
+  out_shardings_idxs: [uint32];
 }
 
 root_type Exported;

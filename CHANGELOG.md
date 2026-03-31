@@ -60,6 +60,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.scipy.linalg.solve_triangular` now show a deprecation warning for
     batched 1D solves with `b.ndim > 1`. In the future these will be treated as
     batched 2D solves.
+  * Added a new version 10 for the jax.export serialization format. This is
+    an optimization for when there are multiple occurrences of the same
+    abstract value, abstract mesh, or sharding.
 
 * Bug fixes:
   * Fixed a bug that led to differing output between CPU and GPU for
