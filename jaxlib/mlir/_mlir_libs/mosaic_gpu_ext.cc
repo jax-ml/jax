@@ -187,9 +187,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
               // clang-format: on
               ),
           "Creates a BarrierType.")
-      .def_property_readonly("orders_tensor_core", [](MlirType self) {
-        return mlirMosaicGpuBarrierTypeGetOrdersTensorCore(self);
-      });
+      .def_property_readonly("orders_tensor_core",
+                             mlirMosaicGpuBarrierTypeGetOrdersTensorCore);
 
   auto tile_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
@@ -280,9 +279,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
               // clang-format: on
               ),
           "Creates a SwizzleTransformAttr with the given swizzle.")
-      .def_property_readonly("swizzle", [](MlirAttribute self) {
-        return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
-      });
+      .def_property_readonly("swizzle",
+                             mlirMosaicGpuSwizzleTransformAttrGetSwizzle);
 
   auto copy_partition_attr_interface =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
@@ -330,9 +328,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
               // clang-format: on
               ),
           "Creates a CopyPartitionedAttr.")
-      .def_property_readonly("axis", [](MlirAttribute self) {
-        return mlirMosaicGpuCopyPartitionedAttrGetAxis(self);
-      });
+      .def_property_readonly("axis", mlirMosaicGpuCopyPartitionedAttrGetAxis);
 
   m.def("init_cc_mlir", [](nb::object mlir_ir_module) {
     nb::object& mlir_ir = MlirIrModule(mlir_ir_module);
