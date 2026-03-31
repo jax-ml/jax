@@ -15,7 +15,7 @@
 """Wrappers around pywrap rules for JAX."""
 
 load(
-    "@xla//third_party/py/rules_pywrap:pywrap.impl.bzl",
+    "@rules_ml_toolchain//py/rules_pywrap:pywrap.impl.bzl",
     "pybind_extension",
     _pywrap_binaries = "pywrap_binaries",
     _pywrap_library = "pywrap_library",
