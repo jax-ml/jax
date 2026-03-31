@@ -19,13 +19,14 @@ import itertools
 import math
 
 from absl.testing import absltest
+from absl.testing import flagsaver
 from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
 from jax import lax
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.state import discharge as state_discharge
@@ -1992,6 +1993,12 @@ class VectorSubcoreTest(PallasSCTest):
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
 
+  def setUp(self):
+    super().setUp()
+    self.enter_context(
+        flagsaver.flagsaver(xla_tpu_mosaic_sc_use_tiled_dmas=False)
+    )
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
@@ -2161,6 +2168,12 @@ class ScalarSubcoreTest(PallasSCTest):
 
 class ScalarSubcoreTestWithTCTiling(ScalarSubcoreTest):
   USE_TC_TILING = True
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(
+        flagsaver.flagsaver(xla_tpu_mosaic_sc_use_tiled_dmas=False)
+    )
 
 
 class MpmdMapTest(PallasSCTest):
@@ -2455,6 +2468,12 @@ class PipelineTest(PallasSCTest):
 class PipelineTestWithTCTiling(PipelineTest):
   USE_TC_TILING = True
 
+  def setUp(self):
+    super().setUp()
+    self.enter_context(
+        flagsaver.flagsaver(xla_tpu_mosaic_sc_use_tiled_dmas=False)
+    )
+
 
 class PallasSparsecoreAsyncTest(PallasSCTest):
 
@@ -2554,6 +2573,12 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
 
 class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
   USE_TC_TILING = True
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(
+        flagsaver.flagsaver(xla_tpu_mosaic_sc_use_tiled_dmas=False)
+    )
 
 
 if __name__ == "__main__":
