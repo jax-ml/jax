@@ -1369,6 +1369,25 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y[:8], x[:8])
     np.testing.assert_array_equal(y[8:], x[:8])
 
+  def test_pallas_call_compiles_with_has_side_effects_true(self):
+    def kernel(x, y):
+      y[:] = x[:] + 1.0
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        interpret=pltpu.InterpretParams(),
+        compiler_params=pltpu.CompilerParams(has_side_effects=True),
+      )(x)
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+    y = f(x)
+    self.assertArraysEqual(y, x + 1.0)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
