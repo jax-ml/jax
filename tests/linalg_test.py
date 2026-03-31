@@ -2725,7 +2725,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
-  @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
+  @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],
                       dtype=float_types + complex_types)
   def test_tridiagonal_solve(self, shape, dtype):
     # Skip test on ROCm due to numerical error. Issue #575788

@@ -52,6 +52,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Bug fixes:
   * Fixed a bug that led to differing output between CPU and GPU for
     non-symmetric multidimensional IRFFTs ({jax-issue}`#29325`).
+  * Fixed an error when tiny matrices were passed to
+    `jax.lax.linalg.tridiagonal_solve` on GPU ({jax-issue}`#32487`).
 
 ## JAX 0.9.2 (March 18, 2026)
 
