@@ -361,6 +361,8 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_cliques",
         "@xla//xla/backends/gpu/runtime:collective_execution",
         "@xla//xla/backends/gpu/runtime:collective_kernel_api",
+        "@xla//xla/backends/gpu/runtime:collective_memory",
+        "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/ffi",
