@@ -193,7 +193,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   auto tile_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr);
+          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr,
+          mlirMosaicGpuTileTransformAttrGetTypeID);
   tile_transform_attr
       .def_staticmethod(
           "get",
@@ -224,7 +225,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   auto transpose_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr);
+          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr,
+          mlirMosaicGpuTransposeTransformAttrGetTypeID);
   transpose_transform_attr
       .def_staticmethod(
           "get",
@@ -258,7 +260,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   auto swizzle_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr);
+          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr,
+          mlirMosaicGpuSwizzleTransformAttrGetTypeID);
   swizzle_transform_attr
       .def_staticmethod(
           "get",

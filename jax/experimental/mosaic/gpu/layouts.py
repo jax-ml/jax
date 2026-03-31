@@ -223,32 +223,6 @@ def splat_is_compatible_with_tiled(
   return all(d1 % d2 == 0 for d1, d2 in zip(s1, s2))
 
 
-_tile_transform_attr_pattern = re.compile(
-    r"^#mosaic_gpu.tile<[^>]+>$"
-)
-
-
-def is_tile_transform(attr: ir.Attribute) -> bool:
-  return bool(_tile_transform_attr_pattern.search(str(attr)))
-
-
-_transpose_transform_attr_pattern = re.compile(
-    r"^#mosaic_gpu.transpose<[^>]+>$"
-)
-
-
-def is_transpose_transform(attr: ir.Attribute) -> bool:
-  return bool(_transpose_transform_attr_pattern.search(str(attr)))
-
-
-_swizzle_transform_attr_pattern = re.compile(
-    r"^#mosaic_gpu.swizzle<[^>]+>$"
-)
-
-def is_swizzle_transform(attr: ir.Attribute) -> bool:
-  return bool(_swizzle_transform_attr_pattern.search(str(attr)))
-
-
 def to_transform_attr(
     transform: launch_context.MemRefTransform | mgpu.SwizzlingMode,
 ) -> ir.Attribute:
@@ -265,15 +239,15 @@ def to_transform_attr(
 def from_transform_attr(
     transform: ir.Attribute,
 ) -> launch_context.MemRefTransform | mgpu.SwizzlingMode:
-  if is_tile_transform(transform):
+  if isinstance(transform, mgpu.TileTransformAttr):
     return launch_context.TileTransform(
         tuple(mgpu.TileTransformAttr(transform).tiling)
     )
-  elif is_transpose_transform(transform):
+  elif isinstance(transform, mgpu.TransposeTransformAttr):
     return launch_context.TransposeTransform(
         tuple(mgpu.TransposeTransformAttr(transform).permutation)
     )
-  elif is_swizzle_transform(transform):
+  elif isinstance(transform, mgpu.SwizzleTransformAttr):
     return mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)
   else:
     raise NotImplementedError(f"Unsupported transform {transform}")
