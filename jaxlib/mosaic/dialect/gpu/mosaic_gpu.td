@@ -47,8 +47,19 @@ class MosaicGPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
 }
 
 def MosaicGPU_Barrier : MosaicGPU_Type<"Barrier", "barrier", [MemRefElementTypeInterface]> {
-  let summary = "barrier";
-  let description = "A barrier to use for synchronizing threads";
+  let summary = "A barrier to use for synchronizing threads";
+  let description = [{
+    A barrier to use for synchronizing threads.
+
+    `orders_tensor_core` indicates whether the barrier can be used for ordering
+    tensor core operations.
+  }];
+  let parameters = (ins
+    DefaultValuedParameter<"bool", "false">:$orders_tensor_core
+  );
+  let assemblyFormat = [{
+    (`<` `orders_tensor_core` `=` $orders_tensor_core^ `>`)?
+  }];
 }
 
 def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;

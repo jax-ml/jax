@@ -35,7 +35,10 @@ MLIR_CAPI_EXPORTED void mlirDialectRegistryInsertMosaicGpuInlinerExtensions(
 //===----------------------------------------------------------------------===//
 
 MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsABarrierType(MlirType type);
-MLIR_CAPI_EXPORTED MlirType mlirMosaicGpuBarrierTypeGet(MlirContext ctx);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuBarrierTypeGet(MlirContext ctx, bool orders_tensor_core);
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuBarrierTypeGetOrdersTensorCore(
+    MlirType type);
 MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuBarrierTypeGetTypeID();
 
 #ifdef __cplusplus

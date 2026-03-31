@@ -129,8 +129,19 @@ class DialectTest(MosaicGpuTest):
     barrier_ty = mgpu.dialect.BarrierType.get()
     self.assertIsInstance(barrier_ty, ir.Type)
     self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertFalse(barrier_ty.orders_tensor_core)
+
     barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
     self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertFalse(barrier_ty.orders_tensor_core)
+
+    barrier_ty = mgpu.dialect.BarrierType.get(orders_tensor_core=True)
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertTrue(barrier_ty.orders_tensor_core)
+
+    barrier_ty = ir.Type.parse("!mosaic_gpu.barrier<orders_tensor_core=true>")
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertTrue(barrier_ty.orders_tensor_core)
 
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):

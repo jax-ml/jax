@@ -44,8 +44,13 @@ bool mlirMosaicGpuIsABarrierType(MlirType type) {
   return mlir::isa<mosaic_gpu::BarrierType>(unwrap(type));
 }
 
-MlirType mlirMosaicGpuBarrierTypeGet(MlirContext ctx) {
-  return wrap(mosaic_gpu::BarrierType::get(unwrap(ctx)));
+MlirType mlirMosaicGpuBarrierTypeGet(MlirContext ctx, bool orders_tensor_core) {
+  return wrap(mosaic_gpu::BarrierType::get(unwrap(ctx), orders_tensor_core));
+}
+
+bool mlirMosaicGpuBarrierTypeGetOrdersTensorCore(MlirType type) {
+  return mlir::cast<mosaic_gpu::BarrierType>(unwrap(type))
+      .getOrdersTensorCore();
 }
 
 MlirTypeID mlirMosaicGpuBarrierTypeGetTypeID() {

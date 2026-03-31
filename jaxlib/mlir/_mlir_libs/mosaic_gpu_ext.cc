@@ -169,14 +169,27 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       mlir::python::nanobind_adaptors::mlir_type_subclass(
           m, "BarrierType", mlirMosaicGpuIsABarrierType,
           mlirMosaicGpuBarrierTypeGetTypeID);
-  barrier_type.def_staticmethod(
-      "get",
-      [cls = barrier_type.get_class()](MlirContext ctx) {
-        return cls(mlirMosaicGpuBarrierTypeGet(ctx));
-      },
-      nb::arg("context").none() = nb::none(),
-      nb::sig("def get(context: mlir.ir.Context | None = None) -> BarrierType"),
-      "Creates a BarrierType.");
+  barrier_type
+      .def_staticmethod(
+          "get",
+          [cls = barrier_type.get_class()](bool orders_tensor_core,
+                                           MlirContext ctx) {
+            return cls(mlirMosaicGpuBarrierTypeGet(ctx, orders_tensor_core));
+          },
+          nb::arg("orders_tensor_core") = false,
+          nb::arg("context").none() = nb::none(),
+          nb::sig(
+              // clang-format: off
+              "def get("
+              "orders_tensor_core: bool = False, "
+              "context: mlir.ir.Context | None = None"
+              ") -> BarrierType"
+              // clang-format: on
+              ),
+          "Creates a BarrierType.")
+      .def_property_readonly("orders_tensor_core", [](MlirType self) {
+        return mlirMosaicGpuBarrierTypeGetOrdersTensorCore(self);
+      });
 
   auto tile_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(

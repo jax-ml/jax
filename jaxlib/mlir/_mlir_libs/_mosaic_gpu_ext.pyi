@@ -26,8 +26,13 @@ class BarrierType(ir.Type):
   @staticmethod
   def get_static_typeid() -> ir.TypeID: ...
   @staticmethod
-  def get(context: ir.Context | None = None) -> BarrierType:
+  def get(
+      orders_tensor_core: bool = False, context: ir.Context | None = None
+  ) -> BarrierType:
     """Creates a BarrierType."""
+
+  @property
+  def orders_tensor_core(self) -> bool: ...
 
 class TileTransformAttr(ir.Attribute):
   @staticmethod
