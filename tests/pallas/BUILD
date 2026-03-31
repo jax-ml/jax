@@ -409,6 +409,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
+    backend_variant_args = {
+        "tpu": [
+            "--undefok=xla_tpu_enable_mlir_verifier",
+            "--xla_tpu_enable_mlir_verifier=ALL",
+        ],
+    },
     enable_backends = [
         "tpu",
         "cpu",
@@ -1404,6 +1410,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
+    args = [
+        "--undefok=xla_tpu_enable_mlir_verifier",
+        "--xla_tpu_enable_mlir_verifier=ALL",
+    ],
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p": {"ondemand": True},
@@ -1430,6 +1440,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_debug_check_test",
     srcs = ["tpu_sparsecore_pallas_debug_check_test.py"],
+    backend_variant_args = {
+        "tpu": [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+        ],
+    },
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v6e capacity.
         "tpu_v6e": {"ondemand": True},
@@ -1456,6 +1471,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_distributed_test",
     srcs = ["tpu_sparsecore_pallas_distributed_test.py"],
+    args = [
+        "--xla_tpu_enable_mlir_verifier=ALL",
+    ],
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p_x4": {"ondemand": True},
@@ -1508,6 +1526,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_trace_value_test",
     srcs = ["tpu_trace_value_test.py"],
+    args = [
+        "--xla_tpu_enable_mlir_verifier=ALL",
+    ],
     enable_backends = ["tpu"],
     enable_configs = ["tpu_7x"],
     deps = [
