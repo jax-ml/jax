@@ -3509,6 +3509,15 @@ class APITest(jtu.JaxTestCase):
       # specified.
       api.vmap(lambda x: x, out_axes=None)(jnp.array([1., 2.]))
 
+  def test_vmap_explicit_axis_size_mismatch(self):
+    expected_error = (
+        r"vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"  \* the `axis_size` argument was 2;\n"
+        r"  \* one axis had size 8: axis 0 of argument x of type int32\[8\]"
+    )
+    with self.assertRaisesRegex(ValueError, expected_error):
+      api.vmap(lambda x: x, in_axes=0, axis_size=2)(jnp.arange(8, dtype=jnp.int32))
+
   def test_vmap_structured_in_axes(self):
 
     A, B, C, D = 2, 3, 4, 5
@@ -3558,16 +3567,16 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "vmap wrapped function must be passed at least one argument "
-        r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
+        r"containing an array or axis_size must be specified, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
       api.vmap(lambda x: x)({})
 
   def test_vmap_scalar(self):
     api.vmap(lambda x: x, in_axes=None, axis_size=1)(1.)
     with self.assertRaisesRegex(
-        ValueError, "axis 0 is out of bounds for array of dimension 0"):
+        ValueError, r"vmap was requested to map its argument along axis 0.*"):
       api.vmap(lambda x: x, in_axes=0, axis_size=1)(1.)
     with self.assertRaisesRegex(
-        ValueError, "axis 1 is out of bounds for array of dimension 0"):
+        ValueError, r"vmap was requested to map its argument along axis 1.*"):
       api.vmap(lambda x: x, in_axes=1, axis_size=1)(1.)
 
   def test_pmap_empty_arguments(self):
