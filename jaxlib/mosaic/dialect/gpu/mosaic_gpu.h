@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 
 // Generated definitions.
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attr_interfaces.h.inc"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.h.inc"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.h.inc"
 #define GET_ATTRDEF_CLASSES
