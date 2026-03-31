@@ -71,7 +71,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
     results = lax_linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
         compute_right_eigenvectors=compute_right_eigenvectors,
-        use_magma=True)
+        implementation=lax_linalg.EigImplementation.MAGMA)
     w = results[0]
 
     if compute_left_eigenvectors:
@@ -101,7 +101,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
     results = lax_linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
         compute_right_eigenvectors=compute_right_eigenvectors,
-        use_magma=True)
+        implementation=lax_linalg.EigImplementation.MAGMA)
     for result in results:
       self.assertTrue(np.all(np.isnan(result)))
 
@@ -111,7 +111,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     a = rng((5, 5), np.float32)
     with config.gpu_use_magma("on"):
-      hlo = jax.jit(partial(lax_linalg.eig, use_magma=True)).lower(a).as_text()
+      hlo = jax.jit(partial(lax_linalg.eig, implementation=lax_linalg.EigImplementation.MAGMA)).lower(a).as_text()
       self.assertIn('magma = "on"', hlo)
 
   @jtu.sample_product(
