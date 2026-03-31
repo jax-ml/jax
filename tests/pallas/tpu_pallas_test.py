@@ -4134,9 +4134,13 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     if (
         dtype == jnp.bfloat16
         and n % 256 != 0
-        and not jtu.is_device_tpu_at_least(6)
     ):
-      self.skipTest('16-bit iota support requires TPU v6+.')
+      if not jtu.is_device_tpu_at_least(4):
+        self.skipTest('16-bit mask requires TPU v4+')
+      if not jtu.is_device_tpu_at_least(6) and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest('Requires a newer libTPU.')
     if n == 1 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Sublane gather requires TPU v5+.')
 
