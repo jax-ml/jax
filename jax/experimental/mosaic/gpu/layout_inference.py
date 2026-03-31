@@ -648,9 +648,7 @@ def _vector_load_constraint_system(
     value_sites_for_variable[source_var] = [source]
     shape = tuple(ir.MemRefType(op.source.type).shape)
     constraints.append(
-        cs.IsTransferable(
-            source_var, dest_var, shape, utils.bitwidth(op.source.type.element_type)
-        )
+        cs.IsTransferable(source_var, dest_var, shape)
     )
 
   system = cs.ConstraintSystem(constraints=constraints)
@@ -675,9 +673,7 @@ def _vector_store_constraint_system(
     value_sites_for_variable[dest_var] = [dest]
     shape = tuple(ir.MemRefType(op.destination.type).shape)
     constraints.append(
-        cs.IsTransferable(
-            value_var, dest_var, shape, utils.bitwidth(op.destination.type.element_type)
-        )
+        cs.IsTransferable(value_var, dest_var, shape)
     )
 
   system = cs.ConstraintSystem(constraints=constraints)
@@ -1487,7 +1483,6 @@ def _async_load_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1599,7 +1594,6 @@ def _async_store_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),

@@ -781,7 +781,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0 = V(MockVariableKey(idx=0, shape=(128, 128)))
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
     constraint = cs.IsTransferable(
-        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128), bitwidth=32
+        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128)
     )
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
@@ -1280,7 +1280,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # Yield empty if not an mma layout.
     with self.subTest("not_mma_layout_yield_empty_tiling"):
       layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
-      constraints = [cs.IsTransferable(layout, var, (128, 128), 32)]
+      constraints = [cs.IsTransferable(layout, var, (128, 128))]
       conjured = conjure(constraints)
       self.assertEqual(conjured, [(var, cs.SMEMTiling(None))])
 
@@ -1288,7 +1288,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Yield also maximal tiling with no Divides constraints.
     with self.subTest("no_divides_constraints_yield_maximal_tiling_with_mma"):
-      constraints = [cs.IsTransferable(wgmma_layout, var, (128, 128), 32)]
+      constraints = [cs.IsTransferable(wgmma_layout, var, (128, 128))]
       conjured = conjure(constraints)
       if transposed:
         expected_tiling = (32, 8)
@@ -1305,7 +1305,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # Yield also valid tiling with Divides constraints.
     with self.subTest("divides_constraints_yield_valid_tiling"):
       constraints = [
-          cs.IsTransferable(wgmma_layout, var, (128, 128), 32),
+          cs.IsTransferable(wgmma_layout, var, (128, 128)),
           cs.Divides(var, (32, 16)),
       ]
       conjured = conjure(constraints)

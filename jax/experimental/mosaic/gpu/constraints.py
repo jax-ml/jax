@@ -365,7 +365,6 @@ class IsTransferable:
   target: Expression
   # TODO(allanrenucci): Can this be derived from the layouts?
   shape: tuple[int, ...]
-  bitwidth: int
 
   def supported_tmem_transfers(
       self, packing: int
@@ -607,12 +606,12 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return NotOfType(expr_red, ty)
-    case IsTransferable(source=source, target=target, shape=shape, bitwidth=bitwidth):
+    case IsTransferable(source=source, target=target, shape=shape):
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsTransferable(source_red, target_red, shape, bitwidth)
+      return IsTransferable(source_red, target_red, shape)
     case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -679,7 +678,7 @@ class ConstraintSystem:
           extract_variables(target)
         case NotOfType(expr=expr):
           extract_variables(expr)
-        case IsTransferable(source=source, target=target, shape=_, bitwidth=_):
+        case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
         case IsValidMmaTiling(expr=expr):

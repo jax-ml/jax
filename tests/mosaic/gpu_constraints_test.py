@@ -371,9 +371,9 @@ class ConstraintSystemTest(parameterized.TestCase):
     eq_layout = cs.RegisterLayout(layout)
     eq_tiling = cs.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
 
-    reg_to_smem = cs.IsTransferable(eq_layout, eq_tiling, (), 32)
+    reg_to_smem = cs.IsTransferable(eq_layout, eq_tiling, ())
     self.assertEqual(reg_to_smem.holds(), expected)
-    smem_to_reg = cs.IsTransferable(eq_tiling, eq_layout, (), 32)
+    smem_to_reg = cs.IsTransferable(eq_tiling, eq_layout, ())
     self.assertEqual(smem_to_reg.holds(), expected)
 
   def test_transpose_expression(self):
