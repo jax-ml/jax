@@ -2599,9 +2599,7 @@ def _scan_lowering_rule(
     unroll,
     num_consts,
     num_carry,
-    _split_transpose,
 ):
-  del _split_transpose
   # Only implements fori_loop-like scans
   if reverse: raise NotImplementedError
   if unroll != 1: raise NotImplementedError

@@ -3526,7 +3526,6 @@ def _scan_lowering_rule(
     unroll: bool | int,
     num_consts: int,
     num_carry: int,
-    _split_transpose: bool,
 ):
   # Can only handle fori_loop-like scans.
   if reverse:
