@@ -281,18 +281,17 @@ def spvalues_to_avals(
 
 class SparseTracer(core.Tracer['SparseTrace']):
   def __init__(self, trace: SparseTrace, *, spvalue):
+    if not hasattr(trace, 'spenv'):
+      raise RuntimeError("Internal: trace does not have spenv defined.")
+    aval = spvalues_to_avals(trace.spenv, [spvalue])[0]
+    super().__init__(trace, aval)
     self._spvalue = spvalue
-    self._trace = trace
 
   @property
   def spenv(self):
     if not hasattr(self._trace, 'spenv'):
       raise RuntimeError("Internal: trace does not have spenv defined.")
     return self._trace.spenv
-
-  @property
-  def aval(self):
-    return spvalues_to_avals(self.spenv, [self._spvalue])[0]
 
   def full_lower(self):
     return self

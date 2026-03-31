@@ -474,7 +474,8 @@ class CustomErrorsTest(jtu.JaxTestCase):
   )
   def testErrorsURL(self, errorclass):
     class FakeTracer(core.Tracer):
-      aval = None
+      def __init__(self, trace):
+        super().__init__(trace, None)
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 

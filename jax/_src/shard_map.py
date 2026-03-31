@@ -1418,23 +1418,21 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
   val: JaxType
 
   def __init__(self, trace, mat, val):
-    self._trace = trace
     assert isinstance(mat, core.ManualAxisType)
+    aval = core.typeof(val)
+    mat = (mat if trace.check else
+           core.ManualAxisType(varying=trace.manual_axes))
+    size = prod(trace.mesh.shape[n] for n in mat.varying)
+    out = core.mapped_aval(size, 0, aval)
+    manual_mesh = _as_manual_mesh(trace.amesh, trace.manual_axes)
+    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
+    new_sharding = NamedSharding(manual_mesh, spec)
+    mat_out = mat if trace.check else core.ManualAxisType()
+    computed_aval = out.update(sharding=new_sharding, manual_axis_type=mat_out)
+    super().__init__(trace, computed_aval)
     self.mat = mat
     self.val = val
 
-  @property
-  def aval(self):
-    aval = core.typeof(self.val)
-    mat = (self.mat if self._trace.check else
-           core.ManualAxisType(varying=self._trace.manual_axes))
-    size = prod(self._trace.mesh.shape[n] for n in mat.varying)
-    out = core.mapped_aval(size, 0, aval)
-    manual_mesh = _as_manual_mesh(self._trace.amesh, self._trace.manual_axes)
-    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
-    new_sharding = NamedSharding(manual_mesh, spec)
-    mat = self.mat if config._check_vma.value else core.ManualAxisType()
-    return out.update(sharding=new_sharding, manual_axis_type=mat)
 
   def to_concrete_value(self):
     if self._trace.check and self.mat.vur == frozenset():
