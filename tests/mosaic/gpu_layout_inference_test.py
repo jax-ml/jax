@@ -781,12 +781,14 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0 = V(MockVariableKey(idx=0, shape=(128, 128)))
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
     constraint = cs.IsTransferable(
-        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128), bitwidth=32
+        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128),
+        source_strides=None, target_strides=None
     )
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
         cs.ConstraintSystem(constraints=[constraint]),
         fuel=1000,
+        arch=(10, 0),
     )
     # Another valid layout is TMEM_NATIVE_LAYOUT but TCGEN05_LAYOUT is tried
     # first. This may require updating if we decide to change the traversal
@@ -808,6 +810,7 @@ class LayoutInferenceTest(parameterized.TestCase):
             ]
         ),
         fuel=1000,
+        arch=(9, 0)
     )
     self.assertIsInstance(assignments, cs.Unsatisfiable)
 
@@ -882,6 +885,29 @@ class LayoutInferenceTest(parameterized.TestCase):
         ValueError, "user-provided layout casts are unsatisfiable"
     ):
       mgpu.infer_layout(self.module)
+
+  def test_vector_load_of_smem_transposed_tiled_dimensions_yields_transposed_layout(self):
+    shape = (64, 64)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.with_transforms(ref, [mgpu.dialect.TileTransformAttr.get((8, 64))])
+      transposed_ref = mgpu.memref_transpose(ref, (1, 0))
+      load = mgpu.dialect.VectorLoadOp(transposed_ref)
+    mgpu.infer_layout(self.module)
+    self.checkOutLayouts(load, [mgpu.WGMMA_TRANSPOSED_LAYOUT])
+
+  def test_vector_store_of_smem_transposed_tiled_dimensions_yields_transposed_layout(self):
+    shape = (64, 64)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+      vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      [ref, value] = undefs(ref_ty, vec_ty)
+      mgpu.dialect.with_transforms(ref, [mgpu.dialect.TileTransformAttr.get((8, 64))])
+      transposed_ref = mgpu.memref_transpose(ref, (1, 0))
+      store = mgpu.dialect.VectorStoreOp(value, transposed_ref)
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(store, [mgpu.WGMMA_TRANSPOSED_LAYOUT])
 
   def test_layout_of_wgmma_layout_to_wgmma_row_layout_raises(self):
     with ir.InsertionPoint(self.module.body):
@@ -1093,6 +1119,30 @@ class LayoutInferenceTest(parameterized.TestCase):
     [in_transform] = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transform, expected_transforms)
 
+  def test_async_store_smem_to_tmem_allows_unswizzled_tiling(self):
+    shape = (128, 8)
+    dtype = ir.BF16Type.get()
+    dest_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
+    dest_layout = tcgen05.tmem_default_layout(packing=2)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 8)),
+        # TODO(bchetioui): get rid of the need to specify the swizzle here?
+        # Right now, layout inference will always introduce swizzling whenever
+        # possible.
+        mgpu.dialect.SwizzleTransformAttr.get(16),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      src = mgpu.dialect.with_transforms(src, transforms)
+      op = mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [dest_layout])
+
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transform, transforms)
+
   def test_async_store_sparse_metadata_smem_to_tmem_infers_expected_src_dest_layouts(
       self,
   ):
@@ -1184,6 +1234,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_async_store_smem_to_tmem_rejects_incompatible_shape(self):
+    f16 = ir.F16Type.get()
+    shape = (128, 1)
+    dest_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.smem())
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    with self.assertRaisesRegex(ValueError, "Cannot assign TMEM layout"):
+      mgpu.infer_layout(self.module)
+
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout
     # inference does not timeout on a Gelu kernel. This was previously the case,
@@ -1262,16 +1325,20 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = ir.StridedLayoutAttr.get(0, [1, 128]) if transposed else None
     ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
     [ref] = undefs(ref_ty)
+    strides, _ = ref_ty.get_strides_and_offset()
     value_site = layout_inference.ValueSite(
         operation=ref.owner,
         type=layout_inference.VariableType.RESULT,
         index=0,
     )
     var = cs.Variable(value_site)
+    transfer_constraint = lambda reg_layout: cs.IsTransferable(
+        reg_layout, var, shape, None, tuple(strides)
+    )
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
       system = cs.ConstraintSystem(constraints=constraints)
-      return list(layout_inference.conjure_assignment({var}, system))
+      return list(layout_inference.conjure_assignment({var}, system, arch=(9, 0)))
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
@@ -1280,7 +1347,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # Yield empty if not an mma layout.
     with self.subTest("not_mma_layout_yield_empty_tiling"):
       layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
-      constraints = [cs.IsTransferable(layout, var, (128, 128), 32)]
+      constraints = [transfer_constraint(layout)]
       conjured = conjure(constraints)
       self.assertEqual(conjured, [(var, cs.SMEMTiling(None))])
 
@@ -1288,7 +1355,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Yield also maximal tiling with no Divides constraints.
     with self.subTest("no_divides_constraints_yield_maximal_tiling_with_mma"):
-      constraints = [cs.IsTransferable(wgmma_layout, var, (128, 128), 32)]
+      constraints = [transfer_constraint(wgmma_layout)]
       conjured = conjure(constraints)
       if transposed:
         expected_tiling = (32, 8)
@@ -1305,7 +1372,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # Yield also valid tiling with Divides constraints.
     with self.subTest("divides_constraints_yield_valid_tiling"):
       constraints = [
-          cs.IsTransferable(wgmma_layout, var, (128, 128), 32),
+          transfer_constraint(wgmma_layout),
           cs.Divides(var, (32, 16)),
       ]
       conjured = conjure(constraints)
@@ -1352,7 +1419,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     ]
 
     system = cs.ConstraintSystem(constraints=constraints)
-    ordered = list(layout_inference.conjure_assignment({var}, system))
+    ordered = list(layout_inference.conjure_assignment({var}, system, arch=(9, 0)))
     expected = [
         (var, cs.RegisterLayout(fa.WGMMA_LAYOUT)),
         (var, cs.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
@@ -1999,6 +2066,20 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
+
+  def test_infer_transforms_allows_arbitrary_unswizzled_tilings(self):
+    ref_ty = ir.MemRefType.get((64, 512), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((16, 256)),
+        mgpu.dialect.SwizzleTransformAttr.get(16),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.with_transforms(ref, transforms)
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(ref.owner), [transforms]
+    )
 
   def test_infer_transforms_sets_default_empty_transforms_on_async_load(self):
     shape = (64, 64)
@@ -2828,6 +2909,24 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     in_transforms = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transforms, [transforms] * 2)
+
+  @parameterized.parameters(
+      ((9, 0),),  # Hopper
+      ((10, 0),),  # Blackwell
+  )
+  def test_conjure_mma_layout_for_tiled_ref_transfer(self, arch):
+    layout = fa.WGMMA_LAYOUT if arch == (9, 0) else fa.TCGEN05_LAYOUT
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 32)),
+          mgpu.dialect.SwizzleTransformAttr.get(64),
+      ])
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      v = mgpu.dialect.vector_load(ref)
+    mgpu.infer_layout(self.module, arch=arch)
+    self.checkOutLayouts(v.owner, [layout])
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

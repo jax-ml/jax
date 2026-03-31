@@ -324,10 +324,17 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if jtu.get_tpu_version() < 5 and dtype in (jnp.int16, jnp.int8):
+    if dtype == jnp.int8 and jtu.get_tpu_version() < 5:
       self.skipTest(
           f"Not implemented: cast vector to mask with dtype == {dtype}"
       )
+    if dtype == jnp.int16:
+      if jtu.get_tpu_version() < 4:
+        self.skipTest("Requires TPUv4+")
+      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest("requires newer libTPU")
 
     shape = (128, 128)
 
@@ -487,13 +494,15 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.int32, jnp.int16, jnp.int8],
   )
   def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
-    if (
-        any(dtypes.itemsize_bits(ty) <= 16 for ty in (msk_dtype, dtype))
-        and jtu.get_tpu_version() < 5
-    ):
-      self.skipTest(
-          "Requires TPUv5+ for bitwidth <= 16 and TPUv6+ for bitwidth <= 8"
-      )
+    if msk_dtype == jnp.int8 and jtu.get_tpu_version() < 5:
+      self.skipTest("Requires TPUv5+")
+    if msk_dtype == jnp.int16:
+      if jtu.get_tpu_version() < 4:
+        self.skipTest("Requires TPUv4+")
+      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest("requires newer libTPU")
 
     shape = (1024,)
 
@@ -1049,7 +1058,11 @@ class OpsTest(ptu.PallasTPUTest):
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
     if packing >= 2:
-      if not data_is_aligned and not jtu.is_device_tpu_at_least(version=6):
+      if (
+          not data_is_aligned
+          and not jtu.is_device_tpu_at_least(version=6)
+          and not jtu.is_cloud_tpu_at_least(2026, 4, 6)
+      ):
         self.skipTest(
             "Requires 16-bit iota, supported on TPU v6+, see b/356344569"
         )

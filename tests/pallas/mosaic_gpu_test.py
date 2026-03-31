@@ -3034,8 +3034,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.barrier_wait(barrier)
       @pl.when(wg_idx == 0)
       def _copy_out():
-        # TODO(b/492443090): layout hint required here.
-        out_ref[...] = plgpu.load(smem_ref, (), layout=layout, optimized=False)
+        out_ref[...] = smem_ref[...]
     x = jnp.arange(1, m * n + 1, dtype=dtype).reshape(m, n)
     y = jnp.arange(m * n, 0, -1, dtype=dtype).reshape(m, n)
     inp = jnp.concatenate([x, y], axis=0)
@@ -5343,6 +5342,36 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     expected = np.array([-1] * (num_sms - cluster_size) + [last_cta_id] * cluster_size)
     np.testing.assert_equal(result, expected)
 
+  @parameterized.parameters((True,), (False,))
+  def test_barrier_arrive_warp_mesh(self, orders_tensor_core):
+    self.skip_if_wg_semantics()
+
+    def kernel(out_ref, bar):
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_idx = jax.lax.axis_index("warp")
+
+        @pl.when(warp_idx < 2)
+        def _():
+          plgpu.barrier_arrive(bar)
+          plgpu.barrier_wait(bar)
+
+          out_ref[warp_idx] = jnp.ones_like(out_ref.at[warp_idx])
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        scratch_shapes=[
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=orders_tensor_core)
+        ],
+        compiler_params=plgpu.CompilerParams(),
+    )
+
+    result = jax.jit(f)()
+
+    np.testing.assert_array_equal(result, jnp.ones_like(result))
 
 class PallasCallTCGen05WGTest(
     PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

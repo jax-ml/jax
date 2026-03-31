@@ -3395,7 +3395,7 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  return core.pvary(out, tuple(aval.vma))
+  return core.pvary(out, tuple(aval.mat.varying))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -3601,11 +3601,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
-  if config._check_vma.value:
-    # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
-    # `typeof` because `x` can be anything that implements the
-    # `DuckTypedArray` protocol.
-    val = core.pvary(val, tuple(typeof(x).vma))
+  val, _ = core.standard_insert_pvary(val, x)
   return val
 
 
@@ -3934,7 +3930,7 @@ def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
                        supports_narrow_ints=supports_narrow_ints)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             sharding_rule=_attrgetter('sharding'),
-                            vma_rule=_attrgetter('vma'),
+                            vma_rule=lambda x, **kwargs: x.mat.varying,
                             ur_rule=partial(unop_ur_rule, name))
   batching.defvectorized(prim)
   return prim
@@ -4542,7 +4538,7 @@ def _integer_pow_jvp(g, x, *, y):
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
-  sharding_rule=_attrgetter('sharding'), vma_rule=_attrgetter('vma'))
+  sharding_rule=_attrgetter('sharding'), vma_rule=lambda x, **_: x.mat.varying)
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
@@ -8397,7 +8393,7 @@ def _rng_bit_generator_sharding_rule(key, *, shape, dtype, algorithm,
   return (key.sharding, out_sharding)
 
 def _rng_bit_generator_vma_rule(key, *, shape, dtype, algorithm, out_sharding):
-  return (key.vma, frozenset())
+  return (key.mat.varying, frozenset())
 
 def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm, out_sharding):
   del shape, algorithm

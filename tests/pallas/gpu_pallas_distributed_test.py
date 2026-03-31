@@ -707,16 +707,22 @@ class PallasCallRemoteDMATest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
         )
     )()
-    if jax.local_device_count() == 1:
-      y = multihost_utils.process_allgather(y, tiled=True)
+    y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
 
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
+    # TODO(b/496061655): Remove this once the bug is fixed.
+    if (
+        jax.local_device_count() > 1 and
+        "XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB" not in os.environ
+    ):
+      self.skipTest(
+          "Multicast is not supported yet with a single process multi device"
+          " topology when collective memory space is not preallocated."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     # TODO(belitskiy): Remove the hasattr guard once JAX 0.9.2 is released.
@@ -750,7 +756,7 @@ class PallasCallMultimemTest(TestCase):
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
-    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     y = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
@@ -764,10 +770,14 @@ class PallasCallMultimemTest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
+    if jax.local_device_count() > 1:
+      # TODO(b/498152250): Support lowering a parameter id in the wg semantics.
+      self.skip_if_wg_semantics()
+
     def kernel(y_ref, sem):
       @pl.when(lax.axis_index('x') == 0)
       def _store():
-        plgpu.multimem_store(1, y_ref.at[0], 'x')
+        plgpu.multimem_store(jnp.int32(1), y_ref.at[0], 'x')
       other_dev_id = 1 - lax.axis_index('x')
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
@@ -816,7 +826,7 @@ class PallasCallMultimemTest(TestCase):
         ],
         compiler_params=plgpu.CompilerParams(),
     )
-    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     y = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
@@ -1233,5 +1243,7 @@ if __name__ == '__main__':
       os.environ["XLA_FLAGS"] = additional_xla_flags
     jt_multiprocess.main()
   else:
+    # TODO(b/496061655): Remove this once the bug is fixed.
+    os.environ["XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB"] = "512"
     config.config_with_absl()
     absltest.main(testLoader=jtu.JaxTestLoader())

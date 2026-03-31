@@ -57,7 +57,7 @@ def to_elt(trace: BatchTrace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> E
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
   elif isinstance(spec, int) or spec is None:
-    spec = spec and canonicalize_axis(spec, len(np.shape(x)))
+    spec = None if spec is None else canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   elif isinstance(typeof(x), hijax.HiType):
@@ -137,37 +137,37 @@ class BatchTracer(Tracer['BatchTrace']):
 
   def __init__(self, trace: BatchTrace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):
+    from jax._src import hijax  # pytype: disable=import-error
+
+    aval = core.typeof(val)
     if config.enable_checks.value:
       # assert type(batch_dim) in (NotMapped, int)
       if type(batch_dim) is int:
-        aval = core.typeof(val)
         assert 0 <= batch_dim < len(aval.shape)
-    self._trace = trace
+
+    if trace.axis_data.spmd_name is not None:
+      if config._check_vma.value:
+        mat = aval.mat.update(
+            varying=aval.mat.varying - frozenset(
+              trace.axis_data.spmd_name))
+        aval = aval.update(manual_axis_type=mat)
+    if batch_dim is not_mapped:
+      aval = aval
+    elif type(batch_dim) is int:
+      aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
+    elif isinstance(aval, hijax.HiType):
+      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+      aval = aval.dec_rank(trace.axis_data.size, batch_dim)
+    else:
+      raise Exception("batch dim should be int or `not_mapped`")
+
+    super().__init__(trace, aval)
     self.val = val
     self.batch_dim = batch_dim
     self.source_info = source_info
 
   def _short_repr(self):
-    return f"VmapTracer(aval={self.aval}, batched={typeof(self.val)})"
-
-  @property
-  def aval(self):
-    from jax._src import hijax  # pytype: disable=import-error
-    aval = core.typeof(self.val)
-    if self._trace.axis_data.spmd_name is not None:
-      if config._check_vma.value:
-        mat = aval.mat.update(
-            varying=aval.vma - frozenset(self._trace.axis_data.spmd_name))
-        aval = aval.update(manual_axis_type=mat)
-    if self.batch_dim is not_mapped:
-      return aval
-    elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
-    elif isinstance(aval, hijax.HiType):
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
-      return aval.dec_rank(self._trace.axis_data.size, self.batch_dim)
-    else:
-      raise Exception("batch dim should be int or `not_mapped`")
+    return f"VmapTracer(aval={self.aval}, batched={core.typeof(self.val)})"
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -418,7 +418,7 @@ def _batch_jaxpr2(
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
           mat = aval.mat.update(  # type: ignore
-              varying=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
+              varying=aval.mat.varying  | frozenset(axis_data.spmd_name))  # type: ignore
           aval = aval.update(manual_axis_type=mat)  # type: ignore
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)

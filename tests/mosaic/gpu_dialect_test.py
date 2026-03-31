@@ -129,8 +129,36 @@ class DialectTest(MosaicGpuTest):
     barrier_ty = mgpu.dialect.BarrierType.get()
     self.assertIsInstance(barrier_ty, ir.Type)
     self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertFalse(barrier_ty.orders_tensor_core)
+
     barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
     self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertFalse(barrier_ty.orders_tensor_core)
+
+    barrier_ty = mgpu.dialect.BarrierType.get(orders_tensor_core=True)
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertTrue(barrier_ty.orders_tensor_core)
+
+    barrier_ty = ir.Type.parse("!mosaic_gpu.barrier<orders_tensor_core=true>")
+    self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
+    self.assertTrue(barrier_ty.orders_tensor_core)
+
+  def test_copy_partition_attr_bindings(self):
+    replicated = mgpu.dialect.CopyReplicatedAttr.get()
+    self.assertIsInstance(replicated, ir.Attribute)
+    self.assertIsInstance(replicated, mgpu.dialect.CopyPartitionAttrInterface)
+    self.assertIsInstance(replicated, mgpu.dialect.CopyReplicatedAttr)
+    replicated = ir.Attribute.parse("#mosaic_gpu.copy_replicated")
+    self.assertIsInstance(replicated, mgpu.dialect.CopyReplicatedAttr)
+
+    partitioned = mgpu.dialect.CopyPartitionedAttr.get(axis=1)
+    self.assertIsInstance(partitioned, ir.Attribute)
+    self.assertIsInstance(partitioned, mgpu.dialect.CopyPartitionAttrInterface)
+    self.assertIsInstance(partitioned, mgpu.dialect.CopyPartitionedAttr)
+    self.assertEqual(partitioned.axis, 1)
+    partitioned = ir.Attribute.parse("#mosaic_gpu.copy_partitioned<axis=1>")
+    self.assertIsInstance(partitioned, mgpu.dialect.CopyPartitionedAttr)
+    self.assertEqual(partitioned.axis, 1)
 
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):

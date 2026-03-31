@@ -961,8 +961,13 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if dtype == jnp.float16:
         self.skipTest("f16 load not supported on TPU")
-      if dtype in (jnp.int16, jnp.uint16) and jtu.get_tpu_version() < 6:
-        self.skipTest("requires TPU v6+")
+      if dtype in (jnp.int16, jnp.uint16):
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("requires TPU v4+")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
+          self.skipTest("requires newer libTPU")
 
     @functools.partial(
         self.pallas_call,
@@ -1840,7 +1845,11 @@ class OpsTest(PallasBaseTest):
       if dtype == "float16":
         self.skipTest("float16 not supported on TPU")
       if dtype == "int16":
-        if jtu.get_tpu_version() < 6:
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("requires TPUv4+")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
           self.skipTest("requires TPUv6+")
 
     @functools.partial(
@@ -2063,9 +2072,10 @@ class OpsTest(PallasBaseTest):
         if dtype == jnp.int8:
           self.skipTest("Unaligned 8-bit 1d store not supported")
         # 16-bit case
-        if (
-            not jtu.is_cloud_tpu_at_least(2026, 3, 29)
-            or jtu.get_tpu_version() < 6
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("Requires TPUv4+")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
         ):
           self.skipTest("Requires a newer libTPU")
 
@@ -2434,8 +2444,12 @@ class OpsTest(PallasBaseTest):
       if op in (jnp.argmin, jnp.argmax) and dtype != "float32":
         self.skipTest("argmin/argmax on TPU only supports float32")
       if dtype == "bfloat16":
-        if jtu.get_tpu_version() < 6:
+        if jtu.get_tpu_version() < 4:
           self.skipTest("require 16-bit iota")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
+          self.skipTest("require newer libtpu")
       if jtu.get_tpu_version() < 5 and axis == 1:
         self.skipTest("sublane gather not supported on old TPUs")
 

@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     PyTorch's bicubic resize ({jax-issue}`#15768`).
 
 * Breaking changes:
+  * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
+    `.manual_axis_type.varying` instead.
   * JAX CPU devices now report their names as `cpu:0`, `cpu:1`, etc. instead of
     `TFRT_CPU_0`, `TFRT_CPU_1`.
   * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
@@ -50,6 +52,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.scipy.linalg.solve_triangular` now show a deprecation warning for
     batched 1D solves with `b.ndim > 1`. In the future these will be treated as
     batched 2D solves.
+
+* Bug fixes:
+  * Fixed a bug that led to differing output between CPU and GPU for
+    non-symmetric multidimensional IRFFTs ({jax-issue}`#29325`).
+  * Fixed an error when tiny matrices were passed to
+    `jax.lax.linalg.tridiagonal_solve` on GPU ({jax-issue}`#32487`).
 
 ## JAX 0.9.2 (March 18, 2026)
 

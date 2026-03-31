@@ -1108,7 +1108,7 @@ def lower_jaxpr_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    mgpu.infer_layout(module)  # pytype: disable=attribute-error
+    mgpu.infer_layout(module, arch=mgpu_core._infer_arch())  # pytype: disable=attribute-error
     mgpu.lower_mgpu_dialect(
         module, launch_ctx, auto_barriers=not params.unsafe_no_auto_barriers
     )
@@ -3521,18 +3521,16 @@ def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     jaxpr: jax_core.ClosedJaxpr,
-    linear: tuple[bool, ...],
     length: int,
     reverse: bool,
     unroll: bool | int,
     num_consts: int,
     num_carry: int,
-    _split_transpose: bool,
 ):
   # Can only handle fori_loop-like scans.
   if reverse:
     raise NotImplementedError
-  del linear, reverse
+  del reverse
 
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts:

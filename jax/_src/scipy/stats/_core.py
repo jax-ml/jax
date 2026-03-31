@@ -200,7 +200,7 @@ def rankdata(
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
   a = jnp.ravel(a)
-  out_dtype = dtypes.to_inexact_dtype(a.dtype)
+  out_dtype = dtypes.default_float_dtype()
 
   def _rankdata(a: Array) -> Array:
     arr, sorter = lax.sort_key_val(a, jnp.arange(a.size))

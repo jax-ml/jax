@@ -313,7 +313,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
 
       def add_implicit_pvary_and_unreduced(val, spec):
         if isinstance(spec, P):
-          val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).vma))
+          val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).mat.varying))
           aval = typeof(val)
           unreduced = spec.unreduced - aval.mat.unreduced
           if unreduced:
@@ -871,7 +871,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
-  vma = frozenset(v for v in aval.vma if v in manual_axes)
+  vma = frozenset(v for v in aval.mat.varying if v in manual_axes)
   # TODO(yashkatariya): Handle partial manual unreduced/reduced.
   out_mat = core.ManualAxisType(varying=vma)
   return aval.update(shape=new_shape, sharding=new_sharding,
@@ -1151,9 +1151,9 @@ def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
                    for p in (s if isinstance(s, tuple) else (s,)))
 
-def _mat_to_spec(mesh, mt):
-  return P(order_wrt_mesh(mesh, mt.varying), unreduced=mt.unreduced,
-           reduced=mt.reduced)
+def _mat_to_spec(mesh, mat):
+  return P(order_wrt_mesh(mesh, mat.varying), unreduced=mat.unreduced,
+           reduced=mat.reduced)
 
 def _spec_to_mat(spec) -> core.ManualAxisType:
   return core.ManualAxisType(varying=_spec_to_vma(spec),
@@ -1367,8 +1367,8 @@ class ShardMapTrace(core.Trace):
     in_vals_ = [_unmatch_spec2(self.mesh, self.manual_axes, spec, x)
                 for x, spec in zip(in_vals, in_specs)]
     # TODO(yashkatariya): Handle unreduced/reduced correctly.
-    in_mats_ = [core.ManualAxisType(varying=mt.varying | _spec_to_vma(s))
-                for mt, s in zip(in_mats, in_specs)]
+    in_mats_ = [core.ManualAxisType(varying=mat.varying | _spec_to_vma(s))
+                for mat, s in zip(in_mats, in_specs)]
     in_tracers = map(partial(ShardMapTracer, trace), in_mats_, in_vals_)
     inner_mesh = _as_manual_mesh(self.mesh, manual_axes | self.manual_axes)
     with (core.set_current_trace(trace), _extend_axis_env(self.mesh, manual_axes),
@@ -1379,8 +1379,8 @@ class ShardMapTrace(core.Trace):
     out_vals = out_vals_.map2(
         lambda x, spec: _match_spec2(self.mesh, self.manual_axes, spec, x), out_specs)
     # TODO(yashkatariya): Handle unreduced/reduced correctly.
-    out_mats = [core.ManualAxisType(varying=mt.varying - _spec_to_vma(spec))
-                for mt, spec in zip(out_mats_, out_specs)]
+    out_mats = [core.ManualAxisType(varying=mat.varying - _spec_to_vma(spec))
+                for mat, spec in zip(out_mats_, out_specs)]
     return out_vals.map2(lambda val, vma: ShardMapTracer(self, vma, val),
                          out_mats)
 
@@ -1418,23 +1418,21 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
   val: JaxType
 
   def __init__(self, trace, mat, val):
-    self._trace = trace
     assert isinstance(mat, core.ManualAxisType)
+    aval = core.typeof(val)
+    mat = (mat if trace.check else
+           core.ManualAxisType(varying=trace.manual_axes))
+    size = prod(trace.mesh.shape[n] for n in mat.varying)
+    out = core.mapped_aval(size, 0, aval)
+    manual_mesh = _as_manual_mesh(trace.amesh, trace.manual_axes)
+    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
+    new_sharding = NamedSharding(manual_mesh, spec)
+    mat_out = mat if trace.check else core.ManualAxisType()
+    computed_aval = out.update(sharding=new_sharding, manual_axis_type=mat_out)
+    super().__init__(trace, computed_aval)
     self.mat = mat
     self.val = val
 
-  @property
-  def aval(self):
-    aval = core.typeof(self.val)
-    mat = (self.mat if self._trace.check else
-           core.ManualAxisType(varying=self._trace.manual_axes))
-    size = prod(self._trace.mesh.shape[n] for n in mat.varying)
-    out = core.mapped_aval(size, 0, aval)
-    manual_mesh = _as_manual_mesh(self._trace.amesh, self._trace.manual_axes)
-    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
-    new_sharding = NamedSharding(manual_mesh, spec)
-    mat = self.mat if config._check_vma.value else core.ManualAxisType()
-    return out.update(sharding=new_sharding, manual_axis_type=mat)
 
   def to_concrete_value(self):
     if self._trace.check and self.mat.vur == frozenset():
@@ -1476,6 +1474,14 @@ def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
                        f"shard_map-decorated functions, but got device {device}")
   return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
+
+def _ref_raise_valueerror(*args, **kwargs):
+  raise ValueError(
+      "Eager shard_map cannot return a `jax.Ref`. Please wrap"
+      " your shard_map in `jax.jit`.")
+
+eager_rules[core.ref_p] = _ref_raise_valueerror
+eager_rules[core.empty_ref_p] = _ref_raise_valueerror
 
 # Batching
 

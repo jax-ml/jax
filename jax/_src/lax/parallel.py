@@ -1643,8 +1643,8 @@ def insert_collective_pvary(axis_name, x):
 
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.typeof(x)
-  names_union = set(axis_name) | aval.vma
-  x = pvary(x, tuple(n for n in names_union if n not in aval.vma))
+  names_union = set(axis_name) | aval.mat.varying
+  x = pvary(x, tuple(n for n in names_union if n not in aval.mat.varying))
   return x
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
@@ -1718,7 +1718,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
 def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
                          tiled=False, to: str = 'varying', is_async: bool =
                          False):
-  _allowed_ag_to = {'varying', 'reduced'}
+  _allowed_ag_to = {'varying', 'reduced', 'invarying'}
   if to not in _allowed_ag_to:
     raise ValueError(
         "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to`"
@@ -1726,11 +1726,16 @@ def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
   if to == 'varying':
     return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
                        axis=axis, tiled=tiled, is_async=is_async)
+  elif to == 'invarying':
+    if axis_index_groups is not None:
+      raise NotImplementedError
+    return all_gather_invariant(x, axis_name, axis=axis, tiled=tiled)
   else:
     assert to == 'reduced'
     if axis_index_groups is not None:
       raise NotImplementedError
-    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled, is_async=is_async)
+    return all_gather_reduced(x, axis_name, axis=axis, tiled=tiled,
+                              is_async=is_async)
 
 
 def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled, is_async):
@@ -1792,14 +1797,14 @@ def collective_vma_rule(prim_name, axis_name, x_aval):
   if not config._check_vma.value:
     return frozenset()
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  if any(a not in x_aval.vma for a in axis_name):
+  if any(a not in x_aval.mat.varying for a in axis_name):
     raise ValueError(
         f"Collective {prim_name} must be applied to a device-varying "
-        f" type, but got {x_aval.vma} for collective acting "
+        f" type, but got {x_aval.mat.varying} for collective acting "
         f"over axis name {axis_name}. Please open an issue at "
         "https://github.com/jax-ml/jax/issues and as a temporary "
         "workaround pass the check_vma=False argument to `jax.shard_map`")
-  return x_aval.vma
+  return x_aval.mat.varying
 
 def _all_gather_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled
@@ -1918,7 +1923,7 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
   axis_size = _axis_size(axis_name, None)
   axes_ = frozenset(axis_name)
   def bind(leaf):
-    in_vma = core.typeof(leaf).vma
+    in_vma = core.typeof(leaf).mat.varying
     if vary_names := axes_ - in_vma:
       leaf = pvary(leaf, tuple(vary_names))
     return all_gather_invariant_p.bind(
@@ -1940,7 +1945,7 @@ def _all_gather_invariant_effectful_abstract_eval(
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
-  out_vma = frozenset(v for v in x_aval.vma if v not in axis_name)
+  out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   return (x_aval.update(shape=new_shape,
                         manual_axis_type=x_aval.mat.update(varying=out_vma)),
           {*map(core.NamedAxisEffect, axis_name)})
@@ -2324,7 +2329,7 @@ def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
   if axis_index_groups is not None:
     raise NotImplementedError
   axes_ = frozenset(axes)
-  in_vma = core.typeof(leaf).vma
+  in_vma = core.typeof(leaf).mat.varying
   arg = (pvary(leaf, tuple(pbroadcast_names))
          if (pbroadcast_names := axes_ - in_vma) else leaf)
   prim = psum_invariant_start_p if is_async else psum_invariant_p
@@ -2340,19 +2345,19 @@ psum_invariant_p.def_impl(_psum_invariant_impl)
 def _psum_invariant_abstract_eval(name, aval, *, axes):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'psum')
-  if not set(axes).intersection(aval.vma):
+  if not set(axes).intersection(aval.mat.varying):
     raise ValueError(
         "psum is a variant->invariant collective. This means that the axis"
         " names mentioned in `axes` passed to `psum` must be present in"
-        f" `jax.typeof(inp).vma`. Got axes={axes} and"
-        f" jax.typeof(inp).vma={aval.vma}")
+        f" `jax.typeof(inp).mat.varying`. Got axes={axes} and"
+        f" jax.typeof(inp).mat.varying={aval.mat.varying}")
   if any(isinstance(a, int) for a in axes):
     raise ValueError(f'psum_invariant does not accept integer axes. Got {axes}')
 
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   core.check_avals_context_mesh([aval], name)
   check_unreduced_args([aval], axes, name)
-  vma = frozenset(a for a in aval.vma if a not in named_axes)
+  vma = frozenset(a for a in aval.mat.varying if a not in named_axes)
   out_aval = aval.update(manual_axis_type=aval.mat.update(varying=vma))
   return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
 psum_invariant_p.def_effectful_abstract_eval(
@@ -2386,11 +2391,11 @@ def _pvary_abstract_eval(aval, *, axes):
   _check_axis_names(axes, 'pvary')
   check_unreduced_args([aval], axes, 'pvary')
   assert isinstance(axes, tuple)
-  if set(axes).intersection(aval.vma):
+  if set(axes).intersection(aval.mat.varying):
     raise ValueError(
         "pvary is a invariant->variant collective. This means that the axis"
         " names mentioned in `axes` passed to `pvary` must not be present in"
-        f" `jax.typeof(inp).vma`. Got axes={axes} and"
+        f" `jax.typeof(inp).mat.varying`. Got axes={axes} and"
         f" jax.typeof(inp)={aval}")
   out_vma = aval.mat.varying.union(frozenset(axes))
   return aval.update(sharding=aval.sharding.update(mesh=get_abstract_mesh()),
@@ -2434,15 +2439,15 @@ def _all_gather_reduced_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'all_gather_reduced')
-  if not x_aval.vma:
+  if not x_aval.mat.varying:
     raise ValueError('all_gather_reduced only accepts inputs that are'
                      f' varying. Got {x_aval.str_short(True)}')
-  # If the intersection between x.vma and axis_name is empty, error
-  if not (x_aval.vma & set(axis_name)):
+  # If the intersection between x.mat.varying and axis_name is empty, error
+  if not (x_aval.mat.varying & set(axis_name)):
     raise ValueError(
         'all_gather_reduced is a Varying -> Reduced collective. This means '
         f'that the {axis_name=} passed to `all_gather_reduced` must be present '
-        f'in jax.typeof(x).vma={x_aval.vma}')
+        f'in jax.typeof(x).mat.varying={x_aval.mat.varying}')
   if x_aval.mat.reduced & set(axis_name):
     raise ValueError(
         "all_gather_reduced's input cannot be reduced across the axis_name"
@@ -2455,7 +2460,7 @@ def _all_gather_reduced_effectful_abstract_eval(
     new_shape.insert(all_gather_dimension, axis_size)
 
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
-  out_vma = frozenset(v for v in x_aval.vma if v not in axis_name)
+  out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
   return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
@@ -2535,7 +2540,7 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
         " be present in"
         f" jax.typeof(x).mat.unreduced={x_aval.mat.unreduced}"
     )
-  if x_aval.vma & set(axis_name):
+  if x_aval.mat.varying & set(axis_name):
     raise ValueError(
         "unreduced_psum_scatter's input cannot be varying across the axis_name"
         f" provided. Got x={x_aval.str_short(True)} and {axis_name=}")
@@ -2557,7 +2562,7 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
 
   out_unreduced = frozenset(i for i in x_aval.mat.unreduced
                             if i not in axis_name)
-  out_vma = x_aval.vma | set(axis_name)
+  out_vma = x_aval.mat.varying | set(axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced)
   return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
@@ -2617,7 +2622,7 @@ def _unreduced_psum_abstract_eval(aval, *, axes):
         f" means that the {axes=} passed to `unreduced_psum` must"
         " be present in"
         f" jax.typeof(x).mat.unreduced={aval.mat.unreduced}")
-  if aval.vma & set(axes):
+  if aval.mat.varying & set(axes):
     raise ValueError(
         "unreduced_psum's input cannot be varying across the "
         f" axis_name provided. Got x={aval.str_short(True)} and {axes=}")
@@ -2669,12 +2674,12 @@ mlir.register_lowering(preduced_p, lambda ctx, x, *, axes: [x])
 def _preduced_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'preduced')
-  if aval.vma.intersection(set(axes)):
+  if aval.mat.varying.intersection(set(axes)):
     raise ValueError(
         "preduced is a Invariant->Reduced collective. This means that the"
         " axis names mentioned in `axes` passed to `preduced` must not be"
-        f" present in `jax.typeof(inp).vma`. Got axes={axes} and"
-        f" jax.typeof(inp).vma={aval.vma}")
+        f" present in `jax.typeof(inp).mat.varying`. Got axes={axes} and"
+        f" jax.typeof(inp).mat.varying={aval.mat.varying}")
   if aval.mat.reduced & set(axes):
     raise ValueError(
         "preduced input cannot be reduced across the axis_name"
@@ -2713,24 +2718,24 @@ def _vary_unreduced_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'vary_unreduced_cast')
   check_unreduced_args([aval], axes, 'vary_unreduced_cast')
-  if not aval.vma:
+  if not aval.mat.varying:
     raise ValueError('vary_unreduced_cast only accepts inputs that are'
                      f' varying. Got {aval.str_short(True)}')
-  # If the intersection between aval.vma and axes is empty, error
-  if not (aval.vma & set(axes)):
+  # If the intersection between aval.mat.varying and axes is empty, error
+  if not (aval.mat.varying & set(axes)):
     raise ValueError(
         "vary_unreduced_cast is a Varying->Unreduced collective. This"
         " means that the axis names mentioned in `axes` passed to"
         " `vary_unreduced_cast` must be present in"
-        f" `jax.typeof(x).vma`. Got axes={axes} and"
-        f" jax.typeof(x).vma={aval.vma}")
+        f" `jax.typeof(x).mat.varying`. Got axes={axes} and"
+        f" jax.typeof(x).mat.varying={aval.mat.varying}")
   if aval.mat.unreduced & set(axes):
     raise ValueError(
         "vary_unreduced_cast input cannot be unreduced across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
 
   new_unreduced = aval.mat.unreduced | frozenset(axes)
-  out_vma = frozenset(i for i in aval.vma if i not in axes)
+  out_vma = frozenset(i for i in aval.mat.varying if i not in axes)
   return aval.update(manual_axis_type=aval.mat.update(
     varying=out_vma, unreduced=new_unreduced))
 vary_unreduced_cast_p.def_abstract_eval(_vary_unreduced_cast_abstract_eval)
@@ -2766,15 +2771,15 @@ def _reduced_vary_cast_abstract_eval(aval, *, axes):
         " `reduced_vary_cast` must be present in"
         f" `jax.typeof(x).mat.reduced`. Got axes={axes} and"
         f" jax.typeof(x).mat.reduced={aval.mat.reduced}")
-  if aval.vma & set(axes):
+  if aval.mat.varying & set(axes):
     raise ValueError(
         "reduced_vary_cast input cannot be varying across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
 
   new_reduced = frozenset(i for i in aval.mat.reduced if i not in axes)
-  out_vma = aval.vma | frozenset(axes)
-  return aval.update(
-      manual_axis_type=aval.mat.update(varying=out_vma, reduced=new_reduced))
+  out_vma = aval.mat.varying | frozenset(axes)
+  return aval.update(manual_axis_type=aval.mat.update(
+    varying=out_vma, reduced=new_reduced))
 core.reduced_vary_cast_p.def_abstract_eval(_reduced_vary_cast_abstract_eval)
 
 def _reduced_vary_cast_transpose_rule(cts, x, *, axes):

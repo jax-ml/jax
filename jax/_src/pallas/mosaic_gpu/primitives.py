@@ -943,6 +943,7 @@ jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 
 
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(barrier_arrive_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Warpgroup)
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
@@ -959,13 +960,28 @@ def _barrier_arrive_lowering(
   sem_dtype = barrier_aval.inner_aval.dtype  # type: ignore
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    scope = mgpu_utils.ThreadSubset.WARP
+  else:
+    scope = mgpu_utils.ThreadSubset.WARPGROUP
+
   if isinstance(barrier, mgpu.CollectiveBarrierRef):
     barrier.arrive(orders_tensor_core)
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     barrier.arrive(orders_tensor_core)
   else:
+    if scope == mgpu_utils.ThreadSubset.WARP and not orders_tensor_core:
+      arrival_count = 4
+    else:
+      arrival_count = 1
+
     pred = ctx.module_ctx.single_lane_predicate if orders_tensor_core else None
-    barrier.arrive(orders_tensor_core=orders_tensor_core, predicate=pred)
+    barrier.arrive(
+        arrival_count=arrival_count,
+        orders_tensor_core=orders_tensor_core,
+        predicate=pred,
+        scope=scope,
+    )
   return ()
 
 
@@ -2249,7 +2265,7 @@ def _tcgen05_mma_lowering_wg(
     )
     if arrive:
       assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
-      mgpu.dialect.tcgen05_commit_arrive(  # pyrefly: ignore[missing-attribute]
+      mgpu.dialect.tcgen05_commit_arrive(
           barrier_ref.as_barrier_memref(), collective=collective
       )
   return []
@@ -2365,7 +2381,7 @@ def _tcgen05_commit_arrive_lowering_wg(
     collective = False
 
   with predicate_ctx:
-    mgpu.dialect.tcgen05_commit_arrive(  # pyrefly: ignore[missing-attribute]
+    mgpu.dialect.tcgen05_commit_arrive(
         barrier_ref.as_barrier_memref(), collective=collective
     )
   return []
@@ -4394,7 +4410,7 @@ def _multimem_store_lowering_rule(
           mgpu.warpgroup_barrier()
     else:
       mc_ref = multicast_ref(local_ref).ref
-      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)  # pyrefly: ignore[unexpected-keyword]
+      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)
     return ()
 
   multi_ref = multicast_ref(local_ref)

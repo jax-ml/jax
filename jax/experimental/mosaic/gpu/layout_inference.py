@@ -140,6 +140,10 @@ class ValueSite:
       return f"{match.group(0)}:a-{self.index}"
 
 
+def is_hopper(arch: tuple[int, int]) -> bool:
+  return arch == (9, 0)
+
+
 def extract_assignment_candidates_from_reduce_equation(
     small: cs.RegisterLayout,
     large: cs.Variable,
@@ -230,9 +234,37 @@ def _extract_tiling_candidate(
   yield divide_constraint.expr, cs.SMEMTiling(lc.TileTransform(tiling))
 
 
+def _register_layouts_for_optimized_transfer_to_smem(
+    shaped_type: ir.ShapedType,
+    smem_layout: cs.SMEMTiling,
+    arch: tuple[int, int],
+) -> Iterator[fa.FragmentedLayout]:
+  """Yields register layout candidates for optimized transfers to SMEM."""
+  if smem_layout.value is None:
+    reg_layout = fa.WGStridedFragLayout.from_shaped_type(shaped_type)
+    if reg_layout is not None:
+      yield reg_layout
+    return
+
+  if is_hopper(arch):
+    candidate_layouts = [
+        fa.WGMMA_LAYOUT,
+        fa.WGMMA_TRANSPOSED_LAYOUT,
+    ]
+  else:
+    # For now, just assume that if it's not Hopper, it's Blackwell.
+    candidate_layouts = [
+        fa.TCGEN05_LAYOUT,
+        fa.TCGEN05_TRANSPOSED_LAYOUT,
+    ]
+
+  yield from candidate_layouts
+
+
 def _extract_layout_candidates_from_memory_space_transfer(
     constraint: cs.IsTransferable,
     division_constraint_per_var: dict[cs.Variable, cs.Divides],
+    arch: tuple[int, int]
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to extract variable assignments from a `Constraint`."""
   # This code assumes that the `IsTransferable` constraint is bidirectional.
@@ -284,6 +316,12 @@ def _extract_layout_candidates_from_memory_space_transfer(
       if layout == tmem_layout:
         yield variable, cs.RegisterLayout(reg_layout)
 
+  if isinstance(constant, cs.SMEMTiling) and variable.key.memory_space == MemorySpace.REG:
+    for layout in _register_layouts_for_optimized_transfer_to_smem(
+        variable.key.value.type, constant, arch
+    ):
+      yield variable, cs.RegisterLayout(layout)
+
 
 def _extract_layout_candidates_from_mma_tiling(
     mma_tiling: cs.IsValidMmaTiling,
@@ -301,6 +339,8 @@ def _extract_layout_candidates_from_mma_tiling(
       return
 
   tiled_dimensions = v.key.shape[-2:]
+  # TODO(bchetioui): we can conjure additional tilings here if
+  # `allow_unswizzled` is true, but it is not clear which ones yet.
   for swizzle in (128, 64, 32):
     swizzle_elems = swizzle * 8 // mma_tiling.bitwidth
     tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
@@ -324,14 +364,14 @@ def _divides_per_var(
 
 # TODO(bchetioui): flatten this call hierarchy.
 def _extract_variable_assignments_from_constraints(
-    constraints: Sequence[cs.Constraint],
+    constraints: Sequence[cs.Constraint], arch: tuple[int, int],
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to extract variable assignments from all constraints."""
   dpv = _divides_per_var(constraints)
   for c in constraints:
     match c:
       case cs.IsTransferable():
-        yield from _extract_layout_candidates_from_memory_space_transfer(c, dpv)
+        yield from _extract_layout_candidates_from_memory_space_transfer(c, dpv, arch)
       case cs.Equals(cs.Reduce(cs.Variable() as large, axes=axes, keep_dims=keep_dims), cs.RegisterLayout() as small):
         for layout in extract_assignment_candidates_from_reduce_equation(small, large, axes, keep_dims):
           yield large, layout
@@ -349,6 +389,7 @@ def _extract_variable_assignments_from_constraints(
 def conjure_assignment(
     unknowns: Sequence[cs.Variable],
     constraint_system: cs.ConstraintSystem,
+    arch: tuple[int, int],
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to conjure an assignment for an unknown variable."""
   # TODO(allanrenucci): We should be able to short-circuit the search here if
@@ -361,7 +402,7 @@ def conjure_assignment(
   # solutions to the constraint system.
   low_priority_assignments: list[tuple[cs.Variable, cs.Constant]] = []
   for variable, constant in _extract_variable_assignments_from_constraints(
-      constraint_system.constraints
+      constraint_system.constraints, arch
   ):
     match constant:
       case cs.RegisterLayout(value=value) if not isinstance(value, fa.TiledLayout):
@@ -403,15 +444,17 @@ def find_assignments_for(
     constraint_system: cs.ConstraintSystem,
     *,
     fuel: int,
+    arch: tuple[int, int],
 ) -> tuple[dict[cs.Variable, cs.Constant] | cs.Unsatisfiable, int]:
   """Attempts to find assignments that satisfy `constraint_system` for `unknowns`.
 
   Args:
-    unknowns: the set of variables that are unknown. Represented as a sequence
+    unknowns: The set of variables that are unknown. Represented as a sequence
       of `Variable`s for determinism purposes.
     constraint_system: the constraint system to satisfy.
-    fuel: the fuel to use for the search. Once the fuel is exhausted, we raise
+    fuel: The fuel to use for the search. Once the fuel is exhausted, we raise
       an error.
+    arch: The architecture to target in the search.
 
   Returns:
     A tuple where the first element is the solution, and the second element is
@@ -445,7 +488,7 @@ def find_assignments_for(
   # new assignments could make the system unsatisfiable, so we use a recursive
   # call to be able to backtrack if necessary.
   for assignment in conjure_assignment(
-      remaining_unknowns, constraint_system
+      remaining_unknowns, constraint_system, arch
   ):
     if fuel <= 0:
       raise ValueError(
@@ -465,7 +508,7 @@ def find_assignments_for(
       # This assignment is not compatible with the constraint system.
       continue
     solution, fuel = find_assignments_for(
-        unknowns, new_constraint_system, fuel=fuel
+        unknowns, new_constraint_system, fuel=fuel, arch=arch
     )
     if not isinstance(solution, cs.Unsatisfiable):
       return solution, fuel
@@ -647,9 +690,10 @@ def _vector_load_constraint_system(
     source_var = ctx.producer_ref(source)
     value_sites_for_variable[source_var] = [source]
     shape = tuple(ir.MemRefType(op.source.type).shape)
+    source_strides, _ = ir.MemRefType(op.source.type).get_strides_and_offset()
     constraints.append(
         cs.IsTransferable(
-            source_var, dest_var, shape, utils.bitwidth(op.source.type.element_type)
+            source_var, dest_var, shape, tuple(source_strides), None
         )
     )
 
@@ -674,9 +718,10 @@ def _vector_store_constraint_system(
     dest_var = ctx.producer_ref(dest)
     value_sites_for_variable[dest_var] = [dest]
     shape = tuple(ir.MemRefType(op.destination.type).shape)
+    target_strides, _ = ir.MemRefType(op.destination.type).get_strides_and_offset()
     constraints.append(
         cs.IsTransferable(
-            value_var, dest_var, shape, utils.bitwidth(op.destination.type.element_type)
+            value_var, dest_var, shape, None, tuple(target_strides)
         )
     )
 
@@ -1483,11 +1528,13 @@ def _async_load_tmem_constraint_system(
   source_variable = ctx.producer_ref(source)
   destination = ValueSite(op, VariableType.RESULT, 0)
   destination_variable = cs.Variable(destination)
+  source_strides, _ = ir.MemRefType(op.source.type).get_strides_and_offset()
   constraint = cs.IsTransferable(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
+      tuple(source_strides),
+      None
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1496,7 +1543,7 @@ def _async_load_tmem_constraint_system(
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemToTmemOp)
-def _async_async_store_smem_to_tmem_constraint_system(
+def _async_store_smem_to_tmem_constraint_system(
     ctx: DerivationContext,
     op: mgpu.AsyncStoreSmemToTmemOp,
 ) -> ConstraintSystemDerivationRuleResult:
@@ -1506,15 +1553,22 @@ def _async_async_store_smem_to_tmem_constraint_system(
   destination_variable = ctx.producer_ref(destination)
   bitwidth = utils.bitwidth(op.destination.type.element_type)
   packing = 32 // bitwidth
+  tmem_layout = tcgen05.tmem_default_layout(packing)
+  if not is_valid_tmem_layout_assignment(destination.shape, tmem_layout):
+    raise ValueError(
+        f"Cannot assign TMEM layout {tmem_layout} to a TMEM ref "
+        f"with shape {destination.shape}"
+    )
   return (
       cs.ConstraintSystem(
-          assignments={
-              destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
-          },
-          constraints=[cs.IsValidMmaTiling(source_variable, bitwidth)],
+          assignments={destination_variable: cs.TMEMLayout(tmem_layout)},
+          constraints=[
+              cs.IsValidMmaTiling(source_variable, bitwidth, allow_unswizzled=True)
+          ],
       ),
       {source_variable: [source], destination_variable: [destination]},
   )
+
 
 @_add_constraint_system_derivation_rule(
     mgpu.AsyncStoreSparseMetadataSmemToTmemOp
@@ -1595,11 +1649,13 @@ def _async_store_tmem_constraint_system(
   source_variable = cs.Variable(source)
   destination = ValueSite(op, VariableType.OPERAND, 1)
   destination_variable = ctx.producer_ref(destination)
+  destination_strides, _ = ir.MemRefType(op.destination.type).get_strides_and_offset()
   constraint = cs.IsTransferable(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      utils.bitwidth(op.source.type.element_type),
+      None,
+      tuple(destination_strides),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1957,17 +2013,17 @@ def _compute_swizzle(
     )
 
   minor_tiling = tiling[np.argmin(strides[-len(tiling):])]
-  swizzle = minor_tiling * utils.bitwidth(ref_ty.element_type)
-  if swizzle % 8:
-    raise ValueError(f"Swizzle is not byte aligned, got: {swizzle} bits.")
-  swizzle //= 8
-  assert swizzle in (
-      mgpu.SwizzlingMode.k128ByteSwizzle,
-      mgpu.SwizzlingMode.k64ByteSwizzle,
-      mgpu.SwizzlingMode.k32ByteSwizzle,
-      mgpu.SwizzlingMode.kNoSwizzle,
-  )
-  return mgpu.SwizzlingMode(swizzle)
+  elem_bitwidth = utils.bitwidth(ref_ty.element_type)
+  tiling_bitwidth = minor_tiling * elem_bitwidth
+  if tiling_bitwidth % 8:
+    raise ValueError("Minor tiling dimension is not byte aligned. "
+                     f"Got {minor_tiling} elements of {elem_bitwidth} bits.")
+  tiling_bytewidth = tiling_bitwidth // 8
+  # Do not swizzle if the bytewidth of the minor tiling dimension does not
+  # exactly match a swizzle width.
+  if tiling_bytewidth in [128, 64, 32]:
+    return mgpu.SwizzlingMode(tiling_bytewidth)
+  return mgpu.SwizzlingMode.kNoSwizzle
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2286,7 +2342,8 @@ def check_layout_assignment(v: ValueSite, layout: cs.Constant) -> None:
 
 
 def infer_layout(
-    module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL
+    module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL,
+    arch: tuple[int, int] = (9, 0)
 ):
   """Infers layouts for the given module.
 
@@ -2299,8 +2356,11 @@ def infer_layout(
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
 
-  The fuel is provided in order to limit the number of attempts made by the
-  solver.
+  Args:
+    module: The module to infer layouts for.
+    fuel: The fuel is provided in order to limit the number of attempts made by
+      the solver.
+    arch: The architecture to infer layouts for.
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
@@ -2361,6 +2421,7 @@ def infer_layout(
       list(ctx.value_sites_for_variable.keys()),
       global_constraint_system,
       fuel=fuel,
+      arch=arch,
   )
 
   if logging.vlog_is_on(1):

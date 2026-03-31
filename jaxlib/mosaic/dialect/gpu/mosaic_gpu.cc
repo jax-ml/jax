@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 // Generated definitions.
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attr_interfaces.cc.inc"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.cc.inc"
 #define GET_ATTRDEF_CLASSES

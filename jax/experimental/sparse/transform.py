@@ -281,18 +281,17 @@ def spvalues_to_avals(
 
 class SparseTracer(core.Tracer['SparseTrace']):
   def __init__(self, trace: SparseTrace, *, spvalue):
+    if not hasattr(trace, 'spenv'):
+      raise RuntimeError("Internal: trace does not have spenv defined.")
+    aval = spvalues_to_avals(trace.spenv, [spvalue])[0]
+    super().__init__(trace, aval)
     self._spvalue = spvalue
-    self._trace = trace
 
   @property
   def spenv(self):
     if not hasattr(self._trace, 'spenv'):
       raise RuntimeError("Internal: trace does not have spenv defined.")
     return self._trace.spenv
-
-  @property
-  def aval(self):
-    return spvalues_to_avals(self.spenv, [self._spvalue])[0]
 
   def full_lower(self):
     return self
@@ -841,15 +840,7 @@ def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
   carry, carry_tree = tree_flatten(spvalues_to_arrays(spenv, carry_spvalues))
   xs, xs_tree = tree_flatten(spvalues_to_arrays(spenv, xs_spvalues))
 
-  # params['linear'] has one entry per arg; expand it to match the sparsified args.
-  const_linear, carry_linear, xs_linear = split_list(
-    params.pop('linear'), [num_consts, num_carry])
-  sp_linear = (
-    *_duplicate_for_sparse_spvalues(const_spvalues, const_linear),
-    *_duplicate_for_sparse_spvalues(carry_spvalues, carry_linear),
-    *_duplicate_for_sparse_spvalues(xs_spvalues, xs_linear))
-
-  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
+  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr,
                         num_consts=len(consts), num_carry=len(carry), **params)
   carry_out = tree_unflatten(carry_tree, out[:len(carry)])
   xs_out = tree_unflatten(xs_tree, out[len(carry):])

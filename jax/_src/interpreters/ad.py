@@ -720,7 +720,7 @@ class JVPTracer(Tracer[JVPTrace]):
   def __init__(self, trace, primal, tangent):
     if config.enable_checks.value:
       _primal_tangent_shapes_match(primal, tangent)
-    self._trace = trace
+    super().__init__(trace, typeof(primal))
     self.primal = primal
     self.tangent = tangent
 
@@ -728,10 +728,6 @@ class JVPTracer(Tracer[JVPTrace]):
     pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
     primal, tangent = pp(self.primal), pp(self.tangent)
     return f'JVPTracer({primal=!s}, {tangent=!s})'
-
-  @property
-  def aval(self):
-    return typeof(self.primal)
 
   def cur_qdd(self):
     return core.cur_qdd(self.primal)
@@ -1041,7 +1037,7 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
   def __init__(self, trace, primal, tangent):
     if config.enable_checks.value:
       _primal_tangent_shapes_match(primal, tangent)
-    self._trace = trace
+    super().__init__(trace, typeof(primal))
     self.primal = primal
     self.tangent = tangent
 
@@ -1049,10 +1045,6 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
     pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
     primal, tangent = pp(self.primal), typeof(self.tangent).str_short(True)
     return f"GradTracer({primal=!s}, typeof(tangent)={tangent!s})"
-
-  @property
-  def aval(self):
-    return typeof(self.primal)
 
   def full_lower(self):
     if type(self.tangent) is Zero:

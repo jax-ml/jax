@@ -895,19 +895,21 @@ else:
 
 class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
-  __slots__ = ['__weakref__', '_trace', '_line_info']
+  __slots__ = ['__weakref__', '_trace', '_line_info', 'aval']
   __hash__ = None
 
   _trace: TraceType
   _line_info: source_info_util.SourceInfo | None
+  aval: AbstractValue
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
 
-  def __init__(self, trace: TraceType):
+  def __init__(self, trace: TraceType, aval: AbstractValue):
     self._trace = trace
+    self.aval = aval
 
   def _error_repr(self):
     if self.aval is None:
@@ -994,10 +996,6 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     if not hasattr(self.aval, "at"):
       raise TypeError(f"Value of type {type(self)} does not support at().")
     return self.aval.at.fget(self)
-
-  @property
-  def aval(self) -> AbstractValue:
-    raise NotImplementedError("must override")
 
   def get_referent(self) -> Any:
     return self  # Override for object equivalence checking
@@ -2298,7 +2296,7 @@ class ManualAxisType:
     return not self.varying and not self.unreduced and not self.reduced
 
   def invarying(self, mesh) -> frozenset:
-    return frozenset(mesh.axis_names) - (
+    return frozenset(mesh.manual_axes) - (
         self.varying | self.unreduced | self.reduced)
 
   @property
@@ -2333,10 +2331,6 @@ class ShapedArray(AbstractValue):
   @property
   def mat(self):
     return self.manual_axis_type
-
-  @property
-  def vma(self):
-    return self.mat.varying
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -2559,7 +2553,7 @@ def standard_insert_pvary(*args):
     return args
   if not args:
     return args
-  in_vma = [aval.vma if isinstance(aval := typeof(a), ShapedArray)
+  in_vma = [aval.mat.varying if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
   in_reduced = [aval.mat.reduced
                 if isinstance(aval := typeof(a), ShapedArray) else frozenset()
@@ -2586,7 +2580,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
   avals = tuple(a for a in avals if a is not abstract_token)
   if not avals:
     return frozenset()
-  vma, *vmas = (a.vma for a in avals)
+  vma, *vmas = (a.mat.varying for a in avals)
   if not all(vma == vma_ for vma_ in vmas):
     raise ValueError(
         f'Primitive {prim_name} requires varying manual axes '
@@ -2675,6 +2669,14 @@ class ArrayRefImpl:
 pytype_aval_mappings[Ref] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
+
+class InternalMutableArrayEffect(effects.Effect):
+  pass
+array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
+effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
+effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
+
+
 def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
@@ -2705,6 +2707,21 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
   return Ref(AbstractRef(val_ty), hival_of_refs)
 ref_p.to_lojax = _ref_to_lojax
 
+@ref_p.def_effectful_abstract_eval
+def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
+          {internal_mutable_array_effect})
+
+@ref_p.def_impl
+def _ref_impl(init_val, *, memory_space: Any, kind: Any):
+  if memory_space is not None:
+    raise NotImplementedError(
+        "array ref with memory space only works inside of a `jit`.")
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
+  aval = AbstractRef(typeof(init_val), kind=kind)
+  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 # TODO(mattjj,dougalm): merge with ref_p
 def empty_ref(ty, memory_space=None):
@@ -2744,29 +2761,6 @@ def _free_ref_abstract_eval(ref_aval):
 @free_ref_p.def_impl
 def _free_ref_impl(ref):
   return ()
-
-
-class InternalMutableArrayEffect(effects.Effect):
-  pass
-array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
-effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
-effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
-
-@ref_p.def_effectful_abstract_eval
-def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
-          {internal_mutable_array_effect})
-
-@ref_p.def_impl
-def _ref_impl(init_val, *, memory_space: Any, kind: Any):
-  if memory_space is not None:
-    raise NotImplementedError(
-        "array ref with memory space only works inside of a `jit`.")
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  aval = AbstractRef(typeof(init_val), kind=kind)
-  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 def freeze(ref: Ref) -> Array:
   """Invalidate a given reference and return its final value.
@@ -3322,8 +3316,8 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
       mismatches.append('the dtypes do not match')
     if a1.shape != a2.shape:
       mismatches.append('the shapes do not match')
-    if a1.vma != a2.vma:
-      mismatches.append('the varying manual axes do not match')
+    if a1.mat != a2.mat:
+      mismatches.append('the manual axis types do not match')
     # TODO(yashkatariya,mattjj): add check for sharding-in-types mismatch
 
     if len(mismatches) == 0:

@@ -99,7 +99,7 @@ def _pallas_call_abstract_eval(
   del params  # Unused.
 
   effs: Set[jax_core.Effect] = {*pallas_core.get_interpret_effects(interpret)}
-  if getattr(compiler_params, "has_side_effects", False):
+  if not effs and getattr(compiler_params, "has_side_effects", False):
     # TODO(slebedev): Fix internal breakages and add
     # ``jax_core.GenericEffect(pallas_call_p)`` here.
     effs = jax_core.no_effects

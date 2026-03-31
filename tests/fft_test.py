@@ -79,13 +79,14 @@ def _zero_for_irfft(z, axes):
     size = z.shape[axis]
   except IndexError:
     return z  # only if axis is invalid, as occurs in some tests
+  dtype = jax.dtypes.canonicalize_dtype(z.dtype)
   if size % 2:
-    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
-             lax.slice_in_dim(z.real, 1, size - 1, axis=axis),
-             lax.slice_in_dim(z.real, size - 1, size, axis=axis).real]
+    parts = [lax.slice_in_dim(z, 0, 1, axis=axis).real.astype(dtype),
+             lax.slice_in_dim(z, 1, size - 1, axis=axis),
+             lax.slice_in_dim(z, size - 1, size, axis=axis).real.astype(dtype)]
   else:
-    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
-             lax.slice_in_dim(z.real, 1, size, axis=axis)]
+    parts = [lax.slice_in_dim(z, 0, 1, axis=axis).real.astype(dtype),
+             lax.slice_in_dim(z, 1, size, axis=axis)]
   return jnp.concatenate(parts, axis=axis)
 
 
@@ -153,13 +154,13 @@ class FftTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_op = _get_fftn_func(jnp.fft, inverse, real)
     np_op = _get_fftn_func(np.fft, inverse, real)
-    jnp_fn = lambda a: jnp_op(a, axes=axes, norm=norm)
-    np_fn = lambda a: np_op(a, axes=axes, norm=norm) if axes is None or axes else a
+    jnp_fn = lambda a: jnp_op(a, s=s, axes=axes, norm=norm)
+    np_fn = lambda a: np_op(a, s=s, axes=axes, norm=norm) if axes is None or axes else a
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 2e-6},
-                          rtol={np.float32: 2e-6})
+    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 3e-6},
+                          rtol={np.float32: 2e-6, np.complex64: 3e-6})
     # Test gradient for differentiable types.
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
@@ -171,6 +172,17 @@ class FftTest(jtu.JaxTestCase):
     dtype = jnp_fn(rng(shape, dtype)).dtype
     expected_dtype = jnp.promote_types(float if inverse and real else complex, dtype)
     self.assertEqual(dtype, expected_dtype)
+
+  def testIrfftnNonSymmetricOuterAxes(self):
+    # https://github.com/jax-ml/jax/issues/29325
+    a = np.array([[1.0 + 0.0j, 2.0 + 0.0j], [3.0 + 0.0j, 4.0 + 0.0j]], dtype=np.complex64)
+    s = (5, 1)
+
+    jnp_fn = lambda x: jnp.fft.irfftn(x, s=s, axes=(0, 1))
+    np_fn = lambda x: np.fft.irfftn(x, s=s, axes=(0, 1))
+
+    self._CheckAgainstNumpy(np_fn, jnp_fn, lambda: (a,), check_dtypes=False, tol=1e-4)
+    self._CompileAndCheck(jnp_fn, lambda: (a,), atol=2e-6)
 
   def testIrfftTranspose(self):
     # regression test for https://github.com/jax-ml/jax/issues/6223

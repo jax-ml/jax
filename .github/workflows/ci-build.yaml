@@ -33,10 +33,12 @@ jobs:
         with:
           python-version: 3.11
       - run: python -m pip install pre-commit
+      - id: get-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
       - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
+          key: pre-commit-${{ steps.get-date.outputs.date }}-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
       - run: pre-commit run --show-diff-on-failure --color=always --all-files
 
   build:

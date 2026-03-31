@@ -554,7 +554,7 @@ print(result)
 
 ## Analyzing the performance
 
-What is the performance of a pipelined kernel? This question can vary depending on where the bottleneck is the hardware is. We are typically interested in 3 quantities:
+What is the performance of a pipelined kernel? This question can vary depending on where the bottleneck in the hardware is. We are typically interested in 3 quantities:
 - **Memory latency** $α$, the minimum latency of a memory transfer.
 - **Memory bandwidth** $β$, the rate in bytes/second that we can transfer from HBM to SRAM.
 - **FLOP/s** $F$, or floating-point-operations per second, the number of calculations per second that the processor can perform.

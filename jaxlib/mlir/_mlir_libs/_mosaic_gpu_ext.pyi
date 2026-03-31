@@ -26,13 +26,20 @@ class BarrierType(ir.Type):
   @staticmethod
   def get_static_typeid() -> ir.TypeID: ...
   @staticmethod
-  def get(context: ir.Context | None = None) -> BarrierType:
+  def get(
+      orders_tensor_core: bool = False, context: ir.Context | None = None
+  ) -> BarrierType:
     """Creates a BarrierType."""
+
+  @property
+  def orders_tensor_core(self) -> bool: ...
 
 class TileTransformAttr(ir.Attribute):
   @staticmethod
   def isinstance(other_attribute: ir.Attribute) -> bool: ...
   def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
   @staticmethod
   def get(
       tiling: Sequence[int], context: ir.Context | None = None
@@ -47,6 +54,8 @@ class TransposeTransformAttr(ir.Attribute):
   def isinstance(other_attribute: ir.Attribute) -> bool: ...
   def __repr__(self) -> str: ...
   @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
   def get(
       permutation: Sequence[int], context: ir.Context | None = None
   ) -> TransposeTransformAttr:
@@ -60,6 +69,8 @@ class SwizzleTransformAttr(ir.Attribute):
   def isinstance(other_attribute: ir.Attribute) -> bool: ...
   def __repr__(self) -> str: ...
   @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
   def get(
       swizzle: int, context: ir.Context | None = None
   ) -> SwizzleTransformAttr:
@@ -67,6 +78,34 @@ class SwizzleTransformAttr(ir.Attribute):
 
   @property
   def swizzle(self) -> int: ...
+
+class CopyPartitionAttrInterface(ir.Attribute):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+
+class CopyReplicatedAttr(CopyPartitionAttrInterface):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(context: ir.Context | None = None) -> CopyReplicatedAttr:
+    """Creates a CopyReplicatedAttr."""
+
+class CopyPartitionedAttr(CopyPartitionAttrInterface):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(axis: int, context: ir.Context | None = None) -> CopyPartitionedAttr:
+    """Creates a CopyPartitionedAttr."""
+
+  @property
+  def axis(self) -> int: ...
 
 def init_cc_mlir(arg: object, /) -> bool: ...
 

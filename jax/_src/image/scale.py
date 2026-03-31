@@ -456,7 +456,10 @@ def resize(image, shape: core.Shape, method: str | ResizeMethod,
     antialias: should an antialiasing filter be used when downsampling? Defaults
       to ``True``. Has no effect when upsampling.
   Returns:
-    The resized image.
+    The resized image. The return type may differ from the input type depending
+    on the ``method``. For ``ResizeMethod.NEAREST``, the return type is the same
+    as the input type. For other methods, the output type will be promoted to a
+    floating point type.
   """
   return _resize(image, core.canonicalize_shape(shape), method, antialias,
                  precision)

@@ -929,7 +929,7 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
 def _insert_pvary(basis, leaf):
   if not config._check_vma.value:
     return basis
-  return core.pvary(basis, tuple(core.typeof(leaf).vma))
+  return core.pvary(basis, tuple(core.typeof(leaf).mat.varying))
 
 def _std_basis(pytree):
   import jax.numpy as jnp  # pytype: disable=import-error
@@ -1193,8 +1193,8 @@ def vmap(fun: F,
                for x, d in zip(args_flat, in_axes_flat)]
       api_util.check_no_aliased_ref_args(lambda: dbg, avals, args_flat)
 
-    axis_size_ = (axis_size if axis_size is not None else
-                  _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
+    axis_size_ = _mapped_axis_size(
+        fun, in_tree, args_flat, in_axes_flat, "vmap", axis_size=axis_size)
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     _check_ema_unmapped_args(explicit_mesh_axis, args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
@@ -1269,19 +1269,24 @@ def _check_ema_unmapped_args(ema, args_flat, in_axes_flat):
             f" axis you are vmapping over. Got type: {aval.str_short(True)},"
             f" in_axes: {i} and vmapped mesh axis: {ema}")
 
-def _mapped_axis_size(fn, tree, vals, dims, name):
+def _mapped_axis_size(fn, tree, vals, dims, name, axis_size=None):
   if not vals:
+    if axis_size is not None:
+      return axis_size
     args, kwargs = tree_unflatten(tree, vals)
     raise ValueError(
         f"{name} wrapped function must be passed at least one argument "
-        f"containing an array, got empty *args={args} and **kwargs={kwargs}"
+        "containing an array or axis_size must be specified, got empty "
+        f"*args={args} and **kwargs={kwargs}"
     )
 
-  def _get_axis_size(name: str, shape: tuple[core.AxisSize, ...], axis: int
-                     ) -> core.AxisSize:
+  def _get_axis_size(name: str, x, shape: tuple[core.AxisSize, ...], axis: int
+                     ) -> core.AxisSize | None:
     try:
       return shape[axis]
     except (IndexError, TypeError) as e:
+      if not core.valid_jaxtype(x) or not isinstance(axis, int):
+        return None  # Suppress the check for custom vmappable types.
       min_rank = axis + 1 if axis >= 0 else -axis
       # TODO(mattjj): better error message here
       raise ValueError(
@@ -1289,14 +1294,20 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
           f"which implies that its rank should be at least {min_rank}, "
           f"but is only {len(shape)} (its shape is {shape})") from e
 
-  sizes = core.dedup_referents(_get_axis_size(name, np.shape(x), d)
-                               for x, d in zip(vals, dims) if d is not None)
+  all_mapped_sizes = [
+    None if d is None else _get_axis_size(name, x, np.shape(x), d)
+    for x, d in zip(vals, dims)
+  ]
+  all_sizes = [s for s in all_mapped_sizes if s is not None]
+  if axis_size is not None:
+    all_sizes.append(axis_size)
+  sizes = core.dedup_referents(all_sizes)
   if len(sizes) == 1:
     sz, = sizes
     return sz
   if not sizes:
-    msg = f"{name} must have at least one non-None value in in_axes"
-    raise ValueError(msg)
+    raise ValueError(f"{name} must have at least one non-None value in in_axes "
+                     "or axis_size must be specified")
 
   def _get_argument_type(x):
     try:
@@ -1333,17 +1344,19 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
     for p, x in generate_key_paths(kwargs)
   ]
   key_paths = [*args_paths, *kwargs_paths]
-  all_sizes = [_get_axis_size(name, np.shape(x), d) if d is not None else None
-               for x, d in zip(vals, dims)]
-  size_counts = collections.Counter(s for s in all_sizes if s is not None)
+  size_counts = collections.Counter(s for s in all_mapped_sizes if s is not None)
   (sz, ct), *other_counts = counts = size_counts.most_common()
+
   def _all_sizes_index(sz):
-    for i, isz in enumerate(all_sizes):
+    for i, isz in enumerate(all_mapped_sizes):
       if core.definitely_equal(isz, sz): return i
-    assert False, (sz, all_sizes)
+    assert False, (sz, all_mapped_sizes)
 
   ex, *examples = (key_paths[_all_sizes_index(sz)] for sz, _ in counts)
   ax, *axs = (dims[_all_sizes_index(sz)] for sz, _ in counts)
+
+  if axis_size is not None:
+    msg.append(f"  * the `axis_size` argument was {axis_size};\n")
   if ct == 1:
     msg.append(f"  * one axis had size {sz}: axis {ax} of {ex};\n")
   else:
@@ -1554,13 +1567,14 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
         extra_msg = ''
         if (isinstance(primal_aval, core.ShapedArray) and
             isinstance(tangent_aval, core.ShapedArray) and
-            primal_aval.vma != tangent_aval.vma):
+            primal_aval.mat != tangent_aval.mat):
+          # TODO(yashkatariya): Tweak error.
           pvary_applications = []
-          if left := tangent_aval.vma - primal_aval.vma:
+          if left := tangent_aval.mat.varying - primal_aval.mat.varying:
             pvary_applications.append(
                 f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
                 " the primal value passed to `jax.linearize`")
-          if left := primal_aval.vma - tangent_aval.vma:
+          if left := primal_aval.mat.varying - tangent_aval.mat.varying:
             pvary_applications.append(
                 f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
                 " the tangent value passed to the callable `f_jvp` returned by"

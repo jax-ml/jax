@@ -47,8 +47,19 @@ class MosaicGPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
 }
 
 def MosaicGPU_Barrier : MosaicGPU_Type<"Barrier", "barrier", [MemRefElementTypeInterface]> {
-  let summary = "barrier";
-  let description = "A barrier to use for synchronizing threads";
+  let summary = "A barrier to use for synchronizing threads";
+  let description = [{
+    A barrier to use for synchronizing threads.
+
+    `orders_tensor_core` indicates whether the barrier can be used for ordering
+    tensor core operations.
+  }];
+  let parameters = (ins
+    DefaultValuedParameter<"bool", "false">:$orders_tensor_core
+  );
+  let assemblyFormat = [{
+    (`<` `orders_tensor_core` `=` $orders_tensor_core^ `>`)?
+  }];
 }
 
 def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;
@@ -167,7 +178,7 @@ def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLay
     thread.
   }];
 
-  let parameters = (ins "::mlir::ArrayAttr":$shape, "int":$vector_size);
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$shape, "int":$vector_size);
   let mnemonic = "WGStridedFragLayout";
   let assemblyFormat = "`<` $shape`,` $vector_size `>`";
 }
@@ -181,7 +192,7 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
     The layout holds the shape that the initial scalar is splatted to.
   }];
 
-  let parameters = (ins "::mlir::ArrayAttr":$shape);
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$shape);
   let mnemonic = "WGSplatFragLayout";
   let assemblyFormat = "`<` $shape `>`";
 }
@@ -287,6 +298,27 @@ def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
   let assemblyFormat = "`<` $swizzle `>`";
 }
 
+def MosaicGPU_CopyPartitionAttrInterface : AttrInterface<"CopyPartition"> {
+  let cppNamespace = "::mosaic_gpu";
+  let description = [{
+    Base interface for copy partition strategies.
+  }];
+}
+
+def MosaicGPU_CopyReplicatedAttr : AttrDef<MosaicGPU_Dialect, "CopyReplicated",
+      [MosaicGPU_CopyPartitionAttrInterface]> {
+  let mnemonic = "copy_replicated";
+  let summary = "A replicated copy partition";
+}
+
+def MosaicGPU_CopyPartitionedAttr : AttrDef<MosaicGPU_Dialect, "CopyPartitioned",
+      [MosaicGPU_CopyPartitionAttrInterface]> {
+  let mnemonic = "copy_partitioned";
+  let summary = "A partitioned copy partition";
+  let parameters = (ins "int":$axis);
+  let assemblyFormat = "`<` `axis` `=` $axis `>`";
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -322,6 +354,11 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     guarantees L2 cache hits. The `collective` attribute is the list of
     cluster dimensions along which to partition the input data loads.
 
+    The `leader_tracked` attribute can be provided to only track the completion
+    of the copy in the leader block in the cluster. If `CopyPartitioned(axis)`,
+    performs a partitioned collective copy along the given axis. If
+    `CopyReplicated`, all blocks load the same data.
+
     The `predicate` allows scheduling the transfer conditionally. The async copy
    is always scheduled by at most a single lane in the warpgroup.
   }];
@@ -331,6 +368,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     AnyMemRef:$destination,
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
+    OptionalAttr<MosaicGPU_CopyPartitionAttrInterface>:$leader_tracked,
     PtxPredicate:$predicate,
 
     // Attributes

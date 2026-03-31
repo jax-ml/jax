@@ -365,7 +365,14 @@ class IsTransferable:
   target: Expression
   # TODO(allanrenucci): Can this be derived from the layouts?
   shape: tuple[int, ...]
-  bitwidth: int
+  # TODO(bchetioui): look into splitting `IsTransferable` into separate classes
+  # to avoid having to pass around strides in unnecessary cases.
+  # The strides of the source memref. If the source is not a memref, then this
+  # is None.
+  source_strides: tuple[int, ...] | None
+  # The strides of the target memref. If the target is not a memref, then this
+  # is None.
+  target_strides: tuple[int, ...] | None
 
   def supported_tmem_transfers(
       self, packing: int
@@ -394,6 +401,7 @@ class IsTransferable:
       self,
       smem_layout: lc.TileTransform | None,
       reg_layout: fa.FragmentedLayout,
+      smem_strides: tuple[int, ...]
   ) -> bool:
     # TODO(b/447079781): This is way too restrictive. We need to make it more
     # precise by:
@@ -402,7 +410,12 @@ class IsTransferable:
     # - If copies have to be optimized, determine if the transfer is optimal by
     #   calling fragmented_array.plan_tiled_transfer.
     if inference_utils.is_mma_layout(reg_layout):
-      return smem_layout is not None and len(smem_layout.tiling) == 2
+      if smem_layout is None or len(smem_layout.tiling) != 2:
+        return False
+      transposed_layouts = {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      if list(smem_strides[-2:]) != sorted(smem_strides[-2:], reverse=True):
+        return reg_layout in transposed_layouts
+      return reg_layout not in transposed_layouts
     return smem_layout is None
 
   def holds(self) -> bool | None:
@@ -422,9 +435,11 @@ class IsTransferable:
       case RegisterLayout(value=src), TMEMLayout(value=dst):
         return self._is_valid_tmem_transfer(dst, src)
       case SMEMTiling(value=src), RegisterLayout(value=dst):
-        return self._is_valid_smem_transfer(src, dst)
+        assert self.source_strides is not None
+        return self._is_valid_smem_transfer(src, dst, self.source_strides)
       case RegisterLayout(value=src), SMEMTiling(value=dst):
-        return self._is_valid_smem_transfer(dst, src)
+        assert self.target_strides is not None
+        return self._is_valid_smem_transfer(dst, src, self.target_strides)
       case Constant(), Constant():
         source_type = type(self.source).__name__
         target_type = type(self.target).__name__
@@ -512,17 +527,23 @@ class IsValidMmaTiling:
 
   For both tcgen05.mma and wgmma, tiling is valid if it is of the form
   (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]}.
+      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
+  as support for unswizzled tilings is not yet supported.
+
+  If `allow_unswizzled` is True, then we additionally accept
+  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
   """
   expr: Expression
   bitwidth: int
+  allow_unswizzled: bool = False
 
   def holds(self) -> bool | None:
     match self.expr:
       case SMEMTiling(value=None):
         return False
       case SMEMTiling(value=lc.TileTransform(tiling=t)):
-        valid_tilings = {(8, s * 8 // self.bitwidth) for s in [32, 64, 128]}
+        swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
+        valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
         return t in valid_tilings
       case RegisterLayout() | TMEMLayout() as c:
         raise ValueError(f"Unexpected value {c} in IsValidMmaTiling constraint")
@@ -530,7 +551,7 @@ class IsValidMmaTiling:
         return None
 
   def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
+    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -607,17 +628,17 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return NotOfType(expr_red, ty)
-    case IsTransferable(source=source, target=target, shape=shape, bitwidth=bitwidth):
+    case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsTransferable(source_red, target_red, shape, bitwidth)
-    case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
+      return dataclasses.replace(transfer, source=source_red, target=target_red)
+    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsValidMmaTiling(expr_red, bitwidth)
+      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -679,7 +700,7 @@ class ConstraintSystem:
           extract_variables(target)
         case NotOfType(expr=expr):
           extract_variables(expr)
-        case IsTransferable(source=source, target=target, shape=_, bitwidth=_):
+        case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
         case IsValidMmaTiling(expr=expr):

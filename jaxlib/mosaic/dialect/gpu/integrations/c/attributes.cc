@@ -18,7 +18,9 @@ limitations under the License.
 #include <cstdint>
 
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
+#include "mlir/CAPI/Support.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
@@ -49,6 +51,11 @@ int32_t mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr,
   return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
       .getTiling()[index];
 }
+
+MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID() {
+  return wrap(mosaic_gpu::TileTransformAttr::getTypeID());
+}
+
 //===----------------------------------------------------------------------===//
 // TransposeTransformAttr
 //===----------------------------------------------------------------------===//
@@ -77,6 +84,10 @@ int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr,
       .getPermutation()[index];
 }
 
+MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID() {
+  return wrap(mosaic_gpu::TransposeTransformAttr::getTypeID());
+}
+
 //===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
@@ -95,4 +106,52 @@ int32_t mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
       mlir::cast<mosaic_gpu::SwizzleTransformAttr>(unwrap(attr))
           .getSwizzle()
           .getValue());
+}
+MlirTypeID mlirMosaicGpuSwizzleTransformAttrGetTypeID() {
+  return wrap(mosaic_gpu::SwizzleTransformAttr::getTypeID());
+}
+
+//===----------------------------------------------------------------------===//
+// CopyPartitionAttrInterface
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsACopyPartitionAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::CopyPartition>(unwrap(attr));
+}
+
+//===----------------------------------------------------------------------===//
+// CopyReplicatedAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsACopyReplicatedAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::CopyReplicatedAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuCopyReplicatedAttrGet(MlirContext ctx) {
+  return wrap(mosaic_gpu::CopyReplicatedAttr::get(unwrap(ctx)));
+}
+
+MlirTypeID mlirMosaicGpuCopyReplicatedAttrGetTypeID() {
+  return wrap(mosaic_gpu::CopyReplicatedAttr::getTypeID());
+}
+
+//===----------------------------------------------------------------------===//
+// CopyPartitionedAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsACopyPartitionedAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::CopyPartitionedAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuCopyPartitionedAttrGet(MlirContext ctx,
+                                                  int32_t axis) {
+  return wrap(mosaic_gpu::CopyPartitionedAttr::get(unwrap(ctx), axis));
+}
+
+int32_t mlirMosaicGpuCopyPartitionedAttrGetAxis(MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::CopyPartitionedAttr>(unwrap(attr)).getAxis();
+}
+
+MlirTypeID mlirMosaicGpuCopyPartitionedAttrGetTypeID() {
+  return wrap(mosaic_gpu::CopyPartitionedAttr::getTypeID());
 }

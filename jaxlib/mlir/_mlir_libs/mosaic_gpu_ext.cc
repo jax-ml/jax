@@ -169,18 +169,31 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       mlir::python::nanobind_adaptors::mlir_type_subclass(
           m, "BarrierType", mlirMosaicGpuIsABarrierType,
           mlirMosaicGpuBarrierTypeGetTypeID);
-  barrier_type.def_staticmethod(
-      "get",
-      [cls = barrier_type.get_class()](MlirContext ctx) {
-        return cls(mlirMosaicGpuBarrierTypeGet(ctx));
-      },
-      nb::arg("context").none() = nb::none(),
-      nb::sig("def get(context: mlir.ir.Context | None = None) -> BarrierType"),
-      "Creates a BarrierType.");
+  barrier_type
+      .def_staticmethod(
+          "get",
+          [cls = barrier_type.get_class()](bool orders_tensor_core,
+                                           MlirContext ctx) {
+            return cls(mlirMosaicGpuBarrierTypeGet(ctx, orders_tensor_core));
+          },
+          nb::arg("orders_tensor_core") = false,
+          nb::arg("context").none() = nb::none(),
+          nb::sig(
+              // clang-format: off
+              "def get("
+              "orders_tensor_core: bool = False, "
+              "context: mlir.ir.Context | None = None"
+              ") -> BarrierType"
+              // clang-format: on
+              ),
+          "Creates a BarrierType.")
+      .def_property_readonly("orders_tensor_core",
+                             mlirMosaicGpuBarrierTypeGetOrdersTensorCore);
 
   auto tile_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr);
+          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr,
+          mlirMosaicGpuTileTransformAttrGetTypeID);
   tile_transform_attr
       .def_staticmethod(
           "get",
@@ -211,7 +224,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   auto transpose_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr);
+          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr,
+          mlirMosaicGpuTransposeTransformAttrGetTypeID);
   transpose_transform_attr
       .def_staticmethod(
           "get",
@@ -245,7 +259,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   auto swizzle_transform_attr =
       mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr);
+          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr,
+          mlirMosaicGpuSwizzleTransformAttrGetTypeID);
   swizzle_transform_attr
       .def_staticmethod(
           "get",
@@ -264,9 +279,56 @@ NB_MODULE(_mosaic_gpu_ext, m) {
               // clang-format: on
               ),
           "Creates a SwizzleTransformAttr with the given swizzle.")
-      .def_property_readonly("swizzle", [](MlirAttribute self) {
-        return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
-      });
+      .def_property_readonly("swizzle",
+                             mlirMosaicGpuSwizzleTransformAttrGetSwizzle);
+
+  auto copy_partition_attr_interface =
+      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+          m, "CopyPartitionAttrInterface", mlirMosaicGpuIsACopyPartitionAttr);
+
+  auto copy_replicated_attr =
+      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+          m, "CopyReplicatedAttr", mlirMosaicGpuIsACopyReplicatedAttr,
+          copy_partition_attr_interface.get_class(),
+          mlirMosaicGpuCopyReplicatedAttrGetTypeID);
+  copy_replicated_attr.def_staticmethod(
+      "get",
+      [cls = copy_replicated_attr.get_class()](MlirContext ctx) {
+        return cls(mlirMosaicGpuCopyReplicatedAttrGet(ctx));
+      },
+      nb::arg("context").none() = nb::none(),
+      nb::sig(
+          // clang-format: off
+          "def get("
+          "context: mlir.ir.Context | None = None"
+          ") -> CopyReplicatedAttr"
+          // clang-format: on
+          ),
+      "Creates a CopyReplicatedAttr.");
+
+  auto copy_partitioned_attr =
+      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+          m, "CopyPartitionedAttr", mlirMosaicGpuIsACopyPartitionedAttr,
+          copy_partition_attr_interface.get_class(),
+          mlirMosaicGpuCopyPartitionedAttrGetTypeID);
+  copy_partitioned_attr
+      .def_staticmethod(
+          "get",
+          [cls = copy_partitioned_attr.get_class()](int32_t axis,
+                                                    MlirContext ctx) {
+            return cls(mlirMosaicGpuCopyPartitionedAttrGet(ctx, axis));
+          },
+          nb::arg("axis"), nb::arg("context").none() = nb::none(),
+          nb::sig(
+              // clang-format: off
+              "def get("
+              "axis: int, "
+              "context: mlir.ir.Context | None = None"
+              ") -> CopyPartitionedAttr"
+              // clang-format: on
+              ),
+          "Creates a CopyPartitionedAttr.")
+      .def_property_readonly("axis", mlirMosaicGpuCopyPartitionedAttrGetAxis);
 
   m.def("init_cc_mlir", [](nb::object mlir_ir_module) {
     nb::object& mlir_ir = MlirIrModule(mlir_ir_module);

@@ -355,25 +355,36 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(
-      (mgpu.WGMMA_LAYOUT, (64, 64), True),
-      (mgpu.WGMMA_LAYOUT, (64,), False),
-      (mgpu.WGMMA_LAYOUT, None, False),
-      (mgpu.WGMMA_ROW_LAYOUT, None, True),
-      (mgpu.WGMMA_ROW_LAYOUT, (64,), False),
-      (mgpu.WGMMA_COL_LAYOUT, None, True),
-      (mgpu.WGMMA_COL_LAYOUT, (64,), False),
-      (mgpu.WGSplatFragLayout((16, 16)), None, True),
-      (mgpu.WGSplatFragLayout((16, 16)), (16,), False),
-      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), None, True),
-      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), (1,), False),
+      (mgpu.WGMMA_LAYOUT, (64, 64), True, True),
+      (mgpu.WGMMA_LAYOUT, (64, 64), False, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, (64, 64), False, True),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, (64, 64), True, False),
+      (mgpu.TCGEN05_LAYOUT, (128, 64), True, True),
+      (mgpu.TCGEN05_LAYOUT, (128, 64), False, False),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, (128, 64), False, True),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, (128, 64), True, False),
+      (mgpu.WGMMA_LAYOUT, (64,), True, False),
+      (mgpu.WGMMA_LAYOUT, None, True, False),
+      (mgpu.WGMMA_ROW_LAYOUT, None, True, True),
+      (mgpu.WGMMA_ROW_LAYOUT, (64,), True, False),
+      (mgpu.WGMMA_COL_LAYOUT, None, True, True),
+      (mgpu.WGMMA_COL_LAYOUT, (64,), True, False),
+      (mgpu.WGSplatFragLayout((16, 16)), None, True, True),
+      (mgpu.WGSplatFragLayout((16, 16)), (16,), True, False),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), None, True, True),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), (1,), True, False),
   )
-  def test_smem_is_transferable(self, layout, tiling, expected):
+  def test_smem_is_transferable(self, layout, tiling, contiguous_strides, expected):
     eq_layout = cs.RegisterLayout(layout)
     eq_tiling = cs.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
-
-    reg_to_smem = cs.IsTransferable(eq_layout, eq_tiling, (), 32)
+    strides = (128, 1) if contiguous_strides else (1, 128)
+    reg_to_smem = cs.IsTransferable(
+        eq_layout, eq_tiling, (), source_strides=None, target_strides=strides
+    )
     self.assertEqual(reg_to_smem.holds(), expected)
-    smem_to_reg = cs.IsTransferable(eq_tiling, eq_layout, (), 32)
+    smem_to_reg = cs.IsTransferable(
+        eq_tiling, eq_layout, (), source_strides=strides, target_strides=None
+    )
     self.assertEqual(smem_to_reg.holds(), expected)
 
   def test_transpose_expression(self):
@@ -513,9 +524,10 @@ class ConstraintSystemTest(parameterized.TestCase):
     layout = cs.SMEMTiling(lc.TileTransform((8, swizzle_elems)))
     self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
 
-  def test_tiling_is_valid_mma_tiling_does_not_hold_for_invalid_tiling(self):
+  @parameterized.parameters(False, True)
+  def test_tiling_is_valid_mma_tiling_holds_for_unswizzled_tiling_only_if_allowed(self, allow_unswizzled):
     layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
-    self.assertFalse(cs.IsValidMmaTiling(layout, 16).holds())
+    self.assertEqual(cs.IsValidMmaTiling(layout, 16, allow_unswizzled).holds(), allow_unswizzled)
 
   @parameterized.named_parameters(
       (

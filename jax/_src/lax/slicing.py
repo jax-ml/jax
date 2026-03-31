@@ -1554,7 +1554,7 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
     operand_aval, = lax_utils.ensure_shaped(operand.aval)
     zeros = lax.full(operand_aval.shape, 0, operand_aval.dtype,
                      sharding=operand_aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand_aval.vma))
+    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))  # type: ignore
     operand.accum(dynamic_update_slice_p.bind(zeros, out_ct, *start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
@@ -2177,7 +2177,7 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
   else:
     zeros = lax.full(operand.aval.shape, 0, core.typeof(t).dtype,
                      sharding=operand.aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand.aval.vma))
+    zeros = core.pvary(zeros, tuple(operand.aval.mat.varying))
     scatter_dnums = ScatterDimensionNumbers(
         update_window_dims=dimension_numbers.offset_dims,
         inserted_window_dims=dimension_numbers.collapsed_slice_dims,

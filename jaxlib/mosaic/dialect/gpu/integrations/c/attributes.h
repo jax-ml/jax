@@ -40,6 +40,8 @@ mlirMosaicGpuTileTransformAttrGetTilingSize(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t
 mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr, int32_t index);
 
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID();
+
 //===----------------------------------------------------------------------===//
 // TransposeTransformAttr
 //===----------------------------------------------------------------------===//
@@ -56,6 +58,8 @@ mlirMosaicGpuTransposeTransformAttrGetPermutationSize(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(
     MlirAttribute attr, int32_t index);
 
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID();
+
 //===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
@@ -68,6 +72,39 @@ mlirMosaicGpuSwizzleTransformAttrGet(MlirContext ctx, int32_t swizzle);
 
 MLIR_CAPI_EXPORTED int32_t
 mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuSwizzleTransformAttrGetTypeID();
+
+//===----------------------------------------------------------------------===//
+// CopyPartitionAttrInterface
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsACopyPartitionAttr(MlirAttribute attr);
+
+//===----------------------------------------------------------------------===//
+// CopyReplicatedAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsACopyReplicatedAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuCopyReplicatedAttrGet(MlirContext ctx);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuCopyReplicatedAttrGetTypeID();
+
+//===----------------------------------------------------------------------===//
+// CopyPartitionedAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsACopyPartitionedAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuCopyPartitionedAttrGet(MlirContext ctx, int32_t axis);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuCopyPartitionedAttrGetAxis(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuCopyPartitionedAttrGetTypeID();
 
 #ifdef __cplusplus
 }

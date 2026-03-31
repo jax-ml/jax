@@ -579,12 +579,6 @@ class BufferedRef(BufferedRefBase):
         )
 
       if len(block_shape) == 1 and tiling is not Tiling.SPARSE_CORE:
-        [tile_dim] = tpu_info.infer_tiling(ty, tiling)
-        assert tile_dim is not None
-        if buffer_count > 1 and block_shape[-1] % tile_dim:
-          raise ValueError(
-              f"1D {block_shape=} must be a multiple of {tile_dim=}"
-          )
         buffer_ty = ty.update(shape=(buffer_count * block_shape[0],))
       else:
         buffer_ty = ty.update(shape=(buffer_count, *block_shape))

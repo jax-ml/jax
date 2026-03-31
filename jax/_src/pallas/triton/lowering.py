@@ -2594,19 +2594,16 @@ def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     jaxpr,
-    linear,
     length,
     reverse,
     unroll,
     num_consts,
     num_carry,
-    _split_transpose,
 ):
-  del _split_transpose
   # Only implements fori_loop-like scans
   if reverse: raise NotImplementedError
   if unroll != 1: raise NotImplementedError
-  del linear, unroll, reverse
+  del unroll, reverse
 
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError

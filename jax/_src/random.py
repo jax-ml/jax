@@ -1308,10 +1308,10 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
-  zero = core.pvary(zero, tuple(core.typeof(alpha).vma))
-  one = core.pvary(one, tuple(core.typeof(alpha).vma))
-  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).vma))
-  two = core.pvary(two, tuple(core.typeof(alpha).vma))
+  zero = core.pvary(zero, tuple(core.typeof(alpha).mat.varying))
+  one = core.pvary(one, tuple(core.typeof(alpha).mat.varying))
+  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).mat.varying))
+  two = core.pvary(two, tuple(core.typeof(alpha).mat.varying))
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
@@ -2975,10 +2975,11 @@ def random_insert_pvary(name, key, *args):
     return key, args
   if not args:
     return key, args
-  key_vma = core.typeof(key).vma
+  key_vma = core.typeof(key).mat.varying
   out = []
   for a in args:
-    arg_vma = (aval.vma if isinstance(aval := core.typeof(a), core.ShapedArray)
+    arg_vma = (aval.mat.varying
+               if isinstance(aval := core.typeof(a), core.ShapedArray)
                else frozenset())
     # If key is less varying than the args, then it's an error and user should
     # pvary at their level because it has key-reuse implications. They can
@@ -2986,7 +2987,7 @@ def random_insert_pvary(name, key, *args):
     # getting correctly varying keys. But JAX shouldn't auto-pvary the key.
     if key_vma - arg_vma:
       a = core.pvary(a, tuple(k for k in key_vma if k not in arg_vma))
-    if key_vma != core.typeof(a).vma:
+    if core.typeof(key).mat != core.typeof(a).mat:
       raise TypeError(
           f"{name} requires all arguments to have matching type. Got key type:"
           f" {core.typeof(key)} vs arg type: {core.typeof(a)}. Use"

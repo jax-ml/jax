@@ -429,13 +429,17 @@ class AbstractRef(core.AbstractValue):
       ) from None
 
   @property
-  def vma(self):
+  def manual_axis_type(self):
     try:
-      return self.inner_aval.vma  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.manual_axis_type  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
-          f"{self!r} has no `vma`."
+          f"{self!r} has no `manual_axis_type`."
       ) from None
+
+  @property
+  def mat(self):
+    return self.manual_axis_type
 
   @core.aval_property
   def at(self):
