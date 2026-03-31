@@ -365,6 +365,14 @@ class IsTransferable:
   target: Expression
   # TODO(allanrenucci): Can this be derived from the layouts?
   shape: tuple[int, ...]
+  # TODO(bchetioui): look into splitting `IsTransferable` into separate classes
+  # to avoid having to pass around strides in unnecessary cases.
+  # The strides of the source memref. If the source is not a memref, then this
+  # is None.
+  source_strides: tuple[int, ...] | None
+  # The strides of the target memref. If the target is not a memref, then this
+  # is None.
+  target_strides: tuple[int, ...] | None
 
   def supported_tmem_transfers(
       self, packing: int
@@ -393,6 +401,7 @@ class IsTransferable:
       self,
       smem_layout: lc.TileTransform | None,
       reg_layout: fa.FragmentedLayout,
+      smem_strides: tuple[int, ...]
   ) -> bool:
     # TODO(b/447079781): This is way too restrictive. We need to make it more
     # precise by:
@@ -401,7 +410,12 @@ class IsTransferable:
     # - If copies have to be optimized, determine if the transfer is optimal by
     #   calling fragmented_array.plan_tiled_transfer.
     if inference_utils.is_mma_layout(reg_layout):
-      return smem_layout is not None and len(smem_layout.tiling) == 2
+      if smem_layout is None or len(smem_layout.tiling) != 2:
+        return False
+      transposed_layouts = {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      if list(smem_strides[-2:]) != sorted(smem_strides[-2:], reverse=True):
+        return reg_layout in transposed_layouts
+      return reg_layout not in transposed_layouts
     return smem_layout is None
 
   def holds(self) -> bool | None:
@@ -421,9 +435,11 @@ class IsTransferable:
       case RegisterLayout(value=src), TMEMLayout(value=dst):
         return self._is_valid_tmem_transfer(dst, src)
       case SMEMTiling(value=src), RegisterLayout(value=dst):
-        return self._is_valid_smem_transfer(src, dst)
+        assert self.source_strides is not None
+        return self._is_valid_smem_transfer(src, dst, self.source_strides)
       case RegisterLayout(value=src), SMEMTiling(value=dst):
-        return self._is_valid_smem_transfer(dst, src)
+        assert self.target_strides is not None
+        return self._is_valid_smem_transfer(dst, src, self.target_strides)
       case Constant(), Constant():
         source_type = type(self.source).__name__
         target_type = type(self.target).__name__
@@ -606,12 +622,12 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return NotOfType(expr_red, ty)
-    case IsTransferable(source=source, target=target, shape=shape):
+    case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsTransferable(source_red, target_red, shape)
+      return dataclasses.replace(transfer, source=source_red, target=target_red)
     case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -678,7 +694,7 @@ class ConstraintSystem:
           extract_variables(target)
         case NotOfType(expr=expr):
           extract_variables(expr)
-        case IsTransferable(source=source, target=target, shape=_):
+        case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
         case IsValidMmaTiling(expr=expr):
