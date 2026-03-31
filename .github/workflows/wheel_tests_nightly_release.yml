@@ -32,6 +32,11 @@ on:
         required: true
         default: '0'
         type: string
+      build-jit-artifacts:
+        description: "Whether to build JIT artifacts before running the tests (uses matrix from nightly)"
+        required: false
+        default: false
+        type: boolean
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection? (yes/no)'
         required: false
@@ -47,7 +52,97 @@ env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
+  build-jax-artifact:
+    if: ${{ inputs.build-jit-artifacts == true }}
+    uses: ./.github/workflows/build_artifacts.yml
+    name: "Build jax artifact"
+    with:
+        runner: "linux-x86-n4-16"
+        artifact: "jax"
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-jaxlib-artifact:
+    if: ${{ inputs.build-jit-artifacts == true }}
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false
+        matrix:
+            runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+            artifact: ["jaxlib"]
+            python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+            exclude:
+              - runner: "windows-x86-n2-16"
+                python: "3.13-nogil"
+              - runner: "windows-x86-n2-16"
+                python: "3.14-nogil"
+    name: "Build ${{ format('{0}', 'jaxlib') }} artifacts"
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-cuda-artifacts:
+    if: ${{ inputs.build-jit-artifacts == true }}
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false
+        matrix:
+          runner: ["linux-x86-n4-16"]
+          artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          cuda-version: ["12", "13"]
+    name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      clone_main_xla: 1
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-rocm-artifacts:
+    if: ${{ inputs.build-jit-artifacts == true }}
+    uses: ./.github/workflows/build_rocm_artifacts.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    strategy:
+        fail-fast: false
+        matrix:
+          runner: ["linux-x86-64-1gpu-amd"]
+          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          rocm-version: ["7"]
+          exclude:
+            - artifact: "jax-rocm-pjrt"
+              python: "3.12"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.13"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.13-nogil"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.14"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.14-nogil"
+    name: "Build ${{ format('{0}', 'ROCm') }} artifacts"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm-version }}
+      clone_main_xla: 1
+      upload_artifacts_to_s3: true
+      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+
   run-pytest-cpu:
+    if: false
+    needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -68,13 +163,15 @@ jobs:
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
       # TODO(b/456203132): Increase to more than 16 processes if this works
       #  (56 prior to this).
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
 
   run-bazel-test-cpu:
+    if: ${{ !cancelled() }}
+    needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -89,13 +186,15 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
       clone_main_xla: 0
 
   run-pytest-cuda:
+    if: false
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -143,10 +242,12 @@ jobs:
       use-nvidia-pip-wheels: ${{ matrix.cuda.use-nvidia-pip-wheels }}
       enable-x64:  ${{ matrix.enable-x64 }}
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-cuda:
+    if: ${{ !cancelled() }}
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -163,7 +264,7 @@ jobs:
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
@@ -173,6 +274,8 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-rocm:
+    if: false
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -194,9 +297,12 @@ jobs:
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
+      s3_download_uri: ${{ inputs.build-jit-artifacts == true && 's3://jax-ci-amd/rocm-wheels/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}' || '' }}
 
   run-bazel-test-rocm:
+    if: false
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -213,7 +319,7 @@ jobs:
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
@@ -223,6 +329,8 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-tpu:
+    if: false
+    needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -283,10 +391,12 @@ jobs:
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-tpu:
+    if: ${{ !cancelled() }}
+    needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -353,7 +463,7 @@ jobs:
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
-      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      gcs_download_uri: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
@@ -361,7 +471,8 @@ jobs:
       clone_main_xla: 0
 
   verify-release-wheels-install:
-    if: ${{ startsWith(github.ref_name, 'release/')}}
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'release/')}}
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     defaults:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default
@@ -412,7 +523,7 @@ jobs:
             echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> $GITHUB_ENV
           fi
         env:
-          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
+          INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.build-jit-artifacts == true && needs.build-jaxlib-artifact.outputs.gcs_upload_uri || inputs.gcs_download_uri }}
           INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CPU packages can be installed
         run: |

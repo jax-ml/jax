@@ -49,6 +49,7 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   fi
 fi
 
+export JAXCI_XLA_COMMIT=6cd92bede5f500c8e33fa08ddf0b3b2023e41e18
 # If a XLA commit is provided, check out XLA at that commit.
 if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
   # Clone XLA at HEAD if a path to local XLA is not provided.
