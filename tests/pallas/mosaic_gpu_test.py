@@ -5342,6 +5342,36 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     expected = np.array([-1] * (num_sms - cluster_size) + [last_cta_id] * cluster_size)
     np.testing.assert_equal(result, expected)
 
+  @parameterized.parameters((True,), (False,))
+  def test_barrier_arrive_warp_mesh(self, orders_tensor_core):
+    self.skip_if_wg_semantics()
+
+    def kernel(out_ref, bar):
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_idx = jax.lax.axis_index("warp")
+
+        @pl.when(warp_idx < 2)
+        def _():
+          plgpu.barrier_arrive(bar)
+          plgpu.barrier_wait(bar)
+
+          out_ref[warp_idx] = jnp.ones_like(out_ref.at[warp_idx])
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        scratch_shapes=[
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=orders_tensor_core)
+        ],
+        compiler_params=plgpu.CompilerParams(),
+    )
+
+    result = jax.jit(f)()
+
+    np.testing.assert_array_equal(result, jnp.ones_like(result))
 
 class PallasCallTCGen05WGTest(
     PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

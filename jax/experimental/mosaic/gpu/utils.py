@@ -1064,13 +1064,19 @@ class BarrierRef:
       can_complete: bool = True,
       orders_tensor_core: bool = False,
       predicate: ir.Value | None = None,
+      scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
       if predicate is not None:
         # We need to synchronize the threads after `::before_thread_sync`, as
         # not all threads arrive on the barrier.
-        warpgroup_barrier()
+        if scope == ThreadSubset.WARPGROUP:
+          warpgroup_barrier()
+        elif scope == ThreadSubset.WARP:
+          warp_barrier()
+        else:
+          raise ValueError(f"Unsupported scope: {scope}")
 
     if can_complete:
       pred_ptx = pred_constraint = ""
