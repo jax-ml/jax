@@ -1413,6 +1413,7 @@ jax_multiplatform_test(
     args = [
         "--undefok=xla_tpu_enable_mlir_verifier",
         "--xla_tpu_enable_mlir_verifier=ALL",
+        "--xla_tpu_mosaic_sc_use_tiled_dmas=false",  # TODO: b/483801998 - Remove once fixed.
     ],
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
