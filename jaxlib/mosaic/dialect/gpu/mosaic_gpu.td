@@ -178,7 +178,7 @@ def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLay
     thread.
   }];
 
-  let parameters = (ins "::mlir::ArrayAttr":$shape, "int":$vector_size);
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$shape, "int":$vector_size);
   let mnemonic = "WGStridedFragLayout";
   let assemblyFormat = "`<` $shape`,` $vector_size `>`";
 }
@@ -192,7 +192,7 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
     The layout holds the shape that the initial scalar is splatted to.
   }];
 
-  let parameters = (ins "::mlir::ArrayAttr":$shape);
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$shape);
   let mnemonic = "WGSplatFragLayout";
   let assemblyFormat = "`<` $shape `>`";
 }
