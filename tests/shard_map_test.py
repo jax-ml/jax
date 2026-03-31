@@ -5284,6 +5284,17 @@ class ShardMapTest(jtu.JaxTestCase):
     out = jax.shard_map(jax.jit(f), out_specs=P('x'), check_vma=False)(x)
     self.assertArraysEqual(out, x)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_full_like_pvary_existing(self, mesh):
+    @jax.shard_map(out_specs=P("x"))
+    def f():
+      res = jax.lax.pcast(jnp.array([10, 11]), "x", to="varying")
+      fill_value = jax.lax.pcast(jnp.array(-1), "x", to="varying")
+      return jnp.full_like(res, fill_value)
+
+    f()  # doesn't exist
+    jax.jit(f)()  # doesn't exist
+
 
 class FunSpec(NamedTuple):
   name: str

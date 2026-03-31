@@ -3601,11 +3601,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
-  if config._check_vma.value:
-    # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
-    # `typeof` because `x` can be anything that implements the
-    # `DuckTypedArray` protocol.
-    val = core.pvary(val, tuple(typeof(x).mat.varying))
+  val, _ = core.standard_insert_pvary(val, x)
   return val
 
 
