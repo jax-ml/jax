@@ -188,7 +188,7 @@ def rankdata(
     )
   if nan_policy == "raise":
     raise NotImplementedError(
-      "In order to best JIT compile `mode`, we cannot know whether `x` "
+      "In order to best JIT compile `rankdata`, we cannot know whether `x` "
       "contains nans. Please check if nans exist in `x` outside of the "
       "`rankdata` function."
     )
@@ -196,29 +196,34 @@ def rankdata(
   if method not in ("average", "min", "max", "dense", "ordinal"):
     raise ValueError(f"unknown method '{method}'")
 
-  a = jnp.asarray(a)
-
   if axis is not None:
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
-  arr = jnp.ravel(a)
-  arr, sorter = lax.sort_key_val(arr, jnp.arange(arr.size))
-  inv = invert_permutation(sorter)
+  a = jnp.ravel(a)
+  out_dtype = dtypes.default_float_dtype()
 
-  if method == "ordinal":
-    return inv + 1
-  obs = jnp.concatenate([jnp.array([True]), arr[1:] != arr[:-1]])
-  dense = obs.cumsum()[inv]
-  if method == "dense":
-    return dense
-  count = jnp.nonzero(obs, size=arr.size + 1, fill_value=obs.size)[0]
-  if method == "max":
-    return count[dense]
-  if method == "min":
-    return count[dense - 1] + 1
-  if method == "average":
-    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
-  raise ValueError(f"unknown method '{method}'")
+  def _rankdata(a: Array) -> Array:
+    arr, sorter = lax.sort_key_val(a, jnp.arange(a.size))
+    inv = invert_permutation(sorter)
+
+    if method == "ordinal":
+      return (inv + 1).astype(out_dtype)
+    obs = jnp.concatenate([jnp.array([True]), arr[1:] != arr[:-1]])
+    dense = obs.cumsum()[inv]
+    if method == "dense":
+      return dense.astype(out_dtype)
+    count = jnp.nonzero(obs, size=arr.size + 1, fill_value=obs.size)[0].astype(out_dtype)
+    if method == "max":
+      return count[dense]
+    if method == "min":
+      return count[dense - 1] + 1
+    if method == "average":
+      return .5 * (count[dense] + count[dense - 1] + 1)
+    raise ValueError(f"unknown method '{method}'")
+
+  return lax.cond(jnp.any(jnp.isnan(a)),
+                  lambda a: jnp.full_like(a, jnp.nan, out_dtype),
+                  _rankdata, a)
 
 
 @api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])

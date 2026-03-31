@@ -2012,11 +2012,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       for axis in [None, *range(len(shape))
     ]],
     dtype=jtu.dtypes.integer + jtu.dtypes.floating,
-    method=['average', 'min', 'max', 'dense', 'ordinal']
+    method=['average', 'min', 'max', 'dense', 'ordinal'],
+    sampler=[jtu.rand_default, jtu.rand_some_nan],
   )
-  def testRankData(self, shape, dtype, axis, method):
+  def testRankData(self, shape, dtype, axis, method, sampler):
 
-    rng = jtu.rand_default(self.rng())
+    rng = sampler(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
     scipy_fun = partial(osp_stats.rankdata, method=method, axis=axis)
