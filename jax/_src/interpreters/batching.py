@@ -57,7 +57,7 @@ def to_elt(trace: BatchTrace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> E
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
   elif isinstance(spec, int) or spec is None:
-    spec = spec and canonicalize_axis(spec, len(np.shape(x)))
+    spec = None if spec is None else canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   elif isinstance(typeof(x), hijax.HiType):

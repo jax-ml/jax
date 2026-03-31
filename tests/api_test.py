@@ -3561,6 +3561,15 @@ class APITest(jtu.JaxTestCase):
         r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
       api.vmap(lambda x: x)({})
 
+  def test_vmap_scalar(self):
+    api.vmap(lambda x: x, in_axes=None, axis_size=1)(1.)
+    with self.assertRaisesRegex(
+        ValueError, "axis 0 is out of bounds for array of dimension 0"):
+      api.vmap(lambda x: x, in_axes=0, axis_size=1)(1.)
+    with self.assertRaisesRegex(
+        ValueError, "axis 1 is out of bounds for array of dimension 0"):
+      api.vmap(lambda x: x, in_axes=1, axis_size=1)(1.)
+
   def test_pmap_empty_arguments(self):
     with self.assertRaisesRegex(
         ValueError, "pmap requires at least one argument with a mapped axis."

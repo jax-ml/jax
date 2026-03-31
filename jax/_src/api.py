@@ -1295,8 +1295,8 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
     sz, = sizes
     return sz
   if not sizes:
-    msg = f"{name} must have at least one non-None value in in_axes"
-    raise ValueError(msg)
+    raise ValueError(f"{name} must have at least one non-None value in in_axes "
+                     "or axis_size must be specified")
 
   def _get_argument_type(x):
     try:
