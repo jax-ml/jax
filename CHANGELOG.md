@@ -49,6 +49,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     batched 1D solves with `b.ndim > 1`. In the future these will be treated as
     batched 2D solves.
 
+* Bug fixes:
+  * Fixed a bug that led to differing output between CPU and GPU for
+    non-symmetric multidimensional IRFFTs ({jax-issue}`#29325`).
+
 ## JAX 0.9.2 (March 18, 2026)
 
 * Changes:
