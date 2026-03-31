@@ -5292,8 +5292,24 @@ class ShardMapTest(jtu.JaxTestCase):
       fill_value = jax.lax.pcast(jnp.array(-1), "x", to="varying")
       return jnp.full_like(res, fill_value)
 
-    f()  # doesn't exist
-    jax.jit(f)()  # doesn't exist
+    f()  # doesn't crash
+    jax.jit(f)()  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mat_invarying(self, mesh):
+    arr = jax.device_put(np.arange(8), P())
+    self.assertEqual(jax.typeof(arr).mat.invarying(mesh), frozenset())
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def f(x):
+      am = get_abstract_mesh()
+      self.assertEqual(jax.typeof(x).mat.invarying(am), {'x'})
+      out = x * 2
+      self.assertEqual(jax.typeof(out).mat.invarying(am), {'x'})
+      return out
+
+    f(arr)  # doesn't crash
 
 
 class FunSpec(NamedTuple):

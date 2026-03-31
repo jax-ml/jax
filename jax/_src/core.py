@@ -2296,7 +2296,7 @@ class ManualAxisType:
     return not self.varying and not self.unreduced and not self.reduced
 
   def invarying(self, mesh) -> frozenset:
-    return frozenset(mesh.axis_names) - (
+    return frozenset(mesh.manual_axes) - (
         self.varying | self.unreduced | self.reduced)
 
   @property
