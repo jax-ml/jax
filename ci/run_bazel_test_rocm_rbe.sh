@@ -23,6 +23,22 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+# Source default JAXCI environment variables.
+source ci/envs/default.env
+
+# Clone XLA at HEAD if path to local XLA is not provided
+if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
+    export JAXCI_CLONE_MAIN_XLA=1
+fi
+
+# Set up the build environment.
+source "ci/utilities/setup_build_environment.sh"
+
+OVERRIDE_XLA_REPO=""
+if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+fi
+
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
@@ -85,6 +101,7 @@ done
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --config=rocm \
     --config=rocm_rbe_dynamic \
+    $OVERRIDE_XLA_REPO \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
