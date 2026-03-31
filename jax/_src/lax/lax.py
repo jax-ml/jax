@@ -4735,7 +4735,9 @@ ad.defbilinear(
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 
 def _div_transpose_rule(cotangent, x, y):
-  assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
+  assert ad.is_undefined_primal(x)
+  if ad.is_undefined_primal(y):
+    raise RuntimeError("nonlinear div can't be transposed")
   if type(cotangent) is ad_util.Zero:
     return [ad_util.Zero(x.aval), None]
   else:
