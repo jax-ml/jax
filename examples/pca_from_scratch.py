@@ -43,6 +43,10 @@ def pca(X: jnp.ndarray, n_components: int = 2):
         components: shape (n_components, n_features)
         explained_variance_ratio: shape (n_components,)
     """
+    if n_components > min(X.shape):
+        raise ValueError(
+            f"n_components={n_components} must be <= min(n_samples, n_features)={min(X.shape)}"
+        )
     mean = jnp.mean(X, axis=0)
     X_centered = X - mean
 
@@ -62,7 +66,7 @@ def pca(X: jnp.ndarray, n_components: int = 2):
     return X_projected, components, explained_variance_ratio
 
 # 2. Vectorizing over a batch of distinct datasets
-batched_pca = jit(vmap(pca, in_axes=(0, None)), static_argnames=['n_components'])
+batched_pca = vmap(pca, in_axes=(0, None))
 
 def main():
     print("--- JAX PCA Example ---")
