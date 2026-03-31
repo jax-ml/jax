@@ -2013,17 +2013,17 @@ def _compute_swizzle(
     )
 
   minor_tiling = tiling[np.argmin(strides[-len(tiling):])]
-  swizzle = minor_tiling * utils.bitwidth(ref_ty.element_type)
-  if swizzle % 8:
-    raise ValueError(f"Swizzle is not byte aligned, got: {swizzle} bits.")
-  swizzle //= 8
-  assert swizzle in (
-      mgpu.SwizzlingMode.k128ByteSwizzle,
-      mgpu.SwizzlingMode.k64ByteSwizzle,
-      mgpu.SwizzlingMode.k32ByteSwizzle,
-      mgpu.SwizzlingMode.kNoSwizzle,
-  )
-  return mgpu.SwizzlingMode(swizzle)
+  elem_bitwidth = utils.bitwidth(ref_ty.element_type)
+  tiling_bitwidth = minor_tiling * elem_bitwidth
+  if tiling_bitwidth % 8:
+    raise ValueError("Minor tiling dimension is not byte aligned. "
+                     f"Got {minor_tiling} elements of {elem_bitwidth} bits.")
+  tiling_bytewidth = tiling_bitwidth // 8
+  # Do not swizzle if the bytewidth of the minor tiling dimension does not
+  # exactly match a swizzle width.
+  if tiling_bytewidth in [128, 64, 32]:
+    return mgpu.SwizzlingMode(tiling_bytewidth)
+  return mgpu.SwizzlingMode.kNoSwizzle
 
 
 @dataclasses.dataclass(frozen=True)

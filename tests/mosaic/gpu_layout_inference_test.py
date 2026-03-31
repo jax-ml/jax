@@ -2067,6 +2067,20 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
+  def test_infer_transforms_allows_arbitrary_unswizzled_tilings(self):
+    ref_ty = ir.MemRefType.get((64, 512), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((16, 256)),
+        mgpu.dialect.SwizzleTransformAttr.get(16),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.with_transforms(ref, transforms)
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(ref.owner), [transforms]
+    )
+
   def test_infer_transforms_sets_default_empty_transforms_on_async_load(self):
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()
