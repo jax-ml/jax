@@ -498,3 +498,13 @@ class PGLEProfiler:
               "and then profiling a second run that has the "
               "JAX_COMPILATION_CACHE_EXPECT_PGLE option enabled.",
               RuntimeWarning)
+          
+
+import os
+import atexit
+
+_jax_profile_dir = os.environ.get("JAX_PROFILE")
+if _jax_profile_dir:
+    start_trace(_jax_profile_dir)
+    # Registra o stop_trace para rodar automaticamente quando o script do usuário terminar
+    atexit.register(stop_trace)
