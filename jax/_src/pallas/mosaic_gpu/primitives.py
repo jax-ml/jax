@@ -2265,7 +2265,7 @@ def _tcgen05_mma_lowering_wg(
     )
     if arrive:
       assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
-      mgpu.dialect.tcgen05_commit_arrive(  # pyrefly: ignore[missing-attribute]
+      mgpu.dialect.tcgen05_commit_arrive(
           barrier_ref.as_barrier_memref(), collective=collective
       )
   return []
@@ -2381,7 +2381,7 @@ def _tcgen05_commit_arrive_lowering_wg(
     collective = False
 
   with predicate_ctx:
-    mgpu.dialect.tcgen05_commit_arrive(  # pyrefly: ignore[missing-attribute]
+    mgpu.dialect.tcgen05_commit_arrive(
         barrier_ref.as_barrier_memref(), collective=collective
     )
   return []
@@ -4410,7 +4410,7 @@ def _multimem_store_lowering_rule(
           mgpu.warpgroup_barrier()
     else:
       mc_ref = multicast_ref(local_ref).ref
-      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)  # pyrefly: ignore[unexpected-keyword]
+      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)
     return ()
 
   multi_ref = multicast_ref(local_ref)
