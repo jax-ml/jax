@@ -73,7 +73,7 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 1
+        clone_main_xla: 0
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -93,7 +93,7 @@ jobs:
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
-      clone_main_xla: 1
+      clone_main_xla: 0
       upload_artifacts_to_gcs: true
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -209,7 +209,7 @@ jobs:
       build_jax: "false"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   run-bazel-test-cuda-py-import:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -236,7 +236,7 @@ jobs:
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   # run-pytest-tpu:
   #   # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
