@@ -2004,12 +2004,15 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
   x, = primals
   dx, = tangents
   q, r, *p = qr_p.bind(x, pivoting=pivoting, full_matrices=False, use_magma=use_magma)
-  *_, m, n = x.shape
+  *batch_dims, m, n = x.shape
   if m < n or (full_matrices and m != n):
     raise NotImplementedError(
       "Unimplemented case of QR decomposition derivative")
   if pivoting:
-    dx = dx[..., p[0]]
+    permute_fn = lambda dx, p: dx[..., p]
+    for _ in range(len(batch_dims)):
+      permute_fn = api.vmap(permute_fn)
+    dx = permute_fn(dx, p[0])
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = _H(q) @ dx_rinv
   qt_dx_rinv_lower = _tril(qt_dx_rinv, -1)
