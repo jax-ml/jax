@@ -2332,10 +2332,6 @@ class ShapedArray(AbstractValue):
   def mat(self):
     return self.manual_axis_type
 
-  @property
-  def vma(self):
-    return self.mat.varying
-
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
       shape = self.shape

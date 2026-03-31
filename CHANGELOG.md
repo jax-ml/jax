@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     PyTorch's bicubic resize ({jax-issue}`#15768`).
 
 * Breaking changes:
+  * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
+    `.manual_axis_type.varying` instead.
   * JAX CPU devices now report their names as `cpu:0`, `cpu:1`, etc. instead of
     `TFRT_CPU_0`, `TFRT_CPU_1`.
   * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
