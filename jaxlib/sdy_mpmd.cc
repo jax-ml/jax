@@ -56,9 +56,7 @@ limitations under the License.
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_mpmd_loaded_executable.h"
 #include "jaxlib/py_user_context.h"
-#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"  // IWYU pragma: keep; Needed for ValueOrThrow
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -70,6 +68,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/python/version.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -156,8 +155,12 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
     nb::object backend_py, MlirModule c_module, nb::sequence devices_py,
     const std::vector<nb::object> out_avals,
     std::optional<const std::vector<nb::object>> out_shardings,
-    const absl::flat_hash_map<std::string, nb::object>& xla_compile_options,
-    const absl::flat_hash_map<std::string, nb::handle>&
+    std::optional<const absl::flat_hash_map<std::string, nb::object>>&
+        xla_compile_options,
+    const std::optional<absl::flat_hash_map<
+        std::string, std::variant<std::string, bool, int64_t, double>>>&
+        ifrt_ir_compile_options,
+    const std::optional<absl::flat_hash_map<std::string, nb::handle>>&
         loaded_executable_bindings) {
   auto backend = nb::cast<jax::nb_class_ptr<jax::PyClient>>(backend_py);
   auto devices =
@@ -172,22 +175,39 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
   xla::ifrt::LoadedExecutableRef loaded_executable;
   auto compile_options = std::make_shared<absl::flat_hash_map<
       std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>();
-  for (const auto& [compile_key, atom_program_compile_options_py] :
-       xla_compile_options) {
-    const xla::CompileOptions* atom_program_compile_options =
-        nb::cast<const xla::CompileOptions*>(atom_program_compile_options_py);
-    compile_options->emplace(compile_key,
-                             std::make_unique<xla::ifrt::XlaCompileOptions>(
-                                 *atom_program_compile_options, device_list));
+  if (xla_compile_options.has_value()) {
+    for (const auto& [compile_key, atom_program_compile_options_py] :
+         *xla_compile_options) {
+      const xla::CompileOptions* atom_program_compile_options =
+          nb::cast<const xla::CompileOptions*>(atom_program_compile_options_py);
+      compile_options->emplace(compile_key,
+                               std::make_unique<xla::ifrt::XlaCompileOptions>(
+                                   *atom_program_compile_options, device_list));
+    }
   }
   absl::flat_hash_map<std::string, xla::ifrt::LoadedExecutableRef>
       loaded_exec_bindings;
-  for (const auto& [exec_symbol_name, py_exec] : loaded_executable_bindings) {
-    jax::PyLoadedExecutable* executable =
-        nb::cast<jax::PyLoadedExecutable*>(py_exec);
-    loaded_exec_bindings.emplace(exec_symbol_name,
-                                 executable->shared_ifrt_loaded_executable());
+  if (loaded_executable_bindings.has_value()) {
+    for (const auto& [exec_symbol_name, py_exec] :
+         *loaded_executable_bindings) {
+      jax::PyLoadedExecutable* executable =
+          nb::cast<jax::PyLoadedExecutable*>(py_exec);
+      loaded_exec_bindings.emplace(exec_symbol_name,
+                                   executable->shared_ifrt_loaded_executable());
+    }
   }
+
+  auto ifrt_compile_options = std::make_unique<xla::ifrt::IfrtIRCompileOptions>(
+      xla::ifrt::GetDeviceIds(device_list), std::move(loaded_exec_bindings),
+      compile_options);
+
+  if (ifrt_ir_compile_options.has_value()) {
+#if JAX_IFRT_VERSION_NUMBER >= 52
+    TF_RETURN_IF_ERROR(
+        ifrt_compile_options->SetOptionsFromMap(*ifrt_ir_compile_options));
+#endif
+  }
+
   {
     nb::gil_scoped_release gil_release;
     TF_ASSIGN_OR_RETURN(
@@ -195,9 +215,7 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
         client->GetDefaultCompiler()
             ->CompileAndLoad(
                 std::make_unique<xla::ifrt::IfrtIRProgram>(unwrap(c_module)),
-                std::make_unique<xla::ifrt::IfrtIRCompileOptions>(
-                    xla::ifrt::GetDeviceIds(device_list),
-                    std::move(loaded_exec_bindings), compile_options))
+                std::move(ifrt_compile_options))
             .Await());
   }
   if (!llvm::isa<xla::ifrt::MpmdLoadedExecutable>(loaded_executable.get())) {
@@ -401,7 +419,9 @@ NB_MODULE(_sdy_mpmd, m) {
   m.def("compile_mpmd", xla::ValueOrThrowWrapper(CompileMpmd),
         nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
         nb::arg("out_avals"), nb::arg("out_shardings"),
-        nb::arg("xla_compile_options"), nb::arg("loaded_executable_bindings"));
+        nb::arg("xla_compile_options").none() = std::nullopt,
+        nb::arg("ifrt_ir_compile_options").none() = std::nullopt,
+        nb::arg("loaded_executable_bindings").none() = std::nullopt);
 
   nb::class_<xla::ifrt::IfrtIrProgramMemoryStats>(m, "IfrtIrProgramMemoryStats")
       .def_ro("argument_size_in_bytes",
