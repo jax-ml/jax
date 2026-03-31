@@ -339,6 +339,8 @@ def _extract_layout_candidates_from_mma_tiling(
       return
 
   tiled_dimensions = v.key.shape[-2:]
+  # TODO(bchetioui): we can conjure additional tilings here if
+  # `allow_unswizzled` is true, but it is not clear which ones yet.
   for swizzle in (128, 64, 32):
     swizzle_elems = swizzle * 8 // mma_tiling.bitwidth
     tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
@@ -1556,7 +1558,9 @@ def _async_async_store_smem_to_tmem_constraint_system(
           assignments={
               destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
           },
-          constraints=[cs.IsValidMmaTiling(source_variable, bitwidth)],
+          constraints=[
+              cs.IsValidMmaTiling(source_variable, bitwidth, allow_unswizzled=True)
+          ],
       ),
       {source_variable: [source], destination_variable: [destination]},
   )

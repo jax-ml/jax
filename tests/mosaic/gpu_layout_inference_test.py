@@ -1119,6 +1119,30 @@ class LayoutInferenceTest(parameterized.TestCase):
     [in_transform] = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transform, expected_transforms)
 
+  def test_async_store_smem_to_tmem_allows_unswizzled_tiling(self):
+    shape = (128, 8)
+    dtype = ir.BF16Type.get()
+    dest_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
+    dest_layout = tcgen05.tmem_default_layout(packing=2)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 8)),
+        # TODO(bchetioui): get rid of the need to specify the swizzle here?
+        # Right now, layout inference will always introduce swizzling whenever
+        # possible.
+        mgpu.dialect.SwizzleTransformAttr.get(16),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      src = mgpu.dialect.with_transforms(src, transforms)
+      op = mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [dest_layout])
+
+    [in_transform] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transform, transforms)
+
   def test_async_store_sparse_metadata_smem_to_tmem_infers_expected_src_dest_layouts(
       self,
   ):

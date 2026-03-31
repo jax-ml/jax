@@ -524,9 +524,10 @@ class ConstraintSystemTest(parameterized.TestCase):
     layout = cs.SMEMTiling(lc.TileTransform((8, swizzle_elems)))
     self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
 
-  def test_tiling_is_valid_mma_tiling_does_not_hold_for_invalid_tiling(self):
+  @parameterized.parameters(False, True)
+  def test_tiling_is_valid_mma_tiling_holds_for_unswizzled_tiling_only_if_allowed(self, allow_unswizzled):
     layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
-    self.assertFalse(cs.IsValidMmaTiling(layout, 16).holds())
+    self.assertEqual(cs.IsValidMmaTiling(layout, 16, allow_unswizzled).holds(), allow_unswizzled)
 
   @parameterized.named_parameters(
       (

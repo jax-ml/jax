@@ -527,17 +527,23 @@ class IsValidMmaTiling:
 
   For both tcgen05.mma and wgmma, tiling is valid if it is of the form
   (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]}.
+      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
+  as support for unswizzled tilings is not yet supported.
+
+  If `allow_unswizzled` is True, then we additionally accept
+  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
   """
   expr: Expression
   bitwidth: int
+  allow_unswizzled: bool = False
 
   def holds(self) -> bool | None:
     match self.expr:
       case SMEMTiling(value=None):
         return False
       case SMEMTiling(value=lc.TileTransform(tiling=t)):
-        valid_tilings = {(8, s * 8 // self.bitwidth) for s in [32, 64, 128]}
+        swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
+        valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
         return t in valid_tilings
       case RegisterLayout() | TMEMLayout() as c:
         raise ValueError(f"Unexpected value {c} in IsValidMmaTiling constraint")
@@ -545,7 +551,7 @@ class IsValidMmaTiling:
         return None
 
   def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
+    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -628,11 +634,11 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       return dataclasses.replace(transfer, source=source_red, target=target_red)
-    case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
+    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsValidMmaTiling(expr_red, bitwidth)
+      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
