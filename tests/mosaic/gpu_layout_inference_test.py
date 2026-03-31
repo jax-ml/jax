@@ -1234,6 +1234,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_async_store_smem_to_tmem_rejects_incompatible_shape(self):
+    f16 = ir.F16Type.get()
+    shape = (128, 1)
+    dest_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.tmem())
+    src_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.smem())
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      mgpu.dialect.async_store_smem_to_tmem(src, dest)
+
+    with self.assertRaisesRegex(ValueError, "Cannot assign TMEM layout"):
+      mgpu.infer_layout(self.module)
+
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout
     # inference does not timeout on a Gelu kernel. This was previously the case,

@@ -1543,7 +1543,7 @@ def _async_load_tmem_constraint_system(
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemToTmemOp)
-def _async_async_store_smem_to_tmem_constraint_system(
+def _async_store_smem_to_tmem_constraint_system(
     ctx: DerivationContext,
     op: mgpu.AsyncStoreSmemToTmemOp,
 ) -> ConstraintSystemDerivationRuleResult:
@@ -1553,11 +1553,15 @@ def _async_async_store_smem_to_tmem_constraint_system(
   destination_variable = ctx.producer_ref(destination)
   bitwidth = utils.bitwidth(op.destination.type.element_type)
   packing = 32 // bitwidth
+  tmem_layout = tcgen05.tmem_default_layout(packing)
+  if not is_valid_tmem_layout_assignment(destination.shape, tmem_layout):
+    raise ValueError(
+        f"Cannot assign TMEM layout {tmem_layout} to a TMEM ref "
+        f"with shape {destination.shape}"
+    )
   return (
       cs.ConstraintSystem(
-          assignments={
-              destination_variable: cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
-          },
+          assignments={destination_variable: cs.TMEMLayout(tmem_layout)},
           constraints=[
               cs.IsValidMmaTiling(source_variable, bitwidth, allow_unswizzled=True)
           ],
