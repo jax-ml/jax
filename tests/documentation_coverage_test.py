@@ -67,7 +67,7 @@ UNDOCUMENTED_APIS = {
   'jax.numpy': ['bfloat16', 'bool', 'e', 'euler_gamma', 'float4_e2m1fn', 'float8_e3m4', 'float8_e4m3', 'float8_e4m3b11fnuz', 'float8_e4m3fn', 'float8_e4m3fnuz', 'float8_e5m2', 'float8_e5m2fnuz', 'float8_e8m0fnu', 'inf', 'int1', 'int2', 'int4', 'nan', 'newaxis', 'pi', 'uint1', 'uint2', 'uint4'],
   'jax.profiler': ['ProfileData', 'ProfileEvent', 'ProfileOptions', 'ProfilePlane', 'stop_server'],
   'jax.random': ['key_impl', 'random_gamma_p'],
-  'jax.scipy.special': ['bessel_jn', 'sph_harm_y'],
+  'jax.scipy.special': ['bessel_jn'],
   'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType'],
   'jax.stages': ['ArgInfo', 'CompilerOptions'],
   'jax.tree_util': ['DictKey', 'FlattenedIndexKey', 'GetAttrKey', 'PyTreeDef', 'SequenceKey', 'default_registry'],

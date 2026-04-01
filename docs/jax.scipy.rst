@@ -196,7 +196,7 @@ jax.scipy.special
    sici
    softmax
    spence
-   sph_harm
+   sph_harm_y
    xlog1py
    xlogy
    zeta

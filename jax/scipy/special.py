@@ -58,7 +58,6 @@ from jax._src.scipy.special import (
   sici as sici,
   softmax as softmax,
   spence as spence,
-  sph_harm as _deprecated_sph_harm,
   sph_harm_y as sph_harm_y,
   xlog1py as xlog1py,
   xlogy as xlogy,
@@ -79,10 +78,12 @@ _deprecations = {
         "jax.scipy.special.lpmn_values is deprecated; no replacement is planned.",
         _deprecated_lpmn_values,
     ),
-    # Added Jul 7 2025
+    # Deprecated in v0.7.0, removed in v0.10.0.
+    # TODO(jakevdp): remove this entry in v0.11.0.
     "sph_harm": (
-        "jax.scipy.special.sph_harm is deprecated; use sph_harm_y instead.",
-        _deprecated_sph_harm
+        "jax.scipy.special.sph_harm was deprecated in v0.7.0 and removed in"
+        " v0.10.0. Use jax.scipy.special.sph_harm_y instead.",
+        None
     )
 }
 
@@ -90,7 +91,6 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   lpmn = _deprecated_lpmn
   lpmn_values = _deprecated_lpmn_values
-  sph_harm = _deprecated_sph_harm
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

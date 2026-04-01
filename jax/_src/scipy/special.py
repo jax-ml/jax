@@ -24,7 +24,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import lax
@@ -1824,57 +1823,6 @@ def sph_harm_y(n: Array,
       'be statically specified to use `sph_harm` within JAX transformations.')
 
   return _sph_harm(n, m, theta, phi, n_max)
-
-
-def sph_harm(m: Array,
-             n: Array,
-             theta: Array,
-             phi: Array,
-             n_max: int | None = None) -> Array:
-  r"""Computes the spherical harmonics.
-
-  Note:
-    This function is deprecated, and :func:`~jax.scipy.special.sph_harm_y`
-    should be used instead, noting that the order of ``m`` and ``n`` are
-    reversed, and definitions of ``theta`` and ``phi`` are swapped.
-
-  The JAX version has one extra argument `n_max`, the maximum value in `n`.
-
-  The spherical harmonic of degree `n` and order `m` can be written as
-  :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \phi) * \exp(i m \theta)`,
-  where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
-  {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\phi` and
-  :math:`\theta` are the colatitude and longitude, respectively. :math:`N_n^m` is
-  chosen in the way that the spherical harmonics form a set of orthonormal basis
-  functions of :math:`L^2(S^2)`.
-
-  Args:
-    m: The order of the harmonic; must have `|m| <= n`. Return values for
-      `|m| > n` are undefined.
-    n: The degree of the harmonic; must have `n >= 0`. The standard notation for
-      degree in descriptions of spherical harmonics is `l (lower case L)`. We
-      use `n` here to be consistent with `scipy.special.sph_harm`. Return
-      values for `n < 0` are undefined.
-    theta: The azimuthal (longitudinal) coordinate; must be in [0, 2*pi].
-    phi: The polar (colatitudinal) coordinate; must be in [0, pi].
-    n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
-      maximum value of `n`, the results are clipped to `n_max`. For example,
-      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
-      actually returns
-      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
-  Returns:
-    A 1D array containing the spherical harmonics at (m, n, theta, phi).
-  """
-  # Added 2025-01-06.
-  # TODO(dfm): Remove after deprecation period.
-  deprecations.warn(
-      "jax-scipy-special-sph-harm",
-      ("jax.scipy.special.sph_harm is deprecated. Please use "
-       "jax.scipy.special.sph_harm_y instead, noting that the order of `m` and "
-       "`n` are reversed, and definitions of `theta` and `phi` are swapped."),
-      stacklevel=2,
-  )
-  return sph_harm_y(n, m, phi, theta, n_max=n_max)
 
 
 # exponential integrals
