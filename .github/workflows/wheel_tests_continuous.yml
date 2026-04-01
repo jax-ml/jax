@@ -37,7 +37,30 @@ permissions:
 on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
-  workflow_dispatch: # allows triggering the workflow run manually
+  workflow_dispatch:
+    inputs:
+      bazel-cuda-bisect:
+        description: 'Run the reduced CUDA cuBLASLt confirmation workflow instead of the full continuous matrix.'
+        type: choice
+        default: '1'
+        options:
+        - '0'
+        - '1'
+      bazel-cuda-bisect-runs-per-test:
+        description: 'Value passed to --runs_per_test for the reduced CUDA confirmation target.'
+        type: choice
+        default: '8'
+        options:
+        - '6'
+        - '8'
+        - '10'
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -45,6 +68,7 @@ concurrency:
 
 jobs:
   build-jax-artifact:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -56,6 +80,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -77,6 +102,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -100,7 +126,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -122,7 +148,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -163,6 +189,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -183,7 +210,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
@@ -215,7 +242,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -239,11 +266,56 @@ jobs:
       build_artifacts_with_rbe: "true"
       clone_main_xla: 1
 
+  run-bazel-cuda-bisect:
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1' }}
+    uses: ./.github/workflows/bazel_cuda.yml
+    strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - case-id: "head-default"
+              case-name: "Head baseline"
+              xla-commit: ""
+              xla-flags: ""
+              xla-cublaslt-default: "default"
+            - case-id: "head-flag-off"
+              case-name: "Head with XLA_FLAGS cuBLASLt off"
+              xla-commit: ""
+              xla-flags: "--xla_gpu_enable_cublaslt=false"
+              xla-cublaslt-default: "default"
+            - case-id: "head-source-off"
+              case-name: "Head with source default off"
+              xla-commit: ""
+              xla-flags: ""
+              xla-cublaslt-default: "off"
+    name: "Bazel CUDA cuBLASLt confirmation (${{ matrix.case-name }})"
+    with:
+      runner: "linux-x86-g2-48-l4-4gpu"
+      python: "3.11"
+      cuda-version: "13"
+      enable-x64: "1"
+      jaxlib-version: "head"
+      build_jaxlib: "wheel"
+      build_jax: "wheel"
+      write_to_bazel_remote_cache: "0"
+      run_tests_with_rbe: "false"
+      build_artifacts_with_rbe: "true"
+      clone_main_xla: "1"
+      xla-commit: ${{ matrix.xla-commit }}
+      xla-flags: ${{ matrix.xla-flags }}
+      xla-cublaslt-default: ${{ matrix.xla-cublaslt-default }}
+      multiaccelerator-bazel-targets: |
+        //tests:linalg_sharding_test_gpu
+      bazel-runs-per-test: ${{ github.event.inputs.bazel-cuda-bisect-runs-per-test }}
+      skip-single-accelerator-tests: "1"
+      nocache-test-results: "1"
+      halt-for-connection: ${{ github.event.inputs.halt-for-connection }}
+
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
@@ -271,7 +343,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -297,6 +369,7 @@ jobs:
       clone_main_xla: 1
 
   build-rocm-artifacts:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -327,7 +400,7 @@ jobs:
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/pytest_rocm.yml
     strategy:
@@ -349,7 +422,7 @@ jobs:
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
     strategy:
