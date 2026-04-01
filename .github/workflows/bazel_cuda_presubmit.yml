@@ -92,5 +92,6 @@ jobs:
       # NOTE: For debugging wheel test change build_jaxlib and build_jax to 'wheel'.
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
       build_jax: 'true'
-      run_multiaccelerator_tests: 'false'
+      run_tests_with_rbe: 'true'
+      build_artifacts_with_rbe: 'true'
       clone_main_xla: 1
