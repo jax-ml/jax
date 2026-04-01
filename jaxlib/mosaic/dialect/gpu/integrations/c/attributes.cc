@@ -22,6 +22,7 @@ limitations under the License.
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Support.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
@@ -36,20 +37,14 @@ bool mlirMosaicGpuIsATileTransformAttr(MlirAttribute attr) {
 MlirAttribute mlirMosaicGpuTileTransformAttrGet(MlirContext ctx,
                                                 int32_t* tiling,
                                                 int32_t tiling_size) {
-  return wrap(mosaic_gpu::TileTransformAttr::get(
-      unwrap(ctx), llvm::ArrayRef<int32_t>(tiling, tiling_size)));
+  mlir::DenseI32ArrayAttr tiling_attr = mlir::DenseI32ArrayAttr::get(
+      unwrap(ctx), llvm::ArrayRef<int32_t>(tiling, tiling_size));
+  return wrap(mosaic_gpu::TileTransformAttr::get(unwrap(ctx), tiling_attr));
 }
 
-int32_t mlirMosaicGpuTileTransformAttrGetTilingSize(MlirAttribute attr) {
-  return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
-      .getTiling()
-      .size();
-}
-
-int32_t mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr,
-                                                int32_t index) {
-  return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
-      .getTiling()[index];
+MlirAttribute mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr)).getTiling());
 }
 
 MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID() {
@@ -67,21 +62,15 @@ bool mlirMosaicGpuIsATransposeTransformAttr(MlirAttribute attr) {
 MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(MlirContext ctx,
                                                      int32_t* permutation,
                                                      int32_t permutation_size) {
-  return wrap(mosaic_gpu::TransposeTransformAttr::get(
-      unwrap(ctx), llvm::ArrayRef<int32_t>(permutation, permutation_size)));
+  mlir::DenseI32ArrayAttr permutation_attr = mlir::DenseI32ArrayAttr::get(
+      unwrap(ctx), llvm::ArrayRef<int32_t>(permutation, permutation_size));
+  return wrap(
+      mosaic_gpu::TransposeTransformAttr::get(unwrap(ctx), permutation_attr));
 }
-
-int32_t mlirMosaicGpuTransposeTransformAttrGetPermutationSize(
+MlirAttribute mlirMosaicGpuTransposeTransformAttrGetPermutation(
     MlirAttribute attr) {
-  return mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
-      .getPermutation()
-      .size();
-}
-
-int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr,
-                                                          int32_t index) {
-  return mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
-      .getPermutation()[index];
+  return wrap(mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
+                  .getPermutation());
 }
 
 MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID() {
