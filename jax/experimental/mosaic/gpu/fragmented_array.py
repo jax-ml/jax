@@ -797,7 +797,7 @@ class FragmentedArray:
               "Register array shape does not match the tiled layout"
           ) from None
         [vec_len] = self.registers.flat[0].type.shape
-        assert vec_len == self.layout.vector_length
+        assert vec_len == self.layout.vector_length  # pytype: disable=attribute-error
 
       case _:
         raise NotImplementedError
@@ -2878,7 +2878,7 @@ class FragmentedArray:
             _is_signed=self.is_signed,
         )
       case TiledLayout():
-        base_tile_shape = self.layout.base_tile_shape
+        base_tile_shape = self.layout.base_tile_shape  # pytype: disable=attribute-error
         assert base_tile_shape
         old_shape_suffix = self.shape[-len(base_tile_shape):]
         new_shape_suffix = shape[-len(base_tile_shape):]
