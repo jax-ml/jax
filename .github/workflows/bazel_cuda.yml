@@ -79,6 +79,34 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla-commit:
+        description: "Optional XLA commit to check out after cloning."
+        type: string
+        default: ""
+      bazel-targets:
+        description: "Optional newline-separated Bazel targets for single-accelerator tests."
+        type: string
+        default: ""
+      bazel-test-filter:
+        description: "Optional Bazel --test_filter value for single-accelerator tests."
+        type: string
+        default: ""
+      bazel-runs-per-test:
+        description: "Optional Bazel --runs_per_test value for single-accelerator tests."
+        type: string
+        default: ""
+      skip-multiaccelerator-tests:
+        description: "Skip the multi-accelerator test invocation."
+        type: string
+        default: "0"
+      nocache-test-results:
+        description: "Set --nocache_test_results for the single-accelerator test invocation."
+        type: string
+        default: "0"
+      local-test-jobs-override:
+        description: "Optional override for --local_test_jobs in the single-accelerator invocation."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -101,6 +129,13 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla-commit }}
+      JAXCI_BAZEL_TARGETS: ${{ inputs.bazel-targets }}
+      JAXCI_TEST_FILTER: ${{ inputs.bazel-test-filter }}
+      JAXCI_RUNS_PER_TEST: ${{ inputs.bazel-runs-per-test }}
+      JAXCI_SKIP_MULTIACCELERATOR_TESTS: ${{ inputs.skip-multiaccelerator-tests }}
+      JAXCI_NOCACHE_TEST_RESULTS: ${{ inputs.nocache-test-results }}
+      JAXCI_LOCAL_TEST_JOBS_OVERRIDE: ${{ inputs.local-test-jobs-override }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||

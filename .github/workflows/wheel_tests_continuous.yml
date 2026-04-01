@@ -37,7 +37,30 @@ permissions:
 on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
-  workflow_dispatch: # allows triggering the workflow run manually
+  workflow_dispatch:
+    inputs:
+      bazel-cuda-bisect:
+        description: 'Run the reduced CUDA head-wheel bisect workflow instead of the full continuous matrix.'
+        type: choice
+        default: '0'
+        options:
+        - '0'
+        - '1'
+      bazel-cuda-bisect-runs-per-test:
+        description: 'Value passed to --runs_per_test for the reduced CUDA bisect target.'
+        type: choice
+        default: '6'
+        options:
+        - '3'
+        - '6'
+        - '10'
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -45,6 +68,7 @@ concurrency:
 
 jobs:
   build-jax-artifact:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -56,6 +80,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -77,6 +102,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -100,7 +126,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -122,7 +148,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -163,6 +189,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -183,7 +210,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
@@ -214,7 +241,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -237,11 +264,164 @@ jobs:
       run_multiaccelerator_tests: "true"
       clone_main_xla: 1
 
+  build-bazel-cuda-bisect-artifacts:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1' }}
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - case-id: "xla-321278-good"
+              case-name: "XLA 321278 good anchor"
+              xla-commit: ""
+              artifact: "jax"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "0"
+            - case-id: "xla-321278-good"
+              case-name: "XLA 321278 good anchor"
+              xla-commit: "321278335f10ea33f231435dd52909af0e603d48"
+              artifact: "jaxlib"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-321278-good"
+              case-name: "XLA 321278 good anchor"
+              xla-commit: "321278335f10ea33f231435dd52909af0e603d48"
+              artifact: "jax-cuda-plugin"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-321278-good"
+              case-name: "XLA 321278 good anchor"
+              xla-commit: "321278335f10ea33f231435dd52909af0e603d48"
+              artifact: "jax-cuda-pjrt"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-d52dd-parent"
+              case-name: "XLA d52dd parent"
+              xla-commit: ""
+              artifact: "jax"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "0"
+            - case-id: "xla-d52dd-parent"
+              case-name: "XLA d52dd parent"
+              xla-commit: "d52dd115311928341201cf57bcb2dd048071f515"
+              artifact: "jaxlib"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-d52dd-parent"
+              case-name: "XLA d52dd parent"
+              xla-commit: "d52dd115311928341201cf57bcb2dd048071f515"
+              artifact: "jax-cuda-plugin"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-d52dd-parent"
+              case-name: "XLA d52dd parent"
+              xla-commit: "d52dd115311928341201cf57bcb2dd048071f515"
+              artifact: "jax-cuda-pjrt"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-43478-suspect"
+              case-name: "XLA 43478 suspect"
+              xla-commit: ""
+              artifact: "jax"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "0"
+            - case-id: "xla-43478-suspect"
+              case-name: "XLA 43478 suspect"
+              xla-commit: "43478b4c15cf4cab60e6ad9b4adff7ca6843fb82"
+              artifact: "jaxlib"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-43478-suspect"
+              case-name: "XLA 43478 suspect"
+              xla-commit: "43478b4c15cf4cab60e6ad9b4adff7ca6843fb82"
+              artifact: "jax-cuda-plugin"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+            - case-id: "xla-43478-suspect"
+              case-name: "XLA 43478 suspect"
+              xla-commit: "43478b4c15cf4cab60e6ad9b4adff7ca6843fb82"
+              artifact: "jax-cuda-pjrt"
+              runner: "linux-x86-n4-16"
+              python: "3.11"
+              cuda-version: "13"
+              clone-main-xla: "1"
+    name: "Build CUDA bisect artifacts (${{ matrix.case-name }}, ${{ matrix.artifact }})"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      clone_main_xla: ${{ matrix.clone-main-xla }}
+      xla-commit: ${{ matrix.xla-commit }}
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}/cuda-bisect/${{ matrix.case-id }}'
+
+  run-bazel-cuda-bisect:
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1' }}
+    needs: [build-bazel-cuda-bisect-artifacts]
+    uses: ./.github/workflows/bazel_cuda.yml
+    strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - case-id: "xla-321278-good"
+              case-name: "XLA 321278 good anchor"
+              xla-commit: "321278335f10ea33f231435dd52909af0e603d48"
+            - case-id: "xla-d52dd-parent"
+              case-name: "XLA d52dd parent"
+              xla-commit: "d52dd115311928341201cf57bcb2dd048071f515"
+            - case-id: "xla-43478-suspect"
+              case-name: "XLA 43478 suspect"
+              xla-commit: "43478b4c15cf4cab60e6ad9b4adff7ca6843fb82"
+    name: "Bazel CUDA bisect (${{ matrix.case-name }}, QR sharding)"
+    with:
+      runner: "linux-x86-g2-48-l4-4gpu"
+      python: "3.11"
+      cuda-version: "13"
+      enable-x64: "0"
+      jaxlib-version: "head"
+      gcs_download_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}/cuda-bisect/${{ matrix.case-id }}'
+      build_jaxlib: "false"
+      build_jax: "false"
+      write_to_bazel_remote_cache: "0"
+      run_multiaccelerator_tests: "true"
+      clone_main_xla: "1"
+      xla-commit: ${{ matrix.xla-commit }}
+      bazel-targets: |
+        //tests:linalg_sharding_test_gpu
+      bazel-test-filter: 'LinalgShardingTest.test_batch_axis_sharding_(jvp|vjp).*'
+      bazel-runs-per-test: ${{ github.event.inputs.bazel-cuda-bisect-runs-per-test }}
+      skip-multiaccelerator-tests: "1"
+      nocache-test-results: "1"
+      halt-for-connection: ${{ github.event.inputs.halt-for-connection }}
+
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
@@ -269,7 +449,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -295,6 +475,7 @@ jobs:
       clone_main_xla: 1
 
   build-rocm-artifacts:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -325,7 +506,7 @@ jobs:
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/pytest_rocm.yml
     strategy:
@@ -347,7 +528,7 @@ jobs:
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && github.event.inputs.bazel-cuda-bisect == '1') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
     strategy:

@@ -88,6 +88,46 @@ else
     TEST_STRATEGY=""
 fi
 
+single_accelerator_targets=(
+  //tests:gpu_tests
+  //tests:backend_independent_tests
+  //tests/pallas:gpu_tests
+  //tests/pallas:backend_independent_tests
+)
+multiaccelerator_targets=(
+  //tests:gpu_tests
+  //tests/pallas:gpu_tests
+  //tests/multiprocess:gpu_tests
+)
+
+if [[ -n "${JAXCI_BAZEL_TARGETS:-}" ]]; then
+  single_accelerator_targets=()
+  while IFS= read -r target; do
+    if [[ -n "${target}" ]]; then
+      single_accelerator_targets+=("${target}")
+    fi
+  done <<< "${JAXCI_BAZEL_TARGETS}"
+fi
+
+if [[ ${#single_accelerator_targets[@]} -eq 0 ]]; then
+  echo "No single-accelerator Bazel targets were provided."
+  exit 1
+fi
+
+single_accelerator_extra_args=()
+if [[ -n "${JAXCI_TEST_FILTER:-}" ]]; then
+  single_accelerator_extra_args+=(--test_filter="${JAXCI_TEST_FILTER}")
+fi
+if [[ -n "${JAXCI_RUNS_PER_TEST:-}" ]]; then
+  single_accelerator_extra_args+=(--runs_per_test="${JAXCI_RUNS_PER_TEST}")
+fi
+if [[ "${JAXCI_NOCACHE_TEST_RESULTS:-0}" == "1" ]]; then
+  single_accelerator_extra_args+=(--nocache_test_results)
+fi
+
+single_accelerator_local_test_jobs="${JAXCI_LOCAL_TEST_JOBS_OVERRIDE:-$num_test_jobs}"
+skip_multiaccelerator_tests="${JAXCI_SKIP_MULTIACCELERATOR_TESTS:-0}"
+
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
 set +e
@@ -110,49 +150,53 @@ bazel test --config=$TEST_CONFIG \
       --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
       --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
       $TEST_STRATEGY \
-      --local_test_jobs=$num_test_jobs \
+      --local_test_jobs=$single_accelerator_local_test_jobs \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
       --test_tag_filters=-multiaccelerator \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --action_env=NCCL_DEBUG=WARN \
+      "${single_accelerator_extra_args[@]}" \
       --color=yes \
       --config=cuda_libraries_from_stubs \
       --config=hermetic_cuda_umd \
-      //tests:gpu_tests //tests:backend_independent_tests \
-      //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
+      "${single_accelerator_targets[@]}"
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
 
-echo "Running multi-accelerator tests (without RBE)..."
-# Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
-bazel test --config=$TEST_CONFIG \
-      $CACHE_OPTION \
-      --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
-      --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
-      $OVERRIDE_XLA_REPO \
-      --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAX \
-      --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-      --test_output=errors \
-      $TEST_STRATEGY \
-      --local_test_jobs=8 \
-      --test_tag_filters=multiaccelerator \
-      --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-      --test_env=JAX_SKIP_SLOW_TESTS=true \
-      --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-      --action_env=NCCL_DEBUG=WARN \
-      --color=yes \
-      --config=cuda_libraries_from_stubs \
-      --config=hermetic_cuda_umd \
-      //tests:gpu_tests //tests/pallas:gpu_tests \
-      //tests/multiprocess:gpu_tests
+if [[ "$skip_multiaccelerator_tests" == "1" ]]; then
+  echo "Skipping multi-accelerator tests because JAXCI_SKIP_MULTIACCELERATOR_TESTS=1"
+  second_bazel_cmd_retval=0
+else
+  echo "Running multi-accelerator tests (without RBE)..."
+  # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
+  bazel test --config=$TEST_CONFIG \
+        $CACHE_OPTION \
+        --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+        --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+        --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
+        $OVERRIDE_XLA_REPO \
+        --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
+        --//jax:build_jax=$JAXCI_BUILD_JAX \
+        --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+        --test_output=errors \
+        $TEST_STRATEGY \
+        --local_test_jobs=8 \
+        --test_tag_filters=multiaccelerator \
+        --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+        --test_env=JAX_SKIP_SLOW_TESTS=true \
+        --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+        --action_env=NCCL_DEBUG=WARN \
+        --color=yes \
+        --config=cuda_libraries_from_stubs \
+        --config=hermetic_cuda_umd \
+        "${multiaccelerator_targets[@]}"
 
-# Store the return value of the second bazel command.
-second_bazel_cmd_retval=$?
+  # Store the return value of the second bazel command.
+  second_bazel_cmd_retval=$?
+fi
 
 ci/utilities/collect_bazel_test_xmls.sh test-artifacts
 
