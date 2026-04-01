@@ -2401,6 +2401,18 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertLen(e2.invars, 2)   # res and cotangent inputs
     self.assertEqual(sum(e1.outvars[0] is v for v in e2.invars), 1)
 
+  def test_res_forwarding_optimization_2(self):
+    mesh = jtu.create_mesh((4,), ('i',))
+
+    @shard_map(mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.lax.exp(x), jax.lax.exp(x)
+    policy = jax.ad_checkpoint.checkpoint_policies.everything_saveable
+    g = jax.remat(lambda x: f(x)[1].sum(), policy=policy)
+
+    x = jnp.arange(16.)
+    jax.grad(g)(x)
+
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization_complex(self, jit, remat):
     # like the above test, but a different function `f`
