@@ -353,7 +353,7 @@ partitioned over devices. The compiler inserts communication operations as
 needed. For example:
 
 ```{code-cell}
-x = jax.random.normal(jax.random.key(0), (8192, 8192),
+x = jax.random.normal(jax.random.key(0), (8, 4),
                       out_sharding=jax.P('X', 'Y'))
 print(jax.typeof(x))
 ```
