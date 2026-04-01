@@ -237,7 +237,7 @@ absl::StatusOr<void*> FindMagmaSymbol(const char name[]) {
 
 // magma geqp3_gpu
 
-template <ffi::DataType DataType>
+template <ffi::DataType DataType, typename IntType>
 class PivotingQrFactorizationHost {
   using RealType = ffi::NativeType<ffi::ToReal(DataType)>;
   using ValueType = ffi::NativeType<DataType>;
@@ -252,11 +252,11 @@ class PivotingQrFactorizationHost {
                      ffi::Result<ffi::AnyBuffer> x_out,
                      ffi::Result<ffi::AnyBuffer> jpvt_out,
                      ffi::Result<ffi::AnyBuffer> tau) {
-    FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
-    FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+    FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<IntType>(rows));
+    FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<IntType>(cols));
     auto min_dim = std::min(m, n);
 
-    FFI_ASSIGN_OR_RETURN(int lwork, lwork(m, n));
+    FFI_ASSIGN_OR_RETURN(IntType lwork, lwork(m, n));
     auto work = AllocateScratchMemory<DataType>(lwork);
 
     constexpr bool is_complex_dtype = ffi::IsComplexType<DataType>();
@@ -268,24 +268,49 @@ class PivotingQrFactorizationHost {
     auto x_host = HostBuffer<ValueType>(x.element_count());
     FFI_RETURN_IF_ERROR_STATUS(
         x_host.CopyFromDevice(stream, x.typed_data<ValueType>()));
-    auto jpvt_host = HostBuffer<int>(jpvt.element_count());
+    auto jpvt_host = HostBuffer<int32_t>(jpvt.element_count());
     FFI_RETURN_IF_ERROR_STATUS(
-        jpvt_host.CopyFromDevice(stream, jpvt.typed_data<int>()));
+        jpvt_host.CopyFromDevice(stream, jpvt.typed_data<int32_t>()));
     auto tau_host = HostBuffer<ValueType>(batch * min_dim);
-    auto info_host = HostBuffer<int>(batch);
+    auto info_host = HostBuffer<int32_t>(batch);
+
+    std::unique_ptr<IntType[]> jpvt_tmp;
+    if constexpr (!std::is_same_v<IntType, int32_t>) {
+      jpvt_tmp = std::make_unique<IntType[]>(n);
+    }
 
     for (int64_t i = 0; i < batch; ++i) {
-      if constexpr (is_complex_dtype) {
-        PivotingQrFactorization<DataType>::fn(
-            &m, &n, x_host.get() + i * m * n, &m, jpvt_host.get() + i * n,
-            tau_host.get() + i * min_dim, work.get(), &lwork, rwork.get(),
-            info_host.get() + i);
+      IntType info_v;
+      if constexpr (std::is_same_v<IntType, int32_t>) {
+        if constexpr (is_complex_dtype) {
+          PivotingQrFactorization<DataType, IntType>::fn(
+              &m, &n, x_host.get() + i * m * n, &m, jpvt_host.get() + i * n,
+              tau_host.get() + i * min_dim, work.get(), &lwork, rwork.get(),
+              &info_v);
+        } else {
+          PivotingQrFactorization<DataType, IntType>::fn(
+              &m, &n, x_host.get() + i * m * n, &m, jpvt_host.get() + i * n,
+              tau_host.get() + i * min_dim, work.get(), &lwork, &info_v);
+        }
       } else {
-        PivotingQrFactorization<DataType>::fn(
-            &m, &n, x_host.get() + i * m * n, &m, jpvt_host.get() + i * n,
-            tau_host.get() + i * min_dim, work.get(), &lwork,
-            info_host.get() + i);
+        for (int64_t j = 0; j < n; ++j) {
+          jpvt_tmp[j] = static_cast<IntType>(jpvt_host.get()[i * n + j]);
+        }
+        if constexpr (is_complex_dtype) {
+          PivotingQrFactorization<DataType, IntType>::fn(
+              &m, &n, x_host.get() + i * m * n, &m, jpvt_tmp.get(),
+              tau_host.get() + i * min_dim, work.get(), &lwork, rwork.get(),
+              &info_v);
+        } else {
+          PivotingQrFactorization<DataType, IntType>::fn(
+              &m, &n, x_host.get() + i * m * n, &m, jpvt_tmp.get(),
+              tau_host.get() + i * min_dim, work.get(), &lwork, &info_v);
+        }
+        for (int64_t j = 0; j < n; ++j) {
+          jpvt_host.get()[i * n + j] = static_cast<int32_t>(jpvt_tmp[j]);
+        }
       }
+      info_host.get()[i] = static_cast<int32_t>(info_v);
     }
 
     FFI_RETURN_IF_ERROR_STATUS(
@@ -299,9 +324,10 @@ class PivotingQrFactorizationHost {
   }
 
  private:
-  absl::StatusOr<int> lwork(int m, int n) {
-    int64_t lwork = PivotingQrFactorization<DataType>::GetWorkspaceSize(m, n);
-    return MaybeCastNoOverflow<int>(lwork);
+  absl::StatusOr<IntType> lwork(IntType m, IntType n) {
+    int64_t lwork =
+        PivotingQrFactorization<DataType, IntType>::GetWorkspaceSize(m, n);
+    return MaybeCastNoOverflow<IntType>(lwork);
   }
 };
 
@@ -311,11 +337,12 @@ class PivotingQrFactorizationMagma {
   using ValueType = ffi::NativeType<DataType>;
   using Fn = std::conditional_t<
       ffi::IsComplexType<DataType>(),
-      int(int m, int n, ValueType* dA, int ldda, int* jpvt, ValueType* tau,
-          ValueType* dwork, int lwork, RealType* rwork, int* info),
-      int(int m, int n, RealType* dA, int ldda, int* jpvt, RealType* tau,
-          RealType* dwork, int lwork, int* info)>;
-  using BlockSizeFn = int(int m, int n);
+      int32_t(int32_t m, int32_t n, ValueType* dA, int32_t ldda, int32_t* jpvt,
+              ValueType* tau, ValueType* dwork, int32_t lwork, RealType* rwork,
+              int32_t* info),
+      int32_t(int32_t m, int32_t n, RealType* dA, int32_t ldda, int32_t* jpvt,
+              RealType* tau, RealType* dwork, int32_t lwork, int32_t* info)>;
+  using BlockSizeFn = int32_t(int32_t m, int32_t n);
 
  public:
   explicit PivotingQrFactorizationMagma() = default;
@@ -327,11 +354,11 @@ class PivotingQrFactorizationMagma {
                      ffi::Result<ffi::AnyBuffer> x_out,
                      ffi::Result<ffi::AnyBuffer> jpvt_out,
                      ffi::Result<ffi::AnyBuffer> tau) {
-    FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
-    FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+    FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int32_t>(rows));
+    FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int32_t>(cols));
     auto min_dim = std::min(m, n);
 
-    FFI_ASSIGN_OR_RETURN(int lwork, lwork(m, n));
+    FFI_ASSIGN_OR_RETURN(int32_t lwork, lwork(m, n));
     FFI_ASSIGN_OR_RETURN(auto work,
                          AllocateWorkspace<ValueType>(scratch, lwork, "geqp3"));
 
@@ -350,10 +377,10 @@ class PivotingQrFactorizationMagma {
           JAX_AS_STATUS(gpuMemcpyAsync(x_out_data, x_data, x.size_bytes(),
                                        gpuMemcpyDeviceToDevice, stream)));
     }
-    auto jpvt_host = HostBuffer<int>(jpvt.element_count());
+    auto jpvt_host = HostBuffer<int32_t>(jpvt.element_count());
     FFI_RETURN_IF_ERROR_STATUS(
-        jpvt_host.CopyFromDevice(stream, jpvt.typed_data<int>()));
-    auto info_host = HostBuffer<int>(batch);
+        jpvt_host.CopyFromDevice(stream, jpvt.typed_data<int32_t>()));
+    auto info_host = HostBuffer<int32_t>(batch);
 
     // TODO: do we need to wrap with synchronise due to non-stream safety.
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
@@ -368,7 +395,7 @@ class PivotingQrFactorizationMagma {
     }
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     FFI_RETURN_IF_ERROR_STATUS(
-        jpvt_host.CopyToDevice(stream, jpvt_out->typed_data<int>()));
+        jpvt_host.CopyToDevice(stream, jpvt_out->typed_data<int32_t>()));
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     return ffi::Error::Success();
   }
@@ -376,7 +403,7 @@ class PivotingQrFactorizationMagma {
  private:
   Fn* fn_ = nullptr;
 
-  absl::StatusOr<int> lwork(int m, int n) {
+  absl::StatusOr<int32_t> lwork(int32_t m, int32_t n) {
     // `{c,d,s,z}_geqp3_gpu` do not support a workspace query, but we can call
     // the expert API instead.
     auto maybe_ptr = FindMagmaSymbol(MagmaGeqp3<DataType>::name);
@@ -385,17 +412,17 @@ class PivotingQrFactorizationMagma {
 
     auto maybe_expert_ptr = FindMagmaSymbol(MagmaGeqp3<DataType>::expert_name);
     if (!maybe_expert_ptr.ok()) return maybe_expert_ptr.status();
-    using ExpertFn =
-        int(int m, int n, ValueType* dA, int ldda, int* jpvt, ValueType* tau,
-            void* host_work, int* lwork_host, void* device_work,
-            int* lwork_device, int* info, void* queue);
+    using ExpertFn = int32_t(int32_t m, int32_t n, ValueType* dA, int32_t ldda,
+                             int32_t* jpvt, ValueType* tau, void* host_work,
+                             int32_t* lwork_host, void* device_work,
+                             int32_t* lwork_device, int32_t* info, void* queue);
     auto* expert_fn = reinterpret_cast<ExpertFn*>(*maybe_expert_ptr);
 
-    int lwork_host = -1;
-    int lwork_device = -1;
-    int info = 0;
-    expert_fn(m, n, nullptr, std::max(1, m), nullptr, nullptr, nullptr,
-              &lwork_host, nullptr, &lwork_device, &info, nullptr);
+    int32_t lwork_host = -1;
+    int32_t lwork_device = -1;
+    int32_t info = 0;
+    expert_fn(m, n, nullptr, std::max(1, static_cast<int>(m)), nullptr, nullptr,
+              nullptr, &lwork_host, nullptr, &lwork_device, &info, nullptr);
     if (info != 0) {
       return absl::InternalError(absl::StrFormat(
           "MAGMA expert geqp3 workspace query failed with info=%d", info));
@@ -435,7 +462,12 @@ ffi::Error PivotingQrFactorizationDispatch(
         return PivotingQrFactorizationMagma<ffi::F32>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       } else {
-        return PivotingQrFactorizationHost<ffi::F32>().compute(
+        if (PivotingQrFactorization<ffi::F32, int64_t>::fn != nullptr) {
+          return PivotingQrFactorizationHost<ffi::F32, int64_t>().compute(
+              batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out,
+              tau);
+        }
+        return PivotingQrFactorizationHost<ffi::F32, int32_t>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       }
     case ffi::F64:
@@ -443,7 +475,12 @@ ffi::Error PivotingQrFactorizationDispatch(
         return PivotingQrFactorizationMagma<ffi::F64>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       } else {
-        return PivotingQrFactorizationHost<ffi::F64>().compute(
+        if (PivotingQrFactorization<ffi::F64, int64_t>::fn != nullptr) {
+          return PivotingQrFactorizationHost<ffi::F64, int64_t>().compute(
+              batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out,
+              tau);
+        }
+        return PivotingQrFactorizationHost<ffi::F64, int32_t>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       }
     case ffi::C64:
@@ -451,7 +488,12 @@ ffi::Error PivotingQrFactorizationDispatch(
         return PivotingQrFactorizationMagma<ffi::C64>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       } else {
-        return PivotingQrFactorizationHost<ffi::C64>().compute(
+        if (PivotingQrFactorization<ffi::C64, int64_t>::fn != nullptr) {
+          return PivotingQrFactorizationHost<ffi::C64, int64_t>().compute(
+              batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out,
+              tau);
+        }
+        return PivotingQrFactorizationHost<ffi::C64, int32_t>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       }
     case ffi::C128:
@@ -459,7 +501,12 @@ ffi::Error PivotingQrFactorizationDispatch(
         return PivotingQrFactorizationMagma<ffi::C128>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       } else {
-        return PivotingQrFactorizationHost<ffi::C128>().compute(
+        if (PivotingQrFactorization<ffi::C128, int64_t>::fn != nullptr) {
+          return PivotingQrFactorizationHost<ffi::C128, int64_t>().compute(
+              batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out,
+              tau);
+        }
+        return PivotingQrFactorizationHost<ffi::C128, int32_t>().compute(
             batch, rows, cols, stream, scratch, x, jpvt, x_out, jpvt_out, tau);
       }
     default:
@@ -482,7 +529,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(kGeqp3, PivotingQrFactorizationDispatch,
 
 // Real-valued eigendecomposition
 
-template <ffi::DataType DataType>
+template <ffi::DataType DataType, typename IntType>
 class EigRealHost {
   using Real = ffi::NativeType<DataType>;
 
@@ -490,38 +537,41 @@ class EigRealHost {
   explicit EigRealHost() = default;
   EigRealHost(EigRealHost&&) = default;
 
-  absl::StatusOr<int> lwork(int n, bool left, bool right) {
+  absl::StatusOr<IntType> lwork(IntType n, bool left, bool right) {
     n_ = n;
     jobvl_ = left ? 'V' : 'N';
     jobvr_ = right ? 'V' : 'N';
-    int64_t lwork = EigenvalueDecomposition<DataType>::GetWorkspaceSize(
-        n, static_cast<eig::ComputationMode>(jobvl_),
-        static_cast<eig::ComputationMode>(jobvr_));
-    return MaybeCastNoOverflow<int>(lwork);
+    int64_t lwork =
+        EigenvalueDecomposition<DataType, IntType>::GetWorkspaceSize(
+            n, static_cast<eig::ComputationMode>(jobvl_),
+            static_cast<eig::ComputationMode>(jobvr_));
+    return MaybeCastNoOverflow<IntType>(lwork);
   }
 
   void compute(Real* x, Real* wr, Real* wi, Real* vl, Real* vr, Real* work,
-               int lwork, int* info) {
-    EigenvalueDecomposition<DataType>::fn(&jobvl_, &jobvr_, &n_, x, &n_, wr, wi,
-                                          vl, &n_, vr, &n_, work, &lwork, info);
+               IntType lwork, IntType* info) {
+    EigenvalueDecomposition<DataType, IntType>::fn(&jobvl_, &jobvr_, &n_, x,
+                                                   &n_, wr, wi, vl, &n_, vr,
+                                                   &n_, work, &lwork, info);
   }
 
  private:
-  int n_;
+  IntType n_;
   char jobvl_, jobvr_;
 };
 
 template <ffi::DataType DataType>
 class EigRealMagma {
   using Real = ffi::NativeType<DataType>;
-  using Fn = int(magma_vec_t, magma_vec_t, int, Real*, int, Real*, Real*, Real*,
-                 int, Real*, int, Real*, int, int*);
+  using Fn = int32_t(magma_vec_t, magma_vec_t, int32_t, Real*, int32_t, Real*,
+                     Real*, Real*, int32_t, Real*, int32_t, Real*, int32_t,
+                     int32_t*);
 
  public:
   explicit EigRealMagma() = default;
   EigRealMagma(EigRealMagma&&) = default;
 
-  absl::StatusOr<int> lwork(int n, bool left, bool right) {
+  absl::StatusOr<int32_t> lwork(int32_t n, bool left, bool right) {
     n_ = n;
     jobvl_ = left ? MagmaVec : MagmaNoVec;
     jobvr_ = right ? MagmaVec : MagmaNoVec;
@@ -530,25 +580,25 @@ class EigRealMagma {
     if (!maybe_ptr.ok()) return maybe_ptr.status();
     fn_ = reinterpret_cast<Fn*>(*maybe_ptr);
 
-    int query_info;
+    int32_t query_info;
     Real query_host;
     fn_(jobvl_, jobvr_, n, nullptr, n, nullptr, nullptr, nullptr, n, nullptr, n,
         &query_host, -1, &query_info);
-    return static_cast<int>(query_host);
+    return static_cast<int32_t>(query_host);
   }
 
   void compute(Real* x, Real* wr, Real* wi, Real* vl, Real* vr, Real* work,
-               int lwork, int* info) {
+               int32_t lwork, int32_t* info) {
     fn_(jobvl_, jobvr_, n_, x, n_, wr, wi, vl, n_, vr, n_, work, lwork, info);
   }
 
  private:
-  int n_;
+  int32_t n_;
   magma_vec_t jobvl_, jobvr_;
   Fn* fn_ = nullptr;
 };
 
-template <ffi::DataType DataType, typename Impl>
+template <ffi::DataType DataType, typename IntType, typename Impl>
 ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
                    bool left, bool right, ffi::AnyBuffer x,
                    ffi::Result<ffi::AnyBuffer> wr,
@@ -567,10 +617,10 @@ ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
   auto wi_host = HostBuffer<Real>(batch * cols);
   auto vl_host = HostBuffer<Complex>(batch * cols * cols);
   auto vr_host = HostBuffer<Complex>(batch * cols * cols);
-  auto info_host = HostBuffer<int>(batch);
+  auto info_host = HostBuffer<IntType>(batch);
 
-  FFI_ASSIGN_OR_RETURN(int n, MaybeCastNoOverflow<int>(cols));
-  FFI_ASSIGN_OR_RETURN(int lwork, impl.lwork(n, left, right));
+  FFI_ASSIGN_OR_RETURN(IntType n, MaybeCastNoOverflow<IntType>(cols));
+  FFI_ASSIGN_OR_RETURN(IntType lwork, impl.lwork(n, left, right));
   auto work_host = AllocateScratchMemory<DataType>(lwork);
   auto work_left = AllocateScratchMemory<DataType>(cols * cols);
   auto work_right = AllocateScratchMemory<DataType>(cols * cols);
@@ -602,10 +652,16 @@ ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
     }
   }
 
+  auto info_host_out = HostBuffer<int32_t>(batch);
+  for (int64_t i = 0; i < batch; ++i) {
+    info_host_out.get()[i] = static_cast<int32_t>(info_host.get()[i]);
+  }
   FFI_RETURN_IF_ERROR_STATUS(
       wr_host.CopyToDevice(stream, wr->typed_data<Real>()));
   FFI_RETURN_IF_ERROR_STATUS(
       wi_host.CopyToDevice(stream, wi->typed_data<Real>()));
+  FFI_RETURN_IF_ERROR_STATUS(
+      info_host_out.CopyToDevice(stream, info->typed_data()));
   if (left) {
     FFI_RETURN_IF_ERROR_STATUS(
         vl_host.CopyToDevice(stream, vl->typed_data<Complex>()));
@@ -614,8 +670,6 @@ ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
     FFI_RETURN_IF_ERROR_STATUS(
         vr_host.CopyToDevice(stream, vr->typed_data<Complex>()));
   }
-  FFI_RETURN_IF_ERROR_STATUS(
-      info_host.CopyToDevice(stream, info->typed_data()));
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
   return ffi::Error::Success();
@@ -662,19 +716,33 @@ ffi::Error EigRealDispatch(gpuStream_t stream, std::string_view magma,
   switch (dataType) {
     case ffi::F32:
       if (use_magma) {
-        return EigReal<ffi::F32>(EigRealMagma<ffi::F32>(), batch, cols, stream,
-                                 left, right, x, wr, wi, vl, vr, info);
+        return EigReal<ffi::F32, int32_t>(EigRealMagma<ffi::F32>(), batch, cols,
+                                          stream, left, right, x, wr, wi, vl,
+                                          vr, info);
       } else {
-        return EigReal<ffi::F32>(EigRealHost<ffi::F32>(), batch, cols, stream,
-                                 left, right, x, wr, wi, vl, vr, info);
+        if (EigenvalueDecomposition<ffi::F32, int64_t>::fn != nullptr) {
+          return EigReal<ffi::F32, int64_t>(EigRealHost<ffi::F32, int64_t>(),
+                                            batch, cols, stream, left, right, x,
+                                            wr, wi, vl, vr, info);
+        }
+        return EigReal<ffi::F32, int32_t>(EigRealHost<ffi::F32, int32_t>(),
+                                          batch, cols, stream, left, right, x,
+                                          wr, wi, vl, vr, info);
       }
     case ffi::F64:
       if (use_magma) {
-        return EigReal<ffi::F64>(EigRealMagma<ffi::F64>(), batch, cols, stream,
-                                 left, right, x, wr, wi, vl, vr, info);
+        return EigReal<ffi::F64, int32_t>(EigRealMagma<ffi::F64>(), batch, cols,
+                                          stream, left, right, x, wr, wi, vl,
+                                          vr, info);
       } else {
-        return EigReal<ffi::F64>(EigRealHost<ffi::F64>(), batch, cols, stream,
-                                 left, right, x, wr, wi, vl, vr, info);
+        if (EigenvalueDecomposition<ffi::F64, int64_t>::fn != nullptr) {
+          return EigReal<ffi::F64, int64_t>(EigRealHost<ffi::F64, int64_t>(),
+                                            batch, cols, stream, left, right, x,
+                                            wr, wi, vl, vr, info);
+        }
+        return EigReal<ffi::F64, int32_t>(EigRealHost<ffi::F64, int32_t>(),
+                                          batch, cols, stream, left, right, x,
+                                          wr, wi, vl, vr, info);
       }
     default:
       return ffi::Error::InvalidArgument(absl::StrFormat(
@@ -698,7 +766,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(kEigReal, EigRealDispatch,
 
 // Complex-valued eigendecomposition
 
-template <ffi::DataType DataType>
+template <ffi::DataType DataType, typename IntType>
 class EigCompHost {
   using Real = ffi::NativeType<ffi::ToReal(DataType)>;
   using Complex = ffi::NativeType<DataType>;
@@ -707,25 +775,26 @@ class EigCompHost {
   explicit EigCompHost() = default;
   EigCompHost(EigCompHost&&) = default;
 
-  absl::StatusOr<int> lwork(int n, bool left, bool right) {
+  absl::StatusOr<IntType> lwork(IntType n, bool left, bool right) {
     n_ = n;
     jobvl_ = left ? 'V' : 'N';
     jobvr_ = right ? 'V' : 'N';
-    int64_t lwork = EigenvalueDecompositionComplex<DataType>::GetWorkspaceSize(
-        n, static_cast<eig::ComputationMode>(jobvl_),
-        static_cast<eig::ComputationMode>(jobvr_));
-    return MaybeCastNoOverflow<int>(lwork);
+    int64_t lwork =
+        EigenvalueDecompositionComplex<DataType, IntType>::GetWorkspaceSize(
+            n, static_cast<eig::ComputationMode>(jobvl_),
+            static_cast<eig::ComputationMode>(jobvr_));
+    return MaybeCastNoOverflow<IntType>(lwork);
   }
 
   void compute(Complex* x, Complex* w, Complex* vl, Complex* vr, Complex* work,
-               int lwork, Real* rwork, int* info) {
-    EigenvalueDecompositionComplex<DataType>::fn(&jobvl_, &jobvr_, &n_, x, &n_,
-                                                 w, vl, &n_, vr, &n_, work,
-                                                 &lwork, rwork, info);
+               IntType lwork, Real* rwork, IntType* info) {
+    EigenvalueDecompositionComplex<DataType, IntType>::fn(
+        &jobvl_, &jobvr_, &n_, x, &n_, w, vl, &n_, vr, &n_, work, &lwork, rwork,
+        info);
   }
 
  private:
-  int n_;
+  IntType n_;
   char jobvl_, jobvr_;
 };
 
@@ -733,14 +802,15 @@ template <ffi::DataType DataType>
 class EigCompMagma {
   using Real = ffi::NativeType<ffi::ToReal(DataType)>;
   using Complex = ffi::NativeType<DataType>;
-  using Fn = int(magma_vec_t, magma_vec_t, int, Complex*, int, Complex*,
-                 Complex*, int, Complex*, int, Complex*, int, Real*, int*);
+  using Fn = int32_t(magma_vec_t, magma_vec_t, int32_t, Complex*, int32_t,
+                     Complex*, Complex*, int32_t, Complex*, int32_t, Complex*,
+                     int32_t, Real*, int32_t*);
 
  public:
   explicit EigCompMagma() = default;
   EigCompMagma(EigCompMagma&&) = default;
 
-  absl::StatusOr<int> lwork(int n, bool left, bool right) {
+  absl::StatusOr<int32_t> lwork(int32_t n, bool left, bool right) {
     n_ = n;
     jobvl_ = left ? MagmaVec : MagmaNoVec;
     jobvr_ = right ? MagmaVec : MagmaNoVec;
@@ -752,26 +822,26 @@ class EigCompMagma {
     if (!maybe_ptr.ok()) return maybe_ptr.status();
     fn_ = reinterpret_cast<Fn*>(*maybe_ptr);
 
-    int query_info;
+    int32_t query_info;
     Complex query_host;
     fn_(jobvl_, jobvr_, n_, nullptr, lda_, nullptr, nullptr, ldvl_, nullptr,
         ldvr_, &query_host, -1, nullptr, &query_info);
-    return static_cast<int>(query_host.real());
+    return static_cast<int32_t>(query_host.real());
   }
 
   void compute(Complex* x, Complex* w, Complex* vl, Complex* vr, Complex* work,
-               int lwork, Real* rwork, int* info) {
+               int32_t lwork, Real* rwork, int32_t* info) {
     fn_(jobvl_, jobvr_, n_, x, lda_, w, vl, ldvl_, vr, ldvr_, work, lwork,
         rwork, info);
   }
 
  private:
-  int n_, lda_, ldvl_, ldvr_;
+  int32_t n_, lda_, ldvl_, ldvr_;
   magma_vec_t jobvl_, jobvr_;
   Fn* fn_ = nullptr;
 };
 
-template <ffi::DataType DataType, typename Impl>
+template <ffi::DataType DataType, typename IntType, typename Impl>
 ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
                    bool left, bool right, ffi::AnyBuffer x,
                    ffi::Result<ffi::AnyBuffer> w,
@@ -787,10 +857,10 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
   auto w_host = HostBuffer<Complex>(batch * cols);
   auto vl_host = HostBuffer<Complex>(batch * cols * cols);
   auto vr_host = HostBuffer<Complex>(batch * cols * cols);
-  auto info_host = HostBuffer<int>(batch);
+  auto info_host = HostBuffer<IntType>(batch);
 
-  FFI_ASSIGN_OR_RETURN(int n, MaybeCastNoOverflow<int>(cols));
-  FFI_ASSIGN_OR_RETURN(int lwork, impl.lwork(n, left, right));
+  FFI_ASSIGN_OR_RETURN(IntType n, MaybeCastNoOverflow<IntType>(cols));
+  FFI_ASSIGN_OR_RETURN(IntType lwork, impl.lwork(n, left, right));
   auto work_host = AllocateScratchMemory<DataType>(lwork);
   auto rwork_host =
       AllocateScratchMemory<ffi::ToReal(DataType)>(2 * cols * cols);
@@ -824,8 +894,12 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
     FFI_RETURN_IF_ERROR_STATUS(
         vr_host.CopyToDevice(stream, vr->typed_data<Complex>()));
   }
+  auto info_host_out = HostBuffer<int32_t>(batch);
+  for (int64_t i = 0; i < batch; ++i) {
+    info_host_out.get()[i] = static_cast<int32_t>(info_host.get()[i]);
+  }
   FFI_RETURN_IF_ERROR_STATUS(
-      info_host.CopyToDevice(stream, info->typed_data()));
+      info_host_out.CopyToDevice(stream, info->typed_data()));
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
   return ffi::Error::Success();
@@ -869,19 +943,33 @@ ffi::Error EigCompDispatch(gpuStream_t stream, std::string_view magma,
   switch (dataType) {
     case ffi::C64:
       if (use_magma) {
-        return EigComp<ffi::C64>(EigCompMagma<ffi::C64>(), batch, cols, stream,
-                                 left, right, x, w, vl, vr, info);
+        return EigComp<ffi::C64, int32_t>(EigCompMagma<ffi::C64>(), batch, cols,
+                                          stream, left, right, x, w, vl, vr,
+                                          info);
       } else {
-        return EigComp<ffi::C64>(EigCompHost<ffi::C64>(), batch, cols, stream,
-                                 left, right, x, w, vl, vr, info);
+        if (EigenvalueDecompositionComplex<ffi::C64, int64_t>::fn != nullptr) {
+          return EigComp<ffi::C64, int64_t>(EigCompHost<ffi::C64, int64_t>(),
+                                            batch, cols, stream, left, right, x,
+                                            w, vl, vr, info);
+        }
+        return EigComp<ffi::C64, int32_t>(EigCompHost<ffi::C64, int32_t>(),
+                                          batch, cols, stream, left, right, x,
+                                          w, vl, vr, info);
       }
     case ffi::C128:
       if (use_magma) {
-        return EigComp<ffi::C128>(EigCompMagma<ffi::C128>(), batch, cols,
-                                  stream, left, right, x, w, vl, vr, info);
+        return EigComp<ffi::C128, int32_t>(EigCompMagma<ffi::C128>(), batch,
+                                           cols, stream, left, right, x, w, vl,
+                                           vr, info);
       } else {
-        return EigComp<ffi::C128>(EigCompHost<ffi::C128>(), batch, cols, stream,
-                                  left, right, x, w, vl, vr, info);
+        if (EigenvalueDecompositionComplex<ffi::C128, int64_t>::fn != nullptr) {
+          return EigComp<ffi::C128, int64_t>(EigCompHost<ffi::C128, int64_t>(),
+                                             batch, cols, stream, left, right,
+                                             x, w, vl, vr, info);
+        }
+        return EigComp<ffi::C128, int32_t>(EigCompHost<ffi::C128, int32_t>(),
+                                           batch, cols, stream, left, right, x,
+                                           w, vl, vr, info);
       }
     default:
       return ffi::Error::InvalidArgument(absl::StrFormat(
