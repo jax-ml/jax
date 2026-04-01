@@ -117,7 +117,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: jax-ml/jax
+          fetch-depth: 0
           persist-credentials: false
+      - name: Checkout specific commit
+        run: |
+          git config --global --add safe.directory '*'
+          git checkout 590ed66e69e4b0d072b87494e52df5eff5801f3f
       - name: Download JAX CUDA wheels
         if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-cuda-wheels
