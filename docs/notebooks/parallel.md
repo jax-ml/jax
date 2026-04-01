@@ -310,15 +310,15 @@ We also call this mode "sharding in types".
 
 In terms of the printed representation, the type language is roughly:
 
-```{raw-cell}
+```
  <array_type> ::= <dtype>[<size_and_sharding>, ...]
  <size_and_sharding> ::= <size> | <size>@<MeshAxisName>
 ```
 
 Where
- * The mesh axis names in scope are those from `jax.typeof(x).sharding.mesh`
- * Each mesh axis name must be of Explicit axis type
- * Each mesh axis name can be mentioned at most once in an array type
+ * The MeshAxisName in scope are those from `jax.typeof(x).sharding.mesh`
+ * Each MeshAxisName must be of Explicit axis type
+ * Each MeshAxisName can be mentioned at most once in an array type
 
 These shardings associated with JAX-level types propagate through operations.
 For example:
