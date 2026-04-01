@@ -77,6 +77,7 @@ class ModuleContext:
   program_ids: Sequence[ir.Value]
   traceback_caches: mlir.TracebackCaches = dataclasses.field(repr=False)
   platform: str
+  compute_capability: int | None
 
 
 @dataclasses.dataclass
@@ -304,7 +305,8 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Squeezed, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    platform: str
+    platform: str,
+    compute_capability: int | None,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -353,7 +355,11 @@ def lower_jaxpr_to_triton_module(
       ]
       ctx = ModuleContext(
           mlir.sanitize_name(debug_info.func_name),
-          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
+          grid_mapping,
+          local_program_ids,
+          mlir.TracebackCaches(),
+          platform,
+          compute_capability,
       )
       block_infos = [
           BlockInfo(
@@ -1614,17 +1620,37 @@ def _cast(
     src: ir.Value,
     src_type: jax.typing.DTypeLike,
     dst_type: jax.typing.DTypeLike,
+    *,
+    compute_capability: int | None = None,
 ) -> ir.Value:
   return _ir_cast(
       src,
       _dtype_to_ir_type(dst_type),
       signed=jnp.issubdtype(src_type, jnp.signedinteger),
       dst_signed=jnp.issubdtype(dst_type, jnp.signedinteger),
+      compute_capability=compute_capability,
   )
 
 
-def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
-             signed: bool, dst_signed: bool = False) -> ir.Value:
+def _is_float8_e4m3fn_cast_supported(compute_capability: int | None) -> bool:
+  return compute_capability is None or compute_capability >= 89
+
+
+_UNSUPPORTED_CAST_DTYPES = (
+    (ir.Float8E4M3FNType, "float8_e4m3fn", _is_float8_e4m3fn_cast_supported),
+    # TODO(slebedev): Check the CUDA version and raise conditionally.
+    (ir.Float8E4M3FNUZType, "float8_e4m3fnuz", lambda _: False),
+)
+
+
+def _ir_cast(
+    src: ir.Value,
+    dst_type: ir.Type,
+    *,
+    signed: bool,
+    dst_signed: bool = False,
+    compute_capability: int | None = None,
+) -> ir.Value:
   if isinstance(src.type, ir.RankedTensorType) and not isinstance(
       dst_type, ir.RankedTensorType
   ):
@@ -1639,11 +1665,14 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
 
   src_element_type = _element_type(src.type)
   dst_element_type = _element_type(dst_type)
-  if isinstance(src_element_type, ir.Float8E4M3FNUZType) or isinstance(
-      dst_element_type, ir.Float8E4M3FNUZType
-  ):
-    # TODO(slebedev): Check the CUDA version and raise conditionally.
-    raise NotImplementedError("cannot cast from or to float8_e4m3fnuz")
+
+  for dtype, dtype_name, is_supported in _UNSUPPORTED_CAST_DTYPES:
+    if isinstance(src_element_type, dtype):
+      if not is_supported(compute_capability):
+        raise NotImplementedError(f"cannot cast from `{dtype_name}`")
+    if isinstance(dst_element_type, dtype):
+      if not is_supported(compute_capability):
+        raise NotImplementedError(f"cannot cast to `{dtype_name}`")
 
   if isinstance(src_element_type, (ir.F16Type, ir.BF16Type)) and not isinstance(
       dst_element_type, ir.F32Type
@@ -1701,7 +1730,8 @@ def _convert_element_type_lowering_rule(
   x = _ensure_ir_value(x, x_aval)
   if new_dtype == x_aval.dtype:
     return x
-  return _cast(x, x_aval.dtype, new_dtype)
+  cc = ctx.context.compute_capability
+  return _cast(x, x_aval.dtype, new_dtype, compute_capability=cc)
 
 
 @register_lowering(lax.select_n_p)
