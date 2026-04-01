@@ -50,6 +50,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
@@ -206,7 +207,9 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
-ir_type_handlers[core.AbstractTodo] = lambda x: _array_ir_types(x.inner_aval)
+if jaxlib_extension_version >= 427:
+  # pyrefly: ignore[missing-attribute]
+  ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
 
 # This is a backwards compatibility shim for external users of jax.mlir apis.
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
