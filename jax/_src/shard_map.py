@@ -1831,8 +1831,10 @@ def _partial_eval_jaxpr_custom_rule(
         pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
   num_out_primals = len(jaxpr_known.outvars) - num_res
   in_fwd = pe._jaxpr_forwarding(jaxpr_known)[num_out_primals:]
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   out_vars, res_vars = split_list(jaxpr_known.outvars, [num_out_primals])
-  idx_map = {id(v): i for i, v in enumerate(out_vars)}
+  idx_map = {id(v): i for i, (v, b) in enumerate(zip(out_vars, out_binders_known))
+             if not isinstance(b, core.DropVar)}
   out_fwd = [idx_map.get(id(v)) for v in res_vars]
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   mesh = eqn.params['mesh']
@@ -1844,7 +1846,6 @@ def _partial_eval_jaxpr_custom_rule(
   jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)
   jaxpr_staged = core.remove_named_axis_effects(jaxpr_staged, mesh.axis_names)
   ins_known, _ = partition_list(unks_in, eqn.invars)
-  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   nv = core.gensym()
