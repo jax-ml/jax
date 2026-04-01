@@ -1227,6 +1227,16 @@ log_checkpoint_residuals = bool_state(
           'partially evaluated (e.g. for autodiff), printing what residuals '
           'are saved.'))
 
+scan3 = bool_state(
+    name='jax_scan3',
+    default=False,
+    upgrade=True,
+    help='If True, embrace the future of loops.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
 custom_vjp3 = bool_state(
     name='jax_custom_vjp3',
     default=False,
