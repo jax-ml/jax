@@ -79,6 +79,78 @@ class SwizzleTransformAttr(ir.Attribute):
   @property
   def swizzle(self) -> int: ...
 
+class WGSplatFragLayoutAttr(ir.Attribute):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(
+      shape: ir.DenseI64ArrayAttr, context: ir.Context | None = None
+  ) -> WGSplatFragLayoutAttr:
+    """Creates a WGSplatFragLayoutAttr with the given shape."""
+
+  @property
+  def shape(self) -> ir.DenseI64ArrayAttr: ...
+
+class WGStridedFragLayoutAttr(ir.Attribute):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(
+      shape: ir.DenseI64ArrayAttr,
+      vector_size: int,
+      context: ir.Context | None = None,
+  ) -> WGStridedFragLayoutAttr:
+    """Creates a WGStridedFragLayoutAttr."""
+
+  @property
+  def shape(self) -> ir.DenseI64ArrayAttr: ...
+  @property
+  def vector_size(self) -> int: ...
+
+class ReplicatedAttr(ir.Attribute):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(times: int, context: ir.Context | None = None) -> ReplicatedAttr:
+    """Creates a ReplicatedAttr."""
+
+  @property
+  def times(self) -> int: ...
+
+class TiledLayoutAttr(ir.Attribute):
+  @staticmethod
+  def isinstance(other_attribute: ir.Attribute) -> bool: ...
+  def __repr__(self) -> str: ...
+  @staticmethod
+  def get_static_typeid() -> ir.TypeID: ...
+  @staticmethod
+  def get(
+      tiling: ir.ArrayAttr,
+      warp_dims: ir.ArrayAttr,
+      lane_dims: ir.ArrayAttr,
+      vector_dim: int,
+      context: ir.Context | None = None,
+  ) -> TiledLayoutAttr:
+    """Creates a TiledLayoutAttr."""
+
+  @property
+  def tiling(self) -> ir.ArrayAttr: ...
+  @property
+  def warp_dims(self) -> ir.ArrayAttr: ...
+  @property
+  def lane_dims(self) -> ir.ArrayAttr: ...
+  @property
+  def vector_dim(self) -> int: ...
+
 class CopyPartitionAttrInterface(ir.Attribute):
   @staticmethod
   def isinstance(other_attribute: ir.Attribute) -> bool: ...

@@ -61,7 +61,7 @@ def MosaicGPU_Barrier : MosaicGPU_Type<"Barrier", "barrier", [MemRefElementTypeI
     (`<` `orders_tensor_core` `=` $orders_tensor_core^ `>`)?
   }];
 }
-
+ 
 def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;
 
 def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",

@@ -441,7 +441,8 @@ def _retry_on_failure(transfer: _Transfer, optimized: bool | None) -> Any:
 def _vector_load_op_lowering_rule(
     _: LoweringContext, op: mgpu.VectorLoadOp
 ) -> Sequence[ir.Value]:
-  (out_layout_attr,) = inference_utils.out_layouts(op)
+  out_layout_attr, = inference_utils.out_layouts(op)
+  out_layout = layouts_lib.from_layout_attr(out_layout_attr)
 
   element_type = ir.VectorType(op.result.type).element_type
   is_signed = _default_is_signed(element_type)
@@ -451,28 +452,24 @@ def _vector_load_op_lowering_rule(
   ) -> ir.Value:
     return fragmented_array_to_ir(fragmented_array, op.result.type)
 
-  if layouts_lib.is_strided_fragmented_layout(out_layout_attr):
-    strided_layout = layouts_lib.from_strided_fragmented_layout_attr(
-        out_layout_attr
-    )
+  if isinstance(out_layout, fa.WGStridedFragLayout):
     # TODO(bchetioui): Process transforms.
     fragmented_array = fa.FragmentedArray.load_strided(
         op.source,
         is_signed=is_signed,
-        vec_size=strided_layout.vec_size,
+        vec_size=out_layout.vec_size,
     )
     return [_fragmented_array_to_ir(fragmented_array)]
 
-  if not layouts_lib.is_tiled_layout(out_layout_attr):
+  if not isinstance(out_layout, fa.TiledLayout):
     raise ValueError(f"{op} has an unsupported layout: {out_layout_attr}")
 
   optimized = op.optimized.value if op.optimized is not None else None
-  layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
   ref_ty = ir.MemRefType(op.source.type)
   if ref_ty.memory_space is None:  # GMEM
     fragmented_array = fa.FragmentedArray.load_untiled(
         op.source,
-        layout=layout,
+        layout=out_layout,
         is_signed=is_signed,
         optimized=bool(optimized),
     )
@@ -495,7 +492,7 @@ def _vector_load_op_lowering_rule(
           transformed_ref,
           swizzle,
           is_signed=is_signed,
-          layout=layout,
+          layout=out_layout,
           optimized=optimized,
       )
 
@@ -505,7 +502,7 @@ def _vector_load_op_lowering_rule(
     def load_untiled(optimized: bool) -> fa.FragmentedArray:
       return fa.FragmentedArray.load_untiled(
           op.source,
-          layout=layout,
+          layout=out_layout,
           is_signed=is_signed,
           optimized=optimized,
       )
@@ -513,6 +510,7 @@ def _vector_load_op_lowering_rule(
     fragmented_array = _retry_on_failure(load_untiled, optimized)
 
   return [_fragmented_array_to_ir(fragmented_array)]
+
 
 @_register_lowering(mgpu.VectorStoreOp)
 def _vector_store_op_lowering_rule(
@@ -2198,7 +2196,8 @@ def _async_load_tmem_op_lowering_rule(
   in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
   tmem_ref = _tmem_ref_from_ir(op.source, in_layout_attr)
   out_layout_attr = inference_utils.out_layouts(op)[0]
-  out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
+  out_layout = layouts_lib.from_layout_attr(out_layout_attr)
+  assert isinstance(out_layout, fa.TiledLayout)
   is_signed = _default_is_signed(ir.MemRefType(op.source.type).element_type)
   arr = tmem_ref.load(out_layout, is_signed)
   return [fragmented_array_to_ir(arr, op.result.type)]

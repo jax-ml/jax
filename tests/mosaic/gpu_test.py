@@ -5696,9 +5696,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       if is_transposed(dst_layout):
         dst_ref = utils.memref_transpose(dst_ref, (1, 0))
       src_reg = mgpu_dialect.vector_load(src_ref)
-      src_layout_attr = layouts.to_tiled_layout_attr(src_layout)
+      src_layout_attr = layouts.to_layout_attr(src_layout)
       src_reg = mgpu_dialect.layout_cast(src_reg, src_layout_attr)
-      dst_layout_attr = layouts.to_tiled_layout_attr(dst_layout)
+      dst_layout_attr = layouts.to_layout_attr(dst_layout)
       dst_reg = mgpu_dialect.layout_cast(src_reg, dst_layout_attr)
       mgpu_dialect.vector_store(dst_reg, dst_ref)
 

@@ -863,17 +863,19 @@ ir.MLIRError,
       mgpu.dialect.warp_map(operands=[scalar, ref])
     self.assertTrue(self.module.operation.verify())
 
-  def test_tiled_layout_attr_parsing(self):
+  def test_layout_to_and_from_attr(self):
     with ir.InsertionPoint(self.module.body):
       for layout in (
           mgpu.WGMMA_LAYOUT,
           mgpu.WGMMA_ROW_LAYOUT,
           mgpu.WGMMA_COL_LAYOUT,
           mgpu.WGMMA_TRANSPOSED_LAYOUT,
+          mgpu.WGSplatFragLayout(shape=(64, 64)),
+          mgpu.WGStridedFragLayout(shape=(64, 64), vec_size=1),
       ):
-        attr = layouts.to_tiled_layout_attr(layout)
-        parsed_layout = layouts.from_tiled_layout_attr(attr)
-        self.assertEqual(layout, parsed_layout)
+        attr = layouts.to_layout_attr(layout)
+        new_layout = layouts.from_layout_attr(attr)
+        self.assertEqual(layout, new_layout)
 
   def test_broadcast_in_dim_ok(self):
     with ir.InsertionPoint(self.module.body):

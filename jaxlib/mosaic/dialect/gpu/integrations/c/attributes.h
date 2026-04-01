@@ -70,6 +70,78 @@ mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuSwizzleTransformAttrGetTypeID();
 
 //===----------------------------------------------------------------------===//
+// WGSplatFragLayoutAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsAWGSplatFragLayoutAttr(
+    MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuWGSplatFragLayoutAttrGetTypeID(void);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuWGSplatFragLayoutAttrGet(MlirContext ctx, MlirAttribute shape);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuWGSplatFragLayoutAttrGetShape(MlirAttribute attr);
+
+//===----------------------------------------------------------------------===//
+// WGStridedFragLayoutAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsAWGStridedFragLayoutAttr(
+    MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID
+mlirMosaicGpuWGStridedFragLayoutAttrGetTypeID(void);
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuWGStridedFragLayoutAttrGet(
+    MlirContext ctx, MlirAttribute shape, int32_t vector_size);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuWGStridedFragLayoutAttrGetShape(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuWGStridedFragLayoutAttrGetVectorSize(MlirAttribute attr);
+
+//===----------------------------------------------------------------------===//
+// ReplicatedAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsAReplicatedAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuReplicatedAttrGetTypeID(void);
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuReplicatedAttrGet(MlirContext ctx,
+                                                                int32_t times);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuReplicatedAttrGetTimes(MlirAttribute attr);
+
+//===----------------------------------------------------------------------===//
+// TiledLayoutAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATiledLayoutAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuTiledLayoutAttrGetTypeID(void);
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTiledLayoutAttrGet(
+    MlirContext ctx, MlirAttribute tiling, MlirAttribute warp_dims,
+    MlirAttribute lane_dims, int32_t vector_dim);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuTiledLayoutAttrGetTiling(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuTiledLayoutAttrGetWarpDims(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuTiledLayoutAttrGetLaneDims(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuTiledLayoutAttrGetVectorDim(MlirAttribute attr);
+
+//===----------------------------------------------------------------------===//
 // CopyPartitionAttrInterface
 //===----------------------------------------------------------------------===//
 

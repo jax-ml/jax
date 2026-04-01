@@ -101,6 +101,121 @@ MlirTypeID mlirMosaicGpuSwizzleTransformAttrGetTypeID() {
 }
 
 //===----------------------------------------------------------------------===//
+// WGSplatFragLayoutAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsAWGSplatFragLayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::WGSplatFragLayoutAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuWGSplatFragLayoutAttrGet(MlirContext ctx,
+                                                    MlirAttribute shape) {
+  return wrap(mosaic_gpu::WGSplatFragLayoutAttr::get(
+      unwrap(ctx), mlir::cast<mlir::DenseI64ArrayAttr>(unwrap(shape))));
+}
+
+MlirTypeID mlirMosaicGpuWGSplatFragLayoutAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::WGSplatFragLayoutAttr::getTypeID());
+}
+
+MlirAttribute mlirMosaicGpuWGSplatFragLayoutAttrGetShape(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::WGSplatFragLayoutAttr>(unwrap(attr)).getShape());
+}
+
+//===----------------------------------------------------------------------===//
+// WGStridedFragLayoutAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsAWGStridedFragLayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::WGStridedFragLayoutAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuWGStridedFragLayoutAttrGet(MlirContext ctx,
+                                                      MlirAttribute shape,
+                                                      int32_t vector_size) {
+  return wrap(mosaic_gpu::WGStridedFragLayoutAttr::get(
+      unwrap(ctx), mlir::cast<mlir::DenseI64ArrayAttr>(unwrap(shape)),
+      vector_size));
+}
+
+MlirTypeID mlirMosaicGpuWGStridedFragLayoutAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::WGStridedFragLayoutAttr::getTypeID());
+}
+
+MlirAttribute mlirMosaicGpuWGStridedFragLayoutAttrGetShape(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::WGStridedFragLayoutAttr>(unwrap(attr)).getShape());
+}
+
+int32_t mlirMosaicGpuWGStridedFragLayoutAttrGetVectorSize(MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::WGStridedFragLayoutAttr>(unwrap(attr))
+      .getVectorSize();
+}
+
+//===----------------------------------------------------------------------===//
+// ReplicatedAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsAReplicatedAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::ReplicatedAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuReplicatedAttrGet(MlirContext ctx, int32_t times) {
+  return wrap(mosaic_gpu::ReplicatedAttr::get(unwrap(ctx), times));
+}
+
+MlirTypeID mlirMosaicGpuReplicatedAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::ReplicatedAttr::getTypeID());
+}
+
+int32_t mlirMosaicGpuReplicatedAttrGetTimes(MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::ReplicatedAttr>(unwrap(attr)).getTimes();
+}
+
+//===----------------------------------------------------------------------===//
+// TiledLayoutAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsATiledLayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::TiledLayoutAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuTiledLayoutAttrGet(MlirContext ctx,
+                                              MlirAttribute tiling,
+                                              MlirAttribute warp_dims,
+                                              MlirAttribute lane_dims,
+                                              int32_t vector_dim) {
+  return wrap(mosaic_gpu::TiledLayoutAttr::get(
+      unwrap(ctx), mlir::cast<mlir::ArrayAttr>(unwrap(tiling)),
+      mlir::cast<mlir::ArrayAttr>(unwrap(warp_dims)),
+      mlir::cast<mlir::ArrayAttr>(unwrap(lane_dims)), vector_dim));
+}
+
+MlirTypeID mlirMosaicGpuTiledLayoutAttrGetTypeID(void) {
+  return wrap(mosaic_gpu::TiledLayoutAttr::getTypeID());
+}
+
+MlirAttribute mlirMosaicGpuTiledLayoutAttrGetTiling(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::TiledLayoutAttr>(unwrap(attr)).getTiling());
+}
+
+MlirAttribute mlirMosaicGpuTiledLayoutAttrGetWarpDims(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::TiledLayoutAttr>(unwrap(attr)).getWarpDims());
+}
+
+MlirAttribute mlirMosaicGpuTiledLayoutAttrGetLaneDims(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::TiledLayoutAttr>(unwrap(attr)).getLaneDims());
+}
+
+int32_t mlirMosaicGpuTiledLayoutAttrGetVectorDim(MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::TiledLayoutAttr>(unwrap(attr)).getVectorDim();
+}
+
+//===----------------------------------------------------------------------===//
 // CopyPartitionAttrInterface
 //===----------------------------------------------------------------------===//
 
