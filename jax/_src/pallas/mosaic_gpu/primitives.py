@@ -2277,17 +2277,18 @@ tcgen05_commit_arrive_p.multiple_results = True
 
 def tcgen05_commit_arrive(barrier: _Ref,
                           collective_axis: str | None = None):
-  """Tracks completion of a preceding ``tcgen05_mma`` call.
+  """Tracks completion of all preceding ``tcgen05_mma`` and ``async_copy_smem_to_tmem`` calls.
 
   Args:
     barrier: Barrier Ref for synchronizing with the tensor core. Must have
       orders_tensor_core set to True.
     collective_axis: The name of the cluster axis along which the
-      MMA was performed if it was collective. The cluster axis should have a
-      size of exactly 2, and must be on the minormost cluster axis.
+      operations were performed if it was collective. The cluster axis should
+      have a size of exactly 2, and must be on the minormost cluster axis.
 
   See also:
-    :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
+    - :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
+    - :func:`jax.experimental.pallas.mosaic_gpu.async_copy_smem_to_tmem`
   """
   if isinstance(barrier, pallas_core.TransformedRef):
     barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
