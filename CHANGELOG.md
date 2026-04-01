@@ -19,6 +19,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added `ResizeMethod.CUBIC_PYTORCH` to {func}`jax.image.resize` to match
     PyTorch's bicubic resize ({jax-issue}`#15768`).
+  * We now support differentiation of {func}`jax.lax.linalg.qr` for wide
+    matrices and when `full_matrices` is `True`.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
