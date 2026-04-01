@@ -1301,7 +1301,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(1, 2, None)
   def test_subcore_parallel(self, num_subcores):
-    if self.USE_TC_TILING and num_subcores in (2, None):
+    if self.USE_TC_TILING and num_subcores in (2, None) and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
 
     if num_subcores is None:
@@ -1330,7 +1330,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_smem_vmem_store_literals(self):
-    if self.USE_TC_TILING:
+    if self.USE_TC_TILING and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
 
     num_subcores = self.sc_info.num_subcores
@@ -1597,7 +1597,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_barrier_via_mesh(self):
-    if self.USE_TC_TILING:
+    if self.USE_TC_TILING and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
 
     mesh = plsc.VectorSubcoreMesh(
@@ -2040,7 +2040,7 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_sliced_copy(self):
-    if self.USE_TC_TILING:
+    if self.USE_TC_TILING and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
 
     x = jnp.arange(self.sc_info.num_cores * self.num_lanes).reshape(
@@ -2246,7 +2246,7 @@ class MpmdMapTest(PallasSCTest):
 class PipelineTest(PallasSCTest):
 
   def test_basic(self):
-    if self.USE_TC_TILING:
+    if self.USE_TC_TILING and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
 
     if self.num_lanes != 8:
