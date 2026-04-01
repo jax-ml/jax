@@ -207,35 +207,69 @@ def _rocm_wheels_repository_impl(repository_ctx):
     jaxlib_version = repository_ctx.attr.jaxlib_version
     rocm_version = repository_ctx.attr.rocm_version
 
-    headers = _get_github_headers(repository_ctx)
-    release = _fetch_release_metadata(repository_ctx, headers)
+    py_tag = "cp" + python_version.replace(".", "")
+    rocm_tag = "rocm" + rocm_version if rocm_version else ""
 
-    plugin_asset, pjrt_asset = _find_wheel_assets(
-        release,
-        python_version,
-        rocm_version,
-    )
+    # Check for local wheels in jax/dist/ first in case they
+    # are downloaded already from S3 or pip.
+    dist_dir = repository_ctx.workspace_root.get_child("dist")
+    dl_plugin = None
+    dl_pjrt = None
 
-    tag_name = release.get("tag_name", "unknown")
+    if dist_dir.exists:
+        for entry in dist_dir.readdir():
 
-    # buildifier: disable=print
-    print("rocm_wheels: release '{}' — plugin='{}', pjrt='{}'".format(
-        tag_name,
-        plugin_asset["name"],
-        pjrt_asset["name"],
-    ))
+            name = entry.basename
+            if not name.endswith(".whl"):
+                continue
+            if rocm_tag and rocm_tag not in name:
+                continue
 
-    repository_ctx.download(
-        url = plugin_asset["browser_download_url"],
-        output = "plugin.whl",
-        headers = headers,
-    )
+            if "plugin" in name and "pjrt" not in name and py_tag in name:
+                dl_plugin = entry
+            elif "pjrt" in name:
+                dl_pjrt = entry
 
-    repository_ctx.download(
-        url = pjrt_asset["browser_download_url"],
-        output = "pjrt.whl",
-        headers = headers,
-    )
+    if dl_plugin and dl_pjrt:
+
+        # buildifier: disable=print
+        print("rocm_wheels: dist/ -  plugin='{}', pjrt='{}'".format(
+            dl_plugin.basename,
+            dl_pjrt.basename,
+        ))
+        repository_ctx.symlink(dl_plugin, "plugin.whl")
+        repository_ctx.symlink(dl_pjrt, "pjrt.whl")
+
+    else:
+        headers = _get_github_headers(repository_ctx)
+        release = _fetch_release_metadata(repository_ctx, headers)
+
+        plugin_asset, pjrt_asset = _find_wheel_assets(
+            release,
+            python_version,
+            rocm_version,
+        )
+
+        tag_name = release.get("tag_name", "unknown")
+
+        # buildifier: disable=print
+        print("rocm_wheels: release '{}' - plugin='{}', pjrt='{}'".format(
+            tag_name,
+            plugin_asset["name"],
+            pjrt_asset["name"],
+        ))
+
+        repository_ctx.download(
+            url = plugin_asset["browser_download_url"],
+            output = "plugin.whl",
+            headers = headers,
+        )
+
+        repository_ctx.download(
+            url = pjrt_asset["browser_download_url"],
+            output = "pjrt.whl",
+            headers = headers,
+        )
 
     repository_ctx.file("BUILD.bazel", _BUILD_TEMPLATE)
 

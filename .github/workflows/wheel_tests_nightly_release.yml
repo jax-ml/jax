@@ -198,6 +198,9 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-bazel-test-rocm:
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/bazel_rocm.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -205,7 +208,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-64-1gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.11", "3.12", "3.13", "3.14"]
           rocm-version: [7]
           enable-x64: [0]
     name: "Bazel ROCm Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
