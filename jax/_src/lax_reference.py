@@ -102,7 +102,12 @@ bitwise_xor = np.bitwise_xor
 
 add = np.add
 sub = np.subtract
-mul = np.multiply
+
+def mul(x, y, /, *, out_dtype=None):
+  if out_dtype is not None:
+    x = np.astype(x, out_dtype)
+    y = np.astype(y, out_dtype)
+  return np.multiply(x, y)
 
 def div(lhs, rhs):
   if dtypes.issubdtype(dtypes.result_type(lhs), np.integer):

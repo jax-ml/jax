@@ -1186,7 +1186,7 @@ def sub(x: ArrayLike, y: ArrayLike) -> Array:
   return sub_p.bind(x, y)
 
 @export
-def mul(x: ArrayLike, y: ArrayLike) -> Array:
+def mul(x: ArrayLike, y: ArrayLike, *, out_dtype: DTypeLike | None = None) -> Array:
   r"""Elementwise multiplication: :math:`x \times y`.
 
   This function lowers directly to the `stablehlo.multiply`_ operation.
@@ -1195,6 +1195,11 @@ def mul(x: ArrayLike, y: ArrayLike) -> Array:
     x, y: Input arrays. Must have matching numerical dtypes. If neither
       is a scalar, ``x`` and ``y`` must have the same number of dimensions
       and be broadcast compatible.
+    out_dtype: Optional. Either ``None`` (default), or a dtype. If
+      it is a dtype, the output will be of the specified dtype. Typically, this
+      is accomplished by casting the inputs to the specified dtype before the
+      multiplication is performed, but on some backends this may be done via
+      a custom kernel.
 
   Returns:
     An array of the same dtype as ``x`` and ``y`` containing the product
@@ -1207,7 +1212,7 @@ def mul(x: ArrayLike, y: ArrayLike) -> Array:
   .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
   """
   x, y = core.standard_insert_pvary(x, y)
-  return mul_p.bind(x, y)
+  return mul_p.bind(x, y, out_dtype=out_dtype)
 
 @export
 def div(x: ArrayLike, y: ArrayLike) -> Array:
@@ -3963,18 +3968,19 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
         typename = dtype_to_string(aval.dtype)
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
-  if require_same: check_same_dtypes(name, *avals)
+  if require_same and kwargs.get('out_dtype') is None:
+    check_same_dtypes(name, *avals)
   return result_dtype(*avals, **kwargs)
 
 
-def broadcasting_shape_rule(name, *avals):
+def broadcasting_shape_rule(name, *avals, **kwargs):
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
     return ()
   return _try_broadcast_shapes(*shapes, name=name)
 
 
-def broadcasting_sharding_rule(name, *avals):
+def broadcasting_sharding_rule(name, *avals, **kwargs):
   mesh = None
   for a in avals:
     if a.sharding is not None and not a.sharding.mesh.empty:
@@ -4114,10 +4120,15 @@ def _nary_lower_hlo(
 ) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
   """
+  out_dtype = params.pop('out_dtype', None)
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   args = tuple(mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape,
                                            aval_out.sharding))
+
+  if out_dtype is not None:
+    ir_type = mlir.aval_to_ir_type(aval_out)
+    args = tuple(hlo.convert(ir_type, a) for a in args)
 
   out = op(*args)
   if accuracy:
@@ -4693,7 +4704,8 @@ ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 
-def _mul_ur_rule(x, y):
+def _mul_ur_rule(x, y, *, out_dtype=None):
+  del out_dtype  # unused
   out_reduced = default_nary_reduced_rule(x, y)
   x_ur, y_ur = getu(x), getu(y)
   if x_ur and y_ur:
@@ -4720,15 +4732,25 @@ def _mul_ur_rule(x, y):
     out_reduced = frozenset()  # if both are equal, set difference is empty.
   return out_unreduced, out_reduced
 
+
+def _binary_with_out_dtype_pp_rule(eqn, context, settings):
+  params = dict(eqn.params)
+  if params['out_dtype'] is None:
+    del params['out_dtype']  # don't show trivial case
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
+
+
 mul_p = standard_naryop([_num, _num], 'mul', ur_rule=_mul_ur_rule)
 ad.defjvp(mul_p,
-          lambda xdot, x, y: mul(xdot, y),
-          lambda ydot, x, y: mul(x, ydot))
+          lambda xdot, x, y, **kwargs: mul(xdot, y, **kwargs),
+          lambda ydot, x, y, **kwargs: mul(x, ydot, **kwargs))
+
 ad.defbilinear(
     mul_p,
-    lambda ct, x, y: _unbroadcast(x.aval.to_ct_aval(), mul(ct, y)),
-    lambda ct, x, y: _unbroadcast(y.aval.to_ct_aval(), mul(x, ct)))
+    lambda ct, x, y, *, out_dtype: _unbroadcast(x.aval.to_ct_aval(), mul(ct, y, out_dtype=None if out_dtype is None else x.aval.dtype)),
+    lambda ct, x, y, *, out_dtype: _unbroadcast(y.aval.to_ct_aval(), mul(x, ct, out_dtype=None if out_dtype is None else y.aval.dtype)))
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
+core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)

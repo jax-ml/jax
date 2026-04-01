@@ -1143,7 +1143,9 @@ def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
   raise NotImplementedError(f"unsupported dtype: {y.type}")
 
 
-def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
+def _mul(x: ir.Value, y: ir.Value, *, out_dtype=None) -> ir.Value:
+  if out_dtype is not None:
+    raise NotImplementedError("out_dtype is not supported..")
   assert x.type == y.type, (str(x.type), str(y.type))
   x_element_type = _element_type(x.type)
   if isinstance(x_element_type, ir.IntegerType):
@@ -1267,9 +1269,9 @@ _JAX_TO_TRITON_BINARY = {
 
 for prim, fn in _JAX_TO_TRITON_BINARY.items():
 
-  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn, **kwargs):
     x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-    return fn(x, y)
+    return fn(x, y, **kwargs)
 
   triton_lowering_rules[prim] = signless_rule
 

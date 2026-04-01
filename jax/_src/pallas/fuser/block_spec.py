@@ -861,8 +861,9 @@ def _push_bcast_block_spec(
   return pallas_core.BlockSpec(new_block_shape, block_spec.index_map)
 
 
-def _binop_usage_rule(prim, ctx, used_out: set[Usage]):
+def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
   del prim
+  del params  # unused
   if used_out == {Usage.SCALAR_PREFETCH}:
     return [{Usage.SCALAR_PREFETCH}, {Usage.SCALAR_PREFETCH}]
   elif used_out == {Usage.REGULAR}:
@@ -872,13 +873,14 @@ def _binop_usage_rule(prim, ctx, used_out: set[Usage]):
     return [set()] * len(ctx.avals_in)
 
 
-def _binop_eval_rule(prim, ctx, x, y):
+def _binop_eval_rule(prim, ctx, x, y, **params):
   del ctx
-  return prim.bind(x, y)
+  return prim.bind(x, y, **params)
 
 
-def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform):
+def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
   del prim
+  del params  # unused
   l_block_transform = block_transform
   r_block_transform = block_transform
   left_aval, right_aval = ctx.avals_in
