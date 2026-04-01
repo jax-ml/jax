@@ -37,6 +37,7 @@ from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_inter
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
+from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
