@@ -2731,7 +2731,7 @@ def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, / ,*,
 def where(condition: ArrayLike, x: ArrayLike | None = None,
           y: ArrayLike | None = None, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> Array | tuple[Array, ...]: ...
+          ) -> Any: ...
 
 
 @export
