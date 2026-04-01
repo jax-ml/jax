@@ -157,6 +157,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -1198,7 +1199,8 @@ absl::Status MosaicGpuPrepare(
     xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
-  VLOG(5) << "MosaicGpuPrepare";
+  int device_ordinal = collective_params->global_device_id.value();
+  XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuPrepare";
   // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
   // CUDA has a system-wide mutex around this call which can cause a deadlock
   // if user tries to load the module on one GPU while another GPU is executing
@@ -1217,7 +1219,8 @@ absl::Status MosaicGpuPrepare(
   if (!ModuleUsesCollectiveMetadata(attributes)) {
     return absl::OkStatus();
   }
-  VLOG(5) << "MosaicGpuPrepare uses collective metadata";
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "MosaicGpuPrepare uses collective metadata";
 
   CHECK(collective_params != nullptr);
   CHECK(clique_requests != nullptr);
@@ -1267,8 +1270,8 @@ absl::Status MosaicGpuPrepare(
         /*range_mapped=*/true));
   }
 
-  VLOG(6) << "[" << collective_params->global_device_id.value()
-          << "] Prepare is done for clique key: " << clique_key;
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "MosaicGpuPrepare is done for clique key: " << clique_key;
   return absl::OkStatus();
 }
 
@@ -1285,6 +1288,8 @@ absl::Status MosaicGpuInitialize(
     return absl::OkStatus();
   }
 
+  int device_ordinal = collective_params->global_device_id.value();
+  XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuInitialize start";
   TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                       GetBuffers(inputs, results));
   // Pointers to the parameter base addresses which are going to be exchanged
@@ -1303,8 +1308,8 @@ absl::Status MosaicGpuInitialize(
                       ParseMultimemArgs(attributes, buffers.size()));
 
   for (int i = 0; i < buffers.size(); ++i) {
-    VLOG(5) << "[" << collective_params->global_device_id.value()
-            << "] MosaicGpuInitialize processing buffer: " << i;
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "MosaicGpuInitialize processing buffer: " << i;
     se::DeviceAddressBase device_address = buffers[i].device_memory();
     collective_metadata_parameters[i] = device_address;
 
@@ -1325,13 +1330,13 @@ absl::Status MosaicGpuInitialize(
       auto [multimem_address, offset] = collective_memory->FindMultimemAddress(
           clique_key, allocated_memory_range);
 
-      VLOG(5) << "[" << collective_params->global_device_id.value()
-              << "] MosaicGpuInitialize buffer: " << i << " device_address: ("
-              << device_address.opaque() << ", size: " << device_address.size()
-              << ") found multimem_address: (" << multimem_address
-              << ", offset: " << offset << ")"
-              << " address_range (" << allocated_memory_range.opaque()
-              << ", size: " << allocated_memory_range.size() << ")";
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+          << device_address.opaque() << ", size: " << device_address.size()
+          << ") found multimem_address: (" << multimem_address
+          << ", offset: " << offset << ")"
+          << " address_range (" << allocated_memory_range.opaque()
+          << ", size: " << allocated_memory_range.size() << ")";
 
       parameter_multimem_addresses[i] = multimem_address;
       // Use the allocated memory range instead to correctly calculate the
@@ -1448,16 +1453,17 @@ absl::Status MosaicGpuInitialize(
                                     device_state.metadata_bytes.data(),
                                     device_state.metadata_bytes.size()));
 
-  VLOG(6) << "[" << rank << "] Constructed device state {"
-          << " metadata rank: " << metadata.rank << ", param_to_peers: ("
-          << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
-          << "), multimem address spaces: ("
-          << absl::StrJoin(parameter_multimem_addresses, ", ", PtrFormatter{})
-          << "), peer_barrier_signal_buffers: ("
-          << absl::StrJoin(device_state.peer_barrier_signal_buffers, ", ",
-                           DeviceAddressFormatter{})
-          << "), copied metadata to the device with address: "
-          << metadata_address.opaque() << "}";
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "[" << rank << "] Constructed device state {"
+      << " metadata rank: " << metadata.rank << ", param_to_peers: ("
+      << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
+      << "), multimem address spaces: ("
+      << absl::StrJoin(parameter_multimem_addresses, ", ", PtrFormatter{})
+      << "), peer_barrier_signal_buffers: ("
+      << absl::StrJoin(device_state.peer_barrier_signal_buffers, ", ",
+                       DeviceAddressFormatter{})
+      << "), copied metadata to the device with address: "
+      << metadata_address.opaque() << "}";
   return absl::OkStatus();
 }
 
@@ -1479,6 +1485,7 @@ absl::Status MosaicGpuExecute(
 
   cudaStream_t cuda_stream =
       reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
+  int device_ordinal = collective_params->global_device_id.value();
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
     TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
@@ -1493,31 +1500,32 @@ absl::Status MosaicGpuExecute(
 
     se::DeviceAddressBase metadata_address =
         device_state.metadata_handle.address();
-    VLOG(5) << "[" << current_rank
-            << "] Executing collective with metadata address: "
-            << metadata_address.opaque();
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Executing collective with metadata address: "
+        << metadata_address.opaque() << " clique_key: " << clique_key;
 
     // Appending both the device and the host-side collective metadata.
     // The host-side metadata is needed for TMA initialization.
     buffer_ptrs.push_back(metadata_address.opaque());
     buffer_ptrs.push_back(device_state.metadata_bytes.data());
 
-    VLOG(6) << "[" << current_rank
-            << "] Starting multi-GPU barrier with key: " << clique_key;
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Starting multi-GPU barrier with key: " << clique_key;
     TF_RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrier(
         stream, clique_key.num_devices(), current_rank,
         device_state.peer_barrier_signal_buffers,
         device_state.barrier_signal_value_buffer_handle.address()));
-    VLOG(6) << "[" << current_rank
-            << "] Finished multi-GPU barrier with key: " << clique_key;
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Finished multi-GPU barrier with key: " << clique_key;
   } else if (kernel->is_nvshmem_used) {
     NvshmemApi::Default().barrier_all_on_stream(cuda_stream);
   }
 
   void** buffers_data = buffer_ptrs.data();
   kernel->host_launch(kernel_ctx, cuda_stream, buffers_data);
-  VLOG(5) << "[" << collective_params->global_device_id.value()
-          << "] MosaicGpuExecute finished";
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "[" << collective_params->global_device_id.value()
+      << "] MosaicGpuExecute finished";
   return absl::OkStatus();
 }
 
