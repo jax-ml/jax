@@ -2355,6 +2355,9 @@ def _tcgen05_commit_arrive_lowering(
 @lowering.register_lowering_rule(
     tcgen05_commit_arrive_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _tcgen05_commit_arrive_lowering_wg(
     ctx: lowering.LoweringRuleContext,
     barrier_ref: mgpu.DialectBarrierRef,

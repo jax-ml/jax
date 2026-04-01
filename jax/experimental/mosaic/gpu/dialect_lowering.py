@@ -2223,7 +2223,7 @@ def _async_store_tmem_op_lowering_rule(
 
 # TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
 if hasattr(mgpu, "TcGen05CommitArriveOp"):
-  @_register_lowering(mgpu.TcGen05CommitArriveOp)
+  @_register_lowering(mgpu.TcGen05CommitArriveOp, support_warp_semantics=True)
   def _tcgen05_commit_arrive_op_lowering_rule(
       ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
   ) -> Sequence[ir.Value]:

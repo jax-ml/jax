@@ -4682,6 +4682,32 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     result = f(x, y)
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
+  def test_commit_arrive_warp_semantics(self):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=True),
+        ],
+    )
+    def kernel(o_ref, barrier):
+      @pl.core_map(warp_mesh)
+      def _():
+        o_ref[...] = jnp.array(42, dtype=jnp.int32)  # core_map assumes it has side effects
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id >= 2)
+        def _():
+          # TODO(allanrenucci): Call `async_copy_smem_to_tmem` here when
+          # supported under warp semantics.
+          plgpu.tcgen05_commit_arrive(barrier)
+        @pl.when(warp_id < 2)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+    # The test only intends to check that this does not crash/hang.
+    kernel().block_until_ready()
+
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
     dtype = jnp.float16
