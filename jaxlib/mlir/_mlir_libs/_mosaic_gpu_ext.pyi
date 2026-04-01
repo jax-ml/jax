@@ -47,7 +47,7 @@ class TileTransformAttr(ir.Attribute):
     """Creates a TileTransformAttr with the given tiling."""
 
   @property
-  def tiling(self) -> list[int]: ...
+  def tiling(self) -> ir.DenseI32ArrayAttr: ...
 
 class TransposeTransformAttr(ir.Attribute):
   @staticmethod
@@ -62,7 +62,7 @@ class TransposeTransformAttr(ir.Attribute):
     """Creates a TransposeTransformAttr with the given permutation."""
 
   @property
-  def permutation(self) -> list[int]: ...
+  def permutation(self) -> ir.DenseI32ArrayAttr: ...
 
 class SwizzleTransformAttr(ir.Attribute):
   @staticmethod

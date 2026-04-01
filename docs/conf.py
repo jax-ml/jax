@@ -232,8 +232,6 @@ nb_execution_excludepatterns = [
     'notebooks/Neural_Network_and_Data_Loading.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
-    # TODO(jakevdp): enable execution on the following if possible:
-    'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
@@ -399,6 +397,8 @@ rediraffe_redirects = {
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",
+  "notebooks/Distributed_arrays_and_automatic_parallelization.md": "notebooks/parallel.md",
+  "notebooks/sharding.md": "notebooks/parallel.md",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory

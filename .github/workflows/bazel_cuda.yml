@@ -10,15 +10,17 @@
 #       Otherwise, the artifacts are built from source.
 #    - Downloads the jax artifact from a GCS bucket if build_jax is `false`.
 #       Otherwise, the artifact is built from source.
-#    - If `run_multiaccelerator_tests` is `false`, executes the `run_bazel_test_cuda_rbe.sh` script,
+#    - If `run_tests_with_rbe` is `true`, executes the `run_bazel_test_cuda_rbe.sh` script,
 #      which performs the following actions:
 #      - `build_jaxlib=wheel`: Runs the Bazel CPU tests with py_import dependencies.
 #      - `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
 #      - `build_jaxlib=true`: Runs the Bazel CPU tests with individual Bazel target dependencies.
-#    - If `run_multiaccelerator_tests` is `true`, executes the `run_bazel_test_cuda_non_rbe.sh`
+#    - If `run_tests_with_rbe` is `false`, executes the `run_bazel_test_cuda_non_rbe.sh`
 #      script, which performs the following actions:
 #      - `build_jaxlib=wheel`: Runs the Bazel CPU tests with py_import dependencies.
 #      - `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
+#      If `build_artifacts_with_rbe` is `true`, the artifacts are built with RBE. Otherwise,
+#      they are built without RBE.
 
 name: CI - Bazel CUDA tests
 
@@ -70,10 +72,15 @@ on:
         required: false
         default: '0'
         type: string
-      run_multiaccelerator_tests:
-        description: 'Whether to run multi-accelerator tests'
+      run_tests_with_rbe:
+        description: 'Whether to run tests with RBE'
         required: false
-        default: 'false'
+        default: 'true'
+        type: string
+      build_artifacts_with_rbe:
+        description: 'Whether to build the artifacts with RBE'
+        required: false
+        default: 'true'
         type: string
       clone_main_xla:
         description: "Should latest XLA be used?"
@@ -101,6 +108,7 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_BUILD_ARTIFACT_WITH_RBE: ${{ inputs.build_artifacts_with_rbe }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
@@ -133,7 +141,7 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Bazel CUDA tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 60
-        run: ${{ ((inputs.run_multiaccelerator_tests == 'false') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}
+        run: ${{ ((inputs.run_tests_with_rbe == 'true') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}
       - name: Upload test artifacts
         if: always() && !cancelled()
         continue-on-error: true

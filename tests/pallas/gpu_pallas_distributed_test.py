@@ -725,9 +725,6 @@ class PallasCallMultimemTest(TestCase):
       )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    # TODO(belitskiy): Remove the hasattr guard once JAX 0.9.2 is released.
-    if not hasattr(cuda_versions, "cuda_supports_multicast"):
-      self.skipTest("Multicast not yet supported")
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
@@ -949,9 +946,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       self.skipTest("Multimem not supported in multi-thread mode yet.")
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    # TODO(belitskiy): Remove the hasattr guard once JAX 0.9.2 is released.
-    if not hasattr(cuda_versions, "cuda_supports_multicast"):
-      self.skipTest("Multicast not yet supported")
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()

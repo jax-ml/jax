@@ -58,8 +58,8 @@ def _get_block_size(
   match bd:
     case int():
       return bd
-    case pl.Blocked(block_size):
-      return block_size
+    case pl.Blocked() | pl.Element():
+      return bd.block_size
     case _:
       raise NotImplementedError(f"Unsupported block size type: {type(bd)}")
 
@@ -110,6 +110,10 @@ class BufferedRef:
           return pl.Slice(block_index * bd, bd)
         case pl.Blocked(block_size):
           return pl.Slice(block_index * block_size, block_size)
+        case pl.Element(block_size, padding):
+          if padding != (0, 0):
+            raise NotImplementedError("Element dim with padding not supported.")
+          return pl.Slice(block_index, block_size)
         case None | pl.Squeezed():
           return block_index
         case _:

@@ -1581,20 +1581,21 @@ LogicalResult EnqueueIndirectDMAOp::verifyScatter(
 }
 
 namespace {
-bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
+bool hasHbmOrTcVmemOrVmemSharedMemorySpace(MemRefType ty) {
   return HasMemorySpace(ty, MemorySpace::kHbm) ||
+         HasMemorySpace(ty, MemorySpace::kVmem, CoreType::kTc) ||
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
 }  // namespace
 
 FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
                          MemRefType target_ty) {
-  if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
+  if (hasHbmOrTcVmemOrVmemSharedMemorySpace(source_ty) &&
       HasMemorySpace(target_ty, MemorySpace::kVmem)) {
     return true;
   }
   if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
-      hasHbmOrVmemSharedMemorySpace(target_ty)) {
+      hasHbmOrTcVmemOrVmemSharedMemorySpace(target_ty)) {
     return false;
   }
   return op.emitOpError(

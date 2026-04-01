@@ -1378,6 +1378,9 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
             .c_str());
   }
   for (const PyDevice* device : dst_devices) {
+    if (device == nullptr) {
+      return xla::InvalidArgument("Device cannot be None.");
+    }
     if (device->client().get() == nullptr) {
       return xla::InvalidArgument("Cannot copy to unattached devices.");
     }

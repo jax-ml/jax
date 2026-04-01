@@ -65,6 +65,8 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version
 
 config.parse_flags_with_absl()
 
@@ -9681,11 +9683,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s, inp_s in zip(out2.addressable_shards, inp.addressable_shards):
       self.assertArraysEqual(s.data, inp_s.data)
 
-    out = jax.device_put(inp, P(unreduced={'x'}))
-    expected_out = [inp, jnp.array(0)]
-    for s, ex_out in zip(out.addressable_shards, expected_out):
-      self.assertArraysEqual(s.data, ex_out)
-
   @parameterized.parameters(
       ((4,), P(None), P(None, unreduced={'x'})),
       ((4,), P(None), P(None, unreduced={'y'})),
@@ -10545,6 +10542,38 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out_g = jax.jit(jax.grad(lambda x: f(x).mean()))(arr)
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x', None, None)))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_identity_jit_out_unreduced(self, mesh):
+    if jaxlib_extension_version < 428:
+      self.skipTest('Requires jaxlib_extension_version >= 428')
+    if ifrt_version < 53:
+      self.skipTest('Requires ifrt_version >= 53')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 3):
+      self.skipTest('Requires a newer libtpu')
+
+    def check_rep(out):
+      self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
+      for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
+        self.assertArraysEqual(s.data, es, check_dtypes=False)
+
+    rep_inp = jnp.arange(4)
+    out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(rep_inp)
+    check_rep(out)
+    out2 = jax.device_put(rep_inp, P(unreduced={'x'}))
+    check_rep(out2)
+
+    def check_shd(out):
+      self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
+      for s, es in zip(out.addressable_shards,
+                      [np.array([0, 1, 0, 0]), np.array([0, 0, 2, 3])]):
+        self.assertArraysEqual(s.data, es, check_dtypes=False)
+
+    shd_inp = jax.device_put(np.arange(4), P('x'))
+    out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
+    check_shd(out)
+    out2 = jax.device_put(shd_inp, P(unreduced={'x'}))
+    check_shd(out2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

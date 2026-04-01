@@ -270,7 +270,7 @@ def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
 }
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
-  let parameters = (ins ArrayRefParameter<"int32_t", "tiling">:$tiling);
+  let parameters = (ins "::mlir::DenseI32ArrayAttr":$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
   let description = [{
     For example, given a memref of shape (5, 128, 128) and a tiling of (64, 32),
@@ -286,7 +286,7 @@ def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
 }
 
 def TransposeTransformAttr : MosaicGPU_Attr<"TransposeTransform", "transpose"> {
-  let parameters = (ins ArrayRefParameter<"int32_t", "permutation">:$permutation);
+  let parameters = (ins "::mlir::DenseI32ArrayAttr":$permutation);
   let summary = "Specifies a transpose transform of a memref in SMEM.";
   let assemblyFormat = "`<` $permutation `>`";
 }

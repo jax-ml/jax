@@ -53,6 +53,7 @@ from jax._src.sharding_impls import (
     NamedSharding, make_single_device_sharding, GSPMDSharding)
 from jax._src.stages import SourceInfo
 import numpy as np
+from jax._src.lib import jaxlib_extension_version
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -458,9 +459,10 @@ def _device_put_sharding_impl(
 
     if isinstance(s, NamedSharding) and s.spec.unreduced:
       # TODO(mattjj,yashkatariya): handle donation
-      # TODO(mattjj,yahskatariya): out_sharding doesn't work!
-      # return api.jit(_device_put_reshard, out_shardings=s)(x)
-      return pjit.reshard(x, s)
+      if jaxlib_extension_version >= 428:
+        return api.jit(_device_put_reshard, out_shardings=s)(x)
+      else:
+        return pjit.reshard(x, s)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and

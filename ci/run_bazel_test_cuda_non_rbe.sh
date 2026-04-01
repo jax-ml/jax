@@ -78,7 +78,7 @@ fi
 # Get the CUDA major version only
 cuda_major_version="${JAXCI_CUDA_VERSION%%.*}"
 
-if [[ "$JAXCI_BUILD_JAXLIB" == "wheel" ]]; then
+if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == "true" ]]; then
     TEST_CONFIG="rbe_linux_x86_64_cuda$cuda_major_version"
     TEST_STRATEGY="--strategy=TestRunner=local"
     CACHE_OPTION=""

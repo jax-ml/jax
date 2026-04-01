@@ -207,10 +207,14 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
-bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
+bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
+                    std::optional<CoreType> type) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
-  return memory_space && memory_space.getValue() == space;
+  if (!memory_space || memory_space.getValue() != space) {
+    return false;
+  }
+  return !type.has_value() || memory_space.getCoreType() == type;
 }
 
 bool layoutIsValidForValue(const Layout& l, const Value v,

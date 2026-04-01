@@ -1761,9 +1761,11 @@ def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, a
 
 def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
                          axis_index_groups, axis_size, tiled,
-                         platform=None):
+                         platform=None, is_async=False):
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
+  if is_async:
+    out_aval = out_aval.inner_aval
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
   if not tiled:
@@ -1786,11 +1788,27 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   else:
     other_args = {}
 
-  return hlo.AllGatherOp(
-      [mlir.aval_to_ir_type(out_aval)],
-      [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
-      replica_groups=_replica_groups_hlo(replica_groups),
-      **other_args).results
+  if not is_async:
+    return hlo.AllGatherOp(
+        [mlir.aval_to_ir_type(out_aval)],
+        [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args).results
+
+  # pyrefly: ignore[missing-attribute]
+  future_type = hlo.FutureType.get([mlir.aval_to_ir_type(out_aval)])
+  async_start = hlo.AsyncStartOp(future_type, [x])
+  block = async_start.regions[0].blocks.append(x.type)
+  with ir.InsertionPoint(block):
+    results = hlo.AllGatherOp(
+        [mlir.aval_to_ir_type(out_aval)],
+        [block.arguments[0]],
+        all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args,
+    ).results
+    hlo.return_(results)
+  return async_start.results
 
 
 def collective_vma_rule(prim_name, axis_name, x_aval):
@@ -2476,11 +2494,11 @@ all_gather_reduced_p.def_impl(_all_gather_reduced_impl)
 
 def _all_gather_reduced_lowering(
     ctx, x, *, all_gather_dimension, axis_name, axis_size, tiled,
-    platform=None):
+    platform=None, is_async=False):
   return _all_gather_lowering(
       ctx, x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
       axis_index_groups=None, axis_size=axis_size, tiled=tiled,
-      platform=platform)
+      platform=platform, is_async=is_async)
 
 mlir.register_lowering(all_gather_reduced_p, _all_gather_reduced_lowering)
 for p in ("cuda", "rocm", "tpu"):
@@ -2858,12 +2876,45 @@ pbroadcast_start_p = core.Primitive("pbroadcast_start")
 ppermute_start_p = core.Primitive("ppermute_start")
 
 # Asynchronous start functions.
-all_gather_start = partial(_all_gather_is_async, is_async=True)
-psum_start = partial(_psum_is_async, is_async=True)
-psum_scatter_start = partial(_psum_scatter_is_async, is_async=True)
-all_to_all_start = partial(_all_to_all_is_async, is_async=True)
-pbroadcast_start = partial(_pbroadcast_is_async, is_async=True)
-ppermute_start = partial(_ppermute_is_async, is_async=True)
+class Todo:
+
+  def __init__(self, x, done_fun):
+    self.x = x
+    self.done_fun = done_fun
+
+  def done(self):
+    return self.done_fun(self.x)
+
+
+def all_gather_start(*args, **kwargs):
+  x = _all_gather_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, all_gather_done_p.bind)
+
+
+def psum_start(*args, **kwargs):
+  x = _psum_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, psum_done_p.bind)
+
+
+def psum_scatter_start(*args, **kwargs):
+  x = _psum_scatter_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, reduce_scatter_done_p.bind)
+
+
+def all_to_all_start(*args, **kwargs):
+  x = _all_to_all_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, all_to_all_done_p.bind)
+
+
+def pbroadcast_start(*args, **kwargs):
+  x = _pbroadcast_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, pbroadcast_done_p.bind)
+
+
+def ppermute_start(*args, **kwargs):
+  x = _ppermute_is_async(*args, **kwargs, is_async=True)
+  return Todo(x, ppermute_done_p.bind)
+
 
 # Asynchronous start abstract eval.
 def _start_abstract_eval(q):
@@ -2887,27 +2938,107 @@ for p, q in [
   p.def_effectful_abstract_eval(_start_abstract_eval(q))
 
 # Asynchronous start lowering.
-mlir.register_lowering(all_gather_start_p, _all_gather_lowering)
+def _start_lowering(sync_lower):
+  """Returns an async start lowering function given a synchronous lowering.
+
+  An async StableHLO collective looks like this:
+
+  > %f = "stablehlo.async_start"(%x) ({
+  >   ^bb0(%arg: tensor<2x2xf32>):
+  >     %tmp = "stablehlo.all_gather"(%arg) : (tensor<2x2xf32>) ->
+  tensor<4x2xf32>
+  >     stablehlo.return %tmp : tensor<4x2xf32>
+  > }) : (tensor<2x2xf32>) -> !stablehlo.future<tensor<4x2xf32>>
+  > %y = "stablehlo.async_done"(%f) : (!stablehlo.future<tensor<4x2xf32>>) ->
+  tensor<4x2xf32>
+
+  There is an async_start op with a region that performs and returns the
+  synchronous collective. _start_lowering takes in a lowering function for the
+  synchronous collective and transforms it into a lowering function for the
+  async collective by wrapping everything in an async_start.
+  """
+
+  def f(ctx, x, **kwargs):
+    (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
+    (out_aval,) = ctx.avals_out  # e.g., # AbstractTodo[f32[4, 2]]
+    inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
+    inner_type = mlir.aval_to_ir_type(inner_aval)  # e.g., <tensor<4x2xf32>
+    # pyrefly: ignore[missing-attribute]
+    future_type = hlo.FutureType.get([inner_type])  # e.g., !stablehlo.future<tensor<4x2xf32>>
+    async_start = hlo.AsyncStartOp(future_type, [x])
+    block = async_start.regions[0].blocks.append(x.type)
+    with ir.InsertionPoint(block):
+      inner_ctx = ctx.replace(
+          primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
+      )
+      results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
+      hlo.return_(results)
+    return async_start.results
+
+  return f
+
+
+def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
+  if not tiled:
+    # TODO(mwhittaker): When the output is not tiled, a reduce_scatter is
+    # lowered to two operations: a reduce_scatter and a reshape. Lowering the
+    # async version of this is tricky because we need to reshape after the
+    # future is resolved.
+    raise NotImplementedError("lowering reduce_scatter_start with tiled=False unimplemented")
+  lower = partial(_reduce_scatter_lowering, lax.add_p)
+  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+
+
+def _unreduced_reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
+  if not tiled:
+    msg = (
+        "lowering unreduced_reduce_scatter_start with tiled=False unimplemented"
+    )
+    raise NotImplementedError(msg)
+  lower = partial(_unreduced_reduce_scatter_lowering, lax.add_p)
+  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+
+
+mlir.register_lowering(
+    all_gather_start_p, partial(_all_gather_lowering, is_async=True)
+)
 for p in ("cuda", "rocm", "tpu"):
-  mlir.register_lowering(all_gather_start_p,
-                         partial(_all_gather_lowering, platform=p),
-                         platform=p)
-mlir.register_lowering(all_gather_reduced_start_p, _all_gather_reduced_lowering)
+  mlir.register_lowering(
+      all_gather_start_p,
+      partial(_all_gather_lowering, platform=p, is_async=True),
+      platform=p,
+  )
+mlir.register_lowering(
+    all_gather_reduced_start_p,
+    partial(_all_gather_reduced_lowering, is_async=True),
+)
 for p in ("cuda", "rocm", "tpu"):
-  mlir.register_lowering(all_gather_reduced_start_p,
-                         partial(_all_gather_reduced_lowering, platform=p),
-                         platform=p)
-mlir.register_lowering(psum_start_p,
-                       partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
-mlir.register_lowering(psum_invariant_start_p, _psum_invariant_lowering_rule)
-mlir.register_lowering(unreduced_psum_start_p, _unreduced_psum_lowering)
-mlir.register_lowering(reduce_scatter_start_p,
-                       partial(_reduce_scatter_lowering, lax.add_p))
-mlir.register_lowering(unreduced_reduce_scatter_start_p,
-                       partial(_unreduced_reduce_scatter_lowering, lax.add_p))
-mlir.register_lowering(all_to_all_start_p, _all_to_all_lowering)
-mlir.register_lowering(pbroadcast_start_p, _pbroadcast_lowering, platform="gpu")
-mlir.register_lowering(ppermute_start_p, _ppermute_lowering)
+  mlir.register_lowering(
+      all_gather_reduced_start_p,
+      partial(_all_gather_reduced_lowering, platform=p, is_async=True),
+      platform=p,
+  )
+mlir.register_lowering(
+    psum_start_p,
+    _start_lowering(partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
+)
+mlir.register_lowering(
+    psum_invariant_start_p, _start_lowering(_psum_invariant_lowering_rule)
+)
+mlir.register_lowering(
+    unreduced_psum_start_p, _start_lowering(_unreduced_psum_lowering)
+)
+mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
+mlir.register_lowering(
+    unreduced_reduce_scatter_start_p, _unreduced_reduce_scatter_start_lowering
+)
+mlir.register_lowering(
+    all_to_all_start_p, _start_lowering(_all_to_all_lowering)
+)
+mlir.register_lowering(
+    pbroadcast_start_p, _start_lowering(_pbroadcast_lowering), platform="gpu"
+)
+mlir.register_lowering(ppermute_start_p, _start_lowering(_ppermute_lowering))
 
 # Asynchronous done primitives.
 all_gather_done_p = core.Primitive("all_gather_done")
@@ -2917,13 +3048,14 @@ all_to_all_done_p = core.Primitive("all_to_all_done")
 pbroadcast_done_p = core.Primitive("pbroadcast_done")
 ppermute_done_p = core.Primitive("ppermute_done")
 
-# Asynchronous done functions.
-all_gather_done = all_gather_done_p.bind
-psum_done = psum_done_p.bind
-psum_scatter_done = reduce_scatter_done_p.bind
-all_to_all_done = all_to_all_done_p.bind
-pbroadcast_done = pbroadcast_done_p.bind
-ppermute_done = ppermute_done_p.bind
+_dones_p = [
+    all_gather_done_p,
+    psum_done_p,
+    reduce_scatter_done_p,
+    all_to_all_done_p,
+    pbroadcast_done_p,
+    ppermute_done_p,
+]
 
 # Asynchronous done abstract eval and lowering.
 def _done_abstract_eval(aval):
@@ -2931,7 +3063,6 @@ def _done_abstract_eval(aval):
     raise TypeError(f"async done op got {aval}, want core.AbstractTodo")
   return aval.inner_aval
 
-for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
-          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
+for p in _dones_p:
   p.def_abstract_eval(_done_abstract_eval)
-  mlir.register_lowering(p, lambda ctx, x: [x])
+  mlir.register_lowering(p, lambda ctx, x: hlo.AsyncDoneOp(x).results)

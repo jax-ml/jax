@@ -51,7 +51,8 @@ def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
       else:
         return f":{size_str}"
     else:
-      end = start + size
+      _val = lambda x: x.val if isinstance(x, core.Literal) else x  # pytype: disable=attribute-error
+      end = _val(start) + _val(size)
       end_str = "" if end == dim else str(end)
       return f"{start_str}:{end_str}"
 

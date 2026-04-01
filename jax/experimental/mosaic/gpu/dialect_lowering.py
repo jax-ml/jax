@@ -861,7 +861,8 @@ def swizzle_and_transforms_from_transforms_attr(
     if mgpu.SwizzleTransformAttr.isinstance(transform):
       # TODO(dasenov): Swizzling can change if the ref is sliced in certain
       # ways. We might want to enforce some restrictions here.
-      swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
+      # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
+      swizzle = mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)
     elif mgpu.TileTransformAttr.isinstance(transform):
       tiling = mgpu.TileTransformAttr(transform).tiling
       tiling_transform = lc.TileTransform(tuple(tiling))
@@ -875,8 +876,6 @@ def swizzle_and_transforms_from_transforms_attr(
     else:
       raise ValueError("Unknown transform: {transform}")
 
-  # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
-  # pyrefly: ignore[bad-return]
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
@@ -2079,9 +2078,8 @@ def _swizzle(attrs: Iterable[ir.Attribute]) -> mgpu.SwizzlingMode:
     if mgpu.SwizzleTransformAttr.isinstance(attr):
       if swizzle is not None:
         raise ValueError("Multiple swizzle transforms are not supported.")
-      swizzle = mgpu.SwizzleTransformAttr(attr).swizzle
-  # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
-  # pyrefly: ignore[bad-return]
+      # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
+      swizzle = mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(attr).swizzle)
   return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
 
 
@@ -2223,7 +2221,7 @@ def _async_store_tmem_op_lowering_rule(
 
 # TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
 if hasattr(mgpu, "TcGen05CommitArriveOp"):
-  @_register_lowering(mgpu.TcGen05CommitArriveOp)
+  @_register_lowering(mgpu.TcGen05CommitArriveOp, support_warp_semantics=True)
   def _tcgen05_commit_arrive_op_lowering_rule(
       ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
   ) -> Sequence[ir.Value]:

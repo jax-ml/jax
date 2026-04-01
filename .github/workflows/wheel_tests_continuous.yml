@@ -208,7 +208,8 @@ jobs:
       build_jaxlib: "false"
       build_jax: "false"
       write_to_bazel_remote_cache: 1
-      run_multiaccelerator_tests: "true"
+      run_tests_with_rbe: "false"
+      build_artifacts_with_rbe: "false"
       clone_main_xla: 0
 
   run-bazel-test-cuda-py-import:
@@ -235,7 +236,8 @@ jobs:
       build_jax: "wheel"
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
-      run_multiaccelerator_tests: "true"
+      run_tests_with_rbe: "false"
+      build_artifacts_with_rbe: "true"
       clone_main_xla: 0
 
   # run-pytest-tpu:

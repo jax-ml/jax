@@ -253,7 +253,8 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
 bool canReinterpretToUntiledContiguousMemref(MemRefType ty);
 
 // Determines whether the given MemRefType has the given memory space.
-bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
+bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
+                    std::optional<tpu::CoreType> core_type = std::nullopt);
 
 bool layoutIsValidForValue(const Layout& l, const Value v,
                            const std::array<int64_t, 2> target_shape);

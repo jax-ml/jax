@@ -1147,8 +1147,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       q, r = jnp.linalg.qr(a, mode=mode)
       return q @ r
 
-    if m == n or (m > n and not full_matrices):
-      jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
+    jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.skip_on_devices("tpu")
   def testQrInvalidDtypeCPU(self, shape=(5, 6), dtype=np.float16):

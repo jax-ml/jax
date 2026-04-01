@@ -4682,6 +4682,32 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     result = f(x, y)
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
+  def test_commit_arrive_warp_semantics(self):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[
+            plgpu.Barrier(num_arrivals=2, orders_tensor_core=True),
+        ],
+    )
+    def kernel(o_ref, barrier):
+      @pl.core_map(warp_mesh)
+      def _():
+        o_ref[...] = jnp.array(42, dtype=jnp.int32)  # core_map assumes it has side effects
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id >= 2)
+        def _():
+          # TODO(allanrenucci): Call `async_copy_smem_to_tmem` here when
+          # supported under warp semantics.
+          plgpu.tcgen05_commit_arrive(barrier)
+        @pl.when(warp_id < 2)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+    # The test only intends to check that this does not crash/hang.
+    kernel().block_until_ready()
+
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
     dtype = jnp.float16
@@ -5759,6 +5785,35 @@ class PipelineTest(PallasTest):
     )
     x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
     np.testing.assert_array_equal(kernel_fn(x), x + 1)
+
+  def test_emit_with_element_dim(self):
+    shape = (20, 256)
+
+    def kernel(x_gmem, o_gmem):
+      index_map = lambda i: (10 * i + 1, 0)
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
+          out_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
+          grid=(2,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def kernel_body(_, in_smem, o_smem):
+      assert in_smem.shape == (8, shape[1])
+      assert o_smem.shape == (8, shape[1])
+      o_smem[...] = in_smem[...] + 1
+
+    kernel_fn = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        input_output_aliases={0: 0},
+    )
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)
+    np.testing.assert_array_equal(kernel_fn(x), x + active_rows[..., None])
 
 
 class PipelineWGTest(

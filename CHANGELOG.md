@@ -19,6 +19,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features:
   * Added `ResizeMethod.CUBIC_PYTORCH` to {func}`jax.image.resize` to match
     PyTorch's bicubic resize ({jax-issue}`#15768`).
+  * We now support differentiation of {func}`jax.lax.linalg.qr` for wide
+    matrices and when `full_matrices` is `True`.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
@@ -2148,7 +2150,7 @@ Changes:
     breaking change to the `pjit` API.  The [jax.Array migration
     guide](https://docs.jax.dev/en/latest/jax_array_migration.html) can
     help you migrate your codebase to `jax.Array`. You can also look at the
-    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/parallel.html)
     tutorial to understand the new concepts.
   * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.

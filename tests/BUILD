@@ -1707,8 +1707,8 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "ode_test",
-    size = "large",
     srcs = ["ode_test.py"],
+    shard_count = 2,
     deps = ["//jax/experimental:ode"] + py_deps([
         "absl/testing",
         "numpy",
