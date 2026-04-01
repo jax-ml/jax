@@ -500,11 +500,16 @@ class PGLEProfiler:
               RuntimeWarning)
           
 
-import os
 import atexit
 
 _jax_profile_dir = os.environ.get("JAX_PROFILE")
 if _jax_profile_dir:
+  def _stop_trace_at_exit():
+    if _profile_state.profile_session:
+      stop_trace()
+
+  try:
     start_trace(_jax_profile_dir)
-    # Registra o stop_trace para rodar automaticamente quando o script do usuário terminar
-    atexit.register(stop_trace)
+    atexit.register(_stop_trace_at_exit)
+  except Exception as e:
+    logger.warning("Failed to auto-start JAX profiling: %s", e)
