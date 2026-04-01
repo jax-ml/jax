@@ -5786,6 +5786,35 @@ class PipelineTest(PallasTest):
     x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
     np.testing.assert_array_equal(kernel_fn(x), x + 1)
 
+  def test_emit_with_element_dim(self):
+    shape = (20, 256)
+
+    def kernel(x_gmem, o_gmem):
+      index_map = lambda i: (10 * i + 1, 0)
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
+          out_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
+          grid=(2,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def kernel_body(_, in_smem, o_smem):
+      assert in_smem.shape == (8, shape[1])
+      assert o_smem.shape == (8, shape[1])
+      o_smem[...] = in_smem[...] + 1
+
+    kernel_fn = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        input_output_aliases={0: 0},
+    )
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)
+    np.testing.assert_array_equal(kernel_fn(x), x + active_rows[..., None])
+
 
 class PipelineWGTest(
     PipelineTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
