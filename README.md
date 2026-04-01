@@ -178,10 +178,10 @@ per_example_grads = jax.jit(jax.vmap(jax.grad(loss), in_axes=(None, 0, 0)))
 
 To scale your computations across thousands of devices, you can use any
 composition of these:
-* [**Compiler-based automatic parallelization**](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+* [**Compiler-based automatic parallelization**](https://docs.jax.dev/en/latest/notebooks/parallel.html)
 where you program as if using a single global machine, and the compiler chooses
 how to shard data and partition computation (with some user-provided constraints);
-* [**Explicit sharding and automatic partitioning**](https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
+* [**Explicit sharding and automatic partitioning**](https://docs.jax.dev/en/latest/notebooks/parallel.html)
 where you still have a global view but data shardings are
 explicit in JAX types, inspectable using `jax.typeof`;
 * [**Manual per-device programming**](https://docs.jax.dev/en/latest/notebooks/shard_map.html)

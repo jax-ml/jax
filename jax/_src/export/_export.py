@@ -145,7 +145,7 @@ class Exported:
         an output, the `out_avals.sharding.spec` for `Auto` axes may be `None`
         even if after compilation the compiler may pick a non-replicated
         sharding.
-        See https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html#concrete-array-shardings-can-mention-auto-mesh-axis
+        See https://docs.jax.dev/en/latest/notebooks/parallel.html#concrete-array-shardings-can-mention-auto-mesh-axis
         for more details.
     in_shardings_hlo: (Not used for exports created after 3/17/2026.) the
         flattened input shardings, a sequence as long
