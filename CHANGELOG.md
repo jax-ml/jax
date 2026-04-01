@@ -41,6 +41,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
       `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
       `Unstacked`, `spec_to_indices`.
+  * The deprecated keyword arguments `a`, `a_min`, and `a_max` to
+    `jax.numpy.clip` have been removed.
+  * Functions `jax.numpy.hstack`, `jax.numpy.vstack`, `jax.numpy.dstack`,
+    `jax.numpy.column_stack`, `jax.numpy.atleast_1d`, `jax.numpy.atleast_2d`,
+    and `jax.numpy.atleast_3d` no longer accept non-`ArrayLike` inputs.
+    Doing so previously issued a `DeprecationWarning`.
   * {func}`jax.scipy.stats.rankdata` now returns floating point values in
     all cases, following a similar change in the SciPy 1.18 release.
 

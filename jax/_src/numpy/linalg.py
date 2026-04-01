@@ -974,8 +974,6 @@ def eigvalsh(a: ArrayLike, UPLO: str | None = 'L', *,
   w, _ = eigh(a, UPLO, symmetrize_input=symmetrize_input)
   return w
 
-
-# TODO(micky774): deprecated 2024-5-14, remove wrapper after deprecation expires.
 @export
 def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
          hermitian: bool = False, *, rcond: ArrayLike | None = None) -> Array:

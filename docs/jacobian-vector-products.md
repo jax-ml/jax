@@ -260,7 +260,7 @@ f = lambda W: predict(W, b, inputs)
 # First, use a list comprehension to loop over rows in the matrix M.
 def loop_mjp(f, x, M):
     y, vjp_fun = jax.vjp(f, x)
-    return jnp.vstack([vjp_fun(mi) for mi in M])
+    return jnp.vstack([jnp.asarray(vjp_fun(mi)) for mi in M])
 
 # Now, use vmap to build a computation that does a single fast matrix-matrix
 # multiply, rather than an outer loop over vector-matrix multiplies.

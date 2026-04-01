@@ -848,11 +848,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, msg):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
-  def testClipDeprecatedArgs(self):
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-clip-args",
-                                             "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"):
-      jnp.clip(jnp.arange(4), a_min=2, a_max=3)
-
   def testClipUpperPrecedence(self):
     a_min = 3 * np.ones(1)
     a_max = 2 * np.ones(1)
