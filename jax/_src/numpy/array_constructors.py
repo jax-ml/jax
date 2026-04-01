@@ -175,7 +175,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     >>> jnp.array(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")

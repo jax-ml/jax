@@ -201,7 +201,7 @@ JAX Array objects have a `devices` method that lets you inspect where the conten
 x.devices()
 ```
 
-In general, an array may be [*sharded*](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html) across multiple devices, in a manner that can be inspected via the `sharding` attribute:
+In general, an array may be [*sharded*](https://docs.jax.dev/en/latest/notebooks/parallel.html) across multiple devices, in a manner that can be inspected via the `sharding` attribute:
 
 ```{code-cell} ipython3
 x.sharding

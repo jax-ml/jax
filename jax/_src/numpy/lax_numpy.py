@@ -5889,7 +5889,7 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
       which the created array will be committed. Use `out_sharding` argument,
       if using explicit sharding
-      (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
+      (https://docs.jax.dev/en/latest/notebooks/parallel.html)
 
   Returns:
     Array of evenly-spaced values from ``start`` to ``stop``, separated by ``step``.

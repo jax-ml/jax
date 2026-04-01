@@ -248,8 +248,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     >>> out = jax.jit(lambda x: x * 2)(arr)
     >>> assert out.sharding == NamedSharding(mesh, P('x', 'y'))
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
 
   devices: np.ndarray
@@ -497,7 +497,7 @@ class AbstractMesh(BaseMesh):
     axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries corresponding to
       the ``axis_names``. See `Explicit Sharding`_ for more information.
 
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
 
   def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
