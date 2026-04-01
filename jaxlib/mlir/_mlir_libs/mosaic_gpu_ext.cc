@@ -251,8 +251,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
           "get",
           [cls = swizzle_transform_attr.get_class()](int32_t swizzle,
                                                      MlirContext ctx) {
-            return cls(mlirMosaicGpuSwizzleTransformAttrGet(
-                ctx, static_cast<int32_t>(swizzle)));
+            return cls(mlirMosaicGpuSwizzleTransformAttrGet(ctx, swizzle));
           },
           nb::arg("swizzle"), nb::arg("context").none() = nb::none(),
           nb::sig(
