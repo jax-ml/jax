@@ -54,6 +54,10 @@ from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
 
 
+def initialize_lapack():
+  lapack._lapack.initialize()
+
+
 def register_module_custom_calls(module):
   if hasattr(module, "registrations"):
     for platform, targets in module.registrations().items():

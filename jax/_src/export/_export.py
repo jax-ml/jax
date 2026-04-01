@@ -39,6 +39,7 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.lax import linalg
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -1581,6 +1582,7 @@ def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
+  _ensure_backends_initialized(exported.platforms)
   if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
@@ -1768,6 +1770,10 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
+def _ensure_backends_initialized(platforms: tuple[str,...]):
+  """Ensure FFI handlers are initialized for the given platforms"""
+  if "cpu" in platforms:
+    linalg.initialize_lapack()
 
 def wrap_with_sharding(
     ctx: mlir.LoweringRuleContext,

@@ -783,6 +783,7 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":lax",
         ":mesh",
         ":mlir",
         ":named_sharding",
