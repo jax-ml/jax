@@ -1232,25 +1232,11 @@ absl::Status MosaicGpuPrepare(
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
-  xla::gpu::CollectiveCliqueRequests::CliqueRequirements clique_reqs;
-  const bool any_parameter_uses_multimem =
-      std::any_of(parameter_uses_multimem.begin(),
-                  parameter_uses_multimem.end(), [](bool v) { return v; });
-  if (any_parameter_uses_multimem) {
-    // When multimem is used the runtime needs to synchronize all devices and
-    // execution threads to make sure that no multimem handler is used before
-    // unloading the modules.
-    // TODO(b/496749079): Remove the barrier once collective memory ownership is
-    // tied to the module execution.
-    clique_reqs.barrier_reqs =
-        xla::gpu::CollectiveCliqueRequests::BarrierRequirements{
-            /*module_execution_barrier=*/true};
-  }
   TF_ASSIGN_OR_RETURN(
       std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
       GetCliqueDeviceGroups(*collective_params, attributes));
   TF_RETURN_IF_ERROR(
-      clique_requests->RequestClique(clique_key, device_groups, clique_reqs));
+      clique_requests->RequestClique(clique_key, device_groups));
   for (int i = 0; i < buffers.size(); ++i) {
     if (!parameter_uses_multimem[i]) {
       continue;
