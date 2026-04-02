@@ -4130,7 +4130,10 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     if not jtu.is_cloud_tpu_at_least(2026, 3, 31):
       self.skipTest('Test requires a newer libTPU.')
     if dtype == jnp.int8 and n % 512 != 0:
-      self.skipTest('Requires 8-bit iota support.')
+      if not jtu.is_device_tpu_at_least(5):
+        self.skipTest('8-bit mask requires TPU v5+')
+      if not jtu.is_cloud_tpu_at_least(2026, 4, 8):
+        self.skipTest('Requires a newer libTPU.')
     if (
         dtype == jnp.bfloat16
         and n % 256 != 0

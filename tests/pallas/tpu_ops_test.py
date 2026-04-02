@@ -1053,8 +1053,8 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
     if packing >= 4:
-      if not data_is_aligned:
-        self.skipTest("Requires 8-bit iota, see b/356344569")
+      if not jtu.is_cloud_tpu_at_least(2026, 4, 8):
+        self.skipTest("Requires newer libtpu")
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
     if packing >= 2:
@@ -1063,9 +1063,7 @@ class OpsTest(ptu.PallasTPUTest):
           and not jtu.is_device_tpu_at_least(version=6)
           and not jtu.is_cloud_tpu_at_least(2026, 4, 6)
       ):
-        self.skipTest(
-            "Requires 16-bit iota, supported on TPU v6+, see b/356344569"
-        )
+        self.skipTest("Requires newer libtpu")
       if not jtu.is_device_tpu_at_least(version=4):
         self.skipTest("Requires TPU v4+")
 

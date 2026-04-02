@@ -276,15 +276,14 @@ FailureOr<TypedValue<VectorType>> SingleRowVRegBounds::getVectorMask(
     const std::array<int64_t, 2> target_shape) const /*override*/ {
   // Only packed types may require subelement masking.
   if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-    if (layout_.bitwidth() != 16) {
+    if (layout_.bitwidth() != 16 && layout_.bitwidth() != 8) {
       return emitError(loc,
-                       "Only 16-bit subelement masking is currently "
+                       "Only 16-bit and 8-bit subelement masking is currently "
                        "implemented in SingleRowVRegBounds::getVectorMask.");
     }
 
-    const auto i16_vreg =
-        VectorType::get({target_shape[0], target_shape[1], layout_.packing()},
-                        builder.getI16Type());
+    const auto i16_vreg = VectorType::get({target_shape[0], target_shape[1], 2},
+                                          builder.getI16Type());
     const auto getI16VregConstant = [&](const int32_t v) {
       return arith::ConstantOp::create(
           builder, loc, i16_vreg,
@@ -292,16 +291,54 @@ FailureOr<TypedValue<VectorType>> SingleRowVRegBounds::getVectorMask(
     };
     const Value start = getI16VregConstant(start_offset_);
     const Value end = getI16VregConstant(stop_offset_);
-    const Value iota =
+    const Value i16_iota =
         tpu::IotaOp::create(builder, loc, i16_vreg, ArrayRef<int32_t>{0, 2, 1});
-    return cast<TypedValue<VectorType>>(
-        arith::AndIOp::create(
-            builder, loc,
-            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge, iota,
-                                  start),
-            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt, iota,
-                                  end))
-            .getResult());
+
+    auto generate_mask = [&](Value iota) {
+      return cast<TypedValue<VectorType>>(
+          arith::AndIOp::create(
+              builder, loc,
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
+                                    iota, start),
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
+                                    iota, end))
+              .getResult());
+    };
+
+    // Handle 16-bit.
+    if (layout_.bitwidth() == 16) {
+      if (generation < 4) {
+        return emitError(
+            loc, "16-bit subelement masking is only supported for TPU v4+.");
+      }
+      return generate_mask(i16_iota);
+    }
+
+    // Handle 8-bit by packing two 16-bit masks together.
+    if (generation < 5) {
+      return emitError(
+          loc, "8-bit subelement masking is only supported for TPU v5+.");
+    }
+    int32_t elements_per_vreg_16_bit = target_shape[0] * target_shape[1] * 2;
+    CHECK(llvm::isPowerOf2_64(elements_per_vreg_16_bit));
+    // `i16_iota` generates data from 0 to `elements_per_vreg_16_bit - 1`, so
+    // `i16_iota_shifted` should generate data from `elements_per_vreg_16_bit`
+    // to `2 * elements_per_vreg_16_bit - 1`. Here, we use a trick to avoid
+    // using i16 addition which only works for TPU v6+, a simple OR operation
+    // will suffice.
+    Value i16_iota_shifted = arith::OrIOp::create(
+        builder, loc, i16_iota, getI16VregConstant(elements_per_vreg_16_bit));
+    Value mask1 = generate_mask(i16_iota);
+    Value mask2 = generate_mask(i16_iota_shifted);
+
+    auto mask_vreg_ty =
+        VectorType::get({target_shape[0], target_shape[1], layout_.packing()},
+                        builder.getI1Type());
+    SmallVector<Value> masks_to_pack = {mask1, mask2};
+    Value final_mask =
+        PackMaskOp::create(builder, loc, mask_vreg_ty, masks_to_pack);
+
+    return cast<TypedValue<VectorType>>(final_mask);
   }
 
   // Handle 32-bit as well as packed types with sublane-aligned offsets.

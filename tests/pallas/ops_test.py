@@ -2070,7 +2070,10 @@ class OpsTest(PallasBaseTest):
         self.skipTest("Requires a newer libTPU")
       if len(out_shape) == 1 and dtype not in {jnp.int32, jnp.bool_}:
         if dtype == jnp.int8:
-          self.skipTest("Unaligned 8-bit 1d store not supported")
+          if not jtu.is_device_tpu_at_least(5):
+            self.skipTest("Requires TPUv5+")
+          if not jtu.is_cloud_tpu_at_least(2026, 4, 8):
+            self.skipTest("Requires a newer libTPU")
         # 16-bit case
         if jtu.get_tpu_version() < 4:
           self.skipTest("Requires TPUv4+")
