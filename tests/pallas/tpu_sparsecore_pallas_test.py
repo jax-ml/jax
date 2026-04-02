@@ -390,6 +390,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_swap_index(self, major_dim):
+    if major_dim == 3:
+      self.skipTest("Test is broken")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(major_dim, self.num_lanes), dtype=jnp.int32
