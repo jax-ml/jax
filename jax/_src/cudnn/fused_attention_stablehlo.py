@@ -1076,7 +1076,19 @@ def _dot_product_attention_bwd_partition(
     sliding_window_length, mesh, arg_shapes, result_shape):
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args)
   # args sharding
-  arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
+  arg_shardings = [arg_i.sharding for arg_i in arg_shapes]
+  # grad_output (index 12) may be inferred as replicated (e.g. when it
+  # originates from a broadcast in jnp.sum's backward pass). The cuDNN
+  # backward custom-call is lowered with batch size B taken from the
+  # partitioned query, so every operand that carries a batch dimension
+  # must be partitioned identically. Force fwd_output (11) and
+  # grad_output (12) to match query's sharding so the SPMD partitioner
+  # slices them to the correct per-shard shape.
+  # See https://github.com/jax-ml/jax/issues/25986
+  query_sharding = arg_shardings[0]
+  arg_shardings[11] = query_sharding # fwd_output
+  arg_shardings[12] = query_sharding # grad_output
+  arg_shardings = tuple(arg_shardings)
   def sharded_impl(*args):
     impl = functools.partial(
       _dot_product_attention_bwd_impl,
