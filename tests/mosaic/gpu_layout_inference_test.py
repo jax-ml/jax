@@ -50,6 +50,7 @@ config.parse_flags_with_absl()
 class MockVariableKey:
   idx: int
   shape: tuple[int, ...]
+  memory_space: layout_inference.MemorySpace
 
 
 def _make_ir_context():
@@ -778,11 +779,10 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_find_assignments_for_is_transferable_constraints_is_deterministic(
       self,
   ):
-    v0 = V(MockVariableKey(idx=0, shape=(128, 128)))
+    v0 = V(MockVariableKey(0, (128, 128), layout_inference.MemorySpace.REG))
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
-    constraint = cs.IsTransferable(
+    constraint = cs.IsTransferableTmemRegisters(
         v0, cs.TMEMLayout(tmem_layout), shape=(128, 128),
-        source_strides=None, target_strides=None
     )
     assignments, _ = layout_inference.find_assignments_for(
         {v0},
@@ -1332,8 +1332,8 @@ class LayoutInferenceTest(parameterized.TestCase):
         index=0,
     )
     var = cs.Variable(value_site)
-    transfer_constraint = lambda reg_layout: cs.IsTransferable(
-        reg_layout, var, shape, None, tuple(strides)
+    transfer_constraint = lambda reg_layout: cs.IsTransferableSmemRegisters(
+        reg_layout, var, shape, tuple(strides)
     )
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:

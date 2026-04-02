@@ -30,6 +30,8 @@ from . import tcgen05
 from . import utils
 
 
+# TODO(bchetioui): consider defining an interface for variable keys that carry
+# shape and memory space information.
 VariableKey = Any
 
 
@@ -358,21 +360,27 @@ class Relayout:
 
 
 @dataclasses.dataclass(frozen=True)
-class IsTransferable:
+class IsTransferable(abc.ABC):
   """States that `source` layout must be transferable across memory spaces to `target` layout."""
-
   source: Expression
   target: Expression
-  # TODO(allanrenucci): Can this be derived from the layouts?
   shape: tuple[int, ...]
-  # TODO(bchetioui): look into splitting `IsTransferable` into separate classes
-  # to avoid having to pass around strides in unnecessary cases.
-  # The strides of the source memref. If the source is not a memref, then this
-  # is None.
-  source_strides: tuple[int, ...] | None
-  # The strides of the target memref. If the target is not a memref, then this
-  # is None.
-  target_strides: tuple[int, ...] | None
+
+  def holds(self) -> bool | None:
+    """Returns whether the constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    raise NotImplementedError("Holds must be implemented by subclasses.")
+
+
+@dataclasses.dataclass(frozen=True)
+class IsTransferableTmemRegisters(IsTransferable):
+  """States that `source` layout must be transferable across memory spaces to `target` layout.
+
+  In this case, one of `source` and `target` must be in TMEM, and the other must
+  be in registers.
+  """
 
   def supported_tmem_transfers(
       self, packing: int
@@ -397,11 +405,37 @@ class IsTransferable:
     packing = tmem_layout.vector_length
     return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
 
-  def _is_valid_smem_transfer(
+  def holds(self) -> bool | None:
+    match self.source, self.target:
+      case RegisterLayout(value=src), TMEMLayout(value=dst):
+        return self._is_valid_tmem_transfer(dst, src)
+      case TMEMLayout(value=src), RegisterLayout(value=dst):
+        return self._is_valid_tmem_transfer(src, dst)
+      case Constant(), Constant():
+        raise ValueError(
+            f"{self.source} -> {self.target} is not a TMEM <-> Registers"
+            " transfer."
+        )
+      case _:
+        return None
+
+  def __str__(self):
+    return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
+
+
+@dataclasses.dataclass(frozen=True)
+class IsTransferableSmemRegisters(IsTransferable):
+  """States that `source` layout must be transferable across memory spaces to `target` layout.
+
+  In this case, one of `source` and `target` must be in SMEM, and the other must
+  be in registers.
+  """
+  strides: tuple[int, ...]
+
+  def _is_supported_smem_transfer(
       self,
       smem_layout: lc.TileTransform | None,
       reg_layout: fa.FragmentedLayout,
-      smem_strides: tuple[int, ...]
   ) -> bool:
     # TODO(b/447079781): This is way too restrictive. We need to make it more
     # precise by:
@@ -413,44 +447,27 @@ class IsTransferable:
       if smem_layout is None or len(smem_layout.tiling) != 2:
         return False
       transposed_layouts = {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
-      if list(smem_strides[-2:]) != sorted(smem_strides[-2:], reverse=True):
+      if list(self.strides[-2:]) != sorted(self.strides[-2:], reverse=True):
         return reg_layout in transposed_layouts
       return reg_layout not in transposed_layouts
     return smem_layout is None
 
   def holds(self) -> bool | None:
-    """Returns whether the constraint holds.
-
-    Returns `None` if the constraint can't be checked.
-    """
-
-    assert self.source != self.target, (
-        "IsTransferable constraints within the same memory space are not"
-        " supported."
-    )
-
     match self.source, self.target:
-      case TMEMLayout(value=src), RegisterLayout(value=dst):
-        return self._is_valid_tmem_transfer(src, dst)
-      case RegisterLayout(value=src), TMEMLayout(value=dst):
-        return self._is_valid_tmem_transfer(dst, src)
       case SMEMTiling(value=src), RegisterLayout(value=dst):
-        assert self.source_strides is not None
-        return self._is_valid_smem_transfer(src, dst, self.source_strides)
+        return self._is_supported_smem_transfer(src, dst)
       case RegisterLayout(value=src), SMEMTiling(value=dst):
-        assert self.target_strides is not None
-        return self._is_valid_smem_transfer(dst, src, self.target_strides)
+        return self._is_supported_smem_transfer(dst, src)
       case Constant(), Constant():
-        source_type = type(self.source).__name__
-        target_type = type(self.target).__name__
-        raise NotImplementedError(
-            f"Unsupported transfer: {source_type} -> {target_type}"
+        raise ValueError(
+            f"{self.source} -> {self.target} is not a SMEM <-> Registers"
+            " transfer."
         )
       case _:
         return None
 
   def __str__(self):
-    return f"IsTransferable({self.source}  ⟶ {self.target})"
+    return f"IsTransferableSmemRegisters({self.source} ⟶ {self.target})"
 
 
 @dataclasses.dataclass(frozen=True)

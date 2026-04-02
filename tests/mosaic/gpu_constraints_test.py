@@ -378,12 +378,12 @@ class ConstraintSystemTest(parameterized.TestCase):
     eq_layout = cs.RegisterLayout(layout)
     eq_tiling = cs.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
     strides = (128, 1) if contiguous_strides else (1, 128)
-    reg_to_smem = cs.IsTransferable(
-        eq_layout, eq_tiling, (), source_strides=None, target_strides=strides
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        eq_layout, eq_tiling, (128, 128), strides
     )
     self.assertEqual(reg_to_smem.holds(), expected)
-    smem_to_reg = cs.IsTransferable(
-        eq_tiling, eq_layout, (), source_strides=strides, target_strides=None
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        eq_tiling, eq_layout, (128, 128), strides
     )
     self.assertEqual(smem_to_reg.holds(), expected)
 

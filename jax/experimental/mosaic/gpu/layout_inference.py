@@ -261,15 +261,9 @@ def _register_layouts_for_optimized_transfer_to_smem(
   yield from candidate_layouts
 
 
-def _extract_layout_candidates_from_memory_space_transfer(
-    constraint: cs.IsTransferable,
-    division_constraint_per_var: dict[cs.Variable, cs.Divides],
-    arch: tuple[int, int]
+def _extract_layout_candidates_from_tmem_registers_transfer(
+    constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
-  """Attempts to extract variable assignments from a `Constraint`."""
-  # This code assumes that the `IsTransferable` constraint is bidirectional.
-  # This is currently true for TMEM <-> REG transfers and SMEM <-> REG
-  # transfers.
   src, tgt = constraint.source, constraint.target
   match src, tgt:
     case cs.Variable(), cs.Constant():
@@ -282,45 +276,64 @@ def _extract_layout_candidates_from_memory_space_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    if variable.key.memory_space == MemorySpace.TMEM:
-      dtype = ir.MemRefType(variable.key.value.type).element_type
-      for packing in (1, 32 // utils.bitwidth(dtype)):
-        for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
-            packing
-        ):
-          if layout == reg_layout:
-            yield variable, cs.TMEMLayout(tmem_layout)
-    elif variable.key.memory_space == MemorySpace.SMEM:
-      if inference_utils.is_mma_layout(layout):
-        tiling = _infer_tiling_for_mma_ref(
-            variable.key.value.type,
-            max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-        )
-        divide = cs.Divides(variable, tiling)
-        if (divide2 := division_constraint_per_var.get(variable)) is not None:
-          # This is done on two lines to satisfy type checkers.
-          # TODO(b/447079781): clean up the `merge_divides_constraints` to
-          # avoid the need for this.
-          [merged] = cs.merge_divides_constraints([divide, divide2])
-          divide = cast(cs.Divides, merged)
-        yield from _extract_tiling_candidate(divide, len(tiling))
-      else:
-        # An empty tiling is valid here but we don't yield it in order to
-        # avoid duplicating the empty tiling yielded by the caller.
-        return
+    assert variable.key.memory_space == MemorySpace.TMEM  # pytype: disable=attribute-error
+    dtype = ir.MemRefType(variable.key.value.type).element_type  # pytype: disable=attribute-error
+    for packing in (1, 32 // utils.bitwidth(dtype)):
+      for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
+          packing
+      ):
+        if layout == reg_layout:
+          yield variable, cs.TMEMLayout(tmem_layout)
+    return
 
-  if isinstance(constant, cs.TMEMLayout):
+  assert isinstance(constant, cs.TMEMLayout)
+  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  layout = constant.value
+  packing = layout.vector_length
+  for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
+    if layout == tmem_layout:
+      yield variable, cs.RegisterLayout(reg_layout)
+
+
+def _extract_layout_candidates_from_smem_registers_transfer(
+    constraint: cs.IsTransferableSmemRegisters,
+    division_constraint_per_var: dict[cs.Variable, cs.Divides],
+    arch: tuple[int, int]
+) -> Iterator[tuple[cs.Variable, cs.Constant]]:
+  src, tgt = constraint.source, constraint.target
+  match src, tgt:
+    case cs.Variable(), cs.Constant():
+      variable, constant = src, tgt
+    case cs.Constant(), cs.Variable():
+      variable, constant = tgt, src
+    case _:
+      return
+
+  assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
+  if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    packing = layout.vector_length
-    for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
-      if layout == tmem_layout:
-        yield variable, cs.RegisterLayout(reg_layout)
+    assert variable.key.memory_space == MemorySpace.SMEM  # pytype: disable=attribute-error
+    if inference_utils.is_mma_layout(layout):
+      tiling = _infer_tiling_for_mma_ref(
+          variable.key.value.type,
+          max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+      )
+      divide = cs.Divides(variable, tiling)
+      if (divide2 := division_constraint_per_var.get(variable)) is not None:
+        # This is done on two lines to satisfy type checkers.
+        # TODO(b/447079781): clean up the `merge_divides_constraints` to
+        # avoid the need for this.
+        [merged] = cs.merge_divides_constraints([divide, divide2])
+        divide = cast(cs.Divides, merged)
+      yield from _extract_tiling_candidate(divide, len(tiling))
+    return
 
-  if isinstance(constant, cs.SMEMTiling) and variable.key.memory_space == MemorySpace.REG:
-    for layout in _register_layouts_for_optimized_transfer_to_smem(
-        variable.key.value.type, constant, arch
-    ):
-      yield variable, cs.RegisterLayout(layout)
+  assert isinstance(constant, cs.SMEMTiling)
+  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  for layout in _register_layouts_for_optimized_transfer_to_smem(
+      variable.key.value.type, constant, arch
+  ):
+    yield variable, cs.RegisterLayout(layout)
 
 
 def _extract_layout_candidates_from_mma_tiling(
@@ -370,8 +383,10 @@ def _extract_variable_assignments_from_constraints(
   dpv = _divides_per_var(constraints)
   for c in constraints:
     match c:
-      case cs.IsTransferable():
-        yield from _extract_layout_candidates_from_memory_space_transfer(c, dpv, arch)
+      case cs.IsTransferableTmemRegisters():
+        yield from _extract_layout_candidates_from_tmem_registers_transfer(c)
+      case cs.IsTransferableSmemRegisters():
+        yield from _extract_layout_candidates_from_smem_registers_transfer(c, dpv, arch)
       case cs.Equals(cs.Reduce(cs.Variable() as large, axes=axes, keep_dims=keep_dims), cs.RegisterLayout() as small):
         for layout in extract_assignment_candidates_from_reduce_equation(small, large, axes, keep_dims):
           yield large, layout
@@ -690,10 +705,10 @@ def _vector_load_constraint_system(
     source_var = ctx.producer_ref(source)
     value_sites_for_variable[source_var] = [source]
     shape = tuple(ir.MemRefType(op.source.type).shape)
-    source_strides, _ = ir.MemRefType(op.source.type).get_strides_and_offset()
+    strides, _ = ir.MemRefType(op.source.type).get_strides_and_offset()
     constraints.append(
-        cs.IsTransferable(
-            source_var, dest_var, shape, tuple(source_strides), None
+        cs.IsTransferableSmemRegisters(
+            source_var, dest_var, shape, tuple(strides)
         )
     )
 
@@ -718,10 +733,10 @@ def _vector_store_constraint_system(
     dest_var = ctx.producer_ref(dest)
     value_sites_for_variable[dest_var] = [dest]
     shape = tuple(ir.MemRefType(op.destination.type).shape)
-    target_strides, _ = ir.MemRefType(op.destination.type).get_strides_and_offset()
+    strides, _ = ir.MemRefType(op.destination.type).get_strides_and_offset()
     constraints.append(
-        cs.IsTransferable(
-            value_var, dest_var, shape, None, tuple(target_strides)
+        cs.IsTransferableSmemRegisters(
+            value_var, dest_var, shape, tuple(strides)
         )
     )
 
@@ -1528,13 +1543,10 @@ def _async_load_tmem_constraint_system(
   source_variable = ctx.producer_ref(source)
   destination = ValueSite(op, VariableType.RESULT, 0)
   destination_variable = cs.Variable(destination)
-  source_strides, _ = ir.MemRefType(op.source.type).get_strides_and_offset()
-  constraint = cs.IsTransferable(
+  constraint = cs.IsTransferableTmemRegisters(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      tuple(source_strides),
-      None
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1649,13 +1661,10 @@ def _async_store_tmem_constraint_system(
   source_variable = cs.Variable(source)
   destination = ValueSite(op, VariableType.OPERAND, 1)
   destination_variable = ctx.producer_ref(destination)
-  destination_strides, _ = ir.MemRefType(op.destination.type).get_strides_and_offset()
-  constraint = cs.IsTransferable(
+  constraint = cs.IsTransferableTmemRegisters(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
-      None,
-      tuple(destination_strides),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
