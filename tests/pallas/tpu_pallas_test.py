@@ -4607,6 +4607,36 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     compiled_kernel = jax.jit(wrapper_dynamic).lower(n).compile()
     np.testing.assert_array_equal(compiled_kernel(n), n)
 
+  @parameterized.parameters(
+      (r // m, m)
+      for m in (1, 2, 4, 8, 16)
+      for r in (1, 2, 4, 8, 16, 32, 64)
+      if r % m == 0
+  )
+  def test_manual_dma_reshape_tc(self, n, m):
+    if self.INTERPRET:
+      self.skipTest("Interpret not supported for manual DMA test")
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 10):
+      self.skipTest("Needs a newer libtpu")
+
+    def kernel(x_hbm, y_hbm):
+      @functools.partial(
+          pl.run_scoped,
+          sem=pltpu.SemaphoreType.DMA,
+          vmem_buf=pltpu.VMEM((n, m, 256), jnp.float32),
+      )
+      def body(sem, vmem_buf):
+        vmem_reshaped = vmem_buf.reshape(n * m, 256)
+        pltpu.async_copy(x_hbm, vmem_reshaped, sem).wait()
+        pltpu.async_copy(vmem_reshaped, y_hbm, sem).wait()
+
+    x = np.random.uniform(size=(n * m, 256)).astype(np.float32)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((n * m, 256), jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(out, x)
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
