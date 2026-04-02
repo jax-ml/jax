@@ -966,7 +966,7 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
                     "function?")
   if not indexers:
     if val_dim != ref_dim:
-      val = batching.matchaxis2(axis_data, val_dim, ref_dim, val)
+      val = batching.matchaxis(axis_data, val_dim, ref_dim, val)
     return addupdate_p.bind(ref, val, *flat_idxs, tree=tree), []
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")

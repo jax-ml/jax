@@ -79,8 +79,8 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
   val, bdim = trace.to_batch_info(x)
   bdim_inferred = bdim if spec is infer else spec
   try:
-    return matchaxis2(trace.axis_data, bdim, spec, val,
-                      sum_match=sum_match), bdim_inferred
+    return matchaxis(trace.axis_data, bdim, spec, val,
+                     sum_match=sum_match), bdim_inferred
   except SpecMatchError:
     raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
@@ -485,9 +485,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
-  out_vals = map(partial(matchaxis, axis_data.name, axis_data.size,
-                         axis_data.explicit_mesh_axis),
-                 out_axes, out_axes_dest, out_vals)
+  out_vals = map(partial(matchaxis, axis_data), out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
   store.store(out_batched)
   return out_vals
@@ -517,12 +515,10 @@ zero_if_mapped = ZeroIfMapped()
 
 @lu.transformation_with_aux2
 def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
-  size = axis_data.size
-  mesh_axis = axis_data.explicit_mesh_axis
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [val if dim is None else
-                  SymbolicZero(core.mapped_aval(size, dim, val.aval))
+                  SymbolicZero(core.mapped_aval(axis_data.size, dim, val.aval))
                   if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
                   for val, dim in zip(in_vals, in_dims * 2)]
     with core.set_current_trace(trace):
@@ -531,9 +527,9 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
   out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
   out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)
-  out_primals  = map(partial(matchaxis, trace.axis_data.name, size, mesh_axis),
-                     out_primal_bds, out_dims,  out_primals)
-  out_tangents = map(partial(_matchaxis_symzeros, trace.axis_data.name, size, mesh_axis),
+  out_primals  = map(partial(matchaxis, axis_data), out_primal_bds, out_dims,
+                     out_primals)
+  out_tangents = map(partial(_matchaxis_symzeros, axis_data),
                      out_tangent_bds, out_dims, out_tangents)
   store.store(out_dims)
   return out_primals + out_tangents
@@ -542,48 +538,44 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          axis_data: AxisData,
                          in_dims: Callable[[], Sequence[int | None]],
                          out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
-  axis_size = axis_data.size
-  axis_name = axis_data.name
-  mesh_axis = axis_data.explicit_mesh_axis
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
-    args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
+    args = [SymbolicZero(core.mapped_aval(axis_data.size, dim, x.aval))
             if type(x) is SymbolicZero else x
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
     bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, mesh_axis,
-                               out_dims_thunk, out_dim_dests)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, out_dim_dests)
     return bwd_.call_wrapped(*args)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
 @lu.transformation2
-def _match_axes_and_sum(f, axis_size, axis_name, mesh_axis, out_dims_thunk,
-                        out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
-  return map(partial(_matchaxis_symzeros, axis_name, axis_size, mesh_axis,
-                     sum_match=True),
+  return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
              out_dims_thunk(), out_dim_dests, out_vals)
 
-def _matchaxis_symzeros(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
+def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
   # TODO(mattjj): dedup with matchaxis
   if isinstance(x, (Zero, SymbolicZero)):
     if src == dst:
       return x
     elif type(src) == type(dst) == int:
-      aval = core.mapped_aval(sz, src, x.aval)
-      return type(x)(core.unmapped_aval(sz, dst, aval, mesh_axis))
+      aval = core.mapped_aval(axis_data.size, src, x.aval)
+      return type(x)(core.unmapped_aval(axis_data.size, dst, aval,
+                                        axis_data.explicit_mesh_axis))
     elif src is not_mapped and dst is not not_mapped:
-      return type(x)(core.unmapped_aval(sz, dst, x.aval, mesh_axis))
+      return type(x)(core.unmapped_aval(axis_data.size, dst, x.aval,
+                                        axis_data.explicit_mesh_axis))
     elif dst is not_mapped and sum_match:
-      return type(x)(core.mapped_aval(sz, src, x.aval))
+      return type(x)(core.mapped_aval(axis_data.size, src, x.aval))
     else:
-      raise ValueError((axis_name, x, src, dst))
+      raise ValueError((axis_data.name, x, src, dst))
   else:
-    return matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=sum_match)
+    return matchaxis(axis_data, src, dst, x, sum_match=sum_match)
 
 
 ### utilities for defining primitives' batching rules
@@ -719,12 +711,7 @@ def spmd_names_insert_pvary(*args):
             for a in args]
   return args
 
-def matchaxis2(axis_data, src, dst, x, sum_match=False):
-  return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
-                   src, dst, x, sum_match)
-
-# TODO(yashkatariya): remove this, inline into matchaxis2
-def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
+def matchaxis(axis_data, src, dst, x, sum_match=False):
   try:
     _ = core.typeof(x)
   except TypeError as e:
@@ -735,15 +722,18 @@ def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
   elif src is not_mapped and type(dst) is int:
-    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1), mesh_axis)
+    return broadcast(x, axis_data.size, canonicalize_axis(dst, np.ndim(x) + 1),
+                     axis_data.explicit_mesh_axis)
   elif src is not_mapped and dst is sum_axis:
     return x
   elif dst is not_mapped and sum_match or dst is sum_axis:
     return x.sum(src)
   else:
-    if (not isinstance(axis_name, core._TempAxisName) and
-        axis_name is not core.no_axis_name):
-      raise ValueError(f'vmap has mapped output ({axis_name=}) but out_axes is {dst}')
+    if (not isinstance(axis_data.name, core._TempAxisName) and
+        axis_data.name is not core.no_axis_name):
+      raise ValueError(
+          f'vmap has mapped output (axis_name={axis_data.name}) but out_axes is'
+          f' {dst}')
     else:
       raise SpecMatchError(None, None, None)
 
