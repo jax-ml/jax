@@ -1061,6 +1061,14 @@ def _mgpu_async_load_op_lowering_rule(
       for axis in load_op.collective or []
   ]
 
+  match load_op.leader_tracked:
+    case mgpu.CopyReplicatedAttr():
+      leader_tracked = lc.CopyPartition.REPLICATED
+    case mgpu.CopyPartitionedAttr() as attr:
+      leader_tracked = lc.CopyPartition.PARTITIONED(attr.axis)
+    case _:
+      leader_tracked = None
+
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
   # strided layouts when they are contiguous in GMEM. In that case, we could do:
@@ -1069,6 +1077,7 @@ def _mgpu_async_load_op_lowering_rule(
 
   if ctx.auto_barriers and ctx.thread_semantics == utils.ThreadSubset.WARPGROUP:
     utils.warpgroup_barrier()  # Make sure the writes have completed.
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
@@ -1079,6 +1088,7 @@ def _mgpu_async_load_op_lowering_rule(
       arrive=False,
       swizzle=swizzle,
       gmem_transform=transforms,
+      leader_tracked=leader_tracked,
       **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []

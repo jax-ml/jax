@@ -4368,8 +4368,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       scale_jax_dtype=[jnp.float8_e8m0fnu, jnp.float8_e4m3fn],
   )
   def test_collective_scaled_matmul(self, m, n, scale_jax_dtype):
-    self.skip_if_wg_semantics()  # leader_tracked for copy_gmem_to_smem is unsupported in WG semantics
-
+    self.skip_if_wg_semantics()  # Cannot infer layouts for block scaled collective matmuls
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = 32 if scale_jax_dtype == jnp.float8_e8m0fnu else 16
@@ -5181,7 +5180,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       squeezed_index=(True, False),
   )
   def test_copy_gmem_to_smem_partitioned(self, warp_level, squeezed_index):
-    self.skip_if_wg_semantics()  # partitioned copies not supported for warpgroup.
     block_size = (128, 128)
     partitioned_block_size = (block_size[0] // 2, block_size[1])
     a = jax.random.uniform(
@@ -5262,7 +5260,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_array_equal(result, a + b)
 
   def test_copy_gmem_to_smem_replicated(self):
-    self.skip_if_wg_semantics()
     block_size = (64, 64)
     def kernel(a_gmem, out_gmem, a_smem, tma_barrier, cluster_barrier):
       cluster_idx = lax.axis_index("x")

@@ -674,8 +674,28 @@ def _copy_gmem_to_smem_lowering(
     raise NotImplementedError(
         "GMEM refs with peer ids are not supported in warpgroup lowering."
     )
+  match leader_tracked:
+    case CopyPartition.REPLICATED:
+      leader_tracked_attr = mgpu.dialect.CopyReplicatedAttr.get()
+    case CopyPartition.PARTITIONED(axis):
+      leader_tracked_attr = mgpu.dialect.CopyPartitionedAttr.get(axis)
+    case _:
+      leader_tracked_attr = None
+
   barrier_ref = barrier.as_barrier_memref()
-  mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+
+  if is_leader_tracked_copy:
+    first_block = arith_dialect.cmpi(
+        arith_dialect.CmpIPredicate.eq,
+        mgpu.utils.cluster_idx(collective[0]),
+        mgpu.c(0, ir.IndexType.get()),
+    )
+    arrive_ctx = mgpu.when(first_block)
+  else:
+    arrive_ctx = contextlib.nullcontext()
+  with arrive_ctx:
+    mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+
   mgpu.dialect.async_load(
       src,
       dst,
@@ -685,6 +705,7 @@ def _copy_gmem_to_smem_lowering(
       collective=ir.ArrayAttr.get(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
+      leader_tracked=leader_tracked_attr,
   )
   return ()
 
