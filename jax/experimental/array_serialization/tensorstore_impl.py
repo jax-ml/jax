@@ -339,17 +339,20 @@ async def _transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
 
 async def combine_kvstores(combined_kvstore: dict[str, Any],
                            kvstores: list[dict[str, Any]],
-                           context: ts.Context | dict[str, Any] = _TS_CONTEXT
+                           context: ts.Context | None = _TS_CONTEXT
                            ) -> None:
   """Merge a list of kvstores into a single kvstore. NOT multi-process safe."""
   combined_fut = ts.KvStore.open(combined_kvstore, context=context)
   kvstores_futs = [ts.KvStore.open(kvstore, context=context)
                    for kvstore in kvstores]
-  combined, kvstores = await asyncio.gather(combined_fut,
-                                            asyncio.gather(*kvstores_futs))
+  combined, opened_kvstores = await asyncio.gather(
+      combined_fut, asyncio.gather(*kvstores_futs)
+  )
   tx = ts.Transaction()
-  await asyncio.gather(*[kvstore.experimental_copy_range_to(
-      combined.with_transaction(tx)) for kvstore in kvstores])
+  await asyncio.gather(*(
+      kvstore.experimental_copy_range_to(combined.with_transaction(tx))
+      for kvstore in opened_kvstores
+  ))
   await tx.commit_async()
 
 async def async_serialize(
