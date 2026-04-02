@@ -945,6 +945,7 @@ jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(barrier_arrive_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(barrier_arrive_p, *gpu_core.WGxWARP_SEMANTICS)
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,

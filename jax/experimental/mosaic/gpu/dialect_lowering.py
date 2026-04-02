@@ -1549,7 +1549,7 @@ def _mgpu_wgmma_op_lowering_rule(
   ]
 
 
-@_register_lowering(mgpu.ArriveOp)
+@_register_lowering(mgpu.ArriveOp, support_warp_semantics=True)
 def _mgpu_arrive_op_lowering_rule(
     ctx: LoweringContext, arrive_op: mgpu.ArriveOp
 ) -> Sequence[ir.Value]:
@@ -1558,11 +1558,24 @@ def _mgpu_arrive_op_lowering_rule(
   if orders_tc:
     # Barrier expects a single thread arrival.
     predicate = ctx.single_lane_predicate
+    arrival_count = 1
+  elif ctx.thread_semantics == utils.ThreadSubset.WARP:
+    # In warp-level lowering, we arrive on each CUDA thread in a warp, but the
+    # barrier still expects a full 128 arrivals so we arrive 4 times on each
+    # CUDA thread instead.
+    predicate = None
+    arrival_count = 4
   else:
     # Barrier expects each thread arrives once.
     predicate = None
+    arrival_count = 1
 
-  barrier.barrier_ref.arrive(orders_tensor_core=orders_tc, predicate=predicate)
+  barrier.barrier_ref.arrive(
+      arrival_count,
+      orders_tensor_core=orders_tc,
+      predicate=predicate,
+      scope=ctx.thread_semantics,
+  )
   return []
 
 
