@@ -239,7 +239,7 @@ py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(
         include = ["mosaic/gpu/*.py"],
-        exclude = ["mosaic/gpu/test_util.py"],
+        exclude = ["mosaic/gpu/test_util.py"],  # force rebuild
     ),
     data = if_cuda_is_configured([
         "@local_config_cuda//cuda:runtime_nvdisasm",

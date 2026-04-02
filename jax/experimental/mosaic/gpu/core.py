@@ -721,8 +721,8 @@ def _launch(
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       nvvm.fence_mbarrier_init()
       if math.prod(cluster) != 1:
-        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+        nvvm.cluster_arrive_relaxed(aligned=True)
+        nvvm.cluster_wait(aligned=True)
       if tmem_allocs:
         init_warp_ctx: contextlib.AbstractContextManager
         if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -766,8 +766,8 @@ def _launch(
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
       if any(alloc.collective for alloc in tmem_allocs):
-        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+        nvvm.cluster_arrive_relaxed(aligned=True)
+        nvvm.cluster_wait(aligned=True)
       if lowering_semantics == LoweringSemantics.Warpgroup:
         init_warp_ctx = contextlib.nullcontext()
       else:
