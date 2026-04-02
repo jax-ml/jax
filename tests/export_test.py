@@ -2351,6 +2351,39 @@ class JaxExportTest(jtu.JaxTestCase):
         else:
           jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
 
+  def test_with_multiple_meshes(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest("Need at least 2 devices")
+    devices = jax.devices()[0:nr_devices]
+
+    mesh_inputs = Mesh(np.array(devices).reshape(1, 2), axis_names=("x1", "x2"))
+    mesh_weights = Mesh(np.array(devices).reshape(2, 1), axis_names=("y2", "y1"))
+
+    inp = np.arange(32., dtype=np.float32).reshape((4, 8))
+    TUPLE_SIZE = 4
+    inputs = (inp,) * TUPLE_SIZE
+    w = np.arange(16., dtype=np.float32).reshape((8, 2))
+    weights = (w,) * TUPLE_SIZE
+    in_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x2")),) * TUPLE_SIZE,
+      (jax.sharding.NamedSharding(mesh_weights, P("y2", None),),) * TUPLE_SIZE)
+    out_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x1")),) * TUPLE_SIZE)
+    @functools.partial(
+        jax.jit,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings)
+    def f(inputs, weights):
+      return tuple(i @ w for i, w in zip(inputs, weights))
+
+    exp = get_exported(f)(inputs, weights)
+
+    (placed_inputs, placed_weights) = jax.device_put((inputs, weights),
+                                                      in_shardings)
+    out = exp.call(placed_inputs, placed_weights)
+    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
