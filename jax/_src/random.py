@@ -1713,17 +1713,57 @@ def gumbel(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   if mode is None:
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
-  if mode not in ("high", "low"):
+  if mode not in ("highest", "high", "low"):
     raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gumbel", shape)
   return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
                          mode=mode)(key)
 
+def _safe_int_to_float(bits, dtype):
+  """Converts bits: u32[2,...] into f32[...] in the range (0,1)."""
+  if bits.dtype != np.uint32 or dtype != np.float32:
+    raise RuntimeError("_safe_int_to_float only works for u32 -> f32")
+  finfo = dtypes.finfo(dtype)
+  hiclz, loclz = lax.clz(bits)
+  hi, lo = bits
+
+  mantissa = lax.bitwise_or(
+      lax.shift_left(hi, hiclz),
+      jnp.where(
+          hiclz == 32,
+          lax.shift_left(lo, loclz),
+          lax.shift_right_logical(lo, finfo.bits - hiclz)))
+  mantissa = lax.shift_right_logical(
+      mantissa, np.array(finfo.bits - finfo.nmant - 1, dtype=np.uint32))
+  mantissa = lax.bitwise_and(
+      mantissa, np.array((1 << finfo.nmant) - 1, dtype=np.uint32))
+  exp = lax.shift_left(
+      (-finfo.minexp - jnp.where(hiclz == 32, 32 + loclz, hiclz)),
+      np.array(finfo.nmant, dtype=np.uint32))
+  exp = lax.bitwise_and(exp, np.array(
+      (1 << (finfo.bits - 2)) - (1 << (finfo.nmant - 1)), dtype=np.uint32))
+  return lax.bitwise_or(exp, mantissa).view(dtype)
+
+
 @jit(static_argnums=(1, 2, 3))
 def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
-  if mode == "high":
+  if dtype == np.float32 and mode == "highest":
+    finfo = dtypes.finfo(dtype)
+    bits = _random_bits(key, finfo.bits, shape=(2,) + shape)
+    neg = lax.bitwise_not(bits)
+    lo_bits = neg[1]
+    # 1 - bits in u64 fixed point.
+    neg = neg + jnp.array([
+        lo_bits == np.array((1 << finfo.bits) - 1, dtype=np.uint32),
+        jnp.ones_like(lo_bits)], dtype=np.uint32)
+    flip_mask = bits[0] < np.array(1 << (finfo.bits - 1), dtype=np.uint32)
+    x = _safe_int_to_float(jnp.where(flip_mask, bits, neg), dtype=np.float32)
+    # use log1p for (0,0.5) and log for [0.5, 1).
+    return jnp.where(flip_mask,
+        -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))
+  elif mode == "high" or mode == "highest":
     high, low = _uniform(key, minval=0., maxval=1.,
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
