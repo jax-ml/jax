@@ -50,44 +50,39 @@ namespace mgpu = jax::mosaic::gpu;
 namespace {
 
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
-
-// Returns the `mlir_ir_module` and caches its usage in the program. If the
-// input module is not specified, returns the already cached module, which
-// can be either the default `None` or the module passed in the first call.
-static nb::object& MlirIrModule(nb::object mlir_ir_module = nb::none()) {
-  static nb::object* mlir_ir = new nb::object(nb::none());
-  if (mlir_ir->is_none() && !mlir_ir_module.is_none()) {
-    *mlir_ir = mlir_ir_module;
-  }
-  return *mlir_ir;
-}
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
 
 // Returns an `ImplicitLocOpBuilder` with the current loc location and ip
 // insertion point extracted from the `MlirIrModule`. Returns invalid argument
 // error if the `mlir.ir` module is not found.
 absl::StatusOr<mlir::ImplicitLocOpBuilder> MlirBuilder() {
-  nb::object& mlir_ir = MlirIrModule();
-  if (mlir_ir.is_none()) {
+  PyInsertionPoint* insertion_point =
+      PyThreadContextEntry::getDefaultInsertionPoint();
+  if (insertion_point == nullptr) {
     return absl::InvalidArgumentError(
-        "MLIR IR module has not been initialized. Call init_cc_mlir() before "
-        "using other functions.");
+        "No default insertion point found. Did you forget to do "
+        "``with ip: ...``?");
   }
-  nb::object ip = mlir_ir.attr("InsertionPoint").attr("current");
-  nb::object loc = mlir_ir.attr("Location").attr("current");
+  PyLocation* location = PyThreadContextEntry::getDefaultLocation();
+  if (location == nullptr) {
+    return absl::InvalidArgumentError(
+        "No default location found. Did you forget to do "
+        "``with loc: ...``?");
+  }
 
-  auto insertion_point = nb::cast<PyInsertionPoint>(ip);
-  mlir::Location location = unwrap(nb::cast<MlirLocation>(loc));
-  mlir::Block* block = unwrap(insertion_point.getBlock().get());
+  mlir::Block* block = unwrap(insertion_point->getBlock().get());
   if (block == nullptr) {
     return absl::InvalidArgumentError("MLIR block is null");
   }
   mlir::Operation* ref_op = nullptr;
-  if (insertion_point.getRefOperation()) {
-    if (auto* py_op = insertion_point.getRefOperation()->get(); py_op) {
+  if (insertion_point->getRefOperation()) {
+    if (auto* py_op = insertion_point->getRefOperation()->get(); py_op) {
       ref_op = unwrap(py_op->get());
     }
   }
-  mlir::ImplicitLocOpBuilder builder(location, block, block->end());
+  mlir::ImplicitLocOpBuilder builder(unwrap(location->get()), block,
+                                     block->end());
   if (ref_op != nullptr) {
     builder.setInsertionPoint(ref_op);
   }
@@ -428,11 +423,6 @@ NB_MODULE(_mosaic_gpu_ext, m) {
               ),
           "Creates a CopyPartitionedAttr.")
       .def_property_readonly("axis", mlirMosaicGpuCopyPartitionedAttrGetAxis);
-
-  m.def("init_cc_mlir", [](nb::object mlir_ir_module) {
-    nb::object& mlir_ir = MlirIrModule(mlir_ir_module);
-    return !mlir_ir.is_none();
-  });
 
   nb::class_<mgpu::Tiling>(m, "Tiling")
       .def(
