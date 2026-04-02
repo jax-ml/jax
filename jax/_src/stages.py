@@ -968,17 +968,17 @@ class SourceInfo(NamedTuple):
 
 @dataclasses.dataclass
 class DeviceAssignmentMismatch:
-  da: Sequence[xc.Device] | int
+  da: Sequence[xc.Device]
   m_type: MismatchType
   source_info: SourceInfo | None
 
   @property
   def device_ids(self) -> Sequence[int]:
-    return [d.id for d in self.da]  # type: ignore
+    return [d.id for d in self.da]
 
   @property
   def platform(self) -> str:
-    return self.da[0].platform.upper()  # type: ignore
+    return self.da[0].platform.upper()
 
   def _maybe_api_name(self, api_name) -> str:
     return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
@@ -992,17 +992,14 @@ class DeviceAssignmentMismatch:
 
   @property
   def _dev_ids_plat_str(self):
-    if isinstance(self.da, int):
-      return f"as AbstractMesh of size {self.da}"
-    else:
-      return f"with device ids {self.device_ids} on platform {self.platform}"
+    return f"device ids {self.device_ids} on platform {self.platform}"
 
   def m_type_str(self, api_name):
     return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
             if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
 
   def _str(self, api_name):
-    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} "
+    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
             f"{self._dev_ids_plat_str}{self.source_info_str}")
 
 

@@ -588,22 +588,11 @@ def _infer_params_cached(
     ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
-def get_ctx_mesh(use_resource_env):
-  if use_resource_env:
-    return mesh_lib.thread_resources.env.physical_mesh
-  else:
-    conc_mesh = mesh_lib.get_concrete_mesh()
-    if not conc_mesh.empty:
-      return conc_mesh
-    else:
-      abs_mesh = mesh_lib.get_abstract_mesh()
-      return conc_mesh if abs_mesh.empty else abs_mesh
-
-
 def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[core.Value]]:
-  ctx_mesh = get_ctx_mesh(ji.use_resource_env)
+  ctx_mesh = (mesh_lib.thread_resources.env.physical_mesh
+              if ji.use_resource_env else mesh_lib.get_concrete_mesh())
   dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,

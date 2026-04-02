@@ -2049,8 +2049,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
-        r"x of.*\<lambda\> with shape int.*\[3\] and.*device ids \[0\].*and "
-        r"argument y of.*\<lambda\> with shape int.*\[3\] and.*device ids \[1\].*"):
+        r"x of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
+        r"argument y of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
       pjit(lambda x, y: (x, y))(a, b)
 
   def test_pjit_committed_array_different_devices_variadic_args(self):
@@ -2061,8 +2061,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
-        r"x\[0\] of.*\<lambda\> with shape int.*\[3\] and.*device ids \[0\].*and "
-        r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and.*device ids "
+        r"x\[0\] of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
+        r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and device ids "
         r"\[1\].*"):
       pjit(lambda *x: x)(a, b)
 
@@ -2088,8 +2088,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
                        NamedSharding(mesh, P('x', 'y')))
 
     msg = ("Received incompatible devices for jitted computation. Got "
-           r"argument {} of.*<lambda> with shape int.*\[3\] and.*device ids "
-           r"\[0\].*and argument {} of.*<lambda> with shape int.*\[8,2\] and.*"
+           r"argument {} of.*<lambda> with shape int.*\[3\] and device ids "
+           r"\[0\].*and argument {} of.*<lambda> with shape int.*\[8,2\] and "
            r"device ids.*")
 
     with self.assertRaisesRegex(
@@ -2248,7 +2248,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
-        r"inp of.*sharded_inp with shape bfloat16\[8,2\] and.*device ids \[0\].*"
+        r"inp of.*sharded_inp with shape bfloat16\[8,2\] and device ids \[0\].*"
         r"sharding_constraint inside jit with device ids.*"):
       sharded_inp(committed_inp)
 
@@ -2262,7 +2262,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
-        r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and.*device ids \[0\].*"
+        r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and device ids \[0\].*"
         r"jit inside jit with device ids.*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
@@ -4885,56 +4885,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         sharding=NamedSharding(mesh.abstract_mesh, P('x')))
     out = jnp.zeros_like(val)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
-
-  @parameterized.parameters([AxisType.Explicit, AxisType.Auto])
-  def test_abstract_mesh_context_trace(self, axis_type):
-    abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',), (axis_type,))
-    inp = jax.ShapeDtypeStruct((8, 2), np.float32)
-
-    @jax.jit
-    def f(x):
-      return x * 2
-
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      lowered = f.trace(inp).lower(lowering_platforms=('tpu',))
-    self.assertIn('mhlo.num_partitions = 2', lowered.as_text())
-
-    inp2 = jax.ShapeDtypeStruct(
-        (8, 2), np.float32, sharding=NamedSharding(abstract_mesh, P('x')))
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      lowered = f.trace(inp2).lower(lowering_platforms=('tpu',))
-    self.assertIn('mhlo.num_partitions = 2', lowered.as_text())
-
-    @jax.jit
-    def g():
-      return jnp.arange(8, dtype=jnp.float32)
-
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      lowered = g.trace().lower(lowering_platforms=('tpu',))
-    self.assertIn('mhlo.num_partitions = 2', lowered.as_text())
-
-  def test_abstract_mesh_context_mismatch_error(self):
-    abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Auto,))
-
-    @jax.jit
-    def f(x):
-      return x * 2
-
-    abstract_mesh2 = jax.sharding.AbstractMesh((1,), ('x',), (AxisType.Auto,))
-    inp = jax.ShapeDtypeStruct(
-        (8, 2), np.float32, sharding=NamedSharding(abstract_mesh2, P('x')))
-    with self.assertRaisesRegex(
-        ValueError, "AbstractMesh should be of the same size"):
-      with jax.sharding.use_abstract_mesh(abstract_mesh):
-        f.trace(inp).lower(lowering_platforms=('tpu',))
-
-    mesh3 = jtu.create_mesh((1,), 'x', axis_types=(AxisType.Auto,))
-    inp = jax.ShapeDtypeStruct(
-        (8, 2), np.float32, sharding=NamedSharding(mesh3, P('x')))
-    with self.assertRaisesRegex(
-        ValueError, "Received incompatible devices for jitted computation"):
-      with jax.sharding.use_abstract_mesh(abstract_mesh):
-        f.trace(inp).lower(lowering_platforms=('tpu',))
 
   def test_sds_incompatible_sharding(self):
     mesh = jtu.create_mesh((2,), 'x')
