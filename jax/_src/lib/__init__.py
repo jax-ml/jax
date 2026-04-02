@@ -134,15 +134,15 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   else:
     break
 
-import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_solver as gpu_solver  # noqa: F401
+import jaxlib.gpu_sparse as gpu_sparse  # noqa: F401
+import jaxlib.gpu_prng as gpu_prng  # noqa: F401
+import jaxlib.gpu_linalg as gpu_linalg  # noqa: F401
 
-import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
+import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
-import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
+import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
 if hasattr(mosaic_gpu_dialect, 'init_cc_mlir'):
   # TODO(slebedev): Remove this once the minimum JAX version is 0.10.0.
   try:
@@ -151,7 +151,7 @@ if hasattr(mosaic_gpu_dialect, 'init_cc_mlir'):
     from mlir import ir  # type: ignore[import-not-found]
   mosaic_gpu_dialect.init_cc_mlir(ir)
 
-import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
+import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 
 # TODO(rocm): check if we need the same for rocm.
 
