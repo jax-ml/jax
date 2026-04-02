@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
 #include <memory>
 
 #include "nanobind/nanobind.h"
@@ -47,22 +46,16 @@ void GetLapackKernelsFromScipy() {
       return nb::cast<nb::capsule>(lapack_capi[name]).data();
     };
 
-    AssignKernelFn<EigenvalueDecomposition<ffi::F32, int32_t>>(
-        lapack_ptr("sgeev"));
-    AssignKernelFn<EigenvalueDecomposition<ffi::F64, int32_t>>(
-        lapack_ptr("dgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64, int32_t>>(
+    AssignKernelFn<EigenvalueDecomposition<ffi::F32>>(lapack_ptr("sgeev"));
+    AssignKernelFn<EigenvalueDecomposition<ffi::F64>>(lapack_ptr("dgeev"));
+    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64>>(
         lapack_ptr("cgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128, int32_t>>(
+    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128>>(
         lapack_ptr("zgeev"));
-    AssignKernelFn<PivotingQrFactorization<ffi::F32, int32_t>>(
-        lapack_ptr("sgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::F64, int32_t>>(
-        lapack_ptr("dgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::C64, int32_t>>(
-        lapack_ptr("cgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::C128, int32_t>>(
-        lapack_ptr("zgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::F32>>(lapack_ptr("sgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::F64>>(lapack_ptr("dgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::C64>>(lapack_ptr("cgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::C128>>(lapack_ptr("zgeqp3"));
     lapack_kernels_initialized = true;
     return std::make_unique<bool>(true);
   });
