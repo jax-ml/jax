@@ -588,11 +588,26 @@ def _infer_params_cached(
     ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
+def get_ctx_mesh(use_resource_env):
+  if use_resource_env:
+    return mesh_lib.thread_resources.env.physical_mesh
+  else:
+    conc_mesh = mesh_lib.get_concrete_mesh()
+    if not conc_mesh.empty:
+      return conc_mesh
+    else:
+      abs_mesh = mesh_lib.get_abstract_mesh()
+      # TODO(yashkatariya): Make top-level use_abstract_mesh work with Auto mode
+      # too. But there are failures in user code so restricting it to Explicit
+      # mode for now.
+      if not abs_mesh.empty and abs_mesh._any_axis_explicit:
+        return abs_mesh
+      return conc_mesh
+
 def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[core.Value]]:
-  ctx_mesh = (mesh_lib.thread_resources.env.physical_mesh
-              if ji.use_resource_env else mesh_lib.get_concrete_mesh())
+  ctx_mesh = get_ctx_mesh(ji.use_resource_env)
   dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
@@ -2319,7 +2334,7 @@ def _pp_reshard(eqn, ctx, settings):
   return core._pp_eqn(eqn.replace(params={}), ctx, settings)
 core.pp_eqn_rules[reshard_p] = _pp_reshard
 
-# -------------------- auto and user mode -------------------------
+# -------------------- Auto and Explicit mode -------------------------
 
 @dataclass(frozen=True, kw_only=True)
 class MeshInfo:

@@ -1144,9 +1144,6 @@ def get_mesh_from_args(args_flat, mesh):
   assert isinstance(mesh, Mesh)
   return mesh
 
-def _vma_to_spec(mesh, vma):
-  return P(order_wrt_mesh(mesh, vma))
-
 def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
                    for p in (s if isinstance(s, tuple) else (s,)))
@@ -1338,7 +1335,8 @@ class ShardMapTrace(core.Trace):
           _prim_applier, prim, self.check, tuple(params.items()), self.mesh,
           self.manual_axes, in_specs, out_specs)
       with (core.eval_context(), api.disable_jit(False), config.debug_nans(False),
-            config.debug_infs(False), use_abstract_mesh(self.amesh)):
+            config.debug_infs(False), use_abstract_mesh(self.amesh),
+            sharding_impls._internal_use_concrete_mesh(self.mesh)):
         out_vals = api.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
@@ -1436,7 +1434,8 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
 
   def to_concrete_value(self):
     if self._trace.check and self.mat.vur == frozenset():
-      with core.eval_context(), use_abstract_mesh(self._trace.amesh):
+      with (core.eval_context(), use_abstract_mesh(self._trace.amesh),
+            sharding_impls._internal_use_concrete_mesh(self._trace.mesh)):
         return core.to_concrete_value(self.val[0])
     else:
       return None
@@ -1444,7 +1443,8 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
   def __str__(self) -> str:
     pb_names = set(self._trace.mesh.axis_names) - self.mat.vur
     self = pvary(self, tuple(pb_names))
-    with core.eval_context(), use_abstract_mesh(self._trace.amesh):
+    with (core.eval_context(), use_abstract_mesh(self._trace.amesh),
+          sharding_impls._internal_use_concrete_mesh(self._trace.mesh)):
       blocks = list(self.val)
     mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
