@@ -85,6 +85,9 @@ def p2tz(primal_value):
 def p2cz(primal_value):
   return Zero(typeof(primal_value).to_ct_aval())
 
+def a2tz(primal_aval):
+  return Zero(primal_aval.to_tangent_aval())
+
 
 def _stop_gradient_impl(x: T) -> T:
   if not core.valid_jaxtype(x):

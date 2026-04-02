@@ -1468,8 +1468,8 @@ class FlatTree:
     return x, aux.unflatten().val
 
   @staticmethod
-  def flatten(tree: PyTree) -> FlatTree:
-    vals, tree = tree_flatten(tree)
+  def flatten(tree: PyTree, is_leaf=None) -> FlatTree:
+    vals, tree = tree_flatten(tree, is_leaf)
     return FlatTree(vals, tree, False)
 
   @staticmethod

@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
@@ -97,6 +98,150 @@ def _promote_weak_typed_input(
 Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
+
+class Scan3(hijax.VJPHiPrimitive):
+
+  extensives : list[bool]
+  length : int
+  jaxpr : ClosedJaxpr
+  reverse : bool
+  unroll : bool
+
+  def __init__(self, extensives, length, jaxpr, reverse, unroll):
+    xs_avals = [core.unmapped_leading_aval(length, aval) if extensive else aval
+                for aval, extensive in zip(jaxpr.in_avals, extensives)]
+    ys_avals = [core.unmapped_leading_aval(length, aval) for aval in jaxpr.out_avals]
+    # TODO(dougalm): validity checks
+    self.in_avals = (xs_avals,)
+    self.out_aval = ys_avals
+    self.params = dict(
+        extensives=extensives,
+        length=length,
+        jaxpr=jaxpr,
+        reverse=reverse,  # TODO: don't ignore
+        unroll=unroll)    # TODO: don't ignore
+    super().__init__()
+
+  def expand(self, args):  # type: ignore
+    # TODO(dougalm): use empty_ref instead of new_ref
+    # (requires empty_ref to have an impl rule)
+    outs = [core.new_ref(ad_util.zeros_like_aval(aval)) for aval in self.out_aval]
+    cond_fun = lambda i: i < self.length
+    def body_fun(i):
+      def slice_arg(extensive, arg):
+        if extensive:
+          return arg[i]  # TODO: generalize to hijax slices
+        else:
+          return arg
+      sliced_args = [slice_arg(e, a) for e, a in zip(self.extensives, args)]
+      y_tree = core.eval_jaxpr(self.jaxpr.jaxpr, [], *sliced_args)
+      for out, y in zip(outs, y_tree):
+        out[i] = y
+      return i + 1
+    while_loop(cond_fun, body_fun, 0)
+    return [out[...] for out in outs]
+
+  def jvp(self, primals, tangents):
+    primals_ft = FlatTree.flatten(primals)
+    tangents_ft = FlatTree.flatten(tangents, is_leaf=lambda x: type(x) is ad.Zero)
+    nonzeros = [type(t) is not ad_util.Zero for t in tangents_ft]
+    tangent_extensives = keep(nonzeros, self.extensives)
+    tangents_nz = keep(nonzeros, tangents_ft)
+    jvp_jaxpr, nonzeros_out = ad.jvp_jaxpr(self.jaxpr, nonzeros, False)
+    prim = Scan3(self.extensives + tangent_extensives, self.length,
+                 jvp_jaxpr, self.reverse, self.unroll)
+    outs = prim([*primals_ft, *tangents_nz])
+    primals_out, tangents_out = split_list_checked(outs, [len(nonzeros_out), sum(nonzeros_out)])
+    tangents_out_iter = iter(tangents_out)
+    tangents_out_full = [next(tangents_out_iter) if nz else ad_util.a2tz(aval)
+                         for aval, nz in zip(primals_out, nonzeros_out)]
+    return primals_out, tangents_out_full
+
+def keep(keeps, xs):
+  return [x for x, k in zip(xs, keeps) if k]
+
+def insert_filterd(keeps, xs):
+  return [x for x, k in zip(xs, keeps) if k]
+
+@partial(api_boundary, repro_api_name="jax.lax.scan")
+def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
+         xs: X | None = None,
+         length: int | None = None,
+         reverse: bool = False,
+         unroll: int | bool = 1) -> tuple[Carry, Y]:
+  dbg_body = api_util.debug_info("scan", f, (xs,), {})
+  xs_flat = FlatTree.flatten(xs)
+  check_no_transformed_refs_args(lambda: dbg_body, list(xs_flat))
+  del xs
+  xs_avals = xs_flat.map(core.typeof)
+  length = _infer_scan_length(list(xs_flat), list(xs_avals), length)
+
+  # TODO(dougalm): handle disable_jit
+  if config.mutable_array_checks.value:
+    check_no_aliased_ref_args(lambda: dbg_body, list(xs_avals), list(xs_flat))
+
+  x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
+  # TODO(dougalm): promote away all weak types
+  args_avals = FlatTree.pack(((x_avals,), {}))
+  jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
+  jaxpr, consts = pe.separate_consts(jaxpr)
+
+  if config.mutable_array_checks.value:
+    _check_no_aliased_closed_over_refs(dbg_body, consts, list(xs_flat))
+
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `scan`: {disallowed_effects}')
+
+  unroll = core.concrete_or_error(
+      None, unroll,
+      "The `unroll` argument to `scan` expects a concrete `int` or `bool` "
+      "value.")
+  if isinstance(unroll, bool):
+    unroll = max(length, 1) if unroll else 1
+  if unroll < 0:
+    raise ValueError("`unroll` must be a `bool` or a non-negative `int`.")
+
+  args = list(consts) + list(xs_flat)
+  # TODO(dougalm): handle traceable-level forwarding
+  out = Scan3(
+      extensives = [False] * len(consts) + [True] * len(xs_flat),
+      length=length, jaxpr=jaxpr, reverse=reverse, unroll=unroll)(args)
+
+  return y_avals.update(out).unflatten()
+
+@partial(api_boundary, repro_api_name="jax.lax.scan")
+def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
+         init: Carry,
+         xs: X | None = None,
+         length: int | None = None,
+         reverse: bool = False,
+         unroll: int | bool = 1,
+         _split_transpose: bool = False) -> tuple[Carry, Y]:
+  init_flat = FlatTree.flatten(init)
+  carry_avals = init_flat.map(typeof)
+  carry_refs = [core.new_ref(x) for x in init_flat]
+
+  def read_carry():
+    return carry_avals.update([r[...] for r in carry_refs]).unflatten()
+
+  def write_carry(val):
+    carry_flat = FlatTree.flatten(val)
+    assert carry_flat.tree == init_flat.tree  # TODO: better error
+    for ref, c in zip(carry_refs, carry_flat):
+      ref[...] = c
+
+  def body_no_carry(x):
+    carry, y = f(read_carry(), x)
+    write_carry(carry)
+    return y
+
+  ys = scan_nocarry(
+      body_no_carry, xs,
+      length=length, reverse=reverse, unroll=unroll)
+  return read_carry(), ys
+
 
 @partial(api_boundary, repro_api_name="jax.lax.scan")
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
@@ -195,6 +340,10 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
+
+  if config.scan3.value:
+    return scan3(f, init, xs, length, reverse, unroll)
+
   if not callable(f):
     raise TypeError("lax.scan: f argument should be a callable.")
 
@@ -207,13 +356,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   args_avals = args.map(core.typeof)
   init_avals, xs_avals = args_avals.unpack()
-
-  from jax._src.hijax import HiType
-  if any(isinstance(a, HiType) for a in xs_avals):
-    if length is None:
-      raise ValueError("must provide `length` to `scan`")
-  else:
-    length = _infer_scan_length(list(xs_flat), list(xs_avals), length)
+  length = _infer_scan_length(list(xs_flat), list(xs_avals), length)
 
   if config.disable_jit.value:
     if length == 0:
@@ -334,6 +477,15 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 def _infer_scan_length(
     xs_flat: list[Any], xs_avals: list[AbstractValue],
     length: int | None) -> int:
+
+  # TODO(dougalm): put this in some sort of `scannable` typeclass
+  from jax._src.hijax import HiType
+  if any(isinstance(a, HiType) for a in xs_avals):
+    if length is None:
+      raise ValueError("must provide `length` to `scan`")
+    else:
+      return length
+
   try:
     lengths: list[int] = [x.shape[0] for x in xs_flat]
   except AttributeError as err:
