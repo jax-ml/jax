@@ -47,6 +47,7 @@ repos:
         - numpy~=2.4.0
         - ml_dtypes~=0.5.0
         - opt-einsum~=3.4.0
+        - tensorstore
         - scipy-stubs
         - --pre
         - --extra-index-url

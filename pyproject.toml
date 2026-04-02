@@ -77,7 +77,6 @@ ignore-missing-imports = [
     "tensorflow.*",
     "tensorflowjs.*",
     "tensorflow_serving.*",
-    "tensorstore.*",
     "web_pdb.*",
     "xprof.*",
     "zstandard.*",
