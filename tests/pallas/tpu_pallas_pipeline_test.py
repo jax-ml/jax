@@ -184,6 +184,197 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     expected = x + jnp.tile(y, (1, 4))
     np.testing.assert_allclose(out, expected)
 
+  def test_trivial_windowing_matched_vmem(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          x_vmem=pltpu.VMEM((8, 512), jnp.int32),
+          o_vmem=pltpu.VMEM((8, 512), jnp.int32),
+      )
+      def _(x_vmem, o_vmem):
+        pltpu.sync_copy(x_hbm_ref, x_vmem)
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(4,),
+            in_specs=pl.BlockSpec(
+                (8, 512), lambda i: (0, 0), memory_space=pltpu.VMEM
+            ),
+            out_specs=pl.BlockSpec(
+                (8, 512), lambda i: (0, 0), memory_space=pltpu.VMEM
+            ),
+        )(x_vmem, o_vmem)
+        pltpu.sync_copy(o_vmem, o_hbm_ref)
+
+    x = jnp.arange(8 * 512, dtype=jnp.int32).reshape(8, 512)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+    )(x)
+    np.testing.assert_allclose(out, x)
+
+  def test_trivial_windowing_mismatched_input(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          o_vmem=pltpu.VMEM((3,), jnp.int32),
+      )
+      def _(o_vmem):
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(1,),
+            in_specs=pl.BlockSpec(
+                (3,), lambda i: (0,), memory_space=pltpu.VMEM
+            ),
+            out_specs=pl.BlockSpec(
+                (3,), lambda i: (0,), memory_space=pltpu.VMEM
+            ),
+        )(x_hbm_ref, o_vmem)
+        pltpu.sync_copy(o_vmem, o_hbm_ref)
+
+    x = jnp.array([1, 2, 3], dtype=jnp.int32)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((3,), jnp.int32),
+    )(x)
+    np.testing.assert_allclose(out, x)
+
+  def test_trivial_windowing_mismatched_output(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          x_vmem=pltpu.VMEM((3,), jnp.int32),
+      )
+      def _(x_vmem):
+        pltpu.sync_copy(x_hbm_ref, x_vmem)
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(1,),
+            in_specs=pl.BlockSpec(
+                (3,), lambda i: (0,), memory_space=pltpu.VMEM
+            ),
+            out_specs=pl.BlockSpec(
+                (3,), lambda i: (0,), memory_space=pltpu.VMEM
+            ),
+        )(x_vmem, o_hbm_ref)
+
+    x = jnp.array([1, 2, 3], dtype=jnp.int32)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((3,), jnp.int32),
+    )(x)
+    np.testing.assert_allclose(out, x)
+
+  def test_prng_pallas_vs_pipeline(self):
+    def kernel(key_ref, o_ref):
+      o_ref[...] = jax.random.uniform(key_ref[...], shape=o_ref.shape)
+
+    def pipeline_kernel(key_hbm, o_hbm):
+      pltpu.emit_pipeline(
+          kernel,
+          grid=(),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+      )(key_hbm, o_hbm)
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    key = jax.random.key(0)
+    p_key = pltpu.to_pallas_key(key)
+
+    o_standard = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+    )(p_key)
+
+    o_pipeline = pl.pallas_call(
+        pipeline_kernel,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )(p_key)
+
+    np.testing.assert_array_equal(o_standard, o_pipeline)
+
+  def test_squeezed_block_spec_has_correct_shape(self):
+    def body(x_ref):
+      self.assertEqual(x_ref.shape, (128, 64))
+
+    x = jnp.zeros((1, 128, 64), jnp.float32)
+    spec = pl.BlockSpec(
+        (None, 128, 64),
+        lambda b: (0, 0, 0),
+        memory_space=pltpu.VMEM,
+    )
+
+    def run_kernel(x_ref, o_ref):
+      pltpu.emit_pipeline(
+          body,
+          grid=(1,),
+          in_specs=(spec,),
+      )(x_ref)
+
+    pl.pallas_call(
+        run_kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
+    )(x)
+
+  def test_trivial_window_representation_strips_all_none_dimensions(self):
+    def body(x_ref):
+      self.assertEqual(x_ref.shape, (128, 64))
+
+    x = jnp.zeros((1, 1, 128, 64), jnp.float32)
+    spec = pl.BlockSpec(
+        (None, None, 128, 64),
+        lambda b: (0, 0, 0, 0),
+        memory_space=pltpu.VMEM,
+    )
+
+    def run_kernel(x_ref, _):
+      pltpu.emit_pipeline(
+          body,
+          grid=(1,),
+          in_specs=(spec,),
+      )(x_ref)
+
+    pl.pallas_call(
+        run_kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
+    )(x)
+
+  def test_unbuffered_vmem_output_flushes_to_hbm(self):
+    def body(o_ref):
+      o_ref[...] = jnp.ones((128, 64), jnp.float32)
+
+    spec = pl.BlockSpec(
+        (128, 64),
+        lambda b: (0, 0),
+        memory_space=pltpu.VMEM,
+    )
+
+    def run_kernel(o_ref):
+      pltpu.emit_pipeline(
+          body,
+          grid=(1,),
+          out_specs=(spec,),
+      )(o_ref)
+
+    out = pl.pallas_call(
+        run_kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+    )()
+    expected_out = jnp.ones((128, 64), jnp.float32)
+    np.testing.assert_allclose(out, expected_out)
+
   @parameterized.product(
       no_pipelining=[False, True],
   )
