@@ -184,19 +184,8 @@ def _grid_size(grid):
   return size
 
 
-def _spec_has_trivial_windowing(spec, grid, full_shape):
-  if spec is None:
-    return True
-  if spec.block_shape is None:
-    return True
-  for bs, fs in zip(spec.block_shape, full_shape):
-    if bs is None:
-      return False
-    if isinstance(bs, (pallas_core.BoundedSlice, pl.Squeezed, pl.Element)):
-      return False
-    if pallas_core.get_block_size(bs) != fs:
-      return False
-  if spec.index_map is None:
+def _spec_has_trivial_windowing(spec, grid):
+  if spec is None or spec.index_map is None:
     return True
   nontrivial_dims = {
       i for i, d in enumerate(grid) if not isinstance(d, int) or d != 1
@@ -297,19 +286,6 @@ class BufferedRefBase:
   def is_manual(self):
     return self.buffer_type == BufferType.MANUAL
 
-  @property
-  def is_trivial_windowing(self) -> bool:
-    """Whether the reference uses trivial windowing.
-
-    Returns:
-      True if the reference uses trivial windowing, False otherwise.
-      Trivial windowing means that the BlockSpec just uses the full array,
-      meaning there are no real opportunities for pipelining. Instead, we can
-      just issue sync copies in/out before/after the pipeline for an
-      input/output reference.
-    """
-    return False
-
   def initialize_slots(self):
     """Initializes slots to 0."""
     raise NotImplementedError()
@@ -333,11 +309,6 @@ class BufferedRefBase:
   @property
   def block_shape(self) -> Sequence[pl.BlockDim | int | None] | None:
     return self.spec.block_shape
-
-  @property
-  def has_allocated_buffer(self) -> bool:
-    """Returns True if the reference has an allocated buffer outside loop."""
-    raise NotImplementedError()
 
   @property
   def compute_index(self):
@@ -393,9 +364,6 @@ class BufferedRefBase:
 
     if (src_shape := getattr(src_ty, "shape", None)) is None:
       raise ValueError(f"Type {src_ty} does not have a shape")
-
-    if not src_shape:
-      return ()
 
     tiling = tpu_info.infer_tiling(src_ty, getattr(self, "tiling", None))
     block_indices = self.compute_index(*grid_indices)
@@ -457,9 +425,6 @@ class BufferedRef(BufferedRefBase):
     sem_recvs: Multiple buffered semaphores for input DMAs.
     sem_sends: Multiple buffered semaphores for output DMAs.
     tiling: The tiling to assume for the buffers.
-    is_trivial_windowing: Whether the reference uses trivial windowing.
-    has_allocated_buffer: Whether the reference has an allocated buffer
-      due to being in a different memory space than the source ref.
   """
   _spec: pl.BlockSpec = dataclasses.field(metadata=dict(static=True))
   _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
@@ -474,12 +439,6 @@ class BufferedRef(BufferedRefBase):
   sem_recvs: SemaphoreTuple | None
   sem_sends: SemaphoreTuple | None
   tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
-  is_trivial_windowing: bool = dataclasses.field(
-      default=False, metadata=dict(static=True)
-  )
-  has_allocated_buffer: bool = dataclasses.field(
-      default=False, metadata=dict(static=True)
-  )
 
   def __post_init__(self):
     if self.is_buffered and self.buffer_count < 1:
@@ -528,7 +487,6 @@ class BufferedRef(BufferedRefBase):
       use_lookahead=False,
       source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
       tiling: Tiling | None = None,
-      is_trivial_windowing: bool = False,
   ) -> BufferedRef:
     """Create a BufferedRef.
 
@@ -555,6 +513,7 @@ class BufferedRef(BufferedRefBase):
         else jax_core.ShapedArray((123, 456), dtype_or_type)
     )
 
+    block_shape = _get_block_shape(spec)
     buffer_memory_space = (
           VMEM if spec.memory_space is None else spec.memory_space)
     if buffer_memory_space not in (SMEM, VMEM, HBM):
@@ -576,8 +535,6 @@ class BufferedRef(BufferedRefBase):
           sem_recvs=None,
           sem_sends=None,
           tiling=None,
-          is_trivial_windowing=is_trivial_windowing,
-          has_allocated_buffer=False,
       )
     else:
       if use_lookahead and grid_rank is None:
@@ -585,14 +542,16 @@ class BufferedRef(BufferedRefBase):
             "grid_rank must be specified when use_lookahead is True."
         )
 
-      if is_trivial_windowing:
-        buffer_ty = ty
+      if len(block_shape) == 1 and tiling is not Tiling.SPARSE_CORE:
+        [tile_dim] = tpu_info.infer_tiling(ty, tiling)
+        assert tile_dim is not None
+        if buffer_count > 1 and block_shape[-1] % tile_dim:
+          raise ValueError(
+              f"1D {block_shape=} must be a multiple of {tile_dim=}"
+          )
+        buffer_ty = ty.update(shape=(buffer_count * block_shape[0],))
       else:
-        block_shape = _get_block_shape(spec)
-        if len(block_shape) == 1 and tiling is not Tiling.SPARSE_CORE:
-          buffer_ty = ty.update(shape=(buffer_count * block_shape[0],))
-        else:
-          buffer_ty = ty.update(shape=(buffer_count, *block_shape))
+        buffer_ty = ty.update(shape=(buffer_count, *block_shape))
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
@@ -606,17 +565,15 @@ class BufferedRef(BufferedRefBase):
           next_fetch=None,
           sem_recvs=(
               None
-              if buffer_type is BufferType.OUTPUT or is_trivial_windowing
+              if buffer_type is BufferType.OUTPUT
               else SemaphoreType.DMA((buffer_count,))
           ),
           sem_sends=(
               None
-              if buffer_type is BufferType.INPUT or is_trivial_windowing
+              if buffer_type is BufferType.INPUT
               else SemaphoreType.DMA((buffer_count,))
           ),
           tiling=tiling,
-          is_trivial_windowing=is_trivial_windowing,
-          has_allocated_buffer=True,
       )
 
   @classmethod
@@ -673,7 +630,7 @@ class BufferedRef(BufferedRefBase):
         self.window_ref is None
         or isinstance(self.window_ref, state.AbstractRef)
     )
-    if not self.is_buffered or self.is_trivial_windowing:
+    if not self.is_buffered:
       return self.window_ref
     else:
       if self.is_output:
@@ -736,16 +693,14 @@ class BufferedRef(BufferedRefBase):
 
   def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
-    if not self.is_buffered and not self.has_allocated_buffer:
-      if self.is_trivial_windowing:
-        return dataclasses.replace(self, window_ref=window_ref)
+    if not self.is_buffered:
       return dataclasses.replace(
           self, window_ref=window_ref.at[self.compute_slice(indices)]
       )
     return self
 
   def unbind_refs(self):
-    if not self.is_buffered and not self.has_allocated_buffer:
+    if not self.is_buffered:
       return dataclasses.replace(self, window_ref=None)
     return self
 
@@ -1145,21 +1100,21 @@ class Scheduler:
     return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
 
   def has_changed(self, buffered_ref):
-    if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
+    if not buffered_ref.is_buffered:
       return False
     indices = buffered_ref.compute_index(*self.indices)
     prev_indices = buffered_ref.compute_index(*self.prev_indices)
     return _tuples_differ(indices, prev_indices)
 
   def will_change_current(self, buffered_ref):
-    if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
+    if not buffered_ref.is_buffered:
       return False
     indices = buffered_ref.compute_index(*self.indices)
     next_indices = buffered_ref.compute_index(*self.next_indices)
     return _tuples_differ(indices, next_indices)
 
   def will_change_fetch(self, buffered_ref):
-    if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
+    if not buffered_ref.is_buffered:
       return False
     if buffered_ref.buffer_count < 2:
       return self.has_changed(buffered_ref)
@@ -1225,8 +1180,6 @@ class Scheduler:
     return buffered_ref
 
   def wait_in(self, buffered_ref, src_ref) -> "BufferedRef":
-    if buffered_ref.is_trivial_windowing:
-      return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
 
     @pl.when(pred)
@@ -1237,8 +1190,6 @@ class Scheduler:
     return buffered_ref
 
   def copy_in(self, buffered_ref, src_ref) -> "BufferedRef":
-    if buffered_ref.is_trivial_windowing:
-      return buffered_ref
     pred = (self.will_change_fetch(buffered_ref) &
             ~self.out_of_fetch(buffered_ref))
 
@@ -1265,8 +1216,6 @@ class Scheduler:
     return buffered_ref
 
   def wait_out(self, buffered_ref, dst_ref) -> "BufferedRef":
-    if buffered_ref.is_trivial_windowing:
-      return buffered_ref
     pred = self.has_changed(buffered_ref) & ~self.first_step
     @pl.when(pred)
     @self._named_scope("ep_wait_out")
@@ -1282,8 +1231,6 @@ class Scheduler:
     return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
   def copy_out(self, buffered_ref, dst_ref) -> "BufferedRef":
-    if buffered_ref.is_trivial_windowing:
-      return buffered_ref
     pred = self.will_change_current(buffered_ref) | self.last_step
 
     @pl.when(pred)
@@ -1295,8 +1242,6 @@ class Scheduler:
     return buffered_ref.advance_copy_out_slot(pred & buffered_ref.is_output)
 
   def finalize(self, buffered_ref, dst_ref):
-    if buffered_ref.is_trivial_windowing:
-      return
     pred = self.last_step
 
     @pl.when(pred)
@@ -1356,7 +1301,6 @@ def _make_pipeline_allocations(
   in_refs = refs[:num_in_specs]
   out_refs = refs[num_in_specs:]
   def make_input_bref(in_spec, in_ref):
-    in_aval = _ref_to_value_aval(in_ref)
     buffer_count = 2
     use_lookahead = False
     if has_buffering := in_spec.pipeline_mode is not None:
@@ -1364,10 +1308,13 @@ def _make_pipeline_allocations(
       use_lookahead = in_spec.pipeline_mode.use_lookahead
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
-    is_trivial = _spec_has_trivial_windowing(in_spec, grid, in_aval.shape)
-    if not has_buffering and is_trivial:
+    if (
+        not has_buffering
+        and _spec_has_trivial_windowing(in_spec, grid)
+    ):
       buffer_count = 1
 
+    in_aval = _ref_to_value_aval(in_ref)
     return BufferedRef.input(
         in_spec,
         in_aval,
@@ -1376,19 +1323,21 @@ def _make_pipeline_allocations(
         use_lookahead=use_lookahead,
         source_memory_space=in_ref.memory_space,
         tiling=tiling,
-        is_trivial_windowing=is_trivial,
     )
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref):
-    out_aval = _ref_to_value_aval(out_ref)
     buffer_count = 2
     if has_buffering := out_spec.pipeline_mode is not None:
       buffer_count = out_spec.pipeline_mode.buffer_count
       if out_spec.pipeline_mode.use_lookahead:
         raise ValueError("Output buffering does not support lookahead.")
-    is_trivial = _spec_has_trivial_windowing(out_spec, grid, out_aval.shape)
-    if not has_buffering and is_trivial:
+    if (
+        not has_buffering
+        and _spec_has_trivial_windowing(out_spec, grid)
+    ):
       buffer_count = 1
+
+    out_aval = _ref_to_value_aval(out_ref)
 
     return BufferedRef.output(
         out_spec,
@@ -1396,7 +1345,6 @@ def _make_pipeline_allocations(
         buffer_count,
         source_memory_space=out_ref.memory_space,
         tiling=tiling,
-        is_trivial_windowing=is_trivial,
     )
   out_brefs = jax.tree.map(make_output_bref, out_specs, out_refs)
   return (*in_brefs, *out_brefs)
@@ -1534,16 +1482,14 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     bref = dst
     hbm_ref = src
     copy_in = True
-  window_ref = bref.current_ref
-  if not bref.is_trivial_windowing:
-    hbm_slice = bref.get_dma_slice(_ref_to_value_aval(hbm_ref), indices)
-    bref_slice = bref._to_window_slice(hbm_slice)
-    hbm_ref = hbm_ref.at[hbm_slice]
-    window_ref = window_ref.at[bref_slice]
+  hbm_slice = bref.get_dma_slice(_ref_to_value_aval(hbm_ref), indices)
+  bref_slice = bref._to_window_slice(hbm_slice)
   if copy_in:
-    tpu_helpers.sync_copy(hbm_ref, window_ref)
+    tpu_helpers.sync_copy(hbm_ref.at[hbm_slice],
+                          bref.current_ref.at[bref_slice])
   else:
-    tpu_helpers.sync_copy(window_ref, hbm_ref)
+    tpu_helpers.sync_copy(bref.current_ref.at[bref_slice],
+                          hbm_ref.at[hbm_slice])
 
 
 def emit_pipeline(
@@ -1726,11 +1672,6 @@ def emit_pipeline(
         initial_indices = (0,) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
-        def _sync_copy_in(bref, ref):
-          if bref.is_trivial_windowing and bref.window_ref is not None:
-            sync_copy(ref, bref, initial_indices)
-
-        map_inputs(_sync_copy_in, brefs, refs)
         with scheduler.grid_env():
           # We issue num_stages-1 prefetch copies per buffer.
           # We iterate over steps in the outer loop because we want to
@@ -1750,12 +1691,6 @@ def emit_pipeline(
         scheduler = make_scheduler(num_steps - 1, final_indices)
         with scheduler.grid_env():
           map_brefs(scheduler.finalize, brefs, refs)
-
-        def _sync_copy_out(bref, ref):
-          if bref.is_trivial_windowing and bref.window_ref is not None:
-            sync_copy(bref, ref, initial_indices)
-
-        map_outputs(_sync_copy_out, brefs, refs)
 
   return pipeline
 
