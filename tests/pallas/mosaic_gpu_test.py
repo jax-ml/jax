@@ -4682,31 +4682,35 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     result = f(x, y)
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
-  def test_commit_arrive_warp_semantics(self):
+  def test_async_copy_smem_to_tmem_warp_semantics(self):
+    shape, dtype = (128, 64), jnp.int32
+    transforms = self.default_transforms(dtype=dtype)
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
         self.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
         scratch_shapes=[
-            plgpu.Barrier(num_arrivals=2, orders_tensor_core=True),
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.TMEM(shape, dtype),
+            plgpu.Barrier(),
+            plgpu.Barrier(orders_tensor_core=True),
         ],
     )
-    def kernel(o_ref, barrier):
+    def kernel(src_gmem, dst_gmem, smem, tmem, tma_barrier, tc_barrier):
+      plgpu.copy_gmem_to_smem(src_gmem, smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
       @pl.core_map(warp_mesh)
       def _():
-        o_ref[...] = jnp.array(42, dtype=jnp.int32)  # core_map assumes it has side effects
         warp_id = lax.axis_index("warp")
-        @pl.when(warp_id >= 2)
+        @pl.when(warp_id == 0)
         def _():
-          # TODO(allanrenucci): Call `async_copy_smem_to_tmem` here when
-          # supported under warp semantics.
-          plgpu.tcgen05_commit_arrive(barrier)
-        @pl.when(warp_id < 2)
-        def _():
-          plgpu.barrier_wait(barrier)
+          plgpu.async_copy_smem_to_tmem(smem, tmem)
+          plgpu.tcgen05_commit_arrive(tc_barrier)
+      plgpu.barrier_wait(tc_barrier)
+      dst_gmem[...] = plgpu.async_load_tmem(tmem)
 
-    # The test only intends to check that this does not crash/hang.
-    kernel().block_until_ready()
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    self.assertArraysEqual(kernel(x), x)
 
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):

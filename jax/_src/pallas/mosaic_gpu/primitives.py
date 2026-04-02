@@ -3661,6 +3661,9 @@ def _async_copy_smem_to_tmem_lowering_rule(
 @lowering.register_lowering_rule(
     async_copy_smem_to_tmem_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    async_copy_smem_to_tmem_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _async_copy_smem_to_tmem_lowering_rule_wg(
     ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves,
     smem_tree, tmem_tree, collective_axis,
