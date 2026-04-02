@@ -5323,6 +5323,19 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f(arr)  # doesn't crash
 
+  def test_repeat_shmap_vmap_spmd_axis_names(self):
+    mesh = jtu.create_mesh((4, 2), ("x", "y"))
+    arr1 = np.arange(8).reshape((4, 2))
+    arr2 = np.arange(8).reshape((4, 2))
+
+    @jax.jit
+    @partial(jax.vmap, spmd_axis_name="x")
+    @jax.shard_map(mesh=mesh, in_specs=(P("y"), P("y")), out_specs=P("y"))
+    def f(x, y):
+      return jnp.repeat(x, y, total_repeat_length=10)
+
+    f(arr1, arr2)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

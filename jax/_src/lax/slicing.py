@@ -2888,6 +2888,8 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
         operand_batching_dims=operand_batching_dims,
         scatter_indices_batching_dims=dimension_numbers.scatter_indices_batching_dims,
     )
+    operand, indices, updates = batching.spmd_names_insert_pvary(
+        operand, indices, updates)
     return scatter_op.bind(
       operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,

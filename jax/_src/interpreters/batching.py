@@ -636,7 +636,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
   if all(core.definitely_equal_shape(shape, x.shape) and d == dim
          for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
-    args = core.standard_insert_pvary(*args)
+    args = spmd_names_insert_pvary(*args)
     out = prim.bind(*args, **params)
     return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
   else:
@@ -647,7 +647,6 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
             for x, d in zip(args, dims)]
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
-    args = core.standard_insert_pvary(*args)
     out = prim.bind(*args, **params)
     return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
 
@@ -708,7 +707,17 @@ def broadcast(x, sz, axis, mesh_axis):
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
-    return lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
+    x, = spmd_names_insert_pvary(lax.broadcast_in_dim(
+        x, shape, broadcast_dims, out_sharding=sharding))
+    return x
+
+def spmd_names_insert_pvary(*args):
+  if (config._check_vma.value and
+      (spmd_names := core.get_axis_env().spmd_axis_names)):
+    return [core.pvary(a, tuple(spmd_names - aval.mat.varying))
+            if isinstance(aval := typeof(a), core.ShapedArray) else a
+            for a in args]
+  return args
 
 def matchaxis2(axis_data, src, dst, x, sum_match=False):
   return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
