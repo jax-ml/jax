@@ -443,6 +443,60 @@ def qr(x: ArrayLike, *, pivoting: bool = False, full_matrices: bool = True,
   return q, r
 
 
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, *,
+                left: bool = False,
+                pivoting: Literal[False] = False, conjugate: bool = False,
+                use_magma: bool | None = None) -> tuple[Array, Array]:
+  ...
+
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, *,
+                left: bool = False,
+                pivoting: Literal[True], conjugate: bool = False,
+                use_magma: bool | None = None) -> tuple[Array, Array, Array]:
+  ...
+
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, *,
+                left: bool = False,
+                pivoting: bool = False, conjugate: bool = False,
+                use_magma: bool | None = None
+                ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
+  ...
+
+def qr_multiply(a: ArrayLike, c: ArrayLike, *,
+                left: bool = False,
+                pivoting: bool = False, conjugate: bool = False,
+                use_magma: bool | None = None
+                ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
+  r"""QR decomposition and multiply Q with a matrix.
+
+  Computes ``Q @ c`` (or ``c @ Q``) and ``R`` without materializing Q, where
+  ``A = Q R`` is the QR decomposition of ``a``.
+
+  Args:
+    a: A batch of matrices with shape ``[..., m, n]``.
+    c: Matrix to multiply by Q. For ``left=True``, shape ``[..., k, p]``
+      where ``k = min(m, n)``. For ``left=False``, shape ``[..., p, m]``.
+    left: If ``True``, compute ``Q @ c``. If ``False``, compute ``c @ Q``.
+    pivoting: If ``True``, compute column-pivoted QR and return pivot indices.
+    conjugate: If ``True``, use ``conj(Q)`` (element-wise conjugate) instead
+      of ``Q``. For real arrays this has no effect.
+    use_magma: Locally override the ``jax_use_magma`` flag. If ``True``, the
+      pivoted ``qr`` factorization is computed using MAGMA. If ``False``, the
+      computation is done using LAPACK on the host CPU. If ``None`` (default),
+      the behavior is controlled by the ``jax_use_magma`` flag. This argument is
+      only used on GPU.
+
+  Returns:
+    ``(result, R)`` if ``pivoting=False``, else ``(result, R, P)``.
+  """
+  a, c = core.standard_insert_pvary(a, c)
+  return qr_multiply_p.bind(a, c, left=left, conjugate=conjugate,
+                             pivoting=pivoting, use_magma=use_magma)
+
+
 def schur(
     x: ArrayLike,
     *,
@@ -2167,6 +2221,165 @@ qr_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
+
+
+# QR Multiply
+
+def _qr_multiply_shape_rule(a_shape, c_shape, *, left, conjugate, pivoting,
+                             use_magma):
+  m, n = a_shape
+  k = core.min_dim(m, n)
+  if left:
+    result_shape = (m, c_shape[1])
+  else:
+    result_shape = (c_shape[0], k)
+  r_shape = (k, n)
+  if pivoting:
+    return (result_shape, r_shape, (n,))
+  return (result_shape, r_shape)
+
+def _qr_multiply_dtype_rule(a_dtype, c_dtype, *, pivoting, **_):
+  if pivoting:
+    return (a_dtype, a_dtype, np.dtype(np.int32))
+  return (a_dtype, a_dtype)
+
+def _qr_multiply_lowering(a, c, *, left, conjugate, pivoting, use_magma):
+  """Factorize a and apply Q to c without materializing Q."""
+  *batch_dims, m, n = a.shape
+  k = min(m, n)
+
+  pvt = None
+  if pivoting:
+    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+    r_state, pvt, taus_state = geqp3(a, jpvt, use_magma=use_magma)
+    pvt = pvt - 1
+  else:
+    r_state, taus_state = geqrf(a)
+
+  if m > n and left:
+    zeros = lax.full((*c.shape[:-2], m - k, c.shape[-1]), 0, dtype=c.dtype)
+    c = lax.concatenate([c, zeros], dimension=len(c.shape) - 2)
+
+  if conjugate:
+    # Avoid explicit conj call by instead transposing (for free under jit)
+    # and telling LAPACK to compute Hermitian.
+    c = _T(c)
+
+  # conjugate swaps left/right because c and Q change sides when transposing.
+  ormqr_left = left != conjugate
+  cQ = ormqr(r_state, taus_state, c, left=ormqr_left, transpose=conjugate)
+
+  if conjugate:
+    cQ = _T(cQ)
+
+  if not left:
+    cQ = cQ[..., :k]
+
+  r = _triu(r_state[..., :k, :])
+  if pivoting:
+    assert pvt is not None
+    return cQ, r, pvt
+  return cQ, r
+
+def _qr_multiply_jvp_rule(primals, tangents, *, left, conjugate, pivoting,
+                           use_magma):
+  a, c = primals
+  da, dc = tangents
+  *batch_dims, m, n = a.shape
+
+  if m < n:
+    raise NotImplementedError(
+      "qr_multiply JVP only supports m >= n (tall or square matrices)")
+
+  primal_result = qr_multiply_p.bind(a, c, left=left, conjugate=conjugate,
+                                      pivoting=pivoting, use_magma=use_magma)
+  # Capture a before pivoting permutes it; XLA CSE deduplicates the
+  # factorization against the primal's.
+  a_orig = a
+  def apply_Q(x, qr_left, qr_conjugate):
+    return qr_multiply_p.bind(a_orig, x, left=qr_left, conjugate=qr_conjugate,
+                              pivoting=pivoting, use_magma=use_magma)[0]
+
+  P = None
+  if pivoting:
+    cQ, R, P = primal_result
+    # vmap-safe column permutation (see _lu_jvp_rule).
+    permute_cols = lambda x, p: x[..., p]
+    for _ in batch_dims:
+      permute_cols = api.vmap(permute_cols)
+    a = permute_cols(a, P)
+    if type(da) is not ad_util.Zero:
+      da = permute_cols(da, P)
+  else:
+    cQ, R = primal_result
+
+  if type(da) is ad_util.Zero:
+    tangent_cQ = apply_Q(dc, left, conjugate)
+    tangent_R = ad_util.p2tz(R)
+    if pivoting:
+      assert P is not None
+      return primal_result, (tangent_cQ, tangent_R, ad_util.p2tz(P))
+    return primal_result, (tangent_cQ, tangent_R)
+
+  _maybe_conj = (lambda x: x.conj()) if conjugate else (lambda x: x)
+  qt_da = _T(apply_Q(_T(da), False, True))
+  qt_da_rinv = triangular_solve(R, qt_da)
+
+  # dr_rinv = dR @ R^{-1}, computed directly as the upper-triangular
+  # Hermitian projection of qt_da_rinv.
+  # Eye trick: more flops than scatter but can perform slightly better on
+  # modern accelerators. Matches the pattern used in qr_jvp_rule.
+  n = qt_da_rinv.shape[-1]
+  dr_rinv = _triu(qt_da_rinv, 1) + _triu(_H(qt_da_rinv), 1)
+  I = lax.expand_dims(lax._eye(qt_da_rinv.dtype, (n, n)),
+                      range(qt_da_rinv.ndim - 2))
+  dr_rinv = dr_rinv + I * qt_da_rinv.real.astype(qt_da_rinv.dtype)
+  dR = dr_rinv @ R
+
+  if left:
+    rinv_c = triangular_solve(R, c, left_side=True, conjugate_a=conjugate)
+    tangent_core = -_maybe_conj(dr_rinv) @ c
+    if type(dc) is not ad_util.Zero:
+      tangent_core = tangent_core + dc
+    d_cQ = apply_Q(tangent_core, True, conjugate) + _maybe_conj(da) @ rinv_c
+  else:
+    c_da_rinv = triangular_solve(R, c @ _maybe_conj(da), conjugate_a=conjugate)
+    d_cQ = c_da_rinv - cQ @ _maybe_conj(dr_rinv)
+    if type(dc) is not ad_util.Zero:
+      d_cQ = d_cQ + apply_Q(dc, False, conjugate)
+
+  if pivoting:
+    assert P is not None
+    return primal_result, (d_cQ, dR, ad_util.p2tz(P))
+  return primal_result, (d_cQ, dR)
+
+
+def _qr_multiply_transpose_rule(cotangents, a, c, *, left, conjugate,
+                                 pivoting, use_magma):
+  # qr_multiply is linear in c and nonlinear in a.
+  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(c)
+
+  cotangent_cQ = cotangents[0]
+
+  # Only cotangent_cQ contributes to c's cotangent (R and P depend only on a).
+  if type(cotangent_cQ) is ad_util.Zero:
+    return [None, ad_util.Zero(c.aval)]
+
+  cotangent_c = _T(qr_multiply_p.bind(a, _T(cotangent_cQ),
+                                       left=not left, conjugate=conjugate,
+                                       pivoting=pivoting, use_magma=use_magma)[0])
+
+  return [None, cotangent_c]
+
+
+qr_multiply_p = linalg_primitive(
+    _qr_multiply_dtype_rule,
+    (_float | _complex,) * 2, (2, 2),
+    _qr_multiply_shape_rule, "qr_multiply",
+    multiple_results=True, require_same=True)
+ad.primitive_jvps[qr_multiply_p] = _qr_multiply_jvp_rule
+ad.primitive_transposes[qr_multiply_p] = _qr_multiply_transpose_rule
+mlir.register_lowering(qr_multiply_p, mlir.lower_fun(_qr_multiply_lowering))
 
 
 # Schur Decomposition

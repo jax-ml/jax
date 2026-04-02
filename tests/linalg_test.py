@@ -1986,6 +1986,165 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(fn, args_maker)
 
   @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      conjugate=[False, True],
+  )
+  @jax.default_matmul_precision("highest")
+  def testQrMultiplyJvp(self, shape, dtype, conjugate):
+    """Finite-difference JVP check using the identity cQ @ conj?(R) = c @ conj?(a)."""
+    m, n = shape
+    rng = jtu.rand_default(self.rng())
+    c_shape = (2, m)
+    maybe_conj = jnp.conj if conjugate else lambda x: x
+
+    def qr_mul_identity(a, c):
+      cQ, R = lax.linalg.qr_multiply(a, c, left=False, conjugate=conjugate)
+      return cQ @ maybe_conj(R)
+
+    a = rng(shape, dtype)
+    c = rng(c_shape, dtype)
+    jtu.check_jvp(qr_mul_identity, partial(jvp, qr_mul_identity),
+                  (a, c), atol=5e-2)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+      conjugate=[False, True],
+  )
+  @jax.default_matmul_precision("highest")
+  def testQrMultiplyJvpAgainstDense(self, shape, dtype, mode, conjugate):
+    """Verify qr_multiply JVP matches dense QR JVP."""
+    m, n = shape
+
+    rng = jtu.rand_default(self.rng())
+    k = min(m, n)
+    c_shape = (k, 2) if mode == 'left' else (2, m)
+
+    a = rng(shape, dtype)
+    c = rng(c_shape, dtype)
+    da = rng(shape, dtype)
+    dc = rng(c_shape, dtype)
+
+    fn_qm = partial(lax.linalg.qr_multiply, left=mode == 'left', conjugate=conjugate)
+    primals_qm, tangents_qm = jax.jvp(fn_qm, (a, c), (da, dc))
+
+    def fn_dense(a, c):
+      Q, R = jnp.linalg.qr(a, mode='reduced')
+      if mode == 'left' and not conjugate:
+        return Q @ c, R
+      elif mode == 'left' and conjugate:
+        return jnp.conj(Q) @ c, R
+      elif mode == 'right' and not conjugate:
+        return c @ Q, R
+      else:
+        return (c @ jnp.conj(Q))[:, :min(m, n)], R
+
+    primals_d, tangents_d = jax.jvp(fn_dense, (a, c), (da, dc))
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(primals_qm[0], primals_d[0], rtol=tol, atol=tol)
+    self.assertAllClose(tangents_qm[0], tangents_d[0], rtol=tol, atol=tol)
+    self.assertAllClose(tangents_qm[1], tangents_d[1], rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+      conjugate=[False, True],
+  )
+  @jax.default_matmul_precision("highest")
+  def testQrMultiplyJvpPivoting(self, shape, dtype, mode, conjugate):
+    """Verify pivoted qr_multiply JVP matches dense pivoted QR JVP."""
+    m, n = shape
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+
+    rng = jtu.rand_default(self.rng())
+    k = min(m, n)
+    c_shape = (k, 2) if mode == 'left' else (2, m)
+
+    a = rng(shape, dtype)
+    c = rng(c_shape, dtype)
+    da = rng(shape, dtype)
+    dc = rng(c_shape, dtype)
+
+    fn_qm = partial(lax.linalg.qr_multiply, left=mode == 'left',
+                    conjugate=conjugate, pivoting=True)
+    primals_qm, tangents_qm = jax.jvp(fn_qm, (a, c), (da, dc))
+
+    def fn_dense(a, c):
+      Q, R, P = jax.scipy.linalg.qr(a, pivoting=True, mode='economic')
+      if mode == 'left' and not conjugate:
+        return Q @ c, R, P
+      elif mode == 'left' and conjugate:
+        return jnp.conj(Q) @ c, R, P
+      elif mode == 'right' and not conjugate:
+        return c @ Q, R, P
+      else:
+        return c @ jnp.conj(Q), R, P
+
+    primals_d, tangents_d = jax.jvp(fn_dense, (a, c), (da, dc))
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(primals_qm[0], primals_d[0], rtol=tol, atol=tol)
+    self.assertAllClose(tangents_qm[0], tangents_d[0], rtol=tol, atol=tol)
+    self.assertAllClose(tangents_qm[1], tangents_d[1], rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+      conjugate=[False, True],
+      pivoting=[False, True],
+  )
+  @jax.default_matmul_precision("highest")
+  def testQrMultiplyVjp(self, shape, dtype, mode, conjugate, pivoting):
+    """Verify qr_multiply VJP (reverse mode) matches dense QR VJP."""
+    m, n = shape
+    if pivoting and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+
+    rng = jtu.rand_default(self.rng())
+    k = min(m, n)
+    c_shape = (k, 2) if mode == 'left' else (2, m)
+
+    a = rng(shape, dtype)
+    c = rng(c_shape, dtype)
+
+    def f_qm(a, c):
+      result = lax.linalg.qr_multiply(a, c, left=mode == 'left',
+                                       conjugate=conjugate, pivoting=pivoting)
+      cQ, R = result[0], result[1]
+      return jnp.sum(cQ.real) + jnp.sum(R.real)
+
+    def f_dense(a, c):
+      if pivoting:
+        Q, R, P = jax.scipy.linalg.qr(a, pivoting=True, mode='economic')
+      else:
+        Q, R = jnp.linalg.qr(a, mode='reduced')
+      if mode == 'left' and not conjugate:
+        cQ = Q @ c
+      elif mode == 'left' and conjugate:
+        cQ = jnp.conj(Q) @ c
+      elif mode == 'right' and not conjugate:
+        cQ = c @ Q
+      else:
+        cQ = c @ jnp.conj(Q)
+      return jnp.sum(cQ.real) + jnp.sum(R.real)
+
+    grad_a_qm, grad_c_qm = jax.grad(f_qm, argnums=(0, 1))(a, c)
+    grad_a_d, grad_c_d = jax.grad(f_dense, argnums=(0, 1))(a, c)
+
+    tol = {np.float32: 1e-4, np.complex64: 1e-4, np.float64: 1e-10,
+           np.complex128: 1e-10}
+    self.assertAllClose(grad_a_qm, grad_a_d, rtol=tol, atol=tol)
+    self.assertAllClose(grad_c_qm, grad_c_d, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
       [dict(shape=shape, k=k)
        for shape in [(1, 1), (3, 4, 4), (10, 5)]
        # TODO(phawkins): there are some test failures on GPU for k=0

@@ -1137,41 +1137,17 @@ def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
   a = jnp.broadcast_to(a, batch + a.shape[-2:])
   c = jnp.broadcast_to(c, batch + c.shape[-2:])
 
-  p: Array | None = None
-  if pivoting:
-    jpvt = jnp.zeros(a.shape[:-2] + (n,), dtype=jnp.int32)
-    r, p, taus = lax_linalg.geqp3(a, jpvt)
-    p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
-  else:
-    r, taus = lax_linalg.geqrf(a)
-
-  if m > n and mode == 'left':
-    zeros = jnp.zeros(c.shape[:-2] + (m - k,) + c.shape[-1:], dtype=c.dtype)
-    c = jnp.concatenate([c, zeros], axis=-2)
-
-  if conjugate:
-    # Avoid explicit jnp.conj call by instead transposing (for free under jit)
-    # and telling LAPACK to compute Hermitian
-    c = c.swapaxes(-1, -2)
-
-  # conjugate swaps left/right because c and Q change sides when transposing.
-  left = (mode == 'left') != conjugate
-  cQ = lax_linalg.ormqr(r, taus, c, left=left, transpose=conjugate)
-
-  if conjugate:
-    cQ = cQ.swapaxes(-1, -2)
-
-  if mode == 'right':
-    cQ = cQ[..., :k]
+  result = lax_linalg.qr_multiply(a, c, left=mode == 'left', pivoting=pivoting,
+                                  conjugate=conjugate)
+  cQ = result[0]
+  r = result[1]
 
   if onedim:
     cQ = cQ.ravel()
 
-  r = jnp.triu(r[..., :k, :])
-
   if pivoting:
-    assert p is not None
-    return cQ, r, p
+    assert len(result) == 3
+    return cQ, r, result[2]
   return cQ, r
 
 
