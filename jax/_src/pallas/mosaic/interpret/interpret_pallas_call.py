@@ -20,7 +20,7 @@ import functools
 import itertools
 import math
 import threading
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import jax
 from jax import lax
@@ -1163,6 +1163,25 @@ def _get_memory_space_and_raise_if_hbm(aval, primitive_name, message=None):
   return memory_space
 
 
+_interpret_impls: dict[jax_core.Primitive, Callable] = {}
+
+T = TypeVar('T', bound=Callable)
+
+
+def register_tpu_interpret_impl(prim: jax_core.Primitive) -> Callable[[T], T]:
+  """Registers an alternate primitive implementation for TPU Interpret Mode.
+
+  User-defined primitives may register a custom Mosaic lowering.  To be able
+  to run such a primitive in TPU Interpret Mode, a JAX implementation of the
+  primitive must be registered using this function.
+  """
+  def decorator(impl: T) -> T:
+    _interpret_impls[prim] = impl
+    return impl
+
+  return decorator
+
+
 @dataclasses.dataclass(kw_only=True)
 class InterpretContext:
   grid_point: tuple[int, ...] | None = None
@@ -1208,7 +1227,17 @@ def _interpret_jaxpr(
       # array into the jaxpr when this function is traced.
       deferred_invals = functools.partial(env.read_many, eqn.invars)
 
-      if prim is primitives.load_p:
+      if (impl := _interpret_impls.get(prim, None)):
+        invals = deferred_invals()
+        # TODO(jburnim): Set up a proper kernel tracing environment for `impl`.
+        impl_jaxpr = jax.make_jaxpr(functools.partial(impl, **eqn.params))(
+            *invals)
+        out = _interpret_jaxpr(
+            impl_jaxpr.jaxpr, *impl_jaxpr.consts, *invals, ctx=ctx)
+        if not prim.multiple_results:
+          out = out[0]
+
+      elif prim is primitives.load_p:
         (ref, transforms, mask, _) = jax.tree.unflatten(
             eqn.params['args_tree'], deferred_invals())
         if mask is not None:
