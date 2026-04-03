@@ -2159,7 +2159,7 @@ Changes:
     breaking change to the `pjit` API.  The [jax.Array migration
     guide](https://docs.jax.dev/en/latest/jax_array_migration.html) can
     help you migrate your codebase to `jax.Array`. You can also look at the
-    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/parallel.html)
+    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/parallel.html)
     tutorial to understand the new concepts.
   * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.

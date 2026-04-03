@@ -20,7 +20,7 @@ how JAX arrays are laid out in device-local memory.
 ## Terminology
 
 Array layout is tightly coupled with array
-[sharding](https://docs.jax.dev/en/latest/parallel.html).
+[sharding](https://docs.jax.dev/en/latest/notebooks/parallel.html).
 Together, a layout and a sharding fully describes how an array's
 values are laid out across (distributed) memories. Along these lines,
 we use the following terminology:

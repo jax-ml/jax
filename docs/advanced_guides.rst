@@ -11,6 +11,7 @@ operations.
    :caption: Parallel computation
    :maxdepth: 1
 
+   notebooks/parallel
    notebooks/shard_map
    notebooks/layout
    notebooks/host-offloading

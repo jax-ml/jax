@@ -16,7 +16,7 @@ implementation, in no particular order, see the :doc:`advanced guides <advanced_
    automatic-differentiation
    pytrees
    random-numbers
-   parallel
+   sharded-computation
    control-flow
    tracing
    stateful-computations

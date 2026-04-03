@@ -889,7 +889,7 @@ else:
 ```
 
 [cloud_tpu]: https://cloud.google.com/tpu?hl=en
-[distributed_arrays]: https://jax.readthedocs.io/en/latest/parallel.html
+[distributed_arrays]: https://jax.readthedocs.io/en/latest/notebooks/parallel.html
 [gpu_machines]: https://cloud.google.com/compute/docs/gpus
 [google-artifact-tpu]: https://console.cloud.google.com/artifacts/docker/cloud-tpu-images/us/jax-ai-image/tpu
 [google-artifact-gpu]: https://console.cloud.google.com/artifacts/docker/deeplearning-images/us-central1/jax-ai-image/gpu

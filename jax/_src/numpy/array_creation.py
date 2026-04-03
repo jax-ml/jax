@@ -81,7 +81,7 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -130,7 +130,7 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[ True,  True,  True],
            [ True,  True,  True]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
@@ -181,7 +181,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/parallel.html
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtype = dtypes.check_and_canonicalize_user_dtype(
