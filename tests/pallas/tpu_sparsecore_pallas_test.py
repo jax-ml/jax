@@ -448,6 +448,24 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
     )
 
+  def test_async_copy_with_source_semaphore(self):
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(
+        out_shape=x, out_specs=pl.BlockSpec(memory_space=pltpu.HBM)
+    )
+    def kernel(x_ref, o_hbm_ref):
+      def _(custom_sem, sem):
+        pltpu.async_copy(
+            x_ref, o_hbm_ref, custom_sem, source_semaphore=sem
+        ).wait()
+
+      return pl.run_scoped(
+          _, pltpu.SemaphoreType.CUSTOM, pltpu.SemaphoreType.DMA
+      )
+
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_scatter_1d_array_from_transformed_src(self):
     self.skip_if_tc_tiling()
     x = jnp.arange(2 * self.num_lanes).reshape(2, -1)

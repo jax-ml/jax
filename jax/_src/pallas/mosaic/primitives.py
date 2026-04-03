@@ -173,9 +173,8 @@ class AsyncCopyDescriptor:
   )
 
   def __post_init__(self):
-    if (self.src_sem is None) ^ (self.device_id is None):
-      raise ValueError("Either both or neither `src_sem` and `device_id` "
-                       "can be set.")
+    if self.device_id is not None and self.src_sem is None:
+      raise ValueError("Remote DMA requires a source semaphore.")
 
   def __del__(self):
     if not self._used:
@@ -187,7 +186,7 @@ class AsyncCopyDescriptor:
 
   @property
   def is_remote(self):
-    return self.src_sem is not None
+    return self.device_id is not None
 
   def _get_args_and_tree(self, swap_src_and_dst: bool = False):
     if swap_src_and_dst:
@@ -548,11 +547,6 @@ def dma_start_partial_discharge_rule(
   if is_remote:
     src_sem_discharge = maybe_src_sem_discharge[0]
 
-  if not is_remote:
-    # Local async copies only use one semaphore.
-    assert src_sem is None
-    assert src_sem_transforms is None
-
   num_src_sem_transforms = len(tree_util.tree_leaves(src_sem_transforms_avals))
   num_dst_sem_transforms = len(tree_util.tree_leaves(dst_sem_transforms_avals))
   num_src_transform_vals = len(tree_util.tree_leaves(src_transforms_avals))
@@ -741,6 +735,7 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
     raise ValueError("Expected the destination semaphore to be a reference")
   allowed_semaphore_types = {
       tpu_core.dma_semaphore,
+      tpu_core.custom_semaphore,
       pl_core.SEMAPHORE_INTERPRET_DTYPE,
   }
   if not any(
@@ -840,13 +835,16 @@ def _get_ref_and_transforms(ref):
   return ref, ()
 
 
-def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
+def make_async_copy(
+    src_ref, dst_ref, sem, source_semaphore=None
+) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
   Args:
     src_ref: The source Reference.
     dst_ref: The destination Reference.
     sem: The semaphore used to track completion of the copy.
+    source_semaphore: The semaphore used as a sync flag (source semaphore).
 
   Returns:
     An AsyncCopyDescriptor.
@@ -854,6 +852,11 @@ def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
   sem, sem_transforms = _get_ref_and_transforms(sem)
+  src_sem, src_sem_transforms = (
+      _get_ref_and_transforms(source_semaphore)
+      if source_semaphore is not None
+      else (None, ())
+  )
   return AsyncCopyDescriptor(
       src_ref,
       src_transforms,
@@ -861,18 +864,26 @@ def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
       dst_transforms,
       sem,
       sem_transforms,
-      None,
-      None,
+      src_sem,
+      src_sem_transforms,
       None,
       primitives.DeviceIdType.MESH,
   )
 
 
 def async_copy(
-    src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
+    src_ref,
+    dst_ref,
+    sem,
+    *,
+    priority: int = 0,
+    add: bool = False,
+    source_semaphore=None,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
+  copy_descriptor = make_async_copy(
+      src_ref, dst_ref, sem, source_semaphore=source_semaphore
+  )
   copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
 

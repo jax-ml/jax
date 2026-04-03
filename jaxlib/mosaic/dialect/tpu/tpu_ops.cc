@@ -1407,7 +1407,13 @@ LogicalResult EnqueueDMAOp::verify() {
     if (source_sem_type.getRank() != 0) {
       return emitOpError("DMA source semaphore reference must be rank 0");
     }
-    if (source_sem_type.getElementType() != target_sem_type.getElementType()) {
+    if (isa<CustomSemaphoreType>(source_sem_type.getElementType())) {
+      return emitOpError("DMA source semaphore cannot be a custom semaphore");
+    }
+    if (source_sem_type.getElementType() != target_sem_type.getElementType() &&
+        !(isa<SemaphoreType, DMASemaphoreType>(
+              source_sem_type.getElementType()) &&
+          isa<CustomSemaphoreType>(target_sem_type.getElementType()))) {
       return emitOpError(
           "DMA source and target semaphore must have the same type");
     }
@@ -1429,13 +1435,6 @@ LogicalResult EnqueueDMAOp::verify() {
     }
   }
   bool is_remote = getDeviceId() || getCoreId();
-  if (getSourceSemaphore()) {
-    if (!is_remote) {
-      return emitOpError(
-          "DMA destination device_id or core_id must be specified when source "
-          "semaphore is specified");
-    }
-  }
   int priority = getPriority();
   if (priority < 0 || priority > 1) {
     return emitOpError(
@@ -1449,6 +1448,13 @@ LogicalResult EnqueueDMAOp::verify() {
   // If the target core_type is different from the issuing core_type,
   // the specific core_id must be provided. The device_id is irrelevant here.
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
+  if (issuing_core == CoreType::kTc) {
+    if (getSourceSemaphore() && !is_remote) {
+      return emitOpError(
+          "DMA destination device_id or core_id must be specified when source "
+          "semaphore is specified");
+    }
+  }
   CoreType target_core = getTargetCoreType();
   if (getSourceSemaphore() &&
       getRefCoreType(getSourceSemaphore()).value_or(issuing_core) !=
