@@ -4619,6 +4619,8 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_manual_dma_reshape_tc(self, n, m):
     if self.INTERPRET:
       self.skipTest("Interpret not supported for manual DMA test")
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
     if not jtu.is_cloud_tpu_at_least(2026, 4, 10):
       self.skipTest("Needs a newer libtpu")
 
