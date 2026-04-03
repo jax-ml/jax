@@ -2727,10 +2727,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],
                       dtype=float_types + complex_types)
   def test_tridiagonal_solve(self, shape, dtype):
-    # Skip test on ROCm due to numerical error. Issue #575788
-    # TODO(AratiGanesh): Unskip once fixed.
-    if jtu.is_device_rocm() and dtype == np.float32 and shape in [(3, 4), (3, 4, 5)]:
-      self.skipTest("test_tridiagonal_solve not supported on ROCm for these shapes/dtype due to rocSparse issue")
+    # TODO: Add these tests back once rocSparse issues are fixed.
+    if jtu.is_device_rocm() and shape in [(3, 4), (3, 4, 5)]:
+      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
@@ -2768,10 +2767,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
   def test_tridiagonal_solve_grad(self, shape, dtype):
-    if jtu.is_device_rocm() and shape == (3, 4) and dtype == np.float32:
-      # numerical errors seen as of ROCm 7.2 due to rocSparse issue for grad0 variant
-      # TODO: re-enable the test once the rocSparse issue is fixed
-      self.skipTest("test_tridiagonal_solve_grad0 not supported on ROCm due to rocSparse issue")
+    # TODO: Add these tests back once rocSparse issues are fixed.
+    if jtu.is_device_rocm() and shape == (3, 4):
+      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)

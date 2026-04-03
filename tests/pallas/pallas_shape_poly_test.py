@@ -500,6 +500,9 @@ class ExportTestWithTriton(jtu.JaxTestCase):
     )
 
   def test_cross_platform(self):
+    # TODO: Add this test back once gfx arch string parsing is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm due to gfx arch string parsing error.")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       x, y = x_ref[...], y_ref[...]
       o_ref[...] = x + y

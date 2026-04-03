@@ -113,6 +113,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
+    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
     batch, rhs_non_contract = 4, 256
@@ -138,6 +141,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
+    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
 
     configs = create_mxfp8_configs_if_available()
     cast_to_representable = partial(

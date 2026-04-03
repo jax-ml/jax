@@ -620,6 +620,9 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_csr_spmm(self, shape, dtype, transpose):
+    # TODO: Add these tests back once hipSparse issue is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm due to hipSparse internal error.")
     rng_sparse = sptu.rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
 
