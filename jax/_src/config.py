@@ -1673,8 +1673,7 @@ default_device = string_or_object_state(
         'object (e.g. ``jax.devices("cpu")[0]``) to use that Device as the '
         'default device for JAX operations and jit\'d function calls (there is '
         'no effect on multi-device computations, e.g. pmapped function calls). '
-        'Set to None to use the system default device. See '
-        ':ref:`faq-data-placement` for more information on device placement.'),
+        'Set to None to use the system default device.'),
     validator=_validate_default_device,
     include_in_jit_key=True,
     include_in_trace_context=True)

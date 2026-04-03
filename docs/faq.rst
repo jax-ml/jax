@@ -357,13 +357,6 @@ reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
 
-.. _faq-data-placement:
-
-Controlling data and computation placement on devices
------------------------------------------------------
-
-Moved to :ref:`sharded-data-placement`.
-
 .. _faq-benchmark:
 
 Benchmarking JAX code

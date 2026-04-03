@@ -33,10 +33,11 @@ limitations under the License.
 ```
 
 [![Open in
-Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/parallel.ipynb)
+Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/parallel.ipynb)
 
 +++
 
+(parallel)=
 # Distributed arrays and automatic parallelization
 
 <!--* freshness: { reviewed: '2025-12-02' } *-->
