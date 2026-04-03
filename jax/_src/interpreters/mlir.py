@@ -75,9 +75,7 @@ Value = ir.Value
 
 # IR Helpers
 
-# TODO(slebedev): Fix all callers and uncomment this.
-# IrValues = Union[ir.Value, tuple[ir.Value, ...]]
-IrValues = Any
+IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
@@ -88,7 +86,7 @@ dense_int_array = ir.DenseI64ArrayAttr.get
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def shape_tensor(sizes: Sequence[int | ir.Value]) -> IrValues:
+def shape_tensor(sizes: Sequence[int | ir.Value]) -> ir.Value:
   int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
   i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
   def lower_dim(d):
@@ -223,10 +221,8 @@ def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
 # Constants
 
 class ConstantHandler(Protocol):
-  def __call__(self, val: Any, aval: core.AbstractValue | None) -> IrValues:
-    """Builds an IR representation for a constant `val`.
-
-    A JAX value is represented by zero or more IR values."""
+  def __call__(self, val: Any, aval: core.AbstractValue | None) -> ir.Value:
+    """Builds an IR representation for a constant `val`."""
 
 _constant_handlers : dict[type, ConstantHandler] = {}
 
@@ -238,9 +234,9 @@ def get_constant_handler(type_: type) -> ConstantHandler:
 
 def ir_constant(
   val: Any, *,
-  const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value] | None = None,
   aval: core.AbstractValue | None = None
-) -> IrValues:
+) -> ir.Value:
   """Translate a Python `val` to an IR constant.
 
   See https://docs.jax.dev/en/latest/internals/constants.html.
@@ -253,7 +249,7 @@ def ir_constant(
       for Python scalars.
 
   Returns:
-    A representation of the constant as an IR value or sequence of IR values.
+    A representation of the constant as an IR value.
   """
   if const_lowering is not None:
     # pyrefly: ignore[bad-argument-type]
@@ -269,7 +265,8 @@ def ir_constant(
     return ir_constant(val.__jax_array__())
   raise TypeError(f"No constant handler for type: {type(val)}")
 
-def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
+
+def _numpy_array_constant(x: np.ndarray | np.generic) -> ir.Value:
   return hlo.constant(_numpy_array_attribute(x))
 
 
@@ -287,7 +284,7 @@ register_constant_handler(core.ShapeDtypeStruct,
                           _shape_dtype_struct_constant_handler)
 
 def _ndarray_constant_handler(val: np.ndarray | np.generic,
-                              aval: core.AbstractValue | None) -> IrValues:
+                              aval: core.AbstractValue | None) -> ir.Value:
   """Constant handler for ndarray literals, handling zero-size strides.
 
   In most cases this function calls _numpy_array_constant(val) except it has
@@ -827,11 +824,11 @@ class LoweringRuleContext:
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
   tokens_in: TokenSet
   tokens_out: TokenSet | None  # Mutable store for output containers
-  # The values tobe used for the Literal constants, by id of the const.
+  # The values to be used for the Literal constants, by id of the const.
   # This is used to implement passing along the constants that have been
   # hoisted as main function arguments down to where they are used.
   # See https://docs.jax.dev/en/latest/internals/constants.html
-  const_lowering: dict[tuple[int, core.AbstractValue], IrValues]
+  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value]
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   # The values for the dimension variables in same order as
   # module_context.shape_poly_state.dim_vars
@@ -1999,7 +1996,7 @@ def jaxpr_subcomp(
     consts_for_constvars: Sequence[IrValues],
     *args: IrValues,
     dim_var_values: Sequence[ir.Value],
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
     outer_traceback: xc.Traceback | None,
 ) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
@@ -2119,7 +2116,7 @@ def _cached_lowering(
     eqn: core.JaxprEqn,
     tokens_in: TokenSet,
     dim_var_values: tuple[ir.Value, ...],
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
     *args,
     **params,
 ) -> tuple[Sequence[IrValues], TokenSet]:
@@ -2216,7 +2213,7 @@ def _emit_lowering_rule_as_fun(
       util.split_list(unflattened_args,
                       [num_dim_vars, len(ordered_effects), len(const_args)])
     const_lowering = {
-        (id(c), aval): c_arg
+        (id(c), aval): type_cast(ir.Value, c_arg)
         for c, aval, c_arg in zip(const_args, const_arg_avals, const_arg_values)
     }
     sub_ctx = LoweringRuleContext(
@@ -2582,7 +2579,7 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
                   ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
-                  const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+                  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
                   arg_names=None, result_names=None,
                   attributes: None | dict[str, Any] = None):
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)

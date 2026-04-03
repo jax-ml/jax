@@ -2085,6 +2085,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
         const_lowering=ctx.const_lowering,
         outer_traceback=ctx.traceback,
     )
+    assert isinstance(pred, ir.Value)
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
           module_context=ctx.module_context,
@@ -2139,6 +2140,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           mlir.TokenSet(), cond_consts, *(x + z),
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
+      assert isinstance(body_pred, ir.Value)
       new_z = _map(
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
@@ -2386,13 +2388,11 @@ def _insert_binders(jaxpr, n_after, vals):
 
 
 def _pred_bcast_select_hlo(ctx,
-    pred_aval: core.ShapedArray, pred: ir.Value, x: mlir.IrValues,
-    y: mlir.IrValues, x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+    pred_aval: core.ShapedArray, pred: ir.Value, x: ir.Value, y: ir.Value,
+    x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
     return [hlo.AfterAllOp([x, y]).result]
   else:
-    assert isinstance(x, ir.Value), x
-    assert isinstance(y, ir.Value), y
     assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
