@@ -700,7 +700,7 @@ class CompatTest(bctu.CompatTestBase):
     algorithm = dict(
         qr=lax.linalg.SvdAlgorithm.QR,
         jacobi=lax.linalg.SvdAlgorithm.JACOBI,
-        gesdd=lax.linalg.SvdAlgorithm.DEFAULT,  # ROCm uses gesdd by default
+        gesdd=lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER,
     )[algorithm_name]
 
     def func(operand):
@@ -735,17 +735,9 @@ class CompatTest(bctu.CompatTestBase):
       self.skipTest("Unsupported platform: " + jtu.device_under_test())
 
     data = self.load_testdata(platform_data)
-    # For the "gesdd" algorithm on ROCm: the stored test data was serialized
-    # with hipsolver_gesdd_ffi, but current serialization uses the
-    # is_forward_compat() guard and falls back to hipsolver_gesvd_ffi.
-    # Pass expect_current_custom_calls so the assertion matches the fallback.
-    expect_current_custom_calls = None
-    if algorithm_name == "gesdd" and jtu.test_device_matches(["rocm"]):
-      expect_current_custom_calls = ["hipsolver_gesvd_ffi"]
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
-                                            *data.inputs),
-                      expect_current_custom_calls=expect_current_custom_calls)
+                                            *data.inputs))
 
   @jtu.parameterized_filterable(
     kwargs=[

@@ -2380,19 +2380,12 @@ def _resolve_gpu_svd_implementation(
     raise NotImplementedError(
         f"Unsupported SVD algorithm on GPU: {algorithm!r}")
 
-  if target_name_prefix == "cu":
+  if target_name_prefix in ["cu", "hip"]:
     try:
       if m <= 1024 and n <= 1024:
         return _GpuSvdImpl.JACOBI
     except core.InconclusiveDimensionOperation:
       pass
-    return _GpuSvdImpl.GESVD
-
-  if target_name_prefix == "hip":
-    if (not ctx.is_forward_compat()
-        and jaxlib_extension_version >= 426
-        and _gpu_solver_has_ffi("ROCM", "hipsolver_gesdd_ffi")):
-      return _GpuSvdImpl.GESDD
     return _GpuSvdImpl.GESVD
 
   raise AssertionError(
