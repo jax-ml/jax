@@ -829,10 +829,6 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
 sparse_rules_bcoo[pjit.jit_p] = _pjit_sparse
 
 
-def _duplicate_for_sparse_spvalues(spvalues, params):
-  for spvalue, param in safe_zip(spvalues, params):
-    yield from [param, param] if spvalue.is_sparse() else [param]
-
 def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
   const_spvalues, carry_spvalues, xs_spvalues = split_list(
     spvalues, [num_consts, num_carry])

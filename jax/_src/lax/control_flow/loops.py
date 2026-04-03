@@ -160,9 +160,6 @@ class Scan3(hijax.VJPHiPrimitive):
 def keep(keeps, xs):
   return [x for x, k in zip(xs, keeps) if k]
 
-def insert_filterd(keeps, xs):
-  return [x for x, k in zip(xs, keeps) if k]
-
 @partial(api_boundary, repro_api_name="jax.lax.scan")
 def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
          xs: X | None = None,
