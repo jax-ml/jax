@@ -22,6 +22,7 @@ from functools import partial
 from dataclasses import dataclass
 import itertools
 import math
+from typing import Any
 
 from jax._src import core
 from jax._src import config
@@ -1005,7 +1006,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
 
   def all_reduce(aval, x):
     if is_spmd:
-      other_args = dict(
+      other_args: dict[str, Any] = dict(
           channel_handle=hlo.ChannelHandle.get(
               mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
           use_global_device_ids=ir.BoolAttr.get(True))
@@ -1095,7 +1096,7 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
       and axis_context.manual_axes
   )
   if is_manual:
-    other_args = dict(
+    other_args: dict[str, Any] = dict(
         channel_handle=hlo.ChannelHandle.get(
             mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE
         )
@@ -1292,7 +1293,7 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     # of partitions - and XLA is configured with only a single replica.
     channel_handle = hlo.ChannelHandle.get(mlir.COLLECTIVE_CHANNEL_ID,
                                            mlir.DEVICE_TO_DEVICE_TYPE)
-    other_args = dict(channel_handle=channel_handle)
+    other_args: dict[str, Any] = dict(channel_handle=channel_handle)
   else:
     other_args = {}
   return hlo.CollectiveBroadcastOp(
@@ -1344,7 +1345,7 @@ def _all_to_all_lowering(
     # of partitions - and XLA is configured with only a single replica.
     channel_handle = hlo.ChannelHandle.get(mlir.COLLECTIVE_CHANNEL_ID,
                                            mlir.DEVICE_TO_DEVICE_TYPE)
-    other_args = dict(channel_handle=channel_handle)
+    other_args: dict[str, Any] = dict(channel_handle=channel_handle)
   else:
     other_args = {}
   return hlo.AllToAllOp(
@@ -1781,7 +1782,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    other_args = dict(
+    other_args: dict[str, Any] = dict(
         channel_handle=hlo.ChannelHandle.get(
             mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))
@@ -2028,7 +2029,7 @@ def _reduce_scatter_lowering(
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    other_args = dict(
+    other_args: dict[str, Any] = dict(
         channel_handle=hlo.ChannelHandle.get(
             mlir.COLLECTIVE_CHANNEL_ID, mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))

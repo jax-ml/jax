@@ -295,6 +295,7 @@ def wgmma_m64(
         asm_dialect=0,
         has_side_effects=True,
     )
+    assert isinstance(acc_struct, ir.Value)
     acc_regs = [
         llvm.extractvalue(out_ty_field, acc_struct, [i]) for i in range(len(acc_regs))
     ]

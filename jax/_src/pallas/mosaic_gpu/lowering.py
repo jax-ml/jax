@@ -499,6 +499,7 @@ class ModuleContext:
       *,
       layout: tcgen05.TMEMLayout,
   ) -> Generator[tcgen05.TMEMRef | ir.Value, None, None]:
+    assert self.tmem_base is not None
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       off = arith_dialect.addi(
           self.tmem_base, _i32_constant(self.tmem_used_cols)
@@ -564,6 +565,7 @@ class ModuleContext:
     # operand provided by Mosaic GPU always begins at the beginning of
     # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
+      assert smem_base is not None
       view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
     else:
       view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))

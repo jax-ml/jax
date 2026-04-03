@@ -302,7 +302,7 @@ def _split_gmem_slice(gmem_slice):
         indices.append(mgpu.utils.c(idx.start, i32))
         slice_lengths.append(idx.stop - idx.start)
       case mgpu.DynamicSlice():
-        indices.append(arith_dialect.index_cast(i32, idx.base))
+        indices.append(arith_dialect.index_cast(i32, idx.base))  # pyrefly: ignore[bad-argument-type]
         slice_lengths.append(idx.length)
       case ir.Value() if isinstance(idx.type, ir.IndexType):
         indices.append(arith_dialect.index_cast(i32, idx))
@@ -2074,6 +2074,7 @@ def _tcgen05_mma_lowering(
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
+    assert predicate is not None
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
     predicate = arith_dialect.andi(predicate, is_leader_block)
     collective = True
@@ -2362,6 +2363,7 @@ def _tcgen05_commit_arrive_lowering(
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
+    assert predicate is not None
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
     predicate = arith_dialect.andi(predicate, is_leader_block)
     collective = True
@@ -3053,7 +3055,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
 
   custom_op = mgpu.dialect.CustomPrimitiveOp(
       result=results_ty,
-      operands_=flat_transformed_args,
+      operands_=flat_transformed_args,  # pyrefly: ignore[bad-argument-type]
       in_layouts=in_layouts,
       in_transforms=in_transforms,
       out_layouts=[l for l in out_layouts if l is not None],
@@ -3480,6 +3482,7 @@ def _async_copy_to_tmem_lowering_rule(
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
+    assert predicate is not None
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
     predicate = arith_dialect.andi(predicate, is_leader_block)
     collective = True
@@ -3667,6 +3670,7 @@ def _async_copy_smem_to_tmem_lowering_rule(
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
+    assert predicate is not None
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
     predicate = arith_dialect.andi(predicate, is_leader_block)
     collective = True
@@ -3940,6 +3944,7 @@ def try_cluster_cancel_lowering(
         barrier.as_barrier_memref(),
         predicate=arith_dialect.andi(is_first_cta, is_first_wg))
   else:
+    assert ctx.module_ctx.single_lane_predicate is not None
     is_leader_thread = arith_dialect.andi(
         ctx.module_ctx.single_lane_predicate, is_first_wg
     )

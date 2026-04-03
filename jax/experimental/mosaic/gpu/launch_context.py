@@ -457,10 +457,10 @@ class Scratch:
       )
       # Tag the alloc op with an attribute so that we can find it later.
       alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
-      load_op = llvm.LoadOp(empty_arr_ty, alloc_op)
+      load_op = llvm.LoadOp(empty_arr_ty, alloc_op.result)
 
     with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):  # pytype: disable=attribute-error
-      builtin.unrealized_conversion_cast([ptr_ty], [load_op])
+      builtin.unrealized_conversion_cast([ptr_ty], [load_op.result])
 
   def _find_alloc_load_and_device_ptr(
       self,
@@ -778,6 +778,7 @@ class LaunchContext:
                 [],
                 callee="nvshmem_ptr",
             )
+            assert isinstance(base_ptr, ir.Value)
           else:
             remote_ref = self.to_remote(ref, peer_id, on_host=True)
             base_ptr = utils.memref_ptr(remote_ref)
@@ -791,7 +792,7 @@ class LaunchContext:
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
         dtype_or_bitwidth = c(tma_dtype, i64)
-        args = [
+        args: list[ir.Value] = [
             host_ptr,
             base_ptr,
             dtype_or_bitwidth,

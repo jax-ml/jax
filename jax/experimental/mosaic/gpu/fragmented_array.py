@@ -2078,6 +2078,7 @@ class FragmentedArray:
               """,
               "=r,=r,r",
           )
+          assert isinstance(out_struct, ir.Value)
           i8_vec = ir.VectorType.get((4,), i8)
           return utils.vector_concat([
               utils.bitcast(llvm.extractvalue(i32, out_struct, (i,)), i8_vec)
@@ -2532,7 +2533,7 @@ class FragmentedArray:
       # Reduce within the vector dimension, if necessary.
       if reduced_dims[layout.vector_dim]:
         [vec_len] = ir.VectorType(out_reg.type).shape
-        scalar_out_reg = None
+        scalar_out_reg: ir.Value | None = None
         for i in range(vec_len):
           scalar = vector.extract(
               out_reg,
@@ -2542,6 +2543,7 @@ class FragmentedArray:
           scalar_out_reg = (
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
+        assert scalar_out_reg is not None
         out_reg = vector.broadcast(
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
@@ -2691,6 +2693,7 @@ class FragmentedArray:
         lane_idx: ir.Value,
         swizzle_warp_idx: Callable[[ir.Value], ir.Value]
     ):
+      assert scratch is not None
       [vec_len] = ir.VectorType(reg_ty).shape
       out_reg = None
       step_base_scratch_idx = c(step_idx * WARPGROUP_SIZE, i32)
@@ -4124,6 +4127,7 @@ def optimization_barrier(*arrays):
         struct_ty, regs, ptx, all_reg_constraints,
         asm_dialect=0, has_side_effects=True,
     )
+    assert isinstance(result_struct, ir.Value)
     regs = [
         llvm.extractvalue(dtype, result_struct, [i])
         for i, dtype in enumerate(reg_dtypes)
