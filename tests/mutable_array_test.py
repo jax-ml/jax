@@ -1173,6 +1173,16 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+  def test_grad_get_transformed_ref(self):
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(jnp.ones(5))
+      ref.at[1:4][...] += x
+      return ref[...].sum()
+
+    x = jnp.array([1.0, 2.0, 3.0])
+    jax.grad(f)(x)  # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
