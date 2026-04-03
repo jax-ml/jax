@@ -49,6 +49,9 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   fi
 fi
 
+# Temporary testing-only, hardcoded commit - won't be submitted.
+export JAXCI_XLA_COMMIT=ceee8b5873f18109466ecc8f24a414b0cb1b9be9
+
 # If a XLA commit is provided, check out XLA at that commit.
 if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
   # Clone XLA at HEAD if a path to local XLA is not provided.

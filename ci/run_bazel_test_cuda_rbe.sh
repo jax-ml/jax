@@ -67,6 +67,7 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --test_tag_filters=-multiaccelerator \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+      --repo_env=XLA_PYTHON_REPO_DEBUG=all \
       --color=yes \
       $cuda_libs_flag \
       --config=hermetic_cuda_umd \
