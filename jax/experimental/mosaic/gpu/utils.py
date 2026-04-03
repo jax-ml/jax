@@ -79,22 +79,24 @@ def ptr_as_memref(
     )
   else:
     desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
-  desc = llvm.UndefOp(desc_ty)
-  desc = llvm.InsertValueOp(desc, ptr, [0])  # Allocation
-  desc = llvm.InsertValueOp(desc, ptr, [1])  # Aligned Base
+  desc = llvm.UndefOp(desc_ty).result
+  desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
+  desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
   desc = llvm.InsertValueOp(
-      desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)), [2]
-  )
+      desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)).result, [2]
+  ).result
   if rank > 0:
     for i, s in enumerate(memref_ty.shape):
       desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
-      )
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [3, i]
+      ).result
     for i, s in enumerate(strides):
       desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
-      )
-  return builtin.unrealized_conversion_cast([memref_ty], [desc])
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [4, i]
+      ).result
+  result = builtin.unrealized_conversion_cast([memref_ty], [desc])
+  assert isinstance(result, ir.Value)
+  return result
 
 
 def pack_array(values):
@@ -1189,6 +1191,7 @@ class DialectBarrierRef:
     dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
+    # pyrefly: ignore[bad-argument-type]
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)
 
   def get_ptr(self):
@@ -1407,6 +1410,7 @@ class SemaphoreRef:
               "=r,l,r,r",
               has_side_effects=True,
           )
+          assert isinstance(in_memory, ir.Value)
           ne_pred = arith.CmpIPredicate.ne
           comparison = arith.cmpi(ne_pred, in_memory, expected_in_memory)
           new_expected_in_memory = arith.maxui(in_memory, value)
@@ -1418,6 +1422,7 @@ class SemaphoreRef:
               "=r,l",
               has_side_effects=True,
           )
+          assert isinstance(in_memory, ir.Value)
           lt_pred = arith.CmpIPredicate.ult
           comparison = arith.cmpi(lt_pred, in_memory, value)
           new_expected_in_memory = expected_in_memory
@@ -1518,7 +1523,8 @@ class Partition:
       if p is None:
         dim_base = c(0, index)
       else:
-        dim_base = arith.muli(c(tbs, index), source_coords[p])
+        assert isinstance(source_coord := source_coords[p], ir.Value)
+        dim_base = arith.muli(c(tbs, index), source_coord)
       if self.base_offset is not None:
         dim_base = arith.addi(self.base_offset[i], dim_base)
       coords.append(dim_base)
@@ -1632,7 +1638,8 @@ def memref_ptr(memref_arg, memory_space=None):
         f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
         f" array<{rank} x i64>)>"
     )
-  desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
+  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
+  assert isinstance(desc, ir.Value)
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
 
   offset_elems = llvm.extractvalue(i64, desc, [2])
@@ -1819,7 +1826,7 @@ def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore
   else:
     raise NotImplementedError(x.type)
   assert mask.type == i32
-  extra_kwargs = {}
+  extra_kwargs: dict[str, Any] = {}
   if kind == ReductionKind.FMAX or kind == ReductionKind.FMIN:
     extra_kwargs = dict(nan=True)
   return nvvm.redux_sync(x, kind, mask, **extra_kwargs)
@@ -2069,6 +2076,7 @@ def query_cluster_cancel(
     }""",
       "=r,=r,=r,=b,r",
   )
+  assert isinstance(desc, ir.Value)
   cta_id_x = llvm.extractvalue(i32, desc, [0])
   cta_id_y = llvm.extractvalue(i32, desc, [1])
   cta_id_z = llvm.extractvalue(i32, desc, [2])

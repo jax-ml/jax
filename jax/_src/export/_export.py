@@ -1699,7 +1699,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # Compute the rule index based on the current platform
     i32_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
-      current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+      current_platform_idx = hlo.convert(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
                                      index=current_platform_idx,
                                      num_branches=len(lowering_platforms))
@@ -1710,7 +1710,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
           np.int32(callee_lowering_platform_index[i]))])
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
-                                          callee_platform_idx)
+                                          callee_platform_idx.result)
 
     submodule_args.append(callee_platform_idx.result)
   else:

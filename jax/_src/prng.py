@@ -1077,7 +1077,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
       x_const = hlo.convert(
           ir.RankedTensorType.get(
               [],
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)  # pyrefly: ignore[bad-argument-type]
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
     return mlir.hlo.multiply(x_bcast, y)

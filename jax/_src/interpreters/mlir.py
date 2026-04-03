@@ -75,7 +75,9 @@ Value = ir.Value
 
 # IR Helpers
 
-IrValues = Union[ir.Value, tuple[ir.Value, ...]]
+# TODO(slebedev): Fix all callers and uncomment this.
+# IrValues = Union[ir.Value, tuple[ir.Value, ...]]
+IrValues = Any
 
 
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
@@ -115,7 +117,9 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 
 # IR Types
 
-IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
+# TODO(slebedev): Fix all callers and uncomment this.
+# IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
+IrTypes = Any
 
 def _is_ir_values(x: IrValues) -> bool:
   """Returns true if `x` is an ir.Value or tuple of ir.Values"""
@@ -992,6 +996,7 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
     if type(d) is int:
       return ir_constant(np.array(d, dtype=np.int32))
     else:
+      assert isinstance(d, ir.Value)
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
         return hlo.convert(i32_type, d)
@@ -1008,6 +1013,7 @@ def eval_dynamic_shape_as_ivals(
     if type(d) is int:
       return d
     else:
+      assert isinstance(d, ir.Value)
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
         return hlo.convert(i32_type, d)
@@ -2433,7 +2439,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = map(aval_to_ir_type, rule_out_avals)
   case_op = hlo.CaseOp(flatten_ir_types(output_types),
-                      index=rule_idx_op,
+                      index=rule_idx_op.result,
                       num_branches=len(kept_rules))
   for i, rule in enumerate(kept_rules):
     platforms_for_this_rule = [p

@@ -1343,6 +1343,7 @@ def _dim_as_value(dim: DimSize):
 def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
   res, = mlir.eval_dynamic_shape(ctx, (dim,))
+  assert isinstance(res, mlir.ir.Value)
   out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   if out_type != res.type:  # type: ignore
     return [mlir.hlo.convert(out_type, res)]

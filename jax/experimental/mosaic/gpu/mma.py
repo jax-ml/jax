@@ -138,6 +138,7 @@ def _mma_single_tile(
       constraints,
       has_side_effects=False,
   )
+  assert isinstance(out_regs_struct, ir.Value)
   out_regs = [
       llvm.extractvalue(acc.mlir_dtype, out_regs_struct, [i])
       for i in range(len(acc_regs))

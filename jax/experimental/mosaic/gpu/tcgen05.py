@@ -714,6 +714,7 @@ def _do_mma(
     return offset >> 4
   for k_step in range(k // instr_k):
     if is_sparse:
+      assert a_sparse_addr is not None
       sparse_group_elems = 8 if elem_bitwidth == 4 else 4
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
       meta_cols_per_instr = instr_k // sparse_group_elems * 2 // 16
@@ -735,6 +736,8 @@ def _do_mma(
       )
       assert (m == 64 and collective) or m == 128
       assert (n * num_cta) % 32 == 0
+      assert a_scale_addr is not None
+      assert b_scale_addr is not None
       assert a_scale_m_stride is not None
       assert b_scale_n_stride is not None
       # A scales are sharded, B scales are replicated across CTAs.
@@ -910,6 +913,7 @@ def _tmem_load(tmem_addr, shape, num, pack: bool):
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )
+  assert isinstance(regs, ir.Value)
   return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
 
 

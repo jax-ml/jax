@@ -2557,6 +2557,7 @@ def _split_lowering_rule(
     slice_size[axis] = size
     outs.append(
         vector.extract_strided_slice(
+            # pyrefly: ignore[bad-argument-type]
             ctx.aval_to_ir_type(aval_out), x, starts, slice_size, strides
         )
     )
@@ -4168,7 +4169,7 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
 
 
 @register_lowering_rule(primitives.delay_p, kernel_types=[*tpu_core.CoreType])
-def _delay_rule(ctx: LoweringRuleContext, nanos: int):
+def _delay_rule(ctx: LoweringRuleContext, nanos: ir.Value):
   tpu.delay(nanos)
   return []
 
@@ -4516,7 +4517,7 @@ def _trace_value_lowering_rule(ctx: LoweringRuleContext, value, *, label: str):
 @register_lowering_rule(tpu_primitives.matmul_push_rhs_p)
 def _matmul_push_rhs_lowering_rule(
     ctx: LoweringRuleContext,
-    rhs: jax.Array,
+    rhs: ir.Value,
     *,
     staging_register: int,
     mxu_index: int,
@@ -4532,14 +4533,14 @@ def _matmul_push_rhs_lowering_rule(
 @register_lowering_rule(tpu_primitives.matmul_acc_lhs_p)
 def _matmul_acc_lhs_lowering_rule(
     ctx: LoweringRuleContext,
-    lhs: jax.Array,
+    lhs: ir.Value,
     *,
     acc_addr: int,
     mxu_index: int,
     load_staged_rhs: int | None,
 ):
   del ctx
-  staged_rhs_kwarg = {}
+  staged_rhs_kwarg: dict[str, Any] = {}
   if load_staged_rhs is not None:
     staged_rhs_kwarg = {"load_staged_rhs": load_staged_rhs}
   tpu.matmul_acc_lhs(acc_addr, lhs, mxu_index, **staged_rhs_kwarg)
