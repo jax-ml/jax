@@ -365,6 +365,7 @@ print('all-reduce(' in compile_txt)
 # * `f32[8@X,16]` (a reduce-scatter on the first axis)
 # * `f32[8,16@X]` (a reduce-scatter on the second axis)
 # * `f32[8,16]{U:X}` (no communication)
+#
 # Instead of automatically choosing one, JAX errors in this case and requires an
 # `out_sharding` be provided, e.g. `jnp.dot(x, y, out_sharding=jax.P('X',
 # None))`:
@@ -432,8 +433,6 @@ def add2(x, y):
 
 result = add2(x, y, out_sharding=jax.P("X", None))
 print(f"Result type: {jax.typeof(result)}")
-
-
 # -
 
 # So `auto_axes` lets you add an `out_sharding` argument to any composition of
@@ -442,43 +441,6 @@ print(f"Result type: {jax.typeof(result)}")
 # An `auto_axes`-decorated function can be called when the context mesh's axis
 # types are `Explicit` or `Auto`, but none can be in `Manual`. By default it
 # switches all mesh axis types to `Auto`; use `axes=...` to switch only a subset.
-#
-# ### Concrete array shardings can mention `Auto` mesh axis
-#
-# The sharding of a concrete `jax.Array` can be queried via `x.sharding`.
-# This can only be done at the top-level. You might expect the result to be the
-# same as the sharding associated with the value’s type, `jax.typeof(x).sharding`.
-# It might not be! The concrete array sharding, `x.sharding`, describes the
-# sharding along both `Explicit` and `Auto` mesh axes. It’s the sharding that the
-# compiler eventually chose. Whereas the type-specificed sharding,
-# `jax.typeof(x).sharding`, only describes the sharding along `Explicit` mesh axes.
-# The `Auto` axes are deliberately hidden from the type because they’re the purview
-# of the compiler. We can think of the concrete array sharding being consistent
-# with, but more specific than, the type-specified sharding. For example:
-
-# +
-def compare_shardings(x):
-  print(f"=== with mesh: {jax.sharding.get_abstract_mesh()} ===")
-  print(f"Concrete value sharding: {x.sharding.spec}")
-  print(f"Type-specified sharding: {jax.typeof(x).sharding.spec}\n")
-
-my_array = jnp.sin(jax.device_put(np.arange(8), jax.P("X")))
-compare_shardings(my_array)
-
-@auto_axes
-def check_in_auto_context(x):
-  compare_shardings(x)
-  return x
-
-check_in_auto_context(my_array, out_sharding=jax.P("X"))
-# -
-
-# Notice that at the top level, where we’re currently in a fully `Explicit` mesh context,
-# the concrete array sharding and type-specified sharding agree.
-#
-# But under the `auto_axes` decorator we’re in a fully `Auto` mesh context and the
-# two shardings disagree: the type-specified sharding is `P(None)` whereas the concrete
-# array sharding is `P("X")` (though it could be anything! It’s up to the compiler).
 #
 # ## Auto sharding mode decides shardings automatically during compilation
 #
@@ -544,10 +506,49 @@ def f(arr1):
 
 x = jax.device_put(np.arange(16).reshape(4, 4), jax.P("X", "Y"))
 f(x)
+
+
 # -
 
 # It's a kind of dual to `auto_axes`, where you specify `in_shardings` rather
 # than `out_shardings`.
+#
+# ### Concrete array shardings can mention `Auto` mesh axis
+#
+# The sharding of a concrete `jax.Array` can be queried via `x.sharding`.
+# This can only be done at the top-level. You might expect the result to be the
+# same as the sharding associated with the value’s type, `jax.typeof(x).sharding`.
+# It might not be! The concrete array sharding, `x.sharding`, describes the
+# sharding along both `Explicit` and `Auto` mesh axes. It’s the sharding that the
+# compiler eventually chose. Whereas the type-specificed sharding,
+# `jax.typeof(x).sharding`, only describes the sharding along `Explicit` mesh axes.
+# The `Auto` axes are deliberately hidden from the type because they’re the purview
+# of the compiler. We can think of the concrete array sharding being consistent
+# with, but more specific than, the type-specified sharding. For example:
+
+# +
+def compare_shardings(x):
+  print(f"=== with mesh: {jax.sharding.get_abstract_mesh()} ===")
+  print(f"Concrete value sharding: {x.sharding.spec}")
+  print(f"Type-specified sharding: {jax.typeof(x).sharding.spec}\n")
+
+my_array = jnp.sin(jax.device_put(np.arange(8), jax.P("X")))
+compare_shardings(my_array)
+
+@auto_axes
+def check_in_auto_context(x):
+  compare_shardings(x)
+  return x
+
+check_in_auto_context(my_array, out_sharding=jax.P("X"))
+# -
+
+# Notice that at the top level, where we’re currently in a fully `Explicit` mesh context,
+# the concrete array sharding and type-specified sharding agree.
+#
+# But under the `auto_axes` decorator we’re in a fully `Auto` mesh context and the
+# two shardings disagree: the type-specified sharding is `P(None)` whereas the concrete
+# array sharding is `P("X")` (though it could be anything! It’s up to the compiler).
 #
 # ## Manual mode lets you write explicit collectives with a per-device view of data
 #
