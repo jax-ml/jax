@@ -74,6 +74,16 @@ rocm_library(
     ],
 )
 
+rocm_library(
+    name = "hip_householder_kernels",
+    srcs = ["//jaxlib/gpu:householder_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:householder_kernels.h"],
+    deps = [
+        ":hip_vendor",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
 cc_library(
     name = "hip_blas_handle_pool",
     srcs = ["//jaxlib/gpu:blas_handle_pool.cc"],
@@ -168,6 +178,7 @@ cc_library(
     deps = [
         ":hip_blas_handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_householder_kernels",
         ":hip_make_batch_pointers",
         ":hip_solver_handle_pool",
         ":hip_vendor",

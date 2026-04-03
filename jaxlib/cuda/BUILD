@@ -172,6 +172,16 @@ cc_library(
     ],
 )
 
+cuda_library(
+    name = "cuda_householder_kernels",
+    srcs = ["//jaxlib/gpu:householder_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:householder_kernels.h"],
+    deps = [
+        ":cuda_vendor",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
 cc_library(
     name = "cusolver_kernels_ffi",
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
@@ -179,6 +189,7 @@ cc_library(
     deps = [
         ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
+        ":cuda_householder_kernels",
         ":cuda_make_batch_pointers",
         ":cuda_solver_handle_pool",
         ":cuda_vendor",
