@@ -522,13 +522,10 @@ def ct_check(primal, ct):
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
   ct_aval_expected = primal.aval.to_ct_aval()  # type: ignore
   if not core.typematch(ct_aval, ct_aval_expected, no_dtype_check=True):
-    # TODO(yashkatariya, mattjj): Add primitive name here for
-    # better error message?
+    # TODO(yashkatariya, mattjj): Add primitive name here for better error?
     raise ValueError(
-        f"Input primal JAX type to VJP function is"
-        f" {primal.aval.str_short()}. Hence the expected"
-        f" cotangent type is {ct_aval_expected.str_short()} but"
-        f" got {ct_aval.str_short()}")
+        f"Expected cotangent type {ct_aval_expected.str_short()} for primal "
+        f"type {primal.aval.str_short()}, but got {ct_aval.str_short()}")
 
 class NullAccum(GradAccum):
   aval: core.AbstractValue
