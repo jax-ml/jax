@@ -8960,7 +8960,7 @@ def empty(shape, dtype, *, out_sharding=None):
     >>> jnp.empty(3, jnp.float32)  # doctest: +SKIP
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
   return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)

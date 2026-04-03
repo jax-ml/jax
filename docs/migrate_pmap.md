@@ -628,14 +628,14 @@ on only a subset of the data, producing incorrect results.
 To help with migration, we recommend reviewing the following documentation based
 on your needs:
 
-- **{doc}`sharded-computation`**: Start here for a high-level introduction to
+- **{doc}`parallel`**: Start here for a high-level introduction to
   parallel programming in JAX. This tutorial covers all three sharding modes
   (automatic, explicit, and manual) with a comparison table, explains key
   concepts like data sharding and `NamedSharding`, and demonstrates how each
   mode handles a simple neural network layer. This is the best starting point
   for understanding the overall landscape of parallelism in JAX.
 
-- **{doc}`notebooks/parallel`**: Read
+- **{doc}`parallel`**: Read
   this for a deeper understanding of `jax.Array` and automatic parallelization
   via `jax.jit`. This notebook explains how sharded data works, how computation
   follows data placement, and how to use `jax.lax.with_sharding_constraint` to
@@ -650,7 +650,7 @@ on your needs:
   `all_gather`, `psum_scatter`, and more. If you're migrating complex `pmap`
   code with explicit collectives, this is essential reading.
 
-- **{doc}`notebooks/parallel`**: Explore this for the newest sharding
+- **{doc}`parallel`**: Explore this for the newest sharding
   mode where sharding becomes part of the JAX-level type system. With explicit
   sharding, sharding propagation happens at trace time and shardings are
   queryable via `jax.typeof(x)`. This mode provides more control than automatic

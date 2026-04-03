@@ -149,7 +149,6 @@ exclude_patterns = [
     'autodidax.md',
     'autodidax2_part1.md',
     'array_refs.md',
-    'sharded-computation.md',
     'ffi.ipynb',
 ]
 
@@ -383,9 +382,9 @@ rediraffe_redirects = {
   "jax-101/04-advanced-autodiff.md": "automatic-differentiation.md",
   "jax-101/05-random-numbers.md": "random-numbers.md",
   "jax-101/05.1-pytrees.md": "pytrees.md",
-  "jax-101/06-parallelism.md": "sharded-computation.md",
+  "jax-101/06-parallelism.md": "parallel.md",
   "jax-101/07-state.md": "stateful-computations.md",
-  "jax-101/08-pjit.rst": "sharded-computation.md",
+  "jax-101/08-pjit.rst": "parallel.md",
   "jax-101/index.rst": "jax-101.rst",
   "tutorials.rst": "jax-101.rst",
   "notebooks/external_callbacks.md": "external-callbacks.md",
@@ -397,8 +396,9 @@ rediraffe_redirects = {
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",
-  "notebooks/Distributed_arrays_and_automatic_parallelization.md": "notebooks/parallel.md",
-  "notebooks/explicit-sharding.md": "notebooks/parallel.md",
+  "notebooks/Distributed_arrays_and_automatic_parallelization.md": "parallel.md",
+  "notebooks/explicit-sharding.md": "parallel.md",
+  "notebooks/parallel.md": "parallel.md",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory

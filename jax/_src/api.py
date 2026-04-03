@@ -2135,9 +2135,6 @@ def device_put(
   identity function if the operand is on any device already, otherwise it
   transfers the data to the default device, uncommitted.
 
-  For more details on data placement see the
-  :ref:`FAQ on data placement <faq-data-placement>`.
-
   This function is always asynchronous, i.e. returns immediately without
   blocking the calling Python thread until any transfers are completed.
   """

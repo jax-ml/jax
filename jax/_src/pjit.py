@@ -2040,7 +2040,7 @@ def with_sharding_constraint(x, shardings):
   Returns:
     x_with_shardings: PyTree of jax.Arrays with specified sharding constraints.
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/parallel.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/parallel.html
   """
   x_flat, tree = tree_flatten(x)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
