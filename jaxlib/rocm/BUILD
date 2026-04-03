@@ -126,6 +126,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_rnn",
     deps = [
@@ -201,6 +202,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
@@ -253,6 +255,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_sparse",
     deps = [
@@ -313,6 +316,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_linalg",
     deps = [
@@ -363,6 +367,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_prng",
     deps = [
@@ -404,6 +409,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_hybrid",
     deps = [
@@ -472,6 +478,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_triton",
     deps = [
@@ -543,6 +550,7 @@ cc_library(
 rocm_nanobind_extension(
     name = "rocm_plugin_extension",
     srcs = ["rocm_plugin_extension.cc"],
+    enable_stub_generation = False,
     module_name = "rocm_plugin_extension",
     deps = [
         ":py_client_gpu",

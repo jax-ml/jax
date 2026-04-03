@@ -213,7 +213,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/version.py",
           f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
-          f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
           f"{source_file_prefix}jaxlib/_ifrt_proxy.{pyext}",
           f"{source_file_prefix}jaxlib/_jax.{pyext}",
           f"{source_file_prefix}jaxlib/_sdy_mpmd.{pyext}",

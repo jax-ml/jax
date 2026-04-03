@@ -1,0 +1,206 @@
+# Copyright 2026 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Callable, Mapping, Sequence
+import enum
+from jax.jaxlib._jax import OpSharding, PjRtLayout
+import mlir.ir
+
+class PartitioningPhase(enum.Flag):
+  _boundary_: enum.FlagBoundary = ...
+
+  _flag_mask_: int = ...
+
+  _singles_mask_: int = ...
+
+  _all_bits_: int = ...
+
+  _inverted_: None = ...
+
+  NONE = 0
+
+  IMPORT = 1
+
+  OPTIMIZE = 2
+
+  PARTITION = 4
+
+  ALL = 7
+
+NONE: PartitioningPhase = ...
+
+IMPORT: PartitioningPhase = ...
+
+OPTIMIZE: PartitioningPhase = ...
+
+PARTITION: PartitioningPhase = ...
+
+ALL: PartitioningPhase = ...
+
+class SplitFragmentType(enum.Enum):
+  KEEP_TRANSFERRED = 0
+
+  DROP_TRANSFERRED = 1
+
+KEEP_TRANSFERRED: SplitFragmentType = ...
+
+DROP_TRANSFERRED: SplitFragmentType = ...
+
+class FragmentOrigin:
+  def __init__(self, computation_name: str, transpose_count: int) -> None: ...
+  @property
+  def computation_name(self) -> str: ...
+  @property
+  def transpose_count(self) -> int: ...
+
+class FragmentInfo:
+  def __init__(
+      self,
+      origins: Sequence[FragmentOrigin],
+      *,
+      stage_id: int | None = ...,
+      call_counter: int | None = ...,
+      split_type: SplitFragmentType | None = ...,
+      mesh_name: str,
+  ) -> None: ...
+  @property
+  def origins(self) -> list[FragmentOrigin]: ...
+  @property
+  def stage_id(self) -> int | None: ...
+  @property
+  def call_counter(self) -> int | None: ...
+  @property
+  def split_type(self) -> SplitFragmentType | None: ...
+  @property
+  def mesh_name(self) -> str: ...
+
+class FragmentScheduleRule:
+  def __init__(self, ordered_fragments: Sequence[FragmentInfo]) -> None: ...
+  @property
+  def ordered_fragments(self) -> list[FragmentInfo]: ...
+
+class FragmentMergeRule:
+  def __init__(
+      self, sources: Sequence[FragmentInfo], target: FragmentInfo
+  ) -> None: ...
+  @property
+  def sources(self) -> list[FragmentInfo]: ...
+  @property
+  def target(self) -> FragmentInfo: ...
+
+class PartitioningResult:
+  @property
+  def mpmd_module(self) -> mlir.ir.Module: ...
+  @property
+  def module_io_sharding_specs_and_meshes(
+      self,
+  ) -> FunctionIOShardingSpecsAndMeshes: ...
+
+def apply_mpmd_partitioning(
+    module: mlir.ir.Module,
+    func_name: str,
+    named_meshes: Sequence[tuple[str, Sequence[tuple[str, int]]]],
+    assignment: Mapping[str, str | tuple[str, int]],
+    input_meshes: Sequence[str | None],
+    output_meshes: Sequence[str | None],
+    donate_argnums: Sequence[int],
+    *,
+    partitioning_options: Mapping[str, str | bool] | None = ...,
+    fragment_merge_rules: Sequence[FragmentMergeRule],
+    fragment_schedule_rules: Sequence[FragmentScheduleRule],
+    phases: PartitioningPhase,
+) -> PartitioningResult: ...
+def get_fragment_info(arg: mlir.ir.Module, /) -> list[FragmentInfo]: ...
+
+class NamedSpmdShardingSpec:
+  def __init__(
+      self,
+      mesh_name: str,
+      tensor_spec: Sequence[Sequence[str]],
+      unreduced_axes: Sequence[str] = ...,
+      memory_kind: str | None = ...,
+  ) -> None: ...
+  @property
+  def mesh_name(self) -> str: ...
+  @property
+  def tensor_spec(self) -> list[list[str]]: ...
+  @property
+  def unreduced_axes(self) -> list[str]: ...
+  @property
+  def memory_kind(self) -> str | None: ...
+
+class FunctionIOShardingSpecsAndMeshes:
+  def __init__(
+      self,
+      arg0: Sequence[NamedSpmdShardingSpec],
+      arg1: Sequence[NamedSpmdShardingSpec],
+      /,
+  ) -> None: ...
+  @property
+  def input_specs(self) -> list[NamedSpmdShardingSpec]: ...
+  @property
+  def output_specs(self) -> list[NamedSpmdShardingSpec]: ...
+
+def clone_mlir_module(
+    c_module: mlir.ir.Module, unit_attributes: Sequence[str] = ...
+) -> mlir.ir.Module: ...
+def lower_to_ifrt(module: mlir.ir.Module) -> None: ...
+def get_compile_options(
+    arg0: mlir.ir.Module,
+    arg1: Mapping[str, Sequence[tuple[str, str | bool | int | float]]],
+    /,
+) -> dict: ...
+def compile_mpmd(
+    backend: object,
+    ifrt_mlir_module: mlir.ir.Module,
+    devices: Sequence,
+    out_avals: Sequence[object],
+    out_shardings: Sequence[object] | None,
+    xla_compile_options: Mapping[str, object] | None = ...,
+    ifrt_ir_compile_options: (
+        Mapping[str, str | bool | int | float] | None
+    ) = ...,
+    loaded_executable_bindings: Mapping[str, object] | None = ...,
+) -> MpmdLoadedExecutable: ...
+
+class IfrtIrProgramMemoryStats:
+  @property
+  def argument_size_in_bytes(self) -> int: ...
+  @property
+  def output_size_in_bytes(self) -> int: ...
+  @property
+  def device_to_peak_bytes_used(self) -> dict[int, int]: ...
+  @property
+  def device_to_min_memory_bytes_available(self) -> dict[int, int]: ...
+  @property
+  def host_argument_size_in_bytes(self) -> int: ...
+  @property
+  def host_output_size_in_bytes(self) -> int: ...
+
+class MpmdLoadedExecutable:
+  def execute(self, args: Sequence) -> list: ...
+  def execute_fastpath(self, *args, **kwargs) -> object: ...
+  def setup_fastpath(self, arg0: Callable, arg1: object, /) -> None: ...
+  def input_shardings(self) -> list[OpSharding]: ...
+  def output_shardings(self) -> list[OpSharding]: ...
+  def input_layouts(self) -> list[PjRtLayout]: ...
+  def output_layouts(self) -> list[PjRtLayout]: ...
+  def get_compiled_memory_stats(self) -> dict[str, object]: ...
+  def get_ifrt_ir_program_memory_stats(self) -> IfrtIrProgramMemoryStats: ...
+  def get_ifrt_ir_program_xprof_url(self) -> str: ...
+  def hlo_modules(self) -> dict[str, list[object]]: ...
+  def cost_analysis(
+      self,
+  ) -> dict[str, dict[str, str | bool | int | list[int] | float]]: ...
+  def get_raw_ptr(self) -> int: ...

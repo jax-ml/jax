@@ -285,7 +285,6 @@ nanobind_pywrap_extension(
         "weakref_lru_cache.h",
         "weakref_lru_cache_module.cc",
     ],
-    pytype_srcs = ["weakref_lru_cache.pyi"],
     deps = [
         ":nb_class_ptr",
         ":pytree",
@@ -345,10 +344,8 @@ nanobind_pywrap_extension(
         "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
     ],
-    enable_stub_generation = True,
     postprocess_stubgen = "//jaxlib:backport_stubs",
     pytype_deps = py_deps(["numpy"]),
-    pytype_srcs = glob(["_jax/*.pyi"]),
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
@@ -703,7 +700,9 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_ifrt_proxy",
     srcs = ["ifrt_proxy.cc"],
-    pytype_srcs = ["_ifrt_proxy.pyi"],
+    stub_replacement_patterns = {
+        "_ifrt_proxy.__prefix__": "from jax.jaxlib._jax import Client",
+    },
     deps = [
         ":nb_class_ptr",
         ":py_client",
@@ -727,7 +726,9 @@ nanobind_pywrap_extension(
 nanobind_pywrap_extension(
     name = "_pathways",
     srcs = ["pathways.cc"],
-    pytype_srcs = ["_pathways.pyi"],
+    stub_replacement_patterns = {
+        "_pathways.__prefix__": "from jax.jaxlib._jax import Client",
+    },
     visibility = jax_visibility("jaxlib/_pathways"),
     deps = [
         ":nb_class_ptr",
@@ -1305,6 +1306,19 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_sdy_mpmd",
     srcs = ["sdy_mpmd.cc"],
+    additional_stubgen_deps = [
+        "//jaxlib/mlir:ir",
+    ],
+    pytype_deps = [
+        "//jaxlib/mlir:ir",
+    ],
+    stub_replacement_patterns = {
+        "_sdy_mpmd.__prefix__": "from jax.jaxlib._jax import OpSharding, PjRtLayout",
+        # TODO(slebedev): Remove all of these once we no longer need to support pytype.
+        "PartitioningPhase._boundary_": "_boundary_: enum.FlagBoundary = ...",
+        "_sdy_mpmd\\.(NONE|IMPORT|OPTIMIZE|PARTITION|ALL)": "\\1: PartitioningPhase = ...",
+        "_sdy_mpmd\\.(KEEP_TRANSFERRED|DROP_TRANSFERRED)": "\\1: SplitFragmentType = ...",
+    },
     deps = [
         ":nb_class_ptr",
         ":py_client",
@@ -1545,6 +1559,8 @@ nanobind_pywrap_extension(
     name = "test_exceptions",
     testonly = True,
     srcs = ["test_exceptions.cc"],
+    # No need, since we do not currently type check tests.
+    enable_stub_generation = False,
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

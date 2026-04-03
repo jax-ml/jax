@@ -408,7 +408,15 @@ NB_MODULE(_pathways, m) {
         nb::arg("mesh_axis_sections"), nb::arg("submesh_shardings"),
         nb::arg("donate"));
   m.def("_create_cpu_client", CreateCpuClient, nb::arg("addressable_devices"),
-        nb::arg("device_id_to_process_index"));
+        nb::arg("device_id_to_process_index"),
+        // clang-format off
+        nb::sig(
+          "def _create_cpu_client("
+          "addressable_devices: collections.abc.Set[int], "
+          "device_id_to_process_index: collections.abc.Mapping[int, int]"
+          ") -> Client")
+        // clang-format on
+        );
 }
 
 }  // namespace jax

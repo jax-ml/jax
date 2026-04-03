@@ -270,7 +270,9 @@ NB_MODULE(_sdy_mpmd, m) {
                     std::optional<int>,
                     std::optional<mlir::mpmd::SplitFragmentType>,
                     const std::string&>(),
-           nb::arg("origins"), nb::arg("stage_id").none() = std::nullopt,
+           nb::arg("origins"),
+           nb::kw_only(),
+           nb::arg("stage_id").none() = std::nullopt,
            nb::arg("call_counter").none() = std::nullopt,
            nb::arg("split_type").none() = std::nullopt, nb::arg("mesh_name"))
       .def_ro("origins", &FragmentInfo::origins)
@@ -335,6 +337,7 @@ NB_MODULE(_sdy_mpmd, m) {
       nb::arg("module"), nb::arg("func_name"), nb::arg("named_meshes"),
       nb::arg("assignment"), nb::arg("input_meshes"), nb::arg("output_meshes"),
       nb::arg("donate_argnums"),
+      nb::kw_only(),
       nb::arg("partitioning_options").none() = std::nullopt,
       nb::arg("fragment_merge_rules"), nb::arg("fragment_schedule_rules"),
       nb::arg("phases"));
@@ -449,16 +452,20 @@ NB_MODULE(_sdy_mpmd, m) {
   mpmd_executable.def("setup_fastpath", &PyMpmdLoadedExecutable::SetupFastpath);
   mpmd_executable.def(
       "input_shardings",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterShardings));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterShardings),
+      nb::sig("def input_shardings(self) -> list[OpSharding]"));
   mpmd_executable.def(
       "output_shardings",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputShardings));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputShardings),
+      nb::sig("def output_shardings(self) -> list[OpSharding]"));
   mpmd_executable.def(
       "input_layouts",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterLayouts));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterLayouts),
+      nb::sig("def input_layouts(self) -> list[PjRtLayout]"));
   mpmd_executable.def(
       "output_layouts",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputLayouts));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputLayouts),
+      nb::sig("def output_layouts(self) -> list[PjRtLayout]"));
   mpmd_executable.def(
       "get_compiled_memory_stats",
       [](PyMpmdLoadedExecutable& exec)

@@ -12,12 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utilities for manipulating HloSharding."""
-
-from collections.abc import Sequence
-
-from . import HloSharding as _HloSharding
-
-def PartiallyReplicateTiledShardingOnDims(
-    sharding: _HloSharding, dims: Sequence[int], /
-) -> _HloSharding: ...
+def check_cpu_features():
+  """Throws an exception if the CPU is missing instructions used by jaxlib."""

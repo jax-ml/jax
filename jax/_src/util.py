@@ -386,7 +386,7 @@ def multi_weakref_lru_cache(
   cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(  # type: ignore
       config.trace_context if trace_context_in_key else _ignore,
       call,
-      maxsize,
+      maxsize=maxsize,
       explain=None,
       registry=_multi_weakref_registry,
       weak_types=weakref_cache_key_types,

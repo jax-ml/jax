@@ -12,12 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utilities for manipulating HloSharding."""
-
-from collections.abc import Sequence
-
-from . import HloSharding as _HloSharding
-
-def PartiallyReplicateTiledShardingOnDims(
-    sharding: _HloSharding, dims: Sequence[int], /
-) -> _HloSharding: ...
+def registrations() -> dict: ...
+def build_rnn_descriptor(
+    arg0: int,
+    arg1: int,
+    arg2: int,
+    arg3: int,
+    arg4: int,
+    arg5: float,
+    arg6: bool,
+    arg7: bool,
+    arg8: int,
+    arg9: int,
+    /,
+) -> bytes: ...
+def compute_rnn_workspace_reserve_space_sizes(
+    arg0: int,
+    arg1: int,
+    arg2: int,
+    arg3: int,
+    arg4: int,
+    arg5: float,
+    arg6: bool,
+    arg7: bool,
+    /,
+) -> tuple[int, int]: ...

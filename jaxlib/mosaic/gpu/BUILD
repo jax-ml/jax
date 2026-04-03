@@ -417,7 +417,6 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    enable_stub_generation = True,
     pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
         "//jaxlib:kernel_nanobind_helpers",

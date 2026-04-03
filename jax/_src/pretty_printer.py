@@ -65,7 +65,7 @@ Intensity = _pretty_printer.Intensity
 Doc = _pretty_printer.Doc
 
 def _format(
-  self, width: int = 80, *, use_color: bool | None = None,
+  self: Doc, width: int = 80, *, use_color: bool | None = None,
   annotation_prefix: str = " # ",
   source_map: list[list[tuple[int, int, Any]]] | None = None
 ) -> str:

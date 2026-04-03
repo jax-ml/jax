@@ -38,7 +38,6 @@ cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 proto_library = _proto_library
-nanobind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_windows = _if_windows
@@ -158,6 +157,24 @@ def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_src
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
     lib_rule(name = name, data = data, **new_kwargs)
+
+def nanobind_extension(
+        name,
+        additional_stubgen_deps = [],  # @unused
+        stub_replacement_patterns = {},  # @unused
+        postprocess_stubgen = None,  # @unused
+        enable_stub_generation = False,  # @unused
+        module_name = None,
+        pytype_srcs = None,
+        data = [],
+        **kwargs):
+    module_name_suffix = module_name or name
+    if pytype_srcs == None:
+        pytype_srcs = native.glob([
+            module_name_suffix + ".pyi",
+            module_name_suffix + "/**/*.pyi",
+        ])
+    _pybind_extension(name = name, module_name = module_name, data = data + pytype_srcs, **kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)

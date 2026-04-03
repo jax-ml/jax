@@ -1277,6 +1277,7 @@ void RegisterWeakrefLruCache(nb::module_& m) {
             std::move(explain), std::move(registry), std::move(weak_types));
       },
       nb::arg("cache_context_fn"), nb::arg("fn"),
+      nb::kw_only(),
       nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>(), nb::arg("registry"),
       nb::arg("weak_types"));
