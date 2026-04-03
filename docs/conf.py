@@ -398,7 +398,7 @@ rediraffe_redirects = {
   "working_with_pytrees.md": "pytrees.md",
   "notebooks/Distributed_arrays_and_automatic_parallelization.md": "parallel.md",
   "notebooks/explicit-sharding.md": "parallel.md",
-  "notebooks/parallel.md": "parallel.md",
+  "sharded-computation.md": "parallel.md",
 }
 
 from jupyter_client.provisioning import KernelProvisionerFactory
