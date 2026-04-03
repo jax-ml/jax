@@ -20,6 +20,8 @@ from jax._src.abstract_arrays import (
 )
 
 from jax._src.core import (
+  AbstractToken as AbstractToken,
+  call_impl as call_impl,
   ClosedJaxpr as ClosedJaxpr,
   Jaxpr as Jaxpr,
   JaxprEqn as JaxprEqn,
@@ -28,6 +30,7 @@ from jax._src.core import (
   Literal as Literal,
   Primitive as Primitive,
   set_current_trace as set_current_trace,
+  subjaxprs as subjaxprs,
   take_current_trace as take_current_trace,
   Token as Token,
   TraceTag as TraceTag,

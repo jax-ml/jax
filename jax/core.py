@@ -15,7 +15,6 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-import jax._src.core as _src_core
 from jax._src.core import (
   AbstractValue as AbstractValue,
   Atom as Atom,
@@ -105,29 +104,28 @@ _deprecations = {
     " Use jax.extend.core.TraceTag.",
     None,
   ),
-  # Deprecated in v0.8.2
   "call_impl": (
-    "jax.core.call_impl is deprecated.",
-    _src_core.call_impl,
+    "jax.core.call_impl was deprecated in JAX v0.8.2 and removed in JAX"
+    " v0.10.0. Use jax.extend.core.call_impl.",
+    None,
   ),
   "subjaxprs": (
-    "jax.core.subjaxprs is deprecated.",
-    _src_core.subjaxprs,
+    "jax.core.subjaxprs was deprecated in JAX v0.8.2 and removed in JAX"
+    " v0.10.0. Use jax.extend.core.subjaxprs.",
+    None,
   ),
   "AbstractToken": (
-    "jax.core.AbstractToken is deprecated.",
-    _src_core.AbstractToken,
+    "jax.core.AbstractToken was deprecated in JAX v0.8.2 and removed in JAX"
+    " v0.10.0. Use jax.extend.core.AbstractToken.",
+    None,
   ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  call_impl = _src_core.call_impl
-  subjaxprs = _src_core.subjaxprs
-  AbstractToken = _src_core.AbstractToken
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _src_core
