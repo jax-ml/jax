@@ -2668,6 +2668,302 @@ poch.defjvps(
 )
 
 
+def _lambertw_initial_guess_k0(z: Array) -> Array:
+  """Piecewise initial guess for the principal branch W₀(z).
+
+  Works for both real and complex inputs. Sentinel inputs are masked
+  before this function is called; see _lambertw_impl.
+  """
+  az = jnp.abs(z)
+
+  # Near the branch point -1/e: W₀ ~ -1 + p - p²/3 where p = sqrt(2(ez+1)).
+  p = jnp.sqrt(2.0 * (np.e * z + 1.0))
+  w_branch = -1.0 + p - p * p / 3.0
+
+  if dtypes.issubdtype(z.dtype, np.complexfloating):
+    # Complex k=0: use log(z) as primary starter. For small |z| near the
+    # origin, log1p(z) is more accurate; but near the negative real axis
+    # below -1/e, log1p gives a near-real result that can't reach the
+    # complex principal branch, so use log(z) there (which has Im ≈ ±π).
+    logz = jnp.log(jnp.where(az > 0.1, z, jnp.ones_like(z)))
+    log1pz_raw = jnp.log1p(z)
+    log1pz = jnp.where(jnp.isfinite(log1pz_raw), log1pz_raw, logz)
+    near_neg_cut = (jnp.real(z) < -1.0 / np.e) & (jnp.abs(jnp.imag(z)) < 0.5)
+    w0 = jnp.where((az < 1.5) & ~near_neg_cut, log1pz, logz)
+    near_branch = jnp.abs(z + 1.0 / np.e) < 0.3
+    return jnp.where(near_branch, w_branch, w0)
+  else:
+    # Real k=0: retain asymptotic/Taylor piecewise starter.
+    logz = jnp.log(jnp.where(az > 1.0, z, jnp.ones_like(z)))
+    log_logz = jnp.log(jnp.where(jnp.abs(logz) > 1.0, logz, jnp.ones_like(logz)))
+    w_large = logz - log_logz
+    w_small = z
+    w0 = jnp.where(az >= np.e, w_large, w_small)
+    w0 = jnp.where(jnp.real(z) < -0.3, w_branch, w0)
+    return w0
+
+
+def _lambertw_initial_guess_km1_real(z: Array) -> Array:
+  """Initial guess for k=-1 branch on real inputs.
+
+  For real z in [-1/e, 0): W₋₁(z) is real and <= -1.
+  Uses log(-z) - log(-log(-z)) as starting point, with a near-branch-point
+  fallback of -1 - small_offset for z very close to -1/e.
+  """
+  # Logarithmic approximation for bulk of [-1/e, 0)
+  z_neg = jnp.where((z < 0) & (z > -1.0), z, -0.1 * jnp.ones_like(z))
+  log_negz = jnp.log(-z_neg)
+  log_log_negz = jnp.log(jnp.where(-log_negz > 1.0, -log_negz, jnp.ones_like(z)))
+  w_log = log_negz - log_log_negz
+
+  # Near the branch point -1/e, start just below -1.
+  # Use -1 - 1e-6 as a fixed starting point — Halley will converge to the
+  # correct k=-1 value. The logarithmic guess is poor near -1/e because
+  # log(-z) ≈ log(1/e) = -1, giving W ≈ -1 which is the branch point itself.
+  arg = 2.0 * (np.e * z + 1.0)
+  near_branch = arg < 0.01  # z very close to -1/e
+
+  return jnp.where(near_branch, -1.0 - 1e-6, w_log)
+
+
+def _lambertw_initial_guess_km1_complex(z: Array) -> Array:
+  """Initial guess for k=-1 branch on complex inputs.
+
+  Uses the k=-1 log sheet: W₋₁ ~ log(z) - 2πi.
+  """
+  z_safe = jnp.where(jnp.abs(z) > 0.0, z, -jnp.ones_like(z))
+  logz = jnp.log(z_safe)
+  two_pi_i = jnp.array(2.0j * np.pi, dtype=z.dtype)
+  return logz - two_pi_i
+
+
+def _lambertw_halley(z: Array, w0: Array) -> Array:
+  """Refine Lambert W estimate using Halley's method.
+
+  Halley iteration for f(w) = w*exp(w) - z = 0:
+    w_{n+1} = w_n - f / (f' - f * f'' / (2 * f'))
+
+  Works for both real and complex inputs. Uses a fixed iteration count
+  of 20, which is sufficient for both float32 and float64 given Halley's
+  cubic convergence rate (typically converges in 3-5 iterations; the
+  extra headroom handles the k=-1 branch near the branch point where
+  convergence can be slower).
+  """
+  def body(i, w):
+    # Use scaled residual f/exp(w) = w - z*exp(-w) to avoid exp(w)
+    # overflow for large w (float32 overflows at w > 88) and underflow
+    # for k=-1 where w -> -inf.
+    exp_mw = jnp.exp(-w)
+    f_scaled = w - z * exp_mw
+    w1 = w + 1.0
+    # Guard against w1 == 0 (happens at the branch point w = -1)
+    w1_safe = jnp.where(w1 == 0.0, 1.0, w1)
+    dw = f_scaled / (w1_safe - (w + 2.0) * f_scaled / (2.0 * w1_safe))
+    dw = jnp.where(w1 == 0.0, 0.0, dw)
+    return w - dw
+
+  return lax.fori_loop(0, 20, body, w0)
+
+
+def _lambertw_impl(z: Array, k: int) -> Array:
+  """Core implementation of Lambert W for real and complex inputs."""
+  is_complex = dtypes.issubdtype(z.dtype, np.complexfloating)
+
+  # Choose initial guess based on branch and dtype
+  if k == 0:
+    w0_fn = _lambertw_initial_guess_k0
+  elif is_complex:
+    w0_fn = _lambertw_initial_guess_km1_complex
+  else:
+    w0_fn = _lambertw_initial_guess_km1_real
+
+  # Mask sentinel inputs before iteration. Use -0.1 as safe_val for k=-1
+  # to stay in the valid domain of the k=-1 initial guess (avoids log(-)
+  # producing NaN in the asymptotic path).
+  if k == -1:
+    safe_val = jnp.ones_like(z) * -0.1
+  else:
+    safe_val = jnp.ones_like(z) * 0.5
+  if is_complex:
+    needs_iter = jnp.isfinite(z) & (z != 0.0)
+  else:
+    inv_e = _lax_const(z, 1.0 / np.e)
+    if k == 0:
+      needs_iter = jnp.isfinite(z) & (z > -inv_e) & (z != 0.0)
+    else:
+      # k=-1: valid for real z in [-1/e, 0)
+      needs_iter = jnp.isfinite(z) & (z >= -inv_e) & (z < 0.0)
+
+  z_safe = jnp.where(needs_iter, z, safe_val)
+  if is_complex and k == 0:
+    # Complex k=0: select the best initial guess upfront, then run
+    # Halley once. For small |z|, the log-based guess can land on the
+    # wrong sheet; use z itself (which is near the origin) instead.
+    # For large |z|, the log-based guess is reliable.
+    w0_log = _lambertw_initial_guess_k0(z_safe)
+    # For small |z| away from the branch cut, z itself is a good starter.
+    # But near the negative real axis below -1/e, the principal branch is
+    # complex-valued and a near-real starter won't find it — use the
+    # log-based guess which produces a complex starting point.
+    near_neg_real_cut = (jnp.real(z_safe) < -1.0 / np.e) & (
+        jnp.abs(jnp.imag(z_safe)) < 0.1)
+    use_z_start = (jnp.abs(z_safe) < 1.5) & ~near_neg_real_cut
+    w0 = jnp.where(use_z_start, z_safe, w0_log)
+    w = _lambertw_halley(z_safe, w0)
+    # Verify principal branch: if |Im(w)| > pi or sign(Im(w)) doesn't
+    # match sign(Im(z)), retry with the other starter.
+    pi = _lax_const(jnp.real(z_safe), np.pi)
+    imag_eps = _lax_const(
+        jnp.real(z_safe),
+        10.0 * dtypes.finfo(jnp.real(z_safe).dtype).eps
+    )
+    imag_nonzero = jnp.abs(jnp.imag(z_safe)) > imag_eps
+    wrong_sheet = (jnp.abs(jnp.imag(w)) > pi) | (
+        imag_nonzero & (jnp.sign(jnp.imag(w)) != jnp.sign(jnp.imag(z_safe))))
+    # Retry with the opposite starter for wrong-sheet elements.
+    z_clamped = jnp.where(jnp.abs(z_safe) < 100, z_safe, w0_log)
+    w0_retry = jnp.where(use_z_start, w0_log, z_clamped)
+    w_retry = _lambertw_halley(z_safe, w0_retry)
+    w = jnp.where(wrong_sheet, w_retry, w)
+  else:
+    w0 = w0_fn(z_safe)
+    w = _lambertw_halley(z_safe, w0)
+
+  # Apply special-case overrides using original z
+  if is_complex:
+    is_inf_mag = jnp.isinf(z)
+    has_nan = jnp.isnan(z)
+    if k == 0:
+      w = jnp.where(z == 0.0, z, w)  # preserves sign of zero
+    else:
+      # k=-1: W₋₁(0) = -inf (matches real-path behavior)
+      w = jnp.where(z == 0.0, lax.complex(jnp.full_like(jnp.real(z), -jnp.inf),
+                                           jnp.imag(z)), w)
+    # Branch point: W(-1/e + 0j) = nan+nanj (matching SciPy)
+    neg_inv_e_c = jnp.asarray(-1.0 / np.e, dtype=z.dtype)
+    is_branch_pt = (z == neg_inv_e_c)
+    nan_c = lax.complex(jnp.full_like(jnp.real(z), jnp.nan),
+                        jnp.full_like(jnp.real(z), jnp.nan))
+    w = jnp.where(is_branch_pt, nan_c, w)
+    # For NaN inputs, SciPy preserves the non-NaN component.
+    w = jnp.where(has_nan, z, w)
+    # For |z|=inf with finite imaginary component, match SciPy phase:
+    #   Re(z)=+inf: Im(W0)=Im(z),    Im(W-1)=Im(z)-2pi
+    #   Re(z)=-inf: Im(W0)=pi-Im(z), Im(W-1)=-pi-Im(z)
+    re = jnp.real(z)
+    im = jnp.imag(z)
+    real_inf = jnp.isinf(re)
+    imag_finite = jnp.isfinite(im)
+    inf_re = jnp.full_like(re, jnp.inf)
+    pi = _lax_const(re, np.pi)
+    two_pi = _lax_const(re, 2.0 * np.pi)
+    is_pos_re_inf = is_inf_mag & real_inf & (re > 0) & imag_finite & ~has_nan
+    is_neg_re_inf = is_inf_mag & real_inf & (re < 0) & imag_finite & ~has_nan
+    w_pos = lax.complex(inf_re, im)
+    w_neg = lax.complex(inf_re, pi - im)
+    if k == -1:
+      w_pos = lax.complex(jnp.real(w_pos), jnp.imag(w_pos) - two_pi)
+      w_neg = lax.complex(jnp.real(w_neg), jnp.imag(w_neg) - two_pi)
+    w = jnp.where(is_pos_re_inf, w_pos, w)
+    w = jnp.where(is_neg_re_inf, w_neg, w)
+
+    # Remaining |z|=inf cases (e.g., imag=inf) use log on finite proxies.
+    handled_inf = is_pos_re_inf | is_neg_re_inf
+    remaining_inf = is_inf_mag & ~handled_inf & ~has_nan
+    big = _lax_const(re, dtypes.finfo(re.dtype).max)
+    re_proxy = jnp.where(jnp.isinf(re), jnp.sign(re) * big, re)
+    im_proxy = jnp.where(jnp.isinf(im), jnp.sign(im) * big, im)
+    z_proxy = lax.complex(re_proxy, im_proxy)
+    w_inf = jnp.log(z_proxy)
+    w_inf = lax.complex(inf_re, jnp.imag(w_inf))
+    if k == -1:
+      w_inf = lax.complex(jnp.real(w_inf), jnp.imag(w_inf) - two_pi)
+    w = jnp.where(remaining_inf, w_inf, w)
+  else:
+    neg_inv_e = _lax_const(z, -1.0 / np.e)
+    w = jnp.where(z == 0.0, z, w)  # preserves -0.0
+    w = jnp.where(jnp.isnan(z), jnp.nan, w)
+    if k == 0:
+      w = jnp.where(z == neg_inv_e, -1.0, w)
+      w = jnp.where(z < neg_inv_e, jnp.nan, w)
+      w = jnp.where(isposinf(z), jnp.inf, w)
+    else:
+      # k=-1: W₋₁(-1/e) = -1, W₋₁(0) = -inf, invalid outside [-1/e, 0)
+      w = jnp.where(z == neg_inv_e, -1.0, w)
+      w = jnp.where(z == 0.0, -jnp.inf, w)
+      w = jnp.where((z < neg_inv_e) | (z > 0.0), jnp.nan, w)
+      w = jnp.where(isposinf(z) | isneginf(z), jnp.nan, w)
+
+  return w
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
+def lambertw(z: ArrayLike, k: int = 0) -> Array:
+  r"""The Lambert W function.
+
+  JAX implementation of :obj:`scipy.special.lambertw`.
+
+  The Lambert W function :math:`W(z)` is defined as the inverse of
+  :math:`w e^w`:
+
+  .. math::
+
+     z = W(z) e^{W(z)}
+
+  Args:
+    z: arraylike, real or complex valued.
+    k: int, branch index. Supported values are ``k=0`` (principal branch)
+       and ``k=-1``.
+
+  Returns:
+    array containing the values of the Lambert W function. For complex
+    inputs, the output is complex-valued.
+
+  Notes:
+    For real inputs with ``k=0``, the principal branch is real-valued for
+    :math:`z \ge -1/e` and returns NaN for :math:`z < -1/e`.
+
+    For real inputs with ``k=-1``, the function is real-valued for
+    :math:`-1/e \le z < 0`, returns ``-inf`` at ``z=0``, and NaN
+    outside this range.
+
+    Complex inputs are supported for both ``k=0`` and ``k=-1``.
+
+    The implementation uses Halley's method for iterative refinement,
+    which is cubically convergent.
+  """
+  k = core.concrete_or_error(operator.index, k, "k argument of lambertw")
+  if k not in (0, -1):
+    raise NotImplementedError(
+        f"lambertw is only implemented for k=0 and k=-1, got k={k}")
+  z, = promote_args_inexact("lambertw", z)
+  return _lambertw_impl(z, k)
+
+
+@lambertw.defjvp
+def _lambertw_jvp(k, primals, tangents):
+  (z,) = primals
+  (z_dot,) = tangents
+  w = lambertw(z, k)
+  # dW/dz = W(z) / (z * (1 + W(z)))
+  # This form avoids exp(W) which underflows for k=-1 as z -> 0-.
+  # Mask singular inputs (z=0, w=-1) before computing to avoid
+  # NaN/inf under jax.debug_nans / jax.debug_infs.
+  eps = _lax_const(jnp.real(w), dtypes.finfo(jnp.real(w).dtype).eps)
+  at_branch = jnp.abs(w + 1.0) < 10.0 * eps
+  singular = (z == 0) | at_branch
+  z_safe = jnp.where(singular, jnp.ones_like(z), z)
+  w_safe = jnp.where(singular, jnp.zeros_like(w), w)
+  pval = w_safe / (z_safe * (1.0 + w_safe))
+  # At z=0: for k=0, dW/dz = 1. For k=-1, W=-inf so derivative is NaN.
+  if k == 0:
+    pval = jnp.where(z == 0, jnp.ones_like(w), pval)
+  else:
+    pval = jnp.where(z == 0, jnp.full_like(jnp.real(w), jnp.nan), pval)
+  pval = jnp.where(at_branch, jnp.nan, pval)
+  return w, (pval * z_dot).astype(w.dtype)
+
+
 def _hyp1f1_serie(a, b, x):
   """
   Compute the 1F1 hypergeometric function using the taylor expansion
