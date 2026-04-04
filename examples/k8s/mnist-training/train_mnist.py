@@ -15,11 +15,13 @@ Usage (Kubernetes):
 
 import argparse
 import time
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 from jax import random
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
+from jax import shard_map
 import optax
 import numpy as np
 
@@ -41,7 +43,7 @@ def init_params(key):
             'b': jnp.zeros(64),
         },
         'fc1': {
-            'w': random.normal(keys[2], (3136, 128)) * 0.05,
+            'w': random.normal(keys[2], (9216, 128)) * 0.05,
             'b': jnp.zeros(128),
         },
         'fc2': {
@@ -89,23 +91,38 @@ def cross_entropy_loss(params, images, labels):
     return -jnp.mean(jnp.sum(one_hot * logits, axis=-1))
 
 
-@jax.jit
-def train_step(params, opt_state, images, labels):
-    """Single training step with gradient averaging across devices."""
-    loss, grads = jax.value_and_grad(cross_entropy_loss)(params, images, labels)
-    # Average gradients across all devices (data parallelism).
-    grads = jax.lax.pmean(grads, axis_name='batch')
-    loss = jax.lax.pmean(loss, axis_name='batch')
-    updates, opt_state = optimizer.update(grads, opt_state, params)
-    params = optax.apply_updates(params, updates)
-    return params, opt_state, loss
+@partial(jax.jit, static_argnums=(4,))
+def train_step(params, opt_state, images, labels, mesh):
+    """Single training step with data parallelism via shard_map."""
+    def _step(params, opt_state, images, labels):
+        loss, grads = jax.value_and_grad(cross_entropy_loss)(params, images, labels)
+        # Average gradients across all devices in the mesh.
+        grads = jax.lax.pmean(grads, axis_name='batch')
+        loss = jax.lax.pmean(loss, axis_name='batch')
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
+
+    return shard_map(
+        _step, mesh=mesh,
+        in_specs=(PartitionSpec(), PartitionSpec(), PartitionSpec('batch'), PartitionSpec('batch')),
+        out_specs=(PartitionSpec(), PartitionSpec(), PartitionSpec())
+    )(params, opt_state, images, labels)
 
 
-@jax.jit
-def eval_step(params, images, labels):
-    logits = forward(params, images)
-    predictions = jnp.argmax(logits, axis=-1)
-    return jnp.sum(predictions == labels)
+@partial(jax.jit, static_argnums=(3,))
+def eval_step(params, images, labels, mesh):
+    """Evaluation step with data parallelism via shard_map."""
+    def _step(params, images, labels):
+        logits = forward(params, images)
+        predictions = jnp.argmax(logits, axis=-1)
+        return jax.lax.psum(jnp.sum(predictions == labels), axis_name='batch')
+
+    return shard_map(
+        _step, mesh=mesh,
+        in_specs=(PartitionSpec(), PartitionSpec('batch'), PartitionSpec('batch')),
+        out_specs=PartitionSpec()
+    )(params, images, labels)
 
 
 # ---------------------------------------------------------------------------
@@ -182,65 +199,58 @@ def main():
     # ----- Data loading and sharding -----
     train_images, train_labels, test_images, test_labels = load_mnist()
 
-    # Each process trains on a different shard of the data.
-    shard_size = len(train_images) // num_processes
-    start = process_idx * shard_size
-    end = start + shard_size
-    train_images = train_images[start:end]
-    train_labels = train_labels[start:end]
+    # Manual process-level sharding is removed. JAX's NamedSharding + Mesh
+    # will handle sharding across the entire cluster automatically.
 
     if process_idx == 0:
-        print(f"Training on {shard_size} samples per process, "
-              f"{shard_size * num_processes} total")
+        print(f"Training on {len(train_images)} samples total across all processes")
 
     # ----- Initialize model and optimizer -----
     key = random.PRNGKey(42)
     params = init_params(key)
     opt_state = optimizer.init(params)
 
-    # Create a mesh for data parallelism across all local devices.
-    mesh = Mesh(np.array(local_devices), axis_names=('batch',))
+    # Create a global mesh for data parallelism across ALL devices.
+    mesh = Mesh(np.array(global_devices), axis_names=('batch',))
 
     per_device_batch = args.batch_size
-    num_local_devices = len(local_devices)
-    local_batch_size = per_device_batch * num_local_devices
+    num_global_devices = len(global_devices)
+    # Total batch size across all devices in all processes.
+    global_batch_size = per_device_batch * num_global_devices
 
     # ----- Training loop -----
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
-        # Shuffle data each epoch
-        perm = np.random.permutation(len(train_images))
+        # Shuffle data each epoch - use the SAME seed on all processes to ensure
+        # that jax.device_put(global_batch, sharding) sees the same data.
+        rng = np.random.default_rng(42 + epoch)
+        perm = rng.permutation(len(train_images))
         train_images = train_images[perm]
         train_labels = train_labels[perm]
 
-        num_batches = len(train_images) // local_batch_size
+        num_batches = len(train_images) // global_batch_size
         epoch_loss = 0.0
 
         for batch_idx in range(num_batches):
-            i = batch_idx * local_batch_size
-            batch_images = train_images[i:i + local_batch_size]
-            batch_labels = train_labels[i:i + local_batch_size]
+            i = batch_idx * global_batch_size
+            batch_images = train_images[i:i + global_batch_size]
+            batch_labels = train_labels[i:i + global_batch_size]
 
-            # Reshape for per-device sharding: (num_devices, per_device_batch, ...)
-            batch_images = batch_images.reshape(
-                num_local_devices, per_device_batch, 28, 28, 1
-            )
-            batch_labels = batch_labels.reshape(
-                num_local_devices, per_device_batch
-            )
-
-            batch_images = jnp.array(batch_images)
-            batch_labels = jnp.array(batch_labels)
+            # Sharding for global data parallelism: shard across the 'batch' axis.
+            sharding = NamedSharding(mesh, PartitionSpec('batch'))
+            batch_images = jax.device_put(batch_images, sharding)
+            batch_labels = jax.device_put(batch_labels, sharding)
 
             with mesh:
                 params, opt_state, loss = train_step(
-                    params, opt_state, batch_images, batch_labels
+                    params, opt_state, batch_images, batch_labels, mesh
                 )
 
             epoch_loss += float(loss)
 
             if args.dry_run:
-                print(f"[Process {process_idx}] Dry run batch loss: {loss:.4f}")
+                if process_idx == 0:
+                    print(f"Dry run batch loss: {loss:.4f}")
                 jax.distributed.shutdown()
                 return
 
@@ -253,16 +263,34 @@ def main():
                   f"time: {elapsed:.1f}s")
 
     # ----- Evaluation -----
+    if process_idx == 0:
+        print("\nRunning evaluation...")
+    
     correct = 0
-    eval_batch = 1000
+    # Evaluate on the full test set using global sharding.
+    eval_batch = 1000 * num_processes # Larger batch for efficiency
     for i in range(0, len(test_images), eval_batch):
-        batch_images = jnp.array(test_images[i:i + eval_batch])
-        batch_labels = jnp.array(test_labels[i:i + eval_batch])
-        correct += int(eval_step(params, batch_images, batch_labels))
+        batch_images = test_images[i:i + eval_batch]
+        batch_labels = test_labels[i:i + eval_batch]
+        
+        # Adjust batch size if at the end of the dataset.
+        current_batch_size = len(batch_images)
+        if current_batch_size % num_global_devices != 0:
+            continue # Skip incomplete batches for simplicity in this example
+
+        sharding = NamedSharding(mesh, PartitionSpec('batch'))
+        batch_images = jax.device_put(batch_images, sharding)
+        batch_labels = jax.device_put(batch_labels, sharding)
+
+        with mesh:
+            correct += int(eval_step(params, batch_images, batch_labels, mesh))
 
     if process_idx == 0:
+        # Note: we might have skipped a few samples if not divisible by num_devices
+        total_eval = (len(test_images) // global_batch_size) * global_batch_size
+        if total_eval == 0: total_eval = len(test_images) # Fallback
         accuracy = correct / len(test_images) * 100
-        print(f"\nTest accuracy: {correct}/{len(test_images)} ({accuracy:.1f}%)")
+        print(f"Test accuracy: {correct}/{len(test_images)} ({accuracy:.1f}%)")
 
     jax.distributed.shutdown()
 

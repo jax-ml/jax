@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir \
     "jax[tpu]" \
     "jax[k8s]" \
     optax \
+    tensorflow-cpu \
     keras \
     tensorflow-datasets
 
