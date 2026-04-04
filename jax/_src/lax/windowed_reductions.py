@@ -734,7 +734,7 @@ def _select_and_scatter_lower(
       shape=(), sharding=operand_aval.sharding.update(spec=()))
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   op = hlo.SelectAndScatterOp(
-      mlir.aval_to_ir_type(aval_out),
+      mlir.single_ir_type(mlir.aval_to_ir_type(aval_out)),
       operand,
       source,
       init_value,
@@ -912,7 +912,9 @@ def _select_and_gather_add_lowering(
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
 
-  const = lambda dtype, x: mlir.ir_constant(np.array(x, dtype=dtype))
+  const = lambda dtype, x: mlir.single_ir_value(
+      mlir.ir_constant(np.array(x, dtype=dtype))
+  )
 
   def _broadcast_scalar_const(x, aval_out):
     return mlir.broadcast_in_dim(ctx, const(aval_out.dtype, x),
@@ -929,11 +931,15 @@ def _select_and_gather_add_lowering(
     # Packs two values into a double_word_type.
     def pack(a, b, ab_aval):
       word_type_ab_aval = ab_aval.update(dtype=word_dtype)
+      word_ir_type = mlir.single_ir_type(mlir.aval_to_ir_type(word_type_ab_aval))
+      a = hlo.bitcast_convert(word_ir_type, a)
+      b = hlo.bitcast_convert(word_ir_type, b)
       double_word_type_ab_aval = ab_aval.update(dtype=double_word_dtype)
-      a = hlo.bitcast_convert(mlir.aval_to_ir_type(word_type_ab_aval), a)
-      b = hlo.bitcast_convert(mlir.aval_to_ir_type(word_type_ab_aval), b)
-      a = hlo.convert(mlir.aval_to_ir_type(double_word_type_ab_aval), a)
-      b = hlo.convert(mlir.aval_to_ir_type(double_word_type_ab_aval), b)
+      double_word_ir_type = mlir.single_ir_type(
+          mlir.aval_to_ir_type(double_word_type_ab_aval)
+      )
+      a = hlo.convert(double_word_ir_type, a)
+      b = hlo.convert(double_word_ir_type, b)
       a = hlo.shift_left(
           a, _broadcast_scalar_const(nbits, double_word_type_ab_aval))
       return hlo.or_(a, b)
@@ -948,9 +954,13 @@ def _select_and_gather_add_lowering(
 
     # Unpacks the second element of a double_word_type.
     def snd(t, t_aval):
-      return hlo.bitcast_convert(
-          mlir.aval_to_ir_type(t_aval.update(dtype=dtype)),
-          hlo.convert(mlir.aval_to_ir_type(t_aval.update(dtype=word_dtype)), t))
+      ir_type = mlir.single_ir_type(
+          mlir.aval_to_ir_type(t_aval.update(dtype=dtype))
+      )
+      word_ir_type = mlir.single_ir_type(
+          mlir.aval_to_ir_type(t_aval.update(dtype=word_dtype))
+      )
+      return hlo.bitcast_convert(ir_type, hlo.convert(word_ir_type, t))
 
   else:
     # The double-word trick above only works if we have a sufficiently large
@@ -975,8 +985,11 @@ def _select_and_gather_add_lowering(
                                 mantissa_bits=mlir.i32_attr(nmant))
       b = hlo.reduce_precision(b, exponent_bits=mlir.i32_attr(nexp),
                                 mantissa_bits=mlir.i32_attr(nmant))
-      a = hlo.bitcast_convert(mlir.aval_to_ir_type(word_type_ab_aval), a)
-      b = hlo.bitcast_convert(mlir.aval_to_ir_type(word_type_ab_aval), b)
+      word_ir_type = mlir.single_ir_type(
+          mlir.aval_to_ir_type(word_type_ab_aval)
+      )
+      a = hlo.bitcast_convert(word_ir_type, a)
+      b = hlo.bitcast_convert(word_ir_type, b)
       b = hlo.shift_right_logical(
           b, _broadcast_scalar_const(r_nbits, word_type_ab_aval))
       return hlo.or_(a, b)
@@ -990,7 +1003,7 @@ def _select_and_gather_add_lowering(
     # Unpacks the second element of a double_word_type.
     def snd(t, t_aval):
       return hlo.bitcast_convert(
-          mlir.aval_to_ir_type(t_aval.update(dtype=dtype)),
+          mlir.single_ir_type(mlir.aval_to_ir_type(t_aval.update(dtype=dtype))),
           hlo.shift_left(t, _broadcast_scalar_const(r_nbits, t_aval.update(dtype=word_dtype))))
 
   assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim

@@ -75,9 +75,7 @@ Value = ir.Value
 
 # IR Helpers
 
-# TODO(slebedev): Fix all callers and uncomment this.
-# IrValues = Union[ir.Value, tuple[ir.Value, ...]]
-IrValues = Any
+IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
@@ -88,19 +86,19 @@ dense_int_array = ir.DenseI64ArrayAttr.get
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def shape_tensor(sizes: Sequence[int | ir.Value]) -> IrValues:
-  int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
-  i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
+def shape_tensor(sizes: Sequence[int | ir.Value]) -> ir.Value:
+  int1d = single_ir_type(aval_to_ir_type(core.ShapedArray((1,), np.int32)))
+  i32_type = single_ir_type(aval_to_ir_type(core.ShapedArray((), np.int32)))
   def lower_dim(d):
     if type(d) is int:
-      return ir_constant(np.array([d], np.int32))
+      return single_ir_value(ir_constant(np.array([d], np.int32)))
     else:
       if d.type != i32_type:
         d = hlo.convert(i32_type, d)
       return hlo.reshape(int1d, d)
   ds = map(lower_dim, sizes)
   if not ds:
-    return ir_constant(np.array([], np.int32))
+    return single_ir_value(ir_constant(np.array([], np.int32)))
   elif len(ds) == 1:
     return ds[0]
   else:
@@ -117,9 +115,7 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 
 # IR Types
 
-# TODO(slebedev): Fix all callers and uncomment this.
-# IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
-IrTypes = Any
+IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
 
 def _is_ir_values(x: IrValues) -> bool:
   """Returns true if `x` is an ir.Value or tuple of ir.Values"""
@@ -269,7 +265,7 @@ def ir_constant(
     return ir_constant(val.__jax_array__())
   raise TypeError(f"No constant handler for type: {type(val)}")
 
-def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
+def _numpy_array_constant(x: np.ndarray | np.generic) -> ir.Value:
   return hlo.constant(_numpy_array_attribute(x))
 
 
@@ -913,6 +909,10 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     for p in xb.expand_platform_alias(platform):
       _platform_specific_lowerings[p][prim] = LoweringRuleEntry(rule, inline)
 
+def single_ir_value(x: IrValues) -> ir.Value:
+  if isinstance(x, ir.Value):
+    return x
+  raise TypeError(f"Expected a single IR value, got {x}")
 
 def flatten_ir_values(xs: Iterable[IrValues]) -> list[ir.Value]:
   """Concatenates/flattens a list of ir.Values or ir.Value sequences."""
@@ -923,6 +923,11 @@ def flatten_ir_values(xs: Iterable[IrValues]) -> list[ir.Value]:
     else:
       out.extend(x)
   return out
+
+def single_ir_type(x: IrTypes) -> ir.Type:
+  if isinstance(x, ir.Type):
+    return x
+  raise TypeError(f"Expected a single IR type, got {x}")
 
 def flatten_ir_types(xs: Iterable[IrTypes]) -> list[ir.Type]:
   """Concatenates/flattens a list of ir.Types or ir.Type sequences."""
@@ -997,7 +1002,7 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
       return ir_constant(np.array(d, dtype=np.int32))
     else:
       assert isinstance(d, ir.Value)
-      i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
+      i32_type = single_ir_type(aval_to_ir_type(core.ShapedArray((), np.int32)))
       if d.type != i32_type:  # type: ignore
         return hlo.convert(i32_type, d)
       else:
@@ -1014,7 +1019,7 @@ def eval_dynamic_shape_as_ivals(
       return d
     else:
       assert isinstance(d, ir.Value)
-      i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
+      i32_type = single_ir_type(aval_to_ir_type(core.ShapedArray((), np.int32)))
       if d.type != i32_type:  # type: ignore
         return hlo.convert(i32_type, d)
       else:
@@ -1024,8 +1029,7 @@ def eval_dynamic_shape_as_ivals(
 def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
                                  shape: core.Shape) -> ir.Value:
   """Evaluates the dynamic shapes as one 1d int32 tensor."""
-  [x] = flatten_ir_values([shape_tensor(eval_dynamic_shape(ctx, shape))])
-  return x
+  return single_ir_value(shape_tensor(eval_dynamic_shape(ctx, shape)))
 
 class LoweringResult(NamedTuple):
   module: ir.Module
@@ -2425,7 +2429,9 @@ def lower_per_platform(ctx: LoweringRuleContext,
   # The first dim_var_values is the platform index
   current_platform_idx = ctx.dim_var_values[0]
   # Compute the rule index based on the current platform
-  i32_type = aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
+  i32_type = single_ir_type(
+      aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
+  )
   if current_platform_idx.type != i32_type:
     current_platform_idx = hlo.convert(i32_type, current_platform_idx)
   rule_idx_op = hlo.CaseOp([i32_type],
@@ -2434,7 +2440,9 @@ def lower_per_platform(ctx: LoweringRuleContext,
   for i, p in enumerate(platforms):
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx[p]))])
+      hlo.return_(flatten_ir_values(
+          [ir_constant(np.int32(platform_to_kept_rules_idx[p]))]
+      ))
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = map(aval_to_ir_type, rule_out_avals)
@@ -2698,7 +2706,8 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
       out = hlo.dynamic_broadcast_in_dim(
-          aval_to_ir_type(aval_out), op,
+          single_ir_type(aval_to_ir_type(aval_out)),
+          op,
           shape,
           dense_int_array(broadcast_dimensions),
       )
@@ -2706,7 +2715,8 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
       out = hlo.broadcast_in_dim(
-          aval_to_ir_type(aval_out), op,
+          single_ir_type(aval_to_ir_type(aval_out)),
+          op,
           dense_int_array(broadcast_dimensions))
     wrap_compute_type_in_place(ctx, _get_owner(out))
     return out
@@ -2746,10 +2756,10 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
     return hlo.dynamic_reshape(
-        aval_to_ir_type(aval_out), op, shape,
+        single_ir_type(aval_to_ir_type(aval_out)), op, shape,
     )
   else:
-    return hlo.reshape(aval_to_ir_type(aval_out), op)
+    return hlo.reshape(single_ir_type(aval_to_ir_type(aval_out)), op)
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
@@ -2769,7 +2779,7 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
       limit_indices = eval_dynamic_shape_as_tensor(ctx, limit_indices)
       strides = eval_dynamic_shape_as_tensor(ctx, strides)
       return hlo.real_dynamic_slice(
-        aval_to_ir_type(aval_out),
+        single_ir_type(aval_to_ir_type(aval_out)),
         x, start_indices, limit_indices, strides)
     else:
       return hlo.slice(x,
@@ -2802,7 +2812,8 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
         eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
         slice_sizes))
     return hlo.real_dynamic_slice(
-        aval_to_ir_type(aval_out), x,
+        single_ir_type(aval_to_ir_type(aval_out)),
+        x,
         clamped_start,
         hlo.add(clamped_start, slice_sizes),
         shape_tensor([1] * len(start_indices))
@@ -2839,19 +2850,21 @@ def pad(ctx: LoweringRuleContext, aval_out,
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
     padding_interior = eval_dynamic_shape_as_tensor(ctx, padding_interior)
     return hlo.dynamic_pad(
-        aval_to_ir_type(aval_out),
+        single_ir_type(aval_to_ir_type(aval_out)),
         x, padding_value, padding_low, padding_high, padding_interior)
 
 def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
   if not core.is_constant_shape(aval_out.shape):
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
     return hlo.dynamic_iota(
-        aval_to_ir_type(aval_out),
+        single_ir_type(aval_to_ir_type(aval_out)),
         shape,
         i64_attr(dimension),
     )
   else:
-    return hlo.iota(aval_to_ir_type(aval_out), i64_attr(dimension))
+    return hlo.iota(
+        single_ir_type(aval_to_ir_type(aval_out)), i64_attr(dimension)
+    )
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -2919,7 +2932,7 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "UNSIGNED"
     x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE", compare_type)
     # continue, to adjust the shape if needed
-  return hlo.convert(aval_to_ir_type(aval_out), x)
+  return hlo.convert(single_ir_type(aval_to_ir_type(aval_out)), x)
 
 def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
@@ -3259,12 +3272,12 @@ def reduce_window(
     window_dimensions, window_strides, padding, base_dilation, window_dilation):
   """Builds a ReduceWindowOp, with support for dynamic shapes."""
 
-  scalar_types = flatten_ir_types([aval_to_ir_type(aval) for aval in init_values_avals])
+  scalar_types = flatten_ir_types(map(aval_to_ir_type, init_values_avals))
   if any(not core.is_constant_shape(s)
          for s in [window_dimensions, window_dilation, window_strides, base_dilation, *padding]):
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
-    int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    int2d = single_ir_type(aval_to_ir_type(core.ShapedArray((1, 2), np.int32)))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pads = eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
       return hlo.reshape(int2d, pads)
@@ -3293,7 +3306,7 @@ def reduce_window(
     )
   else:  # Static shapes
     rw = hlo.ReduceWindowOp(
-        list(map(aval_to_ir_type, out_avals)),
+        flatten_ir_types(map(aval_to_ir_type, out_avals)),
         operands, init_values,
         dense_int_array(window_dimensions),
         window_strides=dense_int_array(window_strides),

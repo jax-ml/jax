@@ -1010,7 +1010,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
       branch = kept_index_case_op.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
         kept_i = np.int32(index_to_kept_index.get(i, 0))
-        hlo.return_([mlir.ir_constant(kept_i)])
+        hlo.return_(mlir.flatten_ir_values([mlir.ir_constant(kept_i)]))
 
     index = kept_index_case_op
     branches = branches_kept

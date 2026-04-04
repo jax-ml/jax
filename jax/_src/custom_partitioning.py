@@ -620,7 +620,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
 
   result_types = [mlir.aval_to_ir_type(s) for s in call.out_avals]
   out = hlo.CustomCallOp(
-      result_types,
+      mlir.flatten_ir_types(result_types),
       list(values),
       call_target_name=ir.StringAttr.get(_CUSTOM_PARTITIONING_CALL_NAME),
       has_side_effect=ir.BoolAttr.get(False),

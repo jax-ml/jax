@@ -2104,7 +2104,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           pred_ctx,
           pred,
           axes=tuple(range(len(pred_aval.shape))))
-    hlo.return_([pred])
+    hlo.return_(mlir.flatten_ir_values([pred]))
 
   # Loop body
   body_block = while_op.regions[1].blocks.append(*flat_loop_carry_types)
@@ -2389,7 +2389,7 @@ def _pred_bcast_select_hlo(ctx,
     pred_aval: core.ShapedArray, pred: ir.Value, x: mlir.IrValues,
     y: mlir.IrValues, x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
-    return [hlo.AfterAllOp([x, y]).result]
+    return [hlo.after_all(mlir.flatten_ir_values([x, y]))]
   else:
     assert isinstance(x, ir.Value), x
     assert isinstance(y, ir.Value), y

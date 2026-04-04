@@ -635,10 +635,10 @@ def _call_tf_lowering(
     # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
     jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
     if res_dtype != jax_res_dtype:
-      op = hlo.ConvertOp(
-          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype)),
-          op,
-      ).result
+      res_ir_type = mlir.single_ir_type(
+          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype))
+      )
+      op = hlo.ConvertOp(res_ir_type, op).result
     outputs.append(op)
   return outputs
 

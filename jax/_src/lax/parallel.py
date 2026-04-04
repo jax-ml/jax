@@ -1218,7 +1218,7 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
       ctx, axis_name=axis_name, perm=perm, op_name="precv"
   )
   recv_op = hlo.RecvOp(
-      [mlir.aval_to_ir_type(out_shape), token.type],
+      mlir.flatten_ir_types([mlir.aval_to_ir_type(out_shape), token.type]),
       token,
       source_target_pairs=mlir.dense_int_elements(full_perm),
       **other_args,
@@ -1774,7 +1774,8 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     new_shape.insert(all_gather_dimension, 1)
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
-        mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
+        mlir.single_ir_type(mlir.aval_to_ir_type(x_aval.update(shape=new_shape))),
+        x,
         mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
@@ -1791,7 +1792,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
 
   if not is_async:
     return hlo.AllGatherOp(
-        [mlir.aval_to_ir_type(out_aval)],
+        mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
         [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
         replica_groups=_replica_groups_hlo(replica_groups),
         **other_args).results
@@ -1801,7 +1802,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   block = async_start.regions[0].blocks.append(x.type)
   with ir.InsertionPoint(block):
     results = hlo.AllGatherOp(
-        [mlir.aval_to_ir_type(out_aval)],
+        mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
         [block.arguments[0]],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
         replica_groups=_replica_groups_hlo(replica_groups),
@@ -2036,7 +2037,7 @@ def _reduce_scatter_lowering(
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(
-      mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
+      mlir.single_ir_type(mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape))),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
       replica_groups=_replica_groups_hlo(replica_groups),
@@ -2054,7 +2055,11 @@ def _reduce_scatter_lowering(
   if tiled:
     return op.results
   else:
-    return [hlo.reshape(mlir.aval_to_ir_type(aval_out), op.result)]
+    return [
+        hlo.reshape(
+            mlir.single_ir_type(mlir.aval_to_ir_type(aval_out)), op.result
+        )
+    ]
 
 
 def _reduce_scatter_effectful_abstract_eval(
@@ -2298,12 +2303,14 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
                            out_specs=P())()])(ctx)[0]
 
   nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
-  div = mlir.ir_constant(
-      np.array(
+  div = mlir.single_ir_value(
+      mlir.ir_constant(np.array(
           nreplicas * math.prod(axis_env.sizes[axis_pos + 1 :]), dtype=np.uint32
-      )
+      ))
   )
-  mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
+  mod = mlir.single_ir_value(
+      mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
+  )
   if isinstance(axis_context, (ShardingContext, SPMDAxisContext)):
     device_id = hlo.partition_id()
   else:

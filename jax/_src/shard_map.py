@@ -999,8 +999,10 @@ def _shard_map_lowering_shardy(
       _get_token_sharding(ctx, mesh)] * num_tokens + out_shardings
   out_shardings = sharding_impls.SdyArrayList(out_shardings).build()
 
-  output_types = ([hlo.TokenType.get()] * num_tokens +
-                  list(map(mlir.aval_to_ir_type, ctx.avals_out)))
+  output_types = mlir.flatten_ir_types(
+      [hlo.TokenType.get()] * num_tokens +
+      list(map(mlir.aval_to_ir_type, ctx.avals_out))
+  )
 
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(

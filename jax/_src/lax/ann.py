@@ -315,10 +315,10 @@ def _approx_top_k_lowering(ctx, operand, *, k,
   if all(core.is_constant_shape(aval_out.shape) for aval_out in ctx.avals_out):
     result_shapes = None
   else:
-    result_shapes = mlir.flatten_ir_values(
+    result_shapes = [
         mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
         for aval_out in ctx.avals_out
-    )
+    ]
 
   if core.is_constant_dim(k):
     backend_config["top_k"] = mlir.i64_attr(k)

@@ -56,6 +56,8 @@ from jax._src.interpreters.mlir import (
   register_constant_handler as register_constant_handler,
   register_lowering as register_lowering,
   shape_tensor as shape_tensor,
+  single_ir_type as single_ir_type,
+  single_ir_value as single_ir_value,
   token_type as token_type,
 )
 

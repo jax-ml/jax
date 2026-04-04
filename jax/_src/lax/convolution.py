@@ -814,7 +814,7 @@ def _conv_general_dilated_lower(
     raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
     out = hlo.convolution(
-        mlir.aval_to_ir_type(aval_out), lhs, rhs,
+        mlir.single_ir_type(mlir.aval_to_ir_type(aval_out)), lhs, rhs,
         dimension_numbers=dnums,
         feature_group_count=mlir.i64_attr(feature_group_count),
         batch_group_count=mlir.i64_attr(batch_group_count),
@@ -828,7 +828,9 @@ def _conv_general_dilated_lower(
   else:
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
-    int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    int2d = mlir.single_ir_type(
+        mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    )
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pad1 = mlir.eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
       return hlo.ReshapeOp(int2d, pad1)
@@ -837,7 +839,7 @@ def _conv_general_dilated_lower(
     )
     return [
         hlo.dynamic_conv(
-          mlir.aval_to_ir_type(aval_out),
+          mlir.single_ir_type(mlir.aval_to_ir_type(aval_out)),
           lhs,
           rhs,
           d_padding,

@@ -4127,7 +4127,7 @@ def _nary_lower_hlo(
                                            aval_out.sharding))
 
   if out_dtype is not None:
-    ir_type = mlir.aval_to_ir_type(aval_out)
+    ir_type = mlir.single_ir_type(mlir.aval_to_ir_type(aval_out))
     args = tuple(hlo.convert(ir_type, a) for a in args)
 
   out = op(*args)
@@ -4532,7 +4532,7 @@ def _pow_lower(ctx, x, y):
   if x_aval.dtype != y_aval.dtype:
     out_aval, = ctx.avals_out
     y_aval = y_aval.update(dtype=out_aval.dtype)
-    y = hlo.convert(mlir.aval_to_ir_type(y_aval), y)
+    y = hlo.convert(mlir.single_ir_type(mlir.aval_to_ir_type(y_aval)), y)
     ctx = ctx.replace(avals_in=[x_aval, y_aval])
   return _nary_lower_hlo(hlo.power, ctx, x, y)
 mlir.register_lowering(pow_p, _pow_lower)
@@ -5208,7 +5208,9 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   aval_out, = ctx.avals_out
-  out = hlo.bitcast_convert(mlir.aval_to_ir_type(aval_out), operand)
+  out = hlo.bitcast_convert(
+      mlir.single_ir_type(mlir.aval_to_ir_type(aval_out)), operand
+  )
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
@@ -5812,7 +5814,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
   result = hlo.dot_general(
-      mlir.aval_to_ir_type(accumulation_aval),
+      mlir.single_ir_type(mlir.aval_to_ir_type(accumulation_aval)),
       lhs,
       rhs,
       dot_dnums,
@@ -6387,7 +6389,7 @@ def _ragged_dot_general_lower(
       rhs_group_dimensions=list(rhs_group_dims),
   )
   result = chlo.ragged_dot(
-      mlir.aval_to_ir_type(accumulation_aval),
+      mlir.single_ir_type(mlir.aval_to_ir_type(accumulation_aval)),
       lhs,
       rhs,
       group_sizes,
@@ -7718,7 +7720,7 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
-  op = hlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+  op = hlo.ReduceOp(mlir.flatten_ir_types(map(mlir.aval_to_ir_type, ctx.avals_out)),
                     operands, init_values, mlir.dense_int_array(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
@@ -7983,9 +7985,12 @@ batching.defreducer(reduce_xor_p)
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
-  op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
-                    [mlir.ir_constant(unit_factory(aval_out.dtype))],
-                    mlir.dense_int_array(axes))
+  op = hlo.ReduceOp(
+      mlir.flatten_ir_types([mlir.aval_to_ir_type(aval_out)]),
+      [x],
+      mlir.flatten_ir_values([mlir.ir_constant(unit_factory(aval_out.dtype))]),
+      mlir.dense_int_array(axes),
+  )
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
@@ -8184,7 +8189,7 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
-  sort = hlo.SortOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+  sort = hlo.SortOp(mlir.flatten_ir_types(map(mlir.aval_to_ir_type, ctx.avals_out)),
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
@@ -8402,7 +8407,9 @@ rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 
 def _rng_uniform_lowering(ctx, a, b, *, shape):
   aval_out, = ctx.avals_out
-  shape = mlir.ir_constant(np.array(aval_out.shape, np.int64))
+  shape = mlir.single_ir_value(
+      mlir.ir_constant(np.array(aval_out.shape, np.int64))
+  )
   return [hlo.rng(a, b, shape, hlo.RngDistributionAttr.get('UNIFORM'))]
 
 mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)

@@ -637,9 +637,14 @@ def receive_from_host(
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.RECV_FROM_HOST_TYPE)
-  recv_op = hlo.RecvOp([mlir.aval_to_ir_type(out_aval),
-                        hlo.TokenType.get()], token, channel_handle,
-                        is_host_transfer=ir.BoolAttr.get(True))
+  recv_op = hlo.RecvOp(
+      mlir.flatten_ir_types([
+          mlir.aval_to_ir_type(out_aval), hlo.TokenType.get()
+      ]),
+      token,
+      channel_handle,
+      is_host_transfer=ir.BoolAttr.get(True)
+  )
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(
