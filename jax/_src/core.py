@@ -138,8 +138,9 @@ class Jaxpr:
 
   @property
   def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
+    return [AvalQDD(v.aval, v.final_qdd) if v.aval.is_writer else
+            AvalQDD(v.aval, v.initial_qdd) if v.aval.has_qdd else
+            v.aval for v in self.invars]
 
   @property
   def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
@@ -271,13 +272,11 @@ class ClosedJaxpr:
 
   @property
   def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
+    return self._jaxpr.in_aval_qdds
 
   @property
   def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
-            for v in self.invars]
+    return self._jaxpr.final_aval_qdds
 
   @property
   def out_avals(self):
@@ -1295,22 +1294,15 @@ class AxisEnv:
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
 
-@dataclass(frozen=True)
-class ScanEnv:
-  length: int
-  idx: Tracer | None = None
-  def as_hashable_key(self):
-    return (self.length, self.idx is None)
-
 eval_trace = EvalTrace()
 top_axis_env = AxisEnv({}, set(), frozenset())
-top_scan_env = None
+top_scan_env = ()
 
 
 class TracingContext(threading.local):
   trace: Trace | None
   axis_env: AxisEnv
-  scan_env: ScanEnv | None
+  scan_env: tuple[int, ...]
 
   def __init__(self):
     self.reset()
@@ -1335,7 +1327,7 @@ class TracingContext(threading.local):
 
   def set_scan_env(self, scan_env):
     self.scan_env = scan_env
-    config.scan_env_state.set_local(scan_env and scan_env.as_hashable_key())
+    # config.scan_env_state.set_local(scan_env and scan_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
     ts = self.trace._weakref if self.trace is not None else None
@@ -1401,16 +1393,16 @@ extend_axis_env_nd = ExtendAxisEnvNdContextManager
 
 
 @contextmanager
-def set_scan_env(length, *maybe_idx):
+def extend_scan_env(length):
   prev = trace_ctx.scan_env
-  trace_ctx.set_scan_env(ScanEnv(length, *maybe_idx))
+  trace_ctx.set_scan_env((*prev, length))
   try: yield
   finally: trace_ctx.set_scan_env(prev)
 
 @contextmanager
-def reset_scan_env():
+def set_scan_env(tracers):
   prev = trace_ctx.scan_env
-  trace_ctx.set_scan_env(None)
+  trace_ctx.set_scan_env(tuple(tracers))
   try: yield
   finally: trace_ctx.set_scan_env(prev)
 

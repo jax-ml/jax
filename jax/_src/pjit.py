@@ -880,13 +880,16 @@ def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 jit_p.is_high = _is_high
 
-def lo_vals(a: core.AbstractValue | core.AvalQDD, x):
-  if not a.has_qdd:
+def lo_vals(a, x):
+  if not isinstance(a, core.AvalQDD):
     return a.lower_val(x)  # type: ignore
   elif a.aval.is_writer:  # type: ignore
-    return []
+    if x.cur_qdd() != a.aval.empty_qdd():  # already preallocated, filter
+      return a.aval.filter(a.qdd, x)
+    else:  # must preallocate
+      return a.aval.preallocate(a.qdd)
   else:
-    return a.read_loval(x)  # type: ignore
+    return a.aval.read_loval(x)  # type: ignore
 
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
@@ -898,16 +901,16 @@ def _to_lojax(*hi_args, jaxpr, **params):
   lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = pe.num_himuts_out(jaxpr)
-  params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
+  num_scans = len(core.scan_env())
+  params = _lojax_expand_params(num_scans, lo_nums_in, lo_nums_out, lo_muts_out, **params)
 
   # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in lo_vals(aval, x)]
 
   # lower the jaxpr and bind it using lo input values
-  with core.reset_scan_env():
-    lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
+  lo_jaxpr = pe.lower_jaxpr(jaxpr, scan_env=len(core.scan_env()))
+  all_outs = jit_p.bind(*core.scan_env(), *lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
@@ -923,8 +926,9 @@ def _converted_mutables_add_params(
 
 
 def _lojax_expand_params(
-    nums_in, nums_out, muts_out, *, donated_invars, in_shardings, in_layouts,
-    out_shardings, out_layouts, **params):
+    num_scans, nums_in, nums_out, muts_out, *,
+    donated_invars, in_shardings, in_layouts, out_shardings, out_layouts,
+    **params):
   # some pjit params match the length of hi_jaxpr.invars/outvars, so when
   # lowering we must expand them to match their number of lojax types
   def expand(ns, xs):
@@ -938,6 +942,11 @@ def _lojax_expand_params(
   # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
   out_shardings = (UNSPECIFIED,) * muts_out + out_shardings
   out_layouts = (None,) * muts_out + out_layouts
+
+  # aaaand scan env inputs
+  donated_invars = (False,) * num_scans + donated_invars
+  in_shardings = (UNSPECIFIED,) * num_scans + in_shardings
+  in_layouts = (None,) * num_scans + in_layouts
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
@@ -1322,11 +1331,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
       if v.aval.has_qdd:
         if v.aval.is_writer:
           assert v.initial_qdd == v.aval.empty_qdd()
-          if (env := core.scan_env()):
-            final_qdd = v.final_qdd.inc_rank(env.length)
-          else:
-            final_qdd = v.final_qdd
-          new_qdd = v.aval.extend_qdd(core.cur_qdd(x), final_qdd)
+          new_qdd = v.aval.extend_qdd(core.cur_qdd(x), v.final_qdd)
           x.aval_mutable_qdd.mutable_qdd.update(new_qdd)
         else:
           assert core.cur_qdd(x) == v.initial_qdd

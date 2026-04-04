@@ -2266,7 +2266,6 @@ def trace_to_jaxpr(
       core.ensure_no_leaks(trace),
       source_info_util.reset_name_stack(),
       TracebackScope(),
-      core.reset_scan_env(),
   ):
     source_info = source_info_util.current()
     if requires_low:
@@ -2441,9 +2440,11 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr):
-  lo_avals = [lo_ty for aval in hi_jaxpr.in_aval_qdds for lo_ty in aval.lo_ty()]
-  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr),
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, *, scan_env=0):
+  lo_avals = [lo_ty for a in hi_jaxpr.in_aval_qdds for lo_ty in a.lo_ty()]
+  if scan_env:
+    lo_avals = [typeof(0)] * scan_env + lo_avals
+  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr, scan_env),
                    debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names())
   lo_jaxpr, _, lo_consts = trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
   return core.ClosedJaxpr(lo_jaxpr, lo_consts)
@@ -2454,17 +2455,18 @@ def htlv(a: AbstractValue | core.AvalQDD, lo_vals):
     return a.raise_val(*lo_vals)
   assert isinstance(a, core.AvalQDD)
   if a.aval.is_writer:
-    assert len(lo_vals) == 0
-    return a.aval.new_empty(a.qdd)  # type: ignore
+    return a.aval.new_empty(a.qdd, *lo_vals)  # type: ignore
   else:
     return a.new_from_loval(*lo_vals)  # type: ignore
 
-def lower_traceable(jaxpr, *lo_args):
+def lower_traceable(jaxpr, scan_env, *lo_args):
+  scan_idxs, lo_args = split_list(lo_args, [scan_env])
   lo_args_ = iter(lo_args)
-  hi_args = [htlv(aval_qdd, list(it.islice(lo_args_, len(aval_qdd.lo_ty()))))
-             for aval_qdd in jaxpr.in_aval_qdds]
+  hi_args = [htlv(a, list(it.islice(lo_args_, len(a.lo_ty()))))
+             for a in jaxpr.in_aval_qdds]
   assert next(lo_args_, sentinel := object()) is sentinel
-  hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
+  with core.set_scan_env(scan_idxs):
+    hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
   mut_outs = [lo_val for aval, hi_x in zip(jaxpr.final_aval_qdds, hi_args)
               if aval.has_qdd for lo_val in aval.read_loval(hi_x)]
   lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
