@@ -126,38 +126,49 @@ def eval_step(params, images, labels, mesh):
 
 
 # ---------------------------------------------------------------------------
-# Data loading (downloads MNIST via tensorflow_datasets or falls back to a
-# simple HTTP fetch)
+# Data loading (downloads MNIST directly from GCS, no external dependencies)
 # ---------------------------------------------------------------------------
 
 def load_mnist():
-    """Load MNIST data as numpy arrays. Uses keras if available."""
-    try:
-        import tensorflow_datasets as tfds
-        ds = tfds.load('mnist', split=['train', 'test'], as_supervised=True,
-                       shuffle_files=False)
-        train_images, train_labels = [], []
-        for img, lbl in ds[0]:
-            train_images.append(img.numpy())
-            train_labels.append(lbl.numpy())
-        test_images, test_labels = [], []
-        for img, lbl in ds[1]:
-            test_images.append(img.numpy())
-            test_labels.append(lbl.numpy())
-        train_images = np.stack(train_images).astype(np.float32) / 255.0
-        train_labels = np.array(train_labels, dtype=np.int32)
-        test_images = np.stack(test_images).astype(np.float32) / 255.0
-        test_labels = np.array(test_labels, dtype=np.int32)
-    except ImportError:
-        # Fallback: use keras
-        from keras.datasets import mnist as keras_mnist  # type: ignore
-        (train_images, train_labels), (test_images, test_labels) = (
-            keras_mnist.load_data()
-        )
-        train_images = train_images[..., np.newaxis].astype(np.float32) / 255.0
-        test_images = test_images[..., np.newaxis].astype(np.float32) / 255.0
-        train_labels = train_labels.astype(np.int32)
-        test_labels = test_labels.astype(np.int32)
+    """Load MNIST data as numpy arrays (downloads from GCS, no dependencies)."""
+    import urllib.request
+    import gzip
+    import struct
+    import os
+
+    base_url = "https://storage.googleapis.com/cvdf-datasets/mnist/"
+    files = {
+        "train_images": "train-images-idx3-ubyte.gz",
+        "train_labels": "train-labels-idx1-ubyte.gz",
+        "test_images": "t10k-images-idx3-ubyte.gz",
+        "test_labels": "t10k-labels-idx1-ubyte.gz",
+    }
+
+    data_dir = "/tmp/mnist"
+    os.makedirs(data_dir, exist_ok=True)
+
+    def download_and_parse_images(filename):
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(base_url + filename, path)
+        with gzip.open(path, "rb") as f:
+            _, num, rows, cols = struct.unpack(">IIII", f.read(16))
+            return np.frombuffer(f.read(), dtype=np.uint8).reshape(
+                num, rows, cols, 1
+            ).astype(np.float32) / 255.0
+
+    def download_and_parse_labels(filename):
+        path = os.path.join(data_dir, filename)
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(base_url + filename, path)
+        with gzip.open(path, "rb") as f:
+            struct.unpack(">II", f.read(8))
+            return np.frombuffer(f.read(), dtype=np.uint8).astype(np.int32)
+
+    train_images = download_and_parse_images(files["train_images"])
+    train_labels = download_and_parse_labels(files["train_labels"])
+    test_images = download_and_parse_images(files["test_images"])
+    test_labels = download_and_parse_labels(files["test_labels"])
 
     return train_images, train_labels, test_images, test_labels
 
@@ -199,9 +210,6 @@ def main():
     # ----- Data loading and sharding -----
     train_images, train_labels, test_images, test_labels = load_mnist()
 
-    # Manual process-level sharding is removed. JAX's NamedSharding + Mesh
-    # will handle sharding across the entire cluster automatically.
-
     if process_idx == 0:
         print(f"Training on {len(train_images)} samples total across all processes")
 
@@ -215,12 +223,14 @@ def main():
 
     per_device_batch = args.batch_size
     num_global_devices = len(global_devices)
+
     # Total batch size across all devices in all processes.
     global_batch_size = per_device_batch * num_global_devices
 
     # ----- Training loop -----
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
+
         # Shuffle data each epoch - use the SAME seed on all processes to ensure
         # that jax.device_put(global_batch, sharding) sees the same data.
         rng = np.random.default_rng(42 + epoch)
@@ -263,20 +273,20 @@ def main():
                   f"time: {elapsed:.1f}s")
 
     # ----- Evaluation -----
+    # All processes must participate in eval_step (shard_map requires it).
+    # Only process 0 prints results.
     if process_idx == 0:
         print("\nRunning evaluation...")
-    
+
     correct = 0
-    # Evaluate on the full test set using global sharding.
-    eval_batch = 1000 * num_processes # Larger batch for efficiency
+    eval_batch = per_device_batch * num_global_devices
     for i in range(0, len(test_images), eval_batch):
         batch_images = test_images[i:i + eval_batch]
         batch_labels = test_labels[i:i + eval_batch]
-        
-        # Adjust batch size if at the end of the dataset.
-        current_batch_size = len(batch_images)
-        if current_batch_size % num_global_devices != 0:
-            continue # Skip incomplete batches for simplicity in this example
+
+        # Skip incomplete batches that can't be evenly sharded.
+        if len(batch_images) % num_global_devices != 0:
+            continue
 
         sharding = NamedSharding(mesh, PartitionSpec('batch'))
         batch_images = jax.device_put(batch_images, sharding)
@@ -286,9 +296,6 @@ def main():
             correct += int(eval_step(params, batch_images, batch_labels, mesh))
 
     if process_idx == 0:
-        # Note: we might have skipped a few samples if not divisible by num_devices
-        total_eval = (len(test_images) // global_batch_size) * global_batch_size
-        if total_eval == 0: total_eval = len(test_images) # Fallback
         accuracy = correct / len(test_images) * 100
         print(f"Test accuracy: {correct}/{len(test_images)} ({accuracy:.1f}%)")
 

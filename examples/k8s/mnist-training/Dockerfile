@@ -2,15 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install JAX with TPU support.
-# For GPU, replace jax[tpu] with jax[cuda12] (or the appropriate CUDA version).
 RUN pip install --no-cache-dir \
     "jax[tpu]" \
     "jax[k8s]" \
-    optax \
-    tensorflow-cpu \
-    keras \
-    tensorflow-datasets
+    optax
 
 COPY train_mnist.py .
 
