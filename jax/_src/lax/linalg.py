@@ -76,13 +76,6 @@ register_module_custom_calls(gpu_sparse)
 register_module_custom_calls(lapack)
 
 
-def _gpu_solver_has_ffi(platform: str, ffi_target: str) -> bool:
-  if not hasattr(gpu_solver, "registrations"):
-    return False
-  targets = gpu_solver.registrations().get(platform, ())
-  return any(name == ffi_target for name, _, _ in targets)
-
-
 # Top-level functions in alphabetical order.
 
 def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:

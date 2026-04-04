@@ -374,32 +374,6 @@ def tree_map(f: Callable[..., Any],
 
 
 @export
-def build_tree(treedef: PyTreeDef, xs: Any) -> Any:
-  """Build a treedef from a nested iterable structure
-
-  DEPRECATED: Use :func:`jax.tree.unflatten` instead.
-
-  Args:
-    treedef: the PyTreeDef structure to build.
-    xs: nested iterables matching the arity as the treedef
-
-  Returns:
-    object with structure defined by treedef
-
-  See Also:
-    - :func:`jax.tree.unflatten`
-
-  Examples:
-    >>> import jax
-    >>> tree = [(1, 2), {'a': 3, 'b': 4}]
-    >>> treedef = jax.tree.structure(tree)
-    >>> jax.tree_util.tree_unflatten(treedef, [10, 11, 12, 13])
-    [(10, 11), {'a': 12, 'b': 13}]
-  """
-  return treedef.from_iterable_tree(xs)
-
-
-@export
 def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef | None,
                    pytree_to_transpose: Any) -> Any:
   """Alias of :func:`jax.tree.transpose`."""
