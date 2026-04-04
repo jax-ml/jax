@@ -1,0 +1,57 @@
+# JobSet: distributed MNIST training with JAX on TPU.
+#
+# Prerequisites:
+#   1. A GKE cluster with TPU node pools (e.g. v5e-lite with 2x4 topology).
+#   2. JobSet CRD installed:
+#        kubectl apply --server-side -f \
+#          https://github.com/kubernetes-sigs/jobset/releases/download/v0.8.1/manifests.yaml
+#   3. RBAC for JAX peer discovery:
+#        kubectl apply -f svc-acct.yaml
+#   4. Container image built and pushed:
+#        docker build -t <REGISTRY>/jax-mnist:latest .
+#        docker push <REGISTRY>/jax-mnist:latest
+#
+# Usage:
+#   kubectl apply -f jobset.yaml
+#   kubectl logs -l jobset.sigs.k8s.io/jobset-name=jax-mnist-training
+#
+# This creates a single-slice TPU v5e training job with 2 workers.
+# Each worker gets 4 TPU chips (2x4 topology = 8 chips total).
+# Adjust replicas, topology, and nodeSelector for your cluster.
+---
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: jax-mnist-training
+spec:
+  failurePolicy:
+    maxRestarts: 2
+  replicatedJobs:
+    - name: workers
+      replicas: 1  # Number of TPU slices. Set >1 for multislice.
+      template:
+        spec:
+          parallelism: 2    # Workers per slice (must match TPU topology).
+          completions: 2
+          backoffLimit: 0
+          template:
+            spec:
+              serviceAccountName: jax-job-sa
+              hostNetwork: true
+              dnsPolicy: ClusterFirstWithHostNet
+              restartPolicy: Never
+              nodeSelector:
+                cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+                cloud.google.com/gke-tpu-topology: 2x4
+              containers:
+                - name: jax-mnist
+                  image: <REGISTRY>/jax-mnist:latest  # <-- Replace with your image
+                  args: ["--epochs", "5", "--batch-size", "128"]
+                  ports:
+                    - containerPort: 8471  # JAX distributed coordinator
+                    - containerPort: 8080  # Health check (optional)
+                  resources:
+                    limits:
+                      google.com/tpu: 4    # TPU chips per worker
+                  securityContext:
+                    privileged: true       # Required for TPU device access
