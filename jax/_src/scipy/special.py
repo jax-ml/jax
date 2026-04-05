@@ -148,9 +148,10 @@ def _complex_loggamma(z: Array) -> Array:
   # Lanczos approximation: Ag(z) = c[0] + sum(c[k] / (z + k - 1), k=1..N-1)
   zz = z_lanczos - 1.0
   coeffs = jnp.asarray(_LANCZOS_COEFFS, dtype=z.dtype)
-  ag = coeffs[0] + jnp.zeros_like(zz)
-  for k in range(1, 9):
-    ag = ag + coeffs[k] / (zz + k)
+  ks = lax.expand_dims(jnp.arange(1, 9, dtype=z.dtype), tuple(range(zz.ndim)))
+  ag = coeffs[0] + jnp.sum(
+      lax.expand_dims(coeffs[1:], tuple(range(zz.ndim)))
+      / (lax.expand_dims(zz, (zz.ndim,)) + ks), axis=-1)
 
   t = zz + _LANCZOS_G + 0.5
   half_log2pi = jnp.asarray(0.5 * np.log(2.0 * np.pi), dtype=z.dtype)
@@ -178,8 +179,7 @@ def _complex_gamma(z: Array) -> Array:
   """Gamma function for complex arguments via exp(loggamma(z))."""
   is_nan = jnp.isnan(z)
   is_pole = (jnp.imag(z) == 0) & (jnp.real(z) == jnp.floor(jnp.real(z))) & (jnp.real(z) <= 0)
-  nan_val = lax.complex(jnp.full_like(jnp.real(z), jnp.nan),
-                        jnp.full_like(jnp.real(z), jnp.nan))
+  nan_val = jnp.array(complex(jnp.nan, jnp.nan), dtype=z.dtype)
   # Mask poles/NaN to a safe value before calling loggamma, so the
   # unselected path doesn't produce NaN that contaminates gradients
   # via jnp.where's VJP (0 * NaN = NaN).
