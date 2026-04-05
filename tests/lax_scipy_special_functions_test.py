@@ -416,5 +416,119 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
 
 
+
+class LambertwTest(jtu.JaxTestCase):
+  """Tests for jax.scipy.special.lambertw."""
+
+  @jtu.sample_product(dtype=[np.float32, np.float64])
+  def testLambertwK0RealAgainstScipy(self, dtype):
+    """SciPy parity for k=0 real inputs across dtypes."""
+    with jax.enable_x64(dtype == np.float64):
+      z = np.array([-0.3, -0.1, 0.0, 0.1, 1.0, 5.0, 100.0], dtype=dtype)
+      expected = np.real(osp_special.lambertw(z.astype(np.float64), k=0)).astype(dtype)
+      atol, rtol = (2e-6, 2e-6) if dtype == np.float32 else (1e-12, 1e-12)
+      self.assertAllClose(lsp_special.lambertw(z), expected, atol=atol, rtol=rtol)
+
+  def testLambertwK0ComplexAgainstScipy(self):
+    """SciPy parity for k=0 complex inputs including broad random grid."""
+    with jax.enable_x64():
+      rng = np.random.RandomState(42)
+      z = np.array(rng.uniform(-5, 5, size=200) + 1j * rng.uniform(-5, 5, size=200),
+                    dtype=np.complex128)
+      self.assertAllClose(lsp_special.lambertw(z),
+                          osp_special.lambertw(z, k=0), atol=1e-6, rtol=1e-6)
+
+  def testLambertwK0ComplexBranchCut(self):
+    """Test k=0 on the negative real axis below -1/e where W is complex."""
+    with jax.enable_x64():
+      z = np.array([-1+0j, -0.5+0j, -0.4+0j, -1+1e-12j, -1-1e-12j,
+                     -0.8094117647058823+1e-12j],
+                    dtype=np.complex128)
+      self.assertAllClose(lsp_special.lambertw(z),
+                          osp_special.lambertw(z, k=0), atol=1e-8, rtol=1e-8)
+
+  def testLambertwK0BranchPointAndSpecialValues(self):
+    """Test branch point, poles, and special values for k=0."""
+    with jax.enable_x64():
+      # Branch point: W(-1/e) = -1, below returns NaN
+      bp = -1.0 / np.e
+      self.assertAllClose(lsp_special.lambertw(bp), -1.0, atol=1e-12)
+      self.assertTrue(np.isnan(np.asarray(lsp_special.lambertw(bp - 1e-15))))
+      # Special values
+      self.assertAllClose(lsp_special.lambertw(0.0), 0.0, atol=1e-15)
+      self.assertTrue(np.isposinf(np.asarray(lsp_special.lambertw(jnp.inf))))
+      self.assertTrue(np.isnan(np.asarray(lsp_special.lambertw(jnp.nan))))
+
+  def testLambertwComplexBranchPoint(self):
+    """W(-1/e + 0j) should match SciPy (nan+nanj) for both k=0 and k=-1."""
+    with jax.enable_x64():
+      bp = np.complex128(-1.0 / np.e)
+      for k in [0, -1]:
+        scipy_result = np.asarray(osp_special.lambertw(bp, k=k))
+        result = np.asarray(lsp_special.lambertw(bp, k=k))
+        # SciPy returns nan+nanj at the branch point
+        self.assertTrue(np.isnan(scipy_result.real) and np.isnan(result.real),
+                        f"Real part mismatch at branch point for k={k}")
+        self.assertTrue(np.isnan(scipy_result.imag) and np.isnan(result.imag),
+                        f"Imag part mismatch at branch point for k={k}")
+
+  def testLambertwComplexInfinity(self):
+    """Test complex infinity handling for both branches."""
+    with jax.enable_x64():
+      z = np.array([np.inf+0j, -np.inf+0j, np.inf+1j, -np.inf+1j],
+                    dtype=np.complex128)
+      for k_val in [0, -1]:
+        expected = osp_special.lambertw(z, k=k_val)
+        actual = np.asarray(lsp_special.lambertw(z, k=k_val))
+        self.assertAllClose(actual, expected, atol=1e-6, rtol=1e-6)
+
+  def testLambertwKm1AgainstScipy(self):
+    """SciPy parity for k=-1 on real and complex inputs."""
+    with jax.enable_x64():
+      # Real k=-1
+      z_real = np.array([-0.3, -0.2, -0.1, -0.01, -1e-6], dtype=np.float64)
+      self.assertAllClose(lsp_special.lambertw(z_real, k=-1),
+                          np.real(osp_special.lambertw(z_real, k=-1)),
+                          atol=1e-8, rtol=1e-8)
+      # Complex k=-1
+      z_cplx = np.array([-0.2+0.1j, 1+1j, 1+0j, 10+0j], dtype=np.complex128)
+      self.assertAllClose(lsp_special.lambertw(z_cplx, k=-1),
+                          osp_special.lambertw(z_cplx, k=-1), atol=1e-6, rtol=1e-6)
+      # Branch point and zero
+      self.assertAllClose(lsp_special.lambertw(-1.0/np.e, k=-1), -1.0, atol=1e-12)
+      self.assertTrue(np.isneginf(np.asarray(lsp_special.lambertw(0.0, k=-1))))
+
+  def testLambertwJitAndVmap(self):
+    """Test JIT and vmap compatibility."""
+    with jax.enable_x64():
+      z = jnp.array([0.1, 1.0, 5.0], dtype=jnp.float64)
+      eager = lsp_special.lambertw(z)
+      self.assertAllClose(jax.jit(lsp_special.lambertw)(z), eager, atol=1e-12)
+      self.assertAllClose(jax.vmap(lsp_special.lambertw)(z), eager, atol=1e-12)
+
+  def testLambertwDefiningEquation(self):
+    """Verify W(z) * exp(W(z)) == z for both branches."""
+    with jax.enable_x64():
+      z_k0 = jnp.array([-0.35, 0.1, 1.0, 10.0], dtype=jnp.float64)
+      w_k0 = lsp_special.lambertw(z_k0)
+      self.assertAllClose(w_k0 * jnp.exp(w_k0), z_k0, atol=1e-10, rtol=1e-10)
+      z_km1 = jnp.array([-0.3, -0.1, -0.01], dtype=jnp.float64)
+      w_km1 = lsp_special.lambertw(z_km1, k=-1)
+      self.assertAllClose(w_km1 * jnp.exp(w_km1), z_km1, atol=1e-8, rtol=1e-8)
+
+  def testLambertwGrad(self):
+    """Test autodiff on safe inputs."""
+    with jax.enable_x64():
+      jtu.check_grads(lsp_special.lambertw,
+                      (jnp.array(0.3, dtype=jnp.float64),),
+                      order=1, atol=1e-6, rtol=1e-5, eps=1e-5)
+      # dW/dz at z=0 is 1
+      self.assertAllClose(jax.grad(lsp_special.lambertw)(0.0), 1.0, atol=1e-6)
+
+  def testLambertwUnsupportedBranchRaises(self):
+    with self.assertRaisesRegex(NotImplementedError, "k=0 and k=-1"):
+      lsp_special.lambertw(1.0, k=1)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
