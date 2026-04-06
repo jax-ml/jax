@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import jax
@@ -19,6 +19,7 @@ def log_append(log, key, val):
 
 class Log:
   _dct: dict  # dict[str, list[PyTree[Array]]]
+  __qdd__: LogQDD  # only used at lowering time
 
   def __init__(self):
     self._dct = {}
@@ -72,7 +73,7 @@ class LogTy(MutableHiType):
     update_dct = qdd2.ft.unflatten()
     for k, v in update_dct.items():
       dct.setdefault(k, []).extend(v)
-    return LogQDD(FlatTree.flatten(dct))
+    return LogQDD(FlatTree.flatten(dct), qdd1.in_scope)
 
   def read_loval(self, _state: LogQDD, log: Log) -> list[LoType]:
     return list(FlatTree.flatten(log._dct))
@@ -95,6 +96,8 @@ register_hitype(Log, lambda _: LogTy())
 @dataclass(frozen=True)
 class LogQDD(QDD):
   ft: FlatTree  # FlatTree of dict[str, list[PyTree[Aval]]]
+  in_scope: bool = False
+
   def __repr__(self):
     return f'LogQDD({repr(self.ft.unflatten())})'
   def inc_rank(self, length):
@@ -105,13 +108,14 @@ class LogExtend(HiPrimitive):
   is_effectful = lambda *_, **__: True
 
   def abstract_eval(self, log_ty, *val_tys, treedef):
-    dct = log_ty.mutable_qdd.cur_val.ft.unflatten()
+    cur_qdd = log_ty.mutable_qdd.cur_val
+    dct = cur_qdd.ft.unflatten()
     new_dct = tree_unflatten(treedef, val_tys)
     for k, v in new_dct.items():
       for length in reversed(core.scan_env() or ()):
         v = map(partial(core.unmapped_leading_aval, length), v)
       dct.setdefault(k, []).extend(v)
-    log_ty.mutable_qdd.update(LogQDD(FlatTree.flatten(dct)))
+    log_ty.mutable_qdd.update(LogQDD(FlatTree.flatten(dct), cur_qdd.in_scope))
     return [], {log_effect}
 
   def to_lojax(_, log, *vals, treedef):
@@ -123,72 +127,129 @@ class LogExtend(HiPrimitive):
         sl = slice(len(qdd.setdefault(k, [])), len(qdd[k]) + len(v))
         log._dct[k][sl] = [x.at[idx].set(u) for x, u in zip(log._dct[k][sl], v)]
         qdd[k].extend(map(core.typeof, v))  # qdd update
-      log.__qdd__ = LogQDD(FlatTree.flatten(qdd))
+      log.__qdd__ = LogQDD(FlatTree.flatten(qdd), log.__qdd__.in_scope)
     else:  # top-level
       for k, v in updates.items():
         log._dct.setdefault(k, []).extend(v)
-
     return []
 log_extend_p = LogExtend('log_extend')
+
+class NewLog(HiPrimitive):
+  def is_high(self) -> bool: return True
+
+  def abstract_eval(self):
+    ty = LogTy()
+    qdd = replace(ty.empty_qdd(), in_scope=True)
+    return core.AvalQDD(ty, qdd), {log_effect}
+
+  def to_lojax(_):
+    return Log()
+new_log_p = NewLog('new_log')
+
+def new_log():
+  return new_log_p.bind()
+
+
+class ReadLog(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, _) -> bool: return True
+
+  def abstract_eval(self, log_qdd):
+    if not log_qdd.mutable_qdd.cur_val.in_scope: raise Exception
+    return list(log_qdd.mutable_qdd.cur_val.ft), {log_effect}
+
+  def to_lojax(_, log):
+    return list(FlatTree.flatten(log._dct))
+read_log_p = ReadLog('read_log')
+
+def read_log(log):
+  flat = read_log_p.bind(log)
+  return core.cur_qdd(log).ft.update(flat).unflatten()
 
 
 ##
 
-l = Log()
+# l = Log()
+
+# @jax.jit
+# def f(l, x):
+#   l.append('x', x + 1)
+
+#   @jax.jit
+#   def g():
+#     l.append('x', x + 2)
+#     l.append('x', x + 3)
+
+#   g()
+#   g()
+
+# f(l, 0)
+# print(l._dct)
+
+
+# l = Log()
+# def body(_, x):
+#   l.append('x', x + 1)
+#   l.append('x', 2 * x)
+#   l.append('x', 2 * x + 1)
+#   l.append('x', x + 10)
+#   l.append('x', x + 20)
+#   return (), ()
+# (), () = jax.lax.scan(body, (), jnp.arange(3))
+# print(l._dct)
+
+# l = Log()
+# def body(_, x):
+#   l.append('x', x + 1)
+#   jax.jit(lambda: l.append('x', 2 * x) or l.append('x', 2 * x + 1))()
+#   l.append('x', x + 10)
+#   jax.jit(jax.jit(lambda: l.append('x', x + 20)))()
+#   return (), ()
+# (), () = jax.lax.scan(body, (), jnp.arange(3))
+# print(l._dct)
+
+
+# def loop(*ns):
+#   def wrap(f):
+#     for n in reversed(ns):
+#       f = (lambda f, n: lambda: jax.lax.scan(lambda _, __: f() or ((), ()), (), (), length=n))(f, n)
+#     f()
+#   return wrap
+
+# from jax._src.hijax import Box
+# l = Log()
+# b = Box(0)
+
+# @loop(3, 5)
+# def f():
+#   i = b.get()
+#   l.append('x', i)
+#   jax.jit(lambda: l.append('y', i * 2))()
+#   b.set(i + 1)
+# print(l._dct)
+
+
 
 @jax.jit
-def f(l, x):
-  l.append('x', x + 1)
+def f(x):
+  log = new_log()
+  log.append('x', x + 1)
 
   @jax.jit
   def g():
-    l.append('x', x + 2)
-    l.append('x', x + 3)
+    try:
+      read_log(log)
+    except:
+      print('good!')
+    else:
+      raise Exception
+    # log.append('x', x + 2)
+    # log.append('x', x + 3)
 
+  print(core.cur_qdd(log))
   g()
   g()
+  return read_log(log)
 
-f(l, 0)
-print(l._dct)
-
-
-l = Log()
-def body(_, x):
-  l.append('x', x + 1)
-  l.append('x', 2 * x)
-  l.append('x', 2 * x + 1)
-  l.append('x', x + 10)
-  l.append('x', x + 20)
-  return (), ()
-(), () = jax.lax.scan(body, (), jnp.arange(3))
-print(l._dct)
-
-l = Log()
-def body(_, x):
-  l.append('x', x + 1)
-  jax.jit(lambda: l.append('x', 2 * x) or l.append('x', 2 * x + 1))()
-  l.append('x', x + 10)
-  jax.jit(jax.jit(lambda: l.append('x', x + 20)))()
-  return (), ()
-(), () = jax.lax.scan(body, (), jnp.arange(3))
-print(l._dct)
-
-
-def loop(*ns):
-  def wrap(f):
-    for n in reversed(ns):
-      f = (lambda f, n: lambda: jax.lax.scan(lambda _, __: f() or ((), ()), (), (), length=n))(f, n)
-    f()
-  return wrap
-
-from jax._src.hijax import Box
-l = Log()
-b = Box(0)
-
-@loop(3, 5)
-def f():
-  i = b.get()
-  l.append('x', i)
-  jax.jit(lambda: l.append('y', i * 2))()
-  b.set(i + 1)
-print(l._dct)
+print(f(0))
