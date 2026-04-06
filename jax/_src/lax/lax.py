@@ -6401,16 +6401,27 @@ def _ragged_dot_general_lower(
   return [result]
 
 
-mlir.register_lowering(ragged_dot_general_p,
-                       mlir.lower_fun(_ragged_dot_general_impl,
-                                      multiple_results=False))
+mlir.register_lowering(
+  ragged_dot_general_p,
+  mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False),
+)
 
-for platform in ['tpu', 'gpu']:
-  mlir.register_lowering(
-      ragged_dot_general_p,
-      partial(_ragged_dot_general_lower, platform=platform),
-      platform=platform,
-  )
+def _ragged_dot_general_gpu_lowering(ctx, *args, **kwargs):
+  if config.jax_ragged_dot_use_gpu_pallas_triton_lowering.value:
+    from jax._src.lax.pallas_lowerings.gpu import ragged_dot
+
+    if ragged_dot._backend_supports_triton():
+      return mlir.lower_fun(ragged_dot._pallas_ragged_dot_general_impl,
+                            multiple_results=False)(ctx, *args, **kwargs)
+  # fall back to the default gpu lowering
+  return _ragged_dot_general_lower(ctx, *args, **kwargs, platform='gpu')
+
+mlir.register_lowering(
+  ragged_dot_general_p, _ragged_dot_general_gpu_lowering, platform='gpu')
+
+mlir.register_lowering(
+    ragged_dot_general_p, partial(_ragged_dot_general_lower, platform='tpu'),
+    platform='tpu')
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,
