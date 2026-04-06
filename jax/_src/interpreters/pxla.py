@@ -1915,18 +1915,18 @@ class MeshExecutable(stages.Executable):
     self.build_unsafe_call = build_unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
     # is a GDA or jax.Array else local.
-    self.in_avals = in_avals  # includes the const_args
+    self.in_avals = in_avals  # has const_args, but not dead args
     self.out_avals = out_avals
     self._unsafe_call = None
-    self._in_shardings = in_shardings
+    self._in_shardings = in_shardings  # has const_args, but not dead args
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
-    self._kept_var_idx = kept_var_idx
-    self._xla_in_layouts = xla_in_layouts
+    self._kept_var_idx = kept_var_idx  # indices in _all_args_info
+    self._xla_in_layouts = xla_in_layouts  # has const_args, but not dead args
     self._dispatch_in_layouts = dispatch_in_layouts
     self._xla_out_layouts = xla_out_layouts
     self._mut = mut
-    self._all_args_info = all_args_info
+    self._all_args_info = all_args_info  # has const_args and also dead args
     self._unloaded_executable = unloaded_executable
 
   @property

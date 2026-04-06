@@ -659,7 +659,8 @@ class Compiled(Stage):
   """
   __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs", "_params"]
 
-  args_info: Any                # PyTree of ArgInfo, not including const_args
+  # PyTree of ArgInfo, not including const_args, but including dead args
+  args_info: Any
   out_tree: tree_util.PyTreeDef
   _executable: Executable
   _no_kwargs: bool
@@ -728,14 +729,16 @@ class Compiled(Stage):
 
   @property
   def in_avals(self):
-    in_avals_ = self._executable.in_avals  # pyrefly: ignore[missing-attribute]
+    # Including dead args, but not const_args
+    nr_const_args = len(self._params.const_args)
+    in_avals_ = self._executable.in_avals[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     if self.in_tree.num_leaves > len(in_avals_):
       iter_in_avals = iter(in_avals_)
-      non_dce_avals = self._executable._all_args_info.in_avals  # pyrefly: ignore[missing-attribute]
+      non_dce_avals = self._executable._all_args_info.in_avals[nr_const_args:]  # pyrefly: ignore[missing-attribute]
       in_avals_ = [
-          next(iter_in_avals) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+          next(iter_in_avals) if i + nr_const_args in self._executable._kept_var_idx # pyrefly: ignore[missing-attribute]
           else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
-    return self.in_tree.unflatten(in_avals_[len(self._params.const_args):])
+    return self.in_tree.unflatten(in_avals_)
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct
@@ -758,16 +761,18 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   def _input_shardings_flat(self):
-    shardings_flat = self._executable._in_shardings  # pyrefly: ignore[missing-attribute]
+    nr_const_args = len(self._params.const_args)
+    shardings_flat = self._executable._in_shardings[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
       iter_shardings_flat = iter(shardings_flat)
-      shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+      shardings_flat = [next(iter_shardings_flat) if i + nr_const_args in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                         else None for i in range(self.in_tree.num_leaves)]
-    return shardings_flat[len(self._params.const_args):]
+    return shardings_flat
 
   @property
   def input_shardings(self):  # -> PyTree[sharding.Sharding]
+    # Including dead args, but not const_args
     shardings_flat = self._input_shardings_flat()
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
@@ -777,16 +782,18 @@ class Compiled(Stage):
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   def _input_layouts_flat(self):
-    layouts_flat = self._executable._xla_in_layouts  # pyrefly: ignore[missing-attribute]
+    nr_const_args = len(self._params.const_args)
+    layouts_flat = self._executable._xla_in_layouts[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
-      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+      layouts_flat = [next(iter_layouts_flat) if i + nr_const_args in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                       else None for i in range(self.in_tree.num_leaves)]
-    return layouts_flat[len(self._params.const_args):]
+    return layouts_flat
 
   @property
   def input_formats(self):
+    # Including dead args, but not const_args
     layouts_flat = self._input_layouts_flat()
     shardings_flat = self._input_shardings_flat()
     formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]

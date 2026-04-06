@@ -163,7 +163,9 @@ class JaxAotTest(jtu.JaxTestCase):
     inp = jnp.arange(8.)
     compiled = f.lower(inp).compile()
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertEqual(compiled.args_info[0][0]._aval.shape, inp.shape)
     self.assertLen(compiled.in_avals[0], 1)
+    self.assertEqual(compiled.in_avals[0][0].shape, inp.shape)
     self.assertLen(compiled.input_shardings[0], 1)
     self.assertLen(compiled.input_formats[0], 1)
     if config.use_simplified_jaxpr_constants.value:
@@ -173,6 +175,34 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(compiled._params.const_args, 0)
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
+
+  def test_with_constants_and_dce(self):
+    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+
+    @jax.jit
+    def f(x, y_dead):  # y is DCEed
+      z = const[0:8] + x
+      return z
+
+    inp = jnp.arange(8.)
+    y_dead = jnp.arange(24.)
+    compiled = f.lower(inp, y_dead).compile()
+    # `compiled.` fields include dead inputs, but not the const_args
+    self.assertLen(compiled.args_info[0], 2)
+    self.assertEqual(compiled.args_info[0][0]._aval.shape, inp.shape)
+    self.assertEqual(compiled.args_info[0][1]._aval.shape, y_dead.shape)
+    self.assertLen(compiled.in_avals[0], 2)
+    self.assertEqual(compiled.in_avals[0][0].shape, inp.shape)
+    self.assertEqual(compiled.in_avals[0][1].shape, y_dead.shape)
+    self.assertLen(compiled.input_shardings[0], 2)
+    self.assertLen(compiled.input_formats[0], 2)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+    self.assertArraysEqual(compiled(inp, y_dead), const[0:8] + inp)
+    self.assertCacheMisses(lambda: compiled(inp, y_dead), cpp=0, aot_call=0)
 
   @jtu.parameterized_filterable(
       kwargs=[
