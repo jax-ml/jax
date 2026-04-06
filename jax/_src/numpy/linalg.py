@@ -816,8 +816,12 @@ def eig(a: ArrayLike) -> EigResult:
     - At present, non-symmetric eigendecomposition is only implemented on the CPU and
       GPU backends. For more details about the GPU implementation, see the
       documentation for :func:`jax.lax.linalg.eig`.
+    - Currently autodiff is not supported for computation of non-symmetric eigenvectors;
+      see https://github.com/jax-ml/jax/issues/2748.
 
   See also:
+    - :func:`jax.lax.linalg.eig`: similar function with different eigenvector options
+      and device-specific implementations.
     - :func:`jax.numpy.linalg.eigh`: eigenvectors and eigenvalues of a Hermitian matrix.
     - :func:`jax.numpy.linalg.eigvals`: compute eigenvalues only.
 
