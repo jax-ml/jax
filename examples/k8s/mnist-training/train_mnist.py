@@ -279,6 +279,7 @@ def main():
         print("\nRunning evaluation...")
 
     correct = 0
+    num_test_samples = 0
     eval_batch = per_device_batch * num_global_devices
     for i in range(0, len(test_images), eval_batch):
         batch_images = test_images[i:i + eval_batch]
@@ -294,10 +295,11 @@ def main():
 
         with mesh:
             correct += int(eval_step(params, batch_images, batch_labels, mesh))
+            num_test_samples += len(batch_images)
 
     if process_idx == 0:
-        accuracy = correct / len(test_images) * 100
-        print(f"Test accuracy: {correct}/{len(test_images)} ({accuracy:.1f}%)")
+        accuracy = (correct / num_test_samples * 100) if num_test_samples > 0 else 0
+        print(f"Test accuracy: {correct}/{num_test_samples} ({accuracy:.1f}%)")
 
     jax.distributed.shutdown()
 
