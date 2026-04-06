@@ -194,7 +194,8 @@ MakeIfrtArrayFromFullyReplicatedShard(ifrt::Client* ifrt_client,
       host_buffer_shard.data, host_buffer_shard.dtype,
       std::move(host_buffer_shard.shape),
       std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
-      shard.host_buffer_semantics, std::move(host_buffer_shard.on_done));
+      /*layout=*/nullptr, shard.host_buffer_semantics,
+      std::move(host_buffer_shard.on_done));
 }
 
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
