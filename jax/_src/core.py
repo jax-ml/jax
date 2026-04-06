@@ -2241,6 +2241,9 @@ def get_memory_space(memory_space):
 
 class ManualAxisType:
   __slots__ = ['varying', 'unreduced', 'reduced']
+  varying: frozenset
+  unreduced: frozenset
+  reduced: frozenset
 
   def __init__(self, *, varying=frozenset(), unreduced=frozenset(),
                reduced=frozenset()):
@@ -2265,16 +2268,6 @@ class ManualAxisType:
       return False
     return (self.varying == other.varying and self.unreduced == other.unreduced
             and self.reduced == other.reduced)
-
-  def __setattr__(self, name, value):
-    if hasattr(self, name):
-      if getattr(self, name) == value:
-        # This can to happen if two threads race, for example if two threads
-        # are trying to hash the same ManualAxisType instance.
-        return
-      raise RuntimeError(
-          f"Cannot reassign attributes `{name}` of immutable ManualAxisType object")
-    super().__setattr__(name, value)
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
