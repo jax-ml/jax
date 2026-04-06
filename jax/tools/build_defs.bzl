@@ -20,9 +20,6 @@ load("@bazel_skylib//lib:shell.bzl", "shell")
 def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
     jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "HLO")
 
-def jax_to_tf(name, deps, fn, input_shapes, constants = None):
-    jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "TF")
-
 def jax_to_ir(name, deps, fn, input_shapes, constants = None, format = "HLO"):
     """Creates a genrule that uses jax_to_ir.py to make proto from a JAX func.
 
