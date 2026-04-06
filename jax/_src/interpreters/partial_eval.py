@@ -1896,7 +1896,7 @@ class DynamicJaxprTrace(core.Trace):
         aval = typeof(c)
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace or core.eval_trace):
-          aval = core.AvalQDD(aval, core.cur_qdd(c))  # type: ignore
+          aval = core.aval_qdd_from_current_val(aval, c)  # type: ignore
       tracer = self._new_const(aval, c, source_info)
     return tracer
 
@@ -2440,23 +2440,48 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr):
-  lo_avals = [lo_ty for aval in hi_jaxpr.in_aval_qdds for lo_ty in aval.lo_ty()]
-  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr),
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, *, scan_env=0):
+  lo_avals = [lo_ty for a in hi_jaxpr.in_aval_qdds for lo_ty in a.lo_ty()]
+  if scan_env:
+    lo_avals = [typeof(0)] * scan_env + lo_avals
+  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr, scan_env),
                    debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names())
   lo_jaxpr, _, lo_consts = trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
   return core.ClosedJaxpr(lo_jaxpr, lo_consts)
 
-def lower_traceable(jaxpr, *lo_args):
+def lo_vals(a, x):
+  if not isinstance(a, core.AvalQDD):
+    return a.lower_val(x)  # type: ignore
+  elif a.aval.is_writer:  # type: ignore
+    if hasattr(x, '__qdd__'):  # already preallocated, filter
+      return a.aval.filter(x.__qdd__, a.qdd, x)
+    else:  # must preallocate
+      return a.aval.preallocate(a.qdd)
+  else:
+    return a.aval.read_loval(a.qdd, x)  # type: ignore
+
+def htlv(a: AbstractValue | core.AvalQDD, lo_vals):
+  if not a.has_qdd:
+    assert isinstance(a, AbstractValue)
+    return a.raise_val(*lo_vals)
+  assert isinstance(a, core.AvalQDD)
+  if a.aval.is_writer:
+    w = a.aval.new_empty(a.qdd, *lo_vals)  # type: ignore
+    w.__qdd__ = a.aval.empty_qdd()
+    return w
+  else:
+    return a.new_from_loval(*lo_vals)  # type: ignore
+
+def lower_traceable(jaxpr, scan_env, *lo_args):
+  scan_idxs, lo_args = split_list(lo_args, [scan_env])
   lo_args_ = iter(lo_args)
-  hi_args = [aval.raise_val(*it.islice(lo_args_, len(aval.lo_ty())))
-             if not aval.has_qdd else
-             aval.new_from_loval(*it.islice(lo_args_, len(aval.lo_ty())))
-             for aval in jaxpr.in_aval_qdds]
-  assert (_problem := next(lo_args_, None)) is None
-  hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
-              for lo_val in aval.read_loval(hi_arg)]
+  hi_args = [htlv(a, list(it.islice(lo_args_, len(a.lo_ty()))))
+             for a in jaxpr.in_aval_qdds]
+  assert next(lo_args_, sentinel := object()) is sentinel
+  with core.set_scan_env(scan_idxs):
+    hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
+  mut_outs = [lo_val for aval, hi_x in zip(jaxpr.final_aval_qdds, hi_args)
+              if aval.has_qdd for lo_val in aval.read_loval(hi_x)]
   lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
              for lo_val in v.aval.lower_val(hi_val)]
   return mut_outs + lo_outs
