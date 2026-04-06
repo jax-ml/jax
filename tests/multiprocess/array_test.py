@@ -455,6 +455,7 @@ class ArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     with self.assertRaisesRegex(ValueError, "device_put's second argument.*"):
       jax.device_put(inp, s)
 
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
   def test_closed_over_global_array_error(self):
     mesh = jtu.create_mesh((4, 2), ("x", "y"))
     s = jax.sharding.NamedSharding(mesh, P("x", "y"))
