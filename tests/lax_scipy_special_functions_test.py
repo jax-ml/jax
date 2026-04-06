@@ -67,6 +67,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
+        "gamma", 1, jtu.dtypes.complex, jtu.rand_default, False,
+        test_name="gamma_complex"
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
@@ -414,6 +418,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Argument `x` to sici must be real-valued."):
       lsp_special.sici(samples)
 
+  def testComplexGammaPoles(self):
+    """Test that gamma returns nan+nanj at non-positive integer poles."""
+    with jax.enable_x64():
+      poles = jnp.array([0+0j, -1+0j, -2+0j, -5+0j], dtype=jnp.complex128)
+      result = np.array(lsp_special.gamma(poles))
+      # Both real and imaginary parts should be NaN
+      self.assertTrue(np.all(np.isnan(result.real)))
+      self.assertTrue(np.all(np.isnan(result.imag)))
+
+  def testComplexGammaBranchCut(self):
+    """Test gamma near the negative real axis and at the reflection boundary."""
+    with jax.enable_x64():
+      # Points near poles (approached from above/below) should match SciPy
+      z = np.array([-0.5+0j, -1.5+0j, 0.5+1j, 0.5-1j, -2.5+1e-12j, -2.5-1e-12j],
+                    dtype=np.complex128)
+      self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
+                          atol=1e-10, rtol=1e-10)
 
 
 if __name__ == "__main__":
