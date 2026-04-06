@@ -628,7 +628,7 @@ namespace {
 struct HeapProfileKey {
   std::optional<Traceback> traceback;
   int64_t size;
-  xla::PjRtDevice* device;
+  xla::ifrt::Device* device;
   bool operator==(const HeapProfileKey& other) const;
 };
 
@@ -658,45 +658,56 @@ H AbslHashValue(H h, const HeapProfileKey& key) {
 
 absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
   CHECK(PyGILState_Check());
-  absl::flat_hash_set<xla::PjRtBuffer*> buffer_set;
+  absl::flat_hash_set<xla::PjRtBuffer*> pjrt_buffer_set;
   absl::flat_hash_map<HeapProfileKey, int64_t> entries;
 
-  auto add_buffer_to_profile = [&](xla::PjRtBuffer* buffer,
-                                   std::optional<Traceback> traceback) {
-    // We only wish to count each xla::PjRtBuffer once, even though they may be
-    // shared by multiple PyArrays.
-    if (!buffer->IsDeleted() && buffer_set.insert(buffer).second) {
-      TF_ASSIGN_OR_RETURN(size_t size, buffer->GetOnDeviceSizeInBytes());
-      HeapProfileKey key{traceback, static_cast<int64_t>(size),
-                         buffer->device()};
-      ++entries[key];
+  auto add_array_to_profile = [&](ifrt::Array* array,
+                                  std::optional<Traceback> traceback) {
+    if (array->IsDeleted()) {
+      return absl::OkStatus();
+    }
+    const xla::ifrt::DeviceList* addressable_devices =
+        array->sharding().devices()->AddressableDeviceList();
+    TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, array->ByteSize());
+    if (!byte_size.has_value()) {
+      return absl::OkStatus();
+    }
+    if (auto* pjrt_array =
+            llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array)) {
+      for (int i = 0; i < addressable_devices->size(); ++i) {
+        const std::shared_ptr<xla::PjRtBuffer>& pjrt_buffer =
+            pjrt_array->pjrt_buffers()[i];
+        // We only wish to count each xla::PjRtBuffer once, even though they may
+        // be shared by multiple PyArrays.
+        if (pjrt_buffer_set.insert(pjrt_buffer.get()).second) {
+          HeapProfileKey key{traceback, *byte_size,
+                             addressable_devices->devices()[i]};
+          ++entries[key];
+        }
+      }
+    } else {
+      for (ifrt::Device* device : addressable_devices->devices()) {
+        // IFRT Arrays do not have an API for detecting device buffer aliasing.
+        // Treat all arrays as distinct arrays for the time being.
+        HeapProfileKey key{traceback, *byte_size, device};
+        ++entries[key];
+      }
     }
     return absl::OkStatus();
   };
 
   std::vector<PyArray> arrays = LiveArrays();
   for (const PyArray& array : arrays) {
-    if (array.ifrt_array() == nullptr) {
-      continue;
-    }
-    auto* arr =
-        llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array.ifrt_array());
-    // TODO(hyeontaek): Support non-PjRt Arrays.
-    if (arr == nullptr) {
-      throw xla::XlaRuntimeError(
-          "This operation is implemented for a PjRt-compatible backend "
-          "only.");
-    }
-    for (const auto& buffer : arr->pjrt_buffers()) {
-      TF_RETURN_IF_ERROR(
-          add_buffer_to_profile(buffer.get(), array.traceback()));
+    if (ifrt::Array* ifrt_array = array.ifrt_array()) {
+      TF_RETURN_IF_ERROR(add_array_to_profile(ifrt_array, array.traceback()));
     }
   }
 
   for (PyLoadedExecutable* executable = executables_; executable;
        executable = executable->next_) {
     HeapProfileKey key{executable->traceback(),
-                       executable->SizeOfGeneratedCodeInBytes(), nullptr};
+                       executable->SizeOfGeneratedCodeInBytes(),
+                       /*device=*/nullptr};
     ++entries[key];
   }
 
