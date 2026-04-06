@@ -14,6 +14,7 @@
 
 from functools import partial
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import numpy as np
 import jax
@@ -21,12 +22,18 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
+from jax._src import core
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention,
     paged_attention,
     check_cudnn_version,
+    AttentionLayout,
     MaskType,
+    _dot_product_attention_fwd_abstract,
+    _dot_product_attention_bwd_abstract,
+    _dot_product_attention_fp8_fwd_abstract,
 )
 
 config.parse_flags_with_absl()
@@ -1126,6 +1133,159 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     )
     out_ref = jitted_sdpa_inference_ref(query, key, value)
     self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=8e-2, atol=8e-2)
+
+
+_STAT_SPEC = PartitionSpec("dp", "tp", None)
+_AMAX_SPEC = PartitionSpec(None, None, None, None)
+_META_AVAL = core.ShapedArray((1, 1, 1, 1), jnp.float32)
+
+
+def _make_test_mesh():
+  return mesh_lib.AbstractMesh((2, 2), ("dp", "tp"),
+                               axis_types=(mesh_lib.AxisType.Explicit,) * 2)
+
+
+def _make_qkv_sharding(layout, *, batch="dp", head="tp"):
+  mesh = _make_test_mesh()
+  if layout == AttentionLayout.BNTH.value:
+    spec = PartitionSpec(batch, head, None, None)
+  else:
+    spec = PartitionSpec(batch, None, head, None)
+  return mesh, NamedSharding(mesh, spec)
+
+
+def _qkv_shapes(layout, *, B=2, T=4, S=4, N=2, H=64):
+  q = (B, N, T, H) if layout == AttentionLayout.BNTH.value else (B, T, N, H)
+  kv = (B, N, S, H) if layout == AttentionLayout.BNTH.value else (B, S, N, H)
+  return q, kv
+
+
+class DotProductAttentionAbstractEvalShardingTest(
+    jtu.JaxTestCase, parameterized.TestCase):
+
+  def test_fwd_abstract_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    is_training = True
+    _, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    dummy = core.ShapedArray((), jnp.int32)
+    out = _dot_product_attention_fwd_abstract(
+        core.ShapedArray(q_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        dummy, dummy, dummy, core.ShapedArray((2,), jnp.int32), dummy,
+        core.ShapedArray((2,), jnp.int32), dummy,
+        scale=1.0, seed=0, dropout_rate=0.0, variadic_args=(False, False),
+        mask_type=MaskType.NO_MASK.value, layout=layout,
+        sliding_window_length=None, is_training=is_training)
+    self.assertEqual(out[0].sharding, sharding)
+    if is_training:
+      self.assertEqual(out[1].sharding.spec, _STAT_SPEC)
+
+  def test_fwd_abstract_invalid_qkv_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    mesh = _make_test_mesh()
+    q_shape, kv_shape = _qkv_shapes(layout)
+    dummy = core.ShapedArray((), jnp.int32)
+    query_sharding = NamedSharding(mesh, PartitionSpec("dp", None, "tp", None))
+    kv_sharding = NamedSharding(mesh, PartitionSpec(None, None, "tp", None))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "sharding|sequence|head|same sharding"):
+      _dot_product_attention_fwd_abstract(
+          core.ShapedArray(q_shape, jnp.bfloat16, sharding=query_sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=kv_sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=kv_sharding),
+          dummy, dummy, dummy, core.ShapedArray((2,), jnp.int32), dummy,
+          core.ShapedArray((2,), jnp.int32), dummy,
+          scale=1.0, seed=0, dropout_rate=0.0, variadic_args=(False, False),
+          mask_type=MaskType.NO_MASK.value, layout=layout,
+          sliding_window_length=None, is_training=False)
+
+  def test_fwd_abstract_mixed_empty_and_explicit_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    _, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    dummy = core.ShapedArray((), jnp.int32)
+    with self.assertRaisesRegex(core.ShardingTypeError, "same sharding"):
+      _dot_product_attention_fwd_abstract(
+          core.ShapedArray(q_shape, jnp.bfloat16),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          dummy, dummy, dummy, core.ShapedArray((2,), jnp.int32), dummy,
+          core.ShapedArray((2,), jnp.int32), dummy,
+          scale=1.0, seed=0, dropout_rate=0.0, variadic_args=(False, False),
+          mask_type=MaskType.NO_MASK.value, layout=layout,
+          sliding_window_length=None, is_training=False)
+
+  def test_bwd_abstract_dbias_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    mesh, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    bias = core.ShapedArray(
+        (2, 2, 4, 4), jnp.bfloat16,
+        sharding=NamedSharding(mesh, PartitionSpec("dp", "tp", None, None)))
+    dummy = core.ShapedArray((), jnp.int32)
+    dq, dk, dv, db = _dot_product_attention_bwd_abstract(
+        core.ShapedArray(q_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        bias, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy,
+        scale=1.0, seed=0, dropout_rate=0.0, variadic_args=(True, True),
+        mask_type=MaskType.NO_MASK.value, layout=layout,
+        sliding_window_length=None)
+    self.assertEqual(
+        (dq.sharding, dk.sharding, dv.sharding, db.sharding),
+        (sharding, sharding, sharding, bias.sharding))
+
+  def test_bwd_abstract_invalid_bias_sharding_without_dbias(self):
+    layout = AttentionLayout.BTNH.value
+    mesh, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    dummy = core.ShapedArray((), jnp.int32)
+    bad_bias = core.ShapedArray(
+        (2, 2, 4, 4), jnp.bfloat16,
+        sharding=NamedSharding(mesh, PartitionSpec(None, "tp", "dp", None)))
+    with self.assertRaisesRegex(core.ShardingTypeError, "bias sequence dim"):
+      _dot_product_attention_bwd_abstract(
+          core.ShapedArray(q_shape, jnp.bfloat16, sharding=sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          bad_bias, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy,
+          scale=1.0, seed=0, dropout_rate=0.0, variadic_args=(True, False),
+          mask_type=MaskType.NO_MASK.value, layout=layout,
+          sliding_window_length=None)
+
+  def test_fp8_fwd_abstract_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    is_training = True
+    _, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    out = _dot_product_attention_fp8_fwd_abstract(
+        core.ShapedArray(q_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+        _META_AVAL, _META_AVAL, _META_AVAL,
+        _META_AVAL, _META_AVAL, _META_AVAL,
+        scale=1.0, use_causal_mask=not is_training, layout=layout,
+        is_training=is_training)
+    self.assertEqual(out[0].sharding, sharding)
+    self.assertEqual(out[1].sharding.spec, _AMAX_SPEC)
+    self.assertEqual(out[2].sharding.spec, _AMAX_SPEC)
+    if is_training:
+      self.assertEqual(out[3].sharding.spec, _STAT_SPEC)
+
+  def test_fp8_fwd_abstract_mixed_empty_and_explicit_sharding(self):
+    layout = AttentionLayout.BTNH.value
+    _, sharding = _make_qkv_sharding(layout)
+    q_shape, kv_shape = _qkv_shapes(layout)
+    with self.assertRaisesRegex(core.ShardingTypeError, "same sharding"):
+      _dot_product_attention_fp8_fwd_abstract(
+          core.ShapedArray(q_shape, jnp.bfloat16),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          core.ShapedArray(kv_shape, jnp.bfloat16, sharding=sharding),
+          _META_AVAL, _META_AVAL, _META_AVAL,
+          _META_AVAL, _META_AVAL, _META_AVAL,
+          scale=1.0, use_causal_mask=False, layout=layout, is_training=False)
 
 
 if __name__ == "__main__":

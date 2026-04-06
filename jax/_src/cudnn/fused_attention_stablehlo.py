@@ -564,6 +564,62 @@ def _dot_product_attention_bwd_impl(
       sliding_window_length=sliding_window_length)
   return grads
 
+def _resolve_abstract_operand_sharding(*args):
+  non_empty_s = [
+      arg.sharding for arg in args
+      if arg is not None and not arg.sharding.mesh.empty
+  ]
+  if not non_empty_s:
+    return None
+  meshes = {s.mesh for s in non_empty_s}
+  if len(meshes) > 1:
+    raise core.ShardingTypeError(
+        f"Conflicting meshes received. Got shardings {non_empty_s}")
+  return non_empty_s[0]
+
+
+def _check_abstract_qkv_bias_mask_spec(
+    query, key, value, bias, *, has_bias, layout):
+  query_spec = _get_padded_spec(query)
+  key_spec = _get_padded_spec(key)
+  value_spec = _get_padded_spec(value)
+  bias_spec = _get_padded_spec(bias) if has_bias else None
+  try:
+    _check_qkv_bias_mask_spec(
+        query_spec, key_spec, value_spec, bias_spec, layout)
+  except ValueError as e:
+    raise core.ShardingTypeError(str(e)) from e
+  return query_spec
+
+
+def _fwd_abstract_sharding_rule(query, key, value, bias, *, has_bias, layout):
+  """Validate sharding specs and return (out_sharding, stat_sharding)."""
+  _resolve_abstract_operand_sharding(
+      query, key, value, bias if has_bias else None)
+  query_spec = _check_abstract_qkv_bias_mask_spec(
+      query, key, value, bias, has_bias=has_bias, layout=layout)
+
+  if layout == AttentionLayout.BNTH.value:
+    batch_spec, head_spec, _, _ = query_spec
+  else:
+    batch_spec, _, head_spec, _ = query_spec
+  out_sharding = query.sharding
+  stat_sharding = query.sharding.update(
+      spec=PartitionSpec(batch_spec, head_spec, None))
+  return out_sharding, stat_sharding
+
+
+def _bwd_abstract_sharding_rule(
+    query, key, value, bias, *, has_bias, has_dbias, layout):
+  """Validate sharding specs and return grad shardings."""
+  _resolve_abstract_operand_sharding(
+      query, key, value, bias if has_bias else None)
+  _check_abstract_qkv_bias_mask_spec(
+      query, key, value, bias, has_bias=has_bias, layout=layout)
+  if has_dbias:
+    return query.sharding, key.sharding, value.sharding, bias.sharding
+  return query.sharding, key.sharding, value.sharding
+
 def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
@@ -580,47 +636,63 @@ def _dot_product_attention_fwd_abstract(
   max_seg_per_batch = get_max_seg_per_batch(q_offsets)
   softmax_stat_shape = (B * max_seg_per_batch, N, T)
 
+  has_bias, _ = variadic_args
+  out_sharding = stat_sharding = None
+  if _resolve_abstract_operand_sharding(
+      query, key, value, bias if has_bias else None) is not None:
+    out_sharding, stat_sharding = _fwd_abstract_sharding_rule(
+        query, key, value, bias, has_bias=has_bias, layout=layout)
+
   if is_training:
     return (
-      core.ShapedArray(output_shape, query.dtype),  # output
-      core.ShapedArray(softmax_stat_shape, np.float32),  # softmax_stat
+      core.ShapedArray(output_shape, query.dtype, sharding=out_sharding),  # output
+      core.ShapedArray(softmax_stat_shape, np.float32, sharding=stat_sharding),  # softmax_stat
     )
   else:
     return (
-      core.ShapedArray(output_shape, query.dtype),  # output
+      core.ShapedArray(output_shape, query.dtype, sharding=out_sharding),  # output
     )
 
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, activation, fwd_output, grad_output, *,
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
-  _, has_dbias = variadic_args
+  has_bias, has_dbias = variadic_args
+  q_sharding = k_sharding = v_sharding = b_sharding = None
+  if _resolve_abstract_operand_sharding(
+      query, key, value, bias if has_bias else None) is not None:
+    grad_shardings = _bwd_abstract_sharding_rule(
+        query, key, value, bias, has_bias=has_bias, has_dbias=has_dbias,
+        layout=layout)
+    q_sharding, k_sharding, v_sharding = grad_shardings[:3]
+    if has_dbias:
+      b_sharding = grad_shardings[3]
   if has_dbias:
     # cuDNN supports bias for this case
     return (
       core.ShapedArray(
-          query.shape, query.dtype
+          query.shape, query.dtype, sharding=q_sharding
       ),  # grad query
       core.ShapedArray(
-          key.shape, key.dtype
+          key.shape, key.dtype, sharding=k_sharding
       ),  # grad key
       core.ShapedArray(
-          value.shape, value.dtype
+          value.shape, value.dtype, sharding=v_sharding
       ),  # grad value
       core.ShapedArray(
-          bias.shape, bias.dtype
+          bias.shape, bias.dtype, sharding=b_sharding
       ),  # grad bias
     )
   else:
     return (
       core.ShapedArray(
-          query.shape, query.dtype
+          query.shape, query.dtype, sharding=q_sharding
       ),  # grad query
       core.ShapedArray(
-          key.shape, key.dtype
+          key.shape, key.dtype, sharding=k_sharding
       ),  # grad key
       core.ShapedArray(
-          value.shape, value.dtype
+          value.shape, value.dtype, sharding=v_sharding
       ),  # grad value
     )
 
@@ -1367,36 +1439,48 @@ def _dot_product_attention_fp8_fwd_abstract(
     _, S, _, _ = key.shape
   output_shape = query.shape
   softmax_stat_shape = (B, N, T)
+  out_sharding = activation_sharding = amax_sharding = None
+  if _resolve_abstract_operand_sharding(query, key, value) is not None:
+    out_sharding, activation_sharding = _fwd_abstract_sharding_rule(
+        query, key, value, None, has_bias=False, layout=layout)
+    amax_sharding = NamedSharding(query.sharding.mesh, PartitionSpec())
 
   # output, amax_s, amax_o[, softmax_stat]
   if is_training:
     return (
-      core.ShapedArray(output_shape, query.dtype),
-      core.ShapedArray((1,1,1,1), np.float32),
-      core.ShapedArray((1,1,1,1), np.float32),
-      core.ShapedArray(softmax_stat_shape, np.float32),
+      core.ShapedArray(output_shape, query.dtype, sharding=out_sharding),
+      core.ShapedArray((1,1,1,1), np.float32, sharding=amax_sharding),
+      core.ShapedArray((1,1,1,1), np.float32, sharding=amax_sharding),
+      core.ShapedArray(
+          softmax_stat_shape, np.float32, sharding=activation_sharding),
     )
   else:
     return (
-      core.ShapedArray(output_shape, query.dtype),
-      core.ShapedArray((1,1,1,1), np.float32),
-      core.ShapedArray((1,1,1,1), np.float32),
+      core.ShapedArray(output_shape, query.dtype, sharding=out_sharding),
+      core.ShapedArray((1,1,1,1), np.float32, sharding=amax_sharding),
+      core.ShapedArray((1,1,1,1), np.float32, sharding=amax_sharding),
     )
 
 def _dot_product_attention_fp8_bwd_abstract(
     query, key, value, fwd_output, grad_output, activation,
-    descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s,
-    descale_dP, scale_s, scale_dQ, scale_dK, scale_dV, scale_dP,
-    scale, use_causal_mask, layout):
+  descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s,
+  descale_dP, scale_s, scale_dQ, scale_dK, scale_dV, scale_dP,
+  scale, use_causal_mask, layout):
   amax_shape = (1,1,1,1)
+  q_sharding = k_sharding = v_sharding = amax_sharding = None
+  if _resolve_abstract_operand_sharding(query, key, value) is not None:
+    q_sharding, k_sharding, v_sharding = _bwd_abstract_sharding_rule(
+        query, key, value, None, has_bias=False, has_dbias=False,
+        layout=layout)
+    amax_sharding = NamedSharding(query.sharding.mesh, PartitionSpec())
   return (
-    core.ShapedArray(query.shape, query.dtype),
-    core.ShapedArray(key.shape, key.dtype),
-    core.ShapedArray(value.shape, value.dtype),
-    core.ShapedArray(amax_shape, np.float32),
-    core.ShapedArray(amax_shape, np.float32),
-    core.ShapedArray(amax_shape, np.float32),
-    core.ShapedArray(amax_shape, np.float32),
+    core.ShapedArray(query.shape, query.dtype, sharding=q_sharding),
+    core.ShapedArray(key.shape, key.dtype, sharding=k_sharding),
+    core.ShapedArray(value.shape, value.dtype, sharding=v_sharding),
+    core.ShapedArray(amax_shape, np.float32, sharding=amax_sharding),
+    core.ShapedArray(amax_shape, np.float32, sharding=amax_sharding),
+    core.ShapedArray(amax_shape, np.float32, sharding=amax_sharding),
+    core.ShapedArray(amax_shape, np.float32, sharding=amax_sharding),
   )
 
 def _dot_product_attention_fp8_fwd_cuda_lowering(
