@@ -35,7 +35,6 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
@@ -68,24 +67,6 @@ traceback_util.register_exclusion(__file__)
 CompileOptions = xc.CompileOptions
 
 logger = logging.getLogger(__name__)
-
-
-def _get_cross_compile_backend(compile_only_backend):
-  """Returns a real backend for cross-compilation via a real client.
-
-  When cross-compiling via a compile-only client, checks if a real backend
-  is available for the same platform. If so, returns it so compilation can
-  leverage real hardware (e.g., for GPU kernel autotuning).
-  """
-  platform = compile_only_backend.platform
-  try:
-    real_backend = xb.get_backend(platform)
-  except Exception:
-    return None
-  # Don't use the real backend if it's also a compile-only client.
-  if isinstance(real_backend, _jax.CompileOnlyPyClient):
-    return None
-  return real_backend
 
 
 # Will be monkeypatched with the function that gets the XLA-AutoFDO profile
@@ -325,17 +306,6 @@ def backend_compile_and_load(
     # separately in Python profiling results
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
     if isinstance(backend, _jax.CompileOnlyPyClient):
-      # When a real backend is available for the same platform, use it for
-      # cross-compilation. The real client provides hardware access (e.g.,
-      # for GPU kernel autotuning) while the topology specifies the target.
-      cross_compile_backend = _get_cross_compile_backend(backend)
-      if cross_compile_backend is not None and not host_callbacks:
-        cross_compile_topology = xc.get_topology_for_devices(backend.devices())
-        return cross_compile_backend.compile(  # type: ignore
-            module,
-            topology=cross_compile_topology,
-            compile_options=options,
-        )
       if host_callbacks:
         return backend.compile(  # type: ignore
             module,

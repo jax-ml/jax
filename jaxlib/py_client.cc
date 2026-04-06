@@ -442,52 +442,35 @@ PyClient::CompileAndLoadIfrtProgram(
                                            std::move(fingerprint));
 }
 
-static absl::StatusOr<nb_class_ptr<PyExecutable>>
-CompileWithTopology(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
-                    const xla::ifrt::Topology &topology,
-                    xla::CompileOptions options, ifrt::DeviceListRef devices) {
+/* static */ absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
+    nb_class_ptr<PyClient> client, mlir::ModuleOp module,
+    ifrt::DeviceListRef executable_devices, xla::CompileOptions options) {
   mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
-  options.allow_in_place_mlir_modification = true;
+  module = *clone;
   ifrt::ExecutableRef ifrt_executable;
   {
-    auto xla_options =
-        std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
-        ifrt_executable,
-        client->ifrt_client()
-            ->GetDefaultCompiler()
-            ->Compile(std::make_unique<xla::ifrt::HloProgram>(std::move(clone)),
-                      topology, std::move(xla_options))
-            .Await());
+        auto topology,
+        client->ifrt_client()->GetTopologyForDevices(executable_devices));
+    auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
+        options, std::move(executable_devices));
+#if JAX_IFRT_VERSION_NUMBER >= 47
+    TF_ASSIGN_OR_RETURN(ifrt_executable,
+                        client->ifrt_client()
+                            ->GetDefaultCompiler()
+                            ->Compile(std::make_unique<xla::ifrt::HloProgram>(
+                                          std::move(module)),
+                                      *topology, std::move(xla_options))
+                            .Await());
 #else
     TF_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()->GetDefaultCompiler()->Compile(
-            std::make_unique<xla::ifrt::HloProgram>(std::move(clone)), topology,
-            std::move(xla_options)));
+            std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
+            *topology, std::move(xla_options)));
 #endif
   }
   return make_nb_class<PyExecutable>(ifrt_executable);
-}
-
-absl::StatusOr<nb_class_ptr<PyExecutable>>
-PyClient::Compile(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
-                  ifrt::DeviceListRef executable_devices,
-                  xla::CompileOptions options) {
-  TF_ASSIGN_OR_RETURN(
-      auto topology,
-      client->ifrt_client()->GetTopologyForDevices(executable_devices));
-  return CompileWithTopology(std::move(client), module, *topology,
-                             std::move(options), std::move(executable_devices));
-}
-
-absl::StatusOr<nb_class_ptr<PyExecutable>>
-PyClient::Compile(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
-                  std::shared_ptr<xla::ifrt::Topology> topology,
-                  xla::CompileOptions options) {
-  return CompileWithTopology(std::move(client), module, *topology,
-                             std::move(options), ifrt::DeviceListRef());
 }
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
@@ -835,27 +818,6 @@ PyType_Slot PyClient::slots_[] = {
               "self, "
               "computation: object, "
               "executable_devices: DeviceList, "
-              "compile_options: CompileOptions = ..."
-              ") -> Executable"
-              // clang-format on
-              ))
-      .def(
-          "compile",
-          [](nb_class_ptr<PyClient> client, MlirModule mlir_module,
-             std::shared_ptr<xla::ifrt::Topology> topology,
-             xla::CompileOptions options) {
-            return xla::ValueOrThrow(PyClient::Compile(
-                std::move(client), unwrap(mlir_module), std::move(topology),
-                std::move(options)));
-          },
-          nb::arg("computation"), nb::arg("topology"),
-          nb::arg("compile_options") = xla::CompileOptions(),
-          nb::sig(
-              // clang-format off
-              "def compile("
-              "self, "
-              "computation: object, "
-              "topology: DeviceTopology, "
               "compile_options: CompileOptions = ..."
               ") -> Executable"
               // clang-format on

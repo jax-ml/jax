@@ -874,18 +874,10 @@ class Client:
   def process_index(self) -> int: ...
   def host_id(self) -> int: ...
   def task_id(self) -> int: ...
-  @overload
   def compile(
       self,
       computation: object,
       executable_devices: DeviceList,
-      compile_options: CompileOptions = ...,
-  ) -> Executable: ...
-  @overload
-  def compile(
-      self,
-      computation: object,
-      topology: DeviceTopology,
       compile_options: CompileOptions = ...,
   ) -> Executable: ...
   @overload

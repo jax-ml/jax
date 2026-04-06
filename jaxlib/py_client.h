@@ -168,11 +168,6 @@ class PyClient {
       nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options);
 
-  static absl::StatusOr<nb_class_ptr<PyExecutable>>
-  Compile(nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
-          std::shared_ptr<xla::ifrt::Topology> topology,
-          xla::CompileOptions options);
-
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options,
