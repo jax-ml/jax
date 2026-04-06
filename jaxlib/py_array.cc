@@ -2262,8 +2262,9 @@ absl::Status PyArray::Register(nb::module_& m) {
       [](PyArray& self) { xla::ThrowIfError(self.Delete()); }, nb::is_method());
   type.attr("_rewrap_with_aval_and_sharding") = nb::cpp_function(
       // NOTE(dsuo): Zero-copy metadata rewrapping. Returns a new PyArray with
-      // new aval and sharding metadata that shares the same underlying ifrt
-      // array, avoiding memory copies when only the logical view changes.
+      // new aval and sharding metadata with a new underlying ifrt
+      // array that reuses the same underlying buffers, avoiding memory copies
+      // when only the logical view changes.
       [](PyArray self, nb::object aval, nb::object sharding) -> PyArray {
         xla::ifrt::Array* ifrt_array_ptr = self.ifrt_array();
         if (ifrt_array_ptr == nullptr) {
@@ -2276,9 +2277,28 @@ absl::Status PyArray::Register(nb::module_& m) {
         xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(aval.attr("dtype"));
         std::vector<int64_t> shape =
             nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+        auto ifrt_sharding = xla::ValueOrThrow(
+            jax::GetIfrtHloSharding(sharding, xla::ifrt::Shape(shape)));
+        PyUserContextScope user_context;
+
+        auto single_device_arrays =
+            xla::ValueOrThrow(ifrt_array_ptr->DisassembleIntoSingleDeviceArrays(
+                xla::ifrt::ArrayCopySemantics::kReuseInput,
+                xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+
+        auto new_ifrt_array = xla::ValueOrThrow(
+            self.py_client()
+                ->ifrt_client()
+                ->AssembleArrayFromSingleDeviceArrays(
+                    ifrt_array_ptr->dtype(), xla::ifrt::Shape(shape),
+                    std::move(ifrt_sharding),
+                    absl::MakeSpan(single_device_arrays),
+                    xla::ifrt::ArrayCopySemantics::kReuseInput,
+                    xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+
         return PyArray(std::move(aval), weak_type, dtype, std::move(shape),
                        std::move(sharding), self.py_client(),
-                       tsl::FormRef(ifrt_array_ptr), /*committed=*/true,
+                       std::move(new_ifrt_array), /*committed=*/true,
                        /*skip_checks=*/true);
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));
