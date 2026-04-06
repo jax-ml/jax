@@ -26,14 +26,14 @@ This means we support at least:
   * **NumPy 2.1** was released August 2024, and will be supported in new JAX releases at least until **August 2026**.
   * **NumPy 2.2** was released December 2024, and will be supported in new JAX releases at least until **December 2026**.
   * **NumPy 2.3** was released June 2025, and will be supported in new JAX releases at least until **June 2027**.
+  * **NumPy 2.4** was released December 2025, and will be supported in new JAX releases at least until **December 2027**.
 
 * All SciPy feature releases in the 24 months prior to each JAX release. For example:
 
-  * **SciPy 1.12** was released January 2024, and would normally be supported in new JAX releases at least until **January 2026**. However, we dropped SciPy 1.12 support in September 2025, because NumPy 2.0 support requires SciPy 1.13.
-  * **SciPy 1.13** was released April 2024, and will be supported in new JAX releases at least until **April 2026**.
   * **SciPy 1.14** was released June 2024, and will be supported in new JAX releases at least until **June 2026**.
   * **SciPy 1.15** was released January 2025, and will be supported in new JAX releases at least until **January 2027**.
   * **SciPy 1.16** was released June 2025, and will be supported in new JAX releases at least until **June 2027**.
+  * **SciPy 1.17** was released January 2026, and will be supported in new JAX releases at least until **January 2028**
 
 JAX releases may support older versions of Python, NumPy, and SciPy than strictly required
 by this policy, but support for older versions may be dropped at any time beyond the listed
