@@ -572,7 +572,7 @@ def _load_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
-  ref_memory_space = tc_lowering._memory_space_to_tpu_memory_space(
+  ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       ref_aval.memory_space, ctx.lowering_context.kernel_type
   )
   if (
@@ -655,7 +655,7 @@ def _store_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
-  ref_memory_space = tc_lowering._memory_space_to_tpu_memory_space(
+  ref_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       ref_aval.memory_space, ctx.lowering_context.kernel_type
   )
   if (

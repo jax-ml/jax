@@ -286,45 +286,14 @@ class LoweringRuleContext:
     )
 
 
-def _memory_space_to_tpu_memory_space(
-    memory_space: AnyMemorySpace | None, kernel_type: tpu_core.CoreType
-) -> TPUMemorySpace:
-  match memory_space:
-    case None:
-      match kernel_type:
-        case tpu_core.CoreType.TC | tpu_core.CoreType.SC_VECTOR_SUBCORE:
-          return VMEM
-        case tpu_core.CoreType.SC_SCALAR_SUBCORE:
-          return SMEM
-        case _:
-          raise ValueError(f"Unsupported kernel type: {kernel_type}")
-    case pallas_core.MemorySpace.ANY:
-      return ANY
-    case pallas_core.MemorySpace.HOST:
-      return HOST
-    case (
-        pallas_core.MemorySpace.ERROR
-        | pallas_core.MemorySpace.INDEX
-        | pallas_core.MemorySpace.KEY
-    ):
-      return SMEM
-    case tpu_core.CoreMemorySpace():
-      return (
-          memory_space.memory_space
-          if memory_space.core_type is kernel_type
-          else memory_space
-      )
-    case tpu_core.MemorySpace():
-      return memory_space
-    case _:
-      raise ValueError(f"Invalid memory space: {memory_space!r}")
-
-
 def _memory_space_to_mosaic_attribute(
     memory_space: AnyMemorySpace | None,
     kernel_type: tpu_core.CoreType,
 ) -> ir.Attribute:
-  match _memory_space_to_tpu_memory_space(memory_space, kernel_type):
+  tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+      memory_space, kernel_type
+  )
+  match tpu_memory_space:
     case pallas_core.MemorySpace.ANY:
       return ir.Attribute.parse("#tpu.memory_space<any>")
     case tpu_core.MemorySpace() as ms:
@@ -334,7 +303,7 @@ def _memory_space_to_mosaic_attribute(
           f"#tpu.memory_space<{cms.memory_space}, {cms.core_type}>"
       )
     case _:
-      raise NotImplementedError(f"Invalid memory space: {memory_space!r}")
+      raise NotImplementedError(f"Invalid memory space: {tpu_memory_space!r}")
 
 
 def _dtype_to_ir_type(dtype: DTypeLike,
@@ -691,9 +660,7 @@ def _check_block_mappings(
     rank = len(physical_block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
-    memory_space = _memory_space_to_tpu_memory_space(
-        bm.block_aval.memory_space, kernel_type
-    )
+    memory_space = tpu_core.memory_space_to_tpu_memory_space(bm.block_aval.memory_space, kernel_type)
     if memory_space == tpu_core.MemorySpace.SMEM and bm.has_trivial_window():
       continue
     if memory_space == tpu_core.MemorySpace.SEMAPHORE:
@@ -887,7 +854,7 @@ def lower_jaxpr_into_module(
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
       # ANY and SEMAPHORE operands don't support windowing and require empty window_params.
-      tpu_memory_space = _memory_space_to_tpu_memory_space(
+      tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space, kernel_type
       )
       if (

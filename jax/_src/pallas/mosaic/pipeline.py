@@ -557,6 +557,10 @@ class BufferedRef(BufferedRefBase):
 
     buffer_memory_space = (
           VMEM if spec.memory_space is None else spec.memory_space)
+    # TODO(sharadmv): Don't hard-code TC here, infer from context.
+    buffer_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+        buffer_memory_space, tpu_core.CoreType.TC
+    )
     if buffer_memory_space not in (SMEM, VMEM, HBM):
       raise ValueError(
           f"Unsupported buffer memory space: {buffer_memory_space}"

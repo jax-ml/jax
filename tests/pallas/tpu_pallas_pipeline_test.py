@@ -331,6 +331,38 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     np.testing.assert_array_equal(o_standard, o_pipeline)
 
+  def test_key_memory_space(self):
+    def kernel(key_ref, o_ref):
+      o_ref[...] = jax.random.uniform(key_ref[...], shape=o_ref.shape)
+
+    def pipeline_kernel(key_hbm, o_hbm):
+      pltpu.emit_pipeline(
+          kernel,
+          grid=(),
+          in_specs=[pl.BlockSpec(memory_space=pl.MemorySpace.KEY)],
+          out_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+      )(key_hbm, o_hbm)
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    key = jax.random.key(0)
+    p_key = pltpu.to_pallas_key(key)
+
+    o_standard = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+    )(p_key)
+
+    o_pipeline = pl.pallas_call(
+        pipeline_kernel,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )(p_key)
+
+    np.testing.assert_array_equal(o_standard, o_pipeline)
+
   def test_squeezed_block_spec_has_correct_shape(self):
     def body(x_ref):
       self.assertEqual(x_ref.shape, (128, 64))

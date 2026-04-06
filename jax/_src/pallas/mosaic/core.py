@@ -570,3 +570,40 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+def memory_space_to_tpu_memory_space(
+    memory_space: (
+        MemorySpace | pallas_core.MemorySpace | CoreMemorySpace | None
+    ),
+    kernel_type: CoreType,
+) -> MemorySpace | pallas_core.MemorySpace | CoreMemorySpace:
+  match memory_space:
+    case None:
+      match kernel_type:
+        case CoreType.TC | CoreType.SC_VECTOR_SUBCORE:
+          return MemorySpace.VMEM
+        case CoreType.SC_SCALAR_SUBCORE:
+          return MemorySpace.SMEM
+        case _:
+          raise ValueError(f"Unsupported kernel type: {kernel_type}")
+    case pallas_core.MemorySpace.ANY:
+      return pallas_core.MemorySpace.ANY
+    case pallas_core.MemorySpace.HOST:
+      return MemorySpace.HOST
+    case (
+        pallas_core.MemorySpace.ERROR
+        | pallas_core.MemorySpace.INDEX
+        | pallas_core.MemorySpace.KEY
+    ):
+      return MemorySpace.SMEM
+    case CoreMemorySpace():
+      return (
+          memory_space.memory_space
+          if memory_space.core_type is kernel_type
+          else memory_space
+      )
+    case MemorySpace():
+      return memory_space
+    case _:
+      raise ValueError(f"Invalid memory space: {memory_space!r}")
