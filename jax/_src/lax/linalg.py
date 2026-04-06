@@ -169,6 +169,10 @@ def eig(
   be used if the library can be found, and the input matrix is sufficiently
   large (>= 2048x2048).
 
+  Currently autodiff is not supporteed for non-symmetric eigenvectors, and
+  is only supported to first-order for non-symmetric eigenvalues. See
+  https://github.com/jax-ml/jax/issues/2748.
+
   Args:
     x: A batch of square matrices with shape ``[..., n, n]``.
     compute_left_eigenvectors: If true, the left eigenvectors will be computed.
