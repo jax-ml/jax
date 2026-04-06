@@ -117,7 +117,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_all_gather(self, mesh):
-    self.skipTest('TODO(mwhittaker): Enable when lowering to HLO works')
+    if not (jtu.device_under_test() == 'cpu' and jaxlib_extension_version >= 429):
+      self.skipTest('Requires jaxlib_extension_version >= 429 on CPU')
 
     @jax.jit
     @jax.shard_map(
@@ -138,7 +139,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_psum(self, mesh):
-    self.skipTest('TODO(mwhittaker): Enable when lowering to HLO works')
+    if not (jtu.device_under_test() == 'cpu' and jaxlib_extension_version >= 429):
+      self.skipTest('Requires jaxlib_extension_version >= 429 on CPU')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -153,7 +155,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_psum_scatter(self, mesh):
-    self.skipTest('TODO(mwhittaker): Enable when lowering to HLO works')
+    if not (jtu.device_under_test() == 'cpu' and jaxlib_extension_version >= 429):
+      self.skipTest('Requires jaxlib_extension_version >= 429 on CPU')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -169,7 +172,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_all_to_all(self, mesh):
-    self.skipTest('TODO(mwhittaker): Enable when lowering to HLO works')
+    if not (jtu.device_under_test() == 'cpu' and jaxlib_extension_version >= 429):
+      self.skipTest('Requires jaxlib_extension_version >= 429 on CPU')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -207,7 +211,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_ppermute(self, mesh):
-    self.skipTest('TODO(mwhittaker): Enable when lowering to HLO works')
+    if not (jtu.device_under_test() == 'cpu' and jaxlib_extension_version >= 429):
+      self.skipTest('Requires jaxlib_extension_version >= 429 on CPU')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
