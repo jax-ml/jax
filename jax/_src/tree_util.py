@@ -70,6 +70,18 @@ dispatch_registry = pytree.PyTreeRegistry(
 dispatch_registry.__module__ = __name__
 dispatch_registry.__name__ = "dispatch_registry"  # pyrefly: ignore[missing-attribute]
 
+tracing_registry = pytree.PyTreeRegistry()
+tracing_registry.__module__ = __name__
+tracing_registry.__name__ = "tracing_registry"  # pyrefly: ignore[missing-attribute]
+
+
+_all_registries = (
+    default_registry,
+    none_leaf_registry,
+    dispatch_registry,
+    tracing_registry,
+)
+
 
 @export
 def tree_flatten(tree: Any,
@@ -95,7 +107,7 @@ def tree_leaves(tree: Any,
 
 @export
 def tree_leaves_checked(treedef_expected: PyTreeDef, tree: Any) -> list[Leaf]:
-  flat_vals, treedef_actual = tree_flatten(tree)
+  flat_vals, treedef_actual = tracing_registry.flatten(tree)
   assert treedef_actual == treedef_expected
   return flat_vals
 
@@ -298,15 +310,10 @@ def register_pytree_node(
     >>> jax.jit(f)(m)
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  default_registry.register_node(
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
-  )
-  none_leaf_registry.register_node(
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
-  )
-  dispatch_registry.register_node(
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
-  )
+  for registry in _all_registries:
+    registry.register_node(
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+    )
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
 
@@ -1137,9 +1144,8 @@ def register_dataclass(
     data = tuple(getattr(x, name) for name in data_fields)
     return data, meta
 
-  default_registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
-  none_leaf_registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
-  dispatch_registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
+  for registry in _all_registries:
+    registry.register_dataclass_node(nodetype, list(data_fields), list(meta_fields))
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
   return nodetype
 
@@ -1355,7 +1361,9 @@ class FlatTree:
        wouldn't be able to recover it.
   """
   # `FlatTree` constructor is private. Use `FlatTree.flatten` instead
-  def __init__(self, vals, treedef: PyTreeDef, statics):
+  def __init__(self, vals, treedef: PyTreeDef, statics,
+               registry=tracing_registry):
+    self.registry = registry
     assert isinstance(treedef, pytree.PyTreeDef)
     if not isinstance(vals, tuple):
       vals = tuple(vals)
@@ -1365,7 +1373,8 @@ class FlatTree:
 
   def __eq__(self, other):
     return (isinstance(other, FlatTree) and self.vals == other.vals
-            and self.tree == other.tree and self.statics == other.statics)
+            and self.tree == other.tree and self.statics == other.statics
+            and self.registry is other.registry)
 
   def __hash__(self):
     return hash((self.vals, self.tree))
@@ -1396,7 +1405,7 @@ class FlatTree:
   # TODO: add other helpers like map3, zip, unzip3 etc. as needed
 
   @staticmethod
-  def pack(tree):
+  def pack(tree, registry=tracing_registry):
     # We could generalize this to arbitrary pytrees of FlatTree but tuples/dicts
     # are sufficient for now.
     if isinstance(tree, FlatTree):
@@ -1406,15 +1415,16 @@ class FlatTree:
       trees = []
       staticss = []
       for child_tree in tree:
-        child = FlatTree.pack(child_tree)
+        child = FlatTree.pack(child_tree, registry=registry)
         vals.extend(child.vals)
         trees.append(child.tree)
         staticss.append(child.statics)
-      return FlatTree(vals, treedef_tuple(trees), tuple(staticss))
+      return FlatTree(vals, pytree.treedef_tuple(registry, trees),
+                      tuple(staticss), registry=registry)
     elif isinstance(tree, dict):
       # only empty case handled for now
       if tree == {}:
-        return FlatTree.flatten({})
+        return FlatTree.flatten({}, registry=registry)
       else:
         assert False
     else:
@@ -1430,7 +1440,8 @@ class FlatTree:
     for i, tree in enumerate(trees):
       statics = False if isinstance(self.statics, bool) else self.statics[i]
       new_offset = offset + tree.num_leaves
-      children.append(FlatTree(self.vals[offset:new_offset], tree, statics))
+      children.append(FlatTree(self.vals[offset:new_offset], tree, statics,
+                      registry=self.registry))
       offset = new_offset
     return tuple(children)
 
@@ -1442,18 +1453,18 @@ class FlatTree:
     return x, aux.unflatten().val
 
   @staticmethod
-  def flatten(tree: PyTree, is_leaf=None) -> FlatTree:
-    vals, tree = tree_flatten(tree, is_leaf)
-    return FlatTree(vals, tree, False)
+  def flatten(tree: PyTree, is_leaf=None, registry=tracing_registry) -> FlatTree:
+    vals, tree = registry.flatten(tree, is_leaf)
+    return FlatTree(vals, tree, False, registry=registry)
 
   @staticmethod
-  def flatten_args(*arg_trees: PyTree) -> FlatTree:
-    return FlatTree.flatten((arg_trees, {}))
+  def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> FlatTree:
+    return FlatTree.flatten((arg_trees, {}), registry=registry)
 
   @staticmethod
-  def flatten_static_argnums(args, static_argnums):
+  def flatten_static_argnums(args, static_argnums, registry=tracing_registry):
     if not static_argnums:
-      return FlatTree.flatten(args)
+      return FlatTree.flatten(args, registry=registry)
     else:
       assert isinstance(args, tuple)
       num_args = len(args)
@@ -1461,40 +1472,44 @@ class FlatTree:
       statics = tuple(i in static_argnums for i, _ in enumerate(args))
       tree_with_statics = tuple(
           Static(x) if static else x for static, x in zip(statics, args))
-      vals, treedef = tree_flatten(tree_with_statics)
-      return FlatTree(vals, treedef, statics=statics)
+      vals, treedef = registry.flatten(tree_with_statics)
+      return FlatTree(vals, treedef, statics=statics, registry=registry)
 
   @staticmethod
-  def flatten_static_argnames(kwargs, static_argnames):
+  def flatten_static_argnames(kwargs, static_argnames,
+                              registry=tracing_registry):
     if not static_argnames:
-      return FlatTree.flatten(kwargs)
+      return FlatTree.flatten(kwargs, registry=registry)
     else:
       assert isinstance(kwargs, dict)
       statics = {k : k in static_argnames for k, _ in kwargs.items()}
       tree_with_statics = {k : Static(v) if statics[k] else v
                            for k, v in kwargs.items()}
-      vals, treedef = tree_flatten(tree_with_statics)
-      return FlatTree(vals, treedef, statics=statics)
+      vals, treedef = registry.flatten(tree_with_statics)
+      return FlatTree(vals, treedef, statics=statics, registry=registry)
 
   @staticmethod
   def flatten_static_argnums_argnames(
-      args, kwargs, static_argnums, static_argnames):
+      args, kwargs, static_argnums, static_argnames,
+      registry=tracing_registry):
     return FlatTree.pack((
-        FlatTree.flatten_static_argnums(args, static_argnums),
-        FlatTree.flatten_static_argnames(kwargs, static_argnames)))
+        FlatTree.flatten_static_argnums(args, static_argnums,
+                                        registry=registry),
+        FlatTree.flatten_static_argnames(kwargs, static_argnames,
+                                         registry=registry)),
+        registry=registry)
 
   def unflatten(self) -> PyTree:
-    pytree = tree_unflatten(self.tree, self.vals)
+    pytree = self.tree.unflatten(self.vals)
     return unwrap_statics(pytree, self.statics)
 
   @property
   def tree_without_statics(self):
-    # hardcodes default_registry because it's used implicitly in self.flatten
-    return filter_statics_from_treedef(default_registry, self.tree, self.statics)
+    return filter_statics_from_treedef(self.registry, self.tree, self.statics)
 
   def update(self, new_vals) -> FlatTree:
     # `new_vals` can be a generator because `FlatTree` forces it to a tuple
-    new = FlatTree(new_vals, self.tree, self.statics)
+    new = FlatTree(new_vals, self.tree, self.statics, registry=self.registry)
     assert len(self.vals) == len(new.vals)
     return new
 
@@ -1502,7 +1517,7 @@ class FlatTree:
   def paths(self) -> FlatTree:
     # TODO(dougalm): find a way to do this without roundtripping
     try:
-      paths, _ = unzip2(tree_leaves_with_path(self.unflatten()))
+      paths, _ = unzip2(self.registry.flatten_with_path(self.unflatten())[0])
       assert len(paths) == len(self.vals)
       return self.update(paths)
     except:

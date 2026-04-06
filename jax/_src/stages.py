@@ -51,7 +51,7 @@ from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.tree_util import tree_structure, tree_unflatten
+from jax._src.tree_util import tree_unflatten
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -335,7 +335,7 @@ class Stage:
   @property
   def in_tree(self) -> tree_util.PyTreeDef:
     """Tree structure of the pair (positional arguments, keyword arguments)."""
-    return tree_structure(self.args_info)
+    return tree_util.tracing_registry.flatten(self.args_info)[1]
 
   @property
   def in_avals(self):
@@ -505,7 +505,7 @@ def lojax_expand_params(jaxpr, params):
 
 def lojax_pytree(hi_avals, tree):
   lo_avals = [t.lo_ty() for t in hi_avals]
-  return tree_structure(tree_unflatten(tree, lo_avals))
+  return tree_util.tracing_registry.flatten(tree_unflatten(tree, lo_avals))[1]
 
 
 class LoJax:
@@ -820,17 +820,17 @@ class Compiled(Stage):
           f"keyword arguments, but called with keyword arguments: {kws}")
 
     if params.is_high:
-      hi_args_flat, in_hi_tree = tree_util.tree_flatten((args, kwargs))
+      hi_args_flat, hi_tree = tree_util.tracing_registry.flatten((args, kwargs))
       _in_hi_tree, final_qdds = params.in_types
       # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
       args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                  else a.lower_val(x) for x in hi_args_flat]
-      args_flat, in_tree = \
-          tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
+                   else a.lower_val(x) for x in hi_args_flat]
+      args_flat, in_tree = tree_util.tracing_registry.flatten(
+          tree_util.tree_unflatten(hi_tree, args_flat))
     else:
       hi_args_flat = []
       final_qdds = None
-      args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+      args_flat, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
 
     # TODO(mattjj): improve wrong-number-of-args error
     if in_tree != params.in_tree:

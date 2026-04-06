@@ -47,7 +47,7 @@ from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, Partial)
+    tree_map, tree_leaves, Partial, tracing_registry)
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -374,7 +374,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
-    args_flat, in_tree = tree_flatten((args, kwargs))
+    args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     api_util.check_no_transformed_refs_args(lambda: debug, args_flat)
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)

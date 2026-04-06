@@ -295,11 +295,10 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
                                                    unique_named_shardings)
 
   fun_name = exp.FunctionName().decode("utf-8")
-  in_tree = tree_util.tree_structure(
+  _, in_tree = tree_util.tracing_registry.flatten(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
-
-  out_tree = tree_util.tree_structure(
+  _, out_tree = tree_util.tracing_registry.flatten(
       _deserialize_pytreedef_to_pytree(exp.OutTree())
   )
 

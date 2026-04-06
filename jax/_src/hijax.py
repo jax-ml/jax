@@ -39,8 +39,8 @@ from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static, tree_structure, tree_map_with_path,
-    keystr)
+    broadcast_prefix, register_static, tree_map_with_path, keystr,
+    tracing_registry)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -385,8 +385,8 @@ class VJPHiPrimitive:
         type(self).vjp_bwd_retval is not VJPHiPrimitive.vjp_bwd_retval):
       raise AttributeError(f"subclass {type(self)} should not override both "
                            "`vjp_bwd` and `vjp_bwd_retval`")
-    self.in_avals_flat, self.in_tree = tree_flatten(self.in_avals)
-    self.out_avals_flat, self.out_tree = tree_flatten(self.out_aval)
+    self.in_avals_flat, self.in_tree = tracing_registry.flatten(self.in_avals)
+    self.out_avals_flat, self.out_tree = tracing_registry.flatten(self.out_aval)
     self.__dict__.update(self.params)
     self.check(*self.in_avals)
 
@@ -700,7 +700,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     if config.mutable_array_checks.value:
       _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
                                self.out_tree.num_leaves)
-    if ((tree := tree_structure(out)) != self.out_tree):
+    if ((tree := tracing_registry.flatten(out)[1]) != self.out_tree):
       raise TypeError(_vjp_primal_fwd_tree_mismatch_err(self, tree))
     tree_map_with_path(_vjp_fwd_aval_mismatch_err, self.out_aval, out)
     if self.symbolic_zeros:

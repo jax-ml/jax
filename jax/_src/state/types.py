@@ -29,6 +29,7 @@ from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 import numpy as np
@@ -327,6 +328,15 @@ def disallow_transformed_ref_avals(_):
   raise TransformedRefAvalError("TransformedRefs cannot be abstractified.")
 
 core.pytype_aval_mappings[TransformedRef] = disallow_transformed_ref_avals
+
+# We register the TransformedRefs with the tracing registry here, but not other
+# registries. This allows us to treat TransformedRefs as pytree nodes
+# internally, but as leaves in user code.
+unflatten_func = lambda meta, data: TransformedRef(*data)
+flatten_func = lambda x: ((x.ref, x.transforms), None)
+tracing_registry.register_dataclass_node(TransformedRef,
+                                         ["ref", "transforms"], [])
+_registry[TransformedRef] = _RegistryEntry(flatten_func, unflatten_func)
 
 
 def transform_type(

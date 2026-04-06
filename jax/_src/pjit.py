@@ -68,7 +68,7 @@ from jax._src.sharding_impls import (
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
-from jax._src.state.types import RefEffect, TransformedRefAvalError
+from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_structure, treedef_children,
@@ -614,7 +614,7 @@ def _infer_params(
       signature=ji.fun_signature)
   arg_signature, dynargs = jax_jit.parse_arguments(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-      ji.static_argnames, tree_util.default_registry)
+      ji.static_argnames, tree_util.tracing_registry)
   avals = _infer_input_type(fun, dbg_fn, dynargs)
   entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
 
@@ -643,14 +643,6 @@ def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}. Got {type(x)} with value {x}"
     ) from None
-  except TransformedRefAvalError:
-    dbg = dbg_fn()
-    raise TypeError(
-      f"Error interpreting a TransformedRef argument to {fun} as an abstract "
-      "array. TransformedRefs are not allowed in this context, but got a "
-      "TransformedRef with name "
-      f"{dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} passed "
-      "to jax.jit.") from None
   except TypeError:
     dbg = dbg_fn()
     arg_description = f"path {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"

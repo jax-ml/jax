@@ -3606,8 +3606,19 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
-  val, _ = core.standard_insert_pvary(val, x)
+  val, _ = full_like_insert_pvary(val, x)
   return val
+
+
+def full_like_insert_pvary(val, x):
+  from jax._src.state.types import TransformedRef  # type: ignore
+  if isinstance(x, TransformedRef):
+    all_varying = frozenset.union(*[
+        typeof(x).mat.varying for x in tree_util.FlatTree.flatten(x).vals
+    ])
+    return core.pvary(val, all_varying), x
+  else:
+    return core.standard_insert_pvary(val, x)
 
 
 def collapse(operand: Array, start_dimension: int,
