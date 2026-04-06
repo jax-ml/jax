@@ -304,6 +304,7 @@ pytype_strict_library(
     srcs = ["basearray.py"],
     pytype_srcs = ["basearray.pyi"],
     deps = [
+        ":deprecations",
         ":named_sharding",
         ":partition_spec",
         ":sharding",

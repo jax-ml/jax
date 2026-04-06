@@ -889,6 +889,13 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertIn('nreduced', str(x.sharding))
     self.assertIn('Array(shape=(), dtype=float32, sharding=', str(x))
 
+  @unittest.skipIf(jtu.numpy_version() < (2, 4, 0), "__numpy_dtype__ protocol requires NumPy v2.4 or later")
+  def test_deprecated_dtype_conversion(self):
+    x = jnp.arange(4)
+    msg = "Implicit conversion of an array to a dtype is deprecated"
+    with self.assertDeprecationWarnsOrRaises("jax-array-numpy-dtype", msg):
+      np.dtype(x)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
