@@ -1080,6 +1080,7 @@ pytype_strict_library(
     visibility = ["//jax:internal"] + jax_visibility("pretty_printer"),
     deps = [
         ":config",
+        ":util",
         "//jax/_src/lib",
     ],
 )

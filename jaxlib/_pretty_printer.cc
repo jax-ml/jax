@@ -665,21 +665,7 @@ NB_MODULE(_pretty_printer, m) {
                  std::move(self), std::move(other)});
            })
       .def("_format", &Format, nb::arg("width"), nb::arg("use_color"),
-           nb::arg("annotation_prefix"), nb::arg("source_map").none())
-      .def(
-          "format",
-          [](Doc* self, int width, std::optional<bool> use_color,
-             std::string annotation_prefix,
-             std::optional<nb::list> source_map) -> nb::str {
-            // This method is monkey-patched in Python.
-            PyErr_SetString(PyExc_NotImplementedError,
-                            "format is not implemented for Doc");
-            throw nb::python_error();
-          },
-          nb::arg("width") = 80, nb::kw_only(),
-          nb::arg("use_color") = std::nullopt,
-          nb::arg("annotation_prefix") = std::string(" # "),
-          nb::arg("source_map") = std::nullopt);
+           nb::arg("annotation_prefix"), nb::arg("source_map").none());
 
   nb::class_<NilDoc, Doc>(m, "NilDoc");
   nb::class_<TextDoc, Doc>(m, "TextDoc");

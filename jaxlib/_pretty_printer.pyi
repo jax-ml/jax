@@ -51,14 +51,6 @@ class Doc:
       annotation_prefix: str,
       source_map: list | None,
   ) -> str: ...
-  def format(
-      self,
-      width: int = ...,
-      *,
-      use_color: bool | None = ...,
-      annotation_prefix: str = ...,
-      source_map: list | None = ...,
-  ) -> str: ...
 
 class NilDoc(Doc):
   pass
