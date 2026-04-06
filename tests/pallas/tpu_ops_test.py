@@ -974,6 +974,19 @@ class OpsTest(ptu.PallasTPUTest):
         jax.nn.sigmoid(x),
     )
 
+  def test_erf(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/36149.
+    x = jnp.zeros((32,), dtype=jnp.float32)
+
+    @functools.partial(
+      self.pallas_call,
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jax.scipy.special.erf(x_ref[...])
+
+    _ = jax.jit(kernel).lower(x)
+
   @parameterized.parameters(jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32)
   def test_unsigned_dtype_dot_raises(self, dtype):
     k = 256

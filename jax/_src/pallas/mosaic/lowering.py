@@ -2988,14 +2988,14 @@ def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 @register_lowering_rule(lax.rsqrt_p)
-def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.rsqrt(x)
 
 
 @register_lowering_rule(lax.sqrt_p)
-def _sqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _sqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.sqrt(x)
@@ -3009,7 +3009,7 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(lax.exp_p, kernel_types=[*tpu_core.CoreType])
-def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.exp(x)
@@ -3043,7 +3043,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, *, y):
 
 
 @register_lowering_rule(lax.exp2_p, ensure_mlir_values=False)
-def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 26):
@@ -3057,7 +3057,7 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
 
 # TODO(b/411034003): use sigshift instead of exp for better numerics.
 @register_lowering_rule(lax.logistic_p)
-def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   neg_x = arith.negf(x)
@@ -3075,28 +3075,28 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
 
 
 @register_lowering_rule(lax.sin_p)
-def _sin_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _sin_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.sin(x)
 
 
 @register_lowering_rule(lax.cos_p)
-def _cos_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _cos_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.cos(x)
 
 
 @register_lowering_rule(lax.tan_p)
-def _tan_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _tan_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.tan(x)
 
 
 @register_lowering_rule(lax.atan2_p, ensure_mlir_values=False)
-def _atan2_lowering_rule(ctx: LoweringRuleContext, x, y, accuracy):
+def _atan2_lowering_rule(ctx: LoweringRuleContext, x, y, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
 
@@ -3112,28 +3112,28 @@ def _atan2_lowering_rule(ctx: LoweringRuleContext, x, y, accuracy):
 
 
 @register_lowering_rule(lax.tanh_p)
-def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.tanh(x)
 
 
 @register_lowering_rule(lax.log_p)
-def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.log(x)
 
 
 @register_lowering_rule(lax.log1p_p)
-def _log1p_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _log1p_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.log1p(x)
 
 
 @register_lowering_rule(lax.erf_p)
-def _erf_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+def _erf_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.erf(x)
