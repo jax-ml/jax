@@ -45,7 +45,7 @@ spec:
                 cloud.google.com/gke-tpu-topology: 2x4
               containers:
                 - name: jax-mnist
-                  image: gcr.io/fbongiovanni-gke-dev/jax-mnist:1775272672  # <-- Replace with your image
+                  image: <YOUR_IMAGE>  # <-- Replace with your image
                   args: ["--epochs", "5", "--batch-size", "128"]
                   ports:
                     - containerPort: 8471  # JAX distributed coordinator
