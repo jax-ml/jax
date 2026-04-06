@@ -882,24 +882,14 @@ absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
         "GetOnDeviceSizeInBytes() is not yet supported for arrays with no "
         "addressable devices");
   }
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
-                      layout());
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
-                      ifrt::ToPrimitiveType(ifrt_array->dtype()));
-  if (sharding().type().is(SingleDeviceSharding::type())) {
-    // An array with `SingleDeviceSharding` takes a fast path. We do not need to
-    // compute a shard shape separately, and the array aval is often `None`.
-    xla::Shape shard_shape = xla::ShapeUtil::MakeShape(element_type, shape());
-    *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
-    return xla::ShapeUtil::ArraySize(shard_shape);
+  TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, ifrt_array->ByteSize());
+  if (!byte_size.has_value()) {
+    return xla::Unimplemented(
+        "GetOnDeviceSizeInBytes() is not supported for arrays with no defined "
+        "byte size");
   }
-  auto shard_shape_dims = nb::cast<std::vector<int64_t>>(
-      sharding().attr("shard_shape")(aval().attr("shape")));
-  xla::Shape shard_shape =
-      xla::ShapeUtil::MakeShape(element_type, shard_shape_dims);
-  *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
-  return xla::ShapeUtil::ArraySize(shard_shape) *
-         nb::len(nb::object(sharding().attr("device_set")));
+  return static_cast<size_t>(*byte_size *
+                             ifrt_array->sharding().devices()->size());
 }
 
 absl::Status PyArray::BlockUntilResultStatusIsReady() {
