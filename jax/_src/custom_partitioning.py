@@ -618,7 +618,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  result_types = [mlir.aval_to_ir_type(s) for s in call.out_avals]
+  result_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, call.out_avals))
   out = hlo.CustomCallOp(
       result_types,
       list(values),
@@ -630,7 +630,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       operand_layouts=None,
       result_layouts=None)
   if sharding_rule is not None:
-    value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
+    value_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, call.in_avals))
     if callable(sharding_rule):
       sharding_rule = sharding_rule(*static_args, mesh, value_types, result_types)
       if isinstance(sharding_rule, (list, tuple)) and len(sharding_rule) == 2:

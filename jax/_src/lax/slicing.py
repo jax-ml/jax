@@ -2345,7 +2345,7 @@ def _gather_lower(ctx, operand, indices, *,
     # return hlo.DynamicGatherOp(
     #     operand, indices, mlir.shape_tensor(slice_sizes),
     #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
-    results = mlir.flatten_ir_types([mlir.aval_to_ir_type(aval_out)])
+    results = mlir.flatten_ir_types(mlir.aval_to_ir_types(aval_out))
     operands = [operand, indices, slice_sizes]
     attributes: dict[str, ir.Attribute] = {
         "dimension_numbers": dnums,

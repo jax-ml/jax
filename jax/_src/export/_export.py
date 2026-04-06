@@ -1660,7 +1660,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                     new_aval: core.AbstractValue) -> ir.Value:
     new_ir_type = mlir.aval_to_ir_type(new_aval)
     if x.type != new_ir_type:
-      return hlo.convert(mlir.aval_to_ir_type(new_aval), x)
+      return hlo.convert(new_ir_type, x)
     else:
       return x
 

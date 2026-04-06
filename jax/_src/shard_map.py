@@ -970,9 +970,10 @@ def _shard_map_lowering_shardy(
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   num_const_args = len(const_args)
-  const_arg_values = tuple(
-      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
-      for c, aval in const_args_and_avals)
+  const_arg_values = mlir.flatten_ir_values(
+      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals
+  )
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = [
@@ -993,19 +994,19 @@ def _shard_map_lowering_shardy(
   out_shardings = sharding_impls.SdyArrayList(out_shardings).build()
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
-                  list(map(mlir.aval_to_ir_type, ctx.avals_out)))
+                  mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)))
 
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
       output_types, mlir.flatten_ir_values(args), in_shardings, out_shardings,
       sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
 
-  dim_var_types = mlir.flatten_ir_types(
-    [mlir.aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))]
-  ) * num_dim_vars
+  dim_var_types = [
+    mlir.aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))
+  ] * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
-  const_arg_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_type, const_avals))
-  in_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_type, in_avals_))
+  const_arg_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, const_avals))
+  in_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, in_avals_))
   block = ir.Block.create_at_start(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))

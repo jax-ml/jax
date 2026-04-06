@@ -66,9 +66,10 @@ def attr_get(x):
 def _xla_metadata_call_lowering(ctx, *args, jaxpr, **meta):
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_avals = unzip2(const_args_and_avals)
-  const_arg_values = [
-      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
-      for c, aval in const_args_and_avals]
+  const_arg_values = mlir.flatten_ir_values(
+      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals
+  )
   in_avals = (*const_avals, *ctx.avals_in)
   func_op, output_types, effects = mlir.lower_called_computation(
       "xla_metadata_call", jaxpr, ctx.module_context, len(const_args), in_avals,

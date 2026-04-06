@@ -1377,7 +1377,7 @@ def _householder_product_lowering(ctx, a, taus):
     result_shapes = None
   op = mlir.custom_call(
       "ProductOfElementaryHouseholderReflectors",
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(aval_out)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(aval_out)),
       operands=[a, taus],
       api_version=1,
       result_shapes=result_shapes)
@@ -1704,9 +1704,9 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
 
 def _lu_tpu_lowering_rule(ctx, operand):
   result_types = mlir.flatten_ir_types([
-      mlir.aval_to_ir_type(ctx.avals_out[0]),
-      mlir.aval_to_ir_type(ctx.avals_out[1]),
-      mlir.aval_to_ir_type(ctx.avals_out[2]),
+      mlir.aval_to_ir_types(ctx.avals_out[0]),
+      mlir.aval_to_ir_types(ctx.avals_out[1]),
+      mlir.aval_to_ir_types(ctx.avals_out[2]),
   ])
   if any(not is_constant_shape(a.shape) for a in ctx.avals_out):
     result_shapes = [
@@ -1909,7 +1909,7 @@ def _geqrf_dtype_rule(dtype):
 def _geqrf_lowering_rule(ctx, operand):
   ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
-  result_types = mlir.flatten_ir_types([ts_type, r_type])
+  result_types = [ts_type, r_type]
   if any(not is_constant_shape(aval_out.shape)
          for aval_out in ctx.avals_out):
     result_shapes = [
@@ -3074,8 +3074,8 @@ def _build_sdy_sharding_rule(num_batch_dims, avals_in, avals_out):
   sdy_sharding_rule = str_to_sdy_sharding_rule(f"{lhs} -> {rhs}")
   return sdy_sharding_rule_to_mlir(
       sdy_sharding_rule,
-      [mlir.aval_to_ir_type(a) for a in avals_in],
-      [mlir.aval_to_ir_type(a) for a in avals_out])
+      mlir.flatten_ir_types(map(mlir.aval_to_ir_types, avals_in)),
+      mlir.flatten_ir_types(map(mlir.aval_to_ir_types, avals_out)))
 
 def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
                          operand_output_aliases=None, column_major=True,
