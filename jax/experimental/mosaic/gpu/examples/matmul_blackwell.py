@@ -300,6 +300,7 @@ def main(unused_argv):
       with mlir.make_ir_context(), ir.Location.unknown():
         f = build_kernel(m, k, n, jnp.float16, **kwargs)
         _, runtime = profiler.measure(f)(a, b)
+        assert runtime is not None
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise
