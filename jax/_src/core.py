@@ -2212,7 +2212,7 @@ def get_sharding(sharding, shape):
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def get_mat(mat, mesh):
   if mesh.empty:
-    assert mat.empty(), mat
+    assert mat.empty, mat
     return mat
 
   axis_env = get_axis_env()
@@ -2275,6 +2275,7 @@ class ManualAxisType:
   def to_ct_mat(self):
     return self.update(unreduced=self.reduced, reduced=self.unreduced)
 
+  @property
   def empty(self):
     return not self.varying and not self.unreduced and not self.reduced
 

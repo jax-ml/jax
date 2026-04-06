@@ -446,31 +446,31 @@ def _einsum(
     )
     output_weak_type = False
 
-  def sum(x, axes, out_sharding):
+  def sum(x, axes, out_s):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
     return lax.reduce(
         x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
-        axes, out_sharding)
+        axes, out_s)
 
-  def sum_uniques(operand, names, uniques, out_sharding=None):
+  def sum_uniques(operand, names, uniques, out_s=None):
     if uniques:
       axes = [names.index(name) for name in uniques]
-      operand = sum(operand, axes, out_sharding)
+      operand = sum(operand, axes, out_s)
       names = _removechars(names, uniques)
     return operand, names
 
-  def sum_repeats(operand, names, counts, keep_names, out_sharding=None):
+  def sum_repeats(operand, names, counts, keep_names, out_s=None):
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
         eye = lax._delta(np.dtype('bool'), operand.shape, axes)
         operand = lax.select(eye, operand, lax.full_like(operand, 0))
         if name not in keep_names:
-          operand = sum(operand, axes, out_sharding)
+          operand = sum(operand, axes, out_s)
           names = names.replace(name, '')
         else:
-          operand = sum(operand, axes[:-1], out_sharding)
+          operand = sum(operand, axes[:-1], out_s)
           names = names.replace(name, '', count - 1)
     return operand, names
 
