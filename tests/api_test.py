@@ -1191,7 +1191,7 @@ class JitTest(jtu.BufferDonationTestCase):
     for obj in [lowered, compiled]:
       self.assertEqual(
           obj.in_avals,
-          ((core.ShapedArray([], expected_dtype, weak_type=True),), {}))
+          ((core.ShapedArray((), expected_dtype, weak_type=True),), {}))
       self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
 
   def test_jit_lower_duck_typing(self):

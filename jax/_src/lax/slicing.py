@@ -1368,7 +1368,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     raise TypeError(msg.format(start_indices, limit_indices))
   diff = tuple(map(operator.sub, limit_indices, start_indices))
   if strides is None or tuple(strides) == (1,) * len(operand.shape):
-    return diff
+    return tuple(core.canonicalize_dim(d) for d in diff)
 
   lax._check_shapelike("slice", "strides", strides)
   if len(strides) != operand.ndim:
@@ -1378,7 +1378,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   if not all(s >= 0 for s in strides):
     msg = "slice strides must be positive, got {}"
     raise TypeError(msg.format(strides))
-  return tuple(core.stride_dim(d, window_size=1, window_stride=s)
+  return tuple(core.canonicalize_dim(core.stride_dim(d, window_size=1, window_stride=s))
                for d, s in zip(diff, strides))
 
 def _get_sub_spec_size(mesh, sub_spec):
@@ -1486,7 +1486,7 @@ def _slice_impl(x, start_indices, limit_indices, strides):
     return dispatch.apply_primitive(
       slice_p, x, start_indices=start_indices,
       limit_indices=limit_indices, strides=strides)
-  slice_sizes = tuple(np.array(limit_indices) - np.array(start_indices))
+  slice_sizes = tuple(map(int, np.array(limit_indices) - np.array(start_indices)))
   return dispatch.apply_primitive(dynamic_slice_p, x, *start_indices,
                                   slice_sizes=slice_sizes)
 

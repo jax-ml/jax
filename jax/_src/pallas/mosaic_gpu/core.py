@@ -1161,7 +1161,7 @@ class Barrier:
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers],
+        (self.num_barriers,),
         BarrierType(
             self.num_arrivals, orders_tensor_core=self.orders_tensor_core
         ),
@@ -1187,7 +1187,7 @@ class ClusterBarrier:
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers],
+        (self.num_barriers,),
         ClusterBarrierType(
             self.collective_axes, self.num_arrivals, self.orders_tensor_core
         ),

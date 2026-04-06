@@ -245,10 +245,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
         f"reduction dimension {reduction_dimension} in operand"
         f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
         " should be `None`.")
-  return (operand.update(shape=dims, dtype=operand.dtype,
+  return (operand.update(shape=tuple(dims), dtype=operand.dtype,
                          weak_type=operand.weak_type,
                          manual_axis_type=operand.mat, sharding=operand_s),
-          operand.update(shape=dims, dtype=np.dtype(np.int32),
+          operand.update(shape=tuple(dims), dtype=np.dtype(np.int32),
                          manual_axis_type=operand.mat, sharding=operand_s))
 
 def _get_init_val_literal(op_type, is_max_k):

@@ -980,12 +980,12 @@ def lower_jaxpr_into_module(
     # Now we can use jax to compute the dynamic shape graph
 
     if static_grid is not None:
-      grid_vars = [
+      grid_vars = tuple(
           _mosaic_lowering_dynamic_shape_env.placeholder_to_dim_expr.get(g, g)
           for g in static_grid
-      ]
+      )
     else:
-      grid_vars = []
+      grid_vars = ()
 
     invars = cast(
         list[jax_core.ShapedArray], [invar.aval for invar in jaxpr.invars]

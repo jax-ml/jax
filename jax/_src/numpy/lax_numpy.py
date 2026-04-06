@@ -3124,8 +3124,7 @@ def _split(op: str, ary: ArrayLike,
       sizes = [(part_size + 1)] * r + [part_size] * (num_sections - r)
     else:
       raise ValueError(f"array split does not result in an equal division: rest is {r}")
-  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)
-           for i in sizes]
+  sizes = [core.canonicalize_dim(i) for i in sizes]
   return list(lax.split(ary, sizes, axis=axis))
 
 

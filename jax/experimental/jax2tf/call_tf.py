@@ -453,7 +453,8 @@ def _call_tf_abstract_eval(
         for s in concrete_function_flat_tf.output_shapes):
     avals_from_tf = tuple(
         # We convert to JAX type, and canonicalize to 32-bit if necessary
-        core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
+        core.ShapedArray(
+          tuple(map(int, shape)), jax2tf_internal._to_jax_dtype(dtype))
         for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
                                 concrete_function_flat_tf.output_shapes))
     return avals_from_tf, effs
@@ -636,7 +637,7 @@ def _call_tf_lowering(
     jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
     if res_dtype != jax_res_dtype:
       op = hlo.ConvertOp(
-          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype)),
+          mlir.aval_to_ir_type(core.ShapedArray(tuple(map(int, res_type.shape)), jax_res_dtype)),
           op,
       ).result
     outputs.append(op)

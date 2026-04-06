@@ -215,7 +215,7 @@ class MemorySpace(enum.Enum):
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
-    return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
+    return self.from_type(jax_core.ShapedArray(tuple(int(d) for d in shape), dtype))
 
   def __matmul__(self, other, /):
     if not isinstance(other, CoreType):
@@ -245,7 +245,7 @@ class CoreMemorySpace:
         )
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
-    return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
+    return MemoryRef(jax_core.ShapedArray(tuple(int(d) for d in shape), dtype), self)
 
   def __str__(self) -> str:
     return f"{self.memory_space}@{self.core_type}"
@@ -277,8 +277,9 @@ class SemaphoreType(enum.Enum):
     else:
       return pallas_core.Semaphore()
 
-  def __call__(self, shape: tuple[int, ...]):
-    return MemoryRef(jax_core.ShapedArray(shape, self.dtype), MemorySpace.SEMAPHORE)
+  def __call__(self, shape: tuple[int, ...] | int):
+    shape = (shape,) if isinstance(shape, int) else shape
+    return MemoryRef(jax_core.ShapedArray(tuple(int(d) for d in shape), self.dtype), MemorySpace.SEMAPHORE)
 
   def __matmul__(self, other, /):
     if not isinstance(other, CoreType):

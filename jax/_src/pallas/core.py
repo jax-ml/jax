@@ -1770,6 +1770,7 @@ _out_shape_to_aval_mapping: dict[
 def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
   match out_shape:
     case jax_core.ShapeDtypeStruct():
+      shape = tuple(jax_core.canonicalize_dim(d) for d in out_shape.shape)
       if config._check_vma.value:
         if out_shape.manual_axis_type is None:
           raise ValueError(
@@ -1779,11 +1780,11 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
               " `manual_axis_type` argument of `jax.ShapeDtypeStruct` or set"
               " `check_vma=False` on `jax.shard_map`.")
         return jax_core.ShapedArray(
-            shape=out_shape.shape, dtype=out_shape.dtype,
+            shape=shape, dtype=out_shape.dtype,
             sharding=jax_core.get_cur_mesh_sharding(),
             manual_axis_type=out_shape.manual_axis_type)
       return jax_core.ShapedArray(
-          shape=out_shape.shape, dtype=out_shape.dtype,
+          shape=shape, dtype=out_shape.dtype,
           sharding=jax_core.get_cur_mesh_sharding())
     case MemoryRef():
       return out_shape.get_array_aval()
@@ -1796,7 +1797,8 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
         )
       if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
         raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
-      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
+      shape = tuple(jax_core.canonicalize_dim(d) for d in out_shape.shape)
+      return jax_core.ShapedArray(shape=shape, dtype=out_shape.dtype)
 
 
 def _core_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):

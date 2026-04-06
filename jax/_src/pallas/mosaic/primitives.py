@@ -79,7 +79,7 @@ def _bitcast_abstract_eval(x, *, ty):
   src_bitwidth = dtypes.itemsize_bits(x.dtype)
   dst_bitwidth = dtypes.itemsize_bits(ty)
   shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
-  return jax_core.ShapedArray(shape, ty)
+  return jax_core.ShapedArray(tuple(shape), ty)
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
