@@ -2449,13 +2449,26 @@ def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, *, scan_env=0):
   lo_jaxpr, _, lo_consts = trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
   return core.ClosedJaxpr(lo_jaxpr, lo_consts)
 
+def lo_vals(a, x):
+  if not isinstance(a, core.AvalQDD):
+    return a.lower_val(x)  # type: ignore
+  elif a.aval.is_writer:  # type: ignore
+    if hasattr(x, '__qdd__'):  # already preallocated, filter
+      return a.aval.filter(x.__qdd__, a.qdd, x)
+    else:  # must preallocate
+      return a.aval.preallocate(a.qdd)
+  else:
+    return a.aval.read_loval(a.qdd, x)  # type: ignore
+
 def htlv(a: AbstractValue | core.AvalQDD, lo_vals):
   if not a.has_qdd:
     assert isinstance(a, AbstractValue)
     return a.raise_val(*lo_vals)
   assert isinstance(a, core.AvalQDD)
   if a.aval.is_writer:
-    return a.aval.new_empty(a.qdd, *lo_vals)  # type: ignore
+    w = a.aval.new_empty(a.qdd, *lo_vals)  # type: ignore
+    w.__qdd__ = a.aval.empty_qdd()
+    return w
   else:
     return a.new_from_loval(*lo_vals)  # type: ignore
 

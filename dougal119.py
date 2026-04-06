@@ -19,11 +19,9 @@ def log_append(log, key, val):
 
 class Log:
   _dct: dict  # dict[str, list[PyTree[Array]]]
-  _cursors: dict  # dict[str, int]
 
   def __init__(self):
     self._dct = {}
-    self._cursors = {}
 
   def cur_qdd(self):
     return LogQDD(FlatTree.flatten(self._dct).map(core.typeof))
@@ -51,18 +49,19 @@ class LogTy(MutableHiType):
   def preallocate(self, state: LogQDD) -> list[LoVal]:
     return [jax.lax.empty(a.shape, a.dtype) for a in state.ft]
 
-  def filter(self, state: LogQDD, log: Log) -> list[LoVal]:
+  def filter(self, cur_qdd: LogQDD, update_qdd: LogQDD, log: Log) -> list[LoVal]:
     dct = {}
-    for k, v in state.ft.unflatten().items():
-      dct[k] = log._dct[k][log._cursors[k]:log._cursors[k]+len(v)]
+    qdd = cur_qdd.ft.unflatten()
+    for k, v in update_qdd.ft.unflatten().items():
+      i = len(qdd.get(k, []))
+      dct[k] = log._dct[k][i:i+len(v)]
     return list(FlatTree.flatten(dct))
 
-  def new_empty(self, state, *lo_vals) -> Log:  # writer => no new_from_loval
+  def new_empty(self, state, *lo_vals) -> Log:
     log = Log()
     update_dct = state.ft.update(lo_vals).unflatten()
     for k, v in update_dct.items():
       log._dct[k] = v
-      log._cursors[k] = 0
     return log
 
   def empty_qdd(self) -> LogQDD:
@@ -78,18 +77,17 @@ class LogTy(MutableHiType):
   def read_loval(self, _state: LogQDD, log: Log) -> list[LoType]:
     return list(FlatTree.flatten(log._dct))
 
-  def update_from_loval(self, state: LogQDD, log: Log, *lo_vals) -> None:
-    updates = state.ft.update(lo_vals).unflatten()
-    if log.cur_qdd() != self.empty_qdd():  # preallocated, dus
+  def update_from_loval(self, update_qdd: LogQDD, log: Log, *lo_vals) -> None:
+    updates = update_qdd.ft.update(lo_vals).unflatten()
+    if hasattr(log, '__qdd__'):  # HTLV/lowering-time Log, preallocated, dus
+      cur_qdd = log.__qdd__.ft.unflatten()
       for k, v in updates.items():
-        sl = slice(log._cursors[k], log._cursors[k] + len(v))
-        # log._dct[k][sl] = [x.at[...].set(u) for x, u in zip(log._dct[k][sl], v)]
+        sl = slice(len(cur_qdd.setdefault(k, [])), len(cur_qdd[k]) + len(v))
         log._dct[k][sl] = [u for x, u in zip(log._dct[k][sl], v)]
-        log._cursors[k] += len(v)
-    else:  # not preallocated, allocate
+      log.__qdd__ = self.extend_qdd(log.__qdd__, update_qdd)
+    else:  # at-rest Log, not preallocated, assign allocated
       for k, v in updates.items():
         log._dct.setdefault(k, []).extend(v)
-        log._cursors[k] = log._cursors.get(k, 0) + len(v)
 
 
 register_hitype(Log, lambda _: LogTy())
@@ -117,13 +115,19 @@ class LogExtend(HiPrimitive):
     return [], {log_effect}
 
   def to_lojax(_, log, *vals, treedef):
-    dct = dict(log._dct)
     updates = tree_unflatten(treedef, vals)
-    idx = core.scan_env()
-    for k, v in updates.items():
-      sl = slice(log._cursors[k], log._cursors[k] + len(v))
-      log._dct[k][sl] = [x.at[idx].set(u) for x, u in zip(log._dct[k][sl], v)]
-      log._cursors[k] += len(v)
+    if hasattr(log, '__qdd__'):
+      qdd = log.__qdd__.ft.unflatten()
+      idx = core.scan_env()
+      for k, v in updates.items():
+        sl = slice(len(qdd.setdefault(k, [])), len(qdd[k]) + len(v))
+        log._dct[k][sl] = [x.at[idx].set(u) for x, u in zip(log._dct[k][sl], v)]
+        qdd[k].extend(map(core.typeof, v))  # qdd update
+      log.__qdd__ = LogQDD(FlatTree.flatten(qdd))
+    else:  # top-level
+      for k, v in updates.items():
+        log._dct.setdefault(k, []).extend(v)
+
     return []
 log_extend_p = LogExtend('log_extend')
 

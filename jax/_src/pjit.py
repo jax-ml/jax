@@ -880,17 +880,6 @@ def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 jit_p.is_high = _is_high
 
-def lo_vals(a, x):
-  if not isinstance(a, core.AvalQDD):
-    return a.lower_val(x)  # type: ignore
-  elif a.aval.is_writer:  # type: ignore
-    if x.cur_qdd() != a.aval.empty_qdd():  # already preallocated, filter
-      return a.aval.filter(a.qdd, x)
-    else:  # must preallocate
-      return a.aval.preallocate(a.qdd)
-  else:
-    return a.aval.read_loval(x)  # type: ignore
-
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
   jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
@@ -906,7 +895,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
 
   # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in lo_vals(aval, x)]
+             for lo_val in pe.lo_vals(aval, x)]
 
   # lower the jaxpr and bind it using lo input values
   lo_jaxpr = pe.lower_jaxpr(jaxpr, scan_env=len(core.scan_env()))

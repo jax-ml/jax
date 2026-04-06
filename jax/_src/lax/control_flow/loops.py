@@ -1499,18 +1499,6 @@ def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 scan_p.is_high = _scan_is_high
 
-# like pe.lo_vals but it pre-allocates for writers
-def lo_vals(a, x):
-  if isinstance(a, core.AbstractValue):
-    return a.lower_val(x)
-  elif a.aval.is_writer:
-    if x.cur_qdd() != a.aval.empty_qdd():  # preallocated, filter
-      return a.aval.filter(a.qdd, x)
-    else:  # must preallocate
-      return a.aval.preallocate(a.qdd)
-  else:
-    return a.aval.read_loval(a.qdd, x)  # type: ignore
-
 # like pe.lower_jaxpr but adds a loop index
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, scan_env: int, num_lo_consts: int,
@@ -1525,24 +1513,13 @@ def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, scan_env: int, num_lo_consts: int,
   lo_jaxpr, _, lo_consts = pe.trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
   return core.ClosedJaxpr(lo_jaxpr, lo_consts)
 
-# like pe.htlv but puts pre-allocated buffers into writers
-def htlv(v: core.Var, lo_vals_iter):
-  if not v.aval.has_qdd:
-    lo_vals = it.islice(lo_vals_iter, len(v.aval.lo_ty()))
-    return v.aval.raise_val(*lo_vals)
-  elif v.aval.is_writer:
-    lo_vals = it.islice(lo_vals_iter, len(v.aval.lo_ty_qdd(v.final_qdd)))
-    return v.aval.new_empty(v.final_qdd, *lo_vals)  # type: ignore
-  else:
-    lo_vals = it.islice(lo_vals_iter, len(v.aval.lo_ty_qdd(v.initial_qdd)))
-    return v.aval.new_from_loval(v.initial_qdd, *lo_vals)  # type: ignore
-
 # like pe.lower_jaxpr but sets scan env
 def lower_traceable(jaxpr, scan_env, num_lo_consts, *lo_args):
   scan_idxs, lo_consts, (i,), lo_rest = split_list(lo_args, [scan_env, num_lo_consts, 1])
   lo_args_iter = it.chain(lo_consts, lo_rest)
-  hi_args = [htlv(v, lo_args_iter) for v in jaxpr.invars]
-  assert next(lo_args_iter, sentinel := object()) is sentinel
+  hi_args = [pe.htlv(a, list(it.islice(lo_args_iter, len(a.lo_ty()))))
+             for a in jaxpr.in_aval_qdds]
+  assert next(lo_args_iter, sentinel := object()) is sentinel, breakpoint()
   with core.set_scan_env((*scan_idxs, i)):
     hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
   mut_outs = [lo_val for aval, hi_x in zip(jaxpr.final_aval_qdds, hi_args)
@@ -1562,9 +1539,9 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   # collect input values
   const_aqdd, carry_aqdd, ext_aqdd = split_list(jaxpr.in_aval_qdds, [num_consts, num_carry])
   hi_consts, hi_carry, hi_ext = split_list(hi_args, [num_consts, num_carry])
-  lo_consts = [lo for a, x in zip(const_aqdd, hi_consts) for lo in lo_vals(a, x)]
-  lo_carry  = [lo for a, x in zip(carry_aqdd, hi_carry ) for lo in lo_vals(a, x)]
-  lo_ext    = [lo for a, x in zip(  ext_aqdd, hi_ext   ) for lo in lo_vals(a, x)]
+  lo_consts = [lo for a, x in zip(const_aqdd, hi_consts) for lo in pe.lo_vals(a, x)]
+  lo_carry  = [lo for a, x in zip(carry_aqdd, hi_carry ) for lo in pe.lo_vals(a, x)]
+  lo_ext    = [lo for a, x in zip(  ext_aqdd, hi_ext   ) for lo in pe.lo_vals(a, x)]
 
   # lower the jaxpr and bind it using lo input values
   length = params['length']
