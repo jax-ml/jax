@@ -148,7 +148,10 @@ The C++ fast path has support for const args starting with jaxlib 0.7.1.
 In prior versions, the fast path is disabled when there are const args.
 
 To implement this scheme, we keep the `const_args` in
-`stages.Lowering`, `stages.Lowered`, and `stages.CompiledCallParams`.
+`stages.Lowering`, `stages.Lowered`, `stages.CompiledCallParams`,
+and `pxla.MeshExecutable`.
+In `stages.Compiled` the fields, e.g., `in_avals`, do not include
+`const_args`.
 
 Interestingly, when we serialize an executable, e.g., for the compilation
 cache, we do not need to serialize the closed over constants. The executable
