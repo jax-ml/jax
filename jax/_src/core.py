@@ -2239,42 +2239,25 @@ def get_memory_space(memory_space):
   return memory_space
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ManualAxisType:
-  __slots__ = ['varying', 'unreduced', 'reduced']
+  varying: frozenset = frozenset()
+  unreduced: frozenset = frozenset()
+  reduced: frozenset = frozenset()
 
-  def __init__(self, *, varying=frozenset(), unreduced=frozenset(),
-               reduced=frozenset()):
-    if varying & unreduced:
+  def __post_init__(self):
+    if self.varying & self.unreduced:
       raise ValueError(
           "varying and unreduced cannot have common mesh axes. Got"
-          f" varying={varying} and unreduced={unreduced}")
-    if varying & reduced:
+          f" varying={self.varying} and unreduced={self.unreduced}")
+    if self.varying & self.reduced:
       raise ValueError(
           "varying and reduced cannot have common mesh axes. Got"
-          f" varying={varying} and reduced={reduced}")
-    assert not (varying & unreduced & reduced)
-    self.varying = frozenset(varying)
-    self.unreduced = frozenset(unreduced)
-    self.reduced = frozenset(reduced)
-
-  def __hash__(self):
-    return hash((self.varying, self.unreduced, self.reduced))
-
-  def __eq__(self, other):
-    if not isinstance(other, ManualAxisType):
-      return False
-    return (self.varying == other.varying and self.unreduced == other.unreduced
-            and self.reduced == other.reduced)
-
-  def __setattr__(self, name, value):
-    if hasattr(self, name):
-      if getattr(self, name) == value:
-        # This can to happen if two threads race, for example if two threads
-        # are trying to hash the same ManualAxisType instance.
-        return
-      raise RuntimeError(
-          f"Cannot reassign attributes `{name}` of immutable ManualAxisType object")
-    super().__setattr__(name, value)
+          f" varying={self.varying} and reduced={self.reduced}")
+    assert not (self.varying & self.unreduced & self.reduced)
+    object.__setattr__(self, 'varying', frozenset(self.varying))
+    object.__setattr__(self, 'unreduced', frozenset(self.unreduced))
+    object.__setattr__(self, 'reduced', frozenset(self.reduced))
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
