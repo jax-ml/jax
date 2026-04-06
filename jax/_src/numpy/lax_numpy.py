@@ -2716,23 +2716,12 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 
 
 @overload
-def where(condition: ArrayLike, x: Literal[None] = None,
-          y: Literal[None] = None, /, *, size: int | None = None,
+def where(condition: ArrayLike, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> tuple[Array, ...]: ...
 
 @overload
-def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, / ,*,
-          size: int | None = None,
-          fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> Array: ...
-
-@overload
-def where(condition: ArrayLike, x: ArrayLike | None = None,
-          y: ArrayLike | None = None, /, *, size: int | None = None,
-          fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> Array | tuple[Array, ...]: ...
-
+def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /) -> Array: ...
 
 @export
 def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
