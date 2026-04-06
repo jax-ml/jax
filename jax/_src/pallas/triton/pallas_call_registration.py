@@ -102,8 +102,15 @@ def pallas_call_lowering(
     arch_name = str(gpu_device.compute_capability)
     if lowering_platform == "rocm":
       compute_capability = 0
+    elif (arch_numeric := arch_name.replace(".", "")).isdigit():
+      compute_capability = int(arch_numeric)
     else:
-      compute_capability = int(arch_name.replace(".", ""))
+      # In the case of cross platform export, e.g. lowering for CUDA on a
+      # ROCm device, we may get an `arch_name` (e.g. gfx*) that can't be
+      # parsed properly by the above conditionals. In this case, fall back
+      # to the same defaults as used above.
+      arch_name = "8.0"
+      compute_capability = 80
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
