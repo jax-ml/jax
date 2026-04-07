@@ -10622,6 +10622,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       with jax.sharding.use_abstract_mesh(abstract_mesh):
         f.trace(inp).lower(lowering_platforms=('tpu',))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_vmap_random_categorical_sample(self, mesh):
+    keys = jax.random.split(jax.random.key(0), 2)
+    keys = jax.device_put(keys, NamedSharding(mesh, P("x")))
+    logits = jax.device_put(jnp.ones((2, 10)), NamedSharding(mesh, P("x")))
+
+    @jax.jit
+    def sample(keys, logits):
+      return jax.vmap(jax.random.categorical)(keys, logits)
+
+    sample(keys, logits)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
