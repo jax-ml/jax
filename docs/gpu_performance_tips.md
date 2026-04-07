@@ -26,7 +26,7 @@ code examples:
 ## XLA performance flags
 
 ```{note}
-  JAX-Toolbox also has a page on [NVIDIA XLA performance FLAGS](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta/docs/GPU_performance.md).
+  JAX-Toolbox also has a page on [NVIDIA XLA performance flags](https://github.com/NVIDIA/JAX-Toolbox/blob/main/docs/GPU_performance.md).
 ```
 
 The existence and exact behavior of XLA flags may be `jaxlib`-version dependent.
@@ -48,10 +48,6 @@ os.environ['XLA_FLAGS'] = (
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
 ```
-
-For more examples, see also [XLA Flags recommended for Pax
-training on Nvidia GPUs](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta/rosetta/projects/pax/README.md#xla-flags).
-
 
 ### Code generation flags
 
