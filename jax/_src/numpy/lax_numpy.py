@@ -7658,12 +7658,16 @@ def delete(
 
   # Case 3a: unique integer indices; delete in a JIT-compatible way
   if issubdtype(_dtype(obj), np.integer) and assume_unique_indices:
-    obj = asarray(obj).ravel()
-    obj = clip(where(obj < 0, obj + a.shape[axis], obj), 0, a.shape[axis])
-    obj = sort(obj)
-    obj -= arange(len(obj), dtype=obj.dtype)
-    i = arange(a.shape[axis] - obj.size, dtype=obj.dtype)
-    i += (i[None, :] >= obj[:, None]).sum(0, dtype=i.dtype)
+    obj_array = asarray(obj).ravel()
+    obj_array = clip(
+        where(obj_array < 0, obj_array + a.shape[axis], obj_array),
+        0,
+        a.shape[axis],
+    )
+    obj_array = sort(obj_array)
+    obj_array -= arange(len(obj_array), dtype=obj_array.dtype)
+    i = arange(a.shape[axis] - obj_array.size, dtype=obj_array.dtype)
+    i += (i[None, :] >= obj_array[:, None]).sum(0, dtype=i.dtype)
     return a[(slice(None),) * axis + (i,)]
 
   # Case 3b: non-unique indices: must be static.
