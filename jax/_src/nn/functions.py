@@ -1010,6 +1010,110 @@ def _dot_product_attention_xla(
   return encoded
 
 
+def _dot_product_attention_stable(
+    query: Array,
+    key: Array,
+    value: Array,
+    bias: Array | None,
+    mask: Array | None,
+    is_causal: bool,
+    scale: float,
+    q_seqlen: Array | None,
+    kv_seqlen: Array | None,
+    local_window_size: tuple[int, int] | None,
+    return_residual: bool = False,
+    tile_size: int = 128,
+):
+  """Stable-reduction attention via tiled scan over fixed-shape KV tiles.
+
+  Replaces the variable-length softmax reduction with a fixed-shape scan,
+  so XLA compiles identical kernels regardless of KV-cache size — eliminating
+  floating-point non-determinism from different XLA reduction tree shapes.
+  """
+  if q_seqlen is not None or kv_seqlen is not None or local_window_size is not None:
+    raise NotImplementedError(
+        "stable implementation does not support q_seqlen, kv_seqlen, or "
+        "local_window_size"
+    )
+
+  B, T, N, H = query.shape
+  _, S, K, _ = key.shape
+
+  if K < N:
+    key = jnp.repeat(key, N // K, axis=2)
+    value = jnp.repeat(value, N // K, axis=2)
+
+  pad = (-S) % tile_size
+  S_pad = S + pad
+  num_tiles = S_pad // tile_size
+  neg_inf = float('-inf')
+
+  # Build additive logit bias (B, N, T, S_pad) combining all mask sources.
+  logit_bias = jnp.zeros((B, N, T, S_pad), dtype=np.float32)
+  if pad:
+    logit_bias = logit_bias.at[..., S:].set(neg_inf)
+  if bias is not None:
+    logit_bias = logit_bias + jnp.pad(
+        bias.astype(np.float32), [(0, 0), (0, 0), (0, 0), (0, pad)])
+  if is_causal:
+    causal_mask = jnp.tril(jnp.ones((T, S), dtype=bool))
+    logit_bias = logit_bias + jnp.where(
+        jnp.pad(causal_mask, [(0, 0), (0, pad)])[None, None], 0.0, neg_inf)
+  if mask is not None:
+    logit_bias = logit_bias + jnp.where(
+        jnp.pad(mask, [(0, 0), (0, 0), (0, 0), (0, pad)]), 0.0, neg_inf)
+
+  # Tile for scan: leading axis = num_tiles.
+  key_tiles = jnp.transpose(
+      jnp.reshape(jnp.pad(key, [(0, 0), (0, pad), (0, 0), (0, 0)]),
+                  (B, num_tiles, tile_size, N, H)), (1, 0, 2, 3, 4))
+  value_tiles = jnp.transpose(
+      jnp.reshape(jnp.pad(value, [(0, 0), (0, pad), (0, 0), (0, 0)]),
+                  (B, num_tiles, tile_size, N, H)), (1, 0, 2, 3, 4))
+  bias_tiles = jnp.transpose(
+      jnp.reshape(logit_bias, (B, N, T, num_tiles, tile_size)), (3, 0, 1, 2, 4))
+
+  def combine(left, right):
+    l_max, l_sum, l_out = left
+    r_max, r_sum, r_out = right
+    new_max = jnp.maximum(l_max, r_max)
+    safe = jnp.where(jnp.isneginf(new_max), 0.0, new_max)
+    lc = jnp.exp(l_max - safe)
+    rc = jnp.exp(r_max - safe)
+    return new_max, lc * l_sum + rc * r_sum, lc[..., None] * l_out + rc[..., None] * r_out
+
+  def scan_step(carry, xs):
+    k_tile, v_tile, b_tile = xs
+    scores = scale * jnp_einsum.einsum(
+        'BTNH,BSNH->BNTS', query, k_tile, preferred_element_type=np.float32)
+    scores = (scores + b_tile).astype(np.float32)
+    t_max = scores.max(-1)
+    safe = jnp.where(jnp.isneginf(t_max), 0.0, t_max)
+    exp_s = jnp.exp(scores - safe[..., None])
+    t_sum = exp_s.sum(-1)
+    t_out = jnp_einsum.einsum('BNTS,BSNH->BNTH', exp_s, v_tile)
+    return combine(carry, (t_max, t_sum, t_out)), None
+
+  init = (
+      jnp.full((B, N, T), neg_inf, dtype=np.float32),
+      jnp.zeros((B, N, T), dtype=np.float32),
+      jnp.zeros((B, N, T, H), dtype=np.float32),
+  )
+  (final_max, final_sum, final_out), _ = lax.scan(
+      scan_step, init, (key_tiles, value_tiles, bias_tiles))
+
+  # (B, N, T, H) -> (B, T, N, H), cast back to input dtype.
+  out = jnp.transpose(
+      (final_out / final_sum[..., None]).astype(query.dtype), (0, 2, 1, 3))
+
+  if return_residual:
+    lse = jnp.transpose(
+        (final_max + jnp.log(final_sum)).astype(query.dtype), (0, 2, 1))
+    return out, lax.stop_gradient(lse)
+
+  return out
+
+
 @overload
 def dot_product_attention(
     query: ArrayLike,
@@ -1023,7 +1127,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: Literal[False] = ...,
 ) -> Array: ...
 
@@ -1040,7 +1144,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: Literal[True] = ...,
 ) -> tuple[Array, Array]: ...
 
@@ -1056,7 +1160,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: bool = False,
 ):
   r"""Scaled dot product attention function.
@@ -1121,10 +1225,15 @@ def dot_product_attention(
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
-      Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
-      to `None`, which currently falls back to `xla`.
+      Supported strings are `xla`, `cudnn` (cuDNN flash attention), and
+      `stable` (tiled-scan stable reduction). It defaults to `None`, which
+      currently falls back to `xla`.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
-      will be thrown if its not supported.
+      will be thrown if its not supported. `stable` eliminates floating-point
+      non-determinism across different KV-cache lengths by replacing the
+      variable-length softmax reduction with a fixed-shape tiled scan; it does
+      not support `query_seq_lengths`, `key_value_seq_lengths`, or
+      `local_window_size`.
 
   Returns:
     If return_residual is False, returns an array of the attention output with
@@ -1228,6 +1337,14 @@ def dot_product_attention(
         out, residual = out
         residual = jnp.transpose(residual, (0, 2, 1)).astype(out.dtype)
         out = (out, residual)
+    case 'stable':
+      out = _dot_product_attention_stable(
+          query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
+          scale=scale_val, q_seqlen=query_seq_lengths,
+          kv_seqlen=key_value_seq_lengths,
+          local_window_size=local_window_size,
+          return_residual=return_residual,
+      )
     case None:
       # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(

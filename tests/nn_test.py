@@ -196,7 +196,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       dtype=[jnp.bfloat16, jnp.float16],
       group_num=[1, 2, 4],
       use_vmap=[False, True],
-      impl=['cudnn', 'xla'],
+      impl=['cudnn', 'xla', 'stable'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
     if impl == 'cudnn' and jtu.is_device_rocm():
@@ -392,6 +392,29 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ref, _ = bwd_ref(x, bias, mask)
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
+
+  def testStableAttentionDeterminism(self):
+    """stable implementation produces identical results for different KV lengths
+    when the extra positions are masked out, verifying XLA kernel determinism."""
+    B, T, N, H = 2, 16, 4, 32
+    keys = random.split(random.PRNGKey(42), 3)
+    Q = random.normal(keys[0], (B, T, N, H), jnp.bfloat16)
+    K = random.normal(keys[1], (B, 64, N, H), jnp.bfloat16)
+    V = random.normal(keys[2], (B, 64, N, H), jnp.bfloat16)
+
+    jit_stable = jax.jit(
+        partial(jax.nn.dot_product_attention, implementation='stable'))
+
+    # S=64 (no padding)
+    out64 = jit_stable(Q, K, V)
+    # S=128: pad with zeros, mask out the extra 64 positions
+    K128 = jnp.pad(K, [(0, 0), (0, 64), (0, 0), (0, 0)])
+    V128 = jnp.pad(V, [(0, 0), (0, 64), (0, 0), (0, 0)])
+    mask128 = jnp.pad(jnp.ones((B, 1, T, 64), dtype=jnp.bool_),
+                      [(0, 0), (0, 0), (0, 0), (0, 64)])
+    out128 = jit_stable(Q, K128, V128, mask=mask128)
+    # XLA sees different tile shapes but stable should produce identical values.
+    self.assertAllClose(out64, out128, atol=0, rtol=0)
 
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
