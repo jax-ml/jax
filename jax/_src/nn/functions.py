@@ -1029,6 +1029,11 @@ def _dot_product_attention_stable(
   Replaces the variable-length softmax reduction with a fixed-shape scan,
   so XLA compiles identical kernels regardless of KV-cache size — eliminating
   floating-point non-determinism from different XLA reduction tree shapes.
+
+  Uses the online softmax recurrence from FlashAttention (Dao et al., 2022,
+  https://arxiv.org/abs/2205.14135). Masked padding tiles contribute exactly
+  zero (IEEE 754: exp(-inf)=0, 1.0*x=x), giving bit-exact outputs for any
+  KV length when the logical attention content is the same.
   """
   if q_seqlen is not None or kv_seqlen is not None or local_window_size is not None:
     raise NotImplementedError(
