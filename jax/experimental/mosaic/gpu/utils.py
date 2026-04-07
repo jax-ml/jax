@@ -1142,6 +1142,7 @@ class BarrierRef:
 @dataclasses.dataclass(frozen=True)
 class DialectBarrierRef:
   barrier_ref: BarrierRef
+  orders_tensor_core: bool
 
   @staticmethod
   def initialize(
@@ -1164,7 +1165,8 @@ class DialectBarrierRef:
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     return DialectBarrierRef(
-        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers)
+        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers),
+        orders_tensor_core=orders_tensor_core,
     )
 
   def __iter__(self) -> Iterator["DialectBarrierRef"]:
@@ -1175,12 +1177,14 @@ class DialectBarrierRef:
         yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
-    return DialectBarrierRef(self.barrier_ref[offset])
+    return DialectBarrierRef(self.barrier_ref[offset], self.orders_tensor_core)
 
   def wait_parity(self, parity, orders_tensor_core=False):
+    assert self.orders_tensor_core == orders_tensor_core
     self.barrier_ref.wait_parity(parity, orders_tensor_core)
 
   def wait(self, orders_tensor_core: bool = False):
+    assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
     self.barrier_ref.wait(orders_tensor_core)
 
@@ -1188,6 +1192,7 @@ class DialectBarrierRef:
     return self.barrier_ref.update_parities(parities)
 
   def arrive(self, orders_tensor_core: bool = False):
+    assert self.orders_tensor_core == orders_tensor_core
     dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
@@ -1200,7 +1205,8 @@ class DialectBarrierRef:
   def as_barrier_memref(self) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    memref_type = ir.MemRefType.get(shape, dialect.BarrierType.get())
+    barrier_type = dialect.BarrierType.get(self.orders_tensor_core)
+    memref_type = ir.MemRefType.get(shape, barrier_type)
     result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
     assert isinstance(result, ir.Value)
     return result
@@ -1227,7 +1233,8 @@ class DialectBarrierRef:
             # TODO(slebedev): Why is it safe to use None here?
             phases=None,  # pyrefly: ignore[bad-argument-type]  # pytype: disable=wrong-arg-types
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
-        )
+        ),
+        orders_tensor_core=memref_type.element_type.orders_tensor_core,
     )
 
 
