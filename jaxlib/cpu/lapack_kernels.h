@@ -114,21 +114,19 @@ struct TriMatrixEquationSolver {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
-                                  ::xla::ffi::Buffer<dtype> y,
-                                  ::xla::ffi::ResultBuffer<dtype> y_out,
-                                  MatrixParams::Side side,
-                                  MatrixParams::UpLo uplo,
-                                  MatrixParams::Transpose trans_x,
-                                  MatrixParams::Diag diag);
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<dtype> y, ::xla::ffi::ResultBuffer<dtype> y_out,
+      MatrixParams::Side side, MatrixParams::UpLo uplo,
+      MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
 };
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error TriMatrixEquationSolverKernel(
-    ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-    ::xla::ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
-    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
-    MatrixParams::Diag diag);
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    ::xla::ffi::Buffer<dtype> y, ::xla::ffi::ResultBuffer<dtype> y_out,
+    MatrixParams::Side side, MatrixParams::UpLo uplo,
+    MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
 
 //== LU Decomposition ==//
 
@@ -141,14 +139,16 @@ struct LuDecomposition {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> ipiv,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 };
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error LuDecompositionKernel(
-    ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<LapackIntDtype> ipiv,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
@@ -163,7 +163,8 @@ struct QrFactorization {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+  static ::xla::ffi::Error Kernel(::xla::ffi::ThreadPool thread_pool,
+                                  ::xla::ffi::Buffer<dtype> x,
                                   ::xla::ffi::ResultBuffer<dtype> x_out,
                                   ::xla::ffi::ResultBuffer<dtype> tau);
 
@@ -171,7 +172,8 @@ struct QrFactorization {
 };
 
 template <::xla::ffi::DataType dtype>
-::xla::ffi::Error QrFactorizationKernel(::xla::ffi::Buffer<dtype> x,
+::xla::ffi::Error QrFactorizationKernel(::xla::ffi::ThreadPool thread_pool,
+                                        ::xla::ffi::Buffer<dtype> x,
                                         ::xla::ffi::ResultBuffer<dtype> x_out,
                                         ::xla::ffi::ResultBuffer<dtype> tau);
 
@@ -193,7 +195,8 @@ struct PivotingQrFactorization {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<LapackIntDtype> jpvt,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<LapackIntDtype> jpvt,
       ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> jpvt_out,
       ::xla::ffi::ResultBuffer<dtype> tau);
@@ -203,7 +206,8 @@ struct PivotingQrFactorization {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error PivotingQrFactorizationKernel(
-    ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<LapackIntDtype> jpvt,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    ::xla::ffi::Buffer<LapackIntDtype> jpvt,
     ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<LapackIntDtype> jpvt_out,
     ::xla::ffi::ResultBuffer<dtype> tau);
@@ -219,7 +223,8 @@ struct OrthogonalQr {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+  static ::xla::ffi::Error Kernel(::xla::ffi::ThreadPool thread_pool,
+                                  ::xla::ffi::Buffer<dtype> x,
                                   ::xla::ffi::Buffer<dtype> tau,
                                   ::xla::ffi::ResultBuffer<dtype> x_out);
 
@@ -239,7 +244,8 @@ struct OrthogonalQrMultiply {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> a,
+  static ::xla::ffi::Error Kernel(::xla::ffi::ThreadPool thread_pool,
+                                  ::xla::ffi::Buffer<dtype> a,
                                   ::xla::ffi::Buffer<dtype> tau,
                                   ::xla::ffi::Buffer<dtype> c, bool left,
                                   bool transpose,
@@ -250,7 +256,8 @@ struct OrthogonalQrMultiply {
 };
 
 template <::xla::ffi::DataType dtype>
-::xla::ffi::Error OrthogonalQrKernel(::xla::ffi::Buffer<dtype> x,
+::xla::ffi::Error OrthogonalQrKernel(::xla::ffi::ThreadPool thread_pool,
+                                     ::xla::ffi::Buffer<dtype> x,
                                      ::xla::ffi::Buffer<dtype> tau,
                                      ::xla::ffi::ResultBuffer<dtype> x_out);
 
@@ -265,15 +272,15 @@ struct CholeskyFactorization {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 };
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error CholeskyFactorizationKernel(
-    ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-    ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
 //== Singular Value Decomposition (SVD) ==//
@@ -359,7 +366,8 @@ struct SingularValueDecompositionQR {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> singular_values,
       ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
@@ -371,7 +379,8 @@ struct SingularValueDecompositionQR {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error SingularValueDecompositionQRKernel(
-    ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<dtype> singular_values,
     ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
@@ -391,7 +400,8 @@ struct SingularValueDecompositionQRComplex {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> singular_values,
       ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
@@ -403,7 +413,8 @@ struct SingularValueDecompositionQRComplex {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error SingularValueDecompositionQRComplexKernel(
-    ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> singular_values,
     ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
@@ -456,7 +467,8 @@ struct EigenvalueDecompositionSymmetric {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+  static ::xla::ffi::Error Kernel(::xla::ffi::ThreadPool thread_pool,
+                                  ::xla::ffi::Buffer<dtype> x,
                                   MatrixParams::UpLo uplo,
                                   ::xla::ffi::ResultBuffer<dtype> x_out,
                                   ::xla::ffi::ResultBuffer<dtype> eigenvalues,
@@ -466,8 +478,8 @@ struct EigenvalueDecompositionSymmetric {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error EigenvalueDecompositionSymmetricKernel(
-    ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-    ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<dtype> eigenvalues,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode);
 
@@ -485,16 +497,16 @@ struct EigenvalueDecompositionHermitian {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> eigenvalues,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode);
 };
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error EigenvalueDecompositionHermitianKernel(
-    ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-    ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> eigenvalues,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode);
 
@@ -540,8 +552,8 @@ struct EigenvalueDecomposition {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-      eig::ComputationMode compute_right,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      eig::ComputationMode compute_left, eig::ComputationMode compute_right,
       ::xla::ffi::ResultBuffer<dtype> eigvals_real,
       ::xla::ffi::ResultBuffer<dtype> eigvals_imag,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToComplex(dtype)> eigvecs_left,
@@ -555,8 +567,8 @@ struct EigenvalueDecomposition {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error EigenvalueDecompositionKernel(
-    ::xla::ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
     ::xla::ffi::ResultBuffer<dtype> eigvals_real,
     ::xla::ffi::ResultBuffer<dtype> eigvals_imag,
     ::xla::ffi::ResultBuffer<::xla::ffi::ToComplex(dtype)> eigvecs_left,
@@ -577,8 +589,8 @@ struct EigenvalueDecompositionComplex {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-      eig::ComputationMode compute_right,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      eig::ComputationMode compute_left, eig::ComputationMode compute_right,
       ::xla::ffi::ResultBuffer<dtype> eigvals,
       ::xla::ffi::ResultBuffer<dtype> eigvecs_left,
       ::xla::ffi::ResultBuffer<dtype> eigvecs_right,
@@ -591,8 +603,9 @@ struct EigenvalueDecompositionComplex {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error EigenvalueDecompositionComplexKernel(
-    ::xla::ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ::xla::ffi::ResultBuffer<dtype> eigvals,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
+    ::xla::ffi::ResultBuffer<dtype> eigvals,
     ::xla::ffi::ResultBuffer<dtype> eigvecs_left,
     ::xla::ffi::ResultBuffer<dtype> eigvecs_right,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info);
@@ -615,8 +628,9 @@ struct SchurDecomposition {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, schur::ComputationMode mode,
-      schur::Sort sort, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      schur::ComputationMode mode, schur::Sort sort,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors,
       ::xla::ffi::ResultBuffer<dtype> eigvals_real,
       ::xla::ffi::ResultBuffer<dtype> eigvals_imag,
@@ -629,7 +643,8 @@ struct SchurDecomposition {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error SchurDecompositionKernel(
-    ::xla::ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<dtype> schur_vectors,
     ::xla::ffi::ResultBuffer<dtype> eigvals_real,
@@ -652,8 +667,9 @@ struct SchurDecompositionComplex {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, schur::ComputationMode mode,
-      schur::Sort sort, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      schur::ComputationMode mode, schur::Sort sort,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors,
       ::xla::ffi::ResultBuffer<dtype> eigvals,
       ::xla::ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
@@ -665,7 +681,8 @@ struct SchurDecompositionComplex {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error SchurDecompositionComplexKernel(
-    ::xla::ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<dtype> schur_vectors,
     ::xla::ffi::ResultBuffer<dtype> eigvals,
@@ -685,8 +702,8 @@ struct HessenbergDecomposition {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, int32_t low, int32_t high,
-      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      int32_t low, int32_t high, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> tau,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
@@ -696,8 +713,9 @@ struct HessenbergDecomposition {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error HessenbergDecompositionKernel(
-    ::xla::ffi::Buffer<dtype> x, int32_t low, int32_t high,
-    ::xla::ffi::ResultBuffer<dtype> x_out, ::xla::ffi::ResultBuffer<dtype> tau,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    int32_t low, int32_t high, ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ResultBuffer<dtype> tau,
     ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
 //== Tridiagonal Reduction                                           ==//
@@ -714,8 +732,8 @@ struct TridiagonalReduction {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+      MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> diagonal,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> off_diagonal,
       ::xla::ffi::ResultBuffer<dtype> tau,
@@ -726,8 +744,8 @@ struct TridiagonalReduction {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error TridiagonalReductionKernel(
-    ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
-    ::xla::ffi::ResultBuffer<dtype> x_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> x,
+    MatrixParams::UpLo uplo, ::xla::ffi::ResultBuffer<dtype> x_out,
     ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> diagonal,
     ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> off_diagonal,
     ::xla::ffi::ResultBuffer<dtype> tau,
@@ -744,9 +762,9 @@ struct TridiagonalSolver {
   inline static FnType* fn = nullptr;
 
   static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> dl, ::xla::ffi::Buffer<dtype> d,
-      ::xla::ffi::Buffer<dtype> du, ::xla::ffi::Buffer<dtype> b,
-      ::xla::ffi::ResultBuffer<dtype> dl_out,
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> dl,
+      ::xla::ffi::Buffer<dtype> d, ::xla::ffi::Buffer<dtype> du,
+      ::xla::ffi::Buffer<dtype> b, ::xla::ffi::ResultBuffer<dtype> dl_out,
       ::xla::ffi::ResultBuffer<dtype> d_out,
       ::xla::ffi::ResultBuffer<dtype> du_out,
       ::xla::ffi::ResultBuffer<dtype> b_out,
@@ -755,9 +773,9 @@ struct TridiagonalSolver {
 
 template <::xla::ffi::DataType dtype>
 ::xla::ffi::Error TridiagonalSolverKernel(
-    ::xla::ffi::Buffer<dtype> dl, ::xla::ffi::Buffer<dtype> d,
-    ::xla::ffi::Buffer<dtype> du, ::xla::ffi::Buffer<dtype> b,
-    ::xla::ffi::ResultBuffer<dtype> dl_out,
+    ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Buffer<dtype> dl,
+    ::xla::ffi::Buffer<dtype> d, ::xla::ffi::Buffer<dtype> du,
+    ::xla::ffi::Buffer<dtype> b, ::xla::ffi::ResultBuffer<dtype> dl_out,
     ::xla::ffi::ResultBuffer<dtype> d_out,
     ::xla::ffi::ResultBuffer<dtype> du_out,
     ::xla::ffi::ResultBuffer<dtype> b_out,

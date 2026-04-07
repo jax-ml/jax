@@ -21,6 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     PyTorch's bicubic resize ({jax-issue}`#15768`).
   * We now support differentiation of {func}`jax.lax.linalg.qr` for wide
     matrices and when `full_matrices` is `True`.
+  * LAPACK operations are now parallelized along the batch dimension on CPU.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use

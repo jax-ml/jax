@@ -28,13 +28,14 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/dynamic_annotations.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/future.h"
 
 namespace ffi = xla::ffi;
 
@@ -68,13 +69,70 @@ void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
   }
 }
 
+// Heuristic to choose a good chunk size for parallelizing LAPACK kernels
+// along the batch dimension. The rough idea is that we want:
+// * at most as many chunks as we have threads
+// * we do not want chunks that are so small they would complete in time
+//   comparable to a thread hop.
+// cost_per_matrix is a FLOP estimate for each batch element.
+int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
+                                int64_t num_threads) {
+  // We want the minimum chunk size to be at least as big as the cost of a
+  // thread context switch. Let's assume that's about 2us and each core can do
+  // 100 GFLOP/s. So our minimum chunk size is 2e-6 * 1e11 = 2e5 FLOP.
+  // We could probably tweak this heuristic a bit more.
+  const int64_t kMinWorkPerTask = 200000;
+
+  if (num_threads <= 1) return batch_size;
+
+  if (batch_size * cost_per_matrix < kMinWorkPerTask) {
+    return batch_size;
+  }
+
+  // Size to divide work evenly amongst threads
+  int64_t chunk_for_even_division =
+      (batch_size + num_threads - 1) / num_threads;
+  // Size that ensures each thread gets at least a minimum chunk size.
+  int64_t chunk_for_min_work =
+      (kMinWorkPerTask + cost_per_matrix - 1) / cost_per_matrix;
+
+  return std::max(chunk_for_even_division, chunk_for_min_work);
+}
+
+// Divide batch_count elements into chunk_size pieces, and call run_chunk on
+// each. Use the thread pool if we have more than one chunk.
+static ffi::Error ParallelBatchMap(
+    ffi::ThreadPool thread_pool, int64_t batch_count, int64_t chunk_size,
+    absl::FunctionRef<void(int64_t, int64_t)> run_chunk) {
+  if (chunk_size >= batch_count) {
+    run_chunk(0, batch_count);
+    return ffi::Error::Success();
+  } else {
+    int64_t num_tasks = (batch_count + chunk_size - 1) / chunk_size;
+    absl::BlockingCounter counter(num_tasks);
+
+    for (int64_t i = 0; i < batch_count; i += chunk_size) {
+      int64_t current_chunk_size = std::min(chunk_size, batch_count - i);
+
+      thread_pool.Schedule([run_chunk, &counter, i, current_chunk_size]() {
+        run_chunk(i, current_chunk_size);
+        counter.DecrementCount();
+      });
+    }
+
+    counter.Wait();
+    return ffi::Error::Success();
+  }
+}
+
 //== Triangular System Solver ==//
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TriMatrixEquationSolver<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::ResultBuffer<dtype> y_out,
-    MatrixParams::Side side, MatrixParams::UpLo uplo,
-    MatrixParams::Transpose trans_x, MatrixParams::Diag diag) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
+    ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
+    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
+    MatrixParams::Diag diag) {
   CopyIfDiffBuffer(y, y_out);
   FFI_ASSIGN_OR_RETURN((auto [batch_count, y_rows, y_cols]),
                        SplitBatch2D(y.dimensions()));
@@ -93,28 +151,42 @@ ffi::Error TriMatrixEquationSolver<dtype, IntType>::Kernel(
   const int64_t y_out_step{y_rows * y_cols};
   const int64_t x_step{x_leading_dim_v * x_leading_dim_v};
   ffi::NativeType<dtype> alpha = static_cast<ffi::NativeType<dtype>>(1);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    TriMatrixEquationSolver<dtype, IntType>::fn(
-        &side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v, &alpha,
-        x_data, &x_leading_dim_v, y_out_data, &y_leading_dim_v);
 
-    y_out_data += y_out_step;
-    x_data += x_step;
+  int64_t cost_per_matrix =
+      y_rows * y_cols * (side == MatrixParams::Side::kLeft ? y_rows : y_cols);
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_y_out_data = y_out_data + i * y_out_step;
+        const auto* local_x_data = x_data + i * x_step;
+        for (int64_t j = 0; j < count; ++j) {
+          TriMatrixEquationSolver<dtype, IntType>::fn(
+              &side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
+              &alpha, const_cast<ffi::NativeType<dtype>*>(local_x_data),
+              &x_leading_dim_v, local_y_out_data, &y_leading_dim_v);
+          local_y_out_data += y_out_step;
+          local_x_data += x_step;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolverKernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::ResultBuffer<dtype> y_out,
-    MatrixParams::Side side, MatrixParams::UpLo uplo,
-    MatrixParams::Transpose trans_x, MatrixParams::Diag diag) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
+    ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
+    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
+    MatrixParams::Diag diag) {
   if (TriMatrixEquationSolver<dtype, int64_t>::fn != nullptr) {
-    return TriMatrixEquationSolver<dtype, int64_t>::Kernel(x, y, y_out, side,
-                                                           uplo, trans_x, diag);
+    return TriMatrixEquationSolver<dtype, int64_t>::Kernel(
+        thread_pool, x, y, y_out, side, uplo, trans_x, diag);
   }
-  return TriMatrixEquationSolver<dtype, int32_t>::Kernel(x, y, y_out, side,
-                                                         uplo, trans_x, diag);
+  return TriMatrixEquationSolver<dtype, int32_t>::Kernel(
+      thread_pool, x, y, y_out, side, uplo, trans_x, diag);
 }
 
 template struct TriMatrixEquationSolver<ffi::DataType::F32, int32_t>;
@@ -130,8 +202,8 @@ template struct TriMatrixEquationSolver<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error LuDecomposition<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<LapackIntDtype> ipiv,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> ipiv,
     ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
@@ -147,55 +219,71 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
 
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t ipiv_step{std::min(x_rows, x_cols)};
-  std::unique_ptr<IntType[]> ipiv_tmp;
-  if constexpr (!std::is_same_v<IntType, int32_t>) {
-    ipiv_tmp = std::make_unique<IntType[]>(ipiv_step);
+  int64_t cost_per_matrix = x_rows * x_cols * std::min(x_rows, x_cols);
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    if constexpr (std::is_same_v<IntType, int32_t>) {
-      LuDecomposition<dtype, IntType>::fn(&x_rows_v, &x_cols_v, x_out_data,
-                                          &x_leading_dim_v, ipiv_data, &info_v);
-    } else {
-      LuDecomposition<dtype, IntType>::fn(&x_rows_v, &x_cols_v, x_out_data,
-                                          &x_leading_dim_v, ipiv_tmp.get(),
-                                          &info_v);
-      for (int64_t j = 0; j < ipiv_step; ++j) {
-        ipiv_data[j] = static_cast<int32_t>(ipiv_tmp[j]);
-      }
-    }
-    // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
-    // MSAN.
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
 
-    using T = ffi::NativeType<dtype>;
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
-                                        x_rows * x_cols * sizeof(T));
-    if constexpr (std::is_same_v<IntType, int32_t>) {
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(ipiv_data,
-                                          ipiv_step * sizeof(int32_t));
-    } else {
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(ipiv_tmp.get(),
-                                          ipiv_step * sizeof(IntType));
-    }
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_ipiv_data = ipiv_data + i * ipiv_step;
+        auto* local_info_data = info_data + i;
 
-    x_out_data += x_out_step;
-    ipiv_data += ipiv_step;
-    ++info_data;
-  }
-  return ffi::Error::Success();
+        std::unique_ptr<IntType[]> ipiv_tmp;
+        if constexpr (!std::is_same_v<IntType, int32_t>) {
+          ipiv_tmp = std::make_unique<IntType[]>(ipiv_step);
+        }
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          if constexpr (std::is_same_v<IntType, int32_t>) {
+            LuDecomposition<dtype, IntType>::fn(
+                &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                local_ipiv_data, &info_v);
+          } else {
+            LuDecomposition<dtype, IntType>::fn(
+                &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                ipiv_tmp.get(), &info_v);
+            for (int64_t k = 0; k < ipiv_step; ++k) {
+              local_ipiv_data[k] = static_cast<int32_t>(ipiv_tmp[k]);
+            }
+          }
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+
+          using T = ffi::NativeType<dtype>;
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
+                                              x_rows * x_cols * sizeof(T));
+          if constexpr (std::is_same_v<IntType, int32_t>) {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_ipiv_data,
+                                                ipiv_step * sizeof(int32_t));
+          } else {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(ipiv_tmp.get(),
+                                                ipiv_step * sizeof(IntType));
+          }
+
+          local_x_out_data += x_out_step;
+          local_ipiv_data += ipiv_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
-ffi::Error LuDecompositionKernel(ffi::Buffer<dtype> x,
+ffi::Error LuDecompositionKernel(ffi::ThreadPool thread_pool,
+                                 ffi::Buffer<dtype> x,
                                  ffi::ResultBuffer<dtype> x_out,
                                  ffi::ResultBuffer<LapackIntDtype> ipiv,
                                  ffi::ResultBuffer<LapackIntDtype> info) {
   if (LuDecomposition<dtype, int64_t>::fn != nullptr) {
-    return LuDecomposition<dtype, int64_t>::Kernel(x, x_out, ipiv, info);
+    return LuDecomposition<dtype, int64_t>::Kernel(thread_pool, x, x_out, ipiv,
+                                                   info);
   }
-  return LuDecomposition<dtype, int32_t>::Kernel(x, x_out, ipiv, info);
+  return LuDecomposition<dtype, int32_t>::Kernel(thread_pool, x, x_out, ipiv,
+                                                 info);
 }
 
 template struct LuDecomposition<ffi::DataType::F32, int32_t>;
@@ -211,44 +299,67 @@ template struct LuDecomposition<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error QrFactorization<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<dtype> tau) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
   auto* x_out_data = x_out->typed_data();
   auto* tau_data = tau->typed_data();
-  IntType info;
-  const int64_t work_size =
-      QrFactorization<dtype, IntType>::GetWorkspaceSize(x_rows, x_cols);
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   CopyIfDiffBuffer(x, x_out);
-  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
-                       MaybeCastNoOverflow<IntType>(work_size));
   FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<IntType>(x_rows));
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
   auto x_leading_dim_v = x_rows_v;
 
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t tau_step{std::min(x_rows, x_cols)};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    QrFactorization<dtype, IntType>::fn(
-        &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, tau_data,
-        work_data.get(), &workspace_dim_v, &info);
-    x_out_data += x_out_step;
-    tau_data += tau_step;
+
+  const int64_t work_size =
+      QrFactorization<dtype, IntType>::GetWorkspaceSize(x_rows, x_cols);
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
+                       MaybeCastNoOverflow<IntType>(work_size));
+
+  int64_t min_dim = std::min(x_rows, x_cols);
+  int64_t cost_per_matrix =
+      2 * x_rows * x_cols * min_dim - (2 * min_dim * min_dim * min_dim) / 3;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_tau_data = tau_data + i * tau_step;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info;
+          QrFactorization<dtype, IntType>::fn(
+              &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+              local_tau_data, work_data.get(), &workspace_dim_v, &info);
+          using T = ffi::NativeType<dtype>;
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
+                                              x_rows * x_cols * sizeof(T));
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_tau_data, std::min(x_rows, x_cols) * sizeof(T));
+          local_x_out_data += x_out_step;
+          local_tau_data += tau_step;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
-ffi::Error QrFactorizationKernel(ffi::Buffer<dtype> x,
+ffi::Error QrFactorizationKernel(ffi::ThreadPool thread_pool,
+                                 ffi::Buffer<dtype> x,
                                  ffi::ResultBuffer<dtype> x_out,
                                  ffi::ResultBuffer<dtype> tau) {
   if (QrFactorization<dtype, int64_t>::fn != nullptr) {
-    return QrFactorization<dtype, int64_t>::Kernel(x, x_out, tau);
+    return QrFactorization<dtype, int64_t>::Kernel(thread_pool, x, x_out, tau);
   }
-  return QrFactorization<dtype, int32_t>::Kernel(x, x_out, tau);
+  return QrFactorization<dtype, int32_t>::Kernel(thread_pool, x, x_out, tau);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -277,28 +388,17 @@ template struct QrFactorization<ffi::DataType::C128, int64_t>;
 // lapack geqp3
 template <ffi::DataType dtype, typename IntType>
 ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<LapackIntDtype> jpvt,
-    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> jpvt_out,
-    ffi::ResultBuffer<dtype> tau) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::Buffer<LapackIntDtype> jpvt, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<LapackIntDtype> jpvt_out, ffi::ResultBuffer<dtype> tau) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
   auto* x_out_data = x_out->typed_data();
   auto* jpvt_out_data = jpvt_out->typed_data();
   auto* tau_data = tau->typed_data();
 
-  const int64_t work_size =
-      PivotingQrFactorization<dtype, IntType>::GetWorkspaceSize(x_rows, x_cols);
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
-  constexpr bool is_complex_dtype = ffi::IsComplexType<dtype>();
-  std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork_data;
-  if constexpr (is_complex_dtype) {
-    rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
-  }
-
   CopyIfDiffBuffer(x, x_out);
   CopyIfDiffBuffer(jpvt, jpvt_out);
-  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
-                       MaybeCastNoOverflow<IntType>(work_size));
   FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<IntType>(x_rows));
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
   auto x_leading_dim_v = x_rows_v;
@@ -306,59 +406,105 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t jpvt_step{x_cols};
   const int64_t tau_step{std::min(x_rows, x_cols)};
-  std::unique_ptr<IntType[]> jpvt_tmp;
-  if constexpr (!std::is_same_v<IntType, int32_t>) {
-    jpvt_tmp = std::make_unique<IntType[]>(jpvt_step);
+
+  const int64_t work_size =
+      PivotingQrFactorization<dtype, IntType>::GetWorkspaceSize(x_rows, x_cols);
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
+                       MaybeCastNoOverflow<IntType>(work_size));
+
+  constexpr bool is_complex_dtype = ffi::IsComplexType<dtype>();
+
+  int64_t min_dim = std::min(x_rows, x_cols);
+  int64_t cost_per_matrix =
+      2 * x_rows * x_cols * min_dim - (2 * min_dim * min_dim * min_dim) / 3;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    if constexpr (std::is_same_v<IntType, int32_t>) {
-      if constexpr (is_complex_dtype) {
-        PivotingQrFactorization<dtype, IntType>::fn(
-            &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
-            tau_data, work_data.get(), &workspace_dim_v, rwork_data.get(),
-            &info_v);
-      } else {
-        PivotingQrFactorization<dtype, IntType>::fn(
-            &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
-            tau_data, work_data.get(), &workspace_dim_v, &info_v);
-      }
-    } else {
-      for (int64_t j = 0; j < jpvt_step; ++j) {
-        jpvt_tmp[j] = static_cast<IntType>(jpvt_out_data[j]);
-      }
-      if constexpr (is_complex_dtype) {
-        PivotingQrFactorization<dtype, IntType>::fn(
-            &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_tmp.get(),
-            tau_data, work_data.get(), &workspace_dim_v, rwork_data.get(),
-            &info_v);
-      } else {
-        PivotingQrFactorization<dtype, IntType>::fn(
-            &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_tmp.get(),
-            tau_data, work_data.get(), &workspace_dim_v, &info_v);
-      }
-      for (int64_t j = 0; j < jpvt_step; ++j) {
-        jpvt_out_data[j] = static_cast<int32_t>(jpvt_tmp[j]);
-      }
-    }
-    x_out_data += x_out_step;
-    jpvt_out_data += jpvt_step;
-    tau_data += tau_step;
-  }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_jpvt_out_data = jpvt_out_data + i * jpvt_step;
+        auto* local_tau_data = tau_data + i * tau_step;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork_data;
+        if constexpr (is_complex_dtype) {
+          rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
+        }
+
+        std::unique_ptr<IntType[]> jpvt_tmp;
+        if constexpr (!std::is_same_v<IntType, int32_t>) {
+          jpvt_tmp = std::make_unique<IntType[]>(jpvt_step);
+        }
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          if constexpr (std::is_same_v<IntType, int32_t>) {
+            if constexpr (is_complex_dtype) {
+              PivotingQrFactorization<dtype, IntType>::fn(
+                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                  local_jpvt_out_data, local_tau_data, work_data.get(),
+                  &workspace_dim_v, rwork_data.get(), &info_v);
+            } else {
+              PivotingQrFactorization<dtype, IntType>::fn(
+                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                  local_jpvt_out_data, local_tau_data, work_data.get(),
+                  &workspace_dim_v, &info_v);
+            }
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_jpvt_out_data,
+                                                jpvt_step * sizeof(int32_t));
+            using T = ffi::NativeType<dtype>;
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
+                                                x_rows * x_cols * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_tau_data, std::min(x_rows, x_cols) * sizeof(T));
+          } else {
+            for (int64_t k = 0; k < jpvt_step; ++k) {
+              jpvt_tmp[k] = static_cast<IntType>(local_jpvt_out_data[k]);
+            }
+            if constexpr (is_complex_dtype) {
+              PivotingQrFactorization<dtype, IntType>::fn(
+                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                  jpvt_tmp.get(), local_tau_data, work_data.get(),
+                  &workspace_dim_v, rwork_data.get(), &info_v);
+            } else {
+              PivotingQrFactorization<dtype, IntType>::fn(
+                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                  jpvt_tmp.get(), local_tau_data, work_data.get(),
+                  &workspace_dim_v, &info_v);
+            }
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(jpvt_tmp.get(),
+                                                jpvt_step * sizeof(IntType));
+            using T = ffi::NativeType<dtype>;
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
+                                                x_rows * x_cols * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_tau_data, std::min(x_rows, x_cols) * sizeof(T));
+            for (int64_t k = 0; k < jpvt_step; ++k) {
+              local_jpvt_out_data[k] = static_cast<int32_t>(jpvt_tmp[k]);
+            }
+          }
+          local_x_out_data += x_out_step;
+          local_jpvt_out_data += jpvt_step;
+          local_tau_data += tau_step;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error PivotingQrFactorizationKernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<LapackIntDtype> jpvt,
-    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> jpvt_out,
-    ffi::ResultBuffer<dtype> tau) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::Buffer<LapackIntDtype> jpvt, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<LapackIntDtype> jpvt_out, ffi::ResultBuffer<dtype> tau) {
   if (PivotingQrFactorization<dtype, int64_t>::fn != nullptr) {
-    return PivotingQrFactorization<dtype, int64_t>::Kernel(x, jpvt, x_out,
-                                                           jpvt_out, tau);
+    return PivotingQrFactorization<dtype, int64_t>::Kernel(
+        thread_pool, x, jpvt, x_out, jpvt_out, tau);
   }
-  return PivotingQrFactorization<dtype, int32_t>::Kernel(x, jpvt, x_out,
-                                                         jpvt_out, tau);
+  return PivotingQrFactorization<dtype, int32_t>::Kernel(thread_pool, x, jpvt,
+                                                         x_out, jpvt_out, tau);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -392,22 +538,14 @@ template struct PivotingQrFactorization<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error OrthogonalQr<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> tau,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, ffi::Buffer<dtype> tau,
     ffi::ResultBuffer<dtype> x_out) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
   auto* tau_data = tau.typed_data();
   auto* x_out_data = x_out->typed_data();
-  IntType info;
 
   CopyIfDiffBuffer(x, x_out);
-
-  // Prepare LAPACK workspaces.
-  int64_t work_size = OrthogonalQr<dtype, IntType>::GetWorkspaceSize(
-      x_rows, x_cols, tau.dimensions().back());
-  FFI_ASSIGN_OR_RETURN(auto work_size_v,
-                       MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<IntType>(x_rows));
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
@@ -417,23 +555,49 @@ ffi::Error OrthogonalQr<dtype, IntType>::Kernel(
 
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t tau_step{tau_size_v};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    OrthogonalQr<dtype, IntType>::fn(&x_rows_v, &x_cols_v, &tau_size_v,
-                                     x_out_data, &x_leading_dim_v, tau_data,
-                                     work_data.get(), &work_size_v, &info);
-    x_out_data += x_out_step;
-    tau_data += tau_step;
+
+  int64_t work_size = OrthogonalQr<dtype, IntType>::GetWorkspaceSize(
+      x_rows, x_cols, tau.dimensions().back());
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<IntType>(work_size));
+
+  int64_t k_dim = tau_size_v;
+  int64_t cost_per_matrix = 4 * x_rows * x_cols * k_dim -
+                            2 * k_dim * k_dim * (x_rows + x_cols) +
+                            (4 * k_dim * k_dim * k_dim) / 3;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_tau_data = tau_data + i * tau_step;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info;
+          OrthogonalQr<dtype, IntType>::fn(&x_rows_v, &x_cols_v, &tau_size_v,
+                                           local_x_out_data, &x_leading_dim_v,
+                                           local_tau_data, work_data.get(),
+                                           &work_size_v, &info);
+          local_x_out_data += x_out_step;
+          local_tau_data += tau_step;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
-ffi::Error OrthogonalQrKernel(ffi::Buffer<dtype> x, ffi::Buffer<dtype> tau,
+ffi::Error OrthogonalQrKernel(ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+                              ffi::Buffer<dtype> tau,
                               ffi::ResultBuffer<dtype> x_out) {
   if (OrthogonalQr<dtype, int64_t>::fn != nullptr) {
-    return OrthogonalQr<dtype, int64_t>::Kernel(x, tau, x_out);
+    return OrthogonalQr<dtype, int64_t>::Kernel(thread_pool, x, tau, x_out);
   }
-  return OrthogonalQr<dtype, int32_t>::Kernel(x, tau, x_out);
+  return OrthogonalQr<dtype, int32_t>::Kernel(thread_pool, x, tau, x_out);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -462,8 +626,9 @@ template struct OrthogonalQr<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error OrthogonalQrMultiply<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> a, ffi::Buffer<dtype> tau, ffi::Buffer<dtype> c,
-    bool left, bool transpose, ffi::ResultBuffer<dtype> c_out) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> a, ffi::Buffer<dtype> tau,
+    ffi::Buffer<dtype> c, bool left, bool transpose,
+    ffi::ResultBuffer<dtype> c_out) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, c_rows, c_cols]),
                        SplitBatch2D(c.dimensions()));
   FFI_ASSIGN_OR_RETURN((auto [a_batch, a_rows, a_cols]),
@@ -497,22 +662,41 @@ ffi::Error OrthogonalQrMultiply<dtype, IntType>::Kernel(
       GetWorkspaceSize(side_v, trans_v, c_rows_v, c_cols_v, k_v, lda_v);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   auto c_leading_dim_v = c_rows_v;
-  IntType info;
 
   const int64_t c_out_step{c_rows * c_cols};
   const int64_t a_step{a_rows * a_cols};
   const int64_t tau_step{tau.dimensions().back()};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    fn(&side_v, &trans_v, &c_rows_v, &c_cols_v, &k_v, a_data, &lda_v, tau_data,
-       c_out_data, &c_leading_dim_v, work_data.get(), &work_size_v, &info);
-    c_out_data += c_out_step;
-    a_data += a_step;
-    tau_data += tau_step;
+
+  int64_t k_dim = k_v;
+  int64_t cost_per_matrix = 4 * k_dim * c_rows * c_cols -
+                            2 * k_dim * k_dim * (left ? c_cols : c_rows);
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_c_out_data = c_out_data + i * c_out_step;
+        const auto* local_a_data = a_data + i * a_step;
+        const auto* local_tau_data = tau_data + i * tau_step;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info;
+          fn(&side_v, &trans_v, &c_rows_v, &c_cols_v, &k_v,
+             const_cast<ValueType*>(local_a_data), &lda_v,
+             const_cast<ValueType*>(local_tau_data), local_c_out_data,
+             &c_leading_dim_v, work_data.get(), &work_size_v, &info);
+          local_c_out_data += c_out_step;
+          local_a_data += a_step;
+          local_tau_data += tau_step;
+        }
+      });
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -536,24 +720,25 @@ template struct OrthogonalQrMultiply<ffi::DataType::C64, int64_t>;
 template struct OrthogonalQrMultiply<ffi::DataType::C128, int32_t>;
 template struct OrthogonalQrMultiply<ffi::DataType::C128, int64_t>;
 template <ffi::DataType dtype>
-ffi::Error OrthogonalQrMultiplyKernel(ffi::Buffer<dtype> a,
+ffi::Error OrthogonalQrMultiplyKernel(ffi::ThreadPool thread_pool,
+                                      ffi::Buffer<dtype> a,
                                       ffi::Buffer<dtype> tau,
                                       ffi::Buffer<dtype> c, bool left,
                                       bool transpose,
                                       ffi::ResultBuffer<dtype> c_out) {
   if (OrthogonalQrMultiply<dtype, int64_t>::fn != nullptr) {
-    return OrthogonalQrMultiply<dtype, int64_t>::Kernel(a, tau, c, left,
-                                                        transpose, c_out);
+    return OrthogonalQrMultiply<dtype, int64_t>::Kernel(thread_pool, a, tau, c,
+                                                        left, transpose, c_out);
   }
-  return OrthogonalQrMultiply<dtype, int32_t>::Kernel(a, tau, c, left,
-                                                      transpose, c_out);
+  return OrthogonalQrMultiply<dtype, int32_t>::Kernel(thread_pool, a, tau, c,
+                                                      left, transpose, c_out);
 }
 
 //== Cholesky Factorization ==//
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error CholeskyFactorization<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
@@ -563,39 +748,51 @@ ffi::Error CholeskyFactorization<dtype, IntType>::Kernel(
   CopyIfDiffBuffer(x, x_out);
 
   auto uplo_v = static_cast<char>(uplo);
-  FFI_ASSIGN_OR_RETURN(auto x_order_v,
-                       MaybeCastNoOverflow<IntType>(x.dimensions().back()));
-  auto x_leading_dim_v = x_order_v;
+  FFI_ASSIGN_OR_RETURN(auto n_v, MaybeCastNoOverflow<IntType>(x_rows));
+  auto lda_v = n_v;
 
   const int64_t x_out_step{x_rows * x_cols};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    CholeskyFactorization<dtype, IntType>::fn(&uplo_v, &x_order_v, x_out_data,
-                                              &x_leading_dim_v, &info_v);
-    // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
-    // MSAN.
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-
-    using T = ffi::NativeType<dtype>;
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
-                                        x_rows * x_cols * sizeof(T));
-
-    x_out_data += x_out_step;
-    ++info_data;
+  int64_t cost_per_matrix = x_rows * x_rows * x_rows / 3;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_info_data = info_data + i;
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          CholeskyFactorization<dtype, IntType>::fn(
+              &uplo_v, &n_v, local_x_out_data, &lda_v, &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+
+          using T = ffi::NativeType<dtype>;
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
+                                              x_rows * x_cols * sizeof(T));
+
+          local_x_out_data += x_out_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
-ffi::Error CholeskyFactorizationKernel(ffi::Buffer<dtype> x,
+ffi::Error CholeskyFactorizationKernel(ffi::ThreadPool thread_pool,
+                                       ffi::Buffer<dtype> x,
                                        MatrixParams::UpLo uplo,
                                        ffi::ResultBuffer<dtype> x_out,
                                        ffi::ResultBuffer<LapackIntDtype> info) {
   if (CholeskyFactorization<dtype, int64_t>::fn != nullptr) {
-    return CholeskyFactorization<dtype, int64_t>::Kernel(x, uplo, x_out, info);
+    return CholeskyFactorization<dtype, int64_t>::Kernel(thread_pool, x, uplo,
+                                                         x_out, info);
   }
-  return CholeskyFactorization<dtype, int32_t>::Kernel(x, uplo, x_out, info);
+  return CholeskyFactorization<dtype, int32_t>::Kernel(thread_pool, x, uplo,
+                                                       x_out, info);
 }
 
 template struct CholeskyFactorization<ffi::DataType::F32, int32_t>;
@@ -676,100 +873,85 @@ static ffi::Error SvdKernel(
   const int64_t u_step{u_dims.front() * u_dims.back()};
   const int64_t vt_step{vt_leading_dim_v * vt_dims.back()};
 
-  bool should_parallelize = ShouldParallelizeSVD(batch_count, x_rows, x_cols,
-                                                 thread_pool.num_threads());
+  int64_t min_dim = std::min(x_rows, x_cols);
+  int64_t cost_per_matrix = 10 * x_rows * x_cols * min_dim;
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
 
-  auto thread_work = [&](auto* x_out_data, auto* singular_values_data,
-                         auto* u_data, auto* vt_data, auto* info_data) {
-    auto work_data = AllocateScratchMemory<dtype>(work_size);
-    auto iwork_data =
-        AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
-    std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
-    if constexpr (ffi::IsComplexType<dtype>()) {
-      rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
-    }
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_singular_values_data =
+            singular_values_data + i * singular_values_step;
+        auto* local_u_data = u_data + i * u_step;
+        auto* local_vt_data = vt_data + i * vt_step;
+        auto* local_info_data = info_data + i;
 
-    IntType info_v;
-    if constexpr (ffi::IsComplexType<dtype>()) {
-      svd::SVDType<dtype, IntType>::fn(
-          &mode_v, &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-          singular_values_data, u_data, &u_leading_dim_v, vt_data,
-          &vt_leading_dim_v, work_data.get(), &workspace_dim_v, rwork.get(),
-          iwork_data.get(), &info_v);
-    } else {
-      svd::SVDType<dtype, IntType>::fn(
-          &mode_v, &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-          singular_values_data, u_data, &u_leading_dim_v, vt_data,
-          &vt_leading_dim_v, work_data.get(), &workspace_dim_v,
-          iwork_data.get(), &info_v);
-    }
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto iwork_data =
+            AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
+        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        if constexpr (ffi::IsComplexType<dtype>()) {
+          rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+        }
 
-    // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
-    // MSAN.
-    using T [[maybe_unused]] = typename svd::SVDType<dtype, IntType>::ValueType;
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
-                                        x_cols_v * x_leading_dim_v * sizeof(T));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-        singular_values_data, std::min(x_rows_v, x_cols_v) *
-                                  sizeof(ffi::NativeType<ffi::ToReal(dtype)>));
-    if (mode_v == 'A') {
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-          u_data, u_leading_dim_v * x_rows_v * sizeof(T));
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
-    } else if (mode_v == 'O') {
-      if (x_rows_v < x_cols_v) {
-        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-            u_data, u_leading_dim_v * x_rows_v * sizeof(T));
-      } else {
-        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-            vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
-      }
-    } else if (mode_v == 'S') {
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-          u_data, u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
-          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
-    }
-  };
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          if constexpr (ffi::IsComplexType<dtype>()) {
+            svd::SVDType<dtype, IntType>::fn(
+                &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
+                &x_leading_dim_v, local_singular_values_data, local_u_data,
+                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                work_data.get(), &workspace_dim_v, rwork.get(),
+                iwork_data.get(), &info_v);
+          } else {
+            svd::SVDType<dtype, IntType>::fn(
+                &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
+                &x_leading_dim_v, local_singular_values_data, local_u_data,
+                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                work_data.get(), &workspace_dim_v, iwork_data.get(), &info_v);
+          }
 
-  std::vector<xla::Future<>> futures;
-  futures.reserve(batch_count);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    if (!should_parallelize) {
-      thread_work(x_out_data, singular_values_data, u_data, vt_data, info_data);
-    } else {
-      auto [promise, future] = xla::MakePromise();
-      futures.push_back(std::move(future));
-      // We copy the thread_work parameters here because they get updated in the
-      // loop.
-      thread_pool.Schedule([&, promise = std::move(promise), x_out_data,
-                            singular_values_data, u_data, vt_data,
-                            info_data]() mutable {
-        thread_work(x_out_data, singular_values_data, u_data, vt_data,
-                    info_data);
-        promise.Set();
+          // Suppress MSAN warnings when using a copy of LAPACK uninstrumented
+          // by MSAN.
+          using T [[maybe_unused]] =
+              typename svd::SVDType<dtype, IntType>::ValueType;
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_x_out_data, x_cols_v * x_leading_dim_v * sizeof(T));
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_singular_values_data,
+              std::min(x_rows_v, x_cols_v) *
+                  sizeof(ffi::NativeType<ffi::ToReal(dtype)>));
+          if (mode_v == 'A') {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+          } else if (mode_v == 'O') {
+            if (x_rows_v < x_cols_v) {
+              ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                  local_u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+            } else {
+              ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                  local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+            }
+          } else if (mode_v == 'S') {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_u_data,
+                u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+          }
+
+          local_x_out_data += x_out_step;
+          local_singular_values_data += singular_values_step;
+          local_u_data += u_step;
+          local_vt_data += vt_step;
+          ++local_info_data;
+        }
       });
-    }
-
-    x_out_data += x_out_step;
-    singular_values_data += singular_values_step;
-    u_data += u_step;
-    vt_data += vt_step;
-    ++info_data;
-  }
-
-  if (should_parallelize) {
-    absl::Status futures_status = xla::JoinFutures(std::move(futures)).Await();
-
-    if (!futures_status.ok()) {
-      return ffi::Error(XLA_FFI_Error_Code_INTERNAL,
-                        std::string(futures_status.message()));
-    }
-  }
-  return ffi::Error::Success();
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -801,7 +983,8 @@ static int64_t SvdGetWorkspaceSize(IntType x_rows, IntType x_cols,
 
 template <ffi::DataType dtype, typename IntType>
 static ffi::Error SvdQRKernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
@@ -831,12 +1014,6 @@ static ffi::Error SvdQRKernel(
       x_rows_v, x_cols_v, mode);
   FFI_ASSIGN_OR_RETURN(auto work_size, work_size_or);
   auto workspace_dim_v = work_size;
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
-  std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
-  if constexpr (ffi::IsComplexType<dtype>()) {
-    const auto rwork_size = svd::GetRealWorkspaceSizeQR(x_rows, x_cols);
-    rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
-  }
 
   auto u_dims = u->dimensions().last(2);
   auto vt_dims = vt->dimensions().last(2);
@@ -848,29 +1025,83 @@ static ffi::Error SvdQRKernel(
   const int64_t u_step{u_dims.front() * u_dims.back()};
   const int64_t vt_step{vt_leading_dim_v * vt_dims.back()};
 
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    if constexpr (ffi::IsComplexType<dtype>()) {
-      svd::SVDQRType<dtype, IntType>::fn(
-          &mode_v, &mode_v, &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-          singular_values_data, u_data, &u_leading_dim_v, vt_data,
-          &vt_leading_dim_v, work_data.get(), &workspace_dim_v, rwork.get(),
-          &info_v);
-    } else {
-      svd::SVDQRType<dtype, IntType>::fn(
-          &mode_v, &mode_v, &x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-          singular_values_data, u_data, &u_leading_dim_v, vt_data,
-          &vt_leading_dim_v, work_data.get(), &workspace_dim_v, &info_v);
-    }
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    x_out_data += x_out_step;
-    singular_values_data += singular_values_step;
-    u_data += u_step;
-    vt_data += vt_step;
-    ++info_data;
+  int64_t cost_per_matrix = 10 * x_rows * x_cols * std::min(x_rows, x_cols);
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_singular_values_data =
+            singular_values_data + i * singular_values_step;
+        auto* local_u_data = u_data + i * u_step;
+        auto* local_vt_data = vt_data + i * vt_step;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        if constexpr (ffi::IsComplexType<dtype>()) {
+          const auto rwork_size = svd::GetRealWorkspaceSizeQR(x_rows, x_cols);
+          rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+        }
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          if constexpr (ffi::IsComplexType<dtype>()) {
+            svd::SVDQRType<dtype, IntType>::fn(
+                &mode_v, &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
+                &x_leading_dim_v, local_singular_values_data, local_u_data,
+                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                work_data.get(), &workspace_dim_v, rwork.get(), &info_v);
+          } else {
+            svd::SVDQRType<dtype, IntType>::fn(
+                &mode_v, &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
+                &x_leading_dim_v, local_singular_values_data, local_u_data,
+                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                work_data.get(), &workspace_dim_v, &info_v);
+          }
+
+          using T [[maybe_unused]] =
+              typename svd::SVDQRType<dtype, IntType>::ValueType;
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_x_out_data, x_cols_v * x_leading_dim_v * sizeof(T));
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_singular_values_data,
+              std::min(x_rows_v, x_cols_v) *
+                  sizeof(ffi::NativeType<ffi::ToReal(dtype)>));
+          if (mode_v == 'A') {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+          } else if (mode_v == 'O') {
+            if (x_rows_v < x_cols_v) {
+              ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                  local_u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+            } else {
+              ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                  local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+            }
+          } else if (mode_v == 'S') {
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_u_data,
+                u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+                local_vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+          }
+
+          local_x_out_data += x_out_step;
+          local_singular_values_data += singular_values_step;
+          local_u_data += u_step;
+          local_vt_data += vt_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -947,30 +1178,31 @@ SingularValueDecompositionComplex<dtype, IntType>::GetWorkspaceSize(
 
 template <ffi::DataType dtype>
 ffi::Error SingularValueDecompositionQRKernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<dtype> singular_values, ffi::ResultBuffer<dtype> u,
-    ffi::ResultBuffer<dtype> vt, ffi::ResultBuffer<LapackIntDtype> info,
-    svd::ComputationMode mode) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> singular_values,
+    ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
+    ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
   if (svd::SVDQRType<dtype, int64_t>::fn != nullptr) {
-    return internal::SvdQRKernel<dtype, int64_t>(x, x_out, singular_values, u,
-                                                 vt, info, mode);
+    return internal::SvdQRKernel<dtype, int64_t>(
+        thread_pool, x, x_out, singular_values, u, vt, info, mode);
   }
-  return internal::SvdQRKernel<dtype, int32_t>(x, x_out, singular_values, u, vt,
-                                               info, mode);
+  return internal::SvdQRKernel<dtype, int32_t>(
+      thread_pool, x, x_out, singular_values, u, vt, info, mode);
 }
 
 template <ffi::DataType dtype>
 ffi::Error SingularValueDecompositionQRComplexKernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
   if (svd::SVDQRType<dtype, int64_t>::fn != nullptr) {
-    return internal::SvdQRKernel<dtype, int64_t>(x, x_out, singular_values, u,
-                                                 vt, info, mode);
+    return internal::SvdQRKernel<dtype, int64_t>(
+        thread_pool, x, x_out, singular_values, u, vt, info, mode);
   }
-  return internal::SvdQRKernel<dtype, int32_t>(x, x_out, singular_values, u, vt,
-                                               info, mode);
+  return internal::SvdQRKernel<dtype, int32_t>(
+      thread_pool, x, x_out, singular_values, u, vt, info, mode);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -1050,7 +1282,7 @@ int64_t eig::GetIntWorkspaceSize(int64_t x_cols, ComputationMode mode) {
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionSymmetric<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> eigenvalues,
     ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
@@ -1066,49 +1298,62 @@ ffi::Error EigenvalueDecompositionSymmetric<dtype, IntType>::Kernel(
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
   FFI_ASSIGN_OR_RETURN(auto x_leading_dim_v,
                        MaybeCastNoOverflow<IntType>(x_cols));
-  // Prepare LAPACK workspaces.
-  FFI_ASSIGN_OR_RETURN(
-      IntType work_size_v,
-      MaybeCastNoOverflow<IntType>(eig::GetWorkspaceSize(x_cols, mode)));
-  FFI_ASSIGN_OR_RETURN(
-      IntType iwork_size_v,
-      MaybeCastNoOverflow<IntType>(eig::GetIntWorkspaceSize(x_cols, mode)));
-  auto work_data = AllocateScratchMemory<dtype>(work_size_v);
-  auto iwork_data =
-      AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size_v);
 
   const int64_t x_out_step{x_cols * x_cols};
   const int64_t eigenvalues_step{x_cols};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    EigenvalueDecompositionSymmetric<dtype, IntType>::fn(
-        &mode_v, &uplo_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-        eigenvalues_data, work_data.get(), &work_size_v, iwork_data.get(),
-        &iwork_size_v, &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
-                                        sizeof(*x_out_data) * x_cols * x_cols);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigenvalues_data,
-                                        sizeof(*eigenvalues_data) * x_cols);
-    x_out_data += x_out_step;
-    eigenvalues_data += eigenvalues_step;
-    ++info_data;
-  }
+
+  const int64_t work_size = eig::GetWorkspaceSize(x_cols, mode);
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<IntType>(work_size));
+  const int64_t iwork_size = eig::GetIntWorkspaceSize(x_cols, mode);
+  FFI_ASSIGN_OR_RETURN(auto iwork_size_v,
+                       MaybeCastNoOverflow<IntType>(iwork_size));
+
+  int64_t cost_per_matrix = 5 * x_cols * x_cols * x_cols;
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_eigenvalues_data = eigenvalues_data + i * eigenvalues_step;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto iwork_data =
+            AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          EigenvalueDecompositionSymmetric<dtype, IntType>::fn(
+              &mode_v, &uplo_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+              local_eigenvalues_data, work_data.get(), &work_size_v,
+              iwork_data.get(), &iwork_size_v, &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_x_out_data, sizeof(*local_x_out_data) * x_cols * x_cols);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_eigenvalues_data, sizeof(*local_eigenvalues_data) * x_cols);
+          local_x_out_data += x_out_step;
+          local_eigenvalues_data += eigenvalues_step;
+          ++local_info_data;
+        }
+      });
   return ffi::Error::Success();
 }
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionSymmetricKernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> eigenvalues,
     ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
   if (EigenvalueDecompositionSymmetric<dtype, int64_t>::fn != nullptr) {
     return EigenvalueDecompositionSymmetric<dtype, int64_t>::Kernel(
-        x, uplo, x_out, eigenvalues, info, mode);
+        thread_pool, x, uplo, x_out, eigenvalues, info, mode);
   }
   return EigenvalueDecompositionSymmetric<dtype, int32_t>::Kernel(
-      x, uplo, x_out, eigenvalues, info, mode);
+      thread_pool, x, uplo, x_out, eigenvalues, info, mode);
 }
 
 namespace eig {
@@ -1135,7 +1380,7 @@ int64_t GetRealWorkspaceSize(int64_t x_cols, ComputationMode mode) {
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionHermitian<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> eigenvalues,
     ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
@@ -1152,50 +1397,70 @@ ffi::Error EigenvalueDecompositionHermitian<dtype, IntType>::Kernel(
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
   FFI_ASSIGN_OR_RETURN(auto x_leading_dim_v,
                        MaybeCastNoOverflow<IntType>(x_cols));
-  // Prepare LAPACK workspaces.
-  FFI_ASSIGN_OR_RETURN(
-      IntType work_size_v,
-      MaybeCastNoOverflow<IntType>(eig::GetComplexWorkspaceSize(x_cols, mode)));
-  FFI_ASSIGN_OR_RETURN(
-      IntType rwork_size_v,
-      MaybeCastNoOverflow<IntType>(eig::GetRealWorkspaceSize(x_cols, mode)));
-  FFI_ASSIGN_OR_RETURN(
-      IntType iwork_size_v,
-      MaybeCastNoOverflow<IntType>(eig::GetIntWorkspaceSize(x_cols, mode)));
-  auto work_data = AllocateScratchMemory<dtype>(work_size_v);
-  auto iwork_data =
-      AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size_v);
-  auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size_v);
 
   const int64_t x_out_step{x_cols * x_cols};
   const int64_t eigenvalues_step{x_cols};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    EigenvalueDecompositionHermitian<dtype, IntType>::fn(
-        &mode_v, &uplo_v, &x_cols_v, x_out_data, &x_leading_dim_v,
-        eigenvalues_data, work_data.get(), &work_size_v, rwork_data.get(),
-        &rwork_size_v, iwork_data.get(), &iwork_size_v, &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    x_out_data += x_out_step;
-    eigenvalues_data += eigenvalues_step;
-    ++info_data;
+
+  const int64_t work_size = eig::GetComplexWorkspaceSize(x_cols, mode);
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<IntType>(work_size));
+  const int64_t rwork_size = eig::GetRealWorkspaceSize(x_cols, mode);
+  FFI_ASSIGN_OR_RETURN(auto rwork_size_v,
+                       MaybeCastNoOverflow<IntType>(rwork_size));
+  const int64_t iwork_size = eig::GetIntWorkspaceSize(x_cols, mode);
+  FFI_ASSIGN_OR_RETURN(auto iwork_size_v,
+                       MaybeCastNoOverflow<IntType>(iwork_size));
+
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols * 4;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_out_step;
+        auto* local_eigenvalues_data = eigenvalues_data + i * eigenvalues_step;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto iwork_data =
+            AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
+        auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          EigenvalueDecompositionHermitian<dtype, IntType>::fn(
+              &mode_v, &uplo_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
+              local_eigenvalues_data, work_data.get(), &work_size_v,
+              rwork_data.get(), &rwork_size_v, iwork_data.get(), &iwork_size_v,
+              &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_x_out_data, sizeof(*local_x_out_data) * x_cols * x_cols);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+              local_eigenvalues_data, sizeof(*local_eigenvalues_data) * x_cols);
+          local_x_out_data += x_out_step;
+          local_eigenvalues_data += eigenvalues_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionHermitianKernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> eigenvalues,
     ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
   if (EigenvalueDecompositionHermitian<dtype, int64_t>::fn != nullptr) {
     return EigenvalueDecompositionHermitian<dtype, int64_t>::Kernel(
-        x, uplo, x_out, eigenvalues, info, mode);
+        thread_pool, x, uplo, x_out, eigenvalues, info, mode);
   }
   return EigenvalueDecompositionHermitian<dtype, int32_t>::Kernel(
-      x, uplo, x_out, eigenvalues, info, mode);
+      thread_pool, x, uplo, x_out, eigenvalues, info, mode);
 }
 
 template struct EigenvalueDecompositionSymmetric<ffi::DataType::F32, int32_t>;
@@ -1209,8 +1474,9 @@ template struct EigenvalueDecompositionHermitian<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> eigvals_real,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
+    ffi::ResultBuffer<dtype> eigvals_real,
     ffi::ResultBuffer<dtype> eigvals_imag,
     ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_left,
     ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_right,
@@ -1228,16 +1494,13 @@ ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
   auto compute_left_v = static_cast<char>(compute_left);
   auto compute_right_v = static_cast<char>(compute_right);
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
-  // Prepare LAPACK workspaces.
+
   int64_t work_size = EigenvalueDecomposition<dtype, IntType>::GetWorkspaceSize(
       x_cols_v, compute_left, compute_right);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
+
   const int64_t x_size{x_cols * x_cols};
-  auto x_copy = AllocateScratchMemory<dtype>(x_size);
-  auto work_eigvecs_left = AllocateScratchMemory<dtype>(x_size);
-  auto work_eigvecs_right = AllocateScratchMemory<dtype>(x_size);
 
   const auto is_finite = [](ffi::NativeType<dtype>* data, int64_t size) {
     return absl::c_all_of(
@@ -1249,66 +1512,91 @@ ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
       static_cast<unsigned long>(x_size) * sizeof(ffi::NativeType<dtype>);
   [[maybe_unused]] const auto x_cols_bytes =
       static_cast<unsigned long>(x_cols) * sizeof(ffi::NativeType<dtype>);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    std::copy_n(x_data, x_size, x_copy.get());
-    if (is_finite(x_copy.get(), x_size)) {
-      IntType info_v;
-      EigenvalueDecomposition<dtype, IntType>::fn(
-          &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(), &x_cols_v,
-          eigvals_real_data, eigvals_imag_data, work_eigvecs_left.get(),
-          &x_cols_v, work_eigvecs_right.get(), &x_cols_v, work_data.get(),
-          &work_size_v, &info_v);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-      *info_data = static_cast<int32_t>(info_v);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_real_data, x_cols_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_imag_data, x_cols_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_left.get(),
-                                          x_size_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_right.get(),
-                                          x_size_bytes);
-      if (info_data[0] == 0) {
-        UnpackEigenvectors(x_cols_v, eigvals_imag_data, work_eigvecs_left.get(),
-                           eigvecs_left_data);
-        UnpackEigenvectors(x_cols_v, eigvals_imag_data,
-                           work_eigvecs_right.get(), eigvecs_right_data);
-      }
-    } else {
-      info_data[0] = -4;
-    }
-    x_data += x_size;
-    eigvals_real_data += x_cols;
-    eigvals_imag_data += x_cols;
-    eigvecs_left_data += x_size;
-    eigvecs_right_data += x_size;
-    ++info_data;
-  }
+
+  int64_t cost_per_matrix = 10 * x_cols * x_cols * x_cols;
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        const auto* local_x_data = x_data + i * x_size;
+        auto* local_eigvals_real_data = eigvals_real_data + i * x_cols;
+        auto* local_eigvals_imag_data = eigvals_imag_data + i * x_cols;
+        auto* local_eigvecs_left_data = eigvecs_left_data + i * x_size;
+        auto* local_eigvecs_right_data = eigvecs_right_data + i * x_size;
+        auto* local_info_data = info_data + i;
+
+        auto x_copy = AllocateScratchMemory<dtype>(x_size);
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto work_eigvecs_left = AllocateScratchMemory<dtype>(x_size);
+        auto work_eigvecs_right = AllocateScratchMemory<dtype>(x_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          std::copy_n(local_x_data, x_size, x_copy.get());
+          if (is_finite(x_copy.get(), x_size)) {
+            IntType info_v;
+            EigenvalueDecomposition<dtype, IntType>::fn(
+                &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(),
+                &x_cols_v, local_eigvals_real_data, local_eigvals_imag_data,
+                work_eigvecs_left.get(), &x_cols_v, work_eigvecs_right.get(),
+                &x_cols_v, work_data.get(), &work_size_v, &info_v);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+            *local_info_data = static_cast<int32_t>(info_v);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_real_data,
+                                                x_cols_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_imag_data,
+                                                x_cols_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_left.get(),
+                                                x_size_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_right.get(),
+                                                x_size_bytes);
+            if (local_info_data[0] == 0) {
+              UnpackEigenvectors(x_cols_v, local_eigvals_imag_data,
+                                 work_eigvecs_left.get(),
+                                 local_eigvecs_left_data);
+              UnpackEigenvectors(x_cols_v, local_eigvals_imag_data,
+                                 work_eigvecs_right.get(),
+                                 local_eigvecs_right_data);
+            }
+          } else {
+            local_info_data[0] = -4;
+          }
+          local_x_data += x_size;
+          local_eigvals_real_data += x_cols;
+          local_eigvals_imag_data += x_cols;
+          local_eigvecs_left_data += x_size;
+          local_eigvecs_right_data += x_size;
+          ++local_info_data;
+        }
+      });
   return ffi::Error::Success();
 }
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionKernel(
-    ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> eigvals_real,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
+    ffi::ResultBuffer<dtype> eigvals_real,
     ffi::ResultBuffer<dtype> eigvals_imag,
     ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_left,
     ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_right,
     ffi::ResultBuffer<LapackIntDtype> info) {
   if (EigenvalueDecomposition<dtype, int64_t>::fn != nullptr) {
     return EigenvalueDecomposition<dtype, int64_t>::Kernel(
-        x, compute_left, compute_right, eigvals_real, eigvals_imag,
+        thread_pool, x, compute_left, compute_right, eigvals_real, eigvals_imag,
         eigvecs_left, eigvecs_right, info);
   }
   return EigenvalueDecomposition<dtype, int32_t>::Kernel(
-      x, compute_left, compute_right, eigvals_real, eigvals_imag, eigvecs_left,
-      eigvecs_right, info);
+      thread_pool, x, compute_left, compute_right, eigvals_real, eigvals_imag,
+      eigvecs_left, eigvecs_right, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> eigvals,
-    ffi::ResultBuffer<dtype> eigvecs_left,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
+    ffi::ResultBuffer<dtype> eigvals, ffi::ResultBuffer<dtype> eigvecs_left,
     ffi::ResultBuffer<dtype> eigvecs_right,
     ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
@@ -1322,16 +1610,14 @@ ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
   auto compute_left_v = static_cast<char>(compute_left);
   auto compute_right_v = static_cast<char>(compute_right);
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
-  // Prepare LAPACK workspaces.
+
   int64_t work_size =
       EigenvalueDecompositionComplex<dtype, IntType>::GetWorkspaceSize(
           x_cols_v, compute_left, compute_right);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
+
   const int64_t x_size{x_cols * x_cols};
-  auto x_copy = AllocateScratchMemory<dtype>(x_size);
-  auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
 
   const auto is_finite = [](ffi::NativeType<dtype>* data, int64_t size) {
     return absl::c_all_of(absl::MakeSpan(data, size), [](const auto& z) {
@@ -1343,46 +1629,68 @@ ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
       static_cast<unsigned long>(x_size) * sizeof(ffi::NativeType<dtype>);
   [[maybe_unused]] const auto x_cols_bytes =
       static_cast<unsigned long>(x_cols) * sizeof(ffi::NativeType<dtype>);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    std::copy_n(x_data, x_size, x_copy.get());
-    if (is_finite(x_copy.get(), x_size)) {
-      IntType info_v;
-      EigenvalueDecompositionComplex<dtype, IntType>::fn(
-          &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(), &x_cols_v,
-          eigvals_data, eigvecs_left_data, &x_cols_v, eigvecs_right_data,
-          &x_cols_v, work_data.get(), &work_size_v, rwork_data.get(), &info_v);
-      *info_data = static_cast<int32_t>(info_v);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_data, x_cols_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_left_data, x_size_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_right_data, x_size_bytes);
-    } else {
-      info_data[0] = -4;
-    }
-    x_data += x_size;
-    eigvals_data += x_cols;
-    eigvecs_left_data += x_size;
-    eigvecs_right_data += x_size;
-    ++info_data;
-  }
-  return ffi::Error::Success();
+
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols;
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_data = x_data + i * x_size;
+        auto* local_eigvals_data = eigvals_data + i * x_cols;
+        auto* local_eigvecs_left_data = eigvecs_left_data + i * x_size;
+        auto* local_eigvecs_right_data = eigvecs_right_data + i * x_size;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto x_copy = AllocateScratchMemory<dtype>(x_size);
+        auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
+
+        for (int64_t j = 0; j < count; ++j) {
+          std::copy_n(local_x_data, x_size, x_copy.get());
+          if (is_finite(x_copy.get(), x_size)) {
+            IntType info_v;
+            EigenvalueDecompositionComplex<dtype, IntType>::fn(
+                &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(),
+                &x_cols_v, local_eigvals_data, local_eigvecs_left_data,
+                &x_cols_v, local_eigvecs_right_data, &x_cols_v, work_data.get(),
+                &work_size_v, rwork_data.get(), &info_v);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+            *local_info_data = static_cast<int32_t>(info_v);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_data,
+                                                x_cols_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvecs_left_data,
+                                                x_size_bytes);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvecs_right_data,
+                                                x_size_bytes);
+          } else {
+            *local_info_data = -4;
+          }
+          local_x_data += x_size;
+          local_eigvals_data += x_cols;
+          local_eigvecs_left_data += x_size;
+          local_eigvecs_right_data += x_size;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionComplexKernel(
-    ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> eigvals,
-    ffi::ResultBuffer<dtype> eigvecs_left,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    eig::ComputationMode compute_left, eig::ComputationMode compute_right,
+    ffi::ResultBuffer<dtype> eigvals, ffi::ResultBuffer<dtype> eigvecs_left,
     ffi::ResultBuffer<dtype> eigvecs_right,
     ffi::ResultBuffer<LapackIntDtype> info) {
   if (EigenvalueDecompositionComplex<dtype, int64_t>::fn != nullptr) {
     return EigenvalueDecompositionComplex<dtype, int64_t>::Kernel(
-        x, compute_left, compute_right, eigvals, eigvecs_left, eigvecs_right,
-        info);
+        thread_pool, x, compute_left, compute_right, eigvals, eigvecs_left,
+        eigvecs_right, info);
   }
   return EigenvalueDecompositionComplex<dtype, int32_t>::Kernel(
-      x, compute_left, compute_right, eigvals, eigvecs_left, eigvecs_right,
-      info);
+      thread_pool, x, compute_left, compute_right, eigvals, eigvecs_left,
+      eigvecs_right, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -1431,7 +1739,8 @@ template struct EigenvalueDecompositionComplex<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error SchurDecomposition<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
     ffi::ResultBuffer<dtype> eigvals_real,
     ffi::ResultBuffer<dtype> eigvals_imag,
@@ -1462,52 +1771,70 @@ ffi::Error SchurDecomposition<dtype, IntType>::Kernel(
   auto sort_v = static_cast<char>(sort);
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
 
-  // Prepare LAPACK workspaces.
-  std::unique_ptr<bool[]> bwork =
-      sort != schur::Sort::kNoSortEigenvalues
-          ? AllocateScratchMemory<ffi::DataType::PRED>(x_cols)
-          : nullptr;
-  auto work_size =
+  int64_t work_size =
       SchurDecomposition<dtype, IntType>::GetWorkspaceSize(x_cols, mode, sort);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   const int64_t x_size{x_cols * x_cols};
   [[maybe_unused]] const auto x_size_bytes =
       static_cast<unsigned long>(x_size) * sizeof(ffi::NativeType<dtype>);
   [[maybe_unused]] const auto x_cols_bytes =
       static_cast<unsigned long>(x_cols) * sizeof(ffi::NativeType<dtype>);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType selected_v;
-    IntType info_v;
-    SchurDecomposition<dtype, IntType>::fn(
-        &mode_v, &sort_v, select, &x_cols_v, x_out_data, &x_cols_v, &selected_v,
-        eigvals_real_data, eigvals_imag_data, schur_vectors_data, &x_cols_v,
-        work_data.get(), &work_size_v, bwork.get(), &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(selected_v));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *selected_data = static_cast<int32_t>(selected_v);
-    *info_data = static_cast<int32_t>(info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_real_data, x_cols_bytes);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_imag_data, x_cols_bytes);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
 
-    x_out_data += x_size;
-    eigvals_real_data += x_cols;
-    eigvals_imag_data += x_cols;
-    schur_vectors_data += x_size;
-    ++selected_data;
-    ++info_data;
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols * 5;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
 
-  return ffi::Error::Success();
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_size;
+        auto* local_eigvals_real_data = eigvals_real_data + i * x_cols;
+        auto* local_eigvals_imag_data = eigvals_imag_data + i * x_cols;
+        auto* local_schur_vectors_data = schur_vectors_data + i * x_size;
+        auto* local_selected_data = selected_data + i;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        std::unique_ptr<bool[]> bwork = nullptr;
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType selected_v;
+          IntType info_v;
+          SchurDecomposition<dtype, IntType>::fn(
+              &mode_v, &sort_v, select, &x_cols_v, local_x_out_data, &x_cols_v,
+              &selected_v, local_eigvals_real_data, local_eigvals_imag_data,
+              local_schur_vectors_data, &x_cols_v, work_data.get(),
+              &work_size_v, bwork.get(), &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(IntType));
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(IntType));
+          *local_selected_data = static_cast<int32_t>(selected_v);
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data, x_size_bytes);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_real_data,
+                                              x_cols_bytes);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_imag_data,
+                                              x_cols_bytes);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_schur_vectors_data,
+                                              x_size_bytes);
+
+          local_x_out_data += x_size;
+          local_eigvals_real_data += x_cols;
+          local_eigvals_imag_data += x_cols;
+          local_schur_vectors_data += x_size;
+          ++local_selected_data;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error SchurDecompositionKernel(
-    ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
     ffi::ResultBuffer<dtype> eigvals_real,
     ffi::ResultBuffer<dtype> eigvals_imag,
@@ -1517,21 +1844,20 @@ ffi::Error SchurDecompositionKernel(
     ffi::ResultBuffer<LapackIntDtype> info) {
   if (SchurDecomposition<dtype, int64_t>::fn != nullptr) {
     return SchurDecomposition<dtype, int64_t>::Kernel(
-        x, mode, sort, x_out, schur_vectors, eigvals_real, eigvals_imag,
-        selected_eigvals, info);
+        thread_pool, x, mode, sort, x_out, schur_vectors, eigvals_real,
+        eigvals_imag, selected_eigvals, info);
   }
   return SchurDecomposition<dtype, int32_t>::Kernel(
-      x, mode, sort, x_out, schur_vectors, eigvals_real, eigvals_imag,
-      selected_eigvals, info);
+      thread_pool, x, mode, sort, x_out, schur_vectors, eigvals_real,
+      eigvals_imag, selected_eigvals, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error SchurDecompositionComplex<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
     ffi::ResultBuffer<dtype> eigvals,
-    // TODO(paruzelp): Sort is not implemented because select function is not
-    // supplied. For that reason, this parameter will always be zero!
     ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
     ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
@@ -1557,61 +1883,77 @@ ffi::Error SchurDecompositionComplex<dtype, IntType>::Kernel(
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<IntType>(x_cols));
 
   // Prepare LAPACK workspaces.
-  std::unique_ptr<bool[]> bwork =
-      sort != schur::Sort::kNoSortEigenvalues
-          ? AllocateScratchMemory<ffi::DataType::PRED>(x_cols)
-          : nullptr;
   auto work_size = SchurDecompositionComplex<dtype, IntType>::GetWorkspaceSize(
       x_cols, mode, sort);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
-  auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(x_cols);
 
   const int64_t x_size{x_cols * x_cols};
   [[maybe_unused]] const auto x_size_bytes =
       static_cast<unsigned long>(x_size) * sizeof(ffi::NativeType<dtype>);
   [[maybe_unused]] const auto x_cols_bytes =
       static_cast<unsigned long>(x_cols) * sizeof(ffi::NativeType<dtype>);
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType selected_v;
-    IntType info_v;
-    SchurDecompositionComplex<dtype, IntType>::fn(
-        &mode_v, &sort_v, select, &x_cols_v, x_out_data, &x_cols_v, &selected_v,
-        eigvals_data, schur_vectors_data, &x_cols_v, work_data.get(),
-        &work_size_v, rwork_data.get(), bwork.get(), &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(selected_v));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *selected_data = static_cast<int32_t>(selected_v);
-    *info_data = static_cast<int32_t>(info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_data, x_cols_bytes);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
 
-    x_out_data += x_size;
-    eigvals_data += x_cols;
-    schur_vectors_data += x_size;
-    ++selected_data;
-    ++info_data;
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols * 5;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
 
-  return ffi::Error::Success();
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_size;
+        auto* local_eigvals_data = eigvals_data + i * x_cols;
+        auto* local_schur_vectors_data = schur_vectors_data + i * x_size;
+        auto* local_selected_data = selected_data + i;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+        auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(x_cols);
+        std::unique_ptr<bool[]> bwork = nullptr;
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType selected_v;
+          IntType info_v;
+          SchurDecompositionComplex<dtype, IntType>::fn(
+              &mode_v, &sort_v, select, &x_cols_v, local_x_out_data, &x_cols_v,
+              &selected_v, local_eigvals_data, local_schur_vectors_data,
+              &x_cols_v, work_data.get(), &work_size_v, rwork_data.get(),
+              bwork.get(), &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(IntType));
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(IntType));
+          *local_selected_data = static_cast<int32_t>(selected_v);
+          *local_info_data = static_cast<int32_t>(info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_eigvals_data, x_cols_bytes);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_schur_vectors_data,
+                                              x_size_bytes);
+
+          local_x_out_data += x_size;
+          local_eigvals_data += x_cols;
+          local_schur_vectors_data += x_size;
+          ++local_selected_data;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error SchurDecompositionComplexKernel(
-    ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
     ffi::ResultBuffer<dtype> eigvals,
-    // TODO(paruzelp): Sort is not implemented because select function is not
-    // supplied. For that reason, this parameter will always be zero!
     ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
     ffi::ResultBuffer<LapackIntDtype> info) {
   if (SchurDecompositionComplex<dtype, int64_t>::fn != nullptr) {
     return SchurDecompositionComplex<dtype, int64_t>::Kernel(
-        x, mode, sort, x_out, schur_vectors, eigvals, selected_eigvals, info);
+        thread_pool, x, mode, sort, x_out, schur_vectors, eigvals,
+        selected_eigvals, info);
   }
   return SchurDecompositionComplex<dtype, int32_t>::Kernel(
-      x, mode, sort, x_out, schur_vectors, eigvals, selected_eigvals, info);
+      thread_pool, x, mode, sort, x_out, schur_vectors, eigvals,
+      selected_eigvals, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -1657,8 +1999,8 @@ template struct SchurDecompositionComplex<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error HessenbergDecomposition<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, int32_t low, int32_t high,
-    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, int32_t low,
+    int32_t high, ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
     ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
@@ -1673,39 +2015,53 @@ ffi::Error HessenbergDecomposition<dtype, IntType>::Kernel(
                        MaybeCastNoOverflow<IntType>(x_rows));
   IntType low_v = static_cast<IntType>(low);
   IntType high_v = static_cast<IntType>(high);
-  // Prepare LAPACK workspaces.
+
   int64_t work_size = HessenbergDecomposition<dtype, IntType>::GetWorkspaceSize(
       x_rows, x_cols, low_v, high_v);
   FFI_ASSIGN_OR_RETURN(auto work_size_v,
                        MaybeCastNoOverflow<IntType>(work_size));
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   int64_t x_size{x_rows * x_cols};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    HessenbergDecomposition<dtype, IntType>::fn(
-        &x_cols_v, &low_v, &high_v, x_out_data, &x_leading_dim_v, tau_data,
-        work_data.get(), &work_size_v, &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    x_out_data += x_size;
-    tau_data += x_cols - 1;
-    ++info_data;
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols * 2;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_size;
+        auto* local_tau_data = tau_data + i * (x_cols - 1);
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          HessenbergDecomposition<dtype, IntType>::fn(
+              &x_cols_v, &low_v, &high_v, local_x_out_data, &x_leading_dim_v,
+              local_tau_data, work_data.get(), &work_size_v, &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          local_x_out_data += x_size;
+          local_tau_data += x_cols - 1;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error HessenbergDecompositionKernel(
-    ffi::Buffer<dtype> x, int32_t low, int32_t high,
-    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, int32_t low,
+    int32_t high, ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
     ffi::ResultBuffer<LapackIntDtype> info) {
   if (HessenbergDecomposition<dtype, int64_t>::fn != nullptr) {
-    return HessenbergDecomposition<dtype, int64_t>::Kernel(x, low, high, x_out,
-                                                           tau, info);
+    return HessenbergDecomposition<dtype, int64_t>::Kernel(
+        thread_pool, x, low, high, x_out, tau, info);
   }
-  return HessenbergDecomposition<dtype, int32_t>::Kernel(x, low, high, x_out,
-                                                         tau, info);
+  return HessenbergDecomposition<dtype, int32_t>::Kernel(
+      thread_pool, x, low, high, x_out, tau, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -1732,7 +2088,7 @@ template struct HessenbergDecomposition<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> diagonal,
     ffi::ResultBuffer<ffi::ToReal(dtype)> off_diagonal,
@@ -1749,10 +2105,8 @@ ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
   ffi::NativeType<dtype>* tau_data = tau->typed_data();
   auto* info_data = info->typed_data();
 
-  // Prepare LAPACK workspaces.
   const auto work_size =
       TridiagonalReduction<dtype, IntType>::GetWorkspaceSize(x_rows, x_cols);
-  auto work_data = AllocateScratchMemory<dtype>(work_size);
 
   auto uplo_v = static_cast<char>(uplo);
   FFI_ASSIGN_OR_RETURN(auto x_leading_dim_v,
@@ -1763,35 +2117,53 @@ ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
 
   int64_t x_size = x_rows * x_cols;
   int64_t tau_step = {tau->dimensions().back()};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    TridiagonalReduction<dtype, IntType>::fn(
-        &uplo_v, &x_order_v, x_out_data, &x_leading_dim_v, diagonal_data,
-        off_diagonal_data, tau_data, work_data.get(), &work_size_v, &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    x_out_data += x_size;
-    diagonal_data += x_cols;
-    off_diagonal_data += x_cols - 1;
-    tau_data += tau_step;
-    ++info_data;
+  int64_t cost_per_matrix = x_cols * x_cols * x_cols * 4 / 3;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_x_out_data = x_out_data + i * x_size;
+        auto* local_diagonal_data = diagonal_data + i * x_cols;
+        auto* local_off_diagonal_data = off_diagonal_data + i * (x_cols - 1);
+        auto* local_tau_data = tau_data + i * tau_step;
+        auto* local_info_data = info_data + i;
+
+        auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          TridiagonalReduction<dtype, IntType>::fn(
+              &uplo_v, &x_order_v, local_x_out_data, &x_leading_dim_v,
+              local_diagonal_data, local_off_diagonal_data, local_tau_data,
+              work_data.get(), &work_size_v, &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          local_x_out_data += x_size;
+          local_diagonal_data += x_cols;
+          local_off_diagonal_data += x_cols - 1;
+          local_tau_data += tau_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
 ffi::Error TridiagonalReductionKernel(
-    ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> diagonal,
     ffi::ResultBuffer<ffi::ToReal(dtype)> off_diagonal,
     ffi::ResultBuffer<dtype> tau, ffi::ResultBuffer<LapackIntDtype> info) {
   if (TridiagonalReduction<dtype, int64_t>::fn != nullptr) {
     return TridiagonalReduction<dtype, int64_t>::Kernel(
-        x, uplo, x_out, diagonal, off_diagonal, tau, info);
+        thread_pool, x, uplo, x_out, diagonal, off_diagonal, tau, info);
   }
-  return TridiagonalReduction<dtype, int32_t>::Kernel(x, uplo, x_out, diagonal,
-                                                      off_diagonal, tau, info);
+  return TridiagonalReduction<dtype, int32_t>::Kernel(
+      thread_pool, x, uplo, x_out, diagonal, off_diagonal, tau, info);
 }
 
 template <ffi::DataType dtype, typename IntType>
@@ -1821,10 +2193,11 @@ template struct TridiagonalReduction<ffi::DataType::C128, int64_t>;
 
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TridiagonalSolver<dtype, IntType>::Kernel(
-    ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d, ffi::Buffer<dtype> du,
-    ffi::Buffer<dtype> b, ffi::ResultBuffer<dtype> dl_out,
-    ffi::ResultBuffer<dtype> d_out, ffi::ResultBuffer<dtype> du_out,
-    ffi::ResultBuffer<dtype> b_out, ffi::ResultBuffer<LapackIntDtype> info) {
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
+    ffi::Buffer<dtype> du, ffi::Buffer<dtype> b,
+    ffi::ResultBuffer<dtype> dl_out, ffi::ResultBuffer<dtype> d_out,
+    ffi::ResultBuffer<dtype> du_out, ffi::ResultBuffer<dtype> b_out,
+    ffi::ResultBuffer<LapackIntDtype> info) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, b_rows, b_cols]),
                        SplitBatch2D(b.dimensions()));
 
@@ -1844,24 +2217,40 @@ ffi::Error TridiagonalSolver<dtype, IntType>::Kernel(
 
   const int64_t b_out_step{b_rows * b_cols};
   const int64_t d_step{b_rows};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    IntType info_v;
-    TridiagonalSolver<dtype, IntType>::fn(&b_rows_v, &b_cols_v, dl_out_data + 1,
-                                          d_out_data, du_out_data, b_out_data,
-                                          &b_rows_v, &info_v);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
-    *info_data = static_cast<int32_t>(info_v);
-    b_out_data += b_out_step;
-    dl_out_data += d_step;
-    d_out_data += d_step;
-    du_out_data += d_step;
-    ++info_data;
+  int64_t cost_per_matrix = b_rows * b_cols * 5;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    cost_per_matrix *= 3;
   }
-  return ffi::Error::Success();
+  int64_t chunk_size = GetLapackBatchChunkSize(batch_count, cost_per_matrix,
+                                               thread_pool.num_threads());
+
+  return ParallelBatchMap(
+      thread_pool, batch_count, chunk_size, [&](int64_t i, int64_t count) {
+        auto* local_dl_out_data = dl_out_data + i * d_step;
+        auto* local_d_out_data = d_out_data + i * d_step;
+        auto* local_du_out_data = du_out_data + i * d_step;
+        auto* local_b_out_data = b_out_data + i * b_out_step;
+        auto* local_info_data = info_data + i;
+
+        for (int64_t j = 0; j < count; ++j) {
+          IntType info_v;
+          TridiagonalSolver<dtype, IntType>::fn(
+              &b_rows_v, &b_cols_v, local_dl_out_data + 1, local_d_out_data,
+              local_du_out_data, local_b_out_data, &b_rows_v, &info_v);
+          ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
+          *local_info_data = static_cast<int32_t>(info_v);
+          local_b_out_data += b_out_step;
+          local_dl_out_data += d_step;
+          local_d_out_data += d_step;
+          local_du_out_data += d_step;
+          ++local_info_data;
+        }
+      });
 }
 
 template <ffi::DataType dtype>
-ffi::Error TridiagonalSolverKernel(ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
+ffi::Error TridiagonalSolverKernel(ffi::ThreadPool thread_pool,
+                                   ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
                                    ffi::Buffer<dtype> du, ffi::Buffer<dtype> b,
                                    ffi::ResultBuffer<dtype> dl_out,
                                    ffi::ResultBuffer<dtype> d_out,
@@ -1870,10 +2259,10 @@ ffi::Error TridiagonalSolverKernel(ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
                                    ffi::ResultBuffer<LapackIntDtype> info) {
   if (TridiagonalSolver<dtype, int64_t>::fn != nullptr) {
     return TridiagonalSolver<dtype, int64_t>::Kernel(
-        dl, d, du, b, dl_out, d_out, du_out, b_out, info);
+        thread_pool, dl, d, du, b, dl_out, d_out, du_out, b_out, info);
   }
-  return TridiagonalSolver<dtype, int32_t>::Kernel(dl, d, du, b, dl_out, d_out,
-                                                   du_out, b_out, info);
+  return TridiagonalSolver<dtype, int32_t>::Kernel(
+      thread_pool, dl, d, du, b, dl_out, d_out, du_out, b_out, info);
 }
 
 template struct TridiagonalSolver<ffi::DataType::F32, int32_t>;
@@ -1891,6 +2280,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
       name, TriMatrixEquationSolverKernel<data_type>,    \
       ::xla::ffi::Ffi::Bind()                            \
+          .Ctx<::xla::ffi::ThreadPool>()                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/) \
@@ -1903,6 +2293,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
       name, LuDecompositionKernel<data_type>,                \
       ::xla::ffi::Ffi::Bind()                                \
+          .Ctx<::xla::ffi::ThreadPool>()                     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*ipiv*/) \
@@ -1912,6 +2303,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
       name, QrFactorizationKernel<data_type>,            \
       ::xla::ffi::Ffi::Bind()                            \
+          .Ctx<::xla::ffi::ThreadPool>()                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
@@ -1920,6 +2312,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                 \
       name, PivotingQrFactorizationKernel<data_type>,            \
       ::xla::ffi::Ffi::Bind()                                    \
+          .Ctx<::xla::ffi::ThreadPool>()                         \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)             \
           .Arg<::xla::ffi::Buffer<LapackIntDtype>>(/*jpvt*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)         \
@@ -1930,6 +2323,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                       \
       name, OrthogonalQrKernel<data_type>,             \
       ::xla::ffi::Ffi::Bind()                          \
+          .Ctx<::xla::ffi::ThreadPool>()               \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)   \
           .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/))
@@ -1938,6 +2332,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                       \
       name, OrthogonalQrMultiplyKernel<data_type>,     \
       ::xla::ffi::Ffi::Bind()                          \
+          .Ctx<::xla::ffi::ThreadPool>()               \
           .Arg<::xla::ffi::Buffer<data_type>>(/*a*/)   \
           .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/) \
           .Arg<::xla::ffi::Buffer<data_type>>(/*c*/)   \
@@ -1949,6 +2344,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
       name, CholeskyFactorizationKernel<data_type>,      \
       ::xla::ffi::Ffi::Bind()                            \
+          .Ctx<::xla::ffi::ThreadPool>()                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Attr<MatrixParams::UpLo>("uplo")              \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/) \
@@ -1984,6 +2380,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
       name, SingularValueDecompositionQRKernel<data_type>,   \
       ::xla::ffi::Ffi::Bind()                                \
+          .Ctx<::xla::ffi::ThreadPool>()                     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*s*/)         \
@@ -1996,6 +2393,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
       name, SingularValueDecompositionQRComplexKernel<data_type>,        \
       ::xla::ffi::Ffi::Bind()                                            \
+          .Ctx<::xla::ffi::ThreadPool>()                                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                 \
           .Ret<::xla::ffi::Buffer<::xla::ffi::ToReal(data_type)>>(/*s*/) \
@@ -2008,6 +2406,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                               \
       name, EigenvalueDecompositionSymmetricKernel<data_type>, \
       ::xla::ffi::Ffi::Bind()                                  \
+          .Ctx<::xla::ffi::ThreadPool>()                       \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)           \
           .Attr<MatrixParams::UpLo>("uplo")                    \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)       \
@@ -2019,6 +2418,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                   \
       name, EigenvalueDecompositionHermitianKernel<data_type>,     \
       ::xla::ffi::Ffi::Bind()                                      \
+          .Ctx<::xla::ffi::ThreadPool>()                           \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)               \
           .Attr<MatrixParams::UpLo>("uplo")                        \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)           \
@@ -2031,6 +2431,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                      \
       name, EigenvalueDecompositionKernel<data_type>,                 \
       ::xla::ffi::Ffi::Bind()                                         \
+          .Ctx<::xla::ffi::ThreadPool>()                              \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                  \
           .Attr<eig::ComputationMode>("compute_left")                 \
           .Attr<eig::ComputationMode>("compute_right")                \
@@ -2046,6 +2447,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                 \
       name, EigenvalueDecompositionComplexKernel<data_type>,     \
       ::xla::ffi::Ffi::Bind()                                    \
+          .Ctx<::xla::ffi::ThreadPool>()                         \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)             \
           .Attr<eig::ComputationMode>("compute_left")            \
           .Attr<eig::ComputationMode>("compute_right")           \
@@ -2058,6 +2460,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
       name, SchurDecompositionKernel<data_type>,                         \
       ::xla::ffi::Ffi::Bind()                                            \
+          .Ctx<::xla::ffi::ThreadPool>()                                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
           .Attr<schur::ComputationMode>("mode")                          \
           .Attr<schur::Sort>("sort")                                     \
@@ -2072,6 +2475,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
       name, SchurDecompositionComplexKernel<data_type>,                  \
       ::xla::ffi::Ffi::Bind()                                            \
+          .Ctx<::xla::ffi::ThreadPool>()                                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
           .Attr<schur::ComputationMode>("mode")                          \
           .Attr<schur::Sort>("sort")                                     \
@@ -2085,6 +2489,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                   \
       name, TridiagonalReductionKernel<data_type>,                 \
       ::xla::ffi::Ffi::Bind()                                      \
+          .Ctx<::xla::ffi::ThreadPool>()                           \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)               \
           .Attr<MatrixParams::UpLo>("uplo")                        \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)           \
@@ -2099,6 +2504,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
       name, HessenbergDecompositionKernel<data_type>,    \
       ::xla::ffi::Ffi::Bind()                            \
+          .Ctx<::xla::ffi::ThreadPool>()                 \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Attr<int32_t>("low")                          \
           .Attr<int32_t>("high")                         \
@@ -2110,6 +2516,7 @@ template struct TridiagonalSolver<ffi::DataType::C128, int64_t>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                          \
       name, TridiagonalSolverKernel<data_type>,           \
       ::xla::ffi::Ffi::Bind()                             \
+          .Ctx<::xla::ffi::ThreadPool>()                  \
           .Arg<::xla::ffi::Buffer<data_type>>(/*dl*/)     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*d*/)      \
           .Arg<::xla::ffi::Buffer<data_type>>(/*du*/)     \
