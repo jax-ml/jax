@@ -298,38 +298,31 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
               " If you want to reshard your inputs, you can use `jax.reshard`"
               " on the arguments and then pass those args to shard_map.")
 
+    if (dbg.arg_names is not None and len(dyn_args) != len(dbg.arg_names)):
+      dbg = dbg.with_unknown_names()
+
     def f_wrapped(*dyn_args):
       dyn_args_iter = iter(dyn_args)
       static_args_iter = iter(static_args)
-      all_args = [next(dyn_args_iter) if dyn else next(static_args_iter) for dyn in which_dyn]
+      all_args = [next(dyn_args_iter) if dyn else next(static_args_iter)
+                  for dyn in which_dyn]
       args = tree_unflatten(in_tree, all_args)
       ans = f(*args)
+      ans_ft = FlatTree.flatten(ans)
       try:
         out_specs_flat = tuple(broadcast_prefix(out_specs, ans))
       except ValueError:
         e, *_ = prefix_errors(out_specs, ans)
         raise e('shard_map out_specs') from None
-      ans_ft = FlatTree.flatten(ans)
-
       def add_implicit_pvary_and_unreduced(val, spec):
-        if isinstance(spec, P):
-          val = pvary(val, tuple(_spec_to_vma(spec) - typeof(val).mat.varying))
-          aval = typeof(val)
-          unreduced = spec.unreduced - aval.mat.unreduced
-          if unreduced:
-            axes = order_wrt_mesh(aval.sharding.mesh, unreduced)
-            return lax_parallel.vary_unreduced_cast(val, axes)
-          else:
-            return val
-        else:
-          return val
-
+        if not isinstance(spec, P): return val
+        aval = typeof(val)
+        val = pvary(val, tuple(_spec_to_vma(spec) - aval.mat.varying))
+        return (lax_parallel.vary_unreduced_cast(val, tuple(unreduced))
+                if (unreduced := spec.unreduced - aval.mat.unreduced) else val)
       if check_vma:
         ans_ft = ans_ft.map2(add_implicit_pvary_and_unreduced, out_specs_flat)
       return ans_ft.with_aux(out_specs_flat)
-
-    if (dbg.arg_names is not None and len(dyn_args) != len(dbg.arg_names)):
-      dbg = dbg.with_unknown_names()
 
     try:
       out_ft = shard_map_p.bind(

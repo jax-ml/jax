@@ -2725,8 +2725,11 @@ def vary_unreduced_cast(x, axis_name):
   cur_mesh = get_abstract_mesh()
   if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
     return x
+  new_axes = axes if cur_mesh.empty else core.order_wrt_mesh(cur_mesh, axes)
+  assert set(new_axes) == set(axes)
+  del axes
   return tree_util.tree_map(
-      lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=axes), x)
+      lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=new_axes), x)
 
 vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
 vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))

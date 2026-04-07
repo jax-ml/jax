@@ -2464,8 +2464,8 @@ def _vma_ur_str(mat, spec_unreduced, spec_reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
   vma_str = _create_str(order_wrt_mesh(mesh, vma), 'V') if vma else ''
-  ur_str = _create_str(unreduced, 'U') if unreduced else ''
-  red_str = _create_str(reduced, 'R') if reduced else ''
+  ur_str = _create_str(order_wrt_mesh(mesh, unreduced), 'U') if unreduced else ''
+  red_str = _create_str(order_wrt_mesh(mesh, reduced), 'R') if reduced else ''
   m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
   return f"{{{m_str}}}"
 
@@ -2513,7 +2513,10 @@ def reduced_vary_cast(x, axis_name):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if not config._check_vma.value and all(a in cur_mesh.manual_axes for a in axes):
     return x
-  return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=axes), x)
+  new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
+  assert set(new_axes) == set(axes)
+  del axes
+  return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=new_axes), x)
 
 reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 
