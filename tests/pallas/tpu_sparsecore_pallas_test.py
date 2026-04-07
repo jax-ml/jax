@@ -2224,6 +2224,33 @@ class VectorSubcoreTest(PallasSCTest):
     got = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(got, 2.0 * x)
 
+  def test_select_ref(self):
+    num_refs = 4
+
+    @self.vector_subcore_kernel(
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * num_refs,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8 * num_refs, 128), jnp.int32),
+    )
+    def kernel(*hbm_refs):
+      *x_hbm_refs, y_hbm_ref = hbm_refs
+
+      def body(sem):
+        @pl.loop(0, num_refs)
+        def _(i):
+          pltpu.async_copy(
+              pl.select_ref(i, *x_hbm_refs),
+              y_hbm_ref.at[pl.ds(8 * i, 8)],
+              pl.select_ref(i % 2, sem.at[0], sem.at[1]),
+          ).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA(2))
+
+    x = jnp.arange(8 * num_refs * 128).reshape((8 * num_refs, 128), order="C")
+    xs = jnp.split(x, num_refs)
+    y = kernel(*xs)
+    np.testing.assert_array_equal(y, x)
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True

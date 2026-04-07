@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Protocol, Union
+from typing import Any, cast, Protocol, Union
 
 from jax._src import ad_util
 from jax._src import core
@@ -98,6 +98,17 @@ class Transform(Protocol):
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{{self}}}")
+
+
+class MultiRefTransform(Transform):
+
+  def transform_types(
+      self, xs: Sequence[core.AbstractValue]
+  ) -> core.AbstractValue:
+    raise NotImplementedError(type(self))
+
+  def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
+    raise NotImplementedError(type(self), name)
 
 
 @tree_util.register_dataclass
@@ -220,6 +231,44 @@ class TransposeTransform(Transform):
     return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class SelectTransform(MultiRefTransform):
+  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+  num_refs: int = dataclasses.field(metadata=dict(static=True))
+
+  def transform_types(self, xs):
+    def _type(ref):
+      match ref:
+        case AbstractRef():
+          return ref
+        case core.ShapedArray():
+          raise NotImplementedError
+        case _:
+          raise TypeError(f"Cannot select {ref}")
+
+    assert (
+        isinstance(xs, Sequence) and len(xs) == self.num_refs
+    ), f"Select expected sequence of length {self.num_refs}, got {xs}"
+    types = tuple(_type(ref) for ref in xs)
+    if any(types[0] != t for t in types[1:]):
+      raise TypeError(f"Cannot select from Refs of different types: {types}")
+    return types[0]
+
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{select({self.idx=}, {self.num_refs=})}}")
+
+  def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
+    attrs = [getattr(x, name) for x in xs]
+    if any(attrs[0] != attr for attr in attrs[1:]):
+      raise TypeError(f"Cannot getattr {name} from Refs of different types: {attrs}")
+    return attrs[0]
+
+
 @dataclasses.dataclass
 class RefIndexer:
   """An object temporarily generated when doing ``ref.at``."""
@@ -230,7 +279,10 @@ class RefIndexer:
       slc = (slc,)
     from jax._src.state import indexing  # pyrefly: ignore[missing-import]
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if isinstance(self.ref_or_view, TransformedRef):
+    if (
+        isinstance(self.ref_or_view, TransformedRef)
+        and not self.ref_or_view.multiref
+    ):
       view = self.ref_or_view
       return TransformedRef(view.ref, (*view.transforms, indexer))
     return TransformedRef(self.ref_or_view, (indexer,))
@@ -241,16 +293,40 @@ class TransformedRef:
   ref: Any
   transforms: tuple[Transform, ...]
 
+  def __post_init__(self):
+    if self.multiref and len(self.transforms) > 1:
+      raise ValueError(
+          f"Multi-ref TransformedRef requires a single transform: {self}"
+      )
+    if any(isinstance(t, MultiRefTransform) for t in self.transforms):
+      assert self.multiref and len(self.transforms) == 1
+
+  @property
+  def multiref(self) -> bool:
+    if isinstance(self.ref, Sequence):
+      if all(isinstance(x, int) for x in self.ref):
+        return False  # self.ref is an array's shape. This happens in lowering.
+      return True
+    return False
+
   @property
   def is_dynamic_size(self):
     return any(not isinstance(i, int) for i in self.shape)
 
   @functools.cached_property
   def type(self) -> core.AbstractValue:
-    if type(self.ref) in core.pytype_aval_mappings:
-      ref_ty = core.typeof(self.ref)
-    else:
-      ref_ty = self.ref
+    def _type(ref):
+      if isinstance(ref, TransformedRef):
+        return ref.type
+      elif type(ref) in core.pytype_aval_mappings:
+        return core.typeof(ref)
+      else:
+        return ref
+
+    if self.multiref:
+      ref_ty = tuple(_type(r) for r in self.ref)
+      return cast(MultiRefTransform, self.transforms[0]).transform_types(ref_ty)
+    ref_ty = _type(self.ref)
     for t in self.transforms:
       ref_ty = t.transform_type(ref_ty)
     return ref_ty
@@ -273,9 +349,13 @@ class TransformedRef:
 
   @property
   def at(self) -> RefIndexer:
+    if self.multiref:
+      raise NotImplementedError("At with multiref is not supported.")
     return RefIndexer(self)
 
   def bitcast(self, dtype):
+    if self.multiref:
+      raise NotImplementedError("Bitcast with multiref is not supported.")
     if self.is_dynamic_size:
       raise NotImplementedError(
           "Bitcast ref with dynamic size is not supported."
@@ -284,6 +364,8 @@ class TransformedRef:
     return TransformedRef(self.ref, (*self.transforms, BitcastTransform(dtype)))
 
   def reshape(self, *shape):
+    if self.multiref:
+      raise NotImplementedError("Reshape with multiref is not supported.")
     if self.is_dynamic_size:
       raise NotImplementedError(
           "Reshape ref with dynamic size is not supported."
@@ -295,6 +377,8 @@ class TransformedRef:
     return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
 
   def transpose(self, permutation: Sequence[int]):
+    if self.multiref:
+      raise NotImplementedError("Transpose with multiref is not supported.")
     transposer = TransposeTransform(tuple(permutation))
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
@@ -311,6 +395,8 @@ class TransformedRef:
     return ref_get(self, idx)
 
   def __getattr__(self, name):
+    if self.multiref:
+      return cast(MultiRefTransform, self.transforms[0]).getattr(name, self.ref)
     return getattr(self.ref, name)
 
   def __getitem__(self, slc):

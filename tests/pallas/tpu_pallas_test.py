@@ -1955,6 +1955,52 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     expected = jnp.arange(nrows)[:, None] + jnp.arange(ncols)[None, :]
     np.testing.assert_array_equal(y, expected)
 
+  def test_select_ref(self):
+    num_refs = 4
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * num_refs,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8 * num_refs, 128), jnp.int32),
+    )
+    def kernel(*hbm_refs):
+      *x_hbm_refs, y_hbm_ref = hbm_refs
+      def body(sem):
+        @pl.loop(0, num_refs)
+        def _(i):
+          pltpu.async_copy(pl.select_ref(i, *x_hbm_refs),
+                           y_hbm_ref.at[pl.ds(8 * i, 8)],
+                           pl.select_ref(i, sem.at[0], sem.at[1])).wait()
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA(2))
+
+    x = jnp.arange(8 * num_refs * 128).reshape((8 * num_refs, 128))
+    xs = jnp.split(x, num_refs)
+    y = kernel(*xs)
+    np.testing.assert_array_equal(y, x)
+
+  def test_select_ref_smem_index(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(idx_ref, x0_hbm_ref, x1_hbm_ref, y_hbm_ref):
+      def body(sem):
+        x_hbm_ref = pl.select_ref(idx_ref[...], x0_hbm_ref.at[0:8], x1_hbm_ref)
+        pltpu.async_copy(x_hbm_ref, y_hbm_ref, sem).wait()
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x0 = jnp.arange(8 * 128).reshape((8, 128)).astype(jnp.float32)
+    x1 = jnp.zeros((8, 128)).astype(jnp.float32)
+    idx = jnp.array(0, jnp.int32)
+    y = kernel(idx, x0, x1)
+    np.testing.assert_allclose(y, [x0, x1][idx][0:8])
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
