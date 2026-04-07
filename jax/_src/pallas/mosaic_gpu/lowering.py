@@ -3092,7 +3092,9 @@ def block_id_to_grid_id(ctx: LoweringRuleContext,
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
     if axis_name == ctx.module_ctx.warp_axis_name:
-      return mgpu.warp_idx(sync=True)
+      w_idx = mgpu.warp_idx(sync=True)
+      i32 = ir.IntegerType.get_signless(32)
+      return arith_dialect.remui(w_idx, _ir_constant(4, i32))
     raise ValueError(
         "Named axes can only refer to the warp axis name inside of core_map."
     )

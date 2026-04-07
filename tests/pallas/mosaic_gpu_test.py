@@ -3116,6 +3116,23 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                           jnp.ones((128,), jnp.int32) * 3), axis=0)
     np.testing.assert_array_equal(result, expected)
 
+  def test_axis_index_multi_warpgroup(self):
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(self.kernel,
+                       out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+                       num_threads=2,
+                       thread_name="wg",
+                       )
+    def kernel(out_ref):
+      wg_idx = lax.axis_index("wg")
+      @pl.core_map(warp_mesh)
+      def _():
+        warp_id = lax.axis_index("warp")
+        out_ref[wg_idx * 4 + warp_id] = warp_id
+    result = kernel()
+    expected = jnp.concatenate([jnp.arange(4, dtype=jnp.int32)] * 2)
+    np.testing.assert_array_equal(result, expected)
+
   def test_scalar_load(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
