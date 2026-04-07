@@ -394,8 +394,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
   def testStableAttentionDeterminism(self):
-    """stable implementation produces identical results for different KV lengths
-    when the extra positions are masked out, verifying XLA kernel determinism."""
+    """stable produces bit-exact results for any KV length when masked positions
+    are identical — the core fix for XLA reduction-tree non-determinism."""
     B, T, N, H = 2, 16, 4, 32
     keys = random.split(random.PRNGKey(42), 3)
     Q = random.normal(keys[0], (B, T, N, H), jnp.bfloat16)
@@ -405,16 +405,41 @@ class NNFunctionsTest(jtu.JaxTestCase):
     jit_stable = jax.jit(
         partial(jax.nn.dot_product_attention, implementation='stable'))
 
-    # S=64 (no padding)
-    out64 = jit_stable(Q, K, V)
-    # S=128: pad with zeros, mask out the extra 64 positions
-    K128 = jnp.pad(K, [(0, 0), (0, 64), (0, 0), (0, 0)])
-    V128 = jnp.pad(V, [(0, 0), (0, 64), (0, 0), (0, 0)])
-    mask128 = jnp.pad(jnp.ones((B, 1, T, 64), dtype=jnp.bool_),
-                      [(0, 0), (0, 0), (0, 0), (0, 64)])
-    out128 = jit_stable(Q, K128, V128, mask=mask128)
-    # XLA sees different tile shapes but stable should produce identical values.
-    self.assertAllClose(out64, out128, atol=0, rtol=0)
+    out_base = jit_stable(Q, K, V)
+    # Pad to various lengths — padded positions masked, results must be bit-exact.
+    for extra in [1, 64, 127, 128, 512]:
+      Kp = jnp.pad(K, [(0, 0), (0, extra), (0, 0), (0, 0)])
+      Vp = jnp.pad(V, [(0, 0), (0, extra), (0, 0), (0, 0)])
+      mask = jnp.pad(jnp.ones((B, 1, T, 64), dtype=jnp.bool_),
+                     [(0, 0), (0, 0), (0, 0), (0, extra)])
+      self.assertAllClose(jit_stable(Q, Kp, Vp, mask=mask), out_base, atol=0, rtol=0,
+                          err_msg=f"S=64 vs S=64+{extra}: not bit-exact")
+
+  def testStableAttentionEdgeCases(self):
+    """stable handles S < tile_size, S % tile_size != 0, and T=1 decode."""
+    jit_stable = jax.jit(
+        partial(jax.nn.dot_product_attention, implementation='stable'))
+    jit_xla = jax.jit(jax.nn.dot_product_attention)
+    keys = random.split(random.PRNGKey(7), 3)
+
+    # S < tile_size (single tile, most positions are zero-padding)
+    Q = random.normal(keys[0], (1, 4, 4, 32), jnp.bfloat16)
+    K = random.normal(keys[1], (1, 10, 4, 32), jnp.bfloat16)
+    V = random.normal(keys[2], (1, 10, 4, 32), jnp.bfloat16)
+    self.assertAllClose(jit_stable(Q, K, V), jit_xla(Q, K, V), atol=0.01, rtol=0.01)
+
+    # S not divisible by tile_size
+    K37 = random.normal(keys[1], (1, 37, 4, 32), jnp.bfloat16)
+    V37 = random.normal(keys[2], (1, 37, 4, 32), jnp.bfloat16)
+    self.assertAllClose(jit_stable(Q, K37, V37), jit_xla(Q, K37, V37),
+                        atol=0.01, rtol=0.01)
+
+    # T=1 decode step (the latency-critical path)
+    Q1 = random.normal(keys[0], (2, 1, 8, 64), jnp.bfloat16)
+    K2k = random.normal(keys[1], (2, 2048, 8, 64), jnp.bfloat16)
+    V2k = random.normal(keys[2], (2, 2048, 8, 64), jnp.bfloat16)
+    self.assertAllClose(jit_stable(Q1, K2k, V2k), jit_xla(Q1, K2k, V2k),
+                        atol=0.01, rtol=0.01)
 
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,

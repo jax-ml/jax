@@ -1063,19 +1063,20 @@ def _dot_product_attention_stable(
   key_tiles = _tile(key)
   value_tiles = _tile(value)
 
-  # Pre-tile user bias/mask if provided: (num_tiles, B, N, T, tile_size).
-  # Padding, causal masks are computed per-tile on-the-fly to avoid
-  # materializing an O(B·N·T·S) logit-bias tensor.
-  def _tile_bias(x, dtype):
+  # Pre-tile user bias/mask if provided: (num_tiles, B, n, T, tile_size).
+  # n is preserved as-is (may be 1 for broadcast or N for per-head).
+  # Padding and causal masks are computed per-tile on-the-fly so we never
+  # materialise an O(B·N·T·S) logit-bias tensor.
+  def _to_tiles(x, dtype):
     x = jnp.pad(x.astype(dtype), [(0, 0), (0, 0), (0, 0), (0, pad)])
-    n = x.shape[1]  # may be 1 (broadcast) or N
+    n = x.shape[1]
     return jnp.transpose(jnp.reshape(x, (B, n, T, num_tiles, tile_size)),
                          (3, 0, 1, 2, 4))
   xs = (key_tiles, value_tiles, jnp.arange(num_tiles) * tile_size)
   if has_bias:
-    xs = xs + (_tile_bias(bias, np.float32),)
+    xs = xs + (_to_tiles(bias, np.float32),)
   if has_mask:
-    xs = xs + (_tile_bias(mask, bool),)
+    xs = xs + (_to_tiles(mask, bool),)
 
   def combine(left, right):
     l_max, l_sum, l_out = left
@@ -1086,22 +1087,23 @@ def _dot_product_attention_stable(
     rc = jnp.exp(r_max - safe)
     return new_max, lc * l_sum + rc * r_sum, lc[..., None] * l_out + rc[..., None] * r_out
 
+  bias_idx = 3
+  mask_idx = 3 + has_bias
+
   def scan_step(carry, xs):
-    k_tile = xs[0]   # (B, tile_size, K, H)
-    v_tile = xs[1]   # (B, tile_size, K, H)
-    tile_start = xs[2]  # scalar — position of tile[0] in the full sequence
-    b_tile = xs[3] if has_bias else None          # (B, N, T, tile_size)
-    m_tile = xs[3 + has_bias] if has_mask else None  # (B, N, T, tile_size)
+    k_tile = xs[0]        # (B, tile_size, K, H)
+    v_tile = xs[1]        # (B, tile_size, K, H)
+    tile_start = xs[2]    # scalar — position of tile[0] in the full sequence
 
     # GQA scores without materializing repeated K: (B, K, G, T, tile_size).
     scores = scale * jnp_einsum.einsum(
         'BTKGH,BSKH->BKGTS', query_gqa, k_tile, preferred_element_type=np.float32)
     scores = jnp.reshape(scores, (B, N, T, tile_size))
 
-    if b_tile is not None:
-      scores = scores + b_tile
-    if m_tile is not None:
-      scores = jnp.where(m_tile, scores, neg_inf)
+    if has_bias:
+      scores = scores + xs[bias_idx]
+    if has_mask:
+      scores = jnp.where(xs[mask_idx], scores, neg_inf)
 
     # Padding: positions >= S within this tile are masked.
     tile_pos = tile_start + jnp.arange(tile_size)
