@@ -4397,7 +4397,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       scale_jax_dtype=[jnp.float8_e8m0fnu, jnp.float8_e4m3fn],
   )
   def test_collective_scaled_matmul(self, m, n, scale_jax_dtype):
-    self.skip_if_wg_semantics()  # Cannot infer layouts for block scaled collective matmuls
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = 32 if scale_jax_dtype == jnp.float8_e8m0fnu else 16
@@ -4405,10 +4404,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     k_steps = 2
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(in_jax_dtype)
     k = swizzle_elems * k_steps
-    tiling = (8, swizzle_elems)
-    transforms = (
-        plgpu.TilingTransform(tiling), plgpu.SwizzleTransform(swizzle)
-    )
+    transforms = self.default_transforms(swizzle=swizzle, dtype=in_jax_dtype)
 
     m_block = m // 2
     n_block = n // 2

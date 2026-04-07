@@ -1674,24 +1674,66 @@ class LayoutInferenceTest(parameterized.TestCase):
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
       self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
 
-  @parameterized.parameters(ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+  @parameterized.parameters(64, 128)
+  def test_infer_tmem_layout_for_tcgen05_collective_scaled_mma(self, m):
+    n = k = 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      f32 = ir.F32Type.get()
+      f8e8 = ir.Float8E8M0FNUType.get()
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_ty = ir.MemRefType.get((m, k), f16, memory_space=smem)
+      b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
+      scale_a_ty = ir.MemRefType.get((128, 4), f8e8, memory_space=tmem)
+      scale_b_ty = ir.MemRefType.get(
+          (256 if m == 64 else 128, 4), f8e8, memory_space=tmem
+      )
+      acc, a, b, scale_a, scale_b = undefs(
+          acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty
+      )
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc,
+          a,
+          b,
+          accumulate,
+          a_scale=scale_a,
+          b_scale=scale_b,
+          collective=True,
+      )
+
+    mgpu.infer_layout(self.module)
+    acc_layout = tcgen05._infer_tmem_layout((m, n), collective=True, packing=1)
+    b_scale_layout = (
+        tcgen05.b_scales_m64_collective_layout()
+        if m == 64
+        else tcgen05.scales_layout()
+    )
+    self.checkInTmemLayouts(
+        mma, [acc_layout, tcgen05.scales_layout(), b_scale_layout]
+    )
+
+  @parameterized.parameters(False, True)
   def test_async_store_scales_smem_to_tmem_infers_expected_src_dest_layouts(
-      self, valid_dtype
+      self, collective
   ):
     # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
     if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
       self.skipTest("async_store_scales_smem_to_tmem not available.")
 
-    element_type = valid_dtype.get()
+    dtype = ir.Float8E8M0FNUType.get()
     src_shape = (2, 32, 32, 16)
     dest_shape = (256, 128)
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
-    src_type = ir.MemRefType.get(src_shape, element_type, memory_space=smem)
-    dest_type = ir.MemRefType.get(dest_shape, element_type, memory_space=tmem)
+    src_type = ir.MemRefType.get(src_shape, dtype, memory_space=smem)
+    dest_type = ir.MemRefType.get(dest_shape, dtype, memory_space=tmem)
 
     with ir.InsertionPoint(self.module.body):
       [src, dest] = undefs(src_type, dest_type)
-      op = mgpu.dialect.async_store_scales_smem_to_tmem(src, dest)
+      op = mgpu.dialect.async_store_scales_smem_to_tmem(
+          src, dest, collective=collective
+      )
 
     mgpu.infer_layout(self.module)
 
@@ -1700,6 +1742,35 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     [in_transform] = inference_utils.in_transforms(op)
     # No transforms is expected for this op.
+    self.assertEmpty(in_transform)
+
+  def test_infer_layout_for_async_store_scales_smem_to_tmem_accepts_b_scales_m64_collective_layout(
+      self,
+  ):
+    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
+    if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
+      self.skipTest("async_store_scales_smem_to_tmem not available.")
+
+    dtype = ir.Float8E8M0FNUType.get()
+    src_shape = (2, 32, 32, 16)
+    dest_shape = (256, 128)
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    src_type = ir.MemRefType.get(src_shape, dtype, memory_space=smem)
+    dest_type = ir.MemRefType.get(dest_shape, dtype, memory_space=tmem)
+    dest_layout = tcgen05.b_scales_m64_collective_layout()
+
+    with ir.InsertionPoint(self.module.body):
+      [src, dest] = undefs(src_type, dest_type)
+      dest_layout_attr = layouts.to_layout_attr(dest_layout)
+      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout_attr)
+      op = mgpu.dialect.async_store_scales_smem_to_tmem(
+          src, dest, collective=True
+      )
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [dest_layout])
+    [in_transform] = inference_utils.in_transforms(op)
+    # No transforms are expected for this op.
     self.assertEmpty(in_transform)
 
   def test_async_store_scales_smem_to_tmem_rejects_incompatible_layouts(self):

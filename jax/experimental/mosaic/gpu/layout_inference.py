@@ -1516,21 +1516,23 @@ def _tcgen05_mma_constraint_system(
         f" {op.b_scale=}"
     )
 
-  if scaled and op.collective:
-    # TODO(olechwierowicz): Revisit this after cl/883086276 lands.
-    raise NotImplementedError("Cannot infer layouts for block scaled collective matmuls.")
-  if scaled and not op.collective:
-    def assign_scaled_layout(scale_operand):
-      scale_index = list(op.operands).index(scale_operand)
-      scale = ValueSite(op, VariableType.OPERAND, scale_index)
-      scale_var = ctx.producer_ref(scale)
-      assignments[scale_var] = cs.TMEMLayout(tcgen05.scales_layout())
-      if not is_valid_tmem_layout_assignment(scale.shape, tcgen05.scales_layout()):
-        raise ValueError(
-            f"Cannot assign tcgen05.scales_layout() to {scale_operand=} with"
-            f" shape {scale.shape}."
-        )
-      operands_for_variable[scale_var] = [scale]
+  def assign_scaled_layout(scale_operand):
+    scale_index = list(op.operands).index(scale_operand)
+    scale = ValueSite(op, VariableType.OPERAND, scale_index)
+    scale_var = ctx.producer_ref(scale)
+    if op.collective and scale_operand == op.b_scale and M == 64:
+      layout = tcgen05.b_scales_m64_collective_layout()
+    else:
+      layout = tcgen05.scales_layout()
+    assignments[scale_var] = cs.TMEMLayout(layout)
+    if not is_valid_tmem_layout_assignment(scale.shape, layout):
+      raise ValueError(
+          f"Cannot assign {layout} to {scale_operand=} with"
+          f" shape {scale.shape}."
+      )
+    operands_for_variable[scale_var] = [scale]
+
+  if scaled:
     assign_scaled_layout(op.a_scale)
     assign_scaled_layout(op.b_scale)
 
@@ -1619,15 +1621,25 @@ if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
     source_variable = ctx.producer_ref(source)
     destination = ValueSite(op, VariableType.OPERAND, 1)
     destination_variable = ctx.producer_ref(destination)
-    # TODO(olechwierowicz): Revisit this assignment after cl/883086276 lands.
-    # In particular for collective and scaled mma we need to a different layout for b_scales.
+
+    assignments: dict[cs.Variable, cs.Constant] = {
+        source_variable: cs.SMEMTiling(None)
+    }
+    constraints = []
+    if op.collective.value:
+      constraints.append(
+          cs.AnyOf(
+              destination_variable,
+              (
+                  cs.TMEMLayout(tcgen05.scales_layout()),
+                  cs.TMEMLayout(tcgen05.b_scales_m64_collective_layout()),
+              ),
+          )
+      )
+    else:
+      assignments[destination_variable] = cs.TMEMLayout(tcgen05.scales_layout())
     return (
-        cs.ConstraintSystem(
-            assignments={
-                destination_variable: cs.TMEMLayout(tcgen05.scales_layout()),
-                source_variable: cs.SMEMTiling(None),
-            },
-        ),
+        cs.ConstraintSystem(assignments=assignments, constraints=constraints),
         {source_variable: [source], destination_variable: [destination]},
     )
 
