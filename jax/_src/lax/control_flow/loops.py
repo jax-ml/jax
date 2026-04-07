@@ -58,6 +58,7 @@ from jax._src.lax.control_flow.common import (
 from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import discharge as state_discharge, AbstractRef
@@ -2874,6 +2875,83 @@ def _interleave(a, b, axis):
 
 ### Cumulative reductions.
 
+
+def _get_identity(p, dtype):
+  if p is cumsum_p:
+    return lax._get_sum_identity(dtype)
+  if p is cumprod_p:
+    return lax._get_prod_identity(dtype)
+  if p is cummax_p:
+    return lax._get_max_identity(dtype)
+  if p is cummin_p:
+    return lax._get_min_identity(dtype)
+  raise ValueError(f'Unknown cumulative reduction primitive {p}')
+
+
+def _get_reducer(p):
+  if p is cumsum_p:
+    return hlo.add
+  if p is cumprod_p:
+    return hlo.multiply
+  if p is cummax_p:
+    return hlo.maximum
+  if p is cummin_p:
+    return hlo.minimum
+  raise ValueError(f'Unknown cumulative reduction primitive {p}')
+
+
+def _cumred_chlo_lowering(ctx, x, *, axis, reverse):
+  prim = ctx.primitive
+  dtype = ctx.avals_in[0].dtype
+  init_val = _get_identity(prim, dtype)
+  et = x.type.element_type
+  es = x.type.shape[:axis] + x.type.shape[axis + 1 :]
+  element_type = ir.RankedTensorType.get(es, et)
+
+  init = mlir.ir_constant(init_val)
+  if es:
+    dims = ir.DenseI64ArrayAttr.get([])
+    init = hlo.BroadcastInDimOp(element_type, init, dims).result
+
+  scan_op = chlo.ScanOp(
+      [x.type],
+      [element_type],
+      [x],
+      [init],
+      dimension=ir.IntegerAttr.get(ir.IntegerType.get_signless(64), axis),
+      is_reverse=ir.BoolAttr.get(reverse),
+      is_associative=ir.BoolAttr.get(True),
+  )
+  body_block = scan_op.body.blocks.append(element_type, element_type)
+  with ir.InsertionPoint(body_block):
+    x_arg, carry_arg = body_block.arguments
+    op = _get_reducer(prim)
+    res = op(x_arg, carry_arg)
+    hlo.return_([res, res])
+  return scan_op.results[:1]
+
+
+def _is_supported_cumred(input, reverse, axis):
+  return (
+      not config.jax_export_calling_convention_version.value < 16
+      and not reverse
+      and axis == 0
+      and input.shape[axis] > 0
+      and core.is_constant_dim(input.shape[axis])
+      and input.dtype != np.bool_
+      and not np.issubdtype(input.dtype, np.complexfloating)
+  )
+
+
+def _cumred_gpu_lowering(reduce_window_fn: Callable, ctx, x, *, axis, reverse):
+  if not _is_supported_cumred(ctx.avals_in[0], reverse, axis):
+    fun = partial(cumred_reduce_window_impl, reduce_window_fn)
+    return mlir.lower_fun(fun, multiple_results=False)(
+        ctx, x, axis=axis, reverse=reverse
+    )
+  return _cumred_chlo_lowering(ctx, x, axis=axis, reverse=reverse)
+
+
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
   return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
@@ -2985,3 +3063,9 @@ ad.primitive_jvps[cumlogsumexp_p] = partial(_cumulative_jvp_rule, combine_fn=log
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
 ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
 ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
+
+mlir.register_lowering(
+    cumsum_p,
+    partial(_cumred_gpu_lowering, windowed_reductions._reduce_window_sum),
+    platform='gpu',
+)
