@@ -304,6 +304,24 @@ class TreeTest(jtu.JaxTestCase):
     actual = tree_util.tree_unflatten(tree, xs)
     self.assertEqual(actual, inputs)
 
+  def testIsTreeNode(self):
+    self.assertTrue(tree_util.is_tree_node(list))
+    self.assertTrue(tree_util.is_tree_node(dict))
+    self.assertTrue(tree_util.is_tree_node(tuple))
+    self.assertTrue(tree_util.is_tree_node(type(None)))
+
+    # Custom registered type
+    self.assertTrue(tree_util.is_tree_node(AnObject))
+
+    # Namedtuple
+    self.assertTrue(tree_util.is_tree_node(ATuple))
+    self.assertTrue(tree_util.is_tree_node(ANamedTupleSubclass))
+
+    # Non-node types
+    self.assertFalse(tree_util.is_tree_node(int))
+    self.assertFalse(tree_util.is_tree_node(str))
+    self.assertFalse(tree_util.is_tree_node(float))
+
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
     _, tree = tree_util.tree_flatten(inputs)

@@ -1769,6 +1769,19 @@ void BuildPytreeSubmodule(nb::module_& m) {
       ") -> Any"
                    // clang-format on
                    ));
+  registry.def(
+      "is_node",
+      [](const PyTreeRegistry& registry, nb::handle type) {
+        if (registry.Lookup(type) != nullptr) return true;
+        if (PyType_Check(type.ptr()) &&
+            PyType_IsSubtype(reinterpret_cast<PyTypeObject*>(type.ptr()),
+                             &PyTuple_Type) != 0 &&
+            nb::hasattr(type, "_fields")) {
+          return true;
+        }
+        return false;
+      },
+      nb::arg("type"), nb::sig("def is_node(self, type: type) -> bool"));
   registry.def("__reduce__", [](nb::object self) {
     return nb::cast<nb::str>(self.attr("__name__"));
   });
