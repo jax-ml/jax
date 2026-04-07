@@ -795,6 +795,20 @@ class LayoutInferenceTest(parameterized.TestCase):
     # order in the future.
     self.assertEqual(assignments, {v0: RL(mgpu.TCGEN05_LAYOUT)})
 
+  def test_find_assignments_for_anyof_constraint(self):
+    v0 = V(MockVariableKey(0, (128, 128), layout_inference.MemorySpace.REG))
+    layout1 = RL(mgpu.WGMMA_LAYOUT)
+    layout2 = RL(mgpu.WGMMA_ROW_LAYOUT)
+
+    constraint = cs.AnyOf(v0, (layout1, layout2))
+    assignments, _ = layout_inference.find_assignments_for(
+        {v0},
+        cs.ConstraintSystem(constraints=[constraint]),
+        fuel=1000,
+        arch=(10, 0),
+    )
+    self.assertEqual(assignments, {v0: layout1})
+
   def test_cannot_find_assignments_for_unsatisfiable_constraint_system(self):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))

@@ -399,6 +399,9 @@ def _extract_variable_assignments_from_constraints(
         yield var, layout
       case cs.IsValidMmaTiling() as mma_tiling:
         yield from _extract_layout_candidates_from_mma_tiling(mma_tiling)
+      case cs.AnyOf(cs.Variable() as var, values):
+        for layout in values:
+          yield var, layout
 
 
 def conjure_assignment(

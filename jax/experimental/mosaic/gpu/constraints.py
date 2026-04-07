@@ -587,7 +587,9 @@ class IsSupportedBroadcast:
       case RegisterLayout(
           value=fa.WGStridedFragLayout() as src_layout
       ), RegisterLayout(value=fa.WGStridedFragLayout() as dst_layout):
-        return fa.is_supported_strided_layout_broadcast(src_layout, dst_layout, self.dims)
+        return fa.is_supported_strided_layout_broadcast(
+            src_layout, dst_layout, self.dims
+        )
       case RegisterLayout(value=src_layout), RegisterLayout(value=dst_layout):
         # This is an intentionally loose check. We rely on the presence of a
         # `src = Reduce(dst)` constraint to enforce correctness.
@@ -607,6 +609,22 @@ class IsSupportedBroadcast:
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class AnyOf:
+  """States that a given expression must be equal to one of the specified constant values."""
+
+  expr: Expression
+  values: tuple[Constant, ...]
+
+  def holds(self) -> bool | None:
+    if not isinstance(self.expr, Constant):
+      return None
+    return self.expr in self.values
+
+  def __str__(self):
+    return f"{self.expr} ∈ {self.values}"
+
+
 Constraint = (
     Equals
     | Relayout
@@ -615,6 +633,7 @@ Constraint = (
     | IsValidMmaTiling
     | Divides
     | IsSupportedBroadcast
+    | AnyOf
 )
 
 
@@ -669,6 +688,11 @@ def reduce_constraint(
       ):
         return Unsatisfiable()
       return IsSupportedBroadcast(src_red, dst_red, dims)
+    case AnyOf(expr=expr, values=values):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return AnyOf(expr_red, values)
     case _ as never:
       assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
 
@@ -727,6 +751,8 @@ class ConstraintSystem:
         case IsSupportedBroadcast(src=src, dst=dst):
           extract_variables(src)
           extract_variables(dst)
+        case AnyOf(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
     return free_variables
