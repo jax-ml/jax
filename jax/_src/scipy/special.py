@@ -114,6 +114,80 @@ def gammasgn(x: ArrayLike) -> Array:
     typ(1.0))
 
 
+# Lanczos coefficients for g=7, N=9.
+# Method: C. Lanczos, "A Precision Approximation of the Gamma Function",
+#   SIAM J. Numer. Anal. Ser. B, 1, 1964. https://doi.org/10.1137/0701008
+# Coefficients: GSL (specfunc/gamma.c), lanczos_7_c[9].
+#   https://git.savannah.gnu.org/cgit/gsl.git/plain/specfunc/gamma.c
+# See also: https://en.wikipedia.org/wiki/Lanczos_approximation
+_LANCZOS_G = 7.0
+_LANCZOS_COEFFS = np.array([
+    0.99999999999980993,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.32342877765313,
+    -176.61502916214059,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.9843695780195716e-6,
+    1.5056327351493116e-7,
+])
+
+
+def _complex_loggamma(z: Array) -> Array:
+  """Principal-branch log-gamma for complex arguments via Lanczos approximation.
+
+  Uses the reflection formula for Re(z) < 0.5.
+  """
+  assert dtypes.issubdtype(z.dtype, np.complexfloating)
+
+  # Reflection: for Re(z) < 0.5, use Gamma(z) = pi / (sin(pi*z) * Gamma(1-z))
+  needs_reflection = jnp.real(z) < 0.5
+  z_lanczos = jnp.where(needs_reflection, 1.0 - z, z)
+
+  # Lanczos approximation: Ag(z) = c[0] + sum(c[k] / (z + k - 1), k=1..N-1)
+  zz = z_lanczos - 1.0
+  coeffs = jnp.asarray(_LANCZOS_COEFFS, dtype=z.dtype)
+  ks = lax.expand_dims(jnp.arange(1, 9, dtype=z.dtype), tuple(range(zz.ndim)))
+  ag = coeffs[0] + jnp.sum(
+      lax.expand_dims(coeffs[1:], tuple(range(zz.ndim)))
+      / (lax.expand_dims(zz, (zz.ndim,)) + ks), axis=-1)
+
+  t = zz + _LANCZOS_G + 0.5
+  half_log2pi = jnp.asarray(0.5 * np.log(2.0 * np.pi), dtype=z.dtype)
+  log_gamma_lanczos = (
+      half_log2pi
+      + (zz + 0.5) * jnp.log(t)
+      - t
+      + jnp.log(ag)
+  )
+
+  # Mask z to a safe value in the reflection branch so the unselected
+  # path never produces NaN (which would contaminate gradients via
+  # jnp.where's VJP: 0 * NaN = NaN in IEEE 754).
+  z_safe = jnp.where(needs_reflection, z, jnp.full_like(z, 0.5))
+  reflected = (
+      jnp.log(jnp.asarray(np.pi, dtype=z.dtype))
+      - jnp.log(jnp.sin(np.pi * z_safe))
+      - log_gamma_lanczos
+  )
+
+  return jnp.where(needs_reflection, reflected, log_gamma_lanczos)
+
+
+def _complex_gamma(z: Array) -> Array:
+  """Gamma function for complex arguments via exp(loggamma(z))."""
+  is_nan = jnp.isnan(z)
+  is_pole = (jnp.imag(z) == 0) & (jnp.real(z) == jnp.floor(jnp.real(z))) & (jnp.real(z) <= 0)
+  nan_val = jnp.array(complex(jnp.nan, jnp.nan), dtype=z.dtype)
+  # Mask poles/NaN to a safe value before calling loggamma, so the
+  # unselected path doesn't produce NaN that contaminates gradients
+  # via jnp.where's VJP (0 * NaN = NaN).
+  safe = is_pole | is_nan
+  z_safe = jnp.where(safe, jnp.ones_like(z), z)
+  return jnp.where(safe, nan_val, jnp.exp(_complex_loggamma(z_safe)))
+
+
 def gamma(x: ArrayLike) -> Array:
   r"""The gamma function.
 
@@ -133,18 +207,27 @@ def gamma(x: ArrayLike) -> Array:
 
      \Gamma(n) = (n - 1)!
 
-  * if :math:`z = -\infty`, NaN is returned.
+  For real inputs:
+
+  * if :math:`x = -\infty`, NaN is returned.
   * if :math:`x = \pm 0`, :math:`\pm \infty` is returned.
   * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
     at a negative integer depends on from which side the pole is approached.
   * if :math:`x = \infty`, :math:`\infty` is returned.
   * if :math:`x` is NaN, NaN is returned.
 
+  For complex inputs:
+
+  * at non-positive integers (poles), ``nan+nanj`` is returned, matching SciPy.
+  * if either real or imaginary component is NaN, ``nan+nanj`` is returned.
+
   Args:
-    x: arraylike, real valued.
+    x: arraylike, real or complex valued. Complex inputs use a Lanczos
+       approximation with reflection formula.
 
   Returns:
-    array containing the values of the gamma function
+    array containing the values of the gamma function. For complex inputs,
+    the output is complex-valued.
 
   See Also:
     - :func:`jax.scipy.special.factorial`: the factorial function.
@@ -152,10 +235,12 @@ def gamma(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
 
   Notes:
-    Unlike the scipy version, JAX's ``gamma`` does not support complex-valued
-    inputs.
+    For complex inputs, the implementation uses the Lanczos approximation
+    (g=7, N=9 coefficients) with the reflection formula for Re(z) < 0.5.
   """
   x, = promote_args_inexact("gamma", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return _complex_gamma(x)
   return gammasgn(x) * lax.exp(lax.lgamma(x))
 
 
