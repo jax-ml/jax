@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <numeric>
 #include <optional>
 #include <utility>
 
@@ -573,6 +574,18 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   }
   if (auto mul_op = value.getDefiningOp<arith::MulIOp>()) {
     // We check RHS first, because MLIR canonicalizes constants to the right.
+    if (auto rhs_cst = mlir::getConstantIntValue(mul_op.getRhs())) {
+      int64_t gcd = std::gcd(*rhs_cst, divisor);
+      if (gcd > 1) {
+        return isGuaranteedDivisible(mul_op.getLhs(), divisor / gcd, fuel - 1);
+      }
+    }
+    if (auto lhs_cst = mlir::getConstantIntValue(mul_op.getLhs())) {
+      int64_t gcd = std::gcd(*lhs_cst, divisor);
+      if (gcd > 1) {
+        return isGuaranteedDivisible(mul_op.getRhs(), divisor / gcd, fuel - 1);
+      }
+    }
     return isGuaranteedDivisible(mul_op.getRhs(), divisor, fuel / 2) ||
            isGuaranteedDivisible(mul_op.getLhs(), divisor, (fuel + 1) / 2);
   }
@@ -582,6 +595,12 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   }
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
+  }
+  if (auto div_op = value.getDefiningOp<arith::DivUIOp>()) {
+    if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
+      return isGuaranteedDivisible(div_op.getLhs(), divisor * *rhs_cst,
+                                   fuel - 1);
+    }
   }
   if (checkBothOperandsDivisible<arith::AddIOp>(value, divisor, fuel) ||
       checkBothOperandsDivisible<arith::SubIOp>(value, divisor, fuel) ||
