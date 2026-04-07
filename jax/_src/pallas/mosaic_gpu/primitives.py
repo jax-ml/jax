@@ -1138,8 +1138,11 @@ def _commit_group_abstract_eval():
 
 
 @lowering.register_lowering_rule(commit_group_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(commit_group_p, *gpu_core.LANExWARP_SEMANTICS)
 @lowering.register_lowering_rule(
-    commit_group_p, mgpu.LoweringSemantics.Warpgroup)
+    commit_group_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(commit_group_p, *gpu_core.WGxWARP_SEMANTICS)
 def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
   nvvm_dialect.cp_async_bulk_commit_group()

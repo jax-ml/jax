@@ -766,6 +766,35 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.parameters(True, False)
+  def test_copy_smem_to_gmem_explicit_commit_group(self, use_single_warp):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((256,), jnp.float32)],
+    )
+    def kernel(x_ref, o_ref_gmem, scratch_ref):
+      scratch_ref[...] = x_ref[...] + 1
+      plgpu.commit_smem()
+
+      def copy_to_gmem():
+        plgpu.copy_smem_to_gmem(scratch_ref, o_ref_gmem, commit_group=False)
+        plgpu.commit_smem_to_gmem_group()
+        plgpu.wait_smem_to_gmem(0)
+
+      if use_single_warp:
+
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def warps():
+          pl.when(jax.lax.axis_index("warp") == 0)(copy_to_gmem)
+
+      else:
+        copy_to_gmem()
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
     @functools.partial(
