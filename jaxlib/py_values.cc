@@ -705,7 +705,9 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(&ifrt_array, 1),
                                   std::move(device_list), to_memory_kind,
-                                  ifrt::ArrayCopySemantics::kAlwaysCopy));
+                                  (allow_zero_copy && ifrt_array->sharding().devices()->devices().front() == to_device)
+                                      ? ifrt::ArrayCopySemantics::kReuseInput
+                                      : ifrt::ArrayCopySemantics::kAlwaysCopy));
       return Shard(std::move(copied_ifrt_arrays.front()), weak_type);
     };
   }
