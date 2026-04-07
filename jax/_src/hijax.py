@@ -978,6 +978,8 @@ class LogTy(MutableHiType):
       for k, v in updates.items():
         log._dct.setdefault(k, []).extend(v)
 
+  def to_tangent_aval(self): return LogTy()
+
 
 register_hitype(Log, lambda _: LogTy())
 
@@ -990,6 +992,9 @@ class LogQDD(QDD):
     return f'LogQDD({repr(self.ft.unflatten())})'
   def inc_rank(self, length):
     return LogQDD(self.ft.map(partial(core.unmapped_leading_aval, length)))
+  def to_tangent_qdd(self):
+    ft = self.ft.map(lambda a: a.to_tangent_aval())
+    return LogQDD(ft, self.in_scope)
 
 class LogExtend(HiPrimitive):
   multiple_results = True  # no results

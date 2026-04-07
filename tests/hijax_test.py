@@ -2197,6 +2197,59 @@ class LogTest(jtu.JaxTestCase):
                         {'x': [jnp.arange(3 * 5).reshape(3, 5)],
                          'y': [jnp.arange(3 * 5).reshape(3, 5) * 2]})
 
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing_abstracted(self, jit):
+    log = Log()
+
+    @jax.custom_vjp
+    def foo(log, x):
+      return x
+    def foo_fwd(log, x):
+      return x, log
+    def foo_bwd(log, g):
+      log.append('g', g)
+      return None, g
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(log, x):
+      x = 2 * x
+      x = foo(log, x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(partial(f, log))(1.0)
+    self.assertAllClose(log._dct, {'g': [2.0]})
+
+#   @parameterized.parameters([False, True])
+#   def test_custom_vjp_plumbing_scan(self, jit):
+#     log = Log()
+
+#     @jax.custom_vjp
+#     def foo(log, x):
+#       return x
+#     def foo_fwd(log, x):
+#       return x, log
+#     def foo_bwd(log, g):
+#       log.append('g', g)
+#       return None, g
+#     foo.defvjp(foo_fwd, foo_bwd)
+
+#     def f(log, c):
+#       def body(c, x):
+#         c = foo(log, c)
+#         return c * x, ()
+#       c, () = jax.lax.scan(body, c, jnp.arange(1., 4.))
+#       return c
+
+#     if jit:
+#       f = jax.jit(f)
+
+#     jax.grad(partial(f, log))(1.0)
+#     self.assertAllClose(log._dct, {'g': [jnp.array([6., 6., 3.])]})
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
