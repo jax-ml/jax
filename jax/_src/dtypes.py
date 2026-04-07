@@ -1000,17 +1000,19 @@ def dtype(x: Any) -> DType:
   elif isinstance(x, _types_whose_dtype_should_not_be_canonicalized):
     return x.dtype
 
-  if isinstance(x, str):
-    x = np.dtype(x)
-
-  if isinstance(x, np.dtype):
-    if x not in _jax_dtype_set and not issubdtype(x, extended):
+  if isinstance(x, (str, np.dtype)):
+    dt = np.dtype(x)
+    if dt not in _jax_dtype_set and not issubdtype(dt, extended):
       raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                       "type. Only arrays of numeric types are supported by JAX.")
-    return _maybe_canonicalize_explicit_dtype(x, "dtype")
+    return _maybe_canonicalize_explicit_dtype(dt, "dtype")
 
-  if issubdtype(getattr(x, 'dtype', None), extended):
-    dt = x.dtype
+  # If x has a dtype attribute, and it's a valid dtype, use it. This avoids
+  # calling np.result_type on objects that might have a .dtype but are not
+  # standard NumPy array-like, which can lead to warnings in NumPy 2.4+.
+  dt_attr = getattr(x, 'dtype', None)
+  if issubdtype(dt_attr, extended) or isinstance(dt_attr, np.dtype):
+    dt = dt_attr
   else:
     try:
       dt = np.result_type(x)
