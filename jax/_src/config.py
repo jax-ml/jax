@@ -1320,7 +1320,7 @@ use_direct_linearize = bool_state(
 
 use_simplified_jaxpr_constants = bool_state(
     name='jax_use_simplified_jaxpr_constants',
-    default=False,
+    default=True,
     help=('Enable a simplification of the handling of closed-over constants '
           'in Jaxpr. The value `True` enables the new behavior. '
           'This flag will exist only briefly, while we transition '
