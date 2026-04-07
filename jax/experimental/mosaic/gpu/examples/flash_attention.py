@@ -577,6 +577,7 @@ def benchmark_and_verify(
         **kwargs,
     )
     out, runtime = profiler.measure(f)(q[0], k[0], v[0])
+    assert runtime is not None
     out = out[None]
 
     @jax.jit

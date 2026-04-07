@@ -362,7 +362,7 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
     jaxpr, consts = call_jaxpr, ()
   consts_ = tuple(HashableWrapper(c) for c in consts)
   partial_checkify = lu.hashable_partial(
-      lu.wrap_init(checkify_jaxpr_flat_hashable, debug_info=jaxpr.debug_info),
+      lu.wrap_init(checkify_jaxpr_flat_hashable, debug_info=jaxpr.debug_info),  # pyrefly: ignore[missing-attribute]
       jaxpr, consts_, enabled_errors, err_tree)
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)

@@ -423,6 +423,7 @@ if __name__ == "__main__":
           m, n, k, dtype, dtype, dtype, wgmma_impl=WGMMADefaultImpl, **kwargs
       )
       _, runtime = profiler.measure(f)(x, y)
+      assert runtime is not None
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise

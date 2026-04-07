@@ -195,7 +195,7 @@ def broadcast_shapes(*shapes):
 def _broadcast_shapes_cached(*shapes: tuple[int, ...]) -> tuple[int, ...]:
   return _broadcast_shapes_uncached(*shapes)
 
-def _broadcast_shapes_uncached(*shapes):
+def _broadcast_shapes_uncached(*shapes: tuple[int, ...]):
   _validate_shapes(shapes)
   fst, *rst = shapes
   if not rst: return fst
@@ -4818,7 +4818,7 @@ def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
   aval_x, aval_y = avals_in
   base_aval_x = core.physical_aval(aval_x)
   base_aval_y = core.physical_aval(aval_y)
-  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
+  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)  # pyrefly: ignore[missing-attribute]
   reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
   res, = mlir.delegate_lowering(
       ctx, partial(_compare_lower_hlo, direction, False),
@@ -8184,7 +8184,7 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys
   new_args = []
   for arg, bdim in zip(batched_args, batch_dims):
     if bdim is None:
-      dims = np.delete(np.arange(prototype_arg.ndim), new_bdim).tolist()
+      dims = [int(dim) for dim in np.delete(np.arange(prototype_arg.ndim), new_bdim)]
       new_args.append(broadcast_in_dim(
           arg, prototype_arg.shape, dims,
           out_sharding=typeof(prototype_arg).sharding))

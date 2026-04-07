@@ -4719,7 +4719,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = api.vmap(atleast_1d)(tup)
-    arr0_ndim = arrs.ndim - 1
+    arr0_ndim = arrs.ndim - 1  # pyrefly: ignore[missing-attribute]
   else:
     util.check_arraylike("hstack", *tup)
     arrs = [atleast_1d(m) for m in tup]
@@ -8451,7 +8451,7 @@ def _roll_dynamic(a: Array, shift: Array, axis: Sequence[int]) -> Array:
     raise ValueError(msg)
 
   for x, i in zip(broadcast_to(shift, b_shape),
-                  np.broadcast_to(axis, b_shape)):
+                  np.broadcast_to(axis, b_shape)):  # pyrefly: ignore[no-matching-overload]
     a_shape_i = array(a.shape[i], dtype=np.int32)
     x = ufuncs.remainder(lax.convert_element_type(x, np.int32),
                          lax.max(a_shape_i, np.int32(1)))

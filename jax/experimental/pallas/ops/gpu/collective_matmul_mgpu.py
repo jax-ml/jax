@@ -264,6 +264,7 @@ def _run_example():
       if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
         continue
       raise
+    assert kernels_ms is not None
     runtime_us = _min_results_across_devices(kernels_ms)
     achieved_tc_util = optimal_time / runtime_us * 100
     if achieved_tc_util > best_util:
