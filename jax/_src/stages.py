@@ -500,7 +500,7 @@ def lojax_expand_params(jaxpr, params):
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
                     if aval.has_qdd)
-  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
+  return _lojax_expand_params(0, lo_nums_in, lo_nums_out, lo_muts_out,
                               **dict(params, jaxpr=jaxpr))
 
 def lojax_pytree(hi_avals, tree):

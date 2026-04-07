@@ -374,9 +374,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     check_no_aliased_ref_args(lambda: dbg_body, list(args_avals), list(args))
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
+
   def _create_jaxpr(carry_avals):
     new_arg_avals = FlatTree.pack(((carry_avals, x_avals), {}))
-    jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
+    with core.extend_scan_env(length):
+      jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
     if len(out_avals.unpack()) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -612,8 +614,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry):
         "input types.")
 
 # TODO(mattjj): re-land #19819 version? simpler, but caused ~1 perf regression.
-def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr,
-               unroll):
+def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, unroll):
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   if unroll == 0:
@@ -751,6 +752,24 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         '`jax.shard_map`')
   ys_avals = _map(partial(core.unmapped_leading_aval, length), y_avals)
   return out_carry_avals + ys_avals, core.eqn_effects(jaxpr)
+
+def _scan_staging_rule(trace, source_info, *args, **params):
+  out_tracers = trace.default_process_primitive(scan_p, args, params, source_info=source_info)
+  num_consts, num_carry = params['num_consts'], params['num_carry']
+  in_consts, in_carry, in_ext = split_list(args, [num_consts, num_carry])
+  in_const_vars, _, in_ext_vars = split_list(params['jaxpr'].invars, [num_consts, num_carry])
+  for v, x in zip(in_const_vars, in_consts):
+    if v.aval.has_qdd:
+      if v.aval.is_writer:
+        new_qdd = v.aval.extend_qdd(core.cur_qdd(x), v.final_qdd)
+        x.aval_mutable_qdd.mutable_qdd.update(new_qdd)
+      else:
+        assert v.initial_qdd == v.final_qdd == x.mutable_qdd.cur_val
+  for v, x in zip(in_ext_vars, in_ext):
+    if v.aval.has_qdd:
+      assert v.initial_qdd.inc_rank(params['length']) == x.mutable_qdd.cur_val
+      x.mutable_qdd.update(v.final_qdd.inc_rank(params['length']))
+  return out_tracers
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               unroll):
@@ -1388,6 +1407,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
 def _scan_state_partial_discharge_rule(
     should_discharge, in_avals, out_avals, *args, jaxpr, num_consts, num_carry,
     unroll, reverse, length):
+
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
   discharged_jaxpr = state_discharge.discharge_state2(jaxpr, should_discharge)
@@ -1465,6 +1485,7 @@ scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
+pe.custom_staging_rules[scan_p] = _scan_staging_rule
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
@@ -1478,6 +1499,35 @@ def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 scan_p.is_high = _scan_is_high
 
+# like pe.lower_jaxpr but adds a loop index
+@weakref_lru_cache
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, scan_env: int, num_lo_consts: int,
+                lo_avals: tuple[core.AbstractValue, ...]
+                ) -> core.ClosedJaxpr:
+  lo_avals_consts, lo_avals_rest = split_list(lo_avals, [num_lo_consts])
+  lo_avals = (*lo_avals_consts, typeof(0), *lo_avals_rest)
+  if scan_env:
+    lo_avals = (typeof(0),) * scan_env + lo_avals
+  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr, scan_env, num_lo_consts),
+                   debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names())
+  lo_jaxpr, _, lo_consts = pe.trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
+  return core.ClosedJaxpr(lo_jaxpr, lo_consts)
+
+# like pe.lower_jaxpr but sets scan env
+def lower_traceable(jaxpr, scan_env, num_lo_consts, *lo_args):
+  scan_idxs, lo_consts, (i,), lo_rest = split_list(lo_args, [scan_env, num_lo_consts, 1])
+  lo_args_iter = it.chain(lo_consts, lo_rest)
+  hi_args = [pe.htlv(a, list(it.islice(lo_args_iter, len(a.lo_ty()))))
+             for a in jaxpr.in_aval_qdds]
+  assert next(lo_args_iter, sentinel := object()) is sentinel, breakpoint()
+  with core.set_scan_env((*scan_idxs, i)):
+    hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
+  mut_outs = [lo_val for aval, hi_x in zip(jaxpr.final_aval_qdds, hi_args)
+              if aval.has_qdd for lo_val in aval.read_loval(hi_x)]
+  lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
+             for lo_val in v.aval.lower_val(hi_val)]
+  return [i + 1, *mut_outs, *lo_outs]
+
 def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   # move qdd binders and corresponding hi_args from consts slots to carry slots
   to_move = [t.has_qdd for t in jaxpr.in_aval_qdds[:num_consts]]
@@ -1486,21 +1536,27 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   num_consts -= sum(to_move)
   num_carry += sum(to_move)
 
-  # expand num_consts, num_carry, linear according to lo types
-  const_in_avals, carry_in_avals, _ = split_list(jaxpr.in_aval_qdds, [num_consts, num_carry])
-  num_consts = sum(len(aval.lo_ty()) for aval in const_in_avals)
-  num_carry = sum(len(aval.lo_ty()) for aval in carry_in_avals)
-
-  # collect lo input values
-  lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
+  # collect input values
+  const_aqdd, carry_aqdd, ext_aqdd = split_list(jaxpr.in_aval_qdds, [num_consts, num_carry])
+  hi_consts, hi_carry, hi_ext = split_list(hi_args, [num_consts, num_carry])
+  lo_consts = [lo for a, x in zip(const_aqdd, hi_consts) for lo in pe.lo_vals(a, x)]
+  lo_carry  = [lo for a, x in zip(carry_aqdd, hi_carry ) for lo in pe.lo_vals(a, x)]
+  lo_ext    = [lo for a, x in zip(  ext_aqdd, hi_ext   ) for lo in pe.lo_vals(a, x)]
 
   # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  all_outs = scan_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_consts,
-                         num_carry=num_carry, **params)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
+  length = params['length']
+  scan_env = core.scan_env()
+  lo_avals = ([typeof(x) for x in it.chain(lo_consts, lo_carry)] +
+              [core.mapped_leading_aval(length, typeof(x)) for x in lo_ext])
+  lo_jaxpr = lower_jaxpr(jaxpr, len(scan_env), len(lo_consts), tuple(lo_avals))
+
+  # bind the lo scan
+  all_outs = scan_p.bind(*scan_env, *lo_consts, 0, *lo_carry, *lo_ext,
+                         jaxpr=lo_jaxpr, num_consts=len(scan_env) + len(lo_consts),
+                         num_carry=1 + len(lo_carry), **params)
+
+  # apply hi mutations and return hi outs
+  _, out_mut, lo_outs = split_list(all_outs, [1, pe.num_himuts_out(jaxpr)])
   pe.apply_himut(jaxpr, hi_args, out_mut)
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 scan_p.to_lojax = _scan_to_lojax

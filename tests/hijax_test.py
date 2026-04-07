@@ -40,8 +40,10 @@ from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
-    HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
-    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec)
+    HiPrimitive, HiType, register_hitype, ShapedArray, Ty, MappingSpec, HiPspec,
+    custom_vjp3,
+    Box, new_box, box_set, box_get, box_effect,
+    Log, new_log, read_log)
 from jax.experimental.hijax import VJPHiPrimitive
 
 jtu.request_cpu_devices(8)
@@ -1910,6 +1912,25 @@ class BoxTest(jtu.JaxTestCase):
     f()  # don't crash
     self.assertEqual(box.get(), [1., 1.])
 
+  def test_nested_typecheck(self):
+    @jax.jit
+    def f(x):
+      box = Box()
+      box.set(x + 1)
+
+      @jax.jit
+      def g():
+        box.set([x, x])
+        box.set([x, x, x])
+
+      g()
+      y, z, w = box.get()
+      box.set([x])
+      g()
+      return box.get() + [y, z, w]
+
+    f(0)  # doesn't crash
+
 
 class RefTest(jtu.JaxTestCase):
 
@@ -2082,6 +2103,100 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
     jax.lax.scan(body, None, None, length=5)
     self.assertAllClose(box.get(), 8.0, check_dtypes=False)
+
+
+class LogTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    l = Log()
+
+    @jax.jit
+    def f(l, x):
+      l.append('x', x + 1)
+
+      @jax.jit
+      def g():
+        l.append('x', x + 2)
+        l.append('x', x + 3)
+
+      g()
+      g()
+
+    f(l, 0)
+    self.assertAllClose(l._dct, {'x': [1, 2, 3, 2, 3]})
+
+  def test_log_scoping(self):
+    @jax.jit
+    def f(x):
+      log = new_log()
+      log.append('x', x + 1)
+
+      @jax.jit
+      def g():
+        try:    read_log(log)
+        except: pass
+        else:   raise Exception
+        log.append('x', x + 2)
+        log.append('x', x + 3)
+
+      g()
+      log.append('x', x - 1)
+      g()
+      return read_log(log)
+
+    y = f(0)  # doesn't crash
+    self.assertAllClose(y, {'x': [1, 2, 3, -1, 2, 3]})
+
+  def test_scan_basic(self):
+    l = Log()
+    def body(_, x):
+      l.append('x', x + 1)
+      l.append('x', 2 * x)
+      l.append('x', 2 * x + 1)
+      l.append('x', x + 10)
+      l.append('x', x + 20)
+      return (), ()
+    (), () = jax.lax.scan(body, (), jnp.arange(3))
+    expected = {'x': [jnp.arange(3) + 1, 2 * jnp.arange(3),
+                      2 * jnp.arange(3) + 1, jnp.arange(3) + 10,
+                      jnp.arange(3) + 20]}
+    self.assertAllClose(l._dct, expected)
+
+  def test_scan_inner_jit(self):
+    l = Log()
+    def body(_, x):
+      l.append('x', x + 1)
+      jax.jit(lambda: l.append('x', 2 * x) or l.append('x', 2 * x + 1))()
+      l.append('x', x + 10)
+      jax.jit(jax.jit(lambda: l.append('x', x + 20)))()
+      return (), ()
+    (), () = jax.lax.scan(body, (), jnp.arange(3))
+    expected = {'x': [jnp.arange(3) + 1, 2 * jnp.arange(3),
+                      2 * jnp.arange(3) + 1, jnp.arange(3) + 10,
+                      jnp.arange(3) + 20]}
+    self.assertAllClose(l._dct, expected)
+
+  def test_scan_nested(self):
+    def loop(*ns):
+      def wrap(f):
+        for n in reversed(ns):
+          f = (lambda f, n: lambda: jax.lax.scan(lambda _, __: f() or ((), ()), (), (), length=n))(f, n)
+        f()
+      return wrap
+
+    l = Log()
+    b = Box(0)
+
+    @loop(3, 5)
+    def f():
+      i = b.get()
+      l.append('x', i)
+      jax.jit(lambda: l.append('y', i * 2))()
+      b.set(i + 1)
+    self.assertAllClose(l._dct,
+                        {'x': [jnp.arange(3 * 5).reshape(3, 5)],
+                         'y': [jnp.arange(3 * 5).reshape(3, 5) * 2]})
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

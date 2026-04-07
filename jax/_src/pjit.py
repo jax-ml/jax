@@ -500,9 +500,7 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-    args_ft)
+  in_type = avals_ft.map2(core.aval_qdd_from_current_val, args_ft)
   assert avals_ft is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
@@ -892,16 +890,17 @@ def _to_lojax(*hi_args, jaxpr, **params):
   lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = pe.num_himuts_out(jaxpr)
-  params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
+  num_scans = len(core.scan_env())
+  params = _lojax_expand_params(num_scans, lo_nums_in, lo_nums_out, lo_muts_out,
+                                **params)
 
   # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
+             for lo_val in pe.lo_vals(aval, x)]
 
   # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
+  lo_jaxpr = pe.lower_jaxpr(jaxpr, scan_env=len(core.scan_env()))
+  all_outs = jit_p.bind(*core.scan_env(), *lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
@@ -917,8 +916,9 @@ def _converted_mutables_add_params(
 
 
 def _lojax_expand_params(
-    nums_in, nums_out, muts_out, *, donated_invars, in_shardings, in_layouts,
-    out_shardings, out_layouts, **params):
+    num_scans, nums_in, nums_out, muts_out, *,
+    donated_invars, in_shardings, in_layouts, out_shardings, out_layouts,
+    **params):
   # some pjit params match the length of hi_jaxpr.invars/outvars, so when
   # lowering we must expand them to match their number of lojax types
   def expand(ns, xs):
@@ -932,6 +932,11 @@ def _lojax_expand_params(
   # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
   out_shardings = (UNSPECIFIED,) * muts_out + out_shardings
   out_layouts = (None,) * muts_out + out_layouts
+
+  # aaaand scan env inputs
+  donated_invars = (False,) * num_scans + donated_invars
+  in_shardings = (UNSPECIFIED,) * num_scans + in_shardings
+  in_layouts = (None,) * num_scans + in_layouts
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
@@ -1309,11 +1314,6 @@ def pjit_staging_rule(trace, source_info, *args, **params):
   else:
     out_tracers = trace.default_process_primitive(
         jit_p, args, params, source_info=source_info)
-    # TODO(mattjj): handle qdd in the presence of refs
-    for v, x in zip(it.chain(jaxpr.constvars, jaxpr.invars), it.chain(jaxpr.consts, args)):
-      if v.initial_qdd:
-        assert core.cur_qdd(x) == v.initial_qdd
-        x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
   return out_tracers
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
@@ -1325,13 +1325,29 @@ pe.forwarding_rules[jit_p] = pjit_forwarding_rule
 
 
 def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
-  return core._check_call(ctx_factory, jit_p, in_atoms,
-                          dict(params, call_jaxpr=jaxpr.jaxpr))
+  out_avals = core._check_call(ctx_factory, jit_p, in_atoms,
+                               dict(params, call_jaxpr=jaxpr.jaxpr))
+  in_avals = [core.AvalMutableQDD(x.aval, x.mutable_qdd)
+              if isinstance(x, core.MutableTypecheckVal) else x
+              for x in in_atoms]
+  _ = _pjit_abstract_eval(*in_avals, jaxpr=jaxpr, **params)  # apply qdd update
+  return out_avals
 core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
   effs = core.eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
+  vars = list(it.chain(jaxpr.constvars, jaxpr.invars))
+  vals = list(it.chain(jaxpr.consts, args))
+  for v, x in zip(vars, vals):
+    if v.aval.has_qdd:
+      if v.aval.is_writer:
+        assert v.initial_qdd == v.aval.empty_qdd()
+        new_qdd = v.aval.extend_qdd(x.mutable_qdd.cur_val, v.final_qdd)
+        x.mutable_qdd.update(new_qdd)
+      else:
+        # assert core.cur_qdd(x) == v.initial_qdd
+        x.mutable_qdd.update(v.final_qdd)
   return jaxpr.out_avals, effs
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 

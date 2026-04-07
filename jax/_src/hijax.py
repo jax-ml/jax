@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial, update_wrapper
 import inspect
 import itertools as it
@@ -40,7 +40,7 @@ from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, tree_structure, tree_map_with_path,
-    keystr)
+    keystr, FlatTree)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -99,7 +99,7 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
   # define lowering from hijax value to lojax values and back (like pytrees)
-  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj); not lovals
+  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # type: ignore
     assert False, "must override"
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
     assert False, "must override"
@@ -892,3 +892,165 @@ class HiPspec:
   def to_lo(self) -> HiPspec: assert False, "must override"
   def to_tangent_spec(self) -> HiPspec: assert False, "must override"
   def to_ct_spec(self) -> HiPspec: assert False, "must override"
+
+
+log_effect = box_effect
+
+def log_extend(log, dct):
+  leaves, treedef = tree_flatten(dct)
+  log_extend_p.bind(log, *leaves, treedef=treedef)
+
+def log_append(log, key, val):
+  log_extend(log, {key: [val]})
+
+class Log:
+  _dct: dict  # dict[str, list[PyTree[Array]]]
+  __qdd__: LogQDD  # only used at lowering time, an HTLV in spirit
+
+  def __init__(self):
+    self._dct = {}
+
+  def cur_qdd(self):
+    return LogQDD(FlatTree.flatten(self._dct).map(core.typeof))
+
+  append = log_append
+  extend = log_extend
+
+  def __repr__(self) -> str:
+    return f'Log({self._dct})'
+
+class LogTy(MutableHiType):
+  has_qdd = True
+  is_writer = True
+
+  append = core.aval_method(log_append)
+  extend = core.aval_method(log_extend)
+
+  def __hash__(self): return hash(LogTy)
+  def __eq__(self, other): return isinstance(other, LogTy)
+
+  def str_short(self, short_dtypes=False, **_) -> str: return 'Log'  # type: ignore
+
+  def lo_ty_qdd(self, state: LogQDD, /) -> list[core.AbstractValue]:  # type: ignore
+    return list(state.ft)
+
+  def preallocate(self, state: LogQDD) -> list[LoVal]:
+    from jax._src import lax
+    return [lax.empty(a.shape, a.dtype) for a in state.ft]
+
+  def filter(self, cur_qdd: LogQDD, update_qdd: LogQDD, log: Log) -> list[LoVal]:
+    dct = {}
+    qdd = cur_qdd.ft.unflatten()
+    for k, v in update_qdd.ft.unflatten().items():
+      i = len(qdd.get(k, []))
+      dct[k] = log._dct[k][i:i+len(v)]
+    return list(FlatTree.flatten(dct))
+
+  def new_empty(self, state, *lo_vals) -> Log:
+    log = Log()
+    update_dct = state.ft.update(lo_vals).unflatten()
+    for k, v in update_dct.items():
+      log._dct[k] = v
+    return log
+
+  def empty_qdd(self) -> LogQDD:
+    return LogQDD(FlatTree.flatten({}))
+
+  def extend_qdd(self, qdd1, qdd2):
+    dct = qdd1.ft.unflatten()
+    update_dct = qdd2.ft.unflatten()
+    for k, v in update_dct.items():
+      dct.setdefault(k, []).extend(v)
+    return LogQDD(FlatTree.flatten(dct), qdd1.in_scope)
+
+  def read_loval(self, _state: LogQDD, log: Log) -> list[LoType]:  # type: ignore
+    return list(FlatTree.flatten(log._dct))
+
+  def update_from_loval(self, update_qdd: LogQDD, log: Log, *lo_vals) -> None:  # type: ignore
+    updates = update_qdd.ft.update(lo_vals).unflatten()
+    if hasattr(log, '__qdd__'):  # HTLV/lowering-time Log, preallocated, dus
+      cur_qdd = log.__qdd__.ft.unflatten()
+      for k, v in updates.items():
+        sl = slice(len(cur_qdd.setdefault(k, [])), len(cur_qdd[k]) + len(v))
+        log._dct[k][sl] = [u for x, u in zip(log._dct[k][sl], v)]
+      log.__qdd__ = self.extend_qdd(log.__qdd__, update_qdd)
+    else:  # at-rest Log, not preallocated, assign allocated
+      for k, v in updates.items():
+        log._dct.setdefault(k, []).extend(v)
+
+
+register_hitype(Log, lambda _: LogTy())
+
+@dataclass(frozen=True)
+class LogQDD(QDD):
+  ft: FlatTree  # FlatTree of dict[str, list[PyTree[Aval]]]
+  in_scope: bool = False
+
+  def __repr__(self):
+    return f'LogQDD({repr(self.ft.unflatten())})'
+  def inc_rank(self, length):
+    return LogQDD(self.ft.map(partial(core.unmapped_leading_aval, length)))
+
+class LogExtend(HiPrimitive):
+  multiple_results = True  # no results
+  is_effectful = lambda *_, **__: True
+
+  def abstract_eval(self, log_ty, *val_tys, treedef):
+    cur_qdd = log_ty.mutable_qdd.cur_val
+    dct = cur_qdd.ft.unflatten()
+    new_dct = tree_unflatten(treedef, val_tys)
+    for k, v in new_dct.items():
+      for length in reversed(core.scan_env() or ()):
+        v = map(partial(core.unmapped_leading_aval, length), v)
+      dct.setdefault(k, []).extend(v)
+    log_ty.mutable_qdd.update(LogQDD(FlatTree.flatten(dct), cur_qdd.in_scope))
+    return [], {log_effect}
+
+  def to_lojax(_, log, *vals, treedef):
+    updates = tree_unflatten(treedef, vals)
+    if hasattr(log, '__qdd__'):
+      qdd = log.__qdd__.ft.unflatten()
+      idx = core.scan_env()
+      for k, v in updates.items():
+        sl = slice(len(qdd.setdefault(k, [])), len(qdd[k]) + len(v))
+        log._dct[k][sl] = [x.at[idx].set(u) for x, u in zip(log._dct[k][sl], v)]
+        qdd[k].extend(map(core.typeof, v))  # qdd update
+      log.__qdd__ = LogQDD(FlatTree.flatten(qdd), log.__qdd__.in_scope)
+    else:  # top-level, really an impl rule
+      for k, v in updates.items():
+        log._dct.setdefault(k, []).extend(v)
+    return []
+log_extend_p = LogExtend('log_extend')
+
+class NewLog(HiPrimitive):
+  def is_high(self) -> bool: return True
+
+  def abstract_eval(self):
+    ty = LogTy()
+    qdd = replace(ty.empty_qdd(), in_scope=True)
+    return core.AvalQDD(ty, qdd), {log_effect}
+
+  def to_lojax(_):
+    return Log()
+new_log_p = NewLog('new_log')
+
+def new_log():
+  return new_log_p.bind()
+
+
+class ReadLog(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, _) -> bool: return True
+
+  def abstract_eval(self, log_qdd):
+    if not log_qdd.mutable_qdd.cur_val.in_scope: raise Exception
+    return list(log_qdd.mutable_qdd.cur_val.ft), {log_effect}
+
+  def to_lojax(_, log):
+    return list(FlatTree.flatten(log._dct))
+read_log_p = ReadLog('read_log')
+
+def read_log(log):
+  flat = read_log_p.bind(log)
+  return core.cur_qdd(log).ft.update(flat).unflatten()
