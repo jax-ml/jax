@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import math
 from typing import Any
 from absl.testing import absltest
 import jax
@@ -1047,6 +1048,84 @@ class InterpretTest(jtu.JaxTestCase):
     else:
       self.assertFalse(mosaic_interpret.get_races().races_found)
       np.testing.assert_array_equal(z, x + y)
+
+  @jtu.parameterized.product(
+      grid_dict=[
+          None,
+          dict(g0=1),
+          dict(g0=2, g1=3),
+      ],
+      cluster_dict=[
+          None,
+          dict(c0=2),
+          dict(c0=2, c1=3),
+          dict(c0=2, c1=3, c2=2),
+      ],
+      thread_dict=[
+          None,
+          dict(t=1),
+          dict(t=3),
+      ],
+  )
+  def test_cluster(self, grid_dict, cluster_dict, thread_dict):
+    if cluster_dict is None and thread_dict is None and grid_dict is None:
+
+      def kernel(o_ref):
+        o_ref[...] = 42
+
+      y = plgpu.kernel(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          interpret=mosaic_interpret.InterpretParams(detect_races=True),
+      )()
+
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      self.assertEqual(y, 42)
+      return
+
+    mesh_kwargs = {}
+    axes_dims = ()
+    axes_names = ()
+    if grid_dict is not None:
+      mesh_kwargs['grid'] = tuple(grid_dict.values())
+      mesh_kwargs['grid_names'] = tuple(grid_dict.keys())
+      axes_dims += tuple(grid_dict.values())
+      axes_names += tuple(grid_dict.keys())
+    if cluster_dict is not None:
+      mesh_kwargs['cluster'] = tuple(cluster_dict.values())
+      mesh_kwargs['cluster_names'] = tuple(cluster_dict.keys())
+      axes_dims += tuple(cluster_dict.values())
+      axes_names += tuple(cluster_dict.keys())
+    if thread_dict is not None:
+      (thread_name, num_threads), = thread_dict.items()
+      mesh_kwargs['num_threads'] = num_threads
+      mesh_kwargs['thread_name'] = thread_name
+      axes_dims += (num_threads,)
+      axes_names += (thread_name,)
+    mesh = plgpu.Mesh(**mesh_kwargs)
+    out_shape = axes_dims
+
+    @pl.run_state
+    def kernel(o_ref):
+      @pl.core_map(
+          mesh,
+          interpret=mosaic_interpret.InterpretParams(detect_races=True),
+      )
+      def _():
+        flat_thread_id = jnp.int32(0)
+        for i, name in enumerate(axes_names):
+          stride = math.prod(axes_dims[i + 1 :])
+          flat_thread_id += jax.lax.axis_index(name) * stride
+        thread_idx = tuple(jax.lax.axis_index(name) for name in axes_names)
+
+        o_ref[thread_idx] = flat_thread_id
+
+    expected = np.arange(
+        math.prod(out_shape), dtype=jnp.int32
+    ).reshape(out_shape)
+    y = kernel(jnp.zeros(out_shape, jnp.int32))
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_array_equal(y, expected)
 
 
 if __name__ == '__main__':

@@ -141,26 +141,58 @@ _SENTINEL = jnp.inf
 class JaxprInterpreter:
   """Interprets a jaxpr by replacing memory operations with (GPU) callbacks."""
 
-  grid_point_coords: tuple[int]
+  grid_point_coords: tuple[int, ...]
+  cluster_dims: tuple[int, ...]
+
+  # The (flat) thread ID for the thread that this interpreter instance is
+  # executing. On each simulated GPU, and for each grid point, we execute the
+  # following number of threads concurrently (with concurrent instances of
+  # `JaxprInterpreter`):
+  #
+  #   num_threads = math.prod(self.cluster_dims) * self.num_threads_per_block
+  #
+  # Hence, `thread_id` must be a number in [0, num_threads - 1].
+  #
+  # The `thread_id` maps to a thread's coordinates along the cluster and thread
+  # axes as follows:
+  #
+  #   thread_coord_tuple = (*self.cluster_coords, self.thread_id_in_block),
+  #
+  # where the `self.thread_id_in_block` is the minor-most coordinate, and
+  # `self.cluster_coords` are in major-to-minor order.
   thread_id: int
+
   mesh: plgpu.Mesh | None
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
   interpret_params: interpret_utils.InterpretParams
 
   @functools.cached_property
-  def num_threads(self) -> int:
+  def num_threads_per_block(self) -> int:
     if self.mesh is None or self.mesh.num_threads is None:
       return 1
     else:
       return int(self.mesh.num_threads)
+
+  @functools.cached_property
+  def thread_id_in_block(self) -> int:
+    return self.thread_id % self.num_threads_per_block
+
+  @functools.cached_property
+  def cluster_coords(self) -> tuple[int, ...]:
+    thread_id = self.thread_id // self.num_threads_per_block
+    return interpret_utils.get_indices(self.cluster_dims, thread_id)
 
   def _interpret_axis_index_p(self, eqn):
     assert eqn.primitive is lax.axis_index_p
     axis_name = eqn.params["axis_name"]
     if self.mesh is not None:
       if axis_name == self.mesh.thread_name:
-        return jnp.int32(self.thread_id)
+        return jnp.int32(self.thread_id_in_block)
+      elif axis_name in self.mesh.cluster_names:
+        return jnp.int32(
+            self.cluster_coords[self.mesh.cluster_names.index(axis_name)]
+        )
       elif axis_name in self.mesh.grid_names:
         return jnp.int32(
             self.grid_point_coords[self.mesh.grid_names.index(axis_name)]
@@ -225,7 +257,7 @@ class JaxprInterpreter:
                     thread_id=self.thread_id,
                     num_arrivals=dtype.num_arrivals,
                     num_barriers=shape[0],
-                    ref_count=self.num_threads,
+                    ref_count=self.num_threads_per_block,
                     source_info=eqn.source_info,
                 )
               else:
@@ -242,7 +274,7 @@ class JaxprInterpreter:
                             else self.thread_id
                         ),
                         initial_ref_count=(
-                            self.num_threads
+                            self.num_threads_per_block
                             if same_allocations_for_all_threads
                             else 1
                         ),
@@ -296,7 +328,7 @@ class JaxprInterpreter:
     # interpreter we are a little more lenient and allow non-collective
     # allocations for `SMEM` buffers.
     same_allocations = False
-    if self.num_threads == 1:
+    if self.num_threads_per_block == 1:
       # When there is only one thread, we set `same_allocations` to `True`
       # regardless of whether `collective_axes` is set or not. Since the
       # allocation of barriers asserts on `same_allocations`, setting

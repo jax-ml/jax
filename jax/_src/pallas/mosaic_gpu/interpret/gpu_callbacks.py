@@ -117,32 +117,36 @@ def reset_gpu_interpret_mode_state():
 
 
 def _initialize_shared_memory(
-    num_devices: Any,
-    num_threads: Any,
     *,
+    num_gpus: int,
+    num_threads_per_block: int,
+    num_blocks_per_cluster: int,
     interpret_params: interpret_utils.InterpretGPUParams,
 ):
   global _shared_memory, _races
 
-  num_devices = int(num_devices)
-  num_threads = int(num_threads)
-  num_total_pallas_threads = num_devices * num_threads
+  num_gpus = int(num_gpus)
+  num_threads_per_block = int(num_threads_per_block)
+  num_total_concurrent_threads = (
+      num_gpus * num_threads_per_block * num_blocks_per_cluster
+  )
 
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      _races = RaceDetectionState(num_cores=num_total_pallas_threads)
+      _races = RaceDetectionState(num_cores=num_total_concurrent_threads)
       _shared_memory = memory.GPUSharedMemory(
-          num_devices=num_devices,
-          num_pallas_threads_per_block=num_threads,
+          num_devices=num_gpus,
+          num_threads_per_block=num_threads_per_block,
+          num_blocks_per_cluster=num_blocks_per_cluster,
           num_tma_threads_per_device=interpret_params.num_tma_threads_per_device,
           out_of_bounds_reads=interpret_params.out_of_bounds_reads,
           # TODO(nrink): Support different DMA execution modes on GPU.
           dma_execution_mode="eager",
           uninitialized_memory=interpret_params.uninitialized_memory,
           detect_races=interpret_params.detect_races,
-          barrier=threading.Barrier(num_devices, action=lambda: None),
+          barrier=threading.Barrier(num_gpus, action=lambda: None),
           clean_up_barrier=threading.Barrier(
-              num_devices, action=_clear_shared_memory
+              num_gpus, action=_clear_shared_memory
           ),
           logging_mode=interpret_params.logging_mode,
       )
@@ -150,13 +154,14 @@ def _initialize_shared_memory(
   # support for multipl cores in a (Megacore) TPU device. As commented above, on
   # GPU we model multiple Pallas threads per device as _cores_ in the
   # (TPU-/Megacore-)inspired terminology of `SharedMemory`.
-  assert _shared_memory.num_cores == num_total_pallas_threads
+  assert _shared_memory.num_cores == num_total_concurrent_threads
 
 
 def call_initialize_shared_memory(
     *,
-    num_devices: int,
-    num_threads: int,
+    num_gpus: int,
+    num_threads_per_block: int,
+    num_blocks_per_cluster: int,
     interpret_params: interpret_utils.InterpretGPUParams,
 ):
   callback.io_callback(
@@ -165,8 +170,9 @@ def call_initialize_shared_memory(
           interpret_params=interpret_params,
       ),
       (),
-      num_devices,
-      num_threads,
+      num_gpus=num_gpus,
+      num_threads_per_block=num_threads_per_block,
+      num_blocks_per_cluster=num_blocks_per_cluster,
       ordered=True,
   )
 

@@ -55,12 +55,15 @@ class Barrier(memory.Allocation):
   def __init__(
       self,
       shared_memory: GPUSharedMemory,
+      *,
+      num_participating_threads: int,
       ref_count: int,
       num_arrivals: int,
       enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
     self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
+    self.num_participating_threads: int = num_participating_threads
     self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
     self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
     self.enable_logging: bool = enable_logging
@@ -76,7 +79,7 @@ class Barrier(memory.Allocation):
     self.phase: int = 0  # Protected by `self.cv`'s lock.
     self.next_awaited_phase_by_thread: list[int] = [  # Protected by `self.cv`'s lock.
         1
-    ] * shared_memory.num_pallas_threads_per_block
+    ] * self.num_participating_threads
     # Initialize `self.phase_change_observed` to `True` so that the first
     # arrival (more precisely, the first time we have arrived
     # `self.num_arrivals` times) at the `Barrier` does not raise an error due to
@@ -183,6 +186,14 @@ class Barrier(memory.Allocation):
       local_thread_id: int,
       logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
+    # TODO(nrink): `local_thread_id` is the flat ID of the thread in the
+    # cluster. We need to map it to an index that is within
+    # [0, self.num_participating_threads`). Doing this with `%` here works for
+    # barriers that synchronize the threads within a block, but it may not work
+    # for cluster barriers (if the barrier is not shared by *all* threads in the
+    # cluster). Investigate and correct this when implementing cluster barriers.
+    participating_thread_id = local_thread_id % self.num_participating_threads
+
     with self.cv:
       # We are waiting for the barrier to reach exactly the phase that this
       # thread is waiting for. This could lead to deadlock (see the comment in
@@ -196,17 +207,23 @@ class Barrier(memory.Allocation):
       # integer, we had used a boolean (which would be closer to real GPU
       # hardware), we would be forced to use `!=` here (since `>` would not be
       # an option).
-      while self.next_awaited_phase_by_thread[local_thread_id] != self.phase:
+      while (
+          self.next_awaited_phase_by_thread[participating_thread_id]
+          != self.phase
+      ):
         # If `self.phase` is already past the phase that this thread is waiting
         # for, this thread will wait forever. This is because `self.phase` never
         # decreases and the only way for
         # `self.next_awaited_phase_by_thread[local_thread_id]` to increase is by
         # exiting this `while` loop.
-        if self.next_awaited_phase_by_thread[local_thread_id] < self.phase:
+        if (
+            self.next_awaited_phase_by_thread[participating_thread_id]
+            < self.phase
+        ):
           raise ValueError(
               f"Thread {local_thread_id} is awaiting phase"
-              f" {self.next_awaited_phase_by_thread[local_thread_id]}, but"
-              f" barrier is already at phase {self.phase}. (This means that"
+              f" {self.next_awaited_phase_by_thread[participating_thread_id]},"
+              f" but barrier is already at phase {self.phase}. (This means that"
               f" Thread {local_thread_id} has not participated in all"
               " completions of the barrier.)"
           )
@@ -215,7 +232,7 @@ class Barrier(memory.Allocation):
           self._log(
               logging_info.format(
                   f"Waiting for barrier {id(self)} to reach phase"
-                  f" {self.next_awaited_phase_by_thread[local_thread_id]}."
+                  f" {self.next_awaited_phase_by_thread[participating_thread_id]}."
                   f" (Current phase: {self.phase})",
                   line_prefix="`wait`",
               )
@@ -223,7 +240,7 @@ class Barrier(memory.Allocation):
         self.cv.wait()
 
       self.phase_change_observed = True
-      self.next_awaited_phase_by_thread[local_thread_id] += 1
+      self.next_awaited_phase_by_thread[participating_thread_id] += 1
 
       if self.enable_logging and logging_info is not None:
         self._log(
@@ -264,7 +281,12 @@ class GPUSharedMemory(memory.SharedMemory):
   next_tma_thread_id_per_device: dict[int, int]
 
   def __init__(self, **kwargs):
-    num_pallas_threads_per_block = kwargs.pop("num_pallas_threads_per_block")
+    num_threads_per_block = kwargs.pop("num_threads_per_block")
+    num_blocks_per_cluster = kwargs.pop("num_blocks_per_cluster")
+    num_concurrent_threads = (
+        num_threads_per_block * num_blocks_per_cluster
+    )
+
     num_tma_threads_per_device = kwargs.pop("num_tma_threads_per_device")
     logging_mode = kwargs.pop("logging_mode", None)
 
@@ -272,14 +294,14 @@ class GPUSharedMemory(memory.SharedMemory):
     # of threads concurrently. Hence, we reserve one vector clock per Pallas
     # thread (in a block) plus one vector clock per TMA thread (per device).
     vector_clock_size = kwargs["num_devices"] * (
-        num_pallas_threads_per_block + num_tma_threads_per_device
+        num_concurrent_threads + num_tma_threads_per_device
     )
     clocks = [
         vc.make_vector_clock(vector_clock_size)
-        for _ in range(num_pallas_threads_per_block)
+        for _ in range(num_concurrent_threads)
     ]
 
-    kwargs.update(num_cores_per_device=num_pallas_threads_per_block)
+    kwargs.update(num_cores_per_device=num_concurrent_threads)
     kwargs.update(vector_clock_size=vector_clock_size)
     kwargs.update(clocks=clocks)
 
@@ -291,6 +313,8 @@ class GPUSharedMemory(memory.SharedMemory):
           " interpreting GPU kernels."
       )
 
+    self.num_pallas_threads_per_block = num_threads_per_block
+    self.num_blocks_per_cluster = num_blocks_per_cluster
     self.num_tma_threads_per_device = num_tma_threads_per_device
     self.logging_mode = cast(interpret_utils.LoggingMode | None, logging_mode)
     self.next_tma_thread_id_per_device = {
@@ -298,12 +322,12 @@ class GPUSharedMemory(memory.SharedMemory):
     }
 
   @property
-  def num_pallas_threads_per_block(self) -> int:
+  def num_concurrent_pallas_threads(self) -> int:
     return self.num_cores_per_device
 
   @property
   def num_total_threads_per_device(self) -> int:
-    return self.num_pallas_threads_per_block + self.num_tma_threads_per_device
+    return self.num_concurrent_pallas_threads + self.num_tma_threads_per_device
 
   def get_global_thread_id(self, device_id: int, local_thread_id: int) -> int:
     """Computes the global thread ID from the given device and local thread ID."""
@@ -322,7 +346,7 @@ class GPUSharedMemory(memory.SharedMemory):
       self.next_tma_thread_id_per_device[device_id] = (
           next_tma_thread_id + 1
       ) % self.num_tma_threads_per_device
-      return self.num_pallas_threads_per_block + next_tma_thread_id
+      return self.num_concurrent_pallas_threads + next_tma_thread_id
 
   def update_clock(self, vector_clock_idx, clock: vc.VectorClock):
     with self.lock:
@@ -344,6 +368,7 @@ class GPUSharedMemory(memory.SharedMemory):
       if key not in self.mem:
         barrier = Barrier(
             self,
+            num_participating_threads=self.num_pallas_threads_per_block,
             ref_count=ref_count,
             num_arrivals=num_arrivals,
             enable_logging=(

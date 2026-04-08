@@ -61,31 +61,28 @@ def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
   return tuple(result)
 
 
-def _get_grid_dims_and_num_threads(
+def _get_grid_and_cluster_dims_and_num_threads(
     grid_mapping: pallas_core.GridMapping, mesh: plgpu.Mesh | None
-) -> tuple[tuple[int, ...], int]:
+) -> tuple[tuple[int, ...], tuple[int, ...], int]:
   if not mesh:
     num_threads = 1
+    cluster_dims = ()
     grid_dims = _get_grid_bounds(grid_mapping)
   elif isinstance(mesh, plgpu.Mesh):
-    if mesh.cluster is not None and math.prod(mesh.cluster) != 1:
-      raise NotImplementedError(
-          f"Invalid cluster {mesh.cluster} in mesh: GPU interpret mode does not"
-          " support (non-trivial) clusters."
-      )
     num_threads = int(mesh.num_threads or 1)
+    cluster_dims = tuple(mesh.cluster) if mesh.cluster is not None else ()
     grid_dims = tuple(mesh.grid)
   else:
     raise ValueError(f"Unsupported mesh type: {type(mesh)}")
 
-  reconstructed_grid = grid_dims + (num_threads,)
+  reconstructed_grid = grid_dims + cluster_dims + (num_threads,)
   if math.prod(_get_grid_bounds(grid_mapping)) != math.prod(reconstructed_grid):
     raise NotImplementedError(
         f"Invalid grid {grid_mapping.grid} in grid_mapping: expected grid to"
         f" have the same size as {reconstructed_grid}"
     )
 
-  return grid_dims, num_threads
+  return grid_dims, cluster_dims, num_threads
 
 
 def _allocate_buffers_for_inputs(
@@ -351,9 +348,10 @@ def interpret_pallas_call(
   # `index_map`s).
   assert all(bm.has_trivial_window() for bm in grid_mapping.block_mappings)
 
-  grid_dims, num_threads = _get_grid_dims_and_num_threads(
-      grid_mapping, mesh
+  grid_dims, cluster_dims, num_threads = (
+      _get_grid_and_cluster_dims_and_num_threads(grid_mapping, mesh)
   )
+  num_blocks_per_cluster = math.prod(cluster_dims)
   device_info = jaxpr_interpret.DeviceInfo()
 
   interpret_params = dataclasses.replace(
@@ -361,8 +359,9 @@ def interpret_pallas_call(
   )
 
   gpu_callbacks.call_initialize_shared_memory(
-      num_devices=device_info.num_devices,
-      num_threads=num_threads,
+      num_gpus=device_info.num_devices,
+      num_threads_per_block=num_threads,
+      num_blocks_per_cluster=num_blocks_per_cluster,
       interpret_params=interpret_params,
   )
 
@@ -437,6 +436,7 @@ def interpret_pallas_call(
 
     jaxpr_interpreter = jaxpr_interpret.JaxprInterpreter(
         grid_point_coords=grid_point_coords,
+        cluster_dims=cluster_dims,
         thread_id=thread_id,
         mesh=mesh,
         device_info=device_info,
@@ -465,7 +465,9 @@ def interpret_pallas_call(
     grid_point_coords = interpret_utils.get_indices(
         grid_dims, loop_idx
     )
-    thread_map.thread_map(_kernel, num_threads, grid_point_coords)
+    thread_map.thread_map(
+        _kernel, math.prod(cluster_dims) * num_threads, grid_point_coords
+    )
 
   # TODO(nrink): Should we only create happens-before here from thread 0 to
   # the other threads? Currently we update the vector clocks for all threads by
