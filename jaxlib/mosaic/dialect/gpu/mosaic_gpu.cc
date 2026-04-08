@@ -387,7 +387,7 @@ llvm::LogicalResult QueryClusterCancelOp::verify() {
 llvm::LogicalResult WGMMAOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   if (operands.empty()) {
     return mlir::emitOptionalError(location, "expected non-empty operands");
@@ -889,7 +889,7 @@ llvm::LogicalResult TmemDeallocOp::verify() {
 llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
@@ -948,7 +948,7 @@ llvm::LogicalResult SliceTmemOp::verify() {
 
 llvm::LogicalResult VectorLoadOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location>,
-    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::OpaqueProperties,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::PropertyRef,
     mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
@@ -1003,7 +1003,7 @@ llvm::LogicalResult PrintLayoutOp::verify() {
 llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   if (operands.empty()) {
     return mlir::emitOptionalError(location, "expected non-empty operands");

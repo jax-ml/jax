@@ -141,7 +141,8 @@ mlir::LogicalResult RunSerde(
 
         auto new_op = mlir::Operation::create(
             op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
-            op->getAttrs(), nullptr, op->getSuccessors(), op->getRegions());
+            op->getAttrs(), mlir::PropertyRef{}, op->getSuccessors(),
+            op->getRegions());
         op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
                                                     new_op);
         // Downgrade the op to the target version, if needed.

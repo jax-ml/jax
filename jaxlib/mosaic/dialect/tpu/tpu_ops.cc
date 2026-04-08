@@ -1896,8 +1896,8 @@ LogicalResult ConcatenateOp::verify() {
 
 /*static*/ LogicalResult ConcatenateOp::inferReturnTypes(
     MLIRContext* context, std::optional<Location> location, ValueRange operands,
-    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
-    SmallVectorImpl<Type>& inferredReturnTypes) {
+    DictionaryAttr attributes, mlir::PropertyRef properties,
+    RegionRange regions, SmallVectorImpl<Type>& inferredReturnTypes) {
   ConcatenateOpAdaptor adaptor(operands, attributes, properties, regions);
   auto dimension = adaptor.getDimension();
   for (auto [i, operand] : llvm::enumerate(operands)) {
@@ -2180,8 +2180,8 @@ LogicalResult DynamicGatherOp::verify() {
 
 /*static*/ LogicalResult DynamicGatherOp::inferReturnTypes(
     MLIRContext* context, std::optional<Location> location, ValueRange operands,
-    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
-    SmallVectorImpl<Type>& inferredReturnTypes) {
+    DictionaryAttr attributes, mlir::PropertyRef properties,
+    RegionRange regions, SmallVectorImpl<Type>& inferredReturnTypes) {
   VectorType source_vty = cast<VectorType>(operands[0].getType());
   VectorType indices_vty = cast<VectorType>(operands[1].getType());
   inferredReturnTypes.push_back(
