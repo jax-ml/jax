@@ -205,7 +205,7 @@ class NDIndexer:
     Raises an IndexError in case of out-of-bound indices
     """
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER:
+      if idx.typ == IndexType.INTEGER and isinstance(idx.index, (int, np.integer)):
         assert isinstance(idx.index, (int, np.integer))
         i = operator.index(idx.index)
         axis, = idx.consumed_axes
@@ -331,7 +331,7 @@ class NDIndexer:
   def normalize_indices(self) -> NDIndexer:
     new_indices: list[ParsedIndex] = []
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER:
+      if idx.typ == IndexType.INTEGER and isinstance(idx.index, (int, np.integer)):
         axis, = idx.consumed_axes
         size: ArrayLike = self.shape[axis]
         if isinstance(idx.index, np.unsignedinteger):
@@ -339,7 +339,7 @@ class NDIndexer:
         else:
           normed_index = idx.index + size if idx.index < 0 else idx.index  # type: ignore[assignment,operator]
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
-      elif idx.typ == IndexType.ARRAY:
+      elif idx.typ in [IndexType.ARRAY, IndexType.INTEGER]:
         assert isinstance(idx.index, (Array, np.ndarray))
         axis, = idx.consumed_axes
         if dtypes.issubdtype(idx.index.dtype, np.unsignedinteger):

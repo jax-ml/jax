@@ -76,22 +76,16 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
   indexer = indexing.NDIndexer.from_raw_indices(idx, x.shape).expand_bool_indices()
   dynamic_idx, treedef = tree_util.tree_flatten(indexer)
   dynamic_idx = tuple(dynamic_idx)
-
-  kwargs = dict(scatter_op=scatter_op, treedef=treedef,
-                indices_are_sorted=indices_are_sorted,
-                unique_indices=unique_indices, mode=mode,
-                normalize_indices=normalize_indices)
-  if all(isinstance(i, core.Tracer) for i in dynamic_idx):
-    args = (x, y, dynamic_idx)
-  else:
-    args = (x, y)
-    kwargs = kwargs | dict(dynamic_idx=dynamic_idx)
-
-  internal_scatter = partial(_scatter_impl, **kwargs)
+  internal_scatter = partial(
+      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
+      indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices, mode=mode,
+      normalize_indices=normalize_indices)
   if out_sharding is not None:
     return auto_axes(internal_scatter, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes)(*args)
-  return internal_scatter(*args)
+                     axes=out_sharding.mesh.explicit_axes
+                     )(x, y, dynamic_idx)
+  return internal_scatter(x, y, dynamic_idx)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
