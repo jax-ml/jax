@@ -1406,23 +1406,30 @@ mlir::tpu::CoreType EnqueueDMAOp::getTargetCoreType() {
 }
 
 LogicalResult EnqueueDMAOp::verify() {
-  auto target_sem_type = getMemRefType(getTargetSemaphore());
+  Value target_sem = getTargetSemaphore();
+  if (!target_sem) {
+    // TODO: b/501204503 - Support optional source and destination semaphores.
+    return emitOpError("EnqueueDMA target semaphore must be provided.");
+  }
+  MemRefType target_sem_type = getMemRefType(target_sem);
   if (target_sem_type.getRank() != 0) {
     return emitOpError("DMA target semaphore must be rank 0");
   }
-  auto source_sem = getSourceSemaphore();
+  Type target_sem_elem_type = target_sem_type.getElementType();
+
+  Value source_sem = getSourceSemaphore();
   if (source_sem) {
-    auto source_sem_type = getMemRefType(getSourceSemaphore());
+    MemRefType source_sem_type = getMemRefType(source_sem);
     if (source_sem_type.getRank() != 0) {
       return emitOpError("DMA source semaphore reference must be rank 0");
     }
-    if (source_sem_type.getElementType() != target_sem_type.getElementType()) {
+    if (source_sem_type.getElementType() != target_sem_elem_type) {
       return emitOpError(
           "DMA source and target semaphore must have the same type");
     }
   }
-  auto source_ty = getMemRefType(getSource());
-  auto target_ty = getMemRefType(getTarget());
+  MemRefType source_ty = getMemRefType(getSource());
+  MemRefType target_ty = getMemRefType(getTarget());
   if (source_ty.getElementType() != target_ty.getElementType()) {
     return emitOpError("DMA source and target element type mismatch");
   }
@@ -1439,6 +1446,7 @@ LogicalResult EnqueueDMAOp::verify() {
   }
   bool is_remote = getDeviceId() || getCoreId();
   if (getSourceSemaphore()) {
+    // TODO: b/501204503 - Support optional source and destination semaphores.
     if (!is_remote) {
       return emitOpError(
           "DMA destination device_id or core_id must be specified when source "
@@ -1476,7 +1484,7 @@ LogicalResult EnqueueDMAOp::verify() {
         "Strict ordering is only supported on the SC scalar and vector "
         "subcores");
   }
-  if (isa<SemaphoreType>(target_sem_type.getElementType())) {
+  if (isa<SemaphoreType>(target_sem_elem_type)) {
     if (HasMemorySpace(source_ty, MemorySpace::kSmem) ||
         HasMemorySpace(target_ty, MemorySpace::kSmem)) {
       return emitOpError(
@@ -1753,6 +1761,28 @@ LogicalResult WaitDMA2Op::verify() {
 
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
   if (getRefCoreType(getSemaphore()).value_or(issuing_core) != issuing_core) {
+    return emitOpError("Can only await semaphores attached to the local core");
+  }
+
+  return success();
+}
+
+LogicalResult WaitDMAOp::verify() {
+  bool wait_destination = getWaitTarget();
+  TypedValue<MemRefType> sem =
+      wait_destination ? getTargetSemaphore() : getSourceSemaphore();
+  if (!sem) {
+    // TODO: b/501204503 - Support optional source and destination semaphores
+    // with global reserved semaphore allocation tracking.
+    return emitOpError("The awaited semaphore must be provided");
+  }
+
+  if (getMemRefType(sem).getRank() != 0) {
+    return emitOpError("DMA wait semaphore must be rank 0");
+  }
+
+  CoreType issuing_core = GetCoreTypeOfParentOp(**this);
+  if (getRefCoreType(sem).value_or(issuing_core) != issuing_core) {
     return emitOpError("Can only await semaphores attached to the local core");
   }
 
