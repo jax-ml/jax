@@ -1996,6 +1996,11 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   else:
     raise type_error
 
+def is_shape_canonical(shape: Any) -> bool:
+  if not isinstance(shape, tuple):
+    return False
+  return all(type(d) is int or is_symbolic_dim(d) for d in shape)
+
 def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
   """Canonicalizes and checks for errors in a user-provided shape value.
 
@@ -2321,7 +2326,8 @@ class ShapedArray(AbstractValue):
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
                manual_axis_type: ManualAxisType = ManualAxisType(),
                memory_space: MemorySpace = MemorySpace.Device):
-    self.shape = canonicalize_shape(shape)
+    assert is_shape_canonical(shape), shape
+    self.shape = shape
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     # The ShapedArray.sharding.memory_kind is always None; use memory_space.

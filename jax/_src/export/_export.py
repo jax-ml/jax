@@ -1530,9 +1530,12 @@ def _call_exported_abstract_eval(
       sharding = exported._out_named_shardings[out_aval_idx]
     else:
       sharding = None
+    evaluated_shape = core.evaluate_shape(out_aval.shape, exported_dim_vars,
+                                          *exported_dim_values)
+    canonical_evaluated_shape = tuple(int(d) if not core.is_symbolic_dim(d) else d
+                                      for d in evaluated_shape)
     aval = core.ShapedArray(
-      core.evaluate_shape(out_aval.shape, exported_dim_vars,
-                          *exported_dim_values),
+      canonical_evaluated_shape,
       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
       # memory_space from out_aval because sharding may be None
       memory_space=out_aval.memory_space)

@@ -451,7 +451,7 @@ def _conv_general_dilated_shape_rule(
   rhs_trans = lax._dilate_shape(np.take(rhs.shape, rhs_perm), rhs_dilation)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding,
                                batch_group_count)
-  return tuple(np.take(out_trans, np.argsort(out_perm)))
+  return tuple(core.canonicalize_dim(out_trans[i]) for i in np.argsort(out_perm))
 
 
 def _conv_general_dilated_sharding_rule(
@@ -623,8 +623,8 @@ def _conv_general_dilated_batch_rule(
     if rhs_bdim is not None:
       rhs_shape_unbatched.pop(rhs_bdim)
     shape = _conv_general_dilated_shape_rule(
-      core.ShapedArray(lhs_shape_unbatched, lhs.dtype),
-      core.ShapedArray(rhs_shape_unbatched, rhs.dtype),
+      core.ShapedArray(tuple(lhs_shape_unbatched), lhs.dtype),
+      core.ShapedArray(tuple(rhs_shape_unbatched), rhs.dtype),
       window_strides=window_strides, padding=padding, lhs_dilation=lhs_dilation,
       rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
       feature_group_count=feature_group_count,
@@ -899,7 +899,8 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
   if np.any(lhs_padded < 0):
     raise ValueError("Negative padding is larger than the size of the corresponding dimension: "
                      f"got padding={pads} for lhs_shape[2:]={lhs_shape[2:]}")
-  out_space = tuple(map(core.stride_dim, lhs_padded, rhs_shape[2:], strides))
+  out_space = tuple(core.stride_dim(core.canonicalize_dim(sz), k, s)
+                    for sz, k, s in zip(lhs_padded, rhs_shape[2:], strides))
   if batch_group_count > 1:
     assert lhs_shape[0] % batch_group_count == 0
     out_shape_0 = lhs_shape[0] // batch_group_count
@@ -915,7 +916,7 @@ def conv_general_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   lhs_trans = np.take(lhs_shape, lhs_perm)
   rhs_trans = np.take(rhs_shape, rhs_perm)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
-  return tuple(np.take(out_trans, np.argsort(out_perm)))
+  return tuple(map(int, np.take(out_trans, np.argsort(out_perm))))
 
 
 def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
@@ -934,7 +935,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   # pyrefly: ignore[no-matching-overload]
   out_space = np.sum([unpad_out_space, padding], axis=0).tolist()
   out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
-  return tuple(np.take(out_trans, np.argsort(out_perm)))
+  return tuple(map(int, np.take(out_trans, np.argsort(out_perm))))
 
 def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers
                            ) -> ConvDimensionNumbers:

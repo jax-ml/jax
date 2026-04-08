@@ -989,8 +989,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
     reducer = mlir.lower_fun(pos_fn, multiple_results=False)
     def _positional_reduce(aval, arg):
       aval_out = aval.update(
-          shape=np.delete(np.array(aval.shape, dtype=np.int64),
-                          positional_axes))
+          shape=tuple(np.delete(np.array(aval.shape, dtype=np.int64),
+                                positional_axes).tolist()))
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
       out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
@@ -1775,7 +1775,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     new_shape.insert(all_gather_dimension, 1)
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
-        mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
+        mlir.aval_to_ir_type(x_aval.update(shape=tuple(new_shape))), x,
         mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
@@ -1839,7 +1839,7 @@ def _all_gather_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
   out_vma = collective_vma_rule('all_gather', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
+  return (x_aval.update(shape=tuple(new_shape),
                         manual_axis_type=x_aval.mat.update(varying=out_vma)),
           {*map(core.NamedAxisEffect, axis_name)})
 
@@ -1966,7 +1966,7 @@ def _all_gather_invariant_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
-  return (x_aval.update(shape=new_shape,
+  return (x_aval.update(shape=tuple(new_shape),
                         manual_axis_type=x_aval.mat.update(varying=out_vma)),
           {*map(core.NamedAxisEffect, axis_name)})
 
@@ -2038,7 +2038,7 @@ def _reduce_scatter_lowering(
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(
-      mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
+      mlir.aval_to_ir_type(x_aval.update(shape=tuple(scatter_out_shape))),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
       replica_groups=_replica_groups_hlo(replica_groups),
@@ -2082,7 +2082,7 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
   vma = collective_vma_rule('reduce_scatter', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
+  return (x_aval.update(shape=tuple(new_shape),
                         manual_axis_type=x_aval.mat.update(varying=vma)),
           {*map(core.NamedAxisEffect, axis_name)})
 
@@ -2483,7 +2483,7 @@ def _all_gather_reduced_effectful_abstract_eval(
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
-  return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
+  return (x_aval.update(shape=tuple(new_shape), manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
 all_gather_reduced_p.def_effectful_abstract_eval(
     _all_gather_reduced_effectful_abstract_eval)
@@ -2585,7 +2585,7 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
                             if i not in axis_name)
   out_vma = x_aval.mat.varying | set(axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced)
-  return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
+  return (x_aval.update(shape=tuple(new_shape), manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
 unreduced_reduce_scatter_p.def_effectful_abstract_eval(
     _unreduced_reduce_scatter_effectful_abstract_eval)

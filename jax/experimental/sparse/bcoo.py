@@ -561,8 +561,8 @@ def _bcoo_transpose_impl(data, indices, *, permutation: Sequence[int], spinfo: S
 def _bcoo_transpose_abstract_eval(data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   batch_perm, _, dense_perm = _validate_permutation(data, indices, permutation, spinfo.shape)
   n_batch = len(batch_perm)
-  indices_shape = np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]]  # pyrefly: ignore[bad-index]
-  data_shape = np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]]  # pyrefly: ignore[bad-index]
+  indices_shape = tuple(int(d) for d in np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]])  # pyrefly: ignore[bad-index]
+  data_shape = tuple(int(d) for d in np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]])  # pyrefly: ignore[bad-index]
   return core.ShapedArray(data_shape, data.dtype), core.ShapedArray(indices_shape, indices.dtype)
 
 def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo: SparseInfo):

@@ -890,7 +890,7 @@ def take_along_axis(
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
 
-  gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)
+  gather_index_shape = tuple(out_shape[i] for i in index_dims) + (1,)
   gather_indices = []
   slice_sizes = []
   offset_dims = []
@@ -947,7 +947,7 @@ def take_along_axis(
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return slicing.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
+  return slicing.gather(a, gather_indices_arr, dnums, tuple(map(int, slice_sizes)),
                         mode="fill" if mode is None else mode, fill_value=fill_value)
 
 

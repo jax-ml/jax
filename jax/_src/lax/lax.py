@@ -6646,7 +6646,7 @@ def _tile_abstract_eval(x, reps):
       raise core.ShardingTypeError(
           f'Operand cannot be sharded on dimension {i} when the tiling is'
           f' non-trivial. Got input type: {x} with reps: {reps}')
-  return x.update(shape=tuple(np.multiply(x.shape, reps)))
+  return x.update(shape=tuple(sh * r for sh, r in zip(x.shape, reps)))
 
 def _tile_transpose_rule(ct, operand, *, reps):
   if type(ct) is ad_util.Zero:
@@ -6856,7 +6856,7 @@ def _split_shape_rule(operand, *, sizes, axis):
       f"Sum of sizes {np.sum(sizes)} must be equal to dimension {axis} of the "
       f"operand shape {list(operand.shape)}")
   for size in sizes:
-    shape[axis] = size
+    shape[axis] = core.canonicalize_dim(size)
     shapes.append(tuple(shape))
   return shapes
 
@@ -6940,7 +6940,7 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
   if not all(i >= 0 for _, _, i in padding_config):
     raise ValueError("interior padding in padding_config must be nonnegative, "
                      f"got padding_config {padding_config}")
-  result = tuple(l + h + core.dilate_dim(d, i + 1)
+  result = tuple(core.canonicalize_dim(l + h + core.dilate_dim(d, i + 1))
                  for (l, h, i), d in zip(padding_config, op_shape))
   if not all(d >= 0 for d in result):
     msg = (f"Dimension size after padding is not at least 0, "
@@ -6970,8 +6970,8 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
                               np.zeros_like(interior))
       unpadded = pad(t, np.array(0., t.dtype), unpad_config)
-      return slicing.slice(unpadded, list(np.zeros_like(lo)), unpadded.shape,
-                           list(np.add(interior, 1)))
+      return slicing.slice(unpadded, (0,) * len(lo), unpadded.shape,
+                           tuple(x + 1 for x in interior))
 
     t_operand = t_op() if ad.is_undefined_primal(operand) else None
     t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
@@ -7635,7 +7635,7 @@ def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
   if any(arg.shape != () for arg in init_val_avals):
     init_val_shapes = [a.shape for a in init_val_avals]
     raise ValueError(f'reduce found non-scalar initial value: {init_val_shapes}')
-  return [tuple(np.delete(op.shape, dimensions)) for op in operand_avals]
+  return [tuple(core.canonicalize_dim(d) for d in np.delete(op.shape, dimensions)) for op in operand_avals]
 
 def _reduce_sharding_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, _ = split_list(avals, [len(avals) // 2])
@@ -7972,7 +7972,7 @@ mlir.register_lowering(
 def _reduce_logical_shape_rule(operand, *, axes):
   if operand.dtype != np.bool_ and not np.issubdtype(operand.dtype, np.integer):
     raise TypeError(f"logical reduction requires operand dtype bool or int, got {operand.dtype}.")
-  return tuple(np.delete(operand.shape, axes))
+  return tuple(core.canonicalize_dim(d) for d in np.delete(operand.shape, axes))
 
 def _reduce_logical_sharding_rule(operand, *, axes):
   return operand.sharding.update(spec=tuple_delete(operand.sharding.spec, axes))
@@ -8265,8 +8265,8 @@ def _top_k_abstract_eval(operand, *, k, axis):
     raise core.ShardingTypeError(
         'The input should be unsharded over the axis along which to compute the'
         f' top_k values. Got input type={operand} and axis={axis}')
-  return (operand.update(shape=shape),
-          operand.update(shape=shape, dtype=np.dtype(np.int32)))
+  return (operand.update(shape=tuple(shape)),
+          operand.update(shape=tuple(shape), dtype=np.dtype(np.int32)))
 
 def _top_k_jvp(primals, tangents, *, k, axis):
   operand, = primals
