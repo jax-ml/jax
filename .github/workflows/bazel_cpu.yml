@@ -110,3 +110,5 @@ jobs:
         uses: ./.github/actions/upload-test-artifacts
         with:
           artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-x64_${{ inputs.enable-x64 }}-bzlmod_${{ inputs.enable-bzlmod }}-build_${{ inputs.build_jaxlib }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}

@@ -117,3 +117,5 @@ jobs:
         uses: ./.github/actions/upload-test-artifacts
         with:
           artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}

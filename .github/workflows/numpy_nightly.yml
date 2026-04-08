@@ -92,3 +92,8 @@ jobs:
       - name: Upload test artifacts
         if: always()
         uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: numpy-nightly-py${{ matrix.python }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}
+          env_json: ${{ toJSON(env) }}

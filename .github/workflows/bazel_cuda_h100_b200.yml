@@ -104,6 +104,10 @@ jobs:
         if: always()
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: bazel-cuda-h100-single
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}
   run_multiaccelerator_tests:
     if: >-
       ${{
@@ -150,3 +154,7 @@ jobs:
         if: always()
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: bazel-cuda-h100-multi
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}

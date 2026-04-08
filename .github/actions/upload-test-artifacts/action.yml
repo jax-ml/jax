@@ -14,6 +14,26 @@ inputs:
     description: "GCS location prefix where the test artifacts should be uploaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
     type: string
+  metadata:
+    description: "JSON string containing job-level metadata"
+    default: ''
+    type: string
+  inputs_json:
+    description: "JSON string of workflow inputs"
+    default: '{}'
+    type: string
+  matrix_json:
+    description: "JSON string of matrix parameters"
+    default: '{}'
+    type: string
+  env_json:
+    description: "JSON string of environment variables"
+    default: '{}'
+    type: string
+  custom_json:
+    description: "JSON string of custom metadata"
+    default: '{}'
+    type: string
 
 runs:
   using: "composite"
@@ -36,6 +56,39 @@ runs:
           echo "No test artifacts found in $TEST_ARTIFACTS_DIR/"
         fi
 
+    - name: Generate metadata file
+      shell: bash
+      env:
+        INPUTS_JSON: ${{ inputs.inputs_json }}
+        MATRIX_JSON: ${{ inputs.matrix_json }}
+        ENV_JSON: ${{ inputs.env_json }}
+        CUSTOM_JSON: ${{ inputs.custom_json }}
+        EXPLICIT_METADATA: ${{ inputs.metadata }}
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+      run: |
+        mkdir -p "$TEST_ARTIFACTS_DIR"
+        python3 -c "
+        import json, os
+        inputs = json.loads(os.environ.get('INPUTS_JSON', '{}') or '{}') or {}
+        matrix = json.loads(os.environ.get('MATRIX_JSON', '{}') or '{}') or {}
+        env_vars = json.loads(os.environ.get('ENV_JSON', '{}') or '{}') or {}
+        custom = json.loads(os.environ.get('CUSTOM_JSON', '{}') or '{}') or {}
+        explicit_str = os.environ.get('EXPLICIT_METADATA', '')
+        
+        merged = {**inputs, **matrix, **env_vars, **custom}
+        
+        if explicit_str:
+            try:
+                explicit = json.loads(explicit_str)
+                merged = {**merged, **explicit}
+            except json.JSONDecodeError:
+                print(f'Warning: could not parse explicit metadata as JSON: {explicit_str}')
+                merged['explicit_metadata_raw'] = explicit_str
+                
+        with open(os.path.join(os.environ['TEST_ARTIFACTS_DIR'], 'metadata.json'), 'w') as f:
+            json.dump(merged, f)
+        "
+
     - name: Upload test artifacts to GCS
       if: steps.check-artifacts.outputs.has_artifacts == 'true'
       shell: bash
@@ -46,5 +99,5 @@ runs:
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
         artifact_name="$INPUT_ARTIFACT_NAME-${{ steps.check-artifacts.outputs.padded_attempt }}"
-        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/*.xml "$GCS_UPLOAD_URI/$artifact_name/"
+        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$GCS_UPLOAD_URI/$artifact_name/"
 

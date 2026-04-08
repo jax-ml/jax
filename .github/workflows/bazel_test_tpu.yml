@@ -155,3 +155,5 @@ jobs:
         uses: ./.github/actions/upload-test-artifacts
         with:
           artifact-name: bazel-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}
