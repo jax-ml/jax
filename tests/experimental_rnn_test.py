@@ -38,10 +38,6 @@ class RnnTest(jtu.JaxTestCase):
   @jax.default_matmul_precision("float32")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
-    # TODO(ruturaj4): Bidirectional doesn't quite work well with rocm.
-    if bidirectional and jtu.is_device_rocm():
-      self.skipTest("Bidirectional mode is not available for ROCm.")
-
     num_directions = 2 if bidirectional else 1
     seq_length_key, root_key = jax.random.split(jax.random.PRNGKey(0))
 
@@ -60,8 +56,6 @@ class RnnTest(jtu.JaxTestCase):
     weights = rnn.init_lstm_weight(k4, input_size, hidden_size, num_layers,
                                    bidirectional)
     def f(weights, x, h_0, c_0):
-      if jtu.is_device_rocm():
-        weights = rnn.swap_lstm_gates(weights, input_size, hidden_size, num_layers, bidirectional)
       y, h, c = rnn.lstm(
         x,
         h_0,
