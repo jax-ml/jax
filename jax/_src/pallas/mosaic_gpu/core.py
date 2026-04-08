@@ -1572,6 +1572,7 @@ class TMEMLayout(enum.Enum):
   SCALES_LAYOUT = enum.auto()
   SPARSE_METADATA_LAYOUT = enum.auto()
   M64_COLLECTIVE_LAYOUT = enum.auto()
+  SCALES_M64_COLLECTIVE_LAYOUT = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1584,6 +1585,8 @@ class TMEMLayout(enum.Enum):
         return tcgen05.sparse_meta_layout(*args, **kwargs)
       case TMEMLayout.M64_COLLECTIVE_LAYOUT:
         return tcgen05.tmem_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case TMEMLayout.SCALES_M64_COLLECTIVE_LAYOUT:
+        return tcgen05.b_scales_m64_collective_layout(*args, **kwargs)
     raise ValueError(f"Invalid TMEMLayout: {self}")
 
 
