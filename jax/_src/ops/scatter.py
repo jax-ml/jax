@@ -75,22 +75,27 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
   # is more or less a transpose of the gather equivalent.
   indexer = indexing.NDIndexer.from_raw_indices(idx, x.shape).expand_bool_indices()
   dynamic_idx, treedef = tree_util.tree_flatten(indexer)
+  dynamic_idx = tuple(dynamic_idx)
 
-  internal_scatter = partial(
-      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
-      indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices, mode=mode,
-      normalize_indices=normalize_indices)
+  kwargs = dict(scatter_op=scatter_op, treedef=treedef,
+                indices_are_sorted=indices_are_sorted,
+                unique_indices=unique_indices, mode=mode,
+                normalize_indices=normalize_indices)
+  if all(isinstance(i, core.Tracer) for i in dynamic_idx):
+    args = (x, y, dynamic_idx)
+  else:
+    args = (x, y)
+    kwargs = kwargs | dict(dynamic_idx=dynamic_idx)
+
+  internal_scatter = partial(_scatter_impl, **kwargs)
   if out_sharding is not None:
     return auto_axes(internal_scatter, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
-                     )(x, y, dynamic_idx)
-  return internal_scatter(x, y, tuple(dynamic_idx))
+                     axes=out_sharding.mesh.explicit_axes)(*args)
+  return internal_scatter(*args)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @jit(static_argnums=(2, 3, 4))
 def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   scatter_op: Callable[..., Array],
                   treedef: tree_util.PyTreeDef,
@@ -109,7 +114,8 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
       FutureWarning)
 
   general_indexer = tree_util.tree_unflatten(treedef, dynamic_idx)
-  indexer = general_indexer.to_gather(core.typeof(x).sharding, normalize_indices=normalize_indices)
+  indexer = general_indexer.to_gather(
+      core.typeof(x).sharding, normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].

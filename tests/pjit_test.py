@@ -10634,6 +10634,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     sample(keys, logits)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_scatter_bool_index(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      return x.at[:, -1].set(False, out_sharding=jax.typeof(x).sharding)
+    f(arr)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
