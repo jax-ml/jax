@@ -518,6 +518,17 @@ def _gtl_lowering(ctx, x, *, global_mesh, pspec):
 mlir.register_lowering(global_array_to_host_local_array_p, _gtl_lowering)
 
 
+class ProcessFailureError(Exception):
+  """Raised by live_devices when one or more processes have failed.
+
+  Attributes:
+    failed_devices: A set of devices whose processes failed.
+  """
+  def __init__(self, failed_devices: set[xla_client.Device]):
+    self.failed_devices = failed_devices
+    super().__init__(f'Devices failed: {failed_devices}')
+
+
 def _live_devices(client, devices: list[xla_client.Device]) -> dict[xla_client.Device, int]:
   """Returns the subset of the provided devices that are live and healthy."""
   process_ids = {d.process_index for d in devices}
@@ -639,6 +650,9 @@ class _LiveDevices:
   Raises:
     RuntimeError: If the distributed runtime was not initialized.
     ValueError: If no local devices are provided.
+    ProcessFailureError: If one or more processes fail during the with block.
+      The exception's failed_devices attribute contains the set of failed
+      devices.
   """
 
   def __init__(self):
@@ -668,9 +682,15 @@ class _LiveDevices:
       old_devices = self.devices
       new_devices = _live_devices(client, devices)
       self.devices = new_devices
+      # A device has failed if its process died (absent from new_devices) or
+      # restarted with a new incarnation id.
+      failed_devices = {
+          d for d in old_devices
+          if d not in new_devices or new_devices[d] != old_devices[d]
+      }
+      if failed_devices:
+        raise ProcessFailureError(failed_devices) from exception
       if exception:
         raise exception
-      if not old_devices.items() <= new_devices.items():
-        raise ValueError(f'{old_devices} is not a subset of {new_devices}')
 
 live_devices = _LiveDevices()
