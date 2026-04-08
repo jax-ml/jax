@@ -31,6 +31,8 @@ NB_MODULE(_linalg, m) {
         EncapsulateFfiHandler(LuPivotsToPermutation);
     dict[JAX_GPU_PREFIX "_cholesky_update_ffi"] =
         EncapsulateFunction(CholeskyUpdateFfi);
+    dict[JAX_GPU_PREFIX "_tridiagonal_solve_perturbed"] =
+        EncapsulateFfiHandler(TridiagonalSolvePerturbedFfi);
     return dict;
   });
 }

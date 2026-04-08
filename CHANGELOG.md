@@ -22,6 +22,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * We now support differentiation of {func}`jax.lax.linalg.qr` for wide
     matrices and when `full_matrices` is `True`.
   * LAPACK operations are now parallelized along the batch dimension on CPU.
+  * Added `perturb_singular` argument to
+    {func}`jax.lax.linalg.tridiagonal_solve` to handle singular matrices by
+    perturbing near-zero pivots in the LU decomposition. This is useful for
+    solving numerically singular systems when computing eigenvectors by inverse
+    iteration.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use

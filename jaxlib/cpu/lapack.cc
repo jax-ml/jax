@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
+#include "jaxlib/cpu/tridiagonal_solve_kernels.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/python/safe_static_init.h"
 
@@ -238,6 +239,9 @@ nb::dict Registrations() {
   dict["lapack_dgtsv_ffi"] = EncapsulateFunction(lapack_dgtsv_ffi);
   dict["lapack_cgtsv_ffi"] = EncapsulateFunction(lapack_cgtsv_ffi);
   dict["lapack_zgtsv_ffi"] = EncapsulateFunction(lapack_zgtsv_ffi);
+
+  dict["tridiagonal_solve_perturbed_ffi"] =
+      EncapsulateFunction(tridiagonal_solve_perturbed_ffi);
 
   return dict;
 }

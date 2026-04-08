@@ -305,6 +305,7 @@ rocm_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
+        "//jaxlib:tridiagonal_solve_perturbed",
         "@xla//xla/ffi/api:ffi",
     ],
 )

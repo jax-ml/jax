@@ -45,7 +45,7 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import jaxlib_extension_version, version as jaxlib_version
 from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -691,7 +691,8 @@ def tridiagonal(
   return tridiagonal_p.bind(lax.asarray(a), lower=lower)
 
 
-def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
+def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
+                      perturb_singular: bool = False) -> Array:
   r"""Computes the solution of a tridiagonal linear system.
 
   This function computes the solution of a tridiagonal linear system:
@@ -710,12 +711,24 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
       The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
       Note that ``dl[m - 1] = 0``.
     b: Right hand side matrix.
+    perturb_singular: Whether to perturb singular matrices to return a finite
+      result. ``False`` by default. If ``True``, solutions to systems involving
+      a singular matrix will be computed by perturbing near-zero pivots in
+      the partially pivoted LU decomposition. Specifically, tiny pivots are
+      perturbed by an amount of order ``eps * max_{ij} |U(i,j)|`` to avoid
+      overflow. Here ``U`` is the upper triangular part of the LU decomposition,
+      and ``eps`` is the machine precision. This is useful for solving
+      numerically singular systems when computing eigenvectors by inverse
+      iteration. Only implemented on CPU and GPU at the moment.
 
   Returns:
     Solution ``X`` of tridiagonal system.
   """
+  if perturb_singular and jaxlib_version < (0, 10):
+    raise RuntimeError("perturb_singular=True requires jaxlib >= 0.10.0.")
   dl, d, du, b = core.standard_insert_pvary(dl, d, du, b)
-  return tridiagonal_solve_p.bind(dl, d, du, b)
+  return tridiagonal_solve_p.bind(
+    dl, d, du, b, perturb_singular=perturb_singular)
 
 
 # Primitive registration helper functions
@@ -2809,19 +2822,32 @@ def _tridiagonal_solve_shape_rule(dl_shape, d_shape, du_shape, b_shape, **_):
         "equal the dimensions of the diagonal arguments.")
   return b_shape
 
-def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix):
+def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix,
+                                    perturb_singular):
   m = ctx.avals_in[1].shape[-1]
+  if perturb_singular:
+    b_aval = ctx.avals_in[-1]
+    target_name = f"{target_name_prefix}_tridiagonal_solve_perturbed"
+    rule = _linalg_ffi_lowering(target_name, avals_out=[b_aval])
+    return rule(ctx, dl, d, du, b)
+
   # The cusolver implementation requires m >= 3.
   if m <= 2:
-    return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(ctx, dl, d, du, b)
+    return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(
+        ctx, dl, d, du, b, perturb_singular=perturb_singular)
   target_name = f"{target_name_prefix}sparse_gtsv2_ffi"
   rule = _linalg_ffi_lowering(target_name, operand_output_aliases={3: 0})
   return rule(ctx, dl, d, du, b)
 
-def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
-  del kwargs  # unused
+def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, *, perturb_singular):
   b_aval = ctx.avals_in[-1]
   batch_dims = b_aval.shape[:-2]
+
+  if perturb_singular:
+    target_name = "tridiagonal_solve_perturbed_ffi"
+    rule = _linalg_ffi_lowering(target_name, avals_out=[b_aval])
+    return rule(ctx, dl, d, du, b)
+
   target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
   info_aval = ShapedArray(batch_dims, np.int32)
   rule = _linalg_ffi_lowering(target_name,
@@ -2838,20 +2864,22 @@ def _tridiagonal_product(dl, d, du, b):
   y = y.at[..., :-1, :].add(du[..., :-1, None] * b[..., 1:, :])
   return y
 
-def _tridiagonal_solve_jvp_rule(primals, tangents):
+def _tridiagonal_solve_jvp_rule(primals, tangents, *, perturb_singular):
   *diags, _ = primals
   *diags_dot, b_dot = tangents
-  ans = tridiagonal_solve_p.bind(*primals)
+  ans = tridiagonal_solve_p.bind(*primals, perturb_singular=perturb_singular)
   if all(type(p) is ad_util.Zero for p in diags_dot):
     rhs = b_dot
   else:
     # pyrefly: ignore[bad-argument-count]  # pyrefly#2468
     matvec_dot = _tridiagonal_product(*map(ad.instantiate_zeros, diags_dot), ans)
     rhs = ad.add_tangents(b_dot, -matvec_dot)
-  ans_dot = tridiagonal_solve_p.bind(*diags, rhs)
+  ans_dot = tridiagonal_solve_p.bind(
+    *diags, rhs, perturb_singular=perturb_singular)
   return ans, ans_dot
 
-def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
+def _tridiagonal_solve_transpose_rule(
+    cotangent, dl, d, du, b, *, perturb_singular):
   # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
   # otherwise.
   assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
@@ -2863,10 +2891,12 @@ def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
                                du.ndim-1)
     du_trans = lax.concatenate((dl[..., 1:], lax.full_like(dl[..., :1], 0)),
                                dl.ndim-1)
-    cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent)
+    cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent,
+                                    perturb_singular=perturb_singular)
   return [None, None, None, cotangent_b]
 
-def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
+def _tridiagonal_solve_batching_rule(
+    batched_args, batch_dims, *, perturb_singular):
   dl, d, du, b = batched_args
   bdl, bd, bdu, bb = batch_dims
   if (bdl is batching.not_mapped and
@@ -2876,7 +2906,8 @@ def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
     b = batching.moveaxis(b, bb, -2)
     b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))
     bdim_out = b.ndim - 2
-    out_flat = tridiagonal_solve(dl, d, du, b_flat)
+    out_flat = tridiagonal_solve(dl, d, du, b_flat,
+                                 perturb_singular=perturb_singular)
     return out_flat.reshape(b.shape), bdim_out
   else:
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
@@ -2885,7 +2916,7 @@ def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
     d = batching.bdim_at_front(d, bd, size)
     du = batching.bdim_at_front(du, bdu, size)
     b = batching.bdim_at_front(b, bb, size)
-    return tridiagonal_solve(dl, d, du, b), 0
+    return tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular), 0
 
 def _tridiagonal_solve_jax_impl(dl, d, du, b):
   def fwd(carry, args):
@@ -2907,7 +2938,9 @@ def _tridiagonal_solve_jax_impl(dl, d, du, b):
   end, ans = control_flow.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
   return lax.concatenate((end[None], ans), 0)
 
-def _tridiagonal_solve_jax(dl, d, du, b, **_):
+def _tridiagonal_solve_jax(dl, d, du, b, *, perturb_singular, **_):
+  if perturb_singular:
+    raise NotImplementedError("perturb_singular=True is not supported on this platform.")
   impl = _tridiagonal_solve_jax_impl
   for _ in range(dl.ndim - 1):
     impl = api.vmap(impl)

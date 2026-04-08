@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/cpu/sparse_kernels.h"
+#include "jaxlib/cpu/tridiagonal_solve_kernels.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -83,6 +84,8 @@ JAX_CPU_REGISTER_HANDLER(lapack_sgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zgtsv_ffi);
+
+JAX_CPU_REGISTER_HANDLER(tridiagonal_solve_perturbed_ffi);
 
 JAX_CPU_REGISTER_HANDLER(cpu_csr_sparse_dense_ffi);
 

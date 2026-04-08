@@ -33,6 +33,7 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
+from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -2725,8 +2726,14 @@ class LaxLinalgTest(jtu.JaxTestCase):
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
   @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],
-                      dtype=float_types + complex_types)
-  def test_tridiagonal_solve(self, shape, dtype):
+                      dtype=float_types + complex_types,
+                      k_rhs=[1, 2],
+                      perturb_singular=[False, True])
+  def test_tridiagonal_solve(self, shape, dtype, k_rhs, perturb_singular):
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # TODO: Add these tests back once rocSparse issues are fixed.
     if jtu.is_device_rocm() and shape in [(3, 4), (3, 4, 5)]:
       self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
@@ -2734,8 +2741,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
     du = jtu.rand_default(rng)(shape, dtype)
-    b = jtu.rand_default(rng)(shape + (1,), dtype)
-    x = lax.linalg.tridiagonal_solve(dl, d, du, b)
+    b = jtu.rand_default(rng)(shape + (k_rhs,), dtype)
+    x = lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
 
     def build_tri(dl, d, du):
       return jnp.diag(d) + jnp.diag(dl[1:], -1) + jnp.diag(du[:-1], 1)
@@ -2748,7 +2756,81 @@ class LaxLinalgTest(jtu.JaxTestCase):
           np.float32: 1e-3, np.float64: 1e-10, np.complex64: 1e-3,
           np.complex128: 1e-10})
 
-  def test_tridiagonal_solve_endpoints(self):
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_zero_matrix(self, perturb_singular):
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    dtype = np.float32
+    dl = np.zeros((3,), dtype=dtype)
+    d = np.zeros((3,), dtype=dtype)
+    du = np.zeros((3,), dtype=dtype)
+    b = np.ones((3, 1), dtype=dtype)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+
+    if perturb_singular:
+      self.assertFalse(np.any(np.isnan(x)))
+      self.assertTrue(np.all(np.abs(x) > 1e6))
+    else:
+      self.assertTrue(np.any(np.isnan(x)) or np.any(np.isinf(x)))
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_requiring_pivoting(self, perturb_singular):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
+    d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
+    du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [2.0], [3.0], [4.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+    expected = np.array([[8.0], [-3.5], [0.0], [-4.0]], dtype=np.float32)
+    self.assertAllClose(x, expected)
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_requiring_pivoting_last_rows(self, perturb_singular):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
+    d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
+    du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [2.0], [-1.0], [-2.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+    expected = np.array([[5.0], [-2.0], [-5.0], [3.0]], dtype=np.float32)
+    self.assertAllClose(x, expected)
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_2x2_singular(self, perturb_singular):
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    dl = np.array([0.0, 1.0], dtype=np.float32)
+    d = np.array([1.0, 3.0], dtype=np.float32)
+    du = np.array([3.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [4.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
+    if perturb_singular:
+      self.assertFalse(np.any(np.isnan(x)))
+      self.assertTrue(np.all(np.abs(x) > 1e6))
+    else:
+      self.assertTrue(np.any(np.isnan(x)) or np.any(np.isinf(x)))
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_endpoints(self, perturb_singular):
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
     dtype = np.float32
     size = 10
@@ -2761,12 +2843,17 @@ class LaxLinalgTest(jtu.JaxTestCase):
     duz[-1] = 0.0
     b = np.linspace(0.1, -0.1, size, dtype=dtype)[:, None]
     self.assertAllClose(
-        lax.linalg.tridiagonal_solve(dl, d, du, b),
-        lax.linalg.tridiagonal_solve(dlz, d, duz, b),
+        lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular),
+        lax.linalg.tridiagonal_solve(dlz, d, duz, b, perturb_singular=perturb_singular),
     )
 
-  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
-  def test_tridiagonal_solve_grad(self, shape, dtype):
+  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types,
+                      perturb_singular=[False, True])
+  def test_tridiagonal_solve_grad(self, shape, dtype, perturb_singular):
+    if perturb_singular and jaxlib_version < (0, 10):
+      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # TODO: Add these tests back once rocSparse issues are fixed.
     if jtu.is_device_rocm() and shape == (3, 4):
       self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
@@ -2776,8 +2863,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
     du = jtu.rand_default(rng)(shape, dtype)
     b = jtu.rand_default(rng)(shape + (1,), dtype)
     args = (dl, d, du, b)
-    jtu.check_grads(lax.linalg.tridiagonal_solve, args, order=2, atol=1e-1,
-                    rtol=1e-1)
+    f = lambda dl, d, du, b: lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
+    jtu.check_grads(f, args, order=2, atol=1e-1, rtol=1e-1)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],

@@ -331,6 +331,7 @@ cuda_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        "//jaxlib:tridiagonal_solve_perturbed",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
     ],

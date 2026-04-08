@@ -221,6 +221,15 @@ cc_library(
 )
 
 cc_library(
+    name = "tridiagonal_solve_perturbed",
+    hdrs = ["tridiagonal_solve_perturbed.h"],
+    # compatible with libtpu
+    deps = [
+        "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_library(
     name = "kernel_nanobind_helpers",
     hdrs = ["kernel_nanobind_helpers.h"],
     copts = [

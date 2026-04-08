@@ -63,6 +63,8 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_cholesky_update_ffi", "CUDA",
                          CholeskyUpdateFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_lu_pivots_to_permutation",
                          "CUDA", LuPivotsToPermutation);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_tridiagonal_solve_perturbed",
+                         "CUDA", TridiagonalSolvePerturbedFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_threefry2x32_ffi", "CUDA",
                          ThreeFry2x32Ffi);
 
