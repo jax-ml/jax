@@ -77,6 +77,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     non-symmetric multidimensional IRFFTs ({jax-issue}`#29325`).
   * Fixed an error when tiny matrices were passed to
     `jax.lax.linalg.tridiagonal_solve` on GPU ({jax-issue}`#32487`).
+  * Fixed a bug in `jax.scipy.fft.dctn` and `idctn` where `axes=None`
+    incorrectly defaulted to all axes when `s` was specified, instead of the
+    last `len(s)` axes to match SciPy behavior ({jax-issue}`#29426`).
 
 ## JAX 0.9.2 (March 18, 2026)
 

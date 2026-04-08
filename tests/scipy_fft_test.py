@@ -139,6 +139,28 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     rtol = {np.float64: 1E-12, np.float32: 1E-4}
     self.assertArraysAllClose(actual, expected, rtol=rtol)
 
+  @jtu.sample_product(func=['idctn', 'dctn'])
+  def testDctnAxesNoneSSpecified(self, func):
+    # Regression test for https://github.com/jax-ml/jax/issues/29426
+    x = np.arange(3.0).reshape(1, 3)
+    kwds = dict(type=2, s=(5,), axes=None)
+
+    osp_func = getattr(osp_fft, func)
+    jsp_func = getattr(jsp_fft, func)
+
+    expected = osp_func(x, **kwds)
+    actual = jsp_func(x, **kwds)
+    self.assertArraysAllClose(actual, expected, atol=1e-4)
+
+
+  @jtu.sample_product(func=['idctn', 'dctn'])
+  def testDctnSShapeTooLargeError(self, func):
+    x = np.arange(3.0).reshape(1, 3)
+    jsp_func = getattr(jsp_fft, func)
+    with self.assertRaisesRegex(
+        ValueError, r"s must have at most x.ndim \(2\) elements, got 3"):
+      jsp_func(x, s=(2, 3, 4))
+
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
