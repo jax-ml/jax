@@ -2670,7 +2670,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
       self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
                           rtol=1e-4, atol=1e-4)
 
-  def run_eigh_tridiagonal_test(self, alpha, beta):
+  def run_eigh_tridiagonal_test(self, alpha, beta, rtol=2e-3, multiplier=4, check_eigvecs=True):
     n = alpha.shape[-1]
     # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
     # this we call the slower numpy.linalg.eigh.
@@ -2681,11 +2681,30 @@ class LaxLinalgTest(jtu.JaxTestCase):
     else:
       eigvals_expected = scipy.linalg.eigh_tridiagonal(
           alpha, beta, eigvals_only=True)
+
     eigvals = jax.scipy.linalg.eigh_tridiagonal(
         alpha, beta, eigvals_only=True)
     finfo = np.finfo(alpha.dtype)
+
     atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
     self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
+
+    if jaxlib_version >= (0, 10) and not jtu.test_device_matches(["tpu"]):
+      @jax.jit
+      def solve(a, b):
+        return jax.scipy.linalg.eigh_tridiagonal(a, b, eigvals_only=False)
+
+      eigvals, eigvecs = solve(alpha, beta)
+      self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
+
+      if check_eigvecs:
+        atol_eigvecs = multiplier * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
+
+        A = np.diag(np.real(alpha)) + np.diag(beta, 1) + np.diag(np.conj(beta), -1)
+        self.assertAllClose(
+            A @ eigvecs, eigvecs * eigvals[None, :].astype(eigvecs.dtype),
+            atol=atol_eigvecs, rtol=rtol,
+        )
 
   @jtu.sample_product(
     n=[1, 2, 3, 7, 8, 100],
@@ -2695,7 +2714,8 @@ class LaxLinalgTest(jtu.JaxTestCase):
     for a, b in [[2, -1], [1, 0], [0, 1], [-1e10, 1e10], [-1e-10, 1e-10]]:
       alpha = a * np.ones([n], dtype=dtype)
       beta = b * np.ones([n - 1], dtype=dtype)
-      self.run_eigh_tridiagonal_test(alpha, beta)
+
+      self.run_eigh_tridiagonal_test(alpha, beta, check_eigvecs=False)
 
   @jtu.sample_product(
     n=[1, 2, 3, 7, 8, 100],
@@ -2704,7 +2724,18 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def testRandomUniform(self, n, dtype):
     alpha = jtu.rand_uniform(self.rng())((n,), dtype)
     beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
-    self.run_eigh_tridiagonal_test(alpha, beta)
+
+    multiplier = 4
+    rtol = 2e-3
+    if jtu.test_device_matches(["gpu"]):
+      if dtype == np.complex64:
+        multiplier = 600
+        rtol = 5e-3 * np.sqrt(n)
+      elif dtype == np.float32:
+        multiplier = 100
+        rtol = 2e-3 * np.sqrt(n)
+
+    self.run_eigh_tridiagonal_test(alpha, beta, rtol=rtol, multiplier=multiplier)
 
   @jtu.sample_product(dtype=float_types + complex_types)
   def testSelect(self, dtype):

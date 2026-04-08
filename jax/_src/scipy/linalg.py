@@ -25,6 +25,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
+from jax._src import random
 from jax._src.api import jit, vmap, jvp
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
@@ -1671,7 +1672,8 @@ def block_diag(*arrs: ArrayLike) -> Array:
 @jit(static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
                      select: str = 'a', select_range: tuple[float, float] | None = None,
-                     tol: float | None = None) -> Array:
+                     tol: float | None = None,
+                     key: Array | None = None) -> Array | tuple[Array, Array]:
   """Solve the eigenvalue problem for a symmetric real tridiagonal matrix
 
   JAX implementation of :func:`scipy.linalg.eigh_tridiagonal`.
@@ -1689,6 +1691,9 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
       JAX does not currently implement ``select = 'v'``.
     select_range: range of values used when ``select='i'``.
     tol: absolute tolerance to use when solving for the eigenvalues.
+    key: a PRNG key, as returned by ``jax.random.key``, used to generate random
+      initialization vectors for inverse iteration. If ``None``, defaults to a
+      fixed PRNG key.
 
   Returns:
     An array of eigenvalues with shape ``(N,)``.
@@ -1716,8 +1721,8 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
     >>> jnp.allclose(eigvals, eigvals_full)
     Array(True, dtype=bool)
   """
-  if not eigvals_only:
-    raise NotImplementedError("Calculation of eigenvectors is not implemented")
+  if not eigvals_only and key is None:
+    key = random.key(42)
 
   def _sturm(alpha, beta_sq, pivmin, alpha0_perturbation, x):
     """Implements the Sturm sequence recurrence."""
@@ -1779,7 +1784,10 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
                     f"{alpha.dtype} and {beta.dtype}")
   n = alpha.shape[0]
   if n <= 1:
-    return jnp.real(alpha)
+    if eigvals_only:
+      return jnp.real(alpha)
+    else:
+      return jnp.real(alpha), jnp.eye(n, dtype=alpha.dtype)
 
   if dtypes.issubdtype(alpha.dtype, np.complexfloating):
     alpha = jnp.real(alpha)
@@ -1864,8 +1872,142 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
     mid = 0.5 * (lower + upper)
     return i + 1, lower, mid, upper
 
+  def _compute_eigenvectors(alpha, beta, eigvals, key):
+    """Implements inverse iteration to compute eigenvectors."""
+    n = alpha.shape[0]
+    k = eigvals.shape[0]
+
+    # Pad beta to length n
+    dl = jnp.pad(jnp.conj(beta), (1, 0))
+    du = jnp.pad(beta, (0, 1))
+
+    # Eigenvectors corresponding to cluster of close eigenvalues are
+    # not unique and need to be explicitly orthogonalized. Here we
+    # identify such clusters. Note: This function assumes that
+    # eigenvalues are sorted in non-decreasing order.
+    gap = eigvals[1:] - eigvals[:-1]
+    eps = np.finfo(eigvals.dtype).eps
+    t_norm = jnp.maximum(jnp.abs(eigvals[0]), jnp.abs(eigvals[-1]))
+    gaptol = jnp.sqrt(eps) * t_norm
+
+    # Find the beginning and end of runs of eigenvectors corresponding
+    # to eigenvalues closer than "gaptol", which will need to be
+    # orthogonalized against each other.
+    close = gap < gaptol
+    left_neighbor_close = jnp.pad(close, (1, 0), constant_values=False)
+    right_neighbor_close = jnp.pad(close, (0, 1), constant_values=False)
+
+    ortho_interval_start = jnp.logical_and(
+        jnp.logical_not(left_neighbor_close), right_neighbor_close)
+    ortho_interval_end = jnp.logical_and(
+        left_neighbor_close, jnp.logical_not(right_neighbor_close))
+
+    max_clusters = k // 2 + 1
+    starts = jnp.nonzero(ortho_interval_start, size=max_clusters)[0]
+    ends = jnp.nonzero(ortho_interval_end, size=max_clusters)[0] + 1
+    num_clusters = jnp.sum(ortho_interval_start)
+
+    arange_k = jnp.arange(k)
+
+    solve_dtype = np.result_type(alpha.dtype, beta.dtype)
+    base_dtype = np.finfo(solve_dtype).dtype
+    # We perform inverse iteration for all eigenvectors in parallel,
+    # starting from a random set of vectors, until all have converged.
+    v = random.normal(key, (k, n), dtype=base_dtype).astype(solve_dtype)
+    v = v / jnp.linalg.norm(v, axis=-1, keepdims=True).astype(solve_dtype)
+
+
+    def orthogonalize_close_eigenvectors(ev):
+      # Eigenvectors corresponding to a cluster of close eigenvalues are not
+      # uniquely defined, but the subspace they span is. To avoid numerical
+      # instability, we explicitly mutually orthogonalize such eigenvectors
+      # after each step of inverse iteration. It is customary to use
+      # modified Gram-Schmidt for this, but this is not very efficient
+      # on some platforms, so here we defer to the QR decomposition in JAX.
+      def orthogonalize_cluster(i, ev):
+        start = starts[i]
+        end = ends[i]
+        c = end - start
+
+        ev_padded = jnp.pad(ev, ((0, k), (0, 0)))
+        v_block = lax.dynamic_slice(ev_padded, (start, 0), (k, n))
+
+        mask = (arange_k < c).astype(ev.dtype)
+        v_block_masked = v_block * mask[:, None]
+
+        # We use the builtin QR factorization to orthonormalize the
+        # vectors in the cluster.
+        Q, _ = jnp_linalg.qr(v_block_masked.T)
+
+        QT = Q.T
+        QT_masked = QT * mask[:, None]
+
+        big_zeros = jnp.zeros((2 * k, n), dtype=ev.dtype)
+        big_update = lax.dynamic_update_slice(big_zeros, QT_masked, (start, 0))
+        update_full = big_update[:k, :]
+
+        is_in_cluster = (arange_k >= start) & (arange_k < end)
+        ev = jnp.where(is_in_cluster[:, None], update_full, ev)
+
+        return ev
+
+      ev = lax.fori_loop(0, num_clusters, orthogonalize_cluster, ev)
+      return ev
+
+    # Replicate alpha-shifted and beta across the k eigenvectors so we
+    # can solve the k systems
+    #    [T - eigvals(i)*eye(n)] x_i = r_i
+    # simultaneously using the batching mechanism.
+    alpha_shifted = alpha[None, :] - eigvals[:, None]
+    dl_batched = jnp.broadcast_to(dl[None, :], (k, n))
+    du_batched = jnp.broadcast_to(du[None, :], (k, n))
+
+    def inverse_iteration_step(state):
+      i, v, nrm_v, nrm_v_old = state
+
+      v_new = lax_linalg.tridiagonal_solve(
+          dl_batched.astype(solve_dtype),
+          alpha_shifted.astype(solve_dtype),
+          du_batched.astype(solve_dtype),
+          v[:, :, None].astype(solve_dtype),
+          perturb_singular=True)
+      v_new = jnp.squeeze(v_new, axis=-1)
+
+      nrm_v_new = jnp.linalg.norm(v_new, axis=-1, keepdims=True)
+      v_new = v_new / nrm_v_new.astype(v_new.dtype)
+      nrm_v_new = jnp.squeeze(nrm_v_new, axis=-1)
+
+      v_new = orthogonalize_close_eigenvectors(v_new)
+
+      return i + 1, v_new, nrm_v_new, nrm_v
+
+    def continue_iteration(state):
+      i, _, nrm_v, nrm_v_old = state
+      max_it = 5  # Taken from LAPACK xSTEIN.
+      min_norm_growth = 0.1
+      norm_growth_factor = 1 + min_norm_growth
+      # We stop the inverse iteration when we reach the maximum number of
+      # iterations or the norm growths is less than 10%.
+      return jnp.logical_and(
+          i < max_it,
+          jnp.any(nrm_v >= norm_growth_factor * nrm_v_old)
+      )
+
+    _, v_final, _, _ = lax.while_loop(
+        continue_iteration,
+        inverse_iteration_step,
+        (0, v, jnp.ones(k, dtype=eigvals.dtype), jnp.zeros(k, dtype=eigvals.dtype))
+    )
+
+    return v_final
+
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
-  return mid
+
+  if eigvals_only:
+    return mid
+
+  eigenvectors = _compute_eigenvectors(alpha, beta, mid, key)
+  return mid, eigenvectors.T
 
 @jit(static_argnames=('side', 'method'))
 @config.default_matmul_precision("float32")

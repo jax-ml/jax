@@ -27,6 +27,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     perturbing near-zero pivots in the LU decomposition. This is useful for
     solving numerically singular systems when computing eigenvectors by inverse
     iteration.
+  * {func}`jax.scipy.linalg.eigh_tridiagonal` now supports computing
+    eigenvectors on CPU and GPU.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
