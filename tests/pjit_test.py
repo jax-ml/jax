@@ -10951,11 +10951,11 @@ class UtilTest(jtu.JaxTestCase):
       ('replicated', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4], []}", P()),
       ('1d_mesh1', (4,), ('x',), "{mesh['x'=4], [{'x'}]}", P('x')),
       ('1d_mesh2', (4,), ('x',), "{mesh['x'=4], [{}, {'x'}]}", P(None, 'x')),
-      ('1d_sharded1', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4] [{'a', 'b'}, {}]}", P(('a', 'b'), None)),
+      ('1d_sharded1', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4] [{'a', 'b'}, {}]}", P(('a', 'b'))),
       ('1d_sharded2', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4] [{}, {'a', 'b'}]}", P(None, ('a', 'b'))),
-      ('1d_sharded3', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4], [{}, {'a', 'b'}, {}]}", P(None, ('a', 'b'), None)),
+      ('1d_sharded3', (2, 4), ('a', 'b'), "{mesh['a'=2,'b'=4], [{}, {'a', 'b'}, {}]}", P(None, ('a', 'b'))),
       ('multi_dim_sharded1', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'a', 'd'}, {}, {'b', 'c'}]}", P(('a', 'd'), None, ('b', 'c'))),
-      ('multi_dim_sharded2', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'a'}, {}, {}, {'b', 'c'}, {}]}", P('a', None, None, ('b', 'c'), None)),
+      ('multi_dim_sharded2', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'a'}, {}, {}, {'b', 'c'}, {}]}", P('a', None, None, ('b', 'c'))),
       ('multi_dim_sharded3', (2, 4, 3, 6), ('a', 'b', 'c', 'd'), "{mesh['a'=2,'b'=4,'c'=3,d=6], [{'b'}, {'c', 'a'}, {'d'}]}", P('b', ('c', 'b'), 'd')),
   )
   def testHloShardingV3ToPartitionSpec(

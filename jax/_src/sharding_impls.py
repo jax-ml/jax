@@ -526,8 +526,10 @@ def _hlo_sharding_v3_to_pspec(
         f' ({tuple(v3_mesh.axis_sizes)}) do not match the axis sizes of the'
         f' JAX mesh ({tuple(mesh.axis_sizes)}).')
 
-  return PartitionSpec(*hlo_sharding_v3.partitions())
-
+  partitions = hlo_sharding_v3.partitions()
+  while partitions and not partitions[-1]:
+    partitions.pop()
+  return PartitionSpec(*partitions)
 
 def parse_flatten_op_sharding(
     hlo_sharding: xc.OpSharding | xc.HloSharding,
