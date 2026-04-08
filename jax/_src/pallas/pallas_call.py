@@ -1145,6 +1145,12 @@ def _pallas_call_lowering(
       *in_nodes: ir.Value | Sequence[ir.Value],
       **params,
   ):
+    compiler_params = params.get("compiler_params")
+    if compiler_params is not None:
+      rule = pallas_core.get_lowering_rule(type(compiler_params), "tpu")
+      if rule is not None:
+        return rule(ctx, *in_nodes, **params)
+
     if mosaic_tpu_backend is None:
       raise _unsupported_lowering_error("tpu")
     return mosaic_tpu_backend.pallas_call_tpu_lowering_rule(
@@ -1159,6 +1165,11 @@ def _pallas_call_lowering(
       **params,
   ):
     """Shared GPU lowering implementation for CUDA and ROCm."""
+    if compiler_params is not None:
+      rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
+      if rule is not None:
+        return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
+
     backend: Any = None
     if mosaic_gpu_backend is not None:
       from jax._src.pallas.mosaic_gpu import core as mgpu_core

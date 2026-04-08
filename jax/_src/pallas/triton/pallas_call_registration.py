@@ -204,3 +204,6 @@ def pallas_call_lowering(
       result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
   ).results
+
+
+pallas_core.register_lowering_rule(triton_core.CompilerParams, pallas_call_lowering, "gpu")

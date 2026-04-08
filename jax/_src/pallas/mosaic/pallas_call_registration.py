@@ -567,3 +567,6 @@ def mpmd_map_tpu_lowering_rule(
       name=name,
       jax_mesh=jax_mesh,
   )
+
+
+pallas_core.register_lowering_rule(tpu_core.CompilerParams, pallas_call_tpu_lowering_rule, "tpu")

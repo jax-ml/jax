@@ -159,3 +159,6 @@ def pallas_call_lowering(
 
 def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
   return jax_core.ShapedArray(t.shape, np.dtype(t.dtype))
+
+
+pallas_core.register_lowering_rule(gpu_core.CompilerParams, pallas_call_lowering, "gpu")
