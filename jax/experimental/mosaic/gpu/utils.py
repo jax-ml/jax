@@ -1242,6 +1242,7 @@ class DialectBarrierRef:
 class CollectiveBarrierRef:
   barrier: BarrierRef
   cluster_mask: ir.Value | None
+  leader_tracked: bool = False
 
   @staticmethod
   def initialize(
@@ -1249,7 +1250,21 @@ class CollectiveBarrierRef:
       arrival_count: int,
       dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
       cluster_shape: tuple[int, int, int],
+      leader_tracked: bool = False,
   ) -> "CollectiveBarrierRef":
+    if leader_tracked:
+      # TODO(bchetioui): expand for multiple collective dimensions. Not sure
+      # what useful semantics should be.
+      if len(dims) != 1:
+        raise NotImplementedError(
+            "Only leader tracking for a single collective dimension is supported."
+        )
+      # TODO(bchetioui): adapt or delete case of dims containing sequences
+      # of dimensions.
+      if not isinstance(dims[0], gpu.Dimension):
+        raise NotImplementedError(
+            "Only leader tracking for ungrouped collective dimensions is supported."
+        )
     i32 = ir.IntegerType.get_signless(32)
     # With the exception of the current device, each pair of slices along
     # collective dims is disjoint. Since the current device is overcounted,
@@ -1272,22 +1287,31 @@ class CollectiveBarrierRef:
           # present in one of the non-trivial cluster dims.
           continue
         cluster_mask = arith.ori(
-            cluster_mask, cluster_collective_mask(cluster_shape, d)
+            cluster_mask, cluster_collective_mask(cluster_shape, d, leader_tracked)
         )
     barrier = BarrierRef.initialize(
         barrier_memref, arrival_count=arrival_count * cluster_arrival_count
     )
-    return CollectiveBarrierRef(barrier, cluster_mask)
+    return CollectiveBarrierRef(barrier, cluster_mask, leader_tracked)
 
   def __iter__(self):
     for b in self.barrier:
-      yield CollectiveBarrierRef(b, self.cluster_mask)
+      yield CollectiveBarrierRef(b, self.cluster_mask, self.leader_tracked)
 
   def __getitem__(self, offset):
-    return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
+    return CollectiveBarrierRef(
+        self.barrier[offset], self.cluster_mask, self.leader_tracked
+    )
 
   def arrive(self, orders_tensor_core: bool = False):
-    """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
+    """Arrives on a barrier in one or several blocks in a cluster.
+
+    Specifically,
+    - If ``self.leader_tracked`` is set, arrive only the barrier mapped in the
+      leader block (block 0 along the collective dimension, with otherwise the
+      same coordinates as the current block);
+    - Otherwise, arrive in all blocks whose coordinates vary in at most one
+      collective dimension.
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
@@ -1688,6 +1712,7 @@ def memref_ptr(memref_arg, memory_space=None):
 def cluster_collective_mask(
     cluster_shape: tuple[int, int, int],
     collective: Sequence[gpu.Dimension] | gpu.Dimension,
+    leader_tracked: bool = False,
 ):
   if isinstance(collective, gpu.Dimension):
     collective = (collective,)
@@ -1710,11 +1735,14 @@ def cluster_collective_mask(
           mask_shift,
           arith.muli(dim_idx, c(stride, i32)),
       )
-  mask_unshifted = 0
-  collective_strides = [cluster_strides[d] for d in collective]
-  collective_shape = tuple(cluster_shape[d] for d in collective)
-  for idx in np.ndindex(collective_shape):
-    mask_unshifted |= 1 << sum(i * s for i, s in zip(idx, collective_strides))
+  if leader_tracked:
+    mask_unshifted = 1
+  else:
+    mask_unshifted = 0
+    collective_strides = [cluster_strides[d] for d in collective]
+    collective_shape = tuple(cluster_shape[d] for d in collective)
+    for idx in np.ndindex(collective_shape):
+      mask_unshifted |= 1 << sum(i * s for i, s in zip(idx, collective_strides))
   return arith.shli(c(mask_unshifted, i32), mask_shift)
 
 

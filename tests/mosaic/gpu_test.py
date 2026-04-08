@@ -3363,6 +3363,48 @@ class BarrierTest(TestCase):
     )()
     np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
 
+  @parameterized.product(
+      collective_dim=(0, 1, 2),
+      cluster=list(itertools.product((1, 2, 4), repeat=3)),
+  )
+  def test_leader_tracked_cluster_barrier(self, collective_dim, cluster):
+    if cluster[collective_dim] == 1:
+      self.skipTest("Collective dimension has trivial size")
+    if math.prod(cluster) > jtu.get_cuda_nonportable_max_cluster_size():
+      self.skipTest("Cluster too big")
+    index = ir.IndexType.get()
+    def kernel(_, cluster_masks, collective_barrier):
+      block_id = utils.cluster_idx()
+      collective_dim_id = gpu.cluster_block_id(gpu.Dimension(collective_dim))
+      is_leader_block = arith.cmpi(
+          arith.CmpIPredicate.eq, collective_dim_id, c(0, index)
+      )
+      collective_barrier.arrive()
+      with when(is_leader_block):
+        collective_barrier.wait()
+      memref.store(collective_barrier.cluster_mask, cluster_masks, [block_id])
+    out_shape = jax.ShapeDtypeStruct((math.prod(cluster),), jnp.int32)
+    scratch = mgpu.ClusterBarrier(
+        (gpu.Dimension(collective_dim),), arrival_count=1, leader_tracked=True,
+    )
+    cluster_masks = mgpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (), out_shape, scratch, cluster=cluster,
+    )()
+    expected_masks = []
+    for i in range(math.prod(cluster)):
+      # Cluster dimensions are minor-to-major.
+      idx = np.unravel_index(i, cluster, order="F")
+      mask_shift = 0
+      stride = 1
+      for dim in range(3):
+        if dim == collective_dim:
+          stride *= cluster[dim]
+          continue
+        mask_shift += idx[dim] * stride
+        stride *= cluster[dim]
+      expected_masks.append(1 << mask_shift)
+    np.testing.assert_array_equal(cluster_masks, expected_masks)
+
   @parameterized.parameters(False, True)
   def test_mbarrier_complete_tx(self, predicated):
     i32 = ir.IntegerType.get_signless(32)
