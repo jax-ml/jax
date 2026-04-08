@@ -1202,6 +1202,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "stablehlo.dynamic_rng_bit_generator",
     "stablehlo.dynamic_top_k",
     "shape_assertion",  # Used by shape_poly to evaluate assertions
+    "edge_tpu_pallas_kernel",
 }
 
 check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]"")$")
