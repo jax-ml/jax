@@ -1385,6 +1385,15 @@ class IndirectDMAOp {
 // If the source is in VMEM and the target is in HBM or VMEM_SHARED, performs a
 // scatter of the source (updates) to the target (operand) at the offsets.
 //
+// The memory region being indexed (the `source` for gather, `target` for
+// scatter) must have a shape `[z, s0, ..., sm]` or `[1, z, s0, ..., sm]`,
+// where `z` is the indexed dimension.
+//
+// The `offsets` argument must be of shape `[o]` or `[1, o]`.
+// Each of the `o` values indexes the `z` dimension within the range `[0, z-1]`.
+//
+// Each offset selects a slice of shape `[s0, ..., sm]` (which can be elemental).
+//
 // source          : Memref to copy from.
 // target          : Memref to copy to.
 // offsets         : Gather or scatter offsets.
