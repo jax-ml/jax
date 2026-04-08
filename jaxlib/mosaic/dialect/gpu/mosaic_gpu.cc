@@ -812,13 +812,17 @@ llvm::LogicalResult AsyncStoreScalesSmemToTmemOp::verify() {
   }
 
   llvm::ArrayRef<int64_t> smem_shape = source_type.getShape();
-  std::vector<int64_t> expected_smem_shape_vec = {tmem_shape[0] / 128,
-                                                  tmem_shape[1] / 4, 32, 16};
-  llvm::ArrayRef<int64_t> expected_smem_shape(expected_smem_shape_vec);
-  if (smem_shape != expected_smem_shape) {
-    return error("The `source` memref must have shape ({0}), but got ({1}).",
-                 absl::StrJoin(expected_smem_shape, ", "),
-                 absl::StrJoin(smem_shape, ", "));
+  int k_tiles = tmem_shape[1] / 4;
+  llvm::SmallVector<int64_t, 4> expected_smem_shape0 = {tmem_shape[0] / 128,
+                                                        k_tiles, 32, 16};
+  llvm::SmallVector<int64_t, 4> expected_smem_shape1 = {1, k_tiles, 64, 16};
+  if (expected_smem_shape0 != smem_shape &&
+      expected_smem_shape1 != smem_shape) {
+    return error(
+        "The `source` memref must have shape ({0}) or ({1}), but got ({2}).",
+        absl::StrJoin(expected_smem_shape0, ", "),
+        absl::StrJoin(expected_smem_shape1, ", "),
+        absl::StrJoin(smem_shape, ", "));
   }
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);

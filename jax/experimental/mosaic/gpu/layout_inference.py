@@ -1625,21 +1625,15 @@ if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
     assignments: dict[cs.Variable, cs.Constant] = {
         source_variable: cs.SMEMTiling(None)
     }
-    constraints = []
-    if op.collective.value:
-      constraints.append(
-          cs.AnyOf(
-              destination_variable,
-              (
-                  cs.TMEMLayout(tcgen05.scales_layout()),
-                  cs.TMEMLayout(tcgen05.b_scales_m64_collective_layout()),
-              ),
-          )
+    k_tiles = destination.shape[1] // 4
+    if source.shape == (1, k_tiles, 64, 16):
+      assignments[destination_variable] = cs.TMEMLayout(
+          tcgen05.b_scales_m64_collective_layout()
       )
     else:
       assignments[destination_variable] = cs.TMEMLayout(tcgen05.scales_layout())
     return (
-        cs.ConstraintSystem(assignments=assignments, constraints=constraints),
+        cs.ConstraintSystem(assignments),
         {source_variable: [source], destination_variable: [destination]},
     )
 

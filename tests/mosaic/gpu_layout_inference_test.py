@@ -1714,17 +1714,18 @@ class LayoutInferenceTest(parameterized.TestCase):
         mma, [acc_layout, tcgen05.scales_layout(), b_scale_layout]
     )
 
-  @parameterized.parameters(False, True)
+  @parameterized.parameters(
+      ((2, 32, 32, 16), (256, 128), tcgen05.scales_layout()),
+      ((1, 32, 64, 16), (256, 128), tcgen05.b_scales_m64_collective_layout()),
+  )
   def test_async_store_scales_smem_to_tmem_infers_expected_src_dest_layouts(
-      self, collective
+      self, src_shape, dest_shape, dest_layout
   ):
     # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
     if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
       self.skipTest("async_store_scales_smem_to_tmem not available.")
 
     dtype = ir.Float8E8M0FNUType.get()
-    src_shape = (2, 32, 32, 16)
-    dest_shape = (256, 128)
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
     src_type = ir.MemRefType.get(src_shape, dtype, memory_space=smem)
     dest_type = ir.MemRefType.get(dest_shape, dtype, memory_space=tmem)
@@ -1732,46 +1733,14 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       [src, dest] = undefs(src_type, dest_type)
       op = mgpu.dialect.async_store_scales_smem_to_tmem(
-          src, dest, collective=collective
+          src,
+          dest,
+          collective=dest_layout == tcgen05.b_scales_m64_collective_layout(),
       )
-
-    mgpu.infer_layout(self.module)
-
-    dest_layout = tcgen05.scales_layout()
-    self.checkInTmemLayouts(op, [dest_layout])
-
-    [in_transform] = inference_utils.in_transforms(op)
-    # No transforms is expected for this op.
-    self.assertEmpty(in_transform)
-
-  def test_infer_layout_for_async_store_scales_smem_to_tmem_accepts_b_scales_m64_collective_layout(
-      self,
-  ):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
-      self.skipTest("async_store_scales_smem_to_tmem not available.")
-
-    dtype = ir.Float8E8M0FNUType.get()
-    src_shape = (2, 32, 32, 16)
-    dest_shape = (256, 128)
-    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
-    src_type = ir.MemRefType.get(src_shape, dtype, memory_space=smem)
-    dest_type = ir.MemRefType.get(dest_shape, dtype, memory_space=tmem)
-    dest_layout = tcgen05.b_scales_m64_collective_layout()
-
-    with ir.InsertionPoint(self.module.body):
-      [src, dest] = undefs(src_type, dest_type)
-      dest_layout_attr = layouts.to_layout_attr(dest_layout)
-      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout_attr)
-      op = mgpu.dialect.async_store_scales_smem_to_tmem(
-          src, dest, collective=True
-      )
-
     mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [dest_layout])
     [in_transform] = inference_utils.in_transforms(op)
-    # No transforms are expected for this op.
-    self.assertEmpty(in_transform)
+    self.assertEmpty(in_transform)  # No transforms are expected for this op.
 
   def test_async_store_scales_smem_to_tmem_rejects_incompatible_layouts(self):
     # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
