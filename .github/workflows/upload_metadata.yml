@@ -24,6 +24,7 @@ jobs:
   upload:
     name: "Upload Workflow Metadata"
     runs-on: linux-x86-n4-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     steps:
       - name: Fetch and Upload Metadata
         env:
