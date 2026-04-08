@@ -222,8 +222,8 @@ nanobind::object MakeSingleDeviceSharding(nanobind::object device,
   } catch (nb::python_error& e) {
   }
   if (make_single_device_sharding) {
-    return make_single_device_sharding(std::move(device),
-                                       std::move(memory_kind));
+    return make_single_device_sharding(
+        std::move(device), nb::arg("memory_kind") = std::move(memory_kind));
   }
   return make_nb_class<SingleDeviceSharding>(std::move(device),
                                              std::move(memory_kind));

@@ -21,6 +21,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding as SingleDeviceSharding,
     set_mesh as set_mesh,
     get_mesh as get_mesh,
+    make_single_device_sharding as make_single_device_sharding,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,

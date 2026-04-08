@@ -48,6 +48,8 @@ from jax._src.op_shardings import (
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import use_cpp_class, use_cpp_method
 import numpy as np
+from jax._src.lib import jaxlib_extension_version
+
 
 config_ext = xc._xla.config
 
@@ -185,8 +187,12 @@ class SingleDeviceSharding(jsharding.Sharding):
 SingleDeviceSharding.__module__ = 'jax.sharding'
 
 
-def make_single_device_sharding(device, memory_kind=None):
-  return SingleDeviceSharding(device, memory_kind=memory_kind)
+if jaxlib_extension_version >= 432:
+  def make_single_device_sharding(device, *, memory_kind=None):
+    return SingleDeviceSharding(device, memory_kind=memory_kind)
+else:
+  def make_single_device_sharding(device, memory_kind=None):
+    return SingleDeviceSharding(device, memory_kind=memory_kind)
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):

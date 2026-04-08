@@ -68,7 +68,7 @@ UNDOCUMENTED_APIS = {
   'jax.profiler': ['ProfileData', 'ProfileEvent', 'ProfileOptions', 'ProfilePlane', 'stop_server'],
   'jax.random': ['key_impl', 'random_gamma_p'],
   'jax.scipy.special': ['bessel_jn'],
-  'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType'],
+  'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType', 'make_single_device_sharding'],
   'jax.stages': ['ArgInfo', 'CompilerOptions'],
   'jax.tree_util': ['DictKey', 'FlattenedIndexKey', 'GetAttrKey', 'PyTreeDef', 'SequenceKey', 'default_registry'],
 }
