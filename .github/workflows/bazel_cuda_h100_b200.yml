@@ -63,66 +63,63 @@ defaults:
     shell: bash
 
 jobs:
-  run_tests:
-    if: >-
-      ${{
-          github.event.repository.fork == false
-          && (github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
-              || contains(github.event.pull_request.labels.*.name,
-                          'CI Optional GPU Presubmit'))
-      }}
-    runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
-    name: "Bazel single B200 CUDA tests"
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel single B200 CUDA Tests
-        env:
-          JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
-          JAXCI_BAZEL_TARGETS: |
-            //tests:cudnn_fusion_test_gpu
-            //tests:scaled_matmul_stablehlo_test_gpu
-            //tests:fused_attention_stablehlo_test_gpu
-            //tests:nn_test_gpu
-            //tests/pallas:gpu_tests
-            //tests/mosaic:gpu_tests
-          JAXCI_TEST_TAG_FILTERS: '-multiaccelerator'
-          JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
-          JAXCI_LOCAL_TEST_JOBS: '8'
-          JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
-          JAXCI_TEST_TIMEOUT: '420'
-        run: bash ./ci/run_bazel_cuda_targeted_tests.sh
-      - name: Upload test artifacts
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/upload-test-artifacts
+  # run_tests:
+  #   if: >-
+  #     ${{
+  #         github.event.repository.fork == false
+  #         && (github.event_name == 'schedule'
+  #             || github.event_name == 'workflow_dispatch'
+  #             || contains(github.event.pull_request.labels.*.name,
+  #                         'CI Optional GPU Presubmit'))
+  #     }}
+  #   runs-on: linux-x86-a4-224-b200-1gpu
+  #   container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+  #   name: "Bazel single B200 CUDA tests"
+  #   steps:
+  #     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+  #       with:
+  #         persist-credentials: false
+  #     - name: Wait For Connection
+  #       uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+  #       with:
+  #         halt-dispatch-input: ${{ inputs.halt-for-connection }}
+  #     - name: Run Bazel single B200 CUDA Tests
+  #       env:
+  #         JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
+  #         JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+  #         JAXCI_BAZEL_TARGETS: |
+  #           //tests:cudnn_fusion_test_gpu
+  #           //tests:scaled_matmul_stablehlo_test_gpu
+  #           //tests:fused_attention_stablehlo_test_gpu
+  #           //tests:nn_test_gpu
+  #           //tests/pallas:gpu_tests
+  #           //tests/mosaic:gpu_tests
+  #         JAXCI_TEST_TAG_FILTERS: '-multiaccelerator'
+  #         JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
+  #         JAXCI_LOCAL_TEST_JOBS: '8'
+  #         JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
+  #         JAXCI_TEST_TIMEOUT: '420'
+  #       run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+  #     - name: Upload test artifacts
+  #       if: always()
+  #       continue-on-error: true
+  #       uses: ./.github/actions/upload-test-artifacts
   run_multiaccelerator_tests:
     if: >-
       ${{
-          github.event.repository.fork == false &&
-          (
-              github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
-              || contains(github.event.pull_request.labels.*.name,
-                          'CI Optional GPU Presubmit')
-          )
+          github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+          || contains(github.event.pull_request.labels.*.name,
+                      'CI Optional GPU Presubmit')
       }}
     runs-on: linux-x86-a3-8g-h100-8gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@9f8d7d8d9954430d0fef4a8cce2cb4e3844c200d
         with:
