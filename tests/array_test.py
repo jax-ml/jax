@@ -892,7 +892,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_deprecated_dtype_conversion(self):
     x = jnp.arange(4)
     msg = "Implicit conversion of an array to a dtype is deprecated"
-    with self.assertDeprecationWarnsOrRaises("jax-array-numpy-dtype", msg):
+    with self.assertDeprecationWarnsOrRaises("jax-array-numpy-dtype", msg, error_class=TypeError):
       np.dtype(x)
 
 

@@ -33,6 +33,7 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -656,6 +657,9 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertFalse(jnp.issubdtype(key.dtype, np.number))
     if jtu.numpy_version() < (2, 4, 0):
       with self.assertRaisesRegex(TypeError, "Cannot interpret"):
+        jnp.issubdtype(key, dtypes.prng_key)
+    elif deprecations.is_accelerated("jax-array-numpy-dtype"):
+      with self.assertRaisesRegex(TypeError, "Implicit conversion of an array to a dtype"):
         jnp.issubdtype(key, dtypes.prng_key)
     else:
       with jtu.ignore_warning(category=DeprecationWarning,
