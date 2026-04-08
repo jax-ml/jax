@@ -636,6 +636,60 @@ class PallasCallRemoteDMATest(TestCase):
       if cuda_versions.cuda_runtime_get_version() not in [12080, 12090, 13000]:
         raise
 
+  def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    self.skip_if_wg_semantics()
+
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem_out_ref, sem):
+      dev_idx = jax.lax.axis_index("x")
+
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_idx = jax.lax.axis_index("warp")
+
+        @pl.when(warp_idx == dev_idx)
+        def _():
+          # One warp on each device signals. In total, both semaphores get signaled once.
+          plgpu.semaphore_signal_multicast(sem.at[warp_idx], collective_axes="x")
+
+          y_ref[0, 0] = 1.0
+
+      pl.semaphore_wait(sem.at[0], 1)
+      pl.semaphore_wait(sem.at[1], 1)
+
+      sem_out_ref[0] = pl.semaphore_read(sem.at[0])
+      sem_out_ref[1] = pl.semaphore_read(sem.at[1])
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)] * 2,
+        out_shape=(
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((2,), jnp.int32),
+        ),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
+        compiler_params=plgpu.CompilerParams(),
+    )
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    _, sem_out = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=(P(None), P(None)), check_vma=False,
+        )
+    )()
+
+    try:
+      np.testing.assert_allclose(sem_out, jnp.zeros_like(sem_out))
+    except Exception:
+      # On some CUDA versions there is a compiler bug where the predicate
+      # on the multimem reduction is not respected.
+      if cuda_versions.cuda_runtime_get_version() not in [12080, 12090, 13000]:
+        raise
+
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
       other_dev_id = 1 - lax.axis_index('x')
