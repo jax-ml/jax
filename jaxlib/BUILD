@@ -290,6 +290,8 @@ nanobind_pywrap_extension(
     srcs = [
         "weak_key_weak_value_cache.cc",
         "weak_key_weak_value_cache.h",
+        "weak_value_interner.cc",
+        "weak_value_interner.h",
         "weakref_lru_cache.cc",
         "weakref_lru_cache.h",
         "weakref_lru_cache_module.cc",
@@ -319,6 +321,19 @@ py_strict_test(
     srcs = ["weakref_lru_cache_test.py"],
     deps = [
         ":weakref_lru_cache",
+    ] + py_deps([
+        "absl/flags",
+        "absl/logging",
+        "absl/testing",
+    ]),
+)
+
+py_strict_test(
+    name = "weak_value_interner_test",
+    srcs = ["weak_value_interner_test.py"],
+    deps = [
+        ":weakref_lru_cache",
+        "//jax/_src:util",
     ] + py_deps([
         "absl/flags",
         "absl/logging",

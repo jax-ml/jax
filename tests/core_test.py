@@ -597,5 +597,28 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     core.check_jaxpr(jaxpr)
 
 
+class InternedTest(jtu.JaxTestCase):
+
+  def test_manual_axis_type_pickle(self):
+    import pickle
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    pickled = pickle.dumps(mt)
+    unpickled = pickle.loads(pickled)
+    self.assertIs(mt, unpickled)
+
+  def test_manual_axis_type_deepcopy(self):
+    import copy
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    copied = copy.deepcopy(mt)
+    self.assertIs(mt, copied)
+
+  def test_manual_axis_type_immutable(self):
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    with self.assertRaises(AttributeError):
+      mt.varying = frozenset()
+    with self.assertRaises(AttributeError):
+      del mt.varying
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
