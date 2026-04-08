@@ -1621,6 +1621,7 @@ jax_py_test(
 pytype_test(
     name = "typing_test",
     srcs = ["typing_test.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:test_util",

@@ -30,6 +30,7 @@ pytype_strict_library(
         "dialect.py",
         ":_triton_gen",
     ],
+    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir:core",

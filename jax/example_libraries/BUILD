@@ -24,6 +24,7 @@ pytype_strict_library(
     srcs = [
         "__init__.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
 )
 
@@ -32,6 +33,7 @@ pytype_strict_library(
     srcs = [
         "stax.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = ["//jax"],
 )
@@ -41,6 +43,7 @@ pytype_strict_library(
     srcs = [
         "optimizers.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",

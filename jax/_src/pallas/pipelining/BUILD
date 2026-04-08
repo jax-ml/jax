@@ -27,6 +27,7 @@ package(
 pytype_strict_library(
     name = "internal",
     srcs = ["internal.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:core",
@@ -37,6 +38,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "schedule_api",
     srcs = ["schedule_api.py"],
+    type_checking = "pyrefly",
     deps = [
         ":internal",
         ":schedulers",
@@ -52,6 +54,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "schedulers",
     srcs = ["schedulers.py"],
+    type_checking = "pyrefly",
     deps = [
         ":internal",
         "//jax",
@@ -64,6 +67,7 @@ pytype_strict_library(
     name = "pipeline_test_util",
     testonly = True,
     srcs = ["pipeline_test_util.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src:debugging",
         "//jax/_src/pallas/pipelining:internal",

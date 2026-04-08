@@ -39,6 +39,7 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+# pyrefly: ignore [missing-import]
 from jax._src.lax import linalg
 from jax._src.lib import xla_client
 from jax._src.lib import _jax

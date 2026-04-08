@@ -27,6 +27,7 @@ package(
 pytype_strict_library(
     name = "ragged_dot",
     srcs = ["ragged_dot.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [

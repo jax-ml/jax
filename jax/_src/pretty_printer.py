@@ -34,6 +34,7 @@ from typing import Any
 
 from jax._src import config
 from jax._src.lib import _pretty_printer as _pretty_printer
+# pyrefly: ignore [missing-import]
 from jax._src.util import use_cpp_class, use_cpp_method
 
 

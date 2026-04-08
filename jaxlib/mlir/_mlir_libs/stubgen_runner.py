@@ -18,9 +18,11 @@ import argparse
 import importlib.util
 import sys
 
+# pyrefly: ignore [missing-import]
 from python.runfiles import Runfiles
 
 # Recreate the MLIR namespace, because dialects might reference it.
+# pyrefly: ignore [missing-import]
 from jaxlib.mlir._mlir_libs import _mlir
 sys.modules["mlir"] = _mlir
 sys.modules["mlir.ir"] = _mlir.ir
@@ -39,8 +41,10 @@ def main():
     runfiles = Runfiles.Create()
     stubgen_path = runfiles.Rlocation("nanobind/src/stubgen.py")
     spec = importlib.util.spec_from_file_location("stubgen", stubgen_path)
+    # pyrefly: ignore [bad-argument-type]
     stubgen = importlib.util.module_from_spec(spec)
     sys.modules["stubgen"] = stubgen
+    # pyrefly: ignore [missing-attribute]
     spec.loader.exec_module(stubgen)
     stubgen.main(
         ["-m", args.module, "-r", "--include-private", "-O", args.output]

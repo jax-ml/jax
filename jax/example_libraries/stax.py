@@ -134,6 +134,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     # TODO(phawkins): jnp.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
     ed = tuple(None if i in axis else slice(None) for i in range(jnp.ndim(x)))
+    # pyrefly: ignore [bad-argument-type]
     z = standardize(x, axis, epsilon=epsilon)
     if center and scale: return gamma[ed] * z + beta[ed]
     if center: return z + beta[ed]
