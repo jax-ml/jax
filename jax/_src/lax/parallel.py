@@ -1217,8 +1217,9 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   full_perm, other_args = _pcollectives_lowering_common(
       ctx, axis_name=axis_name, perm=perm, op_name="precv"
   )
+  out_type = mlir.aval_to_ir_type(out_shape)
   recv_op = hlo.RecvOp(
-      [mlir.aval_to_ir_type(out_shape), token.type],
+      [out_type, token.type],
       token,
       source_target_pairs=mlir.dense_int_elements(full_perm),
       **other_args,
@@ -1789,19 +1790,20 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   else:
     other_args = {}
 
+  out_type = mlir.aval_to_ir_type(out_aval)
   if not is_async:
     return hlo.AllGatherOp(
-        [mlir.aval_to_ir_type(out_aval)],
+        [out_type],
         [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
         replica_groups=_replica_groups_hlo(replica_groups),
         **other_args).results
 
-  future_type = hlo.FutureType.get([mlir.aval_to_ir_type(out_aval)])  # type: ignore
+  future_type = hlo.FutureType.get([out_type])  # type: ignore
   async_start = hlo.AsyncStartOp(future_type, [x])
   block = async_start.regions[0].blocks.append(x.type)
   with ir.InsertionPoint(block):
     results = hlo.AllGatherOp(
-        [mlir.aval_to_ir_type(out_aval)],
+        [out_type],
         [block.arguments[0]],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
         replica_groups=_replica_groups_hlo(replica_groups),
@@ -2054,7 +2056,8 @@ def _reduce_scatter_lowering(
   if tiled:
     return op.results
   else:
-    return [hlo.reshape(mlir.aval_to_ir_type(aval_out), op.result)]
+    out_type = mlir.aval_to_ir_type(aval_out)
+    return [hlo.reshape(out_type, op.result)]
 
 
 def _reduce_scatter_effectful_abstract_eval(

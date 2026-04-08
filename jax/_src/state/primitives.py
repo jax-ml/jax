@@ -1130,7 +1130,7 @@ def _lower_create_linear(ctx):
   return mlir.custom_call(
       "CreateBuffer",
       operands=[],
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
   ).results
 mlir.register_lowering(create_linear_p, _lower_create_linear)
 
@@ -1149,7 +1149,7 @@ def _lower_pin(ctx, x_op):
   return mlir.custom_call(
       "Pin",
       operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
 
@@ -1168,7 +1168,7 @@ def _lower_unpin(ctx, x_op):
   return mlir.custom_call(
       "Unpin",
       operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
   ).results
 mlir.register_lowering(unpin_p, _lower_unpin)
 

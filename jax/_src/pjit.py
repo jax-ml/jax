@@ -1373,7 +1373,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
                    out_shardings, in_layouts, out_layouts, donated_invars,
                    ctx_mesh, keep_unused, inline, compiler_options_kvs):
   effects = list(ctx.tokens_in.effects())
-  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
+  output_types = map(mlir._aval_to_ir_types, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = mlir.flatten_ir_types(output_types)
 
@@ -1392,10 +1392,10 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
-  hoisted_const_values = [
-      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
+  hoisted_const_values = mlir.flatten_ir_values(
+      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
-  ]
+  )
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
   with mlir.source_info_to_location(
       ctx.module_context, None,

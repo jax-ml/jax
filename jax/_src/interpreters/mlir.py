@@ -76,8 +76,7 @@ Value = ir.Value
 # IR Helpers
 
 # TODO(slebedev): Fix all callers and uncomment this.
-# IrValues = Union[ir.Value, tuple[ir.Value, ...]]
-IrValues = Any
+IrValues = ir.Value | tuple[ir.Value, ...]
 
 
 def dense_int_elements(xs) -> ir.DenseElementsAttr:
@@ -88,7 +87,7 @@ dense_int_array = ir.DenseI64ArrayAttr.get
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def shape_tensor(sizes: Sequence[int | ir.Value]) -> IrValues:
+def shape_tensor(sizes: Sequence[int | ir.Value]) -> ir.Value:
   int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
   i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
   def lower_dim(d):
@@ -118,8 +117,7 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 # IR Types
 
 # TODO(slebedev): Fix all callers and uncomment this.
-# IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
-IrTypes = Any
+IrTypes = ir.Type | tuple[ir.Type, ...]
 
 def _is_ir_values(x: IrValues) -> bool:
   """Returns true if `x` is an ir.Value or tuple of ir.Values"""
@@ -199,15 +197,16 @@ def _dynamic_array_ir_types(aval: core.ShapedArray) -> ir.Type:
 
 ir_type_handlers: dict[type[core.AbstractValue], Callable[[Any], IrTypes]] = {}
 
-def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
-  """Converts a JAX aval to zero or more MLIR IR types.
+def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
+  """Converts a JAX aval to a single MLIR IR type.
 
-  In general, a JAX value may be represented by multiple IR values, so this
-  function may return a tuple of types."""
-  try:
-    return ir_type_handlers[type(aval)](aval)
-  except KeyError as err:
-    raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
+  Use only when ``aval`` is known to map to a single IR type. For opaque
+  avals, use ``aval_to_ir_types`` instead.
+  """
+  ir_type = _aval_to_ir_types(aval)
+  if isinstance(ir_type, ir.Type):
+    return ir_type
+  raise TypeError(f"Expected a single IR type, got {ir_type}")
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
@@ -215,10 +214,23 @@ if jaxlib_extension_version >= 427:
   # pyrefly: ignore[missing-attribute]
   ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
 
-# This is a backwards compatibility shim for external users of jax.mlir apis.
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
-  typ = aval_to_ir_type(aval)
-  return (typ,) if isinstance(typ, ir.Type) else typ
+  """Converts a JAX aval to one or more MLIR IR types.
+
+  In general, a JAX value may be represented by multiple IR values, so this
+  function returns a tuple of types. This is the safe version to use when the
+  concrete type of ``aval`` is not known.
+  """
+  ir_types = _aval_to_ir_types(aval)
+  return (ir_types,) if isinstance(ir_types, ir.Type) else ir_types
+
+
+def _aval_to_ir_types(aval: core.AbstractValue) -> IrTypes:
+  try:
+    return ir_type_handlers[type(aval)](aval)
+  except KeyError as err:
+    raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
+
 
 # Constants
 
@@ -236,25 +248,70 @@ def register_constant_handler(type_: type, handler_fun: ConstantHandler):
 def get_constant_handler(type_: type) -> ConstantHandler:
   return _constant_handlers[type_]
 
+
 def ir_constant(
-  val: Any, *,
-  const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
-  aval: core.AbstractValue | None = None
-) -> IrValues:
-  """Translate a Python `val` to an IR constant.
+    val: Any, *,
+    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+    aval: core.AbstractValue | None = None
+) -> ir.Value:
+  """Translate a Python ``val`` to an IR constant.
 
   See https://docs.jax.dev/en/latest/internals/constants.html.
+
   Args:
     val: a Python value to be translated to a constant.
     const_lowering: an optional dictionary with known lowering for some
-      constants, indexed by `id`. This is used, e.g., when we pass constants
+      constants, indexed by ``id``. This is used, e.g., when we pass constants
       as MLIR function arguments.
-    aval: the abstract value of `val`, if known. Required where ambiguous, e.g.
-      for Python scalars.
+    aval: the abstract value of ``val``, if known. Required where ambiguous,
+      e.g. for Python scalars.
 
   Returns:
-    A representation of the constant as an IR value or sequence of IR values.
+    A representation of the constant as an IR value.
+
+  Raises:
+    ValueError: if the constant is represented by more than one IR value.
+    TypeError: if no constant handler is registered for the type of `val`.
   """
+  value = _ir_constant(val, const_lowering=const_lowering, aval=aval)
+  if isinstance(value, tuple):
+    raise ValueError(
+        f"Expected a constant to produce a single ir.Value, got {value}"
+    )
+  return value
+
+
+def ir_constants(
+    val: Any, *,
+    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+    aval: core.AbstractValue | None = None
+) -> tuple[ir.Value, ...]:
+  """Translate a Python ``val`` to a sequence of IR constants.
+
+  See https://docs.jax.dev/en/latest/internals/constants.html.
+
+  Args:
+    val: a Python value to be translated.
+    const_lowering: an optional dictionary with known lowering for some
+      constants, indexed by ``id``. This is used, e.g., when we pass constants
+      as MLIR function arguments.
+    aval: the abstract value of ``val``, if known. Required where ambiguous,
+      e.g. for Python scalars.
+
+  Returns:
+    A representation of the constant as a sequence of IR values.
+
+  Raises:
+    TypeError: if no constant handler is registered for the type of ``val``.
+  """
+  values = _ir_constant(val, const_lowering=const_lowering, aval=aval)
+  return values if isinstance(values, tuple) else (values,)
+
+
+def _ir_constant(val: Any, *,
+  const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+  aval: core.AbstractValue | None = None
+) -> IrValues:
   if const_lowering is not None:
     # pyrefly: ignore[bad-argument-type]
     if np.shape(val) and (c_val := const_lowering.get((id(val), aval))) is not None:
@@ -269,7 +326,8 @@ def ir_constant(
     return ir_constant(val.__jax_array__())
   raise TypeError(f"No constant handler for type: {type(val)}")
 
-def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
+
+def _numpy_array_constant(x: np.ndarray | np.generic) -> ir.Value:
   return hlo.constant(_numpy_array_attribute(x))
 
 
@@ -1589,8 +1647,8 @@ def lower_jaxpr_to_fun(
   assert arg_names is None or nr_args == len(arg_names), (nr_args, arg_names)
 
   # Function inputs: *dim_var_values, *tokens, *const_args, *actual_inputs
-  input_types = map(aval_to_ir_type, in_avals)
-  output_types = map(aval_to_ir_type, jaxpr.out_avals)
+  input_types = map(_aval_to_ir_types, in_avals)
+  output_types = map(_aval_to_ir_types, jaxpr.out_avals)
   num_tokens = len(effects)
 
   token_types = [token_type() for _ in effects]
@@ -1849,9 +1907,9 @@ def lower_jaxpr_to_fun(
     const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
-      const_arg_values = [ir_constant(c, aval=aval)
+      const_arg_values = [ir_constants(c, aval=aval)
                           for c, aval in const_args_and_avals]
-    const_lowering = {
+    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] = {
         (id(c), aval): c_arg
         for (c, aval), c_arg in zip(const_args_and_avals, const_arg_values)
     }
@@ -1884,7 +1942,7 @@ def lower_jaxpr_to_fun(
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
     unique_consts = {
-        id(c): ir_constant(c, aval=var.aval)
+        id(c): _ir_constant(c, aval=var.aval)
         for c, var in zip(jaxpr.consts, jaxpr.jaxpr.constvars)
     }
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
@@ -1953,9 +2011,7 @@ def wrap_with_memory_kind(
   if aval_out is None:
     result_type = x.type
   else:
-    typ = aval_to_ir_type(aval_out)
-    assert isinstance(typ, ir.Type), typ
-    result_type = typ
+    (result_type,) = aval_to_ir_types(aval_out)
   op = custom_call("annotate_device_placement", result_types=[result_type],
                    operands=[x], has_side_effect=True, api_version=1)
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get({
@@ -2016,7 +2072,7 @@ def jaxpr_subcomp(
 
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
-      return ir_constant(v.val, const_lowering=const_lowering, aval=v.aval)
+      return _ir_constant(v.val, const_lowering=const_lowering, aval=v.aval)
     else:
       assert isinstance(v, core.Var)
       return env[v]
@@ -2156,7 +2212,7 @@ def _cached_lowering(
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
   const_arg_values = tuple(
-      ir_constant(c, const_lowering=const_lowering, aval=aval)
+      ir_constants(c, const_lowering=const_lowering, aval=aval)
       for c, aval in zip(cache_entry.const_args, cache_entry.const_arg_avals)
   )
   args = flatten_ir_values(
@@ -2195,8 +2251,8 @@ def _emit_lowering_rule_as_fun(
 
   const_args, const_arg_avals = util.unzip2(core.eqn_params_const_args(params))
 
-  input_types = map(aval_to_ir_type, const_arg_avals + avals_in)  # type: ignore
-  output_types = map(aval_to_ir_type, avals_out)
+  input_types = map(_aval_to_ir_types, const_arg_avals + avals_in)  # type: ignore
+  output_types = map(_aval_to_ir_types, avals_out)
   token_types = [token_type() for _ in ordered_effects]
   input_types = [*dim_var_types, *token_types, *input_types]
   output_types = [*token_types, *output_types]
@@ -2437,7 +2493,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
       hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx[p]))])
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
-  output_types = map(aval_to_ir_type, rule_out_avals)
+  output_types = map(_aval_to_ir_types, rule_out_avals)
   case_op = hlo.CaseOp(flatten_ir_types(output_types),
                       index=rule_idx_op.result,
                       num_branches=len(kept_rules))
@@ -2482,7 +2538,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
 
 def ir_consts(consts, avals: Sequence[core.AbstractValue]) -> list[IrValues]:
   uniq_consts = {
-      id(c): ir_constant(c, aval=aval) for c, aval in zip(consts, avals)
+      id(c): _ir_constant(c, aval=aval) for c, aval in zip(consts, avals)
   }
   return [uniq_consts[id(c)] for c in consts]
 
@@ -2570,7 +2626,7 @@ def lower_called_computation(
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
-  output_types = map(aval_to_ir_type, out_avals)
+  output_types = map(_aval_to_ir_types, out_avals)
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
       ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
@@ -2588,7 +2644,7 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
-  const_arg_values = [ir_constant(c, const_lowering=const_lowering, aval=aval)
+  const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
   args = tuple(const_arg_values) + args
   if arg_names is not None:
@@ -2697,16 +2753,18 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+      (result_type,) = aval_to_ir_types(aval_out)
       out = hlo.dynamic_broadcast_in_dim(
-          aval_to_ir_type(aval_out), op,
+          result_type, op,
           shape,
           dense_int_array(broadcast_dimensions),
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
+      (result_type,) = aval_to_ir_types(aval_out)
       out = hlo.broadcast_in_dim(
-          aval_to_ir_type(aval_out), op,
+          result_type, op,
           dense_int_array(broadcast_dimensions))
     wrap_compute_type_in_place(ctx, _get_owner(out))
     return out
@@ -2745,11 +2803,13 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
   aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+    (result_type,) = aval_to_ir_types(aval_out)
     return hlo.dynamic_reshape(
-        aval_to_ir_type(aval_out), op, shape,
+        result_type, op, shape,
     )
   else:
-    return hlo.reshape(aval_to_ir_type(aval_out), op)
+    (result_type,) = aval_to_ir_types(aval_out)
+    return hlo.reshape(result_type, op)
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
@@ -2768,8 +2828,9 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
       limit_indices = eval_dynamic_shape_as_tensor(ctx, limit_indices)
       strides = eval_dynamic_shape_as_tensor(ctx, strides)
+      (result_type,) = aval_to_ir_types(aval_out)
       return hlo.real_dynamic_slice(
-        aval_to_ir_type(aval_out),
+        result_type,
         x, start_indices, limit_indices, strides)
     else:
       return hlo.slice(x,
@@ -2801,8 +2862,9 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
       hlo.subtract(
         eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
         slice_sizes))
+    (result_type,) = aval_to_ir_types(aval_out)
     return hlo.real_dynamic_slice(
-        aval_to_ir_type(aval_out), x,
+        result_type, x,
         clamped_start,
         hlo.add(clamped_start, slice_sizes),
         shape_tensor([1] * len(start_indices))
@@ -2838,20 +2900,23 @@ def pad(ctx: LoweringRuleContext, aval_out,
     padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
     padding_interior = eval_dynamic_shape_as_tensor(ctx, padding_interior)
+    (result_type,) = aval_to_ir_types(aval_out)
     return hlo.dynamic_pad(
-        aval_to_ir_type(aval_out),
+        result_type,
         x, padding_value, padding_low, padding_high, padding_interior)
 
 def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
   if not core.is_constant_shape(aval_out.shape):
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
+    (result_type,) = aval_to_ir_types(aval_out)
     return hlo.dynamic_iota(
-        aval_to_ir_type(aval_out),
+        result_type,
         shape,
         i64_attr(dimension),
     )
   else:
-    return hlo.iota(aval_to_ir_type(aval_out), i64_attr(dimension))
+    (result_type,) = aval_to_ir_types(aval_out)
+    return hlo.iota(result_type, i64_attr(dimension))
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -2919,7 +2984,8 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "UNSIGNED"
     x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE", compare_type)
     # continue, to adjust the shape if needed
-  return hlo.convert(aval_to_ir_type(aval_out), x)
+  (result_type,) = aval_to_ir_types(aval_out)
+  return hlo.convert(result_type, x)
 
 def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
@@ -2939,8 +3005,7 @@ def _wrap_with_spmd_op(name: str,
         [str(i) for i in sorted(unspecified_dims)]) + "]"
   else:
     backend_config = ""
-  result_type = aval_to_ir_type(aval_out)
-  assert isinstance(result_type, ir.Type), result_type
+  (result_type,) = aval_to_ir_types(aval_out)
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -3015,8 +3080,7 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                         aval_out: core.AbstractValue,
                         layout: Layout,
                         aval_in: core.AbstractValue):
-  result_type = aval_to_ir_type(aval_out)
-  assert isinstance(result_type, ir.Type), result_type
+  (result_type,) = aval_to_ir_types(aval_out)
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -3259,7 +3323,7 @@ def reduce_window(
     window_dimensions, window_strides, padding, base_dilation, window_dilation):
   """Builds a ReduceWindowOp, with support for dynamic shapes."""
 
-  scalar_types = flatten_ir_types([aval_to_ir_type(aval) for aval in init_values_avals])
+  scalar_types = flatten_ir_types(map(aval_to_ir_types, init_values_avals))
   if any(not core.is_constant_shape(s)
          for s in [window_dimensions, window_dilation, window_strides, base_dilation, *padding]):
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
@@ -3281,7 +3345,7 @@ def reduce_window(
 
     rw = custom_call(
       "stablehlo.dynamic_reduce_window",
-      result_types=flatten_ir_types(map(aval_to_ir_type, out_avals)),
+      result_types=flatten_ir_types(map(aval_to_ir_types, out_avals)),
       operands=[
         *operands, *init_values,
         eval_dynamic_shape_as_tensor(ctx, window_dimensions),
@@ -3293,7 +3357,7 @@ def reduce_window(
     )
   else:  # Static shapes
     rw = hlo.ReduceWindowOp(
-        list(map(aval_to_ir_type, out_avals)),
+        flatten_ir_types(map(aval_to_ir_types, out_avals)),
         operands, init_values,
         dense_int_array(window_dimensions),
         window_strides=dense_int_array(window_strides),

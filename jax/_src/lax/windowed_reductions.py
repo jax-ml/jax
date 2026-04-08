@@ -733,8 +733,9 @@ def _select_and_scatter_lower(
   scalar_aval = operand_aval.update(
       shape=(), sharding=operand_aval.sharding.update(spec=()))
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  result_type = mlir.aval_to_ir_type(aval_out)
   op = hlo.SelectAndScatterOp(
-      mlir.aval_to_ir_type(aval_out),
+      result_type,
       operand,
       source,
       init_value,

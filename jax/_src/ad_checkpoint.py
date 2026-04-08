@@ -865,7 +865,7 @@ def _remat_lowering(
     barrier_op = hlo.OptimizationBarrierOp(
         mlir.flatten_ir_values(barrier_args))
     barrier_results = mlir.unflatten_ir_values_like_types(
-        barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))
+        barrier_op.results, map(mlir._aval_to_ir_types, barrier_avals))
     args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
