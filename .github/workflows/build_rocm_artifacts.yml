@@ -120,6 +120,7 @@ jobs:
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
       JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
 
     name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-version }}"
@@ -139,19 +140,12 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Create dist dir
-        run: mkdir -p $JAXCI_OUTPUT_DIR/
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 120
-        run: |
-          bazel --bazelrc=build/rocm/rocm.bazelrc run \
-                --config=rocm_release_wheel \
-                --config=rocm_rbe \
-                --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
-                ${{ inputs.wheel-version-suffix && format('--action_env=WHEEL_VERSION_SUFFIX={0}', inputs.wheel-version-suffix) || '' }} \
-                $DEPLOY_TARGET -- $JAXCI_OUTPUT_DIR/
+        run: ./ci/build_rocm_artifacts.sh "$INPUTS_ARTIFACT"
         env:
-          DEPLOY_TARGET: ${{ inputs.artifact == 'jax-rocm-plugin' && '//jaxlib/tools:deploy_rocm_plugin_wheel' || '//jaxlib/tools:deploy_rocm_pjrt_wheel' }}
+          INPUTS_ARTIFACT: ${{ inputs.artifact }}
+          JAXCI_WHEEL_VERSION_SUFFIX: ${{ inputs.wheel-version-suffix }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # ratchet:aws-actions/configure-aws-credentials@v6
