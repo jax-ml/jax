@@ -29,6 +29,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     iteration.
   * {func}`jax.scipy.linalg.eigh_tridiagonal` now supports computing
     eigenvectors on CPU and GPU.
+  * Added the {meth}`jax.numpy.ndarray.byteswap` method.
 
 * Breaking changes:
   * The `.vma` property has been removed from `jax.core.ShapedArray`. Use

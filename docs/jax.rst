@@ -189,6 +189,7 @@ Array properties and methods
     Array.argsort
     Array.astype
     Array.at
+    Array.byteswap
     Array.choose
     Array.clip
     Array.compress
