@@ -1304,9 +1304,10 @@ class TMEMRef:
     # FA more generally, not just for 2x32b.
     # TODO(apaszke): Support a wider range of layouts when dealing with unpacking.
     # 16-bit types are special, because the store instruction can unpack them.
-    elif value.layout == TMEM_NATIVE_LAYOUT and has_default_layout and (
-        (bitwidth == 16 and packing == 1)
-        or (bitwidth == 32 and value.layout.vector_length == 2)
+    elif (
+        value.layout == TMEM_NATIVE_LAYOUT
+        and has_default_layout
+        and ((bitwidth == 16 and packing == 1) or bitwidth == 32)
     ):
       _store_32xcols_native(self.address, value.registers.reshape(-1), packing)
     elif (
