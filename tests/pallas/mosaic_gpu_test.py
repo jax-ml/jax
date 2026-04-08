@@ -1529,7 +1529,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(False, True)
   def test_fp8_relayout(self, from_narrow):
-    self.skip_if_wg_semantics()  # Failed to infer layouts.
     shape = (128, 32)
     dtype = jnp.float8_e4m3fn
     if from_narrow:

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import dataclasses
 import math
 from typing import Any, assert_never, final
@@ -275,30 +275,34 @@ class Equals:
     return f"Equals({self.lhs} == {self.rhs})"
 
 
-_always_supported = lambda bitwidth: True
-
-
-# Maps a tuple of layouts (source, target) to a function that takes in a
-# bitwidth and returns whether the source->target relayout is supported for
-# values of types with the given bitwidth.
-_SUPPORTED_TILED_RELAYOUTS: dict[
-    tuple[fa.FragmentedLayout, fa.FragmentedLayout],
-    Callable[[int], bool],
-]
-_SUPPORTED_TILED_RELAYOUTS = {
+def _is_supported_tiled_relayout(
+    src: fa.TiledLayout, dst: fa.TiledLayout, bitwidth: int
+) -> bool:
+  """Returns whether the source->target relayout is supported for values of types with the given bitwidth."""
+  match src, dst:
     # Transposed layouts.
-    (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT): _always_supported,
-    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT): _always_supported,
-    (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT): _always_supported,
-    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT): _always_supported,
+    case fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT:
+      return True
+    case fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT:
+      return True
+    case fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT:
+      return True
+    case fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT:
+      return True
     # "Conversion-optimized" layouts.
-    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT):
-     lambda bitwidth: fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X):
-     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT):
-     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth) and fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
-}
+    case fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT:
+      return fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
+    case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X:
+      return fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth)
+    case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT:
+      return fa.can_relayout_wgmma_4x_to_wgmma_2x(
+          bitwidth
+      ) and fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
+  if src == fa.tmem_native_layout(
+      src.vector_length
+  ) and dst == fa.tmem_native_layout(dst.vector_length):
+    return True
+  return False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -348,10 +352,9 @@ class Relayout:
             source_layout, target_layout  # pyrefly: ignore[bad-argument-type]  # pyrefly#2857
         )
       case fa.TiledLayout(), fa.TiledLayout():
-        is_supported = _SUPPORTED_TILED_RELAYOUTS.get(
-            (source_layout, target_layout), lambda *_: False
+        return _is_supported_tiled_relayout(
+            source_layout, target_layout, self.bitwidth
         )
-        return is_supported(self.bitwidth)
       case _:
         return False
 

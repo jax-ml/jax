@@ -58,7 +58,16 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
     self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
 
-  @parameterized.parameters(*cs._SUPPORTED_TILED_RELAYOUTS)
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_TRANSPOSED_LAYOUT),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_TRANSPOSED_LAYOUT),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, mgpu.TCGEN05_LAYOUT),
+      (mgpu.WGMMA_LAYOUT_UPCAST_2X, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT_UPCAST_2X),
+      (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT),
+      (mgpu.tmem_native_layout(2), mgpu.tmem_native_layout(1)),
+  )
   def test_reduce_constraint_system_removes_satisfed_relayouts(self, src, tgt):
     system = cs.ConstraintSystem(
         constraints=[cs.Relayout(RL(src), RL(tgt), 4)],
