@@ -15,11 +15,9 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/weak_key_weak_value_cache.h"
-#include "jaxlib/weak_value_interner.h"
 #include "jaxlib/weakref_lru_cache.h"
 
 NB_MODULE(weakref_lru_cache, m) {
   jax::RegisterWeakrefLruCache(m);
   jax::WeakKeyWeakValueCache::Register(m);
-  jax::WeakValueInterner::Register(m);
 }

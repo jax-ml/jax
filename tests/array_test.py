@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import dataclasses
 import math
 import unittest
 
@@ -1374,7 +1375,7 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_manual_axis_type_frozen(self):
     mt = core.ManualAxisType(varying={'x'})
-    with self.assertRaises(AttributeError):
+    with self.assertRaises(dataclasses.FrozenInstanceError):
       mt.varying = {'y'}
 
   def test_modify_spec_auto_unreduced(self):

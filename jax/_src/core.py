@@ -49,8 +49,7 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache, HashableWrapper,
                            weakref_lru_cache, partition_list, StrictABCMeta,
-                           foreach, weakref_cache_key_types, set_module,
-                           weak_value_interner, immutable)
+                           foreach, weakref_cache_key_types, set_module)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -2240,52 +2239,29 @@ def get_memory_space(memory_space):
   return memory_space
 
 
-@immutable
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ManualAxisType:
-  __slots__ = ('varying', 'unreduced', 'reduced', '__weakref__')
+  varying: frozenset = frozenset()
+  unreduced: frozenset = frozenset()
+  reduced: frozenset = frozenset()
 
-  varying: frozenset
-  unreduced: frozenset
-  reduced: frozenset
-
-  @staticmethod
-  @weak_value_interner
-  def _create(*, varying, unreduced, reduced):
-    if varying & unreduced:
+  def __post_init__(self):
+    if self.varying & self.unreduced:
       raise ValueError(
           "varying and unreduced cannot have common mesh axes. Got"
-          f" varying={varying} and unreduced={unreduced}")
-    if varying & reduced:
+          f" varying={self.varying} and unreduced={self.unreduced}")
+    if self.varying & self.reduced:
       raise ValueError(
           "varying and reduced cannot have common mesh axes. Got"
-          f" varying={varying} and reduced={reduced}")
-    assert not (varying & unreduced & reduced)
-
-    obj = object.__new__(ManualAxisType)
-    object.__setattr__(obj, 'varying', varying)
-    object.__setattr__(obj, 'unreduced', unreduced)
-    object.__setattr__(obj, 'reduced', reduced)
-    return obj
-
-  def __new__(cls, *, varying=frozenset(), unreduced=frozenset(), reduced=frozenset()):
-    return cls._create(
-        varying=frozenset(varying),
-        unreduced=frozenset(unreduced),
-        reduced=frozenset(reduced)
-    )
-
-  # No __eq__ or __hash__: interned classes use object identity.
+          f" varying={self.varying} and reduced={self.reduced}")
+    assert not (self.varying & self.unreduced & self.reduced)
+    object.__setattr__(self, 'varying', frozenset(self.varying))
+    object.__setattr__(self, 'unreduced', frozenset(self.unreduced))
+    object.__setattr__(self, 'reduced', frozenset(self.reduced))
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
             f"unreduced={self.unreduced}, reduced={self.reduced})")
-
-  def __getnewargs_ex__(self):
-    return (), {
-        'varying': self.varying,
-        'unreduced': self.unreduced,
-        'reduced': self.reduced
-    }
 
   def update(self, **kwargs):
     if 'varying' not in kwargs:
