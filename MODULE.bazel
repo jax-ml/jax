@@ -4,7 +4,7 @@ module(name = "jax")
 # Bazel module dependencies
 ##############################################################
 
-bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20260107.1", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
@@ -112,6 +112,7 @@ single_version_override(
 # python version.
 # Keep in sync with jax/version.py (_version) and python.defaults below.
 DEFAULT_PYTHON_VERSION = "3.11"
+
 JAXLIB_VERSION = "0.9.2"
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
