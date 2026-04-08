@@ -71,7 +71,8 @@ class Array:
         " rather than dtype=arr use dtype=arr.dtype. In the future"
         " this will result in an error."
       ),
-      stacklevel=2)
+      stacklevel=2,
+      error_class=TypeError)
     return self.dtype
 
   @property

@@ -112,10 +112,12 @@ def is_accelerated(deprecation_id: str) -> bool:
   return _registered_deprecations[deprecation_id].accelerated
 
 
-def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
+def warn(deprecation_id: str, message: str, stacklevel: int, *,
+         error_class: type[Exception] = ValueError) -> None:
   """Warns about a deprecation, or errors if the deprecation is accelerated."""
   if is_accelerated(deprecation_id):
-    raise ValueError(message)
+    assert issubclass(error_class, Exception)
+    raise error_class(message)
   else:
     warnings.warn(message, category=DeprecationWarning,
                   stacklevel=stacklevel + 1)
