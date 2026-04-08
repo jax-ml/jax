@@ -1128,7 +1128,7 @@ def clz(x: ArrayLike) -> Array:
 
   Returns:
     An array of the same shape and dtype as ``x``, containing the number of
-    set bits in the input.
+    leading zero bits in the input.
 
   See also:
     - :func:`jax.lax.population_count`: Count the number of set bits in each element.
