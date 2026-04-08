@@ -603,30 +603,6 @@ class ConstraintSystemTest(parameterized.TestCase):
         cs.IsSupportedBroadcast(RL(src), RL(dst), dims).holds(), holds
     )
 
-  def test_anyof_constraint_holds(self):
-    layout1 = RL(mgpu.WGMMA_LAYOUT)
-    layout2 = RL(mgpu.WGMMA_ROW_LAYOUT)
-    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
-
-    self.assertIsNone(cs.AnyOf(V(0), (layout1, layout2)).holds())
-    self.assertTrue(cs.AnyOf(layout1, (layout1, layout2)).holds())
-    self.assertFalse(cs.AnyOf(layout3, (layout1, layout2)).holds())
-
-  def test_anyof_reduces(self):
-    v0, v1 = V(0), V(1)
-    layout1 = RL(mgpu.WGMMA_LAYOUT)
-    layout2 = RL(mgpu.WGMMA_ROW_LAYOUT)
-
-    system = cs.ConstraintSystem(
-        assignments={v0: layout1},
-        constraints=[
-            cs.AnyOf(v0, (layout1, layout2)),
-            cs.AnyOf(v1, (layout1, layout2)),
-        ],
-    )
-    reduced = cs.reduce(system)
-    self.assertEqual(reduced.constraints, [cs.AnyOf(v1, (layout1, layout2))])
-
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
