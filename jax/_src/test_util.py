@@ -1291,7 +1291,7 @@ class JaxTestCase(parameterized.TestCase):
     return self._rng
 
   def assertDeprecationWarnsOrRaises(self, deprecation_id: str, message: str, *,
-                                     error_class=ValueError):
+                                     error_class: type[Exception] = ValueError):
     """Assert warning or error, depending on deprecation state.
 
     For use with functions that call :func:`jax._src.deprecations.warn`.
