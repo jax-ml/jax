@@ -988,6 +988,10 @@ def _barrier_arrive_lowering(
     scope = mgpu_utils.ThreadSubset.WARPGROUP
 
   if isinstance(barrier, mgpu.CollectiveBarrierRef):
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      raise NotImplementedError(
+          "Arriving on a collective barrier is not supported in a warp context"
+      )
     barrier.arrive(orders_tensor_core)
   elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     barrier.arrive(orders_tensor_core)
