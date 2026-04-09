@@ -2422,10 +2422,15 @@ class ShapedArray(AbstractValue):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def update_manual_axis_type(self, mat):
-    return self.update(manual_axis_type=mat)
+    cls = type(self)
+    mat = get_mat(mat, self.sharding.mesh)
+    if mat is self.manual_axis_type: return self
+    return cls._create(cls, self.shape, self.dtype, self.weak_type, self.sharding, mat, self.memory_space)
 
   def update_weak_type(self, weak_type):
-    return self.update(weak_type=weak_type)
+    cls = type(self)
+    if weak_type == self.weak_type: return self
+    return cls._create(cls, self.shape, self.dtype, weak_type, self.sharding, self.manual_axis_type, self.memory_space)
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
