@@ -109,7 +109,6 @@ config_setting(
 
 exports_files([
     "LICENSE",
-    "version.py",
     "py.typed",
     "oss/pyproject.toml",
 ])
@@ -252,4 +251,5 @@ pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
     type_checking = "pyrefly",
+    deps = ["//jax/_src:version"],
 )
