@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 433  # add weak_value_cache
+_version = 434  # Buffer protocol no longer requires SingleDeviceSharding.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

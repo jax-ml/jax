@@ -1675,7 +1675,8 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
           "Python buffer protocol is only defined for buffers with a single "
           "shard.");
     }
-    if (!py_array.sharding().type().is(SingleDeviceSharding::type())) {
+
+    if (!array->sharding().IsFullyReplicated()) {
       return xla::InvalidArgument(
           "Python buffer protocol is only defined for single-device sharded "
           "buffers.");
