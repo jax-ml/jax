@@ -94,6 +94,7 @@ py_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":error_handling",
@@ -132,6 +133,7 @@ pytype_strict_library(
     srcs = [
         "sc_lowering.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
@@ -161,6 +163,7 @@ pytype_strict_library(
     srcs = [
         "sc_core.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
@@ -180,6 +183,7 @@ pytype_strict_library(
     srcs = [
         "sc_primitives.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
@@ -239,6 +243,7 @@ py_library(
 pytype_strict_library(
     name = "tpu_info",
     srcs = ["tpu_info.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:api",

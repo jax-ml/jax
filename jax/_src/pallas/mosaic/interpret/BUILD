@@ -58,12 +58,14 @@ py_library(
 pytype_strict_library(
     name = "vector_clock",
     srcs = ["vector_clock.py"],
+    type_checking = "pyrefly",
     deps = py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "shared_memory",
     srcs = ["shared_memory.py"],
+    type_checking = "pyrefly",
     deps = [
         ":race_detection_state",
         ":utils",
@@ -81,6 +83,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "race_detection_state",
     srcs = ["race_detection_state.py"],
+    type_checking = "pyrefly",
     deps = [
         ":vector_clock",
         "//jax/_src:source_info_util",
@@ -90,6 +93,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "thread_map",
     srcs = ["thread_map.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:callback",
@@ -99,6 +103,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "utils",
     srcs = ["utils.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:core",

@@ -33,12 +33,14 @@ pytype_strict_library(
         "__init__.py",
         "core.py",
     ],
+    type_checking = "pyrefly",
     deps = ["//jax/_src/pallas"],
 )
 
 pytype_strict_library(
     name = "primitives",
     srcs = ["primitives.py"],
+    type_checking = "pyrefly",
     deps = [
         ":lowering",
         "//jax",
@@ -60,6 +62,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:ad_util",
@@ -84,6 +87,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",

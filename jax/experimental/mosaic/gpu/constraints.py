@@ -353,6 +353,7 @@ class Relayout:
         )
       case fa.TiledLayout(), fa.TiledLayout():
         return _is_supported_tiled_relayout(
+            # pyrefly: ignore [bad-argument-type]
             source_layout, target_layout, self.bitwidth
         )
       case _:

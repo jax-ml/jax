@@ -141,12 +141,14 @@ def pytype_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     py_library(name = name, data = data, **new_kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     py_library(name = name, data = data, **new_kwargs)
 
 py_strict_library = py_library
@@ -156,6 +158,7 @@ def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_src
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     lib_rule(name = name, data = data, **new_kwargs)
 
 def nanobind_extension(
@@ -681,6 +684,7 @@ def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
     test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
+    kwargs.pop("type_checking", None)
     py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):

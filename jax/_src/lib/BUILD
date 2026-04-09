@@ -32,6 +32,7 @@ py_library_providing_imports_info(
         "triton.py",
     ],
     lib_rule = pytype_strict_library,
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
         "//jax:version",
