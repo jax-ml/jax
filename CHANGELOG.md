@@ -39,6 +39,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     will now always use the new implementation that wraps
     `jax.jit(jax.shard_map)`. Please see
     https://docs.jax.dev/en/latest/migrate_pmap.html for more information.
+  * `jax.device_put_sharded` and `jax.device_put_replicated` have been removed
+    from the public API and now raise an `AttributeError` when accessed.
+    Please see
+    https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements for
+    drop-in replacements.
   * The C++ pmap infrastructure has been removed. The following public APIs
     are no longer available:
     * `jax.sharding.PmapSharding`

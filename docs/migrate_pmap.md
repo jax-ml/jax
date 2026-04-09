@@ -254,6 +254,66 @@ before calling `pmap`. If you see the resharding warning and memory is tight,
 consider migrating to `jax.shard_map` where you have full control over
 input/output sharding.
 
+(drop-in-replacements)=
+
+## Drop-in replacements for `device_put_sharded` and `device_put_replicated`
+
+If you need to reproduce the behavior of `jax.device_put_sharded` and
+`jax.device_put_replicated` without using the deprecated APIs, you can use the
+following implementations based on `jax.device_put` and `NamedSharding`.
+
+Note that these functions produce arrays that are sharded along a new leading
+axis. If you want true replication, you should avoid adding the leading axis
+and use a fully replicated sharding instead.
+
+```python
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+
+def device_put_sharded(shards, devices):
+  """Drop-in replacement for jax.device_put_sharded supporting pytrees."""
+  mesh = Mesh(np.array(devices), ('x',))
+  sharding = NamedSharding(mesh, P('x'))
+  return jax.tree.map(
+      lambda *xs: jax.device_put(jnp.stack(xs), sharding), *shards
+  )
+
+def device_put_replicated(x, devices):
+  """Drop-in replacement for jax.device_put_replicated supporting pytrees."""
+  mesh = Mesh(np.array(devices), ('x',))
+  sharding = NamedSharding(mesh, P('x'))
+  return jax.tree.map(
+      lambda y: jax.device_put(jnp.stack([y] * len(devices)), sharding), x
+  )
+```
+
+> [!NOTE]
+> These replacements are stable, but are intended for temporary use while users
+> upgrade their code (see warnings below).
+
+> [!WARNING]
+> **Performance Tip (`jnp` vs `np`)**:
+> The examples above use `jnp.stack` which is safe when the inputs are already
+> JAX arrays (avoiding copying data back to the host).
+> However, if your inputs are purely NumPy arrays, using `np.stack` instead of
+> `jnp.stack` may be more efficient. `jnp.stack` will eagerly move the data to
+> the default JAX device before `device_put` reshards it, whereas `np.stack`
+> will keep it on the host until `device_put` transfers it directly to the
+> target devices.
+> **Efficiency Penalties**:
+> These drop-in replacements use public APIs and may incur efficiency penalties
+> compared to the deprecated implementations, particularly for large data or
+> many devices:
+> - **Memory Overhead**: Both functions create a full array of the final stacked
+>   shape in memory before sharding. For `device_put_replicated`, this means
+>   duplicating the data `len(devices)` times in memory, whereas the original
+>   implementation avoided this duplication.
+> - **Data Transfer**: Depending on whether you use `jnp` or `np` for stacking,
+>   you might trigger unnecessary host-to-device transfers or eager execution on
+>   a single device before the data is properly distributed.
+
 ## Migrating to `jax.shard_map`
 
 For the best support, we recommend migrating from `jax.pmap` to
@@ -623,7 +683,6 @@ on only a subset of the data, producing incorrect results.
       scores = jnp.asarray(scores)
     return jnp.reshape(scores, [-1])  # Now reshapes correctly
   ```
-
 
 To help with migration, we recommend reviewing the following documentation based
 on your needs:

@@ -18,6 +18,7 @@ import unittest
 
 import jax
 from jax import lax
+from jax._src import api
 from jax._src import array
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
@@ -42,7 +43,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     devices = jax.local_devices()
     x = [np.arange(i, i + elems_per_host) + jax.process_index() * elems_per_host
          for i in range(len(devices))]
-    y = jax.device_put_sharded(x, devices)
+    y = api.device_put_sharded(x, devices)
     f = jax.pmap(lambda x: lax.psum(x, "i"), axis_name="i")
     out = f(y)
 

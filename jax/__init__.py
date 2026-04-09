@@ -200,15 +200,24 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added for v0.8.1
-  "device_put_replicated": (
-    "jax.device_put_replicated is deprecated; use jax.device_put instead.",
-    _deprecated_device_put_replicated
-  ),
-  "device_put_sharded": (
-    "jax.device_put_sharded is deprecated; use jax.device_put instead.",
-    _deprecated_device_put_sharded
-  ),
+    # Removed for v0.10.0
+    "device_put_replicated": (
+        (
+            "jax.device_put_replicated is deprecated; use jax.device_put"
+            " instead. See"
+            " https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
+            " for a drop-in replacement."
+        ),
+        None,
+    ),
+    "device_put_sharded": (
+        (
+            "jax.device_put_sharded is deprecated; use jax.device_put instead."
+            " See https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
+            " for a drop-in replacement."
+        ),
+        None,
+    ),
 }
 
 import typing as _typing

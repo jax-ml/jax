@@ -140,6 +140,22 @@ class PythonPmapTest(jtu.JaxTestCase):
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
     self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_sharded_deprecated(self):
+    # TODO(dsuo): update when we accelerate device_put_sharded/device_put_replicated internally
+    try:
+      _ = jax.device_put_sharded
+      _ = jax.device_put_replicated
+      raise unittest.SkipTest("Skipping because functions are available.")
+    except AttributeError:
+      pass
+
+    with self.assertRaisesRegex(AttributeError, "jax.device_put_sharded is deprecated"):
+      _ = jax.device_put_sharded
+
+    with self.assertRaisesRegex(AttributeError, "jax.device_put_replicated is deprecated"):
+      _ = jax.device_put_replicated
+
   @jtu.thread_unsafe_test()
   def testDefaultDeviceOrderingAfterClearBackends(self):
     # Test that clear_backends() properly drops cached PyDevice objects in pmap
@@ -1383,8 +1399,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     sharded_key = jax.random.split(jax.random.key(0), len(devices))
     replicated_key = jax.random.key(1)
 
-    sharded_key = jax.device_put_sharded(jnp.unstack(sharded_key), devices)
-    replicated_key = jax.device_put_replicated(replicated_key, devices)
+    sharded_key = src_api.device_put_sharded(jnp.unstack(sharded_key), devices)
+    replicated_key = src_api.device_put_replicated(replicated_key, devices)
 
     fn(sharded_key)
     fn(replicated_key)
@@ -2336,7 +2352,7 @@ class ArrayTest(jtu.JaxTestCase):
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [np.arange(i, i + 4) for i in range(n_devices)]
-    y = jax.device_put_sharded(x, devices)
+    y = src_api.device_put_sharded(x, devices)
     self.assertIsInstance(y, array.ArrayImpl)
     self.assertIsInstance(y.sharding, jax.NamedSharding)
     for s in y.addressable_shards:
@@ -2352,7 +2368,7 @@ class ArrayTest(jtu.JaxTestCase):
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
-    y1, y2 = jax.device_put_sharded(x, devices)
+    y1, y2 = src_api.device_put_sharded(x, devices)
 
     self.assertIsInstance(y1, array.ArrayImpl)
     self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
@@ -2368,7 +2384,7 @@ class ArrayTest(jtu.JaxTestCase):
   def test_device_put_replicated(self):
     devices = jax.local_devices()
     x = np.arange(1, 5)
-    y = jax.device_put_replicated(x, devices)
+    y = src_api.device_put_replicated(x, devices)
 
     self.assertIsInstance(y, array.ArrayImpl)
     buffers = getattr(y, '_arrays')
@@ -2380,7 +2396,7 @@ class ArrayTest(jtu.JaxTestCase):
   def test_device_put_replicated_pytree(self):
     devices = jax.local_devices()
     xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
-    ys = jax.device_put_replicated(xs, devices)
+    ys = src_api.device_put_replicated(xs, devices)
     self.assertIsInstance(ys, dict)
     y1, y2 = ys['a'], ys['b']
 
@@ -2398,12 +2414,12 @@ class ArrayTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_repr(self):
-    x = jax.device_put_replicated(1, jax.devices())
+    x = src_api.device_put_replicated(1, jax.devices())
     self.assertStartsWith(repr(x), 'Array')
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_delete_is_idempotent(self):
-    x = jax.device_put_replicated(1, jax.devices())
+    x = src_api.device_put_replicated(1, jax.devices())
     x.delete()
     x.delete()
 
@@ -2502,7 +2518,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     def amap(f, xs):
       ys = [f(jax.device_put(x, list(x.devices())[0])) for x in xs]
-      return jax.device_put_sharded(ys, jax.local_devices()[:2])
+      return src_api.device_put_sharded(ys, jax.local_devices()[:2])
 
     # leading axis is batch dim (i.e. mapped/parallel dim), of size 2
     x = jnp.array([[1., 0., 0.],
@@ -2580,7 +2596,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     arr_inp = [jax.device_put(i, d) for i, d in zip(inp, jax.devices())]
 
     with jax.transfer_guard("disallow_explicit"):
-      jax.device_put_sharded(arr_inp, jax.devices())
+      src_api.device_put_sharded(arr_inp, jax.devices())
 
   def test_jnp_stack(self):
     @jax.pmap
