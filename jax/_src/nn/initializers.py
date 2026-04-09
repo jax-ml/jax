@@ -630,6 +630,11 @@ def orthogonal(scale: RealNumeric = 1.0,
     dtype = dtypes.default_float_dtype() if dtype is None else dtype
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
+
+    if any(dim == 0 for dim in shape):
+      # empty shape
+      return jnp.zeros(shape, dtype=dtype, out_sharding=out_sharding)
+
     n_rows, n_cols = math.prod(shape) // shape[column_axis], shape[column_axis]
     Q = random.orthogonal(key, n_rows, (), dtype, n_cols)
     Q = jnp.reshape(Q, tuple(np.delete(shape, column_axis)) + (shape[column_axis],))
