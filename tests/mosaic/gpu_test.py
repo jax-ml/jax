@@ -4165,6 +4165,20 @@ class FragmentedArrayTest(TestCase):
       )(x, y)
       np.testing.assert_array_equal(result, np_op(x, scalar_rhs or y))
 
+  @parameterized.product(
+      vec_size=(4, 3, 1),
+      dtype=(jnp.float16, jnp.bfloat16),
+  )
+  def test_abs_ptx(self, vec_size, dtype):
+      def kernel(ctx, src, dst, _):
+        src = fa.FragmentedArray.load_strided(src, vec_size=vec_size)
+        src.abs().store_untiled(dst)
+      x = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
+      f = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, ()
+      )
+      np.testing.assert_array_equal(f(x), np.abs(x))
+
   def test_minimum_np_compatibility(self):
     one = np.ones((128, 128)).astype(np.float32)
     negz = one * -0.

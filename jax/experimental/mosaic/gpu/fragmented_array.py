@@ -1599,10 +1599,21 @@ class FragmentedArray:
 
   def abs(self) -> FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
-      return self._pointwise(mlir_math.absf)
-    if isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(mlir_math.absi)
-    raise NotImplementedError
+      absf = mlir_math.absf
+      if isinstance(self.mlir_dtype, ir.F32Type):
+        absf = self._lift_fast_instr("abs.f32")
+      elif isinstance(self.mlir_dtype, ir.F16Type):
+        absf = self._lift_fast_packed_instr("abs.f16x2", "abs.f16")
+      elif isinstance(self.mlir_dtype, ir.BF16Type):
+        absf = self._lift_fast_packed_instr("abs.bf16x2", "abs.bf16")
+      return self._pointwise(absf)
+    elif isinstance(self.mlir_dtype, ir.IntegerType):
+      if self.is_signed:
+        return self._pointwise(mlir_math.absi)
+      else:
+        return self
+    else:
+      raise NotImplementedError
 
   def round(self) -> FragmentedArray:
     """Same as `lax.round(..., AWAY_FROM_ZERO)`."""
