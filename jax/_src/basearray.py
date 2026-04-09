@@ -139,8 +139,8 @@ class Array:
     """Whether the array is committed or not.
 
     An array is committed when it is explicitly placed on device(s) via JAX
-    APIs. For example, `jax.device_put(np.arange(8), jax.devices()[0])` is
-    committed to device 0. While `jax.device_put(np.arange(8))` is uncommitted
+    APIs. For example, ``jax.device_put(np.arange(8), jax.devices()[0])`` is
+    committed to device 0. While ``jax.device_put(np.arange(8))`` is uncommitted
     and will be placed on the default device.
 
     Computations involving some committed inputs will happen on the committed
@@ -148,16 +148,13 @@ class Array:
     Invoking an operation on arguments that are committed to different device(s)
     will raise an error.
 
-    For example:
-
-    ```
-    a = jax.device_put(np.arange(8), jax.devices()[0])
-    b = jax.device_put(np.arange(8), jax.devices()[1])
-    a + b  # Raises an error
-    ```
-
-    See https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
-    for more information.
+    Examples:
+      >>> a = jax.device_put(np.arange(8), jax.devices()[0])
+      >>> b = jax.device_put(np.arange(8), jax.devices()[1])
+      >>> a + b  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+        ...
+      ValueError: Received incompatible devices for jitted computation.
     """
     raise NotImplementedError
 
