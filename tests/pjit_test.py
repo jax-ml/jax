@@ -256,14 +256,12 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   def testMeshHashRace(self):
     mesh = jtu.create_mesh((2, 1), ('a', 'testMeshHashRace'))
-    self.assertFalse(hasattr(mesh, '_hash'))
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
       fs = []
       for _ in range(5):
         fs.append(pool.submit(lambda: hash(mesh)))
       for f in concurrent.futures.as_completed(fs):
         f.result()
-    self.assertTrue(hasattr(mesh, '_hash'))
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):

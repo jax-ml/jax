@@ -29,7 +29,8 @@ import numpy as np
 
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
-from jax._src.util import safe_zip, cache, tuple_delete, weak_value_interner, immutable
+from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
+                           immutable)
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -210,15 +211,7 @@ class BaseMesh:
     return dict(safe_zip(self.axis_names, self.axis_types))
 
 
-def _unpicke_mesh(devices, axis_names, axis_types):
-  return Mesh(devices, axis_names, axis_types)
-
-_mesh_object_dict = {}
-
-def _clear_mesh_cache():
-  global _mesh_object_dict
-  _mesh_object_dict = {}
-
+@immutable
 class Mesh(BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
@@ -254,7 +247,19 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
-  _size: int
+  size: int
+
+  @staticmethod
+  @weak_value_interner
+  def _create(flat_devices_tuple, device_shape, axis_names, axis_types, size):
+    devices = np.array(flat_devices_tuple).reshape(device_shape)
+    devices.flags.writeable = False
+    obj = object.__new__(Mesh)
+    object.__setattr__(obj, 'devices', devices)
+    object.__setattr__(obj, 'axis_names', axis_names)
+    object.__setattr__(obj, 'axis_types', axis_types)
+    object.__setattr__(obj, 'size', size)
+    return obj
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
               axis_names: str | Sequence[MeshAxisName],
@@ -266,7 +271,6 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     axis_names = tuple(axis_names)
     if any(i is None for i in axis_names):
       raise ValueError(f"Mesh axis names cannot be None. Got: {axis_names}")
-
     if devices.ndim != len(axis_names):
       raise ValueError(
           "Mesh requires the ndim of its first argument (`devices`) to equal "
@@ -274,59 +278,21 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
+    devices_flat = tuple(devices.flat)
     axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh')
+    empty = not axis_names and devices_flat[0] is None
+    size = 0 if empty else math.prod(devices.shape)
+    return cls._create(devices_flat, devices.shape, axis_names,
+                       axis_types, size)
 
-    key = (axis_names, devices.shape, tuple(devices.flat), axis_types)
-    val = _mesh_object_dict.get(key, None)
-    if val is not None:
-      return val
-
-    self = super().__new__(cls)
-    self.devices = devices.copy()
-    self.devices.flags.writeable = False
-    self.axis_names = axis_names
-    self.axis_types = axis_types
-    empty = not axis_names and list(devices.flat)[0] is None
-    self._size = math.prod(self.shape.values()) if not empty else 0
-    _mesh_object_dict[key] = self
-    return self
+  # No __eq__ or __hash__: interned classes use object identity.
 
   @property
   def is_scalar(self):
-    return self._size == 1 and not self.axis_names
+    return self.size == 1 and not self.axis_names
 
-  def __reduce__(self):
-    return (_unpicke_mesh, (self.devices, self.axis_names, self.axis_types))
-
-  def __eq__(self, other):
-    # This is a performance optimization. Comparing thousands of devices
-    # can be expensive.
-    if self is other:
-      return True
-    if not isinstance(other, Mesh):
-      return False
-    return (self.axis_names == other.axis_names and
-            self.devices.shape == other.devices.shape and
-            self.axis_types == other.axis_types and
-            self._internal_device_list == other._internal_device_list)
-
-  def __hash__(self):
-    if not hasattr(self, '_hash'):
-      self._hash = hash(
-          (self.axis_names, self._internal_device_list, self.devices.shape,
-           self.axis_types))
-    return self._hash
-
-  def __setattr__(self, name, value):
-    if hasattr(self, name):
-      if getattr(self, name) == value:
-        # This can to happen if two threads race, for example if two threads
-        # are trying to hash the same Mesh instance.
-        return
-      raise RuntimeError(
-          f"Cannot reassign attributes ({name}) of immutable mesh objects"
-      )
-    super().__setattr__(name, value)
+  def __getnewargs_ex__(self):
+    return (self.devices, self.axis_names, self.axis_types), {}
 
   def __enter__(self):
     if jax_config.disallow_mesh_context_manager.value:
@@ -371,10 +337,6 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   @property
   def axis_sizes(self) -> tuple[int, ...]:
     return self.devices.shape
-
-  @property
-  def size(self):
-    return self._size
 
   @property
   def empty(self):
@@ -521,13 +483,11 @@ class AbstractMesh(BaseMesh):
     axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh')
     return AbstractMesh._create(axis_sizes, axis_names, axis_types, abstract_device)
 
-  def __getnewargs_ex__(self):
-    return (
-        (self.axis_sizes, self.axis_names, self.axis_types),
-        {'abstract_device': self.abstract_device}
-    )
-
   # No __eq__ or __hash__: interned classes use object identity.
+
+  def __getnewargs_ex__(self):
+    return ((self.axis_sizes, self.axis_names, self.axis_types),
+            {'abstract_device': self.abstract_device})
 
   def __repr__(self):
     mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)

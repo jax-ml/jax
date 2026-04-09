@@ -2250,7 +2250,15 @@ class ManualAxisType:
 
   @staticmethod
   @weak_value_interner
-  def _create(*, varying, unreduced, reduced):
+  def _create(varying, unreduced, reduced):
+    obj = object.__new__(ManualAxisType)
+    object.__setattr__(obj, 'varying', varying)
+    object.__setattr__(obj, 'unreduced', unreduced)
+    object.__setattr__(obj, 'reduced', reduced)
+    return obj
+
+  def __new__(cls, *, varying=frozenset(), unreduced=frozenset(),
+              reduced=frozenset()):
     if varying & unreduced:
       raise ValueError(
           "varying and unreduced cannot have common mesh axes. Got"
@@ -2260,19 +2268,8 @@ class ManualAxisType:
           "varying and reduced cannot have common mesh axes. Got"
           f" varying={varying} and reduced={reduced}")
     assert not (varying & unreduced & reduced)
-
-    obj = object.__new__(ManualAxisType)
-    object.__setattr__(obj, 'varying', varying)
-    object.__setattr__(obj, 'unreduced', unreduced)
-    object.__setattr__(obj, 'reduced', reduced)
-    return obj
-
-  def __new__(cls, *, varying=frozenset(), unreduced=frozenset(), reduced=frozenset()):
-    return cls._create(
-        varying=frozenset(varying),
-        unreduced=frozenset(unreduced),
-        reduced=frozenset(reduced)
-    )
+    return cls._create(frozenset(varying), frozenset(unreduced),
+                       frozenset(reduced))
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -2281,11 +2278,8 @@ class ManualAxisType:
             f"unreduced={self.unreduced}, reduced={self.reduced})")
 
   def __getnewargs_ex__(self):
-    return (), {
-        'varying': self.varying,
-        'unreduced': self.unreduced,
-        'reduced': self.reduced
-    }
+    return (), {'varying': self.varying, 'unreduced': self.unreduced,
+                'reduced': self.reduced}
 
   def update(self, **kwargs):
     if 'varying' not in kwargs:
