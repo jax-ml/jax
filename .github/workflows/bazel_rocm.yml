@@ -87,7 +87,6 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
-permissions: {}
 jobs:
   run-tests:
     defaults:
@@ -109,6 +108,7 @@ jobs:
 
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
@@ -120,12 +120,24 @@ jobs:
       - name: ROCm Info
         run: |
           rocminfo
-      - name: Download jaxlib wheel from PyPI
+      - name: Configure AWS Credentials
+        if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head'
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # ratchet:aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      # Get the JAX/Jaxlib/Plugin/PJRT wheels from their respective
+      # sources when not building.
+      - name: Download JAX/Jaxlib/Plugin/PJRT wheels
         if: inputs.build_jaxlib == 'false'
-        run: |
-          mkdir -p $(pwd)/dist
-          python${{ inputs.python }} -m pip download jaxlib --dest $(pwd)/dist/
-          echo "Downloaded wheels:" && ls -lh $(pwd)/dist/
+        uses: ./.github/actions/download-jax-rocm-wheels
+        with:
+          python: ${{ inputs.python }}
+          rocm-version: ${{ inputs.rocm-version }}
+          download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+          jaxlib-version: ${{ inputs.jaxlib-version }}
+          gcs_download_uri: ${{ inputs.gcs_download_uri }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
