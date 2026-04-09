@@ -2813,6 +2813,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
     if perturb_singular and jaxlib_version < (0, 10):
       self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
+    if jtu.is_device_rocm() and not perturb_singular:
+      self.skipTest(
+          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
     dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
     d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
     du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
@@ -2828,6 +2832,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
     if perturb_singular and jaxlib_version < (0, 10):
       self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
+    if jtu.is_device_rocm() and not perturb_singular:
+      self.skipTest(
+          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
     du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
