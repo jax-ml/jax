@@ -4007,6 +4007,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape=array_shapes,
     dtype=all_dtypes,
   )
+  def testByteSwap(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_op = lambda x: np.asarray(x).byteswap()
+    jnp_op = lambda x: jnp.asarray(x).byteswap()
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(
+    shape=array_shapes,
+    dtype=all_dtypes,
+  )
   def testNbytes(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     np_op = lambda x: np.asarray(x).nbytes
