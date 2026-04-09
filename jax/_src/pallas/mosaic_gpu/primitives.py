@@ -2480,7 +2480,11 @@ def _set_max_registers_abstract_eval(n, *, action):
 @lowering.register_lowering_rule(
     set_max_registers_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    set_max_registers_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(
     set_max_registers_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(
+    set_max_registers_p, *gpu_core.WGxWARP_SEMANTICS)
 def _set_max_registers_lowering(
     ctx: lowering.LoweringRuleContext, n, *, action
 ):
