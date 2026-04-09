@@ -327,7 +327,10 @@ def _run_scoped_resource_estimator(
       [num_barriers] = aval.shape
       rs += Resources(
           barrier_counts=collections.Counter(
-              [mgpu.ClusterBarrier(collective_dims, aval.dtype.num_arrivals, num_barriers)]
+              [mgpu.ClusterBarrier(
+                  collective_dims, aval.dtype.num_arrivals, num_barriers,
+                  leader_tracked=aval.dtype.leader_tracked,
+              )]
           )
       )
       continue
@@ -3306,7 +3309,10 @@ def _run_scoped_lowering_rule(
         [num_barriers] = aval.shape
         barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(
-                mgpu.ClusterBarrier(collective_dims, aval.dtype.num_arrivals, num_barriers)
+                mgpu.ClusterBarrier(
+                    collective_dims, aval.dtype.num_arrivals, num_barriers,
+                    leader_tracked=aval.dtype.leader_tracked,
+                )
             )
         )
         input_refs.append(barrier_ref)

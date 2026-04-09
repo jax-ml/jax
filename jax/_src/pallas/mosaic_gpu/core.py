@@ -1134,6 +1134,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_arrivals: int
   orders_tensor_core: bool
+  leader_tracked: bool = False
 
   def __str__(self):
     return self.name
@@ -1181,6 +1182,7 @@ class ClusterBarrier:
   num_barriers: int = 1
   num_arrivals: int = 1
   orders_tensor_core: bool = False
+  leader_tracked: bool = False
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     raise ValueError("Cluster barriers are not arrays")
@@ -1189,7 +1191,8 @@ class ClusterBarrier:
     aval = jax_core.ShapedArray(
         [self.num_barriers],
         ClusterBarrierType(
-            self.collective_axes, self.num_arrivals, self.orders_tensor_core
+            self.collective_axes, self.num_arrivals,
+            self.orders_tensor_core, self.leader_tracked,
         ),
     )
     return state.AbstractRef(aval, SMEM)

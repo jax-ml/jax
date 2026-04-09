@@ -13,6 +13,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### TPU
+
 * Deprecations
 
   * `pltpu.semaphore`, `pltpu.DeviceIdType`, `pltpu.semaphore_signal`,
@@ -25,6 +27,14 @@ Remember to align the itemized text with the first line of an item within a list
   * Removed the previously deprecated `pltpu.ANY` and `pltpu.MemorySpace.ANY`.
     Use `pl.ANY` instead.
   * Removed the deprecated `pltpu.delay`, which is now available as `pl.delay`.
+
+### Mosaic GPU
+
+* New features
+
+  * Added the `leader_tracked` argument to `ClusterBarrier`, which allows
+    tracking barrier completions solely from the leader block along a specific
+    axis in a cluster.
 
 ## Released with JAX 0.9.2
 

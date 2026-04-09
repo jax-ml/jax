@@ -3017,6 +3017,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )()
     np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
 
+  def test_leader_tracked_cluster_barrier(self):
+    def kernel(dst_ref, collective_barrier):
+      plgpu.barrier_arrive(collective_barrier)
+      @pl.when(lax.axis_index("x") == 0)
+      def _write():
+        plgpu.barrier_wait(collective_barrier)
+        dst_ref[...] = 42
+
+    self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[
+            plgpu.ClusterBarrier(
+                collective_axes=("x",), num_arrivals=1, leader_tracked=True
+            ),
+        ],
+        cluster=(2,),
+        cluster_names=("x",),
+    )()
+
   def test_replicated_layout(self):
     shape = (32,)
     @functools.partial(
