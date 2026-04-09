@@ -784,7 +784,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.wait_smem_to_gmem(0)
 
       if use_single_warp:
-        plgpu.warp_map(lambda warp_id: pl.when(warp_id == 0)(copy_to_gmem))
+        plgpu.when_warp_id_equals(0)(copy_to_gmem)
       else:
         copy_to_gmem()
 
