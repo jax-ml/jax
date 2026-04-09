@@ -86,6 +86,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed a bug in `jax.scipy.fft.dctn` and `idctn` where `axes=None`
     incorrectly defaulted to all axes when `s` was specified, instead of the
     last `len(s)` axes to match SciPy behavior ({jax-issue}`#29426`).
+  * Fixed a bug where calling `jax.distributed.initialize()` on a GCE TPU
+    Managed Instance Group raised an `IndexError` ({jax-issue}`#36593`). When
+    `jax.distributed.initialize()` is called on a GCE VM, it uses the GCE
+    [metadata
+    server](https://docs.cloud.google.com/compute/docs/metadata/overview) to
+    learn the addresses of all participating tasks. The format of this metadata
+    on Managed Instance Groups was not a format JAX expected, leading to the
+    exception. We now parse this format correctly.
 
 ## JAX 0.9.2 (March 18, 2026)
 
