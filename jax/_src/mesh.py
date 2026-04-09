@@ -29,7 +29,7 @@ import numpy as np
 
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
-from jax._src.util import safe_zip, cache, tuple_delete
+from jax._src.util import safe_zip, cache, tuple_delete, weak_value_interner, immutable
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -479,6 +479,7 @@ class AbstractDevice:
     return f"device_kind={self.device_kind}, num_cores={self.num_cores}"
 
 
+@immutable
 class AbstractMesh(BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
 
@@ -499,31 +500,34 @@ class AbstractMesh(BaseMesh):
 
   .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
   """
+  axis_sizes: Any
+  abstract_device: Any
+  size: Any
 
-  def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
+  @staticmethod
+  @weak_value_interner
+  def _create(axis_sizes, axis_names, axis_types, abstract_device):
+    obj = object.__new__(AbstractMesh)
+    object.__setattr__(obj, 'axis_sizes', axis_sizes)
+    object.__setattr__(obj, 'axis_names', axis_names)
+    object.__setattr__(obj, 'axis_types', axis_types)
+    object.__setattr__(obj, 'abstract_device', abstract_device)
+    object.__setattr__(obj, 'size', math.prod(axis_sizes) if axis_sizes else 0)
+    return obj
+
+  def __new__(cls, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
                axis_types: AxisType | tuple[AxisType, ...] | None = None,
                *, abstract_device=None):
-    self.axis_sizes = axis_sizes
-    self.axis_names = axis_names
-    self.axis_types = _normalize_axis_types(
-        self.axis_names, axis_types, 'AbstractMesh')
-    self.abstract_device = abstract_device
-    self.size = math.prod(self.axis_sizes) if self.axis_sizes else 0
-    self._hash = hash((self.axis_sizes, self.axis_names, self.axis_types,
-                       self.abstract_device))
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh')
+    return AbstractMesh._create(axis_sizes, axis_names, axis_types, abstract_device)
 
-  def __hash__(self):
-    return self._hash
+  def __getnewargs_ex__(self):
+    return (
+        (self.axis_sizes, self.axis_names, self.axis_types),
+        {'abstract_device': self.abstract_device}
+    )
 
-  def __eq__(self, other):
-    if self is other:
-      return True
-    if not isinstance(other, AbstractMesh):
-      return False
-    return (self.axis_sizes == other.axis_sizes and
-            self.axis_names == other.axis_names and
-            self.axis_types == other.axis_types and
-            self.abstract_device == other.abstract_device)
+  # No __eq__ or __hash__: interned classes use object identity.
 
   def __repr__(self):
     mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
