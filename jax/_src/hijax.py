@@ -373,6 +373,7 @@ class VJPHiPrimitive:
   in_avals: tuple[PyTreeOfAvals, ...]
   out_aval: PyTreeOfAvals
   params: dict[str, Hashable]
+  effects: frozenset[effects.Effect] = frozenset()
 
   def __init__(self):
     if not hasattr(self, 'in_avals'):
@@ -466,10 +467,11 @@ class VJPHiPrimitive:
     return f"{self.__class__.__name__}[{self.params}]"
 
   def __hash__(self):
-    return hash((self.__class__.__name__, tuple(self.params.items())))
+    return hash((self.__class__.__name__, tuple(self.params.items()), self.effects))
 
   def __eq__(self, other):
-    return type(self) is type(other) and self.params == other.params
+    return (type(self) is type(other) and self.params == other.params
+            and self.effects == other.effects)
 
 class VmapOf(VJPHiPrimitive):
   prim: core.Primitive
@@ -543,16 +545,17 @@ def unmap_zero(axis_data, d, ct):
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
 call_hi_primitive_p.multiple_results = True
 call_hi_primitive_p.is_high = lambda *args, _prim: True
-@call_hi_primitive_p.def_abstract_eval
+call_hi_primitive_p.is_effectful = lambda params: bool(params['_prim'].effects)
+@call_hi_primitive_p.def_effectful_abstract_eval
 def _call_hi_primitive_abstract_eval(*_args, _prim):
-  return _prim.out_avals_flat
+  return _prim.out_avals_flat, _prim.effects
 
 def _call_hi_primitive_typecheck(_ctx_factory, *in_atoms_flat, _prim):
   in_avals = [x.aval for x in in_atoms_flat]
   if not all(map(core.typematch, in_avals, _prim.in_avals_flat)):
     raise TypeError(f"input type mismatch for {_prim}")
   _prim.check()
-  return _prim.out_avals_flat, set()
+  return _prim.out_avals_flat, _prim.effects
 core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
 
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
