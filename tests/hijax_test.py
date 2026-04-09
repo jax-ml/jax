@@ -1322,6 +1322,31 @@ class HijaxTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
     f_vjp(MulH(x))  # doesn't crash
 
+  @parameterized.parameters([False, True])
+  def test_ref_prim(self, jit):
+    class Square(VJPHiPrimitive):
+      def __init__(self, ref_aval):
+        self.in_avals = (ref_aval,)
+        self.out_aval = None
+        self.params = {}
+        self.effects = {state.WriteEffect(0)}
+        super().__init__()
+
+      def expand(self, ref):
+        ref[...] = ref[...] ** 2
+
+    x_ref = jax.new_ref(2.)
+
+    def f(_, x_ref):
+      Square(typeof(x_ref))(x_ref)
+
+    if jit:
+      f = jax.jit(f)
+
+    f(0, x_ref)
+    self.assertAllClose(x_ref[...], 4., check_dtypes=False)
+    self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
+
 
 class BoxTest(jtu.JaxTestCase):
 
