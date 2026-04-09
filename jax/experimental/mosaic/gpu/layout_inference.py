@@ -2213,8 +2213,6 @@ def derive_relayout_constraints(
 
   visited: set[cs.Variable] = set()
   for variable, value_sites in value_sites_for_variable.items():
-    producers: list[cs.Variable] = []
-    consumers: list[cs.Variable] = []
     for value_site in value_sites:
       # We can only relayout variables that are in registers.
       if value_site.memory_space != MemorySpace.REG:
@@ -2224,7 +2222,6 @@ def derive_relayout_constraints(
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)
         producer_variable = variable_for_value_site[pr]
-        producers.append(producer_variable)
         # Only add the constraint if we haven't already created that constraint
         # when processing this variable as one of the producer's consumers.
         if producer_variable not in visited:
@@ -2235,7 +2232,6 @@ def derive_relayout_constraints(
       elif value_site.type in (VariableType.RESULT, VariableType.ARGUMENT):
         for co in consumer_operands(value_site):
           consumer_variable = variable_for_value_site[co]
-          consumers.append(consumer_variable)
           # Only add the constraint if we haven't already created that
           # constraint when processing this variable as the consumer's producer.
           if consumer_variable not in visited:
