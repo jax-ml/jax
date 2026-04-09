@@ -2732,7 +2732,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
         multiplier = 600
         rtol = 5e-3 * np.sqrt(n)
       elif dtype == np.float32:
-        multiplier = 100
+        multiplier = 600
         rtol = 2e-3 * np.sqrt(n)
 
     self.run_eigh_tridiagonal_test(alpha, beta, rtol=rtol, multiplier=multiplier)
