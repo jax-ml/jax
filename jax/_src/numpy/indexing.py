@@ -205,7 +205,7 @@ class NDIndexer:
     Raises an IndexError in case of out-of-bound indices
     """
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER and isinstance(idx.index, (int, np.integer)):
+      if idx.typ == IndexType.INTEGER:
         assert isinstance(idx.index, (int, np.integer))
         i = operator.index(idx.index)
         axis, = idx.consumed_axes
@@ -331,7 +331,7 @@ class NDIndexer:
   def normalize_indices(self) -> NDIndexer:
     new_indices: list[ParsedIndex] = []
     for idx in self.indices:
-      if idx.typ == IndexType.INTEGER and isinstance(idx.index, (int, np.integer)):
+      if idx.typ == IndexType.INTEGER:
         axis, = idx.consumed_axes
         size: ArrayLike = self.shape[axis]
         if isinstance(idx.index, np.unsignedinteger):
@@ -582,7 +582,8 @@ class NDIndexer:
   def tree_flatten(self):
     # split dynamic and static indices
     def is_dynamic(i: ParsedIndex):
-      return i.typ in [IndexType.INTEGER, IndexType.ARRAY, IndexType.BOOLEAN]
+      # These index types are non-hashable and therefore must be dynamic.
+      return i.typ in [IndexType.ARRAY, IndexType.BOOLEAN, IndexType.DYNAMIC_SLICE]
     raw_dynamic_indices = [i.index if is_dynamic(i) else None for i in self.indices]
     static_metadata = [
       ParsedIndex(index=None, typ=i.typ, consumed_axes=i.consumed_axes) if is_dynamic(i) else i
