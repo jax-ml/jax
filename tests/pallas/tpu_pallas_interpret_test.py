@@ -279,6 +279,41 @@ class InterpretTest(jtu.JaxTestCase):
       np.testing.assert_equal(np.array(out[:4]), 0.0)
       self.assertTrue(np.isnan(out[4:]).all())
 
+  def test_masked_store(self):
+    def kernel(i_ref, j_ref, x_ref, mask_ref, o_ref):
+      o_ref[...] = jnp.zeros(o_ref.shape, o_ref.dtype)
+      pltpu.store(
+          o_ref.at[pl.ds(pl.multiple_of(i_ref[0], 8), 16),
+                   pl.ds(pl.multiple_of(j_ref[0], 128), 256)],
+          x_ref[...],
+          mask=mask_ref[...])
+
+    @jax.jit
+    def f(i, j, x, mask):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((16, 256), jnp.float32),
+          grid_spec=pltpu.PrefetchScalarGridSpec(num_scalar_prefetch=2),
+          interpret=pltpu.InterpretParams(),
+      )(i, j, x, mask)
+
+    i = jnp.array([8], jnp.int32)
+    j = jnp.array([128], jnp.int32)
+    x = jnp.ones((16, 256), dtype=jnp.float32)
+    mask = np.full((16, 256), False)
+    mask[0, 0] = True
+
+    with self.subTest('in_bounds'):
+      y = f(i, j, x, jnp.array(mask))
+      self.assertArraysEqual(y, jnp.zeros_like(y).at[8, 128].set(1.0))
+
+    with self.subTest('out_of_bounds'):
+      mask[:] = True
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds masked swap'):
+        f(i, j, x, jnp.array(mask)).block_until_ready()
+      pltpu.reset_tpu_interpret_mode_state()
+
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
       del indices
