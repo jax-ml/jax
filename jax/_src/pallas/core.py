@@ -198,58 +198,21 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+# TODO(yashkatariya): this class confuses JAX memory spaces with Pallas memory
+# spaces. Clean this up.
+@util.immutable
 class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
-  __slots__ = ["memory_space"]
+  __slots__ = []
 
-  def __init__(self, shape, dtype, weak_type=False, sharding=None,
-               manual_axis_type=jax_core.ManualAxisType(), memory_space=None):
-    super().__init__(shape, dtype, weak_type, sharding=sharding,
-                     manual_axis_type=manual_axis_type)
-    self.memory_space = memory_space
-
-  def __eq__(self, other):
-    return super().__eq__(other) and self.memory_space == other.memory_space
-
-  def __hash__(self):
-    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.mat, self.memory_space))
-
-  def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    return jax_core.str_short_aval(
-        self.shape,
-        self.dtype,
-        self.sharding.mesh,
-        self.sharding.spec,
-        self.mat,
-        self.memory_space,
-        short_dtypes,
-        mesh_axis_types,
-    )
-
-  def update(  # pyrefly: ignore[bad-override]
-      self,
-      shape=None,
-      dtype=None,
-      weak_type=None,
-      sharding=None,
-      manual_axis_type=None,
-      memory_space=None,
-  ):
-    if shape is None:
-      shape = self.shape
-    if dtype is None:
-      dtype = self.dtype
-    if weak_type is None:
-      weak_type = self.weak_type
-    if sharding is None:
-      sharding = self.sharding
-    if manual_axis_type is None:
-      manual_axis_type = self.manual_axis_type
-    if memory_space is None:
-      memory_space = self.memory_space
-    return ShapedArrayWithMemorySpace(
-        shape, dtype, weak_type, sharding=sharding,
-        manual_axis_type=manual_axis_type, memory_space=memory_space
+  def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
+              manual_axis_type: jax_core.ManualAxisType = jax_core.ManualAxisType(),
+              memory_space=None):
+    shape = jax_core.canonicalize_shape(shape)
+    dtype = jax_core._dtype_object(dtype)
+    sharding = jax_core.get_sharding(sharding, shape)
+    manual_axis_type = jax_core.get_mat(manual_axis_type, sharding.mesh)
+    return jax_core.ShapedArray._create(
+        cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space
     )
 
   def unwrap(self) -> jax_core.ShapedArray:

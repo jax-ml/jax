@@ -2306,25 +2306,47 @@ class ManualAxisType:
     return self.varying | self.unreduced | self.reduced
 
 
+@immutable
 class ShapedArray(AbstractValue):
   # inherits slots from parent
   __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'manual_axis_type',
-               'memory_space']
+               'memory_space', '__weakref__']
   array_abstraction_level = 2
 
-  def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
+  shape: Any
+  dtype: Any
+  weak_type: Any
+  sharding: Any
+  manual_axis_type: Any
+  memory_space: Any
+
+  # TODO(yashkatariya): remove "cls" from _create and uses of type(self) below
+  # after removing ShapedArrayWithMemorySpace from Pallas.
+  @staticmethod
+  @weak_value_interner
+  def _create(cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space):
+    obj = object.__new__(cls)
+    object.__setattr__(obj, 'shape', shape)
+    object.__setattr__(obj, 'dtype', dtype)
+    object.__setattr__(obj, 'weak_type', weak_type)
+    object.__setattr__(obj, 'sharding', sharding)
+    object.__setattr__(obj, 'manual_axis_type', manual_axis_type)
+    object.__setattr__(obj, 'memory_space', memory_space)
+    return obj
+
+  def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
                manual_axis_type: ManualAxisType = ManualAxisType(),
                memory_space: MemorySpace = MemorySpace.Device):
-    self.shape = canonicalize_shape(shape)
-    self.dtype = _dtype_object(dtype)
-    self.weak_type = weak_type
-    # The ShapedArray.sharding.memory_kind is always None; use memory_space.
-    self.sharding = get_sharding(sharding, self.shape)
-    # short for manual_axis_type. See docs at
+    shape = canonicalize_shape(shape)
+    dtype = _dtype_object(dtype)
+    sharding = get_sharding(sharding, shape)
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
-    self.manual_axis_type = get_mat(manual_axis_type, self.sharding.mesh)
+    manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
-    self.memory_space = get_memory_space(memory_space)
+    memory_space = get_memory_space(memory_space)
+    return ShapedArray._create(cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space)
+
+  # Interned types don't need __eq__ or __hash__.
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
@@ -2347,7 +2369,7 @@ class ShapedArray(AbstractValue):
       kwargs['manual_axis_type'] = self.manual_axis_type
     if 'memory_space' not in kwargs:
       kwargs['memory_space'] = self.memory_space
-    return ShapedArray(shape, dtype, weak_type, **kwargs)
+    return type(self)(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -2359,23 +2381,12 @@ class ShapedArray(AbstractValue):
   reshape: ClassVar[aval_method | None] = None
   _iter: ClassVar[staticmethod | None] = None
 
-  def __eq__(self, other):
-    return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type
-            and self.sharding == other.sharding
-            and self.mat == other.mat
-            and self.memory_space == other.memory_space)
-
-  def __hash__(self):
-    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
-    # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.mat, self.memory_space))
-
-  def __ne__(self, other):
-    return not self == other
+  def __getnewargs_ex__(self):
+    return (self.shape, self.dtype, self.weak_type), {
+        'sharding': self.sharding,
+        'manual_axis_type': self.manual_axis_type,
+        'memory_space': self.memory_space
+    }
 
   def __repr__(self):
     wt_str = ", weak_type=True" if self.weak_type else ""
