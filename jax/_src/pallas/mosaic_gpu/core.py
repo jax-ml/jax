@@ -1348,7 +1348,7 @@ class WarpMesh:
   """
 
   _NUM_WARPS_PER_WARPGROUP: ClassVar[int] = 4
-  axis_name: str
+  axis_name: jax_core.AxisName
 
   @property
   def shape(self):

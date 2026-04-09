@@ -442,7 +442,7 @@ class ModuleContext:
   auto_barriers: bool
   # See the documentation of reduction_scratch_bytes in CompilerParams.
   reduction_scratch_bytes: int
-  warp_axis_name: str | None = None
+  warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
 
   @property
