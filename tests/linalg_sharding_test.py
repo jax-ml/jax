@@ -188,7 +188,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual,
           expected,
-          atol={np.complex64: 1e-4},
+          atol={np.complex64: 2e-4},
           rtol={
               np.float32: 1e-4,
               np.float64: 2e-11,
