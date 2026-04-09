@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_oss",
     "jax_generate_backend_suites",
     "jax_multiplatform_test",
     "jax_py_test",
@@ -1921,6 +1922,18 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "async_collectives_test",
     srcs = ["async_collectives_test.py"],
+    backend_variant_args = if_oss(
+        google_value = {
+            "tpu_v6e_x8": [
+                "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
+                "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true",
+                "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
+                "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=1024",
+                "--xla_tpu_enable_async_all_to_all",
+            ],
+        },
+        oss_value = {},
+    ),
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
