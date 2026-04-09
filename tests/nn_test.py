@@ -892,6 +892,33 @@ class NNInitializersTest(jtu.JaxTestCase):
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
+  @jtu.sample_product(
+    rows=range(4),
+    cols=range(4),
+    dtype=jtu.dtypes.floating,
+  )
+  def testInitializerOrthogonalZeroSize(self, rows, cols, dtype):
+    rng = random.PRNGKey(0)
+    initializer = nn.initializers.orthogonal()
+    val = initializer(rng, (rows, cols), dtype)
+    assert val.shape == (rows, cols)
+    assert val.dtype == dtype
+
+    if jtu.test_device_matches(["tpu"]):
+      atol = 2e-3
+      rtol = 1e-2
+    else:
+      atol = None
+      rtol = None
+
+    if rows <= cols:
+      m = val @ val.T
+      self.assertAllClose(m, jnp.eye(rows, dtype=dtype), atol=atol, rtol=rtol)
+
+    if cols <= rows:
+      m = val.T @ val
+      self.assertAllClose(m, jnp.eye(cols, dtype=dtype), atol=atol, rtol=rtol)
+
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(initializer_provider=rec.initializer)],
