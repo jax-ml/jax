@@ -17,6 +17,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import functools
+import threading
 from functools import partial
 import itertools as it
 import logging
@@ -32,6 +33,7 @@ from jax._src import config
 from jax._src.lib import pytree as lib_pytree
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
+from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +355,61 @@ def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
       explain = lambda: explain if config.explain_cache_misses.value else None)
   register_cache(cached_f, str(f))
   return cached_f
+
+
+# Interner from strong keys to weak values, intended for us to intern object
+# construction, thereby making subsequent __eq__ and __hash__ calls cheap and
+# based on object identity.
+#
+# Caution: The interner does not know about the *signature* of the cached
+# function. In particular, if the same argument value can be passed as either
+# an arg or a kwarg, then the interner may store multiple entries for the same
+# logical call. If this troubles you canonicalize the arguments first, e.g.
+# via a wrapper function.
+if jaxlib_extension_version >= 433:
+  weak_value_interner = lib_weakref_lru_cache.weak_value_interner
+else:
+  def weak_value_interner(f):
+    cache = weakref.WeakValueDictionary()
+    lock = threading.Lock()
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+      key = (args, frozenset(kwargs.items()))
+      with lock:
+        result = cache.get(key)
+        if result is not None:
+          return result
+        result = f(*args, **kwargs)
+        cache[key] = result
+        return result
+    return wrapper
+
+
+def immutable(cls):
+  """Decorator to avoid boilerplate for immutable interned classes."""
+  def __deepcopy__(self, memo):
+    # Deep copy of a singleton interned object is the identity.
+    return self
+  cls.__deepcopy__ = __deepcopy__
+
+  # Pickling calls __getstate__ and __setstate__, but we're assuming the
+  # caller will implement __getnewargs_ex__.
+  def __getstate__(self):
+    return None
+  def __setstate__(self, state):
+    pass
+  cls.__getstate__ = __getstate__
+  cls.__setstate__ = __setstate__
+
+  # Discourage mutation after construction.
+  def __setattr__(self, name, value):
+    raise AttributeError(f"cannot assign to field {name!r}")
+  def __delattr__(self, name):
+    raise AttributeError(f"cannot delete field {name!r}")
+  cls.__setattr__ = __setattr__
+  cls.__delattr__ = __delattr__
+
+  return cls
 
 
 # The types of arguments for which `multi_weakref_lru_cache` should keep
