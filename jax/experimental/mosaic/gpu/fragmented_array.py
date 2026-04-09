@@ -3853,7 +3853,14 @@ class StaggeredTransferPlan(TransferPlan):
   stagger: int
   dim: int
   size: int
-  group_pred: ir.Value
+  group_stride: int
+
+  @functools.cached_property
+  def group_pred(self) -> ir.Value:
+    c32 = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+    lane_idx = arith.remui(utils.thread_idx(), c32(WARP_SIZE))
+    group_idx = arith.remui(arith.divui(lane_idx, c32(self.group_stride)), c32(2))
+    return arith.cmpi(arith.CmpIPredicate.ne, group_idx, c32(0))
 
   @property
   def tile_index_transforms(self):
@@ -3902,8 +3909,6 @@ def plan_tiled_transfer(
     element_bits: Element bitwidth.
     swizzle: The swizzle pattern length.
   """
-  i32 = ir.IntegerType.get_signless(32)
-  c = lambda x: arith.constant(i32, x)
   # TODO(apaszke): Rewrite this function in terms of transfer_bytes (that we get
   # from the caller).
   swizzle_tile_elems = (16 * 8) // element_bits
@@ -4010,11 +4015,8 @@ def plan_tiled_transfer(
         transform = lambda idx: (idx + offset * lane_group) % tiles_shape
         if not has_bank_conflicts(transform):
           # We've found a strategy that avoids bank conflicts!
-          lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE))
-          group_idx = arith.remui(arith.divui(lane_idx, c(group_stride)), c(2))
-          group_pred = arith.cmpi(arith.CmpIPredicate.ne, group_idx, c(0))
           return StaggeredTransferPlan(  # type: ignore[call-arg]
-              stagger, dim, tiles_shape[dim], group_pred  # pylint: disable=too-many-function-args
+              stagger, dim, tiles_shape[dim], group_stride  # pylint: disable=too-many-function-args
           )
   raise ValueError(
       "Failed to synthesize a transfer pattern that avoids bank conflicts"
