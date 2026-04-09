@@ -1696,9 +1696,16 @@ class JaxprStackFrame:
       debug_info: core.DebugInfo,
       source_info: SourceInfo,
     ) -> tuple[Jaxpr, list[Any]]:
+    # We are careful to snapshot constvar_to_val before we call get_eqns(),
+    # to avoid the following scenario:
+    # * we call get_eqns(), snapshotting the equations.
+    # * garbage collection runs, deleting some TracingEqns, which may
+    #   transitively free constant Vars.
+    # * we now have equations with dangling Var references.
+    # If we snapshot the Vars first we won't have this problem.
+    constvars, constvals = unzip2(self.constvar_to_val.copy().items())
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
-    constvars, constvals = unzip2(self.constvar_to_val.copy().items())
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
 
