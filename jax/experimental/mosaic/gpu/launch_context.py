@@ -606,6 +606,13 @@ class AsyncCopyImplementation(enum.Enum):
   CP_ASYNC = enum.auto()
 
 
+class L2CachePolicy(enum.StrEnum):
+  EVICT_LAST = enum.auto()
+  EVICT_NORMAL = enum.auto()
+  EVICT_FIRST = enum.auto()
+  EVICT_UNCHANGED = enum.auto()
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
@@ -1076,6 +1083,7 @@ class LaunchContext:
       arrive: bool | None = None,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       leader_tracked: CopyPartition | None = None,
+      cache_policy: L2CachePolicy | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
@@ -1208,6 +1216,8 @@ class LaunchContext:
             "CP_ASYNC needs to be performed by the whole warpgroup and does not"
             " support the predicate argument"
         )
+      if cache_policy is not None:
+        raise NotImplementedError("Cache policy is not supported for CP_ASYNC")
       # TODO(apaszke): This should be quite easy? The only complication is that
       # the indices array needs to have a layout compatible with the way we
       # assign lanes to rows/cols.
@@ -1352,6 +1362,17 @@ class LaunchContext:
       transfer_bytes_val *= collective_size
     transfer_bytes = c(transfer_bytes_val, i32)
 
+    if cache_policy is None:
+      cache_policy = ()
+      cache_policy_mod = ""
+    else:
+      i64 = ir.IntegerType.get_signless(64)
+      cache_policy = llvm.inline_asm(
+          i64, [], f"createpolicy.fractional.L2::{cache_policy}.b64 $0;", "=l"
+      )
+      cache_policy = (cache_policy,)
+      cache_policy_mod = ".L2::cache_hint"
+
     if gather_indices is not None:
       import builtins
       zips = functools.partial(builtins.zip, strict=True)
@@ -1484,11 +1505,20 @@ class LaunchContext:
               if not g
           )
           col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
+          cache_policy_operand = ", $9" if cache_policy else ""
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
-              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *gather_rows],
-              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
-              "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+              [
+                  predicate,
+                  smem_ptr,
+                  tma_desc,
+                  barrier_ptr,
+                  col_offset,
+                  *gather_rows,
+                  *cache_policy,
+              ],
+              f"@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes{cache_policy_mod} [$1], [$2, {{$4, $5, $6, $7, $8}}], [$3]{cache_policy_operand};",
+              "b,r,l,r,r" + ",r" * (ROWS_PER_INSTR) + ",l" * len(cache_policy),
               has_side_effects=True,
           )
       return
@@ -1535,18 +1565,34 @@ class LaunchContext:
           smem_space = "shared::cta"
           multicast_mod = ""
           multicast_operand = ""
+        if cache_policy:
+          cache_policy_operand = f", ${4 + rank + len(multicast_mask)}"
+        else:
+          cache_policy_operand = ""
+
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
+            [
+                predicate,
+                smem_ptr,
+                tma_desc,
+                barrier_ptr,
+                *rev_dyn_base_indices,
+                *multicast_mask,
+                *cache_policy,
+            ],
             f"""
             {{
             .reg .b32 mapped_addr;
             @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
-            @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2
-                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
+            @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2{cache_policy_mod}
+                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand}{cache_policy_operand};
             }}
             """,
-            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
+            "b,r,l,r"
+            + ",r" * rank
+            + ",h" * len(multicast_mask)
+            + ",l" * len(cache_policy),
             has_side_effects=True,
         )
       else:
@@ -1561,19 +1607,27 @@ class LaunchContext:
         else:
           multicast_mask = None
         nvvm.cp_async_bulk_tensor_shared_cluster_global(
-            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
-            multicast_mask=multicast_mask, predicate=predicate
+            smem_ptr,
+            tma_desc,
+            rev_dyn_base_indices,
+            barrier_ptr,
+            [],
+            multicast_mask=multicast_mask,
+            l2_cache_hint=(cache_policy or [None])[0],
+            predicate=predicate,
         )
+    elif cache_policy:
+      raise NotImplementedError("Cache policy not support for SMEM -> GMEM")
     else:
       if reduction_op is not None:
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
         llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
+            ir.Type.parse("!llvm.void"),
           [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
           f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{_reduction_op_to_ptx(reduction_op)}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
           "b,r,l" + ",r" * rank,
-          has_side_effects=True,
+            has_side_effects=True,
         )
         if arrive:
           nvvm.cp_async_bulk_commit_group()

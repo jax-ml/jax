@@ -53,6 +53,7 @@ from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition
+from jax.experimental.mosaic.gpu.launch_context import L2CachePolicy
 import jax.numpy as jnp
 import numpy as np
 
@@ -520,6 +521,7 @@ def _copy_gmem_to_smem_lowering(
     barrier_transforms_treedef,
     collective_axes,
     leader_tracked,
+    cache_policy,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -658,6 +660,7 @@ def _copy_gmem_to_smem_lowering(
         arrive=False,
         collective=collective,
         leader_tracked=leader_tracked,
+        cache_policy=cache_policy,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
@@ -696,6 +699,9 @@ def _copy_gmem_to_smem_lowering(
   with arrive_ctx:
     mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
 
+  if cache_policy is not None:
+    raise NotImplementedError("Cache policy is not supported in MGPU dialect.")
+
   mgpu.dialect.async_load(
       src,
       dst,
@@ -709,6 +715,7 @@ def _copy_gmem_to_smem_lowering(
   )
   return ()
 
+
 def copy_gmem_to_smem(
     src: _Ref,
     dst: _Ref,
@@ -716,6 +723,7 @@ def copy_gmem_to_smem(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
+    cache_policy: L2CachePolicy | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -748,9 +756,11 @@ def copy_gmem_to_smem(
     barrier: The barrier to use for tracking completion of the copy.
     collective_axes: The collective axes to use for the copy.
     leader_tracked: If specified, only the leader block in the cluster will
-     observe the completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
-     performs a partitioned collective copy along the given axis. If
-     ``CopyPartition.REPLICATED``, all blocks load the same data.
+      observe the completion of the copy. If
+      ``CopyPartition.PARTITIONED(axis)``, performs a partitioned collective
+      copy along the given axis. If ``CopyPartition.REPLICATED``, all blocks
+      load the same data.
+    cache_policy: The eviction policy to use for copied values in L2 cache.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -792,8 +802,10 @@ def copy_gmem_to_smem(
       barrier_transforms_treedef=barrier_transforms_treedef,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
+      cache_policy=cache_policy,
   )
   return None
+
 
 async_prefetch_p = jax_core.Primitive("async_prefetch")
 async_prefetch_p.multiple_results = True

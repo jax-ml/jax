@@ -99,6 +99,7 @@ from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemant
 from jax.experimental.mosaic.gpu.fragmented_array import Replicated as Replicated
 from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition as CopyPartition
+from jax.experimental.mosaic.gpu.launch_context import L2CachePolicy as L2CachePolicy
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.
