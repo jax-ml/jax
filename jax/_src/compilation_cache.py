@@ -108,6 +108,24 @@ def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
   return cache, path
 
 
+class CacheVerificationError(RuntimeError):
+  """Error raised when a freshly compiled executable does not exactly
+  match an executable in the compilation cache at the same key.
+  """
+
+  def __init__(
+      self,
+      message: str,
+      cache_key: str,
+      executable_on_disk: bytes,
+      executable_new: bytes,
+  ):
+    super().__init__(message)
+    self.cache_key = cache_key
+    self.executable_on_disk = executable_on_disk
+    self.executable_new = executable_new
+
+
 class VerificationCache(CacheInterface):
   """A cache that wraps another cache and verifies its contents.
 
@@ -154,10 +172,13 @@ class VerificationCache(CacheInterface):
         executable_on_disk, _ = extract_executable_and_time(decompressed_on_disk)
         executable_new, _ = extract_executable_and_time(decompressed_new)
         if executable_on_disk != executable_new:
-          raise RuntimeError(
+          raise CacheVerificationError(
               f"Persistent compilation cache inconsistency for key {key}. "
               "Executable found in the disk cache does not match the "
-              "freshly compiled executable."
+              "freshly compiled executable.",
+              key,
+              executable_on_disk,
+              executable_new,
           )
       self._verified_keys.add(key)
 

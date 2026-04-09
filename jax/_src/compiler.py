@@ -760,13 +760,21 @@ def _compile_and_write_cache(
   return executable
 
 
+def _should_raise_persistent_cache_error(ex: Exception) -> bool:
+  """Returns True if the exception should be raised, False if it should be warned."""
+  return (
+      config.raise_persistent_cache_errors.value or
+      isinstance(ex, compilation_cache.CacheVerificationError)
+  )
+
+
 def _is_executable_in_cache(backend, cache_key) -> bool:
   """Checks if executable is presented in cache on a given key
   """
   try:
     return compilation_cache.is_executable_in_cache(backend, cache_key)
   except Exception as ex:
-    if config.raise_persistent_cache_errors.value:
+    if _should_raise_persistent_cache_error(ex):
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
@@ -785,7 +793,7 @@ def _cache_read(
     return compilation_cache.get_executable_and_time(
         cache_key, compile_options, backend, executable_devices)
   except Exception as ex:
-    if config.raise_persistent_cache_errors.value:
+    if _should_raise_persistent_cache_error(ex):
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
@@ -836,7 +844,7 @@ def _cache_write(cache_key: str,
     compilation_cache.put_executable_and_time(
         cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
-    if config.raise_persistent_cache_errors.value:
+    if _should_raise_persistent_cache_error(ex):
       raise
     warnings.warn(
         f"Error writing persistent compilation cache entry for "
