@@ -63,6 +63,7 @@ from jax._src.config import (
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
   numpy_dtype_promotion as numpy_dtype_promotion,
+  monitoring_tags as monitoring_tags,
   numpy_rank_promotion as numpy_rank_promotion,
   allow_f16_reductions as allow_f16_reductions,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,

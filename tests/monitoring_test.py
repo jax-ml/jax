@@ -17,6 +17,7 @@ Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
 from absl.testing import absltest
+import jax
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
 
@@ -141,6 +142,19 @@ class MonitoringTest(absltest.TestCase):
 
     with self.assertRaises(AssertionError):
       jax_src_monitoring.unregister_event_listener(callback)
+
+  def test_monitoring_tags(self):
+    observed_kwargs = []
+
+    def callback(_event, _duration, **kwargs):
+      observed_kwargs.append(kwargs)
+
+    monitoring.register_event_duration_secs_listener(callback)
+    with jax.monitoring_tags("key1=val1:key2=val2"):
+      monitoring.record_event_duration_secs("test_event", 1.0)
+    self.assertLen(observed_kwargs, 1)
+    self.assertEqual(observed_kwargs[0], {"key1": "val1", "key2": "val2"})
+
 
 if __name__ == "__main__":
   absltest.main()
