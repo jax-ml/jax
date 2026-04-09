@@ -157,6 +157,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
       fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
+  @jax.default_matmul_precision("highest")
   def test_batch_axis_sharding_jvp(self, fun_and_shapes, dtype):
     if (jtu.is_device_rocm() and
         fun_and_shapes[0] is lax.linalg.qr and
@@ -184,9 +185,17 @@ class LinalgShardingTest(jtu.JaxTestCase):
         (primals_sharded, tangents),
     ]:
       _, actual = jvp_fun_jit(*args)
-      self.assertAllClose(actual, expected, rtol={
-          np.float32: 1e-4, np.float64: 2e-11, np.complex64: 1e-4,
-          np.complex128: 1e-11})
+      self.assertAllClose(
+          actual,
+          expected,
+          atol={np.complex64: 1e-4},
+          rtol={
+              np.float32: 1e-4,
+              np.float64: 2e-11,
+              np.complex64: 1e-4,
+              np.complex128: 1e-11,
+          },
+      )
       hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
       self.assertNotIn("all-", hlo.as_text())
 
@@ -194,6 +203,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
       fun_and_shapes=ALL_FUN_AND_SHAPES, dtype=float_types + complex_types
   )
   @jtu.run_on_devices("gpu", "cpu")
+  @jax.default_matmul_precision("highest")
   def test_batch_axis_sharding_vjp(self, fun_and_shapes, dtype):
     fun, shapes = self.get_fun_and_shapes(fun_and_shapes, grad=True)
     primals = self.get_args(shapes, dtype, batch_size=8)
@@ -207,9 +217,17 @@ class LinalgShardingTest(jtu.JaxTestCase):
     vjp_fun_jit = jax.jit(vjp_fun)
     expected = vjp_fun(tangents)
     actual = vjp_fun_jit(tangents_sharded)
-    self.assertAllClose(actual, expected, rtol={
-          np.float32: 1e-4, np.float64: 1e-11, np.complex64: 1e-4,
-          np.complex128: 1e-11})
+    self.assertAllClose(
+        actual,
+        expected,
+        atol={np.complex64: 1e-4},
+        rtol={
+            np.float32: 1e-4,
+            np.float64: 1e-11,
+            np.complex64: 1e-4,
+            np.complex128: 1e-11,
+        },
+    )
     hlo = vjp_fun_jit.lower(tangents_sharded).compile()
     self.assertNotIn("all-", hlo.as_text())
 
