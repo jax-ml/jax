@@ -40,7 +40,9 @@ for wheel in $WHEELS; do
     # If a wheel is manylinux_2_27 or manylinux2014 compliant, `auditwheel show`
     # will return platform tag as manylinux_2_27 or manylinux_2_17 respectively.
     # manylinux2014 is an alias for manylinux_2_17.
-    if echo "$OUTPUT" | grep -q "manylinux_2_27"; then
+    if echo "$OUTPUT" | grep -q "manylinux_2_28"; then
+        printf "\n$wheel_name is manylinux_2_28 compliant.\n"
+    elif echo "$OUTPUT" | grep -q "manylinux_2_27"; then
         printf "\n$wheel_name is manylinux_2_27 compliant.\n"
     # jax_cudaX_plugin...aarch64.whl is consistent with tag: manylinux_2_26_aarch64"
     elif echo "$OUTPUT" | grep -q "manylinux_2_26"; then
@@ -49,7 +51,7 @@ for wheel in $WHEELS; do
         printf "\n$wheel_name is manylinux2014 compliant.\n"
     else
         echo "$OUTPUT_FULL"
-        printf "\n$wheel_name is NOT manylinux_2_27 or manylinux2014 compliant.\n"
+        printf "\n$wheel_name is NOT  manylinux_2_28, manylinux_2_27, manylinux_2_26, or manylinux2014 compliant.\n"
         exit 1
     fi
 done
