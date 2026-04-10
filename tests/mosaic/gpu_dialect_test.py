@@ -17,7 +17,6 @@
 from collections.abc import Callable
 from absl.testing import parameterized
 import jax
-import jax._src.version
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
@@ -104,7 +103,7 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
 class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
-    if jax._src.version._version != jax.lib.__version__:
+    if jax.version._version != jax.lib.__version__:
       raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
     if jtu.test_device_matches(["rocm"]):

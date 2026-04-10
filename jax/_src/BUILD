@@ -35,10 +35,6 @@ exports_files(
     visibility = jax_export_file_visibility,
 )
 
-exports_files(
-    ["version.py"],
-)
-
 pytype_strict_library(
     name = "init",
     srcs = [
@@ -724,11 +720,6 @@ pytype_strict_library(
     name = "deprecations",
     srcs = ["deprecations.py"],
     type_checking = "pyrefly",
-)
-
-pytype_strict_library(
-    name = "version",
-    srcs = ["version.py"],
 )
 
 pytype_strict_library(

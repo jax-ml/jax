@@ -118,7 +118,7 @@ load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
 jax_python_wheel_repository(
     name = "jax_wheel",
     version_key = "_version",
-    version_source = "//jax/_src:version.py",
+    version_source = "//jax:version.py",
 )
 
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")

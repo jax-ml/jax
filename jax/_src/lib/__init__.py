@@ -33,7 +33,8 @@ except ModuleNotFoundError as err:
     'https://github.com/jax-ml/jax#installation for installation instructions.'
     ) from err
 
-from jax._src.version import __version__ as _jax_version_str, _minimum_jaxlib_version as _minimum_jaxlib_version_str
+import jax.version
+from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
   import jaxlib.version  # noqa: F401
 except Exception as err:
@@ -75,9 +76,9 @@ def check_jaxlib_version(jax_version: str, jaxlib_version: str,
 
 version_str = jaxlib.version.__version__
 version = check_jaxlib_version(
-  jax_version=_jax_version_str,
+  jax_version=jax.version.__version__,
   jaxlib_version=jaxlib.version.__version__,
-  minimum_jaxlib_version=_minimum_jaxlib_version_str)
+  minimum_jaxlib_version=jax.version._minimum_jaxlib_version)
 
 # Before importing any C compiled modules, first import the CPU
 # feature guard module to verify that jaxlib was compiled in a way that only

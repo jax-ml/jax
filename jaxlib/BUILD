@@ -128,7 +128,7 @@ pytype_library(
 
 symlink_files(
     name = "version",
-    srcs = ["//jax/_src:version.py"],
+    srcs = ["//jax:version.py"],
     dst = ".",
     flatten = True,
 )
