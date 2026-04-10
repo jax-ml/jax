@@ -23,11 +23,6 @@ import weakref
 
 
 @dataclasses.dataclass
-class _ClassWrapperForGarbageCollection:
-  obj: Any
-
-
-@dataclasses.dataclass
 class _ConsumableRef:
   """Stores a strong ref initially, but switches to a weak ref once consumed.
 
@@ -119,16 +114,6 @@ class _ObjectStore:
       self._storage[uid] = _ObjectState(is_being_initialized=False, obj=obj)
       self._lock.notify_all()
       return obj
-
-  def remove(self, uid: int) -> None:
-    """Removes the object associated with the given uid."""
-    with self._lock:
-      state = self._storage.pop(uid)
-
-    # The object will be deleted without holding the lock.
-    if isinstance(state.obj, _ClassWrapperForGarbageCollection):
-      del state.obj.obj
-    del state
 
 
 SINGLETON_OBJECT_STORE = _ObjectStore()
