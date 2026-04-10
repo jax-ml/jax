@@ -4279,6 +4279,7 @@ def _semaphore_signal_lowering_rule(
 
 
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_wait_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
@@ -4292,9 +4293,14 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
         f"Unhandled transforms for semaphore_wait: {transforms}"
     )
   val = _ensure_ir_value(value, jnp.int32)
+
+  scope = mgpu.ThreadSubset.WARPGROUP
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    scope = mgpu.ThreadSubset.WARP
+
   with _wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
     mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(
-        val, decrement=decrement
+        val, decrement=decrement, scope=scope
     )
   return ()
 
