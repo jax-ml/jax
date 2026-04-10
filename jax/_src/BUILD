@@ -356,12 +356,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "memory",
-    srcs = ["memory.py"],
-    type_checking = "pyrefly",
-)
-
-pytype_strict_library(
     name = "callback",
     srcs = ["callback.py"],
     type_checking = "pyrefly",
@@ -570,7 +564,6 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":layout",
-        ":memory",
         ":mesh",
         ":named_sharding",
         ":partition_spec",

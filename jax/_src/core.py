@@ -18,6 +18,7 @@ from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
                              Sequence, MutableSet, MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
+import enum
 import functools
 from functools import partial, total_ordering
 import gc
@@ -55,7 +56,6 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
-from jax._src.memory import Space as MemorySpace
 from jax._src.lib import _jax
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
@@ -2091,6 +2091,15 @@ def canonicalize_value(primitive, val, aval):
           " those inputs as an argument to shard_map. Got input with shape"
           f" {aval.str_short(True, True)}")
   return val
+
+
+class MemorySpace(enum.Enum):
+  Device = enum.auto()
+  Host = enum.auto()
+  Any = enum.auto()
+
+  def __repr__(self):
+    return f"MemorySpace.{self.name}"
 
 
 def get_cur_mesh_sharding(spec=None):
