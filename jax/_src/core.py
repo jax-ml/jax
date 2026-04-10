@@ -2102,6 +2102,10 @@ class MemorySpace(enum.Enum):
   def __repr__(self):
     return f"MemorySpace.{self.name}"
 
+  # For reasons passing my understanding Enum.__hash__ hashes the name string.
+  # Use an object identity hash instead.
+  __hash__ = object.__hash__
+
 
 def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
