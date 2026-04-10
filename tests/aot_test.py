@@ -176,6 +176,18 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
 
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
+  def test_with_small_constants(self):
+    const1 = np.ones((4,), dtype=np.int32)  # Will be embedded
+    const2 = jnp.ones((16,), dtype=np.int32)
+    @jax.jit
+    def f():
+      return const1 + const2[:const1.shape[0]]
+    with config.embedded_constants_max_bytes(const1.nbytes):
+      compiled = f.lower().compile()
+    self.assertLen(compiled._params.const_args, 1)
+    self.assertIs(compiled._params.const_args[0], const2)
+
   def test_with_constants_and_dce(self):
     const = jnp.arange(16.) + 42.  # A distinctive shape and value
 
@@ -217,13 +229,13 @@ class JaxAotTest(jtu.JaxTestCase):
     # execution can be run in 64-bit or 32-bit mode.
     with config.enable_x64(True):
       arange = np.arange if use_np else jnp.arange
-      const = arange(8, dtype=np.int64) + 42
+      const = arange(16, dtype=np.int64) + 42
 
       @jax.jit
       def f(x):
         return lax.convert_element_type(const, np.float32) + x
 
-    inp = np.arange(8., dtype=np.float32)
+    inp = np.arange(16., dtype=np.float32)
     with config.enable_x64(True) if lower else contextlib.nullcontext():
       lowered = f.lower(inp)
     with config.enable_x64(True) if compile else contextlib.nullcontext():

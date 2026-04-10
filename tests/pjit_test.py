@@ -3213,9 +3213,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       self.skipTest('Requires >=2 devices')
 
-    arr = jax.device_put(np.arange(8), make_single_device_sharding(
+    arr = jax.device_put(np.arange(16), make_single_device_sharding(
         jax.devices()[0]))
-    const = jax.device_put(np.arange(8), make_single_device_sharding(
+    const = jax.device_put(np.arange(16), make_single_device_sharding(
         jax.devices()[1]))
 
     @jax.jit
@@ -3226,7 +3226,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError, "Received incompatible devices for jitted computation"):
       f(arr)
 
-    out = f(np.arange(8))
+    out = f(np.arange(16))
     self.assertEqual(out.sharding, const.sharding)
 
   def test_device_put_grad(self):
