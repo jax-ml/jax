@@ -874,26 +874,40 @@ def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 jit_p.is_high = _is_high
 
+
+def lower_val(aval, x) -> FlatTree[Any]:
+  from jax._src.hijax import MutableHiType2
+  if aval.has_qdd:
+    return FlatTree.flatten(aval.read_loval(x))
+  elif isinstance(aval, MutableHiType2):
+    return aval.pre_jit_outside(x)
+  else:
+    return FlatTree.flatten(aval.lower_val(x))
+
+
 def _to_lojax(*hi_args, jaxpr, **params):
   # convert closed-over boxes to explicit args
   jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
   hi_args = [*closed_over_himutables, *hi_args]
   params = _converted_mutables_add_params(len(closed_over_himutables), **params)
 
+  # collect lo input values
+  lo_args = FlatTree.pack(tuple(map(lower_val, jaxpr.in_aval_qdds, hi_args)))
+
+  # lower the jaxpr
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, lo_avals)
+
   # expand pjit params that must match number of lo inputs/outputs
-  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = pe.num_himuts_out(jaxpr)
+  lo_nums_in = tuple(map(len, lo_args.unpack()))
   params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
+  lo_avals = lo_args.map(typeof)
 
-  # collect lo input values
-  lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
-
-  # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
+  # bind jaxpr and handle updates to mutable objects
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
+  all_outs_ft = out_avals.update(all_outs)
+
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)

@@ -1422,6 +1422,11 @@ class FlatTree:
   # TODO: add other helpers like map3, zip, unzip3 etc. as needed
 
   @staticmethod
+  def leaf(val):
+    _, singleton_tree = tree_flatten(1.0)
+    return FlatTree((val,), singleton_tree, False)
+
+  @staticmethod
   def pack(tree, registry=tracing_registry):
     # We could generalize this to arbitrary pytrees of FlatTree but tuples/dicts
     # are sufficient for now.

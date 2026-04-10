@@ -135,6 +135,12 @@ class HiType(core.AbstractValue):
              ) -> HiPspec:
     assert False, "must override"
 
+class MutableHiType2(core.AbstractValue):
+  pass
+
+
+
+
 
 class MutableHiType(core.AbstractValue):
   is_high = True

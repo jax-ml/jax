@@ -2243,7 +2243,7 @@ def _canonicalize_dtype(x):
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
-    in_avals: FlatTree,  # (args, kwargs) pair
+    in_avals: FlatTree,  # (args, kwargs) pair. TODO(dougalm): should we split these up?
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     fun_returns_flat_tree=False,
@@ -2440,26 +2440,42 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr):
-  lo_avals = [lo_ty for aval in hi_jaxpr.in_aval_qdds for lo_ty in aval.lo_ty()]
-  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr),
-                   debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names())
-  lo_jaxpr, _, lo_consts = trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
-  return core.ClosedJaxpr(lo_jaxpr, lo_consts)
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, lo_avals: FlatTree):
+  assert isinstance(lo_avals, FlatTree)
+  f = partial(lower_traceable, hi_jaxpr)
+  lo_avals = FlatTree.pack((lo_avals, {}))
+  lo_jaxpr, out_avals = trace_to_jaxpr(
+      f, lo_avals, requires_low=True,
+      debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names(),
+      fun_returns_flat_tree=True)
+  return lo_jaxpr, out_avals
+
+def raise_val(aval, lovals: FlatTree):
+  from jax._src.hijax import MutableHiType2
+  if aval.has_qdd:
+    return aval.new_from_loval(*lovals)
+  elif isinstance(aval, MutableHiType2):
+    return aval.pre_jit_inside(lovals)
+  else:
+    return aval.raise_val(*lovals)
+
+def final_mut_val(aval, hival):
+  from jax._src.hijax import MutableHiType2
+  if aval.has_qdd:
+    aval.read_loval(hi_arg)
+  elif isinstance(aval, MutableHiType2):
+    return aval.post_jit_inside(hival)
+  else:
+    return FlatTree.pack(())
 
 def lower_traceable(jaxpr, *lo_args):
-  lo_args_ = iter(lo_args)
-  hi_args = [aval.raise_val(*it.islice(lo_args_, len(aval.lo_ty())))
-             if not aval.has_qdd else
-             aval.new_from_loval(*it.islice(lo_args_, len(aval.lo_ty())))
-             for aval in jaxpr.in_aval_qdds]
-  assert (_problem := next(lo_args_, None)) is None
+  hi_args = map(raise_val, jaxpr.in_aval_qdds, lo_args)
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
-              for lo_val in aval.read_loval(hi_arg)]
-  lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
-             for lo_val in v.aval.lower_val(hi_val)]
-  return mut_outs + lo_outs
+  val_outs = FlatTree.pack(tuple(
+      FlatTree.flatten(aval.lower_val(hival))
+      for aval, hi_val in zip(jaxpr.jaxpr.out_avals, hi_outs)))
+  mut_outs = FlatTree.pack(tuple(map(final_mut_val, jaxpr.in_aval_qdds, hi_args)))
+  return FlatTree.pack((mut_outs, val_outs))
 
 @weakref_lru_cache
 def convert_const_himutables(jaxpr):
