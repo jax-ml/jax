@@ -1960,8 +1960,9 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): make custom_lin have hashable params.
     # TODO(dougalm): add an attribute to primitives to mark primitives with
     # effectful abstract_eval rules.
-    if (primitive.name in ("custom_lin", "call_hi_primitive_linearized") or
-          primitive.is_effectful and primitive.is_effectful(params)):
+    if (primitive.name in ("custom_lin", "call_hi_primitive_linearized",
+                           "call_hi_primitive") or
+        primitive.is_effectful and primitive.is_effectful(params)):
       out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
     else:
       try:
