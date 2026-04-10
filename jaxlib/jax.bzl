@@ -84,27 +84,28 @@ _py_deps = {
     "absl/testing": ["@pypi//absl_py"],
     "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
-    "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
-    "epath": get_optional_dep("@pypi//etils"),  # etils.epath
-    "filelock": get_optional_dep("@pypi//filelock"),
+    "cloudpickle": ["@pypi//cloudpickle"],
+    "epath": ["@pypi//etils"],  # etils.epath
+    "filelock": ["@pypi//filelock"],
     "flatbuffers": ["@pypi//flatbuffers"],
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": get_optional_dep("@pypi//matplotlib"),
-    "mpmath": [],
+    "matplotlib": ["@pypi//matplotlib"],
+    "mpmath": ["@pypi//mpmath"],
     "opt_einsum": ["@pypi//opt_einsum"],
-    "pil": get_optional_dep("@pypi//pillow"),
+    "pil": ["@pypi//pillow"],
     "portpicker": ["@pypi//portpicker"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": get_optional_dep("@pypi//tensorstore"),
+    "tensorstore": ["@pypi//tensorstore"],
     "torch": [],
     "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
     "tpu_ops": [],
-    # TODO(vam): remove this once zstandard builds against Python >3.13
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13", "3.13-ft", "3.14", "3.14-ft"]),
+    # We're never going to need zstandard for 3.14+ because zstandard is now
+    # in the Python stdlib.
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13-ft", "3.14", "3.14-ft"]),
 }
 
 def all_py_deps(excluded = []):
