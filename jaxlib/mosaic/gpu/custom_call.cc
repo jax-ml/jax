@@ -1522,9 +1522,7 @@ absl::Status MosaicGpuExecute(
 
   void** buffers_data = buffer_ptrs.data();
   kernel->host_launch(kernel_ctx, cuda_stream, buffers_data);
-  XLA_VLOG_DEVICE(5, device_ordinal)
-      << "[" << collective_params->global_device_id.value()
-      << "] MosaicGpuExecute finished";
+  XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuExecute finished";
   return absl::OkStatus();
 }
 
