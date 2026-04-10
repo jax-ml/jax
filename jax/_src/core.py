@@ -2313,7 +2313,7 @@ class ManualAxisType:
 
   @property
   def empty(self):
-    return self is _empty_manual_axis_type
+    return self is empty_mat
 
   def invarying(self, mesh) -> frozenset:
     return frozenset(mesh.manual_axes) - (
@@ -2323,8 +2323,7 @@ class ManualAxisType:
   def vur(self) -> frozenset:
     return self.varying | self.unreduced | self.reduced
 
-_empty_manual_axis_type = ManualAxisType()
-
+empty_mat = ManualAxisType()
 
 @functools.cache
 def _empty_sharding(ndim):
@@ -2361,7 +2360,7 @@ class ShapedArray(AbstractValue):
     return obj
 
   def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
-              manual_axis_type: ManualAxisType = ManualAxisType(),
+              manual_axis_type: ManualAxisType = empty_mat,
               memory_space: MemorySpace = MemorySpace.Device):
     shape = canonicalize_shape(shape)
     dtype = _dtype_object(dtype)

@@ -125,7 +125,7 @@ def call_shape_dtype_sharding_rule(
     avals_str = ', '.join(i.str_short(short_dtypes=True) for i in avals)
     mesh = mesh_lib.empty_abstract_mesh if e.mesh is None else e.mesh
     out_aval_str = core.str_short_aval(
-        out_shapes, out_dtypes, mesh, e.pspec, core.ManualAxisType(),
+        out_shapes, out_dtypes, mesh, e.pspec, core.empty_mat,
         core.MemorySpace.Device, short_dtypes=True)
     raise core.ShardingTypeError(
         f'{prim} operation with inputs: {avals_str} produces an illegally'

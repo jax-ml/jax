@@ -1537,7 +1537,7 @@ def _pallas_call(
     )
     if config._check_vma.value:
       flat_kernel_avals = tuple(
-        a.update_manual_axis_type(jax_core.ManualAxisType())
+        a.update_manual_axis_type(jax_core.empty_mat)
         for a in flat_kernel_avals
       )
     # Note that only a subset of all transforms can be found here, and they are

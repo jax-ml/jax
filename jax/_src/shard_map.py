@@ -1307,7 +1307,7 @@ class ShardMapTrace(core.Trace):
     else:
       val_ = _unmatch_spec(self.mesh, self.check, self.amesh, self.manual_axes,
                            P(), val)
-      return val_, core.ManualAxisType()
+      return val_, core.empty_mat
 
   def process_primitive(self, prim, tracers, params, /):
     in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
@@ -1318,7 +1318,7 @@ class ShardMapTrace(core.Trace):
       in_specs  = tuple(map(partial(_mat_to_spec, self.mesh), in_mat))
       out_specs = tree_map(partial(_mat_to_spec, self.mesh), out_mat)
     else:
-      out_mat = core.ManualAxisType()
+      out_mat = core.empty_mat
       in_specs = out_specs = P(order_wrt_mesh(self.mesh, self.manual_axes))
 
     eager_rule = eager_rules.get(prim)
@@ -1419,7 +1419,7 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
     manual_mesh = _as_manual_mesh(trace.amesh, trace.manual_axes)
     spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
     new_sharding = NamedSharding(manual_mesh, spec)
-    mat_out = mat if trace.check else core.ManualAxisType()
+    mat_out = mat if trace.check else core.empty_mat
     computed_aval = out.update(sharding=new_sharding, manual_axis_type=mat_out)
     super().__init__(trace, computed_aval)
     self.mat = mat
