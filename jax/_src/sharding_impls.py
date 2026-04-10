@@ -514,29 +514,6 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-
-def _hlo_sharding_v3_to_pspec(
-    hlo_sharding: xc.HloSharding, mesh: Mesh | AbstractMesh
-) -> PartitionSpec:
-  hlo_sharding_v3 = hlo_sharding.hlo_sharding_v3()
-  v3_mesh = hlo_sharding_v3.mesh()
-
-  if tuple(v3_mesh.axis_names) != tuple(mesh.axis_names):
-    raise ValueError(
-        f'The axis names of the HloShardingV3 mesh ({v3_mesh.axis_names}) '
-        f'do not match the axis names of the JAX mesh ({mesh.axis_names}).')
-
-  if tuple(v3_mesh.axis_sizes) != tuple(mesh.axis_sizes):
-    raise ValueError(
-        'The axis sizes of the HloShardingV3 mesh'
-        f' ({tuple(v3_mesh.axis_sizes)}) do not match the axis sizes of the'
-        f' JAX mesh ({tuple(mesh.axis_sizes)}).')
-
-  partitions = hlo_sharding_v3.partitions()
-  while partitions and not partitions[-1]:
-    partitions.pop()
-  return PartitionSpec(*partitions)
-
 def parse_flatten_op_sharding(
     hlo_sharding: xc.OpSharding | xc.HloSharding,
     mesh: Mesh | AbstractMesh) -> Sequence[PartitionSpec]:
@@ -551,8 +528,6 @@ def parse_flatten_op_sharding(
     return [PartitionSpec()]
   elif hlo_sharding.is_maximal() and mesh.size == 1:
     return [PartitionSpec()]
-  elif hlo_sharding.is_hlo_sharding_v3():
-    return [_hlo_sharding_v3_to_pspec(hlo_sharding, mesh)]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(
