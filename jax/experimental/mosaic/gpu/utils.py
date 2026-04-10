@@ -255,11 +255,17 @@ def multimem_load_reduce(
     vector_length = vty.shape[0]
     vector_i32_length = vector_length * bitwidth(vty.element_type) // 32
     if isinstance(vty.element_type, ir.IntegerType):
-      # TODO(apaszke): Emulate this by unrolling.
       if vector_length != 1:
-        raise NotImplementedError(
-            "Only single-element integer operations are supported"
-        )
+        results = []
+        elem_ty = vty.element_type
+        for i in range(vector_length):
+          elem_ptr = getelementptr(ptr, [i], elem_ty)
+          v1_ty = ir.VectorType.get((1,), elem_ty)
+          elem_res = multimem_load_reduce(
+              v1_ty, elem_ptr, reduction, is_signed=is_signed
+          )
+          results.append(elem_res)
+        return vector_concat(results)
       if bitwidth(vty.element_type) not in {32, 64}:
         raise NotImplementedError(
             "Only 32-bit and 64-bit integer operations are supported"
