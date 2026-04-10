@@ -238,8 +238,8 @@ class Exported:
     return f"Exported(fun_name={self.fun_name}, ...)"
 
   def in_shardings_jax(
-    self,
-    mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to ``self.in_shardings_hlo`` and ``self._in_named_shardings``.
 
     The Exported object stores ``in_shardings_hlo`` as HloShardings, and
@@ -282,8 +282,8 @@ class Exported:
         self._in_named_shardings, self.in_shardings_hlo, self.in_avals))
 
   def out_shardings_jax(
-      self,
-      mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings for ``out_shardings_hlo`` and ``_out_named_shardings``.
 
     See documentation for in_shardings_jax.
