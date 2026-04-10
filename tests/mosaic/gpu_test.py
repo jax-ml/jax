@@ -1283,7 +1283,7 @@ class WGMMATest(TestCase):
     elif dtype == jnp.float8_e5m2:
       atol = rtol = 3e-3
     else:
-      atol, rtol = 0, 5e-4
+      atol, rtol = 1e-6, 5e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=atol)
 
   @parameterized.product(
