@@ -1241,8 +1241,8 @@ def _closed_jaxpr_partial_eval_custom_cached(
   keep = [f1 is f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   jaxpr_known_ = prune_jaxpr_outputs(jaxpr_known_, [True] * num_out_primals + keep)
 
-  jaxpr_known = core.ClosedJaxpr(jaxpr_known_, jaxpr.consts)
-  jaxpr_staged = core.ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
+  jaxpr_known = ClosedJaxpr(jaxpr_known_, jaxpr.consts)
+  jaxpr_staged = ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
   return jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, in_fwd, out_fwd
 
 partial_eval_jaxpr_custom_rules[core.call_p] = \
@@ -1426,10 +1426,10 @@ dce_rules[core.call_p] = dce_jaxpr_call_rule
 
 @weakref_lru_cache
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
-                            ) -> tuple[core.ClosedJaxpr, list[bool]]:
+                            ) -> tuple[ClosedJaxpr, list[bool]]:
   jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
   new_jaxpr, used_inputs = dce_jaxpr(jaxpr, used_outputs)
-  return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
+  return ClosedJaxpr(new_jaxpr, consts), used_inputs
 
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                                ) -> tuple[list[bool], JaxprEqn | None]:
@@ -1490,7 +1490,7 @@ def _move_binders_to_front(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
   new_jaxpr = jaxpr.jaxpr.replace(
       constvars=constvars, invars=new_invars, effects=new_effs, debug_info=dbg)
-  return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
+  return ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _renumber_effects(new_vars, old_vars, effs):
   newvar_idxs = {id(v): i for i, v in enumerate(new_vars)}
@@ -2040,7 +2040,7 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = [t.aval for t in tracers]
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals)
-    closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
+    closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
@@ -2080,7 +2080,7 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = [core.AvalQDD(t.aval, core.cur_qdd(t)) if t.aval.has_qdd else t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals)
     num_consts = len(consts)
-    closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
+    closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -2445,19 +2445,20 @@ def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
   return lo_jaxpr
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
+def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
   dbg = hi_jaxpr.jaxpr.debug_info.with_unknown_names()
-  return trace_to_jaxpr(partial(lower_traceable, hi_jaxpr),
-                        lo_avals, dbg, requires_low=True)
+  return trace_to_jaxpr(partial(lower_traceable, hi_jaxpr), lo_avals,
+                        dbg, requires_low=True, fun_returns_flat_tree=True)
 
 def lower_traceable(jaxpr, *lo_args):
   hi_args = [a.raise_val(*xs) if not a.has_qdd else a.new_from_loval(*xs)
              for a, xs in zip(jaxpr.in_aval_qdds, lo_args)]
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  mut_outs = [a.read_loval(x) if a.has_qdd else []
+  fu = FlatTree.flatten(())
+  mut_outs = [a.read_loval_out(x) if a.has_qdd else fu
               for a, x in zip(jaxpr.final_aval_qdds, hi_args)]
-  lo_outs = [a.lower_val(y) for a, y in zip(jaxpr.out_avals, hi_outs)]
-  return mut_outs, lo_outs
+  lo_outs = [a.lower_val2(y) for a, y in zip(jaxpr.out_avals, hi_outs)]
+  return FlatTree.pack((tuple(mut_outs), tuple(lo_outs)))
 
 @weakref_lru_cache
 def convert_const_himutables(jaxpr):
@@ -2470,6 +2471,14 @@ def convert_const_himutables(jaxpr):
   new_jaxpr = jaxpr.jaxpr.replace(constvars=constvars, invars=invars,
                                   effects=effects)
   return jaxpr.replace(jaxpr=new_jaxpr, consts=constvals), in_mutables
+
+def move_outvars_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
+  return _move_outvars_to_back(jaxpr, tuple(to_move))
+
+@weakref_lru_cache
+def _move_outvars_to_back(jaxpr, to_move: tuple[bool, ...]) -> ClosedJaxpr:
+  new_outvars = _move_to_front(jaxpr.jaxpr.outvars, map(op.not_, to_move))
+  return ClosedJaxpr(jaxpr.jaxpr.replace(outvars=new_outvars), jaxpr.consts)
 
 # vestigial hijax helpers
 def raise_lo_outs(hi_avals, lo_outs):
