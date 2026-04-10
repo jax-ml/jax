@@ -550,38 +550,47 @@ class ModuleContext:
       A memref view into the runtime scratch buffer.
     """
     smem_base = None
-    i8 = ir.IntegerType.get_signless(8)
-    i32 = ir.IntegerType.get_signless(32)
+    smem_space = mgpu_utils.smem()
+    get_smem_ty = functools.partial(ir.MemRefType.get, memory_space=smem_space)
+    alignment = gpu_core.SMEM_ALIGNMENT
+
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
-      smem_base = gpu_dialect.dynamic_shared_memory(
-          ir.MemRefType.get(
-              (mgpu_utils.DYNAMIC,), i8, memory_space=mgpu_utils.smem()
-          )
+      i8 = ir.IntegerType.get_signless(8)
+      smem_ty = get_smem_ty((mgpu_utils.DYNAMIC,), i8)
+      smem_base = gpu_dialect.dynamic_shared_memory(smem_ty)
+      # In practice, `smem_base` always seems to be aligned to `alignment`, but
+      # it is not guaranteed, so we align it ourselves.
+      smem_addr = memref_dialect.extract_aligned_pointer_as_index(smem_base)
+      smem_addr_aligned = arith_dialect.andi(
+          arith_dialect.addi(smem_addr, _as_index(alignment - 1)),
+          _as_index(~(alignment - 1)),
       )
+      offset = arith_dialect.subi(smem_addr_aligned, smem_addr)
+      prev_size = memref_dialect.dim(smem_base, _as_index(0))
+      size = arith_dialect.subi(prev_size, offset)
+      smem_base = memref_dialect.view(smem_ty, smem_base, offset, [size])
+      smem_base = memref_dialect.assume_alignment(smem_base, alignment)
+
     off = initial_used_bytes = self.smem_used_bytes
-    assert off % gpu_core.SMEM_ALIGNMENT == 0
-    scratch_ty = ir.MemRefType.get(
-        struct.shape,
-        mgpu_utils.dtype_to_ir_type(struct.dtype),
-        memory_space=mgpu_utils.smem(),
-    )
+    assert off % alignment == 0
+    elem_ty = mgpu_utils.dtype_to_ir_type(struct.dtype)
+    scratch_ty = get_smem_ty(struct.shape, elem_ty)
     # The below code emission relies on the assumption that the first scratch
     # operand provided by Mosaic GPU always begins at the beginning of
     # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       assert smem_base is not None
       view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
+      view = memref_dialect.assume_alignment(view, alignment)
     else:
+      i32 = ir.IntegerType.get_signless(32)
       view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
 
-    off += gpu_core.align_to(
-        math.prod(struct.shape)
-        * dtypes.itemsize_bits(jnp.dtype(struct.dtype))
-        // 8,
-        gpu_core.SMEM_ALIGNMENT,
-    )
+    elem_size_bits = dtypes.itemsize_bits(struct.dtype)
+    size_bytes = math.prod(struct.shape) * elem_size_bits // 8
+    off += gpu_core.align_to(size_bytes, alignment)
     assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
-    assert off % gpu_core.SMEM_ALIGNMENT == 0
+    assert off % alignment == 0
 
     self.smem_used_bytes = off
     yield view
