@@ -91,14 +91,19 @@ def _select_block_indices(i):
 
 def _init_block_transforms(
     block_specs: tuple[pallas_core.BlockSpec, ...],
-) -> tuple[BlockIndexTransform, ...]:
+) -> tuple[BlockIndexTransform | NoBlockIndexTransform, ...]:
   out = []
   for i, bs in enumerate(block_specs):
-    out.append(BlockIndexTransform(
-        block_shape=bs.block_shape,
-        block_index_transform=_select_block_indices(i),
-        pipeline_mode=bs.pipeline_mode,
-    ))
+    if bs is pallas_core.no_block_spec:
+      out.append(no_block_index_transform)
+    else:
+      out.append(
+          BlockIndexTransform(
+              block_shape=bs.block_shape,
+              block_index_transform=_select_block_indices(i),
+              pipeline_mode=bs.pipeline_mode,
+          )
+      )
   return tuple(out)
 
 
@@ -110,10 +115,16 @@ def _apply_block_transform(
   def make_new_idx_map(block_index_transform):
     if block_index_transform.block_shape is None:
       return None
+
     def new_idx_map(*args):
       block_indices = tuple(
-          block_spec.index_map(*args) for block_spec in block_specs)
+          None
+          if block_spec is pallas_core.no_block_spec
+          else block_spec.index_map(*args)
+          for block_spec in block_specs
+      )
       return block_index_transform.block_index_transform(*block_indices)
+
     return new_idx_map
 
   if isinstance(block_index_transform, NoBlockIndexTransform):
@@ -232,13 +243,19 @@ class KernelEvalContext:
   def get_in_block_indices(self):
     with _sp_context(*self.scalar_prefetch):
       return tuple(
-          bs.index_map(*self.program_ids) for bs in self.in_block_specs
+          None
+          if bs is pallas_core.no_block_spec
+          else bs.index_map(*self.program_ids)
+          for bs in self.in_block_specs
       )
 
   def get_out_block_indices(self):
     with _sp_context(*self.scalar_prefetch):
       return tuple(
-          bs.index_map(*self.program_ids) for bs in self.out_block_specs
+          None
+          if bs is pallas_core.no_block_spec
+          else bs.index_map(*self.program_ids)
+          for bs in self.out_block_specs
       )
 
 
@@ -292,6 +309,9 @@ _unwrap_cache: dict[int, pallas_core.BlockSpec] = {}
 def _unwrap_block_spec_scalar_prefetch(
     block_spec: pallas_core.BlockSpec,
 ) -> pallas_core.BlockSpec:
+  if block_spec is pallas_core.no_block_spec or block_spec.index_map is None:
+    return block_spec
+
   if id(block_spec) in _unwrap_cache:
     return _unwrap_cache[id(block_spec)]
 
@@ -982,8 +1002,8 @@ def _squeeze_block_spec(
     new_block_shape = util.tuple_insert(new_block_shape, dim, None)
 
   return [block_transform.replace(
-      block_shape=new_block_shape,
-      block_index_transform=new_block_index_transform,
+        block_shape=new_block_shape,
+        block_index_transform=new_block_index_transform,
   )]
 
 
@@ -1874,7 +1894,7 @@ def _reshape_pull_rule(
       return sum(idxs, ())
 
     return [block_transform.replace(
-                block_shape=tuple(new_block_shape),
+            block_shape=tuple(new_block_shape),
                 block_index_transform=new_block_index_transform,)]
 
   # Handle the case where we reshape from (..., n * l) -> (..., n, l)
