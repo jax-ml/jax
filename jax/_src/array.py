@@ -766,7 +766,11 @@ def make_array_from_callback(
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)
     # Only compute data once.
-    per_device_values = [get_data((slice(None),) * len(shape))] * len(devices)
+    per_device_values = (
+        [get_data((slice(None),) * len(shape))] * len(devices)
+        if devices
+        else []
+    )
   else:
     device_to_index_map = sharding.addressable_devices_indices_map(shape)
     devices = list(device_to_index_map.keys())
