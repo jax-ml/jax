@@ -1290,7 +1290,7 @@ class Jax2TfTest(JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "serialization of host_callbacks is not yet implemented"):
+                                "jax.debug.print is not supported in jax2tf"):
       jax2tf.convert(f_jax)(np.float32(42.))
 
     def f_ordered_jax(x):
@@ -1298,7 +1298,7 @@ class Jax2TfTest(JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "serialization of host_callbacks is not yet implemented"):
+                                "jax.debug.print is not supported in jax2tf"):
       jax2tf.convert(f_ordered_jax)(np.float32(42.))
 
   def test_tuple_args(self):
