@@ -767,6 +767,10 @@ def check_avals_context_mesh(avals, prim_name):
           f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
           " error occurs at source: "
           f" {source_info_util.summarize(source_info_util.current())}")
+    if not isinstance(a.memory_space, MemorySpace):
+      raise TypeError(
+          f"Primitive {prim_name} got aval {a} with unknown memory_space type:"
+          f" {type(a.memory_space)}")
 
 # -------------------- tracing --------------------
 
@@ -2236,7 +2240,7 @@ def get_mat(mat, mesh):
 
 
 def get_memory_space(memory_space):
-  assert isinstance(memory_space, MemorySpace)
+  assert memory_space is not None
   return memory_space
 
 
@@ -2324,8 +2328,9 @@ class ShapedArray(AbstractValue):
   # after removing ShapedArrayWithMemorySpace from Pallas.
   @staticmethod
   @weak_value_interner
-  def _create(cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space):
-    obj = object.__new__(cls)
+  def _create(shape, dtype, weak_type, sharding, manual_axis_type,
+              memory_space):
+    obj = object.__new__(ShapedArray)
     object.__setattr__(obj, 'shape', shape)
     object.__setattr__(obj, 'dtype', dtype)
     object.__setattr__(obj, 'weak_type', weak_type)
@@ -2335,8 +2340,8 @@ class ShapedArray(AbstractValue):
     return obj
 
   def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
-               manual_axis_type: ManualAxisType = ManualAxisType(),
-               memory_space: MemorySpace = MemorySpace.Device):
+              manual_axis_type: ManualAxisType = ManualAxisType(),
+              memory_space: MemorySpace = MemorySpace.Device):
     shape = canonicalize_shape(shape)
     dtype = _dtype_object(dtype)
     sharding = get_sharding(sharding, shape)
@@ -2344,7 +2349,8 @@ class ShapedArray(AbstractValue):
     manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
-    return ShapedArray._create(cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space)
+    return cls._create(shape, dtype, weak_type, sharding, manual_axis_type,
+                       memory_space)
 
   # Interned types don't need __eq__ or __hash__.
 
@@ -2369,7 +2375,7 @@ class ShapedArray(AbstractValue):
       kwargs['manual_axis_type'] = self.manual_axis_type
     if 'memory_space' not in kwargs:
       kwargs['memory_space'] = self.memory_space
-    return type(self)(shape, dtype, weak_type, **kwargs)
+    return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -2422,15 +2428,17 @@ class ShapedArray(AbstractValue):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def update_manual_axis_type(self, mat):
-    cls = type(self)
     mat = get_mat(mat, self.sharding.mesh)
-    if mat is self.manual_axis_type: return self
-    return cls._create(cls, self.shape, self.dtype, self.weak_type, self.sharding, mat, self.memory_space)
+    if mat is self.manual_axis_type:
+      return self
+    return ShapedArray._create(self.shape, self.dtype, self.weak_type,
+                               self.sharding, mat, self.memory_space)
 
   def update_weak_type(self, weak_type):
-    cls = type(self)
-    if weak_type == self.weak_type: return self
-    return cls._create(cls, self.shape, self.dtype, weak_type, self.sharding, self.manual_axis_type, self.memory_space)
+    if weak_type == self.weak_type:
+      return self
+    return ShapedArray._create(self.shape, self.dtype, weak_type, self.sharding,
+                               self.manual_axis_type, self.memory_space)
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?

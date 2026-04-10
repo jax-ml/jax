@@ -49,6 +49,10 @@ from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 
+split_list = util.split_list
+map, unsafe_map = util.safe_map, map
+zip, unsafe_zip = util.safe_zip, zip
+
 
 class DynamicGridDim:
   def __repr__(self):
@@ -192,38 +196,6 @@ class Buffered:
   use_lookahead: bool = False
   revisit: Optional[RevisitMode] = None
 
-split_list = util.split_list
-
-map, unsafe_map = util.safe_map, map
-zip, unsafe_zip = util.safe_zip, zip
-
-
-# TODO(yashkatariya): this class confuses JAX memory spaces with Pallas memory
-# spaces. Clean this up.
-@util.immutable
-class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
-  __slots__ = []
-
-  def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
-              manual_axis_type: jax_core.ManualAxisType = jax_core.ManualAxisType(),
-              memory_space=None):
-    shape = jax_core.canonicalize_shape(shape)
-    dtype = jax_core._dtype_object(dtype)
-    sharding = jax_core.get_sharding(sharding, shape)
-    manual_axis_type = jax_core.get_mat(manual_axis_type, sharding.mesh)
-    return jax_core.ShapedArray._create(
-        cls, shape, dtype, weak_type, sharding, manual_axis_type, memory_space
-    )
-
-  def unwrap(self) -> jax_core.ShapedArray:
-    """Returns a ShapedArray with the memory space removed."""
-    return jax_core.ShapedArray(
-        self.shape, self.dtype, self.weak_type, sharding=self.sharding,
-        manual_axis_type=self.mat
-    )
-
-mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
-
 
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
@@ -235,14 +207,11 @@ class MemoryRef:
   def get_array_aval(self) -> jax_core.ShapedArray:
     if not isinstance(self.inner_aval, jax_core.ShapedArray):
       raise ValueError(
-          f"MemoryRef type must be a ShapedArray, got {type(self.inner_aval)}"
-      )
+          f"MemoryRef type must be a ShapedArray, got {type(self.inner_aval)}")
     dtype = self.inner_aval.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
-    return ShapedArrayWithMemorySpace(
-        self.inner_aval.shape, dtype, memory_space=self.memory_space
-    )
+    return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
@@ -544,10 +513,9 @@ class BlockSpec:
         )
 
     ref_block_shape = _get_ref_block_shape(block_shape)
-    if isinstance(array_aval, ShapedArrayWithMemorySpace):
-      block_array_aval = jax_core.ShapedArray(
-          ref_block_shape, array_aval.dtype, array_aval.weak_type
-      )
+    if isinstance(array_aval, jax_core.ShapedArray):
+      block_array_aval = array_aval.update(
+          shape=ref_block_shape, memory_space=jax_core.MemorySpace.Device)
     elif isinstance(array_aval, state_types.AbstractLinVal):
       if not isinstance(array_aval.inner_aval, jax_core.ShapedArray):
         raise NotImplementedError  # TODO(mattjj,sharadmv)
@@ -1364,7 +1332,8 @@ class CostEstimate:
 
 def get_memory_space_aval(aval: jax_core.AbstractValue) -> Any:
   """Queries the memory space of an array."""
-  if isinstance(aval, ShapedArrayWithMemorySpace):
+  if (isinstance(aval, jax_core.ShapedArray) and
+      not isinstance(aval.memory_space, jax_core.MemorySpace)):
     return aval.memory_space
   if isinstance(aval, state.AbstractRef):
     if aval.memory_space is not None:
@@ -1373,20 +1342,19 @@ def get_memory_space_aval(aval: jax_core.AbstractValue) -> Any:
   return None
 
 def _get_sds(aval: jax_core.AbstractValue):
-  match aval:
-    case state.AbstractRef(inner_aval=inner_aval):
-      if aval.memory_space is not None:
-        return aval.memory_space(aval.shape, aval.dtype)
-      return _get_sds(inner_aval)
-    case ShapedArrayWithMemorySpace():
+  if isinstance(aval, state.AbstractRef):
+    if aval.memory_space is not None:
       return aval.memory_space(aval.shape, aval.dtype)
-    case jax_core.ShapedArray():
+    return _get_sds(aval.inner_aval)
+  elif isinstance(aval, jax_core.ShapedArray):
+    if isinstance(aval.memory_space, jax_core.MemorySpace):
       return jax_core.ShapeDtypeStruct(
           aval.shape, aval.dtype, manual_axis_type=aval.mat,
-          sharding=aval.sharding
-      )
-    case _:
-      raise ValueError(f"Unsupported abstract value: {aval}")
+          sharding=aval.sharding)
+    # memory_space is a pallas memory space which is callable
+    return aval.memory_space(aval.shape, aval.dtype)
+  else:
+    raise ValueError(f"Unsupported abstract value: {aval}")
 
 
 core_map_p = jax_core.Primitive("core_map")
@@ -1590,9 +1558,7 @@ def with_memory_space_constraint_abstract_eval(x, *, memory_space):
   if not isinstance(x, jax_core.ShapedArray):
     raise NotImplementedError("with_memory_space_constraint only supports "
                               "arrays.")
-  return ShapedArrayWithMemorySpace(
-      x.shape, x.dtype, memory_space=memory_space
-  )
+  return x.update(memory_space=memory_space)
 
 def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
   del ctx, memory_space

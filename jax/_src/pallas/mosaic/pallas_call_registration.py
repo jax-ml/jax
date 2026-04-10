@@ -102,13 +102,12 @@ def _get_memory_spaces_from_avals(
     avals: Sequence[jax_core.AbstractValue], kernel_type: tpu_core.CoreType
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   memory_spaces = None
-  if any(
-      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace) for aval in avals
-  ):
+  if any(isinstance(aval, jax_core.ShapedArray)
+         and not isinstance(aval.memory_space, jax_core.MemorySpace)
+         for aval in avals):
     memory_spaces = tuple(
         _get_memory_space_from_aval(aval, kernel_type=kernel_type)
-        for aval in avals
-    )
+        for aval in avals)
   return memory_spaces
 
 
@@ -126,10 +125,9 @@ def _resolve_memory_spaces(
       out_avals, kernel_type=kernel_type
   )
   input_memory_spaces = None
-  if any(
-      isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
-      for aval in in_avals
-  ):
+  if any(isinstance(aval, jax_core.ShapedArray)
+         and not isinstance(aval.memory_space, jax_core.MemorySpace)
+         for aval in in_avals):
     input_memory_spaces = _get_memory_spaces_from_avals(
         in_avals, kernel_type=kernel_type
     )

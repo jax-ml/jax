@@ -81,13 +81,11 @@ def _mpmd_map_abstract_eval(
       in_avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
       for out_idx, a in enumerate(out_avals)
   ]
-  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  out_avals = [
-      aval.unwrap()
-      if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
-      else aval
-      for aval in out_avals
-  ]
+  # Make sure we don't return ShapedArray with pallas memory space to the
+  # outside world.
+  out_avals = tuple(a.update(memory_space=jax_core.MemorySpace.Device)
+                    if isinstance(a, jax_core.ShapedArray) else a
+                    for a in out_avals)
   return out_avals, effs
 
 
@@ -282,7 +280,8 @@ def _mpmd_map(
           in_specs=in_tree.unflatten(
               pallas_core.BlockSpec(
                   memory_space=aval.memory_space
-                  if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+                  if isinstance(aval, jax_core.ShapedArray)
+                  and not isinstance(aval.memory_space, jax_core.MemorySpace)
                   else mesh.default_memory_space,
               )
               for aval in flat_avals
@@ -290,7 +289,8 @@ def _mpmd_map(
           out_specs=out_tree.unflatten(
               pallas_core.BlockSpec(
                   memory_space=aval.memory_space
-                  if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+                  if isinstance(aval, jax_core.ShapedArray)
+                  and not isinstance(aval.memory_space, jax_core.MemorySpace)
                   else mesh.default_memory_space,
               )
               for aval in flat_out_avals

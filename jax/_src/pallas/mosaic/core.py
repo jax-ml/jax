@@ -285,7 +285,7 @@ class SemaphoreType(enum.Enum):
       return NotImplemented
     return CoreMemorySpace(MemorySpace.SEMAPHORE, other)((), self.dtype)
 
-  def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
+  def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
 
   def get_ref_aval(self) -> state.AbstractRef:
