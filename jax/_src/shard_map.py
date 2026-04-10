@@ -17,7 +17,7 @@ from collections.abc import Callable, Hashable, Sequence, Set
 import enum
 from functools import partial
 import inspect
-import itertools
+import itertools as it
 from math import prod
 import operator as op
 from typing import Any, TypeVar, Union, cast, overload
@@ -1027,7 +1027,7 @@ def _shard_map_lowering_shardy(
         outer_traceback=_jax.Traceback())
     sdy.ReturnOp(
         mlir.flatten_ir_values(
-            itertools.chain((v for _, v in tokens_out.items()), out_nodes_)
+            it.chain((v for _, v in tokens_out.items()), out_nodes_)
         )
     )
     num_tokens = len(tokens_out.effects())

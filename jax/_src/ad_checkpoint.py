@@ -883,7 +883,7 @@ remat_p.is_high = _remat_is_high
 
 
 def _remat_to_lojax(*hi_args, jaxpr, **kwds):
-  closed_lo_jaxpr = pe.lower_jaxpr(pe.close_jaxpr(jaxpr))
+  closed_lo_jaxpr = pe.lower_jaxpr2(pe.close_jaxpr(jaxpr))
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]

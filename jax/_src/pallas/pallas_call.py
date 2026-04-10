@@ -183,7 +183,7 @@ def _pallas_call_to_lojax(
     raise NotImplementedError("pallas_call does not support QDD for outputs")
   closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
   with grid_mapping.trace_env():
-    closed_lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+    closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
   assert not closed_lo_jaxpr.consts
   lo_jaxpr = closed_lo_jaxpr.jaxpr
   for block_mapping in grid_mapping.block_mappings:

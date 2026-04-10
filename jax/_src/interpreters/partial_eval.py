@@ -2439,28 +2439,25 @@ def try_constant_folding(primitive, tracers, params, out_avals):
       return const_fold_rules[primitive](consts_in, params, out_avals)
   return None
 
+def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
+  in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+  lo_jaxpr, _ = lower_jaxpr(hi_jaxpr, in_avals)
+  return lo_jaxpr
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr):
-  lo_avals = [lo_ty for aval in hi_jaxpr.in_aval_qdds for lo_ty in aval.lo_ty()]
-  f = lu.wrap_init(partial(lower_traceable, hi_jaxpr),
-                   debug_info=hi_jaxpr.jaxpr.debug_info.with_unknown_names())
-  lo_jaxpr, _, lo_consts = trace_to_jaxpr_dynamic(f, lo_avals, lower=True)
-  return core.ClosedJaxpr(lo_jaxpr, lo_consts)
+def lower_jaxpr(hi_jaxpr: core.ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
+  dbg = hi_jaxpr.jaxpr.debug_info.with_unknown_names()
+  return trace_to_jaxpr(partial(lower_traceable, hi_jaxpr),
+                        lo_avals, dbg, requires_low=True)
 
 def lower_traceable(jaxpr, *lo_args):
-  lo_args_ = iter(lo_args)
-  hi_args = [aval.raise_val(*it.islice(lo_args_, len(aval.lo_ty())))
-             if not aval.has_qdd else
-             aval.new_from_loval(*it.islice(lo_args_, len(aval.lo_ty())))
-             for aval in jaxpr.in_aval_qdds]
-  assert (_problem := next(lo_args_, None)) is None
+  hi_args = [a.raise_val(*xs) if not a.has_qdd else a.new_from_loval(*xs)
+             for a, xs in zip(jaxpr.in_aval_qdds, lo_args)]
   hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  mut_outs = [lo_val for aval, hi_arg in zip(jaxpr.final_aval_qdds, hi_args) if aval.has_qdd
-              for lo_val in aval.read_loval(hi_arg)]
-  lo_outs = [lo_val for v, hi_val in zip(jaxpr.jaxpr.outvars, hi_outs)
-             for lo_val in v.aval.lower_val(hi_val)]
-  return mut_outs + lo_outs
+  mut_outs = [a.read_loval(x) if a.has_qdd else []
+              for a, x in zip(jaxpr.final_aval_qdds, hi_args)]
+  lo_outs = [a.lower_val(y) for a, y in zip(jaxpr.out_avals, hi_outs)]
+  return mut_outs, lo_outs
 
 @weakref_lru_cache
 def convert_const_himutables(jaxpr):
@@ -2474,20 +2471,11 @@ def convert_const_himutables(jaxpr):
                                   effects=effects)
   return jaxpr.replace(jaxpr=new_jaxpr, consts=constvals), in_mutables
 
-def num_himuts_out(jaxpr):
-  return sum(len(a.lo_ty()) for a in jaxpr.final_aval_qdds if a.has_qdd)
-
-def apply_himut(jaxpr: Jaxpr | ClosedJaxpr, hi_args, out_mut):
-  out_mut_ = iter(out_mut)
-  for i, v in enumerate(jaxpr.invars):
-    if v.final_qdd is not None:
-      qdd = v.final_qdd
-      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[i], *lo_vals)  # type: ignore
-  assert next(out_mut_, None) is None
-
+# vestigial hijax helpers
 def raise_lo_outs(hi_avals, lo_outs):
   lo_outs_ = iter(lo_outs)
   hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in hi_avals]
   assert next(lo_outs_, None) is None
   return hi_outs
+def num_himuts_out(final_qdds):
+  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
