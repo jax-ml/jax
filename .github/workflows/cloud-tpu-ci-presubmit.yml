@@ -41,6 +41,8 @@ jobs:
       tpu-type: "v6e-8"
       python: "3.14-nogil"
       libtpu-version-type: "nightly"
+      # TODO: Remove the specific version once the wheels are good again.
+      libtpu-nightly-version: "0.0.40.dev20260409+nightly"
       halt-for-connection: ${{ inputs.halt-for-connection }}
       build_jaxlib: "true"
       build_jax: "true"

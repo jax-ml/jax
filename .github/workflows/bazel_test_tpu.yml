@@ -42,10 +42,15 @@ on:
         description: "Which libtpu version should be used for testing?"
         type: string
         # Choices are:
-        # - "nightly": Use the nightly libtpu wheel.
+        # - "nightly": Use the nightly libtpu wheel (can be pinned to a specific version with libtpu-nightly-version).
         # - "pinned": Use the pinned libtpu wheel.
         # - "oldest_supported_libtpu": Use the oldest supported libtpu wheel.
         default: "nightly"
+      libtpu-nightly-version:
+        description: "The specific nightly libtpu version to use (e.g., 0.0.40.dev20260409+nightly)."
+        type: string
+        required: false
+        default: ""
       jaxlib-version:
         description: "Which jaxlib version to test? (head/pypi_latest)"
         required: false
@@ -123,7 +128,13 @@ jobs:
           $JAXCI_PYTHON -m pip install --upgrade pip
           echo "Download the wheel into a local directory"
           if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then
-            $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            if [[ -n "${INPUTS_LIBTPU_NIGHTLY_VERSION}" ]]; then
+              echo "Using specific nightly libtpu version: ${INPUTS_LIBTPU_NIGHTLY_VERSION}"
+              $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu==${INPUTS_LIBTPU_NIGHTLY_VERSION} \
+                -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            else
+              $JAXCI_PYTHON -m pip download -d $(pwd)/dist --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            fi
           elif [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "pinned" ]]; then
             echo "Using pinned libtpu version"
             # Using "dist" folder as artifact registry for jax wheels.
@@ -141,6 +152,7 @@ jobs:
           fi
         env:
           INPUTS_LIBTPU_VERSION_TYPE: ${{ inputs.libtpu-version-type }}
+          INPUTS_LIBTPU_NIGHTLY_VERSION: ${{ inputs.libtpu-nightly-version }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
