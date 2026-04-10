@@ -1985,9 +1985,10 @@ def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
 
 
-def _dtype_object(dtype):
-  return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
+_dtype_object_types = (np.dtype, dtypes.ExtendedDType)
 
+def _dtype_object(dtype):
+  return dtype if isinstance(dtype, _dtype_object_types) else np.dtype(dtype)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -2207,7 +2208,7 @@ def get_sharding(sharding, shape):
   """
   ndim = len(shape)
   if sharding is None:
-    return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
+    return _empty_sharding(ndim)
 
   out_s = _maybe_modify_sharding(sharding, ndim)
   if len(out_s.spec) != ndim:
@@ -2308,7 +2309,7 @@ class ManualAxisType:
 
   @property
   def empty(self):
-    return not self.varying and not self.unreduced and not self.reduced
+    return self is _empty_manual_axis_type
 
   def invarying(self, mesh) -> frozenset:
     return frozenset(mesh.manual_axes) - (
@@ -2317,6 +2318,13 @@ class ManualAxisType:
   @property
   def vur(self) -> frozenset:
     return self.varying | self.unreduced | self.reduced
+
+_empty_manual_axis_type = ManualAxisType()
+
+
+@functools.cache
+def _empty_sharding(ndim):
+  return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 
 
 @immutable
@@ -2353,9 +2361,13 @@ class ShapedArray(AbstractValue):
               memory_space: MemorySpace = MemorySpace.Device):
     shape = canonicalize_shape(shape)
     dtype = _dtype_object(dtype)
-    sharding = get_sharding(sharding, shape)
-    # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
-    manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
+    if sharding is None:
+      sharding = _empty_sharding(len(shape))
+      assert manual_axis_type.empty, manual_axis_type
+    else:
+      sharding = get_sharding(sharding, shape)
+      # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
+      manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
     return cls._create(shape, dtype, weak_type, sharding, manual_axis_type,
