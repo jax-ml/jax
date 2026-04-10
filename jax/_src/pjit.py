@@ -880,23 +880,19 @@ def _to_lojax(*hi_args, jaxpr, **params):
   hi_args = [*closed_over_himutables, *hi_args]
   params = _converted_mutables_add_params(len(closed_over_himutables), **params)
 
-  # expand pjit params that must match number of lo inputs/outputs
-  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
-  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = pe.num_himuts_out(jaxpr)
-  params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
+  in_avals = FlatTree.flatten(([a.lo_ty() for a in jaxpr.in_aval_qdds], {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  params = _lojax_expand_params(in_avals, out_avals, **params)
 
-  # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
-
-  # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
-  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
-  pe.apply_himut(jaxpr, hi_args, out_mut)
-  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
+  out_mut, lo_outs = out_avals.update(all_outs).unflatten()
+  for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):
+    if a.has_qdd:
+      a.aval.update_from_loval(a.qdd, x, *us)
+  return [a.raise_val(*ys) for a, ys in zip(jaxpr.out_avals, lo_outs)]
 jit_p.to_lojax = _to_lojax
 
 def _converted_mutables_add_params(
@@ -909,21 +905,27 @@ def _converted_mutables_add_params(
 
 
 def _lojax_expand_params(
-    nums_in, nums_out, muts_out, *, donated_invars, in_shardings, in_layouts,
+    in_avals_, out_avals, donated_invars, in_shardings, in_layouts,
     out_shardings, out_layouts, **params):
+  in_avals, () = in_avals_.unpack()
+  in_lol = in_avals.unpack()
+  mut_out_lol, out_lol_ = out_avals.unpack()
+  out_lol = out_lol_.unpack()
+
   # some pjit params match the length of hi_jaxpr.invars/outvars, so when
   # lowering we must expand them to match their number of lojax types
-  def expand(ns, xs):
-    return tuple(y for n, x in zip(ns, xs) for y in (x,) * n)
-  donated_invars = expand(nums_in , donated_invars)
-  in_shardings   = expand(nums_in , in_shardings  )
-  in_layouts     = expand(nums_in , in_layouts    )
-  out_shardings  = expand(nums_out, out_shardings )
-  out_layouts    = expand(nums_out, out_layouts   )
+  def expand(lol, stuff):
+    return tuple(x for l, x in zip(lol, stuff) for _ in l)
+  donated_invars = expand(in_lol , donated_invars)
+  in_shardings   = expand(in_lol , in_shardings  )
+  in_layouts     = expand(in_lol , in_layouts    )
+  out_shardings  = expand(out_lol, out_shardings )
+  out_layouts    = expand(out_lol, out_layouts   )
 
   # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
-  out_shardings = (UNSPECIFIED,) * muts_out + out_shardings
-  out_layouts = (None,) * muts_out + out_layouts
+  num_muts_out = len(mut_out_lol)  # it's a flat tree
+  out_shardings = (UNSPECIFIED,) * num_muts_out + out_shardings
+  out_layouts = (None,) * num_muts_out + out_layouts
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,

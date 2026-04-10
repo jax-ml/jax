@@ -51,7 +51,7 @@ from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.tree_util import tree_unflatten
+from jax._src.tree_util import tree_unflatten, FlatTree
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -449,10 +449,13 @@ class Traced(Stage):
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
     from jax._src.interpreters import partial_eval as pe  # type:ignore
+    from jax._src.pjit import _lojax_expand_params  # pytype: disable=import-error
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
+    in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
+    params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
     if any(a.is_high for a in hi_jaxpr.final_aval_qdds):
       in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
     else:
@@ -461,7 +464,6 @@ class Traced(Stage):
       out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     else:
       out_tree = self.out_tree
-    params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
     lo_meta_tys = [mty.replace(aval=lo_ty)
                    for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
                    for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
@@ -493,15 +495,6 @@ class Traced(Stage):
     return Lowered(lowering, lo.args_info, lo.out_tree,
                    in_types=lo._in_types, out_types=lo._out_types)
 
-
-def lojax_expand_params(jaxpr, params):
-  from jax._src.pjit import _lojax_expand_params  # pytype: disable=import-error
-  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
-  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
-                    if aval.has_qdd)
-  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
-                              **dict(params, jaxpr=jaxpr))
 
 def lojax_pytree(hi_avals, tree):
   lo_avals = [t.lo_ty() for t in hi_avals]
@@ -871,7 +864,7 @@ class Compiled(Stage):
       out_mut, lo_outs = util.split_list(lo_outs, [_num_himuts_out(final_qdds)])
       _apply_himut(final_qdds, hi_args_flat, out_mut)
       out_hi_tree, out_hi_types = params.out_types
-      out_flat = _raise_lo_outs(out_hi_types, lo_outs)
+      out_flat = raise_lo_outs(out_hi_types, lo_outs)
       outs = tree_util.tree_unflatten(out_hi_tree, out_flat)
     else:
       out_flat = lo_outs
@@ -890,10 +883,6 @@ class Compiled(Stage):
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
 
-def _raise_lo_outs(avals, lo_outs):
-  from jax._src.interpreters import partial_eval as pe
-  return pe.raise_lo_outs(avals, lo_outs)
-
 # TODO(mattjj): de-dup with partial_eval.py
 def _num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
@@ -907,6 +896,12 @@ def _apply_himut(final_qdds, hi_args, out_mut):
       a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # type: ignore
   assert next(out_mut_, None) is None
 
+# TODO(mattjj): de-dup with partial_eval.py
+def raise_lo_outs(hi_avals, lo_outs):
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in hi_avals]
+  assert next(lo_outs_, None) is None
+  return hi_outs
 
 @runtime_checkable
 class Wrapped(Protocol):

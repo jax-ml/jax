@@ -957,7 +957,7 @@ cond_p.is_high = _cond_is_high
 
 def _cond_to_lojax(pred, *hi_args, branches, **kwds):
   jaxpr = branches[0]
-  lo_branches = tuple(pe.lower_jaxpr(j) for j in branches)
+  lo_branches = tuple(pe.lower_jaxpr2(j) for j in branches)
   lo_args = [lo_val for aval, x in zip(branches[0].in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]

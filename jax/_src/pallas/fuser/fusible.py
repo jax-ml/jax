@@ -128,11 +128,13 @@ def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
 
   closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, lo_args[:num_lo_consts])
 
-  lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+  lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
   all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr.jaxpr, num_consts=num_lo_consts)
 
   out_mut, lo_outs = util.split_list(all_outs, [pe.num_himuts_out(jaxpr)])
-  pe.apply_himut(jaxpr, hi_args, out_mut)
+  for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):
+    if a.has_qdd:
+      a.aval.update_from_loval(a.qdd, x, *us)
   return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 
 

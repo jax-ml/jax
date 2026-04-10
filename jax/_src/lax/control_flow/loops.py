@@ -1486,7 +1486,7 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   num_consts -= sum(to_move)
   num_carry += sum(to_move)
 
-  # expand num_consts, num_carry, linear according to lo types
+  # expand num_consts, num_carry according to lo types
   const_in_avals, carry_in_avals, _ = split_list(jaxpr.in_aval_qdds, [num_consts, num_carry])
   num_consts = sum(len(aval.lo_ty()) for aval in const_in_avals)
   num_carry = sum(len(aval.lo_ty()) for aval in carry_in_avals)
@@ -1497,12 +1497,15 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
                             else aval.lower_val(x))]
 
   # lower the jaxpr and bind it using lo input values
-  lo_jaxpr = pe.lower_jaxpr(jaxpr)
+  in_avals = FlatTree.flatten(([a.lo_ty() for a in jaxpr.in_aval_qdds], {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
   all_outs = scan_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_consts,
                          num_carry=num_carry, **params)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
-  pe.apply_himut(jaxpr, hi_args, out_mut)
-  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
+  out_mut, lo_outs = out_avals.update(all_outs).unflatten()
+  for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):
+    if a.has_qdd:
+      a.aval.update_from_loval(a.qdd, x, *us)
+  return [a.raise_val(*ys) for a, ys in zip(jaxpr.out_avals, lo_outs)]
 scan_p.to_lojax = _scan_to_lojax
 
 def _move_right(lst, to_move):
@@ -2362,13 +2365,17 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
   body_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_bconsts)
 
   # lower jaxprs and bind
+  in_avals = FlatTree.flatten(([a.lo_ty() for a in body_jaxpr.in_aval_qdds], {}))
+  lo_body_jaxpr, out_avals = pe.lower_jaxpr(body_jaxpr, in_avals)
   all_outs = while_p.bind(*lo_cconsts, *lo_bconsts, *lo_carry,
-                          cond_jaxpr=pe.lower_jaxpr(cond_jaxpr),
-                          body_jaxpr=pe.lower_jaxpr(body_jaxpr),
+                          cond_jaxpr=pe.lower_jaxpr2(cond_jaxpr),
+                          body_jaxpr=lo_body_jaxpr,
                           cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(body_jaxpr)])
-  pe.apply_himut(body_jaxpr, [*hi_bconsts, *hi_carry], out_mut)
-  return pe.raise_lo_outs(body_jaxpr.out_avals, lo_outs)
+  out_mut, lo_outs = out_avals.update(all_outs).unflatten()
+  for a, x, us in zip(body_jaxpr.final_aval_qdds, it.chain(hi_bconsts, hi_carry), out_mut):
+    if a.has_qdd:
+      a.aval.update_from_loval(a.qdd, x, *us)
+  return [a.raise_val(*ys) for a, ys in zip(body_jaxpr.out_avals, lo_outs)]
 while_p.to_lojax = _while_to_lojax
 
 def _insert_binders(jaxpr, n_after, vals):
