@@ -4289,12 +4289,25 @@ class MiscellaneousTest(ptu.PallasTPUTest):
           ((2, 2, 4), (4, 4)),
           ((2, 3), (6,)),
       ],
-      input_minor_dims=[(8, 128), (4, 256), (8, 120), (5, 32), (5, 7)],
+      input_minor_dims=[
+          (8, 128),
+          (4, 256),
+          (8, 120),
+          (5, 32),
+          (5, 7),
+          (2, 8, 128),
+          (3, 4, 256),
+          (1, 8, 120),
+          (9, 5, 32),
+          (6, 5, 7),
+      ],
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_reshape_two_minor_dims_to_last_dim_change_major_dim(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17) and len(input_minor_dims) > 2:
+      self.skipTest('Test requires a newer libTPU.')
     input_major_dims, output_major_dims = input_output_major_dims
     output_minor_dims = (math.prod(input_minor_dims),)
     input_shape = input_major_dims + input_minor_dims
@@ -4310,25 +4323,84 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape(output_shape))
 
-  # (p, q, m, n, k) -> (p, q * m * n * k) where k % 128 == 0
+  # (q, m, n, k) -> (q, m * n * k)
   @parameterized.parameters(
-      (p, q, m, n, k, dtype)
-      for (p, q, m, n, k), dtype in itertools.product(
+      (q, m, n, k, dtype)
+      for (q, m, n, k), dtype in itertools.product(
           [
-              (5, 3, 8, 17, 512),
-              (6, 1, 8, 9, 256),
-              (16, 1, 8, 3, 256),
-              (3, 2, 1, 4, 256),
-              (1, 7, 2, 2, 256),
+              # k % 128 == 0
+              (3, 8, 17, 512),
+              (1, 8, 9, 256),
+              (1, 8, 3, 256),
+              (10, 1, 4, 256),
+              (1, 2, 2, 256),
+              (1, 9, 3, 256),
+              # k % 128 != 0
+              (3, 8, 17, 500),
+              (1, 8, 9, 200),
+              (1, 8, 3, 200),
+              (10, 1, 4, 200),
+              (1, 2, 2, 200),
+              (1, 9, 3, 200),
           ],
           [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
       )
   )
-  def test_reshape_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
+  def test_reshape_fold_three_minor_dims_to_R2(self, q, m, n, k, dtype):
+    unsupported_dtype = (
+        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
+    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+
+    if k % 128 != 0 and unsupported_dtype:
       self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      if unsupported_dtype or k % 128 != 0:
+        self.skipTest('Requires a newer libTPU.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(
+          x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2] * x_ref.shape[3]
+      )
+
+    x = np.arange(q * m * n * k, dtype=dtype).reshape(q, m, n, k)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((q, m * n * k), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([q, m * n * k]))
+
+  # (p, q, m, n, k) -> (p, q * m * n * k)
+  @parameterized.parameters(
+      (p, q, m, n, k, dtype)
+      for (p, q, m, n, k), dtype in itertools.product(
+          [
+              # k % 128 == 0
+              (5, 3, 8, 7, 512),
+              (6, 1, 8, 9, 256),
+              (16, 1, 8, 3, 256),
+              (3, 2, 1, 4, 256),
+              (1, 7, 2, 2, 256),
+              # k % 128 != 0
+              (5, 3, 8, 7, 500),
+              (6, 1, 8, 9, 200),
+              (16, 1, 8, 3, 200),
+              (3, 2, 1, 4, 200),
+              (1, 7, 2, 2, 200),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_fold_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
+    unsupported_dtype = (
+        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
+    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+
+    if k % 128 != 0 and unsupported_dtype:
+      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      if unsupported_dtype or k % 128 != 0:
+        self.skipTest('Requires a newer libTPU.')
+
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0],
