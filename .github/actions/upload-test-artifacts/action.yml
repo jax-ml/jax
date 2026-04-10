@@ -1,39 +1,32 @@
 # Composite action to upload test artifacts (JUnit XML) to GitHub Actions.
 name: Upload test artifacts
+description: Upload test artifacts (JUnit XML) to GitHub Actions.
 
 inputs:
   test-artifacts-dir:
     description: "Directory containing test artifact files"
     default: 'test-artifacts'
-    type: string
   artifact-name:
     description: "Name for the GitHub Actions artifact upload"
     default: 'test-artifacts-${{ github.job }}'
-    type: string
   gcs-upload-uri:
     description: "GCS location prefix where the test artifacts should be uploaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
-    type: string
   metadata:
     description: "JSON string containing job-level metadata"
     default: ''
-    type: string
   inputs_json:
     description: "JSON string of workflow inputs"
     default: '{}'
-    type: string
   matrix_json:
     description: "JSON string of matrix parameters"
     default: '{}'
-    type: string
   env_json:
     description: "JSON string of environment variables"
     default: '{}'
-    type: string
   custom_json:
     description: "JSON string of custom metadata"
     default: '{}'
-    type: string
 
 runs:
   using: "composite"
@@ -74,9 +67,9 @@ runs:
         env_vars = json.loads(os.environ.get('ENV_JSON', '{}') or '{}') or {}
         custom = json.loads(os.environ.get('CUSTOM_JSON', '{}') or '{}') or {}
         explicit_str = os.environ.get('EXPLICIT_METADATA', '')
-        
+
         merged = {**inputs, **matrix, **env_vars, **custom}
-        
+
         if explicit_str:
             try:
                 explicit = json.loads(explicit_str)
@@ -84,7 +77,7 @@ runs:
             except json.JSONDecodeError:
                 print(f'Warning: could not parse explicit metadata as JSON: {explicit_str}')
                 merged['explicit_metadata_raw'] = explicit_str
-                
+
         with open(os.path.join(os.environ['TEST_ARTIFACTS_DIR'], 'metadata.json'), 'w') as f:
             json.dump(merged, f)
         "

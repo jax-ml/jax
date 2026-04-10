@@ -156,8 +156,8 @@ jobs:
         if: ${{ inputs.upload_artifacts_to_s3 }}
         run: |
           echo "Uploading wheels to S3..."
-          ls -lh $JAXCI_OUTPUT_DIR/*.whl
-          aws s3 cp --only-show-errors --recursive $JAXCI_OUTPUT_DIR/ "${INPUTS_S3_UPLOAD_URI}"/
+          ls -lh "$JAXCI_OUTPUT_DIR"/*.whl
+          aws s3 cp --only-show-errors --recursive "$JAXCI_OUTPUT_DIR"/ "${INPUTS_S3_UPLOAD_URI}"/
           echo "Upload complete."
 
           echo "${INPUTS_S3_UPLOAD_URI}" | \

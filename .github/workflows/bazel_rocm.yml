@@ -168,7 +168,7 @@ jobs:
             --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
             --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}" \
-            ${JAXCI_ROCM_LOCK_FLAG:-}
+            "${JAXCI_ROCM_LOCK_FLAG:-}"
       - name: Upload test artifacts
         if: always()
         continue-on-error: true

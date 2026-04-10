@@ -44,7 +44,7 @@ jobs:
       # TODO: Remove the specific version once the wheels are good again.
       libtpu-nightly-version: "0.0.40.dev20260409+nightly"
       halt-for-connection: ${{ inputs.halt-for-connection }}
-      build_jaxlib: "true"
-      build_jax: "true"
+      build_jaxlib: ${{ 'true' }}
+      build_jax: ${{ 'true' }}
       clone_main_xla: 1
     # End Presubmit Naming Check github-tpu-presubmits

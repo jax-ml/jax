@@ -88,7 +88,7 @@ jobs:
       halt-for-connection: ${{ inputs.halt-for-connection }}
       enable-x64:  ${{ matrix.enable-x64 }}
       enable-bzlmod:  ${{ matrix.enable-bzlmod }}
-      build_jaxlib: 'true'
-      build_jax: 'true'
+      build_jaxlib: ${{ 'true' }}
+      build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 1

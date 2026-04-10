@@ -46,9 +46,9 @@ jobs:
           set -x
           cd jax
 
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+          echo "JAX_NUM_GENERATED_CASES=${JAX_NUM_GENERATED_CASES}"
+          echo "JAX_ENABLE_X64=${JAX_ENABLE_X64}"
+          echo "JAX_SKIP_SLOW_TESTS=${JAX_SKIP_SLOW_TESTS}"
 
           # Build JAX and run tests
           bazel test \
@@ -57,9 +57,9 @@ jobs:
               --repo_env=HERMETIC_PYTHON_SHA256=19160bafba950761dea5a3e3f831212cf6aa0d5dc8a0fb13c1caf69c009e853e \
               --repo_env=HERMETIC_PYTHON_PREFIX="cpython-3.14.x-tsan-shared-linux-x86_64-llvm-18.1.8/" \
               --verbose_failures \
-              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
-              --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
-              --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+              --test_env=JAX_NUM_GENERATED_CASES="${JAX_NUM_GENERATED_CASES}" \
+              --test_env=JAX_ENABLE_X64="${JAX_ENABLE_X64}" \
+              --test_env=JAX_SKIP_SLOW_TESTS="${JAX_SKIP_SLOW_TESTS}" \
               --test_env=PYTHON_GIL=0 \
               --test_env=TSAN_OPTIONS="halt_on_error=1,suppressions=tests/config/tsan-suppressions_3.14.txt" \
               --test_env=JAX_TEST_NUM_THREADS=8 \

@@ -137,17 +137,17 @@ jobs:
 
           # Enable RBE if building on Linux or Windows x86
           if [[ "${RUNNER_TYPE}" == *linux-x86* || "${RUNNER_TYPE}" == *windows-x86* || ("${RUNNER_TYPE}" == *linux-arm64* && "${ARTIFACT_TYPE}" == "jaxlib") ]]; then
-            echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+            echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> "$GITHUB_ENV"
           fi
 
           # Set bazel output base on Windows runner machine
           if [[ "${RUNNER_TYPE}" == *windows-x86* ]]; then
-            echo "JAXCI_BAZEL_OUTPUT_BASE=C:\actions-runner\_work\bazel_output_base" >> $GITHUB_ENV
+            printf '%s\n' 'JAXCI_BAZEL_OUTPUT_BASE=C:\actions-runner\_work\bazel_output_base' >> "$GITHUB_ENV"
           fi
 
           # Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
           if [[ "${RUNNER_TYPE}" == *linux-arm64* ]]; then
-            echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
+            echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> "$GITHUB_ENV"
           fi
         env:
           INPUTS_RUNNER: ${{ inputs.runner }}

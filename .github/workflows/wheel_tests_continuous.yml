@@ -204,11 +204,11 @@ jobs:
       jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
-      build_jaxlib: "false"
-      build_jax: "false"
+      build_jaxlib: ${{ 'false' }}
+      build_jax: ${{ 'false' }}
       write_to_bazel_remote_cache: 1
-      run_tests_with_rbe: "false"
-      build_artifacts_with_rbe: "false"
+      run_tests_with_rbe: ${{ 'false' }}
+      build_artifacts_with_rbe: ${{ 'false' }}
       clone_main_xla: 1
 
   run-bazel-test-cuda-py-import:
@@ -235,8 +235,8 @@ jobs:
       build_jax: "wheel"
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
-      run_tests_with_rbe: "false"
-      build_artifacts_with_rbe: "true"
+      run_tests_with_rbe: ${{ 'false' }}
+      build_artifacts_with_rbe: ${{ 'true' }}
       clone_main_xla: 1
 
   run-pytest-tpu:
@@ -273,6 +273,7 @@ jobs:
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/bazel_test_tpu.yml
+    needs: [build-jaxlib-artifact]
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
@@ -366,8 +367,8 @@ jobs:
       rocm-version: ${{ matrix.rocm-version }}
       enable-x64: ${{ matrix.enable-x64 }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
-      build_jaxlib: "false"
-      build_jax: "false"
+      build_jaxlib: ${{ 'false' }}
+      build_jax: ${{ 'false' }}
       jaxlib-version: "head"
-      run_multiaccelerator_tests: "false"
+      run_multiaccelerator_tests: ${{ 'false' }}
       clone_main_xla: 1
