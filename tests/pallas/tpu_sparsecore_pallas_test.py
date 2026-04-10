@@ -1331,6 +1331,52 @@ class VectorSubcoreTest(PallasSCTest):
     )
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(128, 256)
+  def test_tiled_dma_hbm_vmem_shared(self, n_pad):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 24):
+      if n_pad > 128 and self.USE_TC_TILING:
+        self.skipTest("Needs newer libtpu")
+
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    vec_dim = plsc.get_sparse_core_info().num_lanes
+    n = 2
+    x = jnp.arange(mesh.num_subcores * n * vec_dim).reshape(-1, n * vec_dim) // 4
+    x_pad = jnp.pad(x, ((0, 0), (0, n_pad - n * vec_dim)), mode="empty")
+
+    @self.kernel(
+        out_shape=x_pad,
+        mesh=mesh,
+        scratch_shapes=(
+            pltpu.VMEM(x_pad.shape[1:], x.dtype),
+            pltpu.VMEM_SHARED(x_pad.shape, jnp.int32),
+        ),
+        debug=True,
+    )
+    def kernel(x_ref, o_ref, scratch_vmem, scratch_shared):
+      subcore_id = lax.axis_index("subcore")
+
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref, scratch_shared)
+      plsc.subcore_barrier()
+      pltpu.sync_copy(scratch_shared.at[subcore_id], scratch_vmem)
+
+      @plsc.parallel_loop(0, x.shape[-1], vec_dim)
+      def _(i):
+        scratch_vmem[pl.ds(i, vec_dim)] += 1
+
+      pltpu.sync_copy(scratch_vmem, scratch_shared.at[subcore_id])
+      plsc.subcore_barrier()
+
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(scratch_shared, o_ref)
+
+    actual = kernel(x_pad)[..., :x.shape[-1]]
+    np.testing.assert_array_equal(actual, x + 1)
+
   def test_smem_vmem_store_literals(self):
     if self.USE_TC_TILING and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
       self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
