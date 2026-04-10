@@ -230,6 +230,50 @@ class DebugPrintTest(PallasSCTest):
     self.assertIn(str(debug_float), get_output())
     self.assertIn("No values", get_output())
 
+  def test_mpmd_print(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      self.skipTest("Needs a newer libtpu")
+
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=self.sc_info.num_cores,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="scs_core", num_cores=self.sc_info.num_cores
+    )
+
+    nl = self.num_lanes
+    x = jnp.arange(nl, dtype=jnp.int32)
+
+    def vector_subcore_fn(x_hbm_ref, out_hbm_ref):
+      del x_hbm_ref, out_hbm_ref
+      pl.debug_print("From TEC")
+
+    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref):
+      del x_hbm_ref, out_hbm_ref
+      pl.debug_print("From SCS")
+
+    def kernel(x):
+      return mpmd.mpmd_map(
+          [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
+          out_shapes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+
+    compiled_kernel = jax.jit(
+        kernel,
+        compiler_options={
+            "xla_tpu_enable_sc_log_recorder": "true",
+            "xla_tpu_enable_tile_log_recorder": "true",
+        },
+    )
+
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+
+    self.assertIn("From TEC", get_output())
+    self.assertIn("From SCS", get_output())
+
 
 class VectorSubcoreTest(PallasSCTest):
 
