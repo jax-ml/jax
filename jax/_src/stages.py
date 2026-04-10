@@ -35,6 +35,7 @@ import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
 import itertools as it
+import logging
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
 from jax._src import core
@@ -806,6 +807,8 @@ class Compiled(Stage):
 
   @staticmethod
   def call(*args, **kwargs):
+    logging.info("XXX Compiled.call: nr_const_args[%d], args[%d]",
+                   len(args[0].const_args), len(args) - 1)
     util.test_event("stages_compiled_call")
     # This is because `__call__` passes in `self._params` as the first argument.
     # Instead of making the call signature `call(params, *args, **kwargs)`
@@ -873,14 +876,27 @@ class Compiled(Stage):
     return outs, out_flat, args_flat
 
   def __call__(self, *args, **kwargs):
+    logging.info("XXX Compiled.__call__: nr_const_args[%d], args[%d]",
+                   len(self._params.const_args), len(args))
     if self._call is None:
       self._call = self._executable.create_cpp_call(self._params)
       if self._call is None:
         params = self._params
         def cpp_call_fallback(*args, **kwargs):
+          logging.info("XXX Compiled.cpp_call_fallback: nr_const_args[%d], args[%d]",
+                   len(self._params.const_args), len(args))
           outs, _, _ = Compiled.call(params, *args, **kwargs)
           return outs
+        logging.info("Compiled.__call__: Using C++ call fallback")
         self._call = cpp_call_fallback
+      else:
+        logging.info("Compiled.__call__: Using create_cpp_call")
+    if self._params.const_args:
+      logging.info("XXX Compiled.__call__: Calling Compiled function with nr_const_args[%d], args[%d]",
+                   len(self._params.const_args), len(args))
+      for i, arg in enumerate(self._params.const_args):
+        logging.info("const_args[%d]: %s %s", i,
+                     type(arg), arg.shape if hasattr(arg, 'shape') else '')
     return self._call(*args, **kwargs)
 
 # TODO(mattjj): de-dup with partial_eval.py
