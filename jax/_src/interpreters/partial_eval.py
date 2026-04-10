@@ -2266,11 +2266,8 @@ def trace_to_jaxpr(
   # equations should be rooted at the enclosing jaxpr and not contain any
   # context from the callsite. Otherwise metadata from one caller would bleed
   # into metadata from a different caller if we, e.g., inline.
-  with (
-      core.ensure_no_leaks(trace),
-      source_info_util.reset_name_stack(),
-      TracebackScope(),
-  ):
+  with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
+        TracebackScope()):
     source_info = source_info_util.current()
     if requires_low:
       def new_arg(aval):
@@ -2308,9 +2305,9 @@ def trace_to_jaxpr(
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
     del trace, fun, in_tracers, flat_out_tracers, ans
-
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return ClosedJaxpr(jaxpr, consts), out_avals
+
 
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
 @profiler.annotate_function

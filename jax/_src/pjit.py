@@ -1328,12 +1328,10 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
-                                    name: str, jaxpr: core.ClosedJaxpr,
-                                    num_const_args: int, in_avals,
-                                    effects, in_shardings,
-                                    out_shardings, in_layouts, out_layouts,
-                                    api_name):
+def _pjit_cached_lower_jaxpr_to_fun(
+    ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.ClosedJaxpr,
+    num_const_args: int, in_avals, effects, in_shardings, out_shardings,
+    in_layouts, out_layouts, api_name):
   assert len(in_avals) == num_const_args + len(jaxpr.in_avals)
   assert len(in_avals) == len(in_shardings)
   assert len(in_avals) == len(in_layouts)
@@ -1345,14 +1343,16 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
   key = (jit_p, name, jaxpr, effects, num_devices,
-         pxla.SemanticallyEqualShardings(in_shardings, in_avals),  # pytype: disable=wrong-arg-types
-         pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),  # pytype: disable=wrong-arg-types
+         pxla.SemanticallyEqualShardings(in_shardings, in_avals),
+         pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
          in_layouts, out_layouts, api_name)
 
   func = mod_ctx.cached_primitive_lowerings.get(key, None)
   if func is None:
-    arg_shardings = [None if isinstance(i, UnspecifiedValue) else i for i in in_shardings]
-    result_shardings = [None if isinstance(o, UnspecifiedValue) else o for o in out_shardings]
+    arg_shardings = [None if isinstance(i, UnspecifiedValue) else i
+                     for i in in_shardings]
+    result_shardings = [None if isinstance(o, UnspecifiedValue) else o
+                        for o in out_shardings]
     # TODO(b/228598865): non-top-level functions cannot have shardings set
     # directly on the inputs or outputs because they are lost during MLIR->HLO
     # conversion. using_sharding_annotation=False means we add an identity
@@ -1386,10 +1386,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   in_layouts = ca_layouts + in_layouts
 
   func = _pjit_cached_lower_jaxpr_to_fun(
-      ctx, name, jaxpr, len(const_args), in_avals,
-      tuple(effects), in_shardings,
-      out_shardings, in_layouts, out_layouts,
-      api_name='jit')
+      ctx, name, jaxpr, len(const_args), in_avals, tuple(effects), in_shardings,
+      out_shardings, in_layouts, out_layouts, api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   hoisted_const_values = mlir.flatten_ir_values(

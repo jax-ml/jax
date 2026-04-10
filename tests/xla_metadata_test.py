@@ -23,6 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
 from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.scheduling_groups import xla_metadata_call
 import jax.numpy as jnp
 import numpy as np
 
@@ -211,6 +212,14 @@ class XlaMetadataTest(jtu.JaxTestCase):
         self.assertIn('mhlo.frontend_attributes = {a = "b"}', line)
       if "stablehlo.add" in line:
         self.assertIn('mhlo.frontend_attributes = {a = "b"}', line)
+
+  def test_close_over_inside_jit(self):
+    @jax.jit
+    def f(x):
+      y = x + 2
+      return xla_metadata_call(lambda a: a * y, inlineable='false')(x)
+
+    f(jnp.arange(8))  # doesn't crash
 
   def test_while(self):
     @jax.jit
