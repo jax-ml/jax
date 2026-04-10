@@ -149,9 +149,13 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
-  JAX implementation of :func:`numpy.empty`. Because XLA cannot create an
-  un-initialized array, :func:`jax.numpy.empty` will always return an array
-  full of zeros.
+  JAX implementation of :func:`numpy.empty`.
+
+  .. note::
+
+    For historical reasons, :func:`jax.numpy.empty` is currently equivalent to
+    :func:`jax.numpy.zeros`: i.e. it returns a buffer initialized with zeros.
+    To create a buffer of uninitialized values, please use :func:`jax.lax.empty`.
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
@@ -169,6 +173,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     Array of the specified shape and dtype, with the given device/sharding if specified.
 
   See also:
+    - :func:`jax.lax.empty`
     - :func:`jax.numpy.empty_like`
     - :func:`jax.numpy.zeros`
     - :func:`jax.numpy.ones`
