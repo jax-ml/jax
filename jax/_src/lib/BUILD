@@ -35,8 +35,8 @@ py_library_providing_imports_info(
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
-        "//jax:version",
         "//jax/_src:lazy_loader",
+        "//jax/_src:version",
     ] + if_building_jaxlib([
         "//jaxlib",
     ]),

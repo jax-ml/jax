@@ -23,6 +23,7 @@ from absl.testing import absltest
 import jax
 from jax._src.lib import check_jaxlib_version
 from jax._src import test_util as jtu
+from jax._src import version as version_module
 
 # This is a subset of the full PEP440 pattern; for example we skip post releases
 VERSION_PATTERN = re.compile(r"""
@@ -41,19 +42,19 @@ VERSION_PATTERN = re.compile(r"""
 @contextlib.contextmanager
 def patch_jax_version(version, release_version):
   """
-  Patch jax.version._version & jax.version._release_version in order to
+  Patch version_module._version & version_module._release_version in order to
   test the version construction logic.
   """
-  original_version = jax.version._version
-  original_release_version = jax.version._release_version
+  original_version = version_module._version
+  original_release_version = version_module._release_version
 
-  jax.version._version = version
-  jax.version._release_version = release_version
+  version_module._version = version
+  version_module._release_version = release_version
   try:
     yield
   finally:
-    jax.version._version = original_version
-    jax.version._release_version = original_release_version
+    version_module._version = original_version
+    version_module._release_version = original_release_version
 
 
 @contextlib.contextmanager
@@ -86,7 +87,7 @@ class JaxVersionTest(unittest.TestCase):
   def testVersionInRelease(self):
     # If the release version is set, subprocess should not be called.
     with assert_no_subprocess_call():
-      version = jax.version._get_version_string()
+      version = version_module._get_version_string()
     self.assertEqual(version, "1.2.3.dev4567")
     self.assertValidVersion(version)
 
@@ -95,7 +96,7 @@ class JaxVersionTest(unittest.TestCase):
     # If the release version is not set, we expect subprocess to be called
     # in order to attempt accessing git commit information.
     with assert_subprocess_call():
-      version = jax.version._get_version_string()
+      version = version_module._get_version_string()
     self.assertTrue(version.startswith("1.2.3.dev"))
     self.assertValidVersion(version)
 
@@ -104,7 +105,7 @@ class JaxVersionTest(unittest.TestCase):
     # If building from a source tree with release version set, subprocess
     # should not be called.
     with assert_no_subprocess_call():
-      version = jax.version._get_version_for_build()
+      version = version_module._get_version_for_build()
     self.assertEqual(version, "1.2.3.dev4567")
     self.assertValidVersion(version)
 
@@ -118,7 +119,7 @@ class JaxVersionTest(unittest.TestCase):
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_subprocess_call():
-        version = jax.version._get_version_for_build()
+        version = version_module._get_version_for_build()
       # TODO(jakevdp): confirm that this includes a date string & commit hash?
       self.assertTrue(version.startswith(f"{base_version}.dev"))
       self.assertValidVersion(version)
@@ -126,7 +127,7 @@ class JaxVersionTest(unittest.TestCase):
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
                      JAX_NIGHTLY="1", JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
+        version = version_module._get_version_for_build()
       datestring = datetime.date.today().strftime("%Y%m%d")
       self.assertEqual(version, f"{base_version}.dev{datestring}")
       self.assertValidVersion(version)
@@ -134,7 +135,7 @@ class JaxVersionTest(unittest.TestCase):
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY="1"):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
+        version = version_module._get_version_for_build()
       datestring = datetime.date.today().strftime("%Y%m%d")
       self.assertEqual(version, f"{base_version}.dev{datestring}")
       self.assertValidVersion(version)
@@ -142,16 +143,16 @@ class JaxVersionTest(unittest.TestCase):
     with jtu.set_env(JAX_RELEASE="1", JAXLIB_RELEASE=None,
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
-      self.assertFalse(jax.version._is_prerelease())
+        version = version_module._get_version_for_build()
+      self.assertFalse(version_module._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
     with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE="1",
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
-      self.assertFalse(jax.version._is_prerelease())
+        version = version_module._get_version_for_build()
+      self.assertFalse(version_module._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
@@ -159,7 +160,7 @@ class JaxVersionTest(unittest.TestCase):
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None,
                      JAX_CUSTOM_VERSION_SUFFIX="test"):
       with assert_subprocess_call(stdout=b"1731433958-1c0f1076e"):
-        version = jax.version._get_version_for_build()
+        version = version_module._get_version_for_build()
       self.assertTrue(version.startswith(f"{base_version}.dev"))
       self.assertTrue(version.endswith("test"))
       self.assertValidVersion(version)
@@ -172,7 +173,7 @@ class JaxVersionTest(unittest.TestCase):
         WHEEL_VERSION_SUFFIX=".dev20250101+1c0f1076erc1",
     ):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
+        version = version_module._get_version_for_build()
       self.assertEqual(version, f"{base_version}.dev20250101+1c0f1076erc1")
       self.assertValidVersion(version)
 
@@ -184,8 +185,8 @@ class JaxVersionTest(unittest.TestCase):
         WHEEL_VERSION_SUFFIX="rc0",
     ):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
-      self.assertTrue(jax.version._is_prerelease())
+        version = version_module._get_version_for_build()
+      self.assertTrue(version_module._is_prerelease())
       self.assertEqual(version, f"{base_version}rc0")
       self.assertValidVersion(version)
 
@@ -197,8 +198,8 @@ class JaxVersionTest(unittest.TestCase):
         WHEEL_VERSION_SUFFIX="rc0",
     ):
       with assert_no_subprocess_call():
-        version = jax.version._get_version_for_build()
-      self.assertTrue(jax.version._is_prerelease())
+        version = version_module._get_version_for_build()
+      self.assertTrue(version_module._is_prerelease())
       self.assertEqual(version, f"{base_version}rc0")
       self.assertValidVersion(version)
 

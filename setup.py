@@ -27,7 +27,7 @@ _libtpu_version = '0.0.37.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
-    'version', os.path.join(pkg_path, 'version.py'))
+    'version', os.path.join(pkg_path, '_src', 'version.py'))
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
@@ -35,7 +35,7 @@ def load_version_module(pkg_path):
 _version_module = load_version_module(project_name)
 __version__ = _version_module._get_version_for_build()
 _jax_version = _version_module._version  # JAX version, with no .dev suffix.
-_cmdclass = _version_module._get_cmdclass(project_name)
+_cmdclass = _version_module._get_cmdclass(os.path.join(project_name, '_src'))
 _minimum_jaxlib_version = _version_module._minimum_jaxlib_version
 
 # If this is a pre-release ("rc" wheels), append "rc0" to

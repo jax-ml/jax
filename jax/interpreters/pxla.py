@@ -202,4 +202,8 @@ else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
+  del _deprecated_pxla
+  del _deprecated_mesh
+  del _deprecated_op_shardings
+  del _deprecated_sharding_impls
 del _typing

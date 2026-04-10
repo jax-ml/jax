@@ -225,7 +225,7 @@ jax_python_wheel_repository = use_repo_rule(
 jax_python_wheel_repository(
     name = "jax_wheel",
     version_key = "_version",
-    version_source = "//jax:version.py",
+    version_source = "//jax/_src:version.py",
 )
 
 python_wheel_version_suffix_repository = use_repo_rule(
