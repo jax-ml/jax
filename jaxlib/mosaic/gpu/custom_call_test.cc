@@ -296,11 +296,10 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
     // Clear the cache to test deserialization.
     MosaicGpuClearKernelCache();
     absl::ScopedMockLog log;
-    // Should not hit the cache during Prepare. One cache hit is expected on the
-    // Execute stage.
+    // Should not hit the cache during Prepare.
     EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
                          "Found Mosaic GPU kernel in cache"))
-        .Times(1);
+        .Times(0);
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     "Successfully compiled Mosaic GPU kernel to object file"))
@@ -319,11 +318,10 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
 
   {
     absl::ScopedMockLog log;
-    // The second execution should hit the cache on both Prepare and Execution
-    // stages.
+    // The second execution should hit the cache.
     EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
                          "Found Mosaic GPU kernel in cache"))
-        .Times(2);
+        .Times(1);
     EXPECT_CALL(log,
                 Log(absl::LogSeverity::kInfo, _,
                     "Successfully compiled Mosaic GPU kernel to object file"))

@@ -952,9 +952,12 @@ struct DeviceState {
   // The RAII handle of the buffer on the device which stores the structure
   // above.
   se::DeviceAddressHandle metadata_handle;
+
+  // Pointer (CUmodule) to the kernel loaded on the GPU.
+  void* kernel_handle = nullptr;
 };
 
-constexpr int kMaxPeers = 8;
+constexpr int kMaxLocalDevices = 8;
 
 }  // namespace
 
@@ -962,9 +965,9 @@ namespace mosaic::gpu {
 struct CustomCallResources {
   CompiledKernel* kernel = nullptr;
 
-  // For each participating device store the metadata for the collective
-  // operation.
-  std::array<DeviceState, kMaxPeers> device_states;
+  // For each participating local device store device-specific metadata for the
+  // custom call operation.
+  std::array<DeviceState, kMaxLocalDevices> device_states;
   KernelHash hash;
 
   static absl::StatusOr<std::string> Serialize(
@@ -1225,10 +1228,11 @@ absl::Status MosaicGpuPrepare(
   // This operation should be done at Prepare stage since XLA launches a
   // rendez-vous between Prepare and Initialize, which we need here to make sure
   // that modules were loaded on all devices before the first execution.
-  // TODO(b/481949311): Store kernel_ctx in a thunk state to avoid CachedInit
-  // call at execution time.
-  TF_ASSIGN_OR_RETURN(void* kernel_ctx, CachedInit(resources->kernel));
-  CHECK_NOTNULL(kernel_ctx);
+  DeviceState& device_state =
+      resources->device_states[collective_params->local_device_id.value()];
+  TF_ASSIGN_OR_RETURN(device_state.kernel_handle,
+                      CachedInit(resources->kernel));
+  CHECK_NOTNULL(device_state.kernel_handle);
 
   if (!ModuleUsesCollectiveMetadata(attributes)) {
     return absl::OkStatus();
@@ -1480,10 +1484,11 @@ absl::Status MosaicGpuExecute(
   }
 
   CompiledKernel* kernel = resources->kernel;
-  TF_ASSIGN_OR_RETURN(void* kernel_ctx, CachedInit(kernel));
 
   cudaStream_t cuda_stream =
       reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
+  DeviceState& device_state =
+      resources->device_states[collective_params->local_device_id.value()];
   int device_ordinal = collective_params->global_device_id.value();
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
@@ -1491,11 +1496,6 @@ absl::Status MosaicGpuExecute(
                         GetCliqueKey(*collective_params, attributes));
     auto current_rank =
         clique_key.rank(collective_params->global_device_id).value();
-    CHECK(current_rank.value() < resources->device_states.size())
-        << "Rank id" << current_rank.value()
-        << " is out of collective metadata bounds: "
-        << resources->device_states.size();
-    DeviceState& device_state = resources->device_states[current_rank.value()];
 
     se::DeviceAddressBase metadata_address =
         device_state.metadata_handle.address();
@@ -1521,7 +1521,7 @@ absl::Status MosaicGpuExecute(
   }
 
   void** buffers_data = buffer_ptrs.data();
-  kernel->host_launch(kernel_ctx, cuda_stream, buffers_data);
+  kernel->host_launch(device_state.kernel_handle, cuda_stream, buffers_data);
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuExecute finished";
   return absl::OkStatus();
 }
