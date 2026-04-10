@@ -822,7 +822,7 @@ class _DimExpr:
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   def __eq__(self, other: Any) -> bool:
-    if isinstance(other, _DimExpr):
+    if isinstance(other, type(self)):
       if self.scope is not other.scope:
         return False
     elif not core.is_constant_dim(other):
