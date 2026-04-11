@@ -38,6 +38,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/hash_util.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 #include "jaxlib/mosaic/gpu/tiled_layout.h"
@@ -532,8 +533,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def("__repr__", &mgpu::Tiling::ToString)
       .def(nb::self == nb::self,
            nb::sig("def __eq__(self, other: object) -> bool"))
-      .def("__hash__", [](const mgpu::Tiling& self) {
-        return absl::Hash<mgpu::Tiling>{}(self);
+      .def("__hash__", [](const mgpu::Tiling& self) -> Py_hash_t {
+        return jax::AbslHashToPythonHash(absl::HashOf(self));
       });
 
   nb::class_<mgpu::Replicated>(m, "Replicated")
@@ -543,8 +544,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
           [](mgpu::Replicated& self, int64_t times) { self.times = times; })
       .def("__repr__", &mgpu::Replicated::ToString)
       .def("__hash__",
-           [](const mgpu::Replicated& self) {
-             return absl::Hash<mgpu::Replicated>{}(self);
+           [](const mgpu::Replicated& self) -> Py_hash_t {
+             return jax::AbslHashToPythonHash(absl::HashOf(self));
            })
       .def("__eq__", [](const mgpu::Replicated& self, nb::object other) {
         if (!nb::isinstance<mgpu::Replicated>(other)) {
@@ -753,8 +754,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def("__str__", &mgpu::TiledLayout::ToString)
       .def("__repr__", &mgpu::TiledLayout::ToString)
       .def("__hash__",
-           [](const mgpu::TiledLayout& self) {
-             return absl::Hash<mgpu::TiledLayout>{}(self);
+           [](const mgpu::TiledLayout& self) -> Py_hash_t {
+             return jax::AbslHashToPythonHash(absl::HashOf(self));
            })
       .def(
           "__eq__",

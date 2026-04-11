@@ -26,7 +26,6 @@ limitations under the License.
 #include <string_view>
 #include <utility>
 
-#include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -36,6 +35,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/nb_numpy.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
@@ -206,9 +205,7 @@ nb::int_ NamedSharding::Hash() const {
     size_t h =
         absl::HashOf(nb::hash(mesh_), spec_->Hash(), nb::hash(memory_kind_),
                      nb::hash(logical_device_ids_));
-    Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
-    return nb::cast(
-        s == -1 ? -2 : s);  // -1 must not be used as a Python hash value.
+    return nb::cast(jax::AbslHashToPythonHash(h));
   }));
 }
 

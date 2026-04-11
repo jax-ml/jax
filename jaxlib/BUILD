@@ -383,6 +383,7 @@ nanobind_pywrap_extension(
         ":dlpack",
         ":ffi",
         ":guard_lib",
+        ":hash_util",
         ":jax_jit",
         ":mlir",
         ":nb_class_ptr",
@@ -801,6 +802,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":config",
+        ":hash_util",
         ":nb_class_ptr",
         ":py_client",
         ":pytree",
@@ -869,6 +871,15 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/nb_class_ptr"),
     deps = ["@nanobind"],
+)
+
+cc_library(
+    name = "hash_util",
+    hdrs = ["hash_util.h"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@xla//third_party/python_runtime:headers",
+    ],
 )
 
 cc_library(
@@ -977,6 +988,7 @@ cc_library(
         ":cached_py_object",
         ":call_location",
         ":guard_lib",
+        ":hash_util",
         ":nb_class_ptr",
         ":pprof_profile_builder",
         ":py_client_cpu",
@@ -1311,6 +1323,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/pytree"),
     deps = [
+        ":hash_util",
         ":nb_class_ptr",
         ":pytree_cc_proto",
         "@com_google_absl//absl/algorithm:container",
@@ -1395,6 +1408,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/traceback"),
     deps = [
+        ":hash_util",
         ":nb_class_ptr",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1450,6 +1464,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":dlpack",
+        ":hash_util",
         ":py_client",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",

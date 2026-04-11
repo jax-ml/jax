@@ -181,6 +181,7 @@ nanobind_pywrap_extension(
     copts = COPTS,
     pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
+        "//jaxlib:hash_util",
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
         "//jaxlib/mosaic/gpu:tiled_layout",
         "//jaxlib/mosaic/gpu:transfer_plan",

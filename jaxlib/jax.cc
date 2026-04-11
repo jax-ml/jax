@@ -51,6 +51,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/ffi.h"
+#include "jaxlib/hash_util.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
 #include "jaxlib/py_values.h"
@@ -317,7 +318,9 @@ NB_MODULE(_jax, m) {
                     layout == nb::cast<const xla::PjRtLayout&>(other);
            })
       .def("__hash__",
-           [](const xla::PjRtLayout& layout) { return absl::HashOf(layout); })
+           [](const xla::PjRtLayout& layout) -> Py_hash_t {
+             return AbslHashToPythonHash(absl::HashOf(layout));
+           })
       .def("_xla_layout", &xla::PjRtLayout::xla_layout)
       .def("__getstate__",
            [](const xla::PjRtLayout& layout) -> nb::tuple {

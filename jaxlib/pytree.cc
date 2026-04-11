@@ -52,6 +52,7 @@ limitations under the License.
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
+#include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.pb.h"
 #include "xla/pjrt/exceptions.h"
@@ -1732,30 +1733,23 @@ void BuildPytreeSubmodule(nb::module_& m) {
         return nb::make_tuple(std::move(leaves), std::move(def));
       },
       nb::arg("tree").none(), nb::arg("leaf_predicate").none() = std::nullopt,
-      nb::sig(
-          // clang-format off
-      "def flatten_with_path("
-      "self, "
-      "tree: object | None, "
-      "leaf_predicate: typing.Callable[[Any, Any], bool] | None = None"
-      ") -> tuple[list[tuple[_KeyPath, Any]], PyTreeDef]"
-          // clang-format on
-          ));
-  registry.def("register_node", &PyTreeRegistry::Register,
-               nb::arg("type").none(), nb::arg("to_iterable").none(),
-               nb::arg("from_iterable").none(),
-               nb::arg("to_iterable_with_keys").none() = std::nullopt,
-               nb::sig(
-                   // clang-format off
-      "def register_node("
-      "self, "
-      "type: type[_T], "
-      "to_iterable: Callable[[_T], tuple[_Children, _AuxData]], "
-      "from_iterable: Callable[[_AuxData, _Children], _T], "
-      "to_iterable_with_keys: Callable[[_T], tuple[_KeyLeafPairs, _AuxData]] | None = None"
-      ") -> Any"
-                   // clang-format on
-                   ));
+      nb::sig("def flatten_with_path("
+              "self, "
+              "tree: object | None, "
+              "leaf_predicate: typing.Callable[[Any, Any], bool] | None = None"
+              ") -> tuple[list[tuple[_KeyPath, Any]], PyTreeDef]"));
+  registry.def(
+      "register_node", &PyTreeRegistry::Register, nb::arg("type").none(),
+      nb::arg("to_iterable").none(), nb::arg("from_iterable").none(),
+      nb::arg("to_iterable_with_keys").none() = std::nullopt,
+      nb::sig("def register_node("
+              "self, "
+              "type: type[_T], "
+              "to_iterable: Callable[[_T], tuple[_Children, _AuxData]], "
+              "from_iterable: Callable[[_AuxData, _Children], _T], "
+              "to_iterable_with_keys: Callable[[_T], tuple[_KeyLeafPairs, "
+              "_AuxData]] | None = None"
+              ") -> Any"));
   registry.def("register_dataclass_node", &PyTreeRegistry::RegisterDataclass,
                nb::arg("type").none(), nb::arg("data_fields").none(),
                nb::arg("meta_fields").none(),
@@ -1839,7 +1833,9 @@ void BuildPytreeSubmodule(nb::module_& m) {
   treedef.def("__ne__", [](const PyTreeDef& a, nb::object b) {
     return nb::isinstance<PyTreeDef>(b) && a != nb::cast<PyTreeDef>(b);
   });
-  treedef.def("__hash__", [](const PyTreeDef& t) { return absl::HashOf(t); });
+  treedef.def("__hash__", [](const PyTreeDef& t) -> Py_hash_t {
+    return AbslHashToPythonHash(absl::HashOf(t));
+  });
   treedef.def("serialize_using_proto", [](const PyTreeDef& a) {
     PyTreeDefProto result;
     a.SerializeTo(result);

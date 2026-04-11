@@ -54,6 +54,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/config.h"
+#include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/pytree.h"
@@ -455,7 +456,9 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       .def("__repr__", &ArgumentSignature::DebugString)
       .def("__str__", &ArgumentSignature::DebugString)
       .def("__hash__",
-           [](const ArgumentSignature& s) { return absl::HashOf(s); })
+           [](const ArgumentSignature& s) -> Py_hash_t {
+             return AbslHashToPythonHash(absl::HashOf(s));
+           })
       .def(
           "__eq__",
           [](const ArgumentSignature& a, nb::object b) {

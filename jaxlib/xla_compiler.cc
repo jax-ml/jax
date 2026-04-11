@@ -44,6 +44,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/dlpack.h"
+#include "jaxlib/hash_util.h"
 #include "jaxlib/py_client.h"
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
@@ -429,7 +430,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__str__", &Layout::ToString)
       .def("__hash__",
-           [](const Layout& layout) { return absl::HashOf(layout); })
+           [](const Layout& layout) -> Py_hash_t {
+             return jax::AbslHashToPythonHash(absl::HashOf(layout));
+           })
       .def("to_string", &Layout::ToString)
       .def("__getstate__",
            [](const Layout& self) -> nb::tuple {
@@ -583,7 +586,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           [](const Shape& shape, const Shape& other) { return shape != other; },
           nb::is_operator(),
           nb::sig("def __ne__(self, other: object, /) -> bool"))
-      .def("__hash__", [](const Shape& shape) { return absl::HashOf(shape); })
+      .def("__hash__",
+           [](const Shape& shape) -> Py_hash_t {
+             return jax::AbslHashToPythonHash(absl::HashOf(shape));
+           })
       .def("__repr__", [](const Shape& shape) {
         return shape.ToString(/*print_layout=*/true);
       });
@@ -1316,7 +1322,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::is_operator(),
           nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__hash__",
-           [](const xla::HloSharding& self) { return absl::HashOf(self); })
+           [](const xla::HloSharding& self) -> Py_hash_t {
+             return jax::AbslHashToPythonHash(absl::HashOf(self));
+           })
       .def("is_replicated", &xla::HloSharding::IsReplicated)
       .def("is_manual", &xla::HloSharding::IsManual)
       .def("is_unreduced", &xla::HloSharding::IsUnreduced)
