@@ -26,6 +26,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames
+from jax._src import traceback_util
 from jax._src.core import typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -48,6 +49,8 @@ PyTreeOfAvals = Any
 PyTreeDef = Any
 LoVal = Any
 HiVal = Any
+
+traceback_util.register_exclusion(__file__)
 
 
 # Hijax extension API

@@ -1278,6 +1278,7 @@ pytype_strict_library(
         ":partial_eval",
         ":remat",
         ":state_types",
+        ":traceback_util",
         ":tree_util",
         ":util",
     ],

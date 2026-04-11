@@ -1502,6 +1502,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     # jax.grad(h)(0.)  # don't crash
 
 
+@jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
