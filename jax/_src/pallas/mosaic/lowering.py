@@ -203,6 +203,7 @@ class LoweringContext:
   forward_compatible: bool
   backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
+  pad_subtile_refs: bool
 
   def replace(self, **changes: Any) -> LoweringContext:
     # The wrapper is necessary to convince pytype that this is a method.
@@ -274,6 +275,7 @@ class LoweringRuleContext:
       memory_space=None,
       is_kernel_boundary=False,
       allow_extended_types=True,
+      pad_subtile_refs=False,
   ):
     return aval_to_ir_type(
         self.lowering_context.dynamic_shape_replacement_fn,
@@ -283,6 +285,7 @@ class LoweringRuleContext:
         is_kernel_boundary=is_kernel_boundary,
         allow_extended_types=allow_extended_types,
         kernel_type=self.lowering_context.kernel_type,
+        pad_subtile_refs=pad_subtile_refs,
     )
 
 
@@ -330,6 +333,36 @@ def _dtype_to_ir_type(dtype: DTypeLike,
     return type
 
 
+def _get_padded_shape(shape, dtype, pad_subtile_refs):
+  if not _maybe_requires_padding(shape, dtype, pad_subtile_refs):
+    return shape
+  dtype = BOOL_MEMREF_TYPE if jnp.issubdtype(dtype, jnp.bool_) else dtype
+  sizing_aval = jax_core.ShapedArray(shape, dtype)
+  tiling = tpu_info.infer_tiling(sizing_aval)
+  assert tiling is not None
+  return tuple(
+      s if t is None or not isinstance(s, int) else max(s, t)
+      for s, t in zip(shape, (None,) * (len(shape) - len(tiling)) + tiling)
+  )
+
+
+def _maybe_requires_padding(shape, dtype, pad_subtile_refs) -> bool:
+  if not pad_subtile_refs:
+    return False
+  if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    return False
+  if any(shape_poly.is_symbolic_dim(s) for s in shape):
+    return False
+  if any(s < 0 if isinstance(s, int) else False for s in shape):
+    return False
+  if not tpu_info.is_tpu_device():
+    return False
+  sizing_aval = jax_core.ShapedArray(shape, dtype)
+  if not (tiling := tpu_info.infer_tiling(sizing_aval)):
+    return shape
+  return any(s < t for s, t in zip(shape, tiling))
+
+
 def aval_to_ir_type(
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     aval,
@@ -339,6 +372,7 @@ def aval_to_ir_type(
     is_kernel_boundary: bool = False,
     allow_extended_types: bool = True,
     kernel_type: tpu_core.CoreType,
+    pad_subtile_refs: bool = False,
 ):
   if allow_extended_types and should_physicalize_dtype(aval.dtype):
     if isinstance(aval, state.AbstractRef):
@@ -357,6 +391,7 @@ def aval_to_ir_type(
         is_kernel_boundary=is_kernel_boundary,
         allow_extended_types=False,
         kernel_type=kernel_type,
+        pad_subtile_refs=pad_subtile_refs,
     )
   if isinstance(aval, tpu_core.AbstractSemaphore):
     if aval.sem_type is tpu_core.SemaphoreType.DMA:
@@ -376,6 +411,7 @@ def aval_to_ir_type(
       memory_space = aval.memory_space
     memspace = _memory_space_to_mosaic_attribute(memory_space, kernel_type)
     shape = dynamic_shape_replacement_fn(shape)
+    shape = _get_padded_shape(shape, aval.dtype, pad_subtile_refs)
     return ir.MemRefType.get(shape,
       _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
       memory_space=memspace)
@@ -474,6 +510,7 @@ class MosaicGridMapping:
       mesh: mesh_lib.Mesh | None,
       dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
       kernel_type: tpu_core.CoreType,
+      pad_subtile_refs: bool,
   ):
     self.grid = grid_mapping.grid
     self.grid_names = grid_mapping.grid_names
@@ -510,7 +547,8 @@ class MosaicGridMapping:
     )
 
     _get_arg_type = functools.partial(
-        aval_to_ir_type, dynamic_shape_replacement_fn, kernel_type=kernel_type
+        aval_to_ir_type, dynamic_shape_replacement_fn, kernel_type=kernel_type,
+        pad_subtile_refs=pad_subtile_refs,
     )
 
     in_avals = [
@@ -755,6 +793,7 @@ def lower_jaxpr_to_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    pad_subtile_refs: bool = False,
 ) -> ir.Module:
   module = ir.Module.create()
   lower_jaxpr_into_module(
@@ -767,6 +806,7 @@ def lower_jaxpr_to_module(
       kernel_type=kernel_type,
       mesh=mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      pad_subtile_refs=pad_subtile_refs,
   )
   return module
 
@@ -782,6 +822,7 @@ def lower_jaxpr_into_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    pad_subtile_refs: bool = False,
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
@@ -822,6 +863,7 @@ def lower_jaxpr_into_module(
       mesh,
       dynamic_shape_replacement_fn,
       kernel_type,
+      pad_subtile_refs=pad_subtile_refs,
   )
   mosaic_grid_mapping.maybe_compress_grid()
   sym_tab = ir.SymbolTable(module.operation)
@@ -834,6 +876,7 @@ def lower_jaxpr_into_module(
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       backend=backend,
+      pad_subtile_refs=pad_subtile_refs,
   )
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type}>"
@@ -875,6 +918,7 @@ def lower_jaxpr_into_module(
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
           backend=backend,
+          pad_subtile_refs=pad_subtile_refs,
       )
       assert mlir_func.verify(), mlir_func
       block_shape = list(pallas_core._get_block_shape(bm.block_shape))
@@ -1082,6 +1126,7 @@ def lower_jaxpr_to_transform_func(
     forward_compatible: bool,
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
+    pad_subtile_refs: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -1111,6 +1156,7 @@ def lower_jaxpr_to_transform_func(
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        pad_subtile_refs=pad_subtile_refs,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -1141,6 +1187,7 @@ def lower_jaxpr_to_func(
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     dynamic_shape_replacement_enabled: bool,
+    pad_subtile_refs: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -1174,6 +1221,7 @@ def lower_jaxpr_to_func(
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        pad_subtile_refs=pad_subtile_refs,
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -1516,6 +1564,8 @@ def _slice_memref(
     indexer: NDIndexer,
     ref_aval: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+    *,
+    pad_subtile_refs: bool,
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
   assert ref_block_shape is not None
   starts, sizes, strides, squeeze_dims, ref_block_shape = (
@@ -1550,8 +1600,11 @@ def _slice_memref(
       dynamic_sizes.append(s)
 
   ref_ty = ir.MemRefType(ref.type)
+  padded_sizes = _get_padded_shape(
+      static_sizes, ref_aval.dtype, pad_subtile_refs
+  )
   out_ty = ir.MemRefType.get(
-      static_sizes, ref_ty.element_type, memory_space=ref_ty.memory_space
+      padded_sizes, ref_ty.element_type, memory_space=ref_ty.memory_space
   )
   out = tpu.memref_slice(out_ty, ref, starts, dynamic_sizes)
   if any(squeeze_dims):
@@ -1640,18 +1693,32 @@ def _reshape_memref(
   )
 
 
-def _transform_ref(ref, ref_ty, ref_block_shape, transforms):
+def _transform_ref(
+    ref, ref_ty, ref_block_shape, transforms, *, pad_subtile_refs: bool
+):
   for transform in transforms:
     match transform:
       case NDIndexer():
         ref, ref_block_shape = _slice_memref(
-            ref, transform, ref_ty, ref_block_shape
+            ref,
+            transform,
+            ref_ty,
+            ref_block_shape,
+            pad_subtile_refs=pad_subtile_refs,
         )
       case BitcastTransform():
+        if _maybe_requires_padding(
+            ref_ty.shape, ref_ty.dtype, pad_subtile_refs
+        ):
+          raise NotImplementedError("Bitcast transform with pad_subtile_refs.")
         ref, ref_block_shape = _bitcast_memref(
             ref, transform, ref_ty, ref_block_shape
         )
       case ReshapeTransform():
+        if _maybe_requires_padding(
+            ref_ty.shape, ref_ty.dtype, pad_subtile_refs
+        ):
+          raise NotImplementedError("Reshape transform with pad_subtile_refs.")
         ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_ty, ref_block_shape
         )
@@ -1714,7 +1781,11 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
   )
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
@@ -1771,14 +1842,22 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   load_aval = jax_core.ShapedArray(sizes, dtype=physical_out_dtype)
   if need_stride:
     load_val = tpu.strided_load(
-        ctx.aval_to_ir_type(load_aval, is_kernel_boundary=True),
+        ctx.aval_to_ir_type(
+            load_aval,
+            is_kernel_boundary=True,
+            pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+        ),
         ref,
         starts,
         strides,
     )
   else:
     load_val = vector.load(
-        ctx.aval_to_ir_type(load_aval, is_kernel_boundary=True),
+        ctx.aval_to_ir_type(
+            load_aval,
+            is_kernel_boundary=True,
+            pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+        ),
         ref,
         starts,
     )
@@ -1816,7 +1895,11 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   ref_block_shape, *_ = ctx.block_shapes
   idx = cast(NDIndexer, idx)
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
   )
 
   if len(key_shape) != 2:
@@ -1911,7 +1994,11 @@ def _masked_swap_lowering_rule(
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
   )
 
   ref_type = ir.MemRefType(ref.type)
@@ -3874,16 +3961,19 @@ def _alloc_value(
   if isinstance(aval, state.AbstractRef):
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
       assert aval.memory_space == SEMAPHORE
-      memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
+      memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE,
+          pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,)
       return tpu.sem_alloc(memref_type)
     else:
       memref_type = ctx.aval_to_ir_type(
-          aval, is_kernel_boundary=True, memory_space=aval.memory_space
+          aval, is_kernel_boundary=True, memory_space=aval.memory_space,
+          pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
       )
       assert isinstance(memref_type, ir.MemRefType)
       return memref.alloca(memref_type, [], [])
   elif isinstance(aval, tpu_core.AbstractSemaphore):
-    memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
+    memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE,
+        pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,)
     return tpu.sem_alloc(memref_type)
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
@@ -3972,7 +4062,13 @@ def _semaphore_read_lowering_rule(
       },
   )
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
   return tpu.sem_read(sem)
 
 
@@ -3989,7 +4085,13 @@ def _semaphore_signal_lowering_rule(
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(
         ctx, device_id, device_id_type, device_id_aval
@@ -4012,7 +4114,13 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   if not decrement:
     raise NotImplementedError("Non-decrementing wait is not supported.")
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
   tpu.sem_wait(sem, value)
   return []
 
@@ -4047,16 +4155,34 @@ def _dma_start_lowering_rule(
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
   src_ref, _ = _transform_ref(
-      src_ref, src_ref_aval, src_ref_block_shape, src_transforms
+      src_ref,
+      src_ref_aval,
+      src_ref_block_shape,
+      src_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
   )
   if src_sem is not None:
     src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
+        src_sem,
+        src_sem_aval,
+        src_sem_aval.shape,
+        src_sem_transforms,
+        pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
     )
   dst_ref, _ = _transform_ref(
-      dst_ref, dst_ref_aval, dst_ref_block_shape, dst_transforms
+      dst_ref,
+      dst_ref_aval,
+      dst_ref_block_shape,
+      dst_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      sem_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
   core_id = None
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type, device_id_aval)
@@ -4091,9 +4217,27 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  src, _ = _transform_ref(src, src_aval, src_aval.shape, src_transforms)
-  dst, _ = _transform_ref(dst, dst_aval, ref_block_shape, transforms)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  src, _ = _transform_ref(
+      src,
+      src_aval,
+      src_aval.shape,
+      src_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
+  dst, _ = _transform_ref(
+      dst,
+      dst_aval,
+      ref_block_shape,
+      transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
+  sem, _ = _transform_ref(
+      sem,
+      sem_aval,
+      sem_aval.shape,
+      sem_transforms,
+      pad_subtile_refs=ctx.lowering_context.pad_subtile_refs,
+  )
 
   core_id = None
   if device_id is not None:

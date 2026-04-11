@@ -111,6 +111,10 @@ class CompilerParams:
       without a custom barrier.
     use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is only
       used for ``SC_*_SUBCORE`` kernels.
+    pad_subtile_refs_during_lowering: Whether or not to pad Refs up to tiling
+      during lowering. This is something that Mosaic does but Pallas can do it
+      too in cases where Mosaic is missing some features like handling slicing
+      of padded refs.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -128,6 +132,7 @@ class CompilerParams:
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
+  pad_subtile_refs_during_lowering: bool = False
 
   def __init__(
       self,
@@ -146,6 +151,7 @@ class CompilerParams:
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
+      pad_subtile_refs_during_lowering: bool = False,
   ):
     object.__setattr__(
         self,
@@ -182,6 +188,11 @@ class CompilerParams:
         self, "shape_invariant_numerics", shape_invariant_numerics
     )
     object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
+    object.__setattr__(
+        self,
+        "pad_subtile_refs_during_lowering",
+        pad_subtile_refs_during_lowering,
+    )
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

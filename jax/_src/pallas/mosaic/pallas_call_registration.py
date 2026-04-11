@@ -396,6 +396,7 @@ def pallas_call_tpu_lowering_rule(
         kernel_type=kernel_type,
         mesh=jax_mesh,
         dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+        pad_subtile_refs=mosaic_params.pad_subtile_refs_during_lowering,
     )
 
   if debug:

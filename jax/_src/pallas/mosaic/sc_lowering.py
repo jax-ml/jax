@@ -141,7 +141,12 @@ def lower_pipelined_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
+    pad_subtile_refs: bool = False,
 ) -> ir.Module:
+  if pad_subtile_refs:
+    raise NotImplementedError(
+        "Pad subtile refs is not supported for SparseCore."
+    )
   module = ir.Module.create()
   lower_pipelined_jaxpr_into_module(
       lowering_context,
@@ -410,6 +415,7 @@ def lower_jaxpr_into_module(
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        pad_subtile_refs=False,
     )
     assert mlir_func.verify(), mlir_func
     module.body.append(mlir_func)
@@ -453,6 +459,7 @@ class MosaicGridMapping(tc_lowering.MosaicGridMapping):
         mesh,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         kernel_type=kernel_type,
+        pad_subtile_refs=False,
     )
 
 
@@ -508,6 +515,7 @@ def lower_jaxpr_to_func(
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        pad_subtile_refs=False,
     )
     return tc_lowering.jaxpr_subcomp(
           lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -593,7 +601,11 @@ def _load_lowering_rule(
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      pad_subtile_refs=False,
   )
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -676,7 +688,11 @@ def _store_lowering_rule(
   *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
-      ref, ref_aval, ref_block_shape, prev_transforms
+      ref,
+      ref_aval,
+      ref_block_shape,
+      prev_transforms,
+      pad_subtile_refs=False,
   )
   starts, sizes, strides, squeeze_dims, _ = tc_lowering._indexer_to_start_size_stride(
       indexer, ref_block_shape, cast_to_index=True
@@ -825,14 +841,22 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref,
+          dst_aval,
+          dst_aval.shape,
+          dst_transforms,
+          pad_subtile_refs=False,
       )
       dst_ref_shape = ir.MemRefType(dst_ref.type).shape
       indirect_offsets, src_transforms = _extract_indirect_offsets(
           src_transforms, tuple(dst_ref_shape)
       )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref,
+          src_aval,
+          src_aval.shape,
+          src_transforms,
+          pad_subtile_refs=False,
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
@@ -842,14 +866,22 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref,
+          src_aval,
+          src_aval.shape,
+          src_transforms,
+          pad_subtile_refs=False,
       )
       src_ref_shape = ir.MemRefType(src_ref.type).shape
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
           dst_transforms, tuple(src_ref_shape)
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref,
+          dst_aval,
+          dst_aval.shape,
+          dst_transforms,
+          pad_subtile_refs=False,
       )
       indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
@@ -871,10 +903,18 @@ def _prepare_dma_refs(
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref,
+          src_aval,
+          src_aval.shape,
+          src_transforms,
+          pad_subtile_refs=False,
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref,
+          dst_aval,
+          dst_aval.shape,
+          dst_transforms,
+          pad_subtile_refs=False,
       )
       indirect_offsets = None
       indirect_offsets_ref_str = ""
@@ -926,10 +966,16 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(
+      sem, sem_aval, sem_aval.shape, sem_transforms, pad_subtile_refs=False
+  )
   if src_sem is not None:
     src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
+        src_sem,
+        src_sem_aval,
+        src_sem_aval.shape,
+        src_sem_transforms,
+        pad_subtile_refs=False,
     )
 
   # If not ``None``, we lower to an indirect DMA instead.
@@ -985,7 +1031,9 @@ def _dma_wait_lowering_rule(
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(
+      sem, sem_aval, sem_aval.shape, sem_transforms, pad_subtile_refs=False
+  )
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
@@ -1040,6 +1088,7 @@ def _extract_indirect_offsets_from_indexer(
           offsets_ref_aval,
           offsets_type.shape,  # The shape before the indexing.
           offsets_ref.transforms,
+          pad_subtile_refs=False,
       )
     case _:
       return None
@@ -1146,7 +1195,9 @@ def _jaxpr_call_lowering_rule(
       ref_aval, _ = ref_aval
       block_shape, _ = block_shape
       assert isinstance(ref_aval, state.AbstractRef)
-      ref, block_shape = _transform_ref(ref, ref_aval, block_shape, transforms)
+      ref, block_shape = _transform_ref(
+          ref, ref_aval, block_shape, transforms, pad_subtile_refs=False
+      )
     ref_block_shapes.append(block_shape)
     args.append(ref)
   user_grid_indices = ctx.lowering_context.user_grid_indices

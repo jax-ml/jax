@@ -273,7 +273,7 @@ def _gather_lowering_rule(
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref, ref_aval, ref_block_shape, transforms, pad_subtile_refs=False
     )
   [out_aval] = ctx.avals_out
   vec_type = ir.VectorType.get(
@@ -347,7 +347,7 @@ def _scatter_lowering_rule(
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
     ref, _ = tc_lowering._transform_ref(
-        ref, ref_aval, ref_block_shape, transforms
+        ref, ref_aval, ref_block_shape, transforms, pad_subtile_refs=False
     )
   tpu.vector_store_idx(x, ref, indices, mask=mask, add=add)
   return ()

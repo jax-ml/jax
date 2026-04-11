@@ -1955,6 +1955,122 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     expected = jnp.arange(nrows)[:, None] + jnp.arange(ncols)[None, :]
     np.testing.assert_array_equal(y, expected)
 
+  def test_subtile_dma_vmem(self):
+    @jax.jit
+    def f(x):
+      def kernel(x_ref, y_ref):
+        def body(dma_sem, scratch_ref):
+          pltpu.async_copy(x_ref, scratch_ref.at[0], dma_sem).wait()
+          scratch_ref[...] = scratch_ref[...] + 1
+          pltpu.async_copy(scratch_ref.at[0], y_ref, dma_sem).wait()
+        pl.run_scoped(
+            body,
+            pltpu.SemaphoreType.DMA,
+            pltpu.VMEM((2, 1, 1), jnp.int32),
+        )
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          compiler_params=pltpu.CompilerParams(
+              pad_subtile_refs_during_lowering=True
+          ),
+      )(x)
+
+    x = jnp.array([[42]], dtype=jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x + 1)
+
+  def test_subtile_dma_slice_vmem(self):
+    @jax.jit
+    def f(x):
+      def kernel(x_ref, y_ref):
+        def body(dma_sem, scratch_ref):
+          pltpu.async_copy(x_ref, scratch_ref.at[0, :1, :1], dma_sem).wait()
+          scratch_ref[...] = scratch_ref[...] + 1
+          pltpu.async_copy(scratch_ref.at[0, :1, :1], y_ref, dma_sem).wait()
+        pl.run_scoped(
+            body,
+            pltpu.SemaphoreType.DMA,
+            pltpu.VMEM((2, 2, 2), jnp.int32),
+        )
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          compiler_params=pltpu.CompilerParams(
+              pad_subtile_refs_during_lowering=True
+          ),
+      )(x)
+
+    x = jnp.array([[42]], dtype=jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x + 1)
+
+  def test_subtile_dma_slice_vmem_1d(self):
+    @jax.jit
+    def f(x):
+      def kernel(x_ref, y_ref):
+        def body(dma_sem, scratch_ref):
+          pltpu.async_copy(x_ref, scratch_ref.at[0, :1], dma_sem).wait()
+          scratch_ref[...] = scratch_ref[...] + 1
+          pltpu.async_copy(scratch_ref.at[0, :1], y_ref, dma_sem).wait()
+        pl.run_scoped(
+            body,
+            pltpu.SemaphoreType.DMA,
+            pltpu.VMEM((2, 2), jnp.int32),
+        )
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          compiler_params=pltpu.CompilerParams(
+              pad_subtile_refs_during_lowering=True
+          ),
+          debug=True,
+      )(x)
+
+    x = jnp.array([42], dtype=jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x + 1)
+
+  def test_subtile_dma_smem(self):
+    @jax.jit
+    def f(x):
+      def kernel(x_ref, y_ref):
+        def body(dma_sem, scratch_ref):
+          pltpu.async_copy(x_ref, scratch_ref.at[0], dma_sem).wait()
+          for i in range(2):
+            for j in range(2):
+              scratch_ref[0, i, j] = scratch_ref[0, i, j] * 2
+          pltpu.async_copy(scratch_ref.at[0], y_ref, dma_sem).wait()
+
+        pl.run_scoped(
+            body,
+            pltpu.SemaphoreType.DMA,
+            pltpu.SMEM((4, 2, 2), jnp.int32),
+        )
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((2, 2), jnp.int32),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          compiler_params=pltpu.CompilerParams(
+              pad_subtile_refs_during_lowering=True
+          ),
+      )(x)
+
+    x = jnp.array([[1, 2], [3, 4]], dtype=jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x * 2)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
