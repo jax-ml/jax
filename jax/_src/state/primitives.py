@@ -46,6 +46,7 @@ from jax._src.state.types import (
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
+from jax._src.lib.mlir import ir
 
 
 # Stand-in for hi-jax inputs to Ref.
@@ -1135,21 +1136,38 @@ def _lower_create_linear(ctx):
 mlir.register_lowering(create_linear_p, _lower_create_linear)
 
 
-def pin(x):
-  return pin_p.bind(x)
+def pin(x, *, to=None):
+  return pin_p.bind(x, to=to)
 pin_p = core.Primitive('pin')
 
 @pin_p.def_abstract_eval
-def _pin_abstract_eval(aval):
+def _pin_abstract_eval(aval, *, to):
+  if to not in (None, 'hbm', 'vmem'): raise ValueError
   if not isinstance(aval, core.ShapedArray): raise NotImplementedError(aval)
-  return AbstractLinVal(aval)
+  return AbstractLinVal(aval, to)
 
-def _lower_pin(ctx, x_op):
+def _lower_pin(ctx, x_op, *, to):
+  color = {'vmem': 1, 'hbm': 0, None: None}[to]
+  if color is not None:
+    backend_config = {
+        "custom_call_config": ir.DictAttr.get({
+            "output_memory_space_colors": ir.ArrayAttr.get([
+                ir.DictAttr.get({
+                    "shape_index": ir.ArrayAttr.get([]),
+                    "color": mlir.i32_attr(color)
+                })
+            ])
+        })
+    }
+    config = dict(backend_config=backend_config)
+  else:
+    config = {}
   out_aval, = ctx.avals_out
   return mlir.custom_call(
       "Pin",
       operands=mlir.flatten_ir_values([x_op]),
       result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
+      **config,  # type: ignore
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
 
@@ -1174,6 +1192,8 @@ mlir.register_lowering(unpin_p, _lower_unpin)
 
 
 def _linval_to_mlir_type(a):
+  color = {'vmem': 1, 'hbm': 0, None: None}[a.memory_space]
+  space = mlir.i32_attr(color) if color is not None else None
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
-                                memory_space=a.memory_space)
+                                memory_space=space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type

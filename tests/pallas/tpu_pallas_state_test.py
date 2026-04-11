@@ -218,6 +218,9 @@ class PinnedBufferTest(jtu.JaxTestCase):
     y = f(x)
     self.assertAllClose(y, x, check_dtypes=False)
 
+    hlo = f.lower(x).compile().as_text()
+    self.assertNotIn('"color"', hlo)
+
   def test_error_if_not_aliased(self):
 
     @jax.jit
@@ -234,6 +237,29 @@ class PinnedBufferTest(jtu.JaxTestCase):
     x = jnp.arange(3.)
     with self.assertRaisesRegex(ValueError, r"pinned buffers without"):
       f(x)
+
+  def test_basic_vmem(self):
+
+    @jax.jit
+    def f(x):
+      x_pinned = pin(x, to='vmem')
+      x_pinned = pl.pallas_call(
+          lambda *_: None, out_shape=x_pinned,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          input_output_aliases={0: 0}
+          )(x_pinned)
+      return unpin(x_pinned)
+
+    x = jnp.arange(3.)
+    y = f(x)
+    self.assertAllClose(y, x, check_dtypes=False)
+
+    hlo = f.lower(x).compile().as_text()
+    self.assertRegex(
+        hlo,
+        r'output_memory_space_colors.*color.*1'
+    )
 
 
 class CoreMapTest(jtu.JaxTestCase):
