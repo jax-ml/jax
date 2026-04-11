@@ -45,7 +45,7 @@ from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
-from jax._src.tree_util import tree_map
+from jax._src.tree_util import tree_map, FlatTree
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache, HashableWrapper,
@@ -1738,6 +1738,12 @@ class AbstractValue:
     from jax._src.ad_util import add_jaxvals  # pytype: disable=import-error
     return add_jaxvals(x, y)
 
+  def raise_val2(self, lo_vals_ft):
+    return self.raise_val(*lo_vals_ft.unflatten())  # type: ignore
+
+  def lower_val2(self, hi_val):
+    return FlatTree.flatten(self.lower_val(hi_val))  # type: ignore
+
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
 
@@ -1909,21 +1915,27 @@ class AvalQDD:
   is_high = True
   aval: AbstractValue
   qdd: QuasiDynamicData | None # immutable
-
   has_qdd = True
+
+  is_writer = property(lambda self: self.aval.is_writer)
+
   def lo_ty(self):
     return self.aval.lo_ty_qdd(self.qdd)
 
   def read_loval(self, val):
     return self.aval.read_loval(self.qdd, val)  # type: ignore
 
+  def read_loval_in(self, val):
+    return self.aval.read_loval_in(self.qdd, val)  # type: ignore
+
+  def read_loval_out(self, val):
+    return self.aval.read_loval_out(self.qdd, val)  # type: ignore
+
   def new_from_loval(self, *lovals):
     return self.aval.new_from_loval(self.qdd, *lovals)  # type: ignore
 
   def to_tangent_aval(self):
-    if not hasattr(self.qdd, "to_tangent_qdd"):
-      raise ValueError(f"Cannot convert to tangent aval when {self.qdd=}.")
-    return AvalQDD(self.aval.to_tangent_aval(), self.qdd.to_tangent_qdd())
+    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # type: ignore
 
 @dataclass(frozen=True)
 class AvalMutableQDD:
@@ -1942,6 +1954,12 @@ def cur_aval_qdd(x):
   aval = typeof(x)
   qdd = cur_qdd(x) if aval.has_qdd else None
   return AvalQDD(aval, qdd)
+
+def aval_qdd_from_current_val(aval, x):
+  if aval.has_qdd:
+    return cur_aval_qdd(x)
+  else:
+    return aval
 
 ### Extended dtypes
 #

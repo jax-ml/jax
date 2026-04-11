@@ -1445,7 +1445,7 @@ class FlatTree:
       else:
         assert False
     else:
-      assert False
+      assert False, type(tree)
 
   def unpack(self: FlatTree) -> tuple[FlatTree, ...]:
     # TODO: this is O(N) not O(1) (with N as the number of leaves). If it

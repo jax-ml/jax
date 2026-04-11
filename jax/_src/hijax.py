@@ -40,7 +40,7 @@ from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, tree_map_with_path, keystr,
-    tracing_registry)
+    tracing_registry, FlatTree)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -99,7 +99,7 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
   # define lowering from hijax value to lojax values and back (like pytrees)
-  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj); not lovals
+  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj): not lovals
     assert False, "must override"
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
     assert False, "must override"
@@ -139,6 +139,7 @@ class HiType(core.AbstractValue):
 class MutableHiType(core.AbstractValue):
   is_high = True
   has_qdd = True  # mutable and potentially type-changing
+  is_writer = False
   type_state = core.aval_method(core.cur_qdd)
 
   # type equality
@@ -156,10 +157,18 @@ class MutableHiType(core.AbstractValue):
     assert False, "must override"
   def read_loval(self, state: QDD, val: HiVal) -> list[LoVal]:
     assert False, "must override"
+  # default implementations of newer apis
+  def read_loval_in(self, state, val):
+    return self.read_loval(state, val)
+  def read_loval_out(self, qdd, hi):
+    return FlatTree.flatten(self.read_loval(qdd, hi))
 
   # define how to mutate/set the mutable hijax value given immutable lojax vals
   def update_from_loval(self, state: QDD, val: HiVal, *lo_vals: LoVal) -> None:
     assert False, "must override"
+  # default implementation of newer api
+  def update_from_loval2(self, state, val, lo_vals_ft) -> None:
+    self.update_from_loval(state, val, *lo_vals_ft.unflatten())
 
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
@@ -895,3 +904,118 @@ class HiPspec:
   def to_lo(self) -> HiPspec: assert False, "must override"
   def to_tangent_spec(self) -> HiPspec: assert False, "must override"
   def to_ct_spec(self) -> HiPspec: assert False, "must override"
+
+# Logs
+
+log_effect = box_effect
+
+def log_extend(log, dct):
+  leaves, treedef = tree_flatten(dct)
+  log_extend_p.bind(log, *leaves, treedef=treedef)
+
+def log_append(log, key, val):
+  log_extend(log, {key: [val]})
+
+def log_read(log):
+  return log_read_p.bind(log)
+
+class _LogMeta(type):
+  def __instancecheck__(self, instance):
+    return (super().__instancecheck__(instance) or
+            isinstance(instance, core.Tracer) and
+            isinstance(core.typeof(instance), LogTy))
+
+class Log(metaclass=_LogMeta):  # noqa: F811
+  _dct: dict  # dict[str, list[PyTree[Array]]]
+
+  def __new__(cls):
+    return new_log_p.bind()
+
+  @classmethod
+  def _new(cls):
+    new = super().__new__(cls)
+    new._dct = {}
+    return new
+
+  def cur_qdd(self):
+    return ()
+
+  append = log_append
+  extend = log_extend
+  read = log_read
+
+class LogTy(MutableHiType):
+  has_qdd = True
+  is_writer = True
+
+  append = core.aval_method(log_append)
+  extend = core.aval_method(log_extend)
+  read = core.aval_method(log_read)
+
+  def __hash__(self): return hash(LogTy)
+  def __eq__(self, other): return isinstance(other, LogTy)
+  def str_short(self, short_dtypes=False, **_) -> str: return 'Log'  # type: ignore
+
+  def to_tangent_aval(self):
+    return LogTy()
+
+  def read_loval_in(self, qdd, log):  # type: ignore
+    () = qdd
+    return []
+
+  def read_loval_out(self, qdd, log):  # type: ignore
+    () = qdd
+    return FlatTree.flatten(log._dct)
+
+  def new_from_loval(self, qdd):  # type: ignore
+    () = qdd
+    return Log._new()
+
+  def update_from_loval2(self, qdd, log: Log, lo_ft) -> None:  # type: ignore
+    () = qdd
+    updates = lo_ft.unflatten()
+    for k, v in updates.items():
+      log._dct.setdefault(k, []).extend(v)
+
+register_hitype(Log, lambda _: LogTy())
+
+class LogExtend(HiPrimitive):
+  multiple_results = True  # no results
+  is_effectful = lambda *_, **__: True
+
+  def abstract_eval(self, log_ty, *val_tys, treedef):
+    return [], {log_effect}
+
+  def to_lojax(_, log, *vals, treedef):
+    updates = tree_unflatten(treedef, vals)
+    for k, v in updates.items():
+      log._dct.setdefault(k, []).extend(v)
+    return []
+log_extend_p = LogExtend('log_extend')
+
+class NewLog(HiPrimitive):
+  def is_high(self) -> bool: return True
+
+  def abstract_eval(self):
+    ty = LogTy()
+    return core.AvalQDD(ty, ()), {log_effect}  # type: ignore
+
+  def to_lojax(_):
+    return Log._new()
+new_log_p = NewLog('new_log')
+
+def new_log():
+  return new_log_p.bind()
+
+
+class ReadLog(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, _) -> bool: return True
+
+  def abstract_eval(self, log_qdd):
+    raise Exception
+
+  def to_lojax(_, log):
+    return list(FlatTree.flatten(log._dct))
+log_read_p = ReadLog('log_read')
