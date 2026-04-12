@@ -28,6 +28,15 @@ def _split_by_mesh_axis(
     submesh_shardings: Sequence[Sequence[object]],
     donate: bool,
 ) -> list[list[object]]: ...
+def _concatenate_by_mesh_axis(
+    arrays: object,
+    sharded_dim_idxs: Sequence[int],
+    mesh_axis_sizes: Sequence[int],
+    mesh_axis_idx: int,
+    mesh_axis_sections: Sequence[int],
+    out_shardings: Sequence[object],
+    donate: bool,
+) -> list[object]: ...
 def _create_cpu_client(
     addressable_devices: Set[int], device_id_to_process_index: Mapping[int, int]
 ) -> Client: ...
