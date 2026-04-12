@@ -169,9 +169,11 @@ def eig(
   be used if the library can be found, and the input matrix is sufficiently
   large (>= 2048x2048).
 
-  Currently autodiff is not supporteed for non-symmetric eigenvectors, and
-  is only supported to first-order for non-symmetric eigenvalues. See
-  https://github.com/jax-ml/jax/issues/2748.
+  Autodiff (forward-mode JVP and, by transposition, reverse-mode VJP) is
+  supported for eigenvalues and eigenvectors. The formulas follow eqns 4.60
+  and 4.63 in https://arxiv.org/abs/1701.00392. Gradients through degenerate
+  (repeated) eigenvalues are mathematically ill-defined and will produce
+  numerically large or infinite values.
 
   Args:
     x: A batch of square matrices with shape ``[..., n, n]``.
@@ -1190,17 +1192,96 @@ def _eig_gpu_lowering(ctx, operand, *,
 
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
                  compute_right_eigenvectors, implementation):
-  if compute_left_eigenvectors or compute_right_eigenvectors:
-    raise NotImplementedError(
-        'The derivatives of non-symmetric eigenvectors are not supported. '
-        'Only first-order derivatives of eigenvalues are supported. See '
-        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
-  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
-  # https://arxiv.org/abs/1701.00392
+  # Formulas from https://arxiv.org/abs/1701.00392:
+  #   eigenvalue JVP:       eqn 4.60
+  #   right eigenvector JVP: eqn 4.63
+  # Left eigenvectors of A are right eigenvectors of A^H, so their JVP is
+  # derived by applying the right-eigenvector formula to (A^H, dA^H).
+  #
+  # Normalization: LAPACK returns unit-norm eigenvectors. The raw perturbation
+  # formula gives dV that changes the norm to first order. We correct this by
+  # projecting out the real part of the diagonal of V^H dV, which enforces the
+  # unit-norm constraint d(||v_j||^2)/dt = 0.
   a, = primals
   da, = tangents
-  l, v = eig(a, compute_left_eigenvectors=False, implementation=implementation)
-  return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
+  n = a.shape[-1]
+
+  # Always compute right eigenvectors — they are required for the eigenvalue JVP
+  # (dl = diag(VR^{-1} dA VR)). If left eigenvectors are also requested, fetch
+  # them in the same LAPACK call to avoid redundant work.
+  if compute_left_eigenvectors:
+    l, vl, vr = eig_p.bind(
+        a,
+        compute_left_eigenvectors=True,
+        compute_right_eigenvectors=True,
+        implementation=implementation,
+    )
+  else:
+    l, vr = eig_p.bind(
+        a,
+        compute_left_eigenvectors=False,
+        compute_right_eigenvectors=True,
+        implementation=implementation,
+    )
+
+  da = da.astype(l.dtype)
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+
+  # P = VR^{-1} dA VR  (n×n projected perturbation matrix)
+  temp = _solve(vr, da)  # VR^{-1} dA
+  P = dot(temp, vr)       # VR^{-1} dA VR
+
+  # Eigenvalue JVP: dl_j = P_{jj}
+  dl = _extract_diagonal(P)
+
+  if not compute_left_eigenvectors and not compute_right_eigenvectors:
+    return [l], [dl]
+
+  # Build F-matrix: F[i,j] = 1/(l[j] - l[i]) for i≠j, 0 on the diagonal.
+  # Trick: (eye + l[j] - l[i]) equals 1 on the diagonal and (l[j]-l[i])
+  # elsewhere. Taking the elementwise reciprocal and subtracting eye zeros out
+  # the diagonal while leaving the off-diagonal entries as 1/(l[j]-l[i]).
+  eye_n = lax._eye(l.dtype, (n, n))
+  with config.numpy_rank_promotion("allow"):
+    Fmat = lax.integer_pow(eye_n + l[..., np.newaxis, :] - l[..., :, np.newaxis], -1) - eye_n
+
+  out_primals = [l]
+  out_tangents = [dl]
+
+  if compute_left_eigenvectors:
+    # Left eigenvectors VL are right eigenvectors of A^H with eigenvalues
+    # conj(l). Apply the right-eigenvector JVP formula to (A^H, dA^H).
+    da_H = _H(da)
+    temp_L = _solve(vl, da_H)   # VL^{-1} dA^H
+    P_L = dot(temp_L, vl)        # VL^{-1} dA^H VL
+
+    # F-matrix for conjugate eigenvalues: F_L[i,j] = 1/(conj(l[j]) - conj(l[i]))
+    l_conj = l.conj()
+    with config.numpy_rank_promotion("allow"):
+      Fmat_L = lax.integer_pow(
+          eye_n + l_conj[..., np.newaxis, :] - l_conj[..., :, np.newaxis], -1
+      ) - eye_n
+
+    dVL_raw = dot(vl, Fmat_L * P_L)
+    # Normalization correction: enforce real(VL^H dVL)_{jj} = 0
+    VLH_dVL = dot(_H(vl), dVL_raw)
+    dVL = dVL_raw - vl * _extract_diagonal(VLH_dVL.real)[..., np.newaxis, :]
+
+    out_primals.append(vl)
+    out_tangents.append(dVL)
+
+  if compute_right_eigenvectors:
+    # Right eigenvector JVP
+    dVR_raw = dot(vr, Fmat * P)
+    # Normalization correction: enforce real(VR^H dVR)_{jj} = 0
+    VRH_dVR = dot(_H(vr), dVR_raw)
+    dVR = dVR_raw - vr * _extract_diagonal(VRH_dVR.real)[..., np.newaxis, :]
+
+    out_primals.append(vr)
+    out_tangents.append(dVR)
+
+  return out_primals, out_tangents
 
 eig_p = linalg_primitive(
     _eig_dtype_rule, (_float | _complex,), (2,), _eig_shape_rule, "eig",
