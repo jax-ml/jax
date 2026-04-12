@@ -24,9 +24,8 @@ import numpy as np
 from jax._src.lib import xla_client as xc
 
 
-def get_num_ways_dim_sharded(
-    hlo_sharding: xc.HloSharding, allow_partial_manual: bool = False
-) -> tuple[list[int], int]:
+def get_num_ways_dim_sharded(hlo_sharding: xc.HloSharding
+                             ) -> tuple[list[int], int]:
   assert not hlo_sharding.is_manual()
   if hlo_sharding.is_replicated():
     return [], 1
@@ -43,14 +42,6 @@ def get_num_ways_dim_sharded(
                                xc.OpSharding.Type.UNREDUCED}:
     replicated_loc = subgroup_types.index(xc.OpSharding.Type.REPLICATED)
     return list(partitions[:-2]), partitions[-2:][replicated_loc]
-  elif allow_partial_manual and xc.OpSharding.Type.MANUAL in subgroup_types:
-    if subgroup_types == [xc.OpSharding.Type.MANUAL]:
-      return list(partitions[:-1]), 1
-    else:
-      assert (set(subgroup_types) ==
-              {xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL})
-      replicated_loc = subgroup_types.index(xc.OpSharding.Type.REPLICATED)
-      return list(partitions[:-2]), partitions[-2:][replicated_loc]
   elif hlo_sharding.replicate_on_last_tile_dim():
     return list(partitions[:-1]), partitions[-1]
   else:

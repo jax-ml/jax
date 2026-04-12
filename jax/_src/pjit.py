@@ -832,8 +832,7 @@ class IgnoreKey:
 
 def pjit_check_aval_sharding(
     shardings, flat_avals, names: Sequence[str],
-    what_aval: str, allow_uneven_sharding: bool,
-    allow_partial_manual: bool = False):
+    what_aval: str, allow_uneven_sharding: bool):
   for aval, s, name in zip(flat_avals, shardings, names):
     if isinstance(s, (UnspecifiedValue, AUTO)):
       continue
@@ -2077,7 +2076,7 @@ def with_sharding_constraint(x, shardings):
   pjit_check_aval_sharding(
       shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
-      allow_uneven_sharding=True, allow_partial_manual=True)
+      allow_uneven_sharding=True)
   check_aval_layout_compatibility(user_layouts_flat, x_avals_flat,
                                   ("",) * len(user_layouts_flat),
                                   "with_sharding_constraint arguments")
