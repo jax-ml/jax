@@ -1218,6 +1218,10 @@ void* AddOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) + offset);
 }
 
+void* SubtractOffset(void* ptrs, int64_t offset) {
+  return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
+}
+
 absl::Status MosaicGpuPrepare(
     const xla::gpu::CollectiveParams* absl_nullable collective_params,
     xla::gpu::CollectiveMemoryRequests* absl_nullable
@@ -1268,18 +1272,8 @@ absl::Status MosaicGpuPrepare(
       continue;
     }
 
-    se::DeviceAddressBase multimem_address = buffers[i].device_memory();
-    TF_ASSIGN_OR_RETURN(
-        se::DeviceAddressBase address_range,
-        collective_params->executor->GetMemoryRange(multimem_address));
-    if (address_range.is_null()) {
-      return absl::InternalError(
-          "Failed to get memory range for multimem address.");
-    }
-
     TF_RETURN_IF_ERROR(collective_memory_requests->RequestMulticastAddress(
-        clique_key, address_range,
-        /*range_mapped=*/true));
+        clique_key, buffers[i].device_memory()));
   }
 
   XLA_VLOG_DEVICE(5, device_ordinal)
@@ -1326,34 +1320,33 @@ absl::Status MosaicGpuInitialize(
     collective_metadata_parameters[i] = device_address;
 
     if (parameter_uses_multimem[i]) {
-      // We are registring with a multicast the actual physical memory range
-      // within which the allocation for a given parameter is located.
-      TF_ASSIGN_OR_RETURN(
-          se::DeviceAddressBase allocated_memory_range,
-          collective_params->executor->GetMemoryRange(device_address));
       // The physical memory range contains several allocations
       // (for example we have separate allocations for the HLO module parameters
       // and temporary buffers). Each allocation can contain several HLO buffers
       // which can overlap within the lifetime of HLO execution.
       // FindMultimemAddress returns the address of an allocation within which
-      // a given buffer is located and the offset of this buffer, however since
-      // we are registring the whole physically allocated memory range here,
-      // we can safely ignore the offset.
-      auto [multimem_address, offset] = collective_memory->FindMultimemAddress(
-          clique_key, allocated_memory_range);
+      // a given buffer is located and the offset of this buffer. Since we are
+      // mapping the allocation range to multimem address space we also need to
+      // substract the offset from the parameter base address to exchange the
+      // addresses of allocation in which the parameter is located.
+      auto [multimem_address, offset] =
+          collective_memory->FindMultimemAddress(clique_key, device_address);
+
 
       XLA_VLOG_DEVICE(6, device_ordinal)
-          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
-          << device_address.opaque() << ", size: " << device_address.size()
-          << ") found multimem_address: (" << multimem_address
-          << ", offset: " << offset << ")"
-          << " address_range (" << allocated_memory_range.opaque()
-          << ", size: " << allocated_memory_range.size() << ")";
+              << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+              << device_address.opaque() << ", size: " << device_address.size()
+              << ") found multimem_address: (" << multimem_address
+              << ", offset: " << offset << ")"
+              << " for device_address: (" << device_address.opaque()
+              << ", size: " << device_address.size() << ")";
 
       parameter_multimem_addresses[i] = multimem_address;
-      // Use the allocated memory range instead to correctly calculate the
+      // Use the allocated memory allocation instead to correctly calculate the
       // offset of the multimem parameter.
-      collective_metadata_parameters[i] = allocated_memory_range;
+      collective_metadata_parameters[i] =
+          se::DeviceAddressBase(SubtractOffset(device_address.opaque(), offset),
+                                device_address.size() + offset);
     }
   }
 

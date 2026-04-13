@@ -772,15 +772,6 @@ class PallasCallRemoteDMATest(TestCase):
 
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
-    # TODO(b/496061655): Remove this once the bug is fixed.
-    if (
-        jax.local_device_count() > 1 and
-        "XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB" not in os.environ
-    ):
-      self.skipTest(
-          "Multicast is not supported yet with a single process multi device"
-          " topology when collective memory space is not preallocated."
-      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     if any(
@@ -1301,7 +1292,5 @@ if __name__ == '__main__':
       os.environ["XLA_FLAGS"] = additional_xla_flags
     jt_multiprocess.main()
   else:
-    # TODO(b/496061655): Remove this once the bug is fixed.
-    os.environ["XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB"] = "512"
     config.config_with_absl()
     absltest.main(testLoader=jtu.JaxTestLoader())
