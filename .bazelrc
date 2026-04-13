@@ -2,7 +2,7 @@
 # All default build options below. These apply to all build commands.
 # #############################################################################
 # TODO: Enable Bzlmod
-common --noenable_bzlmod
+common --noenable_bzlmod --enable_workspace
 common:bzlmod --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common:bzlmod --check_direct_dependencies=error
