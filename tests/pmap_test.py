@@ -20,6 +20,7 @@ import itertools as it
 import math
 from random import shuffle
 import re
+import gc
 from typing import Union, cast
 import unittest
 from unittest import SkipTest
@@ -165,6 +166,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f(np.arange(jax.device_count()))
 
     src_api.clear_backends()
+    gc.collect()
     device_order_after = jax.devices()
 
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
