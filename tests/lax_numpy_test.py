@@ -3501,28 +3501,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     y = jax.vmap(f)(x)
     self.assertIsNot(x, y)
 
-  def testArrayContains(self):
-    self.assertIn(1, jnp.arange(4))
-    self.assertNotIn(100, jnp.arange(4))
-
-    with self.assertRaisesRegex(
-        ValueError, "Array.__contains__: search array must be one-dimensional"):
-      _ = 1 in jnp.array(1)
-
-    with self.assertRaisesRegex(
-        ValueError, "Array.__contains__: query value must be a scalar"):
-      _ = jnp.arange(2) in jnp.arange(2)
-
-    with self.assertRaisesRegex(
-        TypeError, "Array.__contains__: unsupported operand type.*"
-    ):
-      _ = "abc" in jnp.arange(2)
-
-    with self.assertRaisesRegex(
-        TypeError, "Array.__contains__: unsupported operand type.*"
-    ):
-      _ = None in jnp.arange(2)
-
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(
         TypeError, 'JAX only supports number, bool, and string dtypes.*'

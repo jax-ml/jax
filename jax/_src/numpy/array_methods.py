@@ -46,7 +46,6 @@ from jax._src.numpy import reductions
 from jax._src.numpy import sorting
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
-from jax._src.numpy import util
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
@@ -199,27 +198,6 @@ def _conjugate(self: Array) -> Array:
   Refer to :func:`jax.numpy.conjugate` for the full documentation.
   """
   return ufuncs.conjugate(self)
-
-def _contains(self: Array, other: ArrayLike) -> Array:
-  """Implements __contains__ for JAX arrays.
-
-  This is used by the Python ``in`` operator.
-  """
-  # Note: we deliberately depart from NumPy's behavior here, which includes
-  # some oddities (https://github.com/numpy/numpy/issues/21933). Namely, we
-  # require `self` to be a 1D array, and require `other` to be a scalar.'
-
-  # Explicitly check for string and None types, as these were common bugs.
-  if other is None or isinstance(other, str):
-    raise TypeError(f"Array.__contains__: unsupported operand type {type(other)}.")
-  query = util.ensure_arraylike('Array.__contains__', other)
-  if self.ndim != 1:
-    raise ValueError("Array.__contains__: search array must be one-dimensional,"
-                     f" got arr.shape={self.shape}.")
-  if query.ndim != 0:
-    raise ValueError("Array.__contains__: query value must be a scalar,"
-                     f" got {query.shape=}")
-  return reductions.any(self == query)
 
 def _copy(self: Array) -> Array:
   """Return a copy of the array.
@@ -1337,7 +1315,6 @@ _array_operators: dict[str, Callable[..., Any]] = {
   "getitem": _getitem,
   "setitem": _unimplemented_setitem,
   "copy": _copy,
-  "contains": _contains,
   "deepcopy": _deepcopy,
   "neg": ufuncs.negative._func,
   "pos": ufuncs.positive,
