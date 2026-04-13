@@ -305,7 +305,6 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                      promote_integers=promote_integers)
 
 
-
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
 def _reduce_prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                  out: None = None, keepdims: bool = False,
@@ -917,13 +916,19 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
 
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
-            returned: Literal[False] = False, keepdims: bool = False) -> Array: ...
+            returned: Literal[False] = False, keepdims: bool = False) -> Array:
+  ...
+
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None, *,
-            returned: Literal[True], keepdims: bool = False) -> Array: ...
+            returned: Literal[True], keepdims: bool = False) -> Array:
+  ...
+
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
-            returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]: ...
+            returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
+  ...
+
 @export
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
@@ -2027,6 +2032,10 @@ def _cumulative_reduction(
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported")
 
   if axis is None or _isscalar(a):
+    if not builtins.all(s is None for s in core.typeof(a).sharding.spec):
+      raise core.ShardingTypeError(
+          "The input should be fully replicated when axis is not specified to"
+          f" {name}. Got input type={core.typeof(a)}")
     a = lax.reshape(a, (np.size(a),))
   if axis is None:
     axis = 0

@@ -7366,6 +7366,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_cumsum_sharded(self, mesh):
+    np_inp = np.arange(16).reshape(2, 8)
+
+    @jax.jit
+    def f(x):
+      return jnp.cumsum(x, axis=0)
+
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Input should be unsharded over the axis being reduced"):
+      f(arr)
+
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'x')))
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+    self.assertArraysEqual(out, np.cumsum(np_inp, axis=0))
+
+    @jax.jit
+    def g(x):
+      return jnp.cumsum(x)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'x')))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "The input should be fully replicated"):
+      g(arr)
+
   def test_device_put_under_set_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     x = jnp.zeros((4, 4), dtype=jnp.int32)
