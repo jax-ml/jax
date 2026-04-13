@@ -201,7 +201,8 @@ class LRUCache(CacheInterface):
         file_atime = int.from_bytes(atime_path.read_bytes(), "little")
       except FileNotFoundError:
         file_atime = 0  # treat missing atime as oldest; evict it first
-      heapq.heappush(h, (file_atime, key, file_size))
+      h.append((file_atime, key, file_size))
+    heapq.heapify(h)
 
     # evict files until the directory size is less than or equal
     # to `target_size`
@@ -214,7 +215,7 @@ class LRUCache(CacheInterface):
       cache_path = self.path / f"{key}{_CACHE_SUFFIX}"
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
 
-      cache_path.unlink()
+      cache_path.unlink(missing_ok=True)
       atime_path.unlink(missing_ok=True)
 
       dir_size -= file_size
