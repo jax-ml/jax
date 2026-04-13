@@ -1625,7 +1625,7 @@ def convert_element_type(operand: ArrayLike,
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
-  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
+  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,

@@ -660,7 +660,7 @@ def _export_internal(
 
 
 def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
-  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation]
   for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
     # Static args may have no `shape` attribute.
     if not hasattr(aval, "shape"):
@@ -797,7 +797,7 @@ def _export_lowered(
 
   # Log and then check the module.
   logmsg = (f"fun_name={fun_name} version={version} "
-            f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
+            f"lowering_platforms={lowering._platforms} "  # type: ignore[attribute-error]
             f"disabled_checks={disabled_checks}")
   logger.debug("Exported JAX function: %s\n", logmsg)
   logger.debug(mlir.dump_module_message(mlir_module, "export"))
