@@ -1317,8 +1317,60 @@ class LayoutInferenceTest(parameterized.TestCase):
         swizzle = layout_inference._compute_swizzle(ref_ty, tile_transform)
         self.assertEqual(swizzle, mgpu.dialect.SwizzlingMode(want_swizzle))
 
+  def test_do_not_conjure_smem_tiling_for_3d_transposed_ref_transfer(self):
+    # The idea is that we only want to tile trailing dimensions, but the two
+    # last logical dimensions do not correspond to the two last physical
+    # dimensions here.
+    shape = (128, 128, 128)
+    strides = (1, 128, 128 * 128)
+    f32 = ir.F32Type.get()
+    layout = ir.StridedLayoutAttr.get(0, strides)
+    ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
+    [ref] = undefs(ref_ty)
+    value_site = layout_inference.ValueSite(
+        operation=ref.owner,
+        type=layout_inference.VariableType.RESULT,
+        index=0,
+    )
+    var = cs.Variable(value_site)
+    is_transferable = cs.IsTransferableSmemRegisters(
+        cs.RegisterLayout(fa.WGMMA_LAYOUT), cs.Variable(value_site), shape, strides
+    )
+    [(_, tiling)] = list(layout_inference.conjure_assignment(
+        {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
+    ))
+    self.assertEqual(tiling, cs.SMEMTiling(None))
+
+  def test_conjure_smem_tiling_for_arbitrary_tiled_layout_transfer(self):
+    shape = (128, 128)
+    f32 = ir.F32Type.get()
+    ref_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
+    [ref] = undefs(ref_ty)
+    value_site = layout_inference.ValueSite(
+        operation=ref.owner,
+        type=layout_inference.VariableType.RESULT,
+        index=0,
+    )
+    # A random custom-built tiled layout.
+    layout = fa.TiledLayout(tiling=fa.Tiling(((64, 128, 8), (32, 2))),
+                            warp_dims=(-4,),
+                            lane_dims=(-2,),
+                            vector_dim=-1)
+
+    var = cs.Variable(value_site)
+    is_transferable = cs.IsTransferableSmemRegisters(
+        cs.RegisterLayout(layout), var, shape, (128, 1)
+    )
+    assignments = list(layout_inference.conjure_assignment(
+        {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
+    ))
+    # Empty tiling is always a possible assignment.
+    self.assertIn((var, cs.SMEMTiling(None)), assignments)
+    # Check that there is at least one non-empty tiling.
+    self.assertTrue(any(tiling.value is not None for _, tiling in assignments))
+
   @parameterized.parameters([False, True])
-  def test_conjure_smem_assignment_from_is_transferrable(self, transposed):
+  def test_conjure_smem_assignment_from_is_transferable(self, transposed):
     # Create a var to use in the constraint system.
     shape = (128, 128)
     f32 = ir.F32Type.get()
@@ -1344,8 +1396,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.subTest("no_constraints_yield_empty_tiling"):
       self.assertEqual(conjure([]), [(var, cs.SMEMTiling(None))])
 
-    # Yield empty if not an mma layout.
-    with self.subTest("not_mma_layout_yield_empty_tiling"):
+    # Yield empty if not a tiled layout.
+    with self.subTest("not_tiled_layout_yield_empty_tiling"):
       layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
       constraints = [transfer_constraint(layout)]
       conjured = conjure(constraints)
@@ -1353,40 +1405,36 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     wgmma_layout = cs.RegisterLayout(fa.WGMMA_LAYOUT)
 
-    # Yield also maximal tiling with no Divides constraints.
-    with self.subTest("no_divides_constraints_yield_maximal_tiling_with_mma"):
+    # Yield all possible tilings with no Divides constraints.
+    with self.subTest("no_divides_constraints_yields_all_possible_tilings_for_mma"):
       constraints = [transfer_constraint(wgmma_layout)]
       conjured = conjure(constraints)
       if transposed:
-        expected_tiling = (32, 8)
+        expected_tilings = [(32, 8), (16, 8), (8, 8)]
       else:
-        expected_tiling = (8, 32)
-      self.assertEqual(
-          conjured,
-          [
-              (var, cs.SMEMTiling(lc.TileTransform(expected_tiling))),
-              (var, cs.SMEMTiling(None)),
-          ],
-      )
+        expected_tilings = [(8, 32), (8, 16), (8, 8)]
+      expected_assignments = [
+          (var, cs.SMEMTiling(lc.TileTransform(t))) for t in expected_tilings
+      ]
+      expected_assignments.append((var, cs.SMEMTiling(None)))
+      self.assertEqual(conjured, expected_assignments)
 
-    # Yield also valid tiling with Divides constraints.
-    with self.subTest("divides_constraints_yield_valid_tiling"):
+    # Yield also valid tilings with Divides constraints.
+    with self.subTest("divides_constraints_yield_valid_assignments"):
       constraints = [
           transfer_constraint(wgmma_layout),
           cs.Divides(var, (32, 16)),
       ]
       conjured = conjure(constraints)
       if transposed:
-        expected_tiling = (32, 8)
+        expected_tilings = [(32, 8), (16, 8), (8, 8)]
       else:
-        expected_tiling = (8, 16)
-      self.assertEqual(
-          conjured,
-          [
-              (var, cs.SMEMTiling(lc.TileTransform(expected_tiling))),
-              (var, cs.SMEMTiling(None)),
-          ],
-      )
+        expected_tilings = [(8, 16), (8, 8)]
+      expected_assignments = [
+          (var, cs.SMEMTiling(lc.TileTransform(t))) for t in expected_tilings
+      ]
+      expected_assignments.append((var, cs.SMEMTiling(None)))
+      self.assertEqual(conjured, expected_assignments)
 
   def test_conjure_tries_high_priority_assignments_first(self):
     shape = (128, 128)

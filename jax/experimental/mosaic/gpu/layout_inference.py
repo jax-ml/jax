@@ -249,6 +249,34 @@ def _register_layouts_for_optimized_transfer_to_smem(
   yield from candidate_layouts
 
 
+def _conjure_tilings_for_smem_ref(
+    ref_ty: ir.MemRefType
+) -> Iterator[tuple[int, ...]]:
+  if len(ref_ty.shape) < 2:
+    return
+  bitwidth = utils.bitwidth(ref_ty.element_type)
+  strides, _ = ref_ty.get_strides_and_offset()
+  rank = len(strides)
+  dim_order = np.argsort(strides)
+
+  # We want to tile only the last two dimensions.
+  if {dim_order[0], dim_order[1]} != {rank - 1, rank - 2}:
+    return
+
+  minor_dim = ref_ty.shape[dim_order[0]]
+  second_to_minor_dim = ref_ty.shape[dim_order[1]]
+
+  # The second to minor dimension must be tileable by 8.
+  if second_to_minor_dim % 8 != 0:
+    return
+
+  transposed = dim_order[0] != rank - 1
+  for swizzle in [128, 64, 32]:
+    swizzle_elems = 8 * swizzle // bitwidth
+    if minor_dim % swizzle_elems == 0:
+      yield (swizzle_elems, 8) if transposed else (8, swizzle_elems)
+
+
 def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
@@ -301,18 +329,21 @@ def _extract_layout_candidates_from_smem_registers_transfer(
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
     assert variable.key.memory_space == MemorySpace.SMEM
-    if inference_utils.is_mma_layout(layout):
+    if isinstance(layout, fa.TiledLayout) and len(variable.key.shape) >= 2:
+      # Maintain a set of yielded tilings to avoid duplicates caused by existing
+      # divides constraints.
+      yielded = set()
       divide_constraint = division_constraint_per_var.get(variable)
-      tiling = _infer_tiling_for_mma_ref(
-          variable.key.value.type,
-          max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-      )
-      if divide_constraint is not None:
-        # Apply existing multiplicity constraints to the conjured tiling.
-        tiling = cs.merge_divides_constraints(
-            divide_constraint, cs.Divides(variable, tiling)
-        ).tiling_multiple
-      yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
+      for tiling in _conjure_tilings_for_smem_ref(variable.key.value.type):
+        if divide_constraint is not None:
+          # Apply existing multiplicity constraints to the conjured tiling.
+          tiling = cs.merge_divides_constraints(
+              divide_constraint, cs.Divides(variable, tiling)
+          ).tiling_multiple
+        if tiling in yielded:
+          continue
+        yielded.add(tiling)
+        yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
     return
 
   assert isinstance(constant, cs.SMEMTiling)
@@ -973,40 +1004,6 @@ def _layout_cast_constraint_system(
       ),
       {variable: [operand, result]},
   )
-
-
-def _infer_tiling_for_mma_ref(
-    ref_ty: ir.MemRefType, max_swizzle: mgpu.SwizzlingMode
-) -> tuple[int, int]:
-  element_bytewidth = utils.bytewidth(ref_ty.element_type)
-  strides, _ = ref_ty.get_strides_and_offset()
-  min_dim_index = np.argmin(strides)
-  minor_dim = ref_ty.shape[min_dim_index]
-
-  # Try tiling with all swizzling modes starting from the largest one.
-  for swizzle in [
-      mgpu.SwizzlingMode.k128ByteSwizzle,
-      mgpu.SwizzlingMode.k64ByteSwizzle,
-      mgpu.SwizzlingMode.k32ByteSwizzle,
-      mgpu.SwizzlingMode.kNoSwizzle,
-  ]:
-    if swizzle > max_swizzle:
-      continue
-    swizzle_elems = swizzle // element_bytewidth
-    if minor_dim % swizzle_elems == 0:
-      minor_tiling = swizzle_elems
-      break
-  else:
-    # No valid tile transform can be inferred.
-    raise ValueError(f"{ref_ty.shape} is not a valid WGMMA shape")
-
-  major_tiling = 8
-  transposed = min_dim_index != len(strides) - 1
-  if transposed:
-    tiling = (minor_tiling, major_tiling)
-  else:
-    tiling = (major_tiling, minor_tiling)
-  return tiling
 
 
 @_add_constraint_system_derivation_rule(mgpu.WGMMAOp)
