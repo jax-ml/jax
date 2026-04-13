@@ -196,11 +196,20 @@ absl::StatusOr<std::string> GetPtxIsaVersion(
   return absl::StrFormat("ptx%d", final_version);
 }
 
-void EnsureNativeLLVMisInitialized() {
+void EnsureLLVMisInitialized() {
   static absl::once_flag init_flag;
   absl::call_once(init_flag, []() {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
+    // Initialize X86 and AArch64 targets for cross-compilation.
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmPrinter();
   });
 }
 
@@ -213,7 +222,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   static absl::once_flag register_passes_flag;
   absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
     mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
-    EnsureNativeLLVMisInitialized();
+    EnsureLLVMisInitialized();
     mlir::registerCanonicalizerPass();
     mlir::registerCSEPass();
     mlir::registerStripDebugInfoPass();
@@ -619,7 +628,7 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
     std::string init_func_name, bool is_nvshmem_used, bool is_multimem_used) {
-  EnsureNativeLLVMisInitialized();
+  EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
 
