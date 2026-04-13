@@ -258,6 +258,15 @@ def _lower_to_custom_call(
       in_nodes[:num_dynamic_grid_bounds],
       in_nodes[num_dynamic_grid_bounds:],
   )
+
+  if pallas_core.dynamic_shapes_export_enabled():
+    # Add avals for the dimension variables we append to the custom call args.
+    # These are used for specializing the custom call if needed.
+    dim_var_avals = [jax_core.ShapedArray((), jax.numpy.int32)] * len(
+        ctx.dim_var_values
+    )
+    kernel_in_avals.extend(dim_var_avals)
+
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   input_memory_spaces, output_memory_spaces = _resolve_memory_spaces(
       ctx.avals_in,
@@ -291,10 +300,14 @@ def _lower_to_custom_call(
       if all(isinstance(a, str) for a in mesh_axes):
         mesh_axes_list = sorted(mesh_axes)  # type: ignore
       dict_metadata["mesh_axes"] = json.dumps(mesh_axes_list)
+  extra_args = (
+      ctx.dim_var_values if pallas_core.dynamic_shapes_export_enabled() else ()
+  )
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
       *args,
+      *extra_args,
       module=mosaic_module,
       out_type=kernel_out_avals,
       kernel_name=mlir.sanitize_name(name),
