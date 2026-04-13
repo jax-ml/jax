@@ -3122,12 +3122,16 @@ class FragmentedArray:
         if swizzle != 16:
           raise ValueError("Only TiledLayouts support swizzling")
         assert isinstance(self.layout, WGStridedFragLayout)
-        if atomic is not None and isinstance(ref, utils.MultimemRef):
-          raise NotImplementedError("Multimem refs do not support atomic stores")
         # pyrefly: ignore[bad-argument-type]
         for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
           if isinstance(ref, utils.MultimemRef):
-            ref.store(get(self.registers), idx)
+            ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
+            if atomic is not None:
+              self._store_register_atomic(
+                  ptr, get(self.registers), atomic, is_smem=False, multimem=True,
+              )
+            else:
+              utils.multimem_store(ptr, get(self.registers))
           elif atomic is not None:
             is_smem = utils.is_smem_ref(ref)
             memory_space = 3 if is_smem else None
@@ -3298,11 +3302,20 @@ class FragmentedArray:
       vreg: ir.Value,
       atomic: Literal["add", "max", "min", "and", "or", "xor"],
       is_smem: bool,
+      multimem: bool = False,
   ):
     i32 = ir.IntegerType.get_signless(32)
-    scope = "cta" if is_smem else "gpu"
-    space = ".shared::cta" if is_smem else ""
-    ptr_constraint = "r" if is_smem else "l"
+    if multimem:
+      assert not is_smem
+      red = "multimem.red"
+      scope = "sys"
+      space = ".global"
+      ptr_constraint = "l"
+    else:
+      red = "red"
+      scope = "cta" if is_smem else "gpu"
+      space = ".shared::cta" if is_smem else ""
+      ptr_constraint = "r" if is_smem else "l"
     element_type = self.mlir_dtype
     element_bitwidth = utils.bitwidth(element_type)
     noftz = ""
@@ -3320,12 +3333,12 @@ class FragmentedArray:
         raise NotImplementedError(
             f"f16/bf16 only supports add, min, max atomics, got {atomic}"
         )
-      if is_smem and atomic != "add":
+      if (is_smem or multimem) and atomic != "add":
         raise NotImplementedError(
-            f"f16/bf16 SMEM atomics only support add, got {atomic}"
+            f"f16/bf16 SMEM/multimem atomics only support add, got {atomic}"
         )
       ptx_type = f"{element_type}x2"
-      noftz = ".noftz"
+      noftz = "" if multimem else ".noftz"
     else:
       raise NotImplementedError(
           f"Unsupported element type for atomic stores: {element_type}"
@@ -3369,7 +3382,7 @@ class FragmentedArray:
                   llvm.extractelement(pair, arith.constant(i32, 0)),
                   llvm.extractelement(pair, arith.constant(i32, 1)),
               ],
-              f"red.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
+              f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
               f"{ptr_constraint},h,h",
               has_side_effects=True,
           )
@@ -3378,7 +3391,7 @@ class FragmentedArray:
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
               [ptr, *regs_slice],
-              f"red.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
+              f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
               f"{ptr_constraint}" + ",r" * width,
               has_side_effects=True,
           )
@@ -3388,7 +3401,7 @@ class FragmentedArray:
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [ptr, reg],
-            f"red{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
+            f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
             f"{ptr_constraint},r",
             has_side_effects=True,
         )
@@ -3405,19 +3418,19 @@ class FragmentedArray:
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
     if atomic is not None:
-      if isinstance(ref, utils.MultimemRef):
-        raise NotImplementedError("Multimem refs do not support atomic stores")
       if any(isinstance(d, Replicated) for d in layout.warp_dims + layout.lane_dims):
         raise NotImplementedError(
             "Atomic stores not supported for layouts with replicated dims"
         )
-      is_smem = utils.is_smem_ref(ref)
+      multimem = isinstance(ref, utils.MultimemRef)
+      is_smem = not multimem and utils.is_smem_ref(ref)
       stores = self.transfer_tiled(
-          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+          ref.ref if multimem else ref,
+          swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank,
       )
       for get, _update, _idx, base_ptr in stores:
         self._store_register_atomic(
-            base_ptr, get(self.registers), atomic, is_smem,
+            base_ptr, get(self.registers), atomic, is_smem, multimem=multimem,
         )
       return
     # Note that the loop below will "race" for layouts that replicate data.
