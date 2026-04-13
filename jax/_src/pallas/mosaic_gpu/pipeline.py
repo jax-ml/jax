@@ -1049,7 +1049,7 @@ def emit_pipeline_warp_specialized(
         memory_block
     )
   # Type checkers do not understand the get_allocations assignment above.
-  return pipeline  # type: ignore
+  return pipeline  # pyrefly: ignore[bad-return]
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.

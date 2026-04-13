@@ -376,13 +376,13 @@ class AbstractRef(core.AbstractValue):
   def lower_val(self, ref):
     if not self.is_high:
       return [ref]
-    return self.inner_aval.lower_val(ref._refs)  # type: ignore
+    return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
 
   def raise_val(self, *vals):
     if not self.is_high:
       ref, = vals
       return ref
-    return core.Ref(self, self.inner_aval.raise_val(*vals))  # type: ignore
+    return core.Ref(self, self.inner_aval.raise_val(*vals))  # pyrefly: ignore[missing-attribute]
 
   @property
   def weak_type(self) -> bool:
@@ -597,7 +597,7 @@ def zeros_like_abstract_ref(aval: AbstractRef) -> core.Ref:
 # TODO(dougalm): this is nonsense but it's here because in places like
 # custom_vjp we assume that all arguments have tangent spaces. We could have
 # a distinct NotATangentType value instead.
-ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # type: ignore
+ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ignore[unsupported-operation]
 
 # === pinned, chained LinearVals ===
 

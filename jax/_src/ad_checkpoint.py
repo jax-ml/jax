@@ -644,7 +644,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
   _, tracers_staged = partition_list(in_used_staged, tracers)
-  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # type: ignore
+  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # pyrefly: ignore[bad-argument-type]
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   if isinstance(prevent_cse, tuple):
@@ -857,7 +857,7 @@ def _remat_lowering(
     policy,
 ):
   if isinstance(prevent_cse, bool):
-    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # type: ignore
+    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # pyrefly: ignore[bad-assignment]
   assert isinstance(prevent_cse, tuple)
   if differentiated and any(prevent_cse):
     _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)

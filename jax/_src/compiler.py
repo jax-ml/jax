@@ -335,13 +335,13 @@ def backend_compile_and_load(
       cross_compile_backend = _get_cross_compile_backend(backend)
       if cross_compile_backend is not None and not host_callbacks:
         cross_compile_topology = xc.get_topology_for_devices(backend.devices())
-        return cross_compile_backend.compile(  # type: ignore
+        return cross_compile_backend.compile(
             module,
             topology=cross_compile_topology,
             compile_options=options,
         )
       if host_callbacks:
-        return backend.compile(  # type: ignore
+        return backend.compile(  # pyrefly: ignore[bad-return]
             module,
             executable_devices=executable_devices,
             compile_options=options,
@@ -350,7 +350,7 @@ def backend_compile_and_load(
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
       # to take in `host_callbacks`
-      return backend.compile(  # type: ignore
+      return backend.compile(  # pyrefly: ignore[bad-return]
           module,
           executable_devices=executable_devices,
           compile_options=options,

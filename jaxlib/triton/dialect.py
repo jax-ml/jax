@@ -31,7 +31,7 @@ from ._triton_enum_gen import *
 from ._triton_ops_gen import *
 
 
-class ReduceOp(ReduceOp):  # type: ignore
+class ReduceOp(ReduceOp):
 
   def __init__(
       self,
@@ -49,7 +49,7 @@ class ReduceOp(ReduceOp):  # type: ignore
 del reduce
 
 
-class ScanOp(ScanOp):  # type: ignore
+class ScanOp(ScanOp):
 
   def __init__(
       self,

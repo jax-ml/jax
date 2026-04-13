@@ -417,9 +417,9 @@ def _batch_jaxpr2(
           axis_data.size, b, aval, axis_data.explicit_mesh_axis)
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
-          mat = aval.mat.update(  # type: ignore
-              varying=aval.mat.varying  | frozenset(axis_data.spmd_name))  # type: ignore
-          aval = aval.update(manual_axis_type=mat)  # type: ignore
+          mat = aval.mat.update(  # pyrefly: ignore[missing-attribute]
+              varying=aval.mat.varying  | frozenset(axis_data.spmd_name))  # pyrefly: ignore[missing-attribute]
+          aval = aval.update(manual_axis_type=mat)
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()

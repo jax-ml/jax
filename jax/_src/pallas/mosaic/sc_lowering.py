@@ -494,7 +494,7 @@ def lower_jaxpr_to_func(
         if i not in mosaic_grid_mapping.vmapped_dims
     )
     lowering_context = LoweringContext(
-        mosaic_grid_mapping.grid,  # type: ignore
+        mosaic_grid_mapping.grid,  # pyrefly: ignore[bad-argument-type]
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.vmapped_dims,
         jaxpr_indices,

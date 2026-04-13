@@ -34,7 +34,7 @@ from jax._src.interpreters.pxla import (
 from jax._src import (
     util as _util
 )
-register_backend_cache = _util.register_cache  # type: ignore
+register_backend_cache = _util.register_cache
 
 from jax._src.lib import (
     ifrt_proxy as ifrt_proxy

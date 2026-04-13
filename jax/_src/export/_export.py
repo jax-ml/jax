@@ -39,8 +39,7 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-# pyrefly: ignore [missing-import]
-from jax._src.lax import linalg
+from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -793,7 +792,7 @@ def _export_lowered(
     # This is currently the case for pjit
     out_avals_flat = lowering.compile_args["global_out_avals"]
   else:
-    out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
+    out_avals_flat = lowered.compile_args["out_avals"]  # pyrefly: ignore[missing-attribute]
 
   # Log and then check the module.
   if logger.isEnabledFor(logging.DEBUG):
@@ -839,7 +838,7 @@ def _export_lowered(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering._device_list  # type: ignore
+  device_assignment = lowering._device_list  # pyrefly: ignore[missing-attribute]
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
@@ -880,7 +879,7 @@ def _export_lowered(
       out_shardings_hlo=(None,) * len(out_named_shardings),
 
       nr_devices=nr_devices,
-      platforms=lowering._platforms,  # type: ignore
+      platforms=lowering._platforms,  # pyrefly: ignore[missing-attribute]
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=tuple(disabled_checks),
@@ -1334,7 +1333,7 @@ def _get_named_sharding(
     mem_kind = core.mem_space_to_kind(aval.memory_space)
 
   return sharding_impls.cached_named_sharding(
-      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # type: ignore
+      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # pyrefly: ignore[bad-argument-type]
       memory_kind=mem_kind)
 
 
@@ -1389,7 +1388,7 @@ def _get_vjp_fun(
             vjp_in_avals))
       vjp_out_shardings = tuple(
         _get_named_sharding(has_named_shardings, named_sharding,
-                            hlo_sharding, aval, mesh)  # type: ignore
+                            hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
         for named_sharding, hlo_sharding, aval in zip(
           in_named_shardings, in_shardings_hlo, in_avals))
     else:
@@ -1785,8 +1784,8 @@ def wrap_with_sharding(
   if x_sharding is None:
     return x
   if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
+    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
   else:
-    x_sharding = x_sharding.to_proto()  # type: ignore
+    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
   return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
                                     allow_shardy_lowering=use_shardy)

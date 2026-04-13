@@ -276,21 +276,21 @@ def _serialize_array(
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
 
-  unique_avals = [  # type: ignore
+  unique_avals = [
       _deserialize_aval(exp.UniqueAvals(i), scope=scope, sharding=None)
       for i in range(exp.UniqueAvalsLength())]
   unique_abstract_meshes = [
       _deserialize_abstract_mesh(exp.UniqueAbstractMeshes(i))
       for i in range(exp.UniqueAbstractMeshesLength())
   ]
-  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # type: ignore
+  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # pyrefly: ignore[bad-argument-type]
                                                    unique_abstract_meshes,
                                                    [])
   unique_named_shardings = [
       _deserialize_named_sharding(exp.UniqueNamedShardings(i), uniques=uniques)
       for i in range(exp.UniqueNamedShardingsLength())
   ]
-  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # type: ignore
+  uniques = _SerializedUniques.create_from_uniques(unique_avals,  # pyrefly: ignore[bad-argument-type]
                                                    unique_abstract_meshes,
                                                    unique_named_shardings)
 
@@ -352,32 +352,32 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
 
     if exp.InAvalsIdxsLength() > 0:
       in_avals = tuple(
-          get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # type: ignore
+          get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # pyrefly: ignore[bad-argument-type]
           for i in range(exp.InAvalsIdxsLength()))
     elif exp.InAvalsLength() > 0:
       # TODO(necula): remove 6 months after 4/4/26
       in_avals = tuple(
-          _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # type: ignore
+          _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # pyrefly: ignore[bad-argument-type]
           for i in range(exp.InAvalsLength()))
     else:
       in_avals = ()
 
     if exp.OutAvalsIdxsLength() > 0:
       out_avals = tuple(
-          get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # type: ignore
+          get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # pyrefly: ignore[bad-argument-type]
                           for i in range(exp.OutAvalsIdxsLength()))
     elif exp.OutAvalsLength() > 0:
       # TODO(necula): remove 6 months after 4/4/26
       out_avals = tuple(
-        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # type: ignore
+        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # pyrefly: ignore[bad-argument-type]
         for i in range(exp.OutAvalsLength())
       )
     else:
       out_avals = ()
 
-    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
                              for s, aval in zip(in_shardings, in_avals))
-    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # type: ignore
+    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
                              for s, aval in zip(out_shardings, out_avals))
   else:
     # Export from before 1/15/26
@@ -430,8 +430,8 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       in_shardings_hlo=in_shardings_hlo,
       out_shardings_hlo=out_shardings_hlo,
       _has_named_shardings=has_named_shardings,
-      _in_named_shardings=in_shardings,  # type: ignore
-      _out_named_shardings=out_shardings,  # type: ignore
+      _in_named_shardings=in_shardings,  # pyrefly: ignore[bad-argument-type]
+      _out_named_shardings=out_shardings,  # pyrefly: ignore[bad-argument-type]
       platforms=platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
@@ -715,9 +715,9 @@ def _deserialize_partition_spec(spec: ser_flatbuf.PartitionSpec
                                 ) -> partition_spec.PartitionSpec:
   partitions = tuple(_deserialize_partition_spec_one_axis(spec.Partitions(i))
                      for i in range(spec.PartitionsLength()))
-  reduced = frozenset(spec.Reduced(i).decode("utf-8")  # type: ignore
+  reduced = frozenset(spec.Reduced(i).decode("utf-8")
                       for i in range(spec.ReducedLength()))
-  unreduced = frozenset(spec.Unreduced(i).decode("utf-8")  # type: ignore
+  unreduced = frozenset(spec.Unreduced(i).decode("utf-8")
                         for i in range(spec.UnreducedLength()))
   return partition_spec.PartitionSpec(*partitions,
                                       reduced=reduced,
@@ -754,7 +754,7 @@ def _deserialize_named_sharding(
     # abstract_mesh.
     amesh = _deserialize_abstract_mesh(s.Mesh())
   spec = _deserialize_partition_spec(s.Spec())
-  memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None  # type: ignore
+  memory_kind = s.MemoryKind().decode("utf-8") if s.MemoryKind() is not None else None
   return named_sharding.NamedSharding(amesh, spec, memory_kind=memory_kind)
 
 
@@ -783,7 +783,7 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
   dtype = _dtype_kind_to_dtype[aval.Dtype()]
   shape = shape_poly.symbolic_shape(
       ",".join(
-            aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())  # type: ignore
+            aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())
         ),
         scope=scope
     )
@@ -854,7 +854,7 @@ def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
 
 
 def _deserialize_effect(eff: ser_flatbuf.Effect) -> core.Effect:
-  effect_type_name = eff.TypeName().decode("utf-8")  # type: ignore
+  effect_type_name = eff.TypeName().decode("utf-8")
   for existing_effect_type in effects.lowerable_effects._effect_types:
     if str(existing_effect_type) == effect_type_name:
       try:

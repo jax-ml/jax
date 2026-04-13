@@ -541,7 +541,7 @@ def paged_attention(
         if megacore_mode == "kv_head"
         else num_kv_heads,
         pages_per_sequence // pages_per_compute_block,
-    )  # type: ignore
+    )
     dimension_semantics = ("parallel", "arbitrary", "arbitrary", "arbitrary")
 
   if k_scales_pages is not None and v_scales_pages is not None:

@@ -553,7 +553,7 @@ def _tile_preserving_einshape_kernel(
   assert isinstance(t1, int)
   assert isinstance(t2, int)
   dims = _init_dims(x.shape, t1, t2)
-  tiles = _array_to_2d_tile_array(x, tiling)  # type: ignore
+  tiles = _array_to_2d_tile_array(x, tiling)  # pyrefly: ignore[bad-argument-type]
   transforms = get_einshape_transforms(equation, x.shape, **size_vars)
 
   def get_outer_shape(dims_list: list[list[Factor]]) -> tuple[int, ...]:
@@ -632,9 +632,7 @@ def _einshape_kernel(
   if len(transforms) <= 1:
     return _default_einshape_kernel(equation, x, **size_vars)
   tiling = tpu_info.infer_tiling(jax_core.ShapedArray(x.shape, x.dtype))
-  if tiling is not None and _is_tile_preserving(
-      x.shape, transforms, tiling[-2:]  # type: ignore
-  ):
+  if _is_tile_preserving(x.shape, transforms, tiling[-2:]):  # pyrefly: ignore[bad-argument-type]
     return _tile_preserving_einshape_kernel(equation, x, **size_vars)
   elif assert_is_tile_preserving:
     raise ValueError(

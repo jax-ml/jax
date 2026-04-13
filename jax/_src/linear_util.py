@@ -371,22 +371,24 @@ class DebugInfo(NamedTuple):
 
   def safe_result_paths(self, expected_count: int) -> tuple[str, ...]:
     """Get the result paths with a safety check. Empty paths mean unknown."""
-    assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
+    assert not isinstance(self.result_paths, InitialResultPaths) and not callable(self.result_paths), self
     self.assert_result_paths(expected_count)
     if self.result_paths is not None:
-      return self.result_paths  # type: ignore
+      return self.result_paths
 
     return ("",) * expected_count
 
   def assert_result_paths(self, expected_count: int):
-    assert self.result_paths is None or len(self.result_paths) == expected_count, (  # type: ignore
-        expected_count, self)
+    if self.result_paths is None:
+      return
+    assert isinstance(self.result_paths, tuple), self
+    assert len(self.result_paths) == expected_count, (expected_count, self)
 
   def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...] | None:
     """Keep only the result_paths for which `keep` is True."""
-    assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
+    assert not isinstance(self.result_paths, InitialResultPaths) and not callable(self.result_paths), self
     if self.result_paths is None: return None
-    return tuple(v for v, b in zip(self.result_paths, keep) if b)  # type: ignore
+    return tuple(v for v, b in zip(self.result_paths, keep) if b)
 
   def with_unknown_names(self) -> DebugInfo:
     return self._replace(arg_names=None, result_paths=None)
@@ -457,11 +459,13 @@ def cache(call: Callable, *,
       ans, stores = result
       fun.populate_stores(stores)
     else:
+      start = 0.0
       if do_explain := explain and config.explain_cache_misses.value:
         start = time.time()
       ans = call(fun, *args)
       if do_explain:
-        explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
+        assert explain
+        explain(fun, cache is new_cache, cache, key, time.time() - start)
       cache[key] = (ans, fun.stores)
 
     return ans
@@ -469,8 +473,8 @@ def cache(call: Callable, *,
   def _evict_function(f):
     fun_caches.pop(f, None)
 
-  memoized_fun.evict_function = _evict_function  # type: ignore
-  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
+  memoized_fun.evict_function = _evict_function  # pyrefly: ignore[missing-attribute]
+  memoized_fun.cache_clear = fun_caches.clear  # pyrefly: ignore[missing-attribute]
   register_cache(memoized_fun, str(call))
   return memoized_fun
 

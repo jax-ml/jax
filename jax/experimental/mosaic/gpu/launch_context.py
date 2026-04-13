@@ -993,7 +993,7 @@ class LaunchContext:
     # and tiling change that order and if we picked a partition based on the
     # untransformed slice shape, we might have ended up with a non-contiguous
     # SMEM window, which would no longer be realizable in a single TMA transfer.
-    collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
+    collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1 and not isinstance(leader_tracked, _Partitioned):
       assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):

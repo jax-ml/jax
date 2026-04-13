@@ -1150,7 +1150,7 @@ class PrimalTangentDType(ExtendedDType):
   type = primal_tangent_dtype_scalar
   def __repr__(self): return self.name
   @property
-  def _rules(self):  # type: ignore
+  def _rules(self):  # pyrefly: ignore[bad-override]
     return types.SimpleNamespace(
       physical_element_aval=
       lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),

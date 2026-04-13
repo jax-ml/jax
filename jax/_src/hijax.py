@@ -69,7 +69,7 @@ class HiPrimitive(core.Primitive):
   def is_high(self, *avals, **params) -> bool:
     return True
 
-  def is_effectful(self, params) -> bool:  # type: ignore
+  def is_effectful(self, params) -> bool:  # pyrefly: ignore[bad-override]
     return False  # default immutable
 
   # type checking and forward type propagation
@@ -156,21 +156,21 @@ class MutableHiType(core.AbstractValue):
     assert False, "mutable hitypes should use lo_ty_qdd instead"
 
   # define lowering from hijax value to lojax values and back, depending on qdd
-  def new_from_loval(self, state: QDD, *vals: LoVal) -> HiVal:
+  def new_from_loval(self, state: QDD, /, *vals: LoVal) -> HiVal:
     assert False, "must override"
-  def read_loval(self, state: QDD, val: HiVal) -> list[LoVal]:
+  def read_loval(self, state: QDD, val: HiVal, /) -> list[LoVal]:
     assert False, "must override"
   # default implementations of newer apis
-  def read_loval_in(self, state, val):
+  def read_loval_in(self, state, val, /):
     return self.read_loval(state, val)
-  def read_loval_out(self, qdd, hi):
+  def read_loval_out(self, qdd, hi, /):
     return FlatTree.flatten(self.read_loval(qdd, hi))
 
   # define how to mutate/set the mutable hijax value given immutable lojax vals
-  def update_from_loval(self, state: QDD, val: HiVal, *lo_vals: LoVal) -> None:
+  def update_from_loval(self, state: QDD, val: HiVal, /, *lo_vals: LoVal) -> None:
     assert False, "must override"
   # default implementation of newer api
-  def update_from_loval2(self, state, val, lo_vals_ft) -> None:
+  def update_from_loval2(self, state, val, lo_vals_ft, /) -> None:
     self.update_from_loval(state, val, *lo_vals_ft.unflatten())
 
   # autodiff interface
@@ -233,29 +233,29 @@ class BoxTy(MutableHiType):
   def __hash__(self): return hash(BoxTy)
   def __eq__(self, other): return isinstance(other, BoxTy)
 
-  def str_short(self, short_dtypes=False, **_) -> str:  # type: ignore
+  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
     return 'BoxTy'
 
   # mutable interface
   def lo_ty_qdd(self, box_state):
     return [lo_ty for t in box_state.leaf_avals for lo_ty in t.lo_ty()]
 
-  def new_from_loval(self, box_state: BoxTypeState, *lo_vals) -> Box:  # type: ignore
+  def new_from_loval(self, box_state: BoxTypeState, *lo_vals) -> Box:  # pyrefly: ignore[bad-override]
     lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # type: ignore
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
                for hi_ty in box_state.leaf_avals]
     assert next(lo_vals_, None) is None
     return Box._new(tree_unflatten(box_state.treedef, hi_vals))  # will be mutated
 
-  def read_loval(self, box_state: BoxTypeState, box) -> list:  # type: ignore
+  def read_loval(self, box_state: BoxTypeState, box) -> list:  # pyrefly: ignore[bad-override]
     leaf_vals, treedef = tree_flatten(box_get(box))
     assert treedef == box_state.treedef
     return [lo_val for hi_ty, hi_val in zip(box_state.leaf_avals, leaf_vals)
-            for lo_val in hi_ty.lower_val(hi_val)]  # type: ignore
+            for lo_val in hi_ty.lower_val(hi_val)]  # pyrefly: ignore[missing-attribute]
 
-  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals) -> None:  # type: ignore
+  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals) -> None:  # pyrefly: ignore[bad-override]
     lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # type: ignore
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
                for hi_ty in box_state.leaf_avals]
     assert next(lo_vals_, None) is None
     box_set(box, tree_unflatten(box_state.treedef, hi_vals))
@@ -506,25 +506,25 @@ class VmapOf(VJPHiPrimitive):
                 spmd_axis_name=self.axis_data.spmd_name or self.axis_data.explicit_mesh_axis)
 
   def expand(self, *args):
-    return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # type: ignore
+    return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # pyrefly: ignore[missing-attribute]
                     **self._vmap_params)(*args)
 
   def jvp(self, primals, tangents):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
-    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # type: ignore
+    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # pyrefly: ignore[missing-attribute]
                     out_axes=(self.out_dim, self.out_dim),
                     **self._vmap_params)(primals, tangents)
 
   def vjp_fwd(self, in_nzs, *args):
     store = lambda: None
     def fwd(*args):
-      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # type: ignore
+      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # pyrefly: ignore[missing-attribute]
       store.out_nzs = maybe_out_nzs  # pyrefly: ignore[missing-attribute]
       return primal_out, res
     (primal_out, res), (_, res_axes) = api.vmap(
         fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),
         **self._vmap_params)(*args)
-    return primal_out, (res, Static(res_axes)), *store.out_nzs  # type: ignore
+    return primal_out, (res, Static(res_axes)), *store.out_nzs  # pyrefly: ignore[missing-attribute]
 
   def vjp_bwd_retval(self, res_, g):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
@@ -532,14 +532,14 @@ class VmapOf(VJPHiPrimitive):
     in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,
                        is_leaf=lambda x: x is None)
     g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)
-    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # type: ignore
+    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # pyrefly: ignore[missing-attribute]
                    out_axes=in_dims, **self._vmap_params, sum_match=True)(res, g)
     return tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
 
   def batch_dim_rule(self, axis_data, in_dims):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
     in_dims_ = tree_map(fix, in_dims, self.in_dims, is_leaf=lambda x: x is None)
-    out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # type: ignore
+    out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # pyrefly: ignore[missing-attribute]
     return tree_map(lambda d, d_: d + (d_ < d), out_dim, self.out_dim)
 
 def map_zero(axis_data, d, ct):
@@ -711,7 +711,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     if self.symbolic_zeros:
       args_ = tree_map(CustomVJPPrimal, args_, in_nzs)
-    out, res = self.fwd(*args_)  # type: ignore
+    out, res = self.fwd(*args_)
     if config.mutable_array_checks.value:
       _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
                                self.out_tree.num_leaves)
@@ -957,24 +957,25 @@ class LogTy(MutableHiType):
 
   def __hash__(self): return hash(LogTy)
   def __eq__(self, other): return isinstance(other, LogTy)
-  def str_short(self, short_dtypes=False, **_) -> str: return 'Log'  # type: ignore
+  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
+    return 'Log'
 
   def to_tangent_aval(self):
     return LogTy()
 
-  def read_loval_in(self, qdd, log):  # type: ignore
+  def read_loval_in(self, qdd, log):
     () = qdd
     return []
 
-  def read_loval_out(self, qdd, log):  # type: ignore
+  def read_loval_out(self, qdd, log):
     () = qdd
     return FlatTree.flatten(log._dct)
 
-  def new_from_loval(self, qdd):  # type: ignore
+  def new_from_loval(self, qdd):  # pyrefly: ignore[bad-override]
     () = qdd
     return Log._new()
 
-  def update_from_loval2(self, qdd, log: Log, lo_ft) -> None:  # type: ignore
+  def update_from_loval2(self, qdd, log: Log, lo_ft) -> None:
     () = qdd
     updates = lo_ft.unflatten()
     for k, v in updates.items():
@@ -1001,7 +1002,7 @@ class NewLog(HiPrimitive):
 
   def abstract_eval(self):
     ty = LogTy()
-    return core.AvalQDD(ty, ()), {log_effect}  # type: ignore
+    return core.AvalQDD(ty, ()), {log_effect}  # pyrefly: ignore[bad-argument-type]
 
   def to_lojax(_):
     return Log._new()

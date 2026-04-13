@@ -106,7 +106,7 @@ def load_expanded(ref: Ref, *, mask: jax.Array) -> jax.Array:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   return load_p.bind(ref.ref, *flat_transforms, mask, has_mask=True, tree=tree)
@@ -171,7 +171,7 @@ def store_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -196,7 +196,7 @@ def addupdate(ref: Ref, x: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -213,7 +213,7 @@ def addupdate_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(

@@ -166,8 +166,8 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
         (frozenset(), frozenset()) if num_out is None else
         ([frozenset()] * num_out, [frozenset()] * num_out))
   if num_out is None:
-    return core.ManualAxisType(varying=out_vma, unreduced=out_unreduced,  # type: ignore
-                               reduced=out_reduced)  # type: ignore
+    return core.ManualAxisType(varying=out_vma, unreduced=out_unreduced,
+                               reduced=out_reduced)
   else:
     return [core.ManualAxisType(varying=v, unreduced=u, reduced=r)
             for v, u, r in zip(out_vma, out_unreduced, out_reduced)]

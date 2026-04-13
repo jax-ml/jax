@@ -226,7 +226,7 @@ class ColabDebugger(cli_debugger.CliDebugger):
                thread_id: int):
     super().__init__(frames, thread_id)
     self._debugger_view = DebuggerView(self.current_frame())
-    self.stdout = self.stdin = self._debugger_view  # type: ignore
+    self.stdout = self.stdin = self._debugger_view  # pyrefly: ignore[bad-assignment]
 
   def do_up(self, arg, /):
     super().do_up(arg)

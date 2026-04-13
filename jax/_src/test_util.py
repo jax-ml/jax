@@ -1709,11 +1709,10 @@ def parameterized_filterable(*,
       for kw in kwargs]
   else:
     for kw in kwargs:
-      testcase_name = kw.get("testcase_name")
-      if testcase_name is None:
-        testcase_name = "_".join(f"{k}={kw[k]}"  # type: ignore
-                                 for k in sorted(kw.keys()))
-      kw["testcase_name"] = sanitize_test_name(testcase_name)  # type: ignore
+      kw_testcase_name = kw.get("testcase_name")
+      if kw_testcase_name is None:
+        kw_testcase_name = "_".join(f"{k}={kw[k]}" for k in sorted(kw))
+      kw["testcase_name"] = sanitize_test_name(kw_testcase_name)
 
     kwargs_with_testcase_name = kwargs
   if one_containing is not None:

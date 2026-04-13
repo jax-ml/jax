@@ -917,7 +917,7 @@ class GridMapping:
   def static_grid(self) -> StaticGrid:
     if self.num_dynamic_grid_bounds:
       raise ValueError("Expected a grid with fully static bounds")
-    return self.grid  # type: ignore
+    return self.grid  # pyrefly: ignore[bad-return]
 
   @contextlib.contextmanager
   def trace_env(self):
@@ -1131,14 +1131,14 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # type: ignore
+      grid_names, grid = util.unzip2(grid)  # pyrefly: ignore[bad-argument-type]
 
     # TODO(b/353730556): allow NumPy scalars in grids
-    if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
+    if not all(_is_valid_grid_dim(g) for g in grid):  # pyrefly: ignore[bad-argument-type]
       raise ValueError(
           f"Grid must be a tuple of integers or jax.Array, got {grid}"
       )
-    self.grid = grid  # type: ignore
+    self.grid = grid  # pyrefly: ignore[bad-assignment]
     self.grid_names = grid_names
 
   def _make_scalar_ref_aval(self, aval):

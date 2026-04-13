@@ -1798,7 +1798,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         replica_groups=_replica_groups_hlo(replica_groups),
         **other_args).results
 
-  future_type = hlo.FutureType.get([out_type])  # type: ignore
+  future_type = hlo.FutureType.get([out_type])
   async_start = hlo.AsyncStartOp(future_type, [x])
   block = async_start.regions[0].blocks.append(x.type)
   with ir.InsertionPoint(block):
@@ -2970,7 +2970,7 @@ def _start_lowering(sync_lower):
     inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
     inner_type = mlir.aval_to_ir_type(inner_aval)  # e.g., <tensor<4x2xf32>
     # e.g., !stablehlo.future<tensor<4x2xf32>>
-    future_type = hlo.FutureType.get([inner_type])  # type: ignore
+    future_type = hlo.FutureType.get([inner_type])
     async_start = hlo.AsyncStartOp(future_type, [x])
     block = async_start.regions[0].blocks.append(x.type)
     with ir.InsertionPoint(block):

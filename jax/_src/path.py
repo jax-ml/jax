@@ -35,7 +35,7 @@ Path: PathProtocol
 # can read and write to, e.g., GCS buckets. Otherwise we use the builtin
 # pathlib and can only read/write to the local filesystem.
 try:
-  from etils import epath  # type: ignore
+  from etils import epath  # pyrefly: ignore[missing-import]
 except ImportError:
   logger.debug("etils.epath was not found. Using pathlib for file I/O.")
   Path = pathlib.Path

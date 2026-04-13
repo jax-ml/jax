@@ -71,25 +71,25 @@ acosh = np.arccosh
 atanh = np.arctanh
 
 def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)
 def digamma(x): return scipy.special.digamma(x).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 igamma = scipy.special.gammainc
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 igammac = scipy.special.gammaincc
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def erf(x): return scipy.special.erf(x).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def erfc(x): return scipy.special.erfc(x).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def erf_inv(x): return scipy.special.erfinv(x).astype(x.dtype)
 
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def bessel_i0e(x): return scipy.special.i0e(x).astype(x.dtype)
-# pyrefly: ignore [missing-attribute]
+# pyrefly: ignore[missing-attribute]
 def bessel_i1e(x): return scipy.special.i1e(x).astype(x.dtype)
 
 real = np.real

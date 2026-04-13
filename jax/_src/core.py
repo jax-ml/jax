@@ -28,7 +28,7 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar, final,
                     overload, Union, TYPE_CHECKING)
 import warnings
 import weakref
@@ -527,6 +527,7 @@ class DropVar(Var):
     del context, print_dtype  # unused
     return '_'
 
+@final
 class Literal:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   __slots__ = ["val", "aval"]

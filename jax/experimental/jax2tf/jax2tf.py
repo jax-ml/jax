@@ -141,8 +141,8 @@ def convert(fun_jax: Callable,
             polymorphic_shapes: str | PolyShape | None | Sequence[str | PolyShape | None] = None,
             polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
-            enable_xla: bool = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
-            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
+            enable_xla: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
+            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
@@ -289,7 +289,7 @@ def convert(fun_jax: Callable,
     try:
       impl.before_conversion()
 
-      outs_tree: tree_util.PyTreeDef = None  # type: ignore
+      outs_tree: tree_util.PyTreeDef | None = None
       if with_gradient:
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient_tf(*args_flat_tf: TfVal) -> TfVal:
@@ -318,6 +318,7 @@ def convert(fun_jax: Callable,
     finally:
       impl.after_conversion()
 
+    assert outs_tree is not None
     outs_flat_tf = [tf.identity(x, "jax2tf_out") for x in outs_flat_tf]
     out_tf = tree_util.tree_unflatten(outs_tree, outs_flat_tf)
     return out_tf
@@ -842,7 +843,7 @@ def _shard_value(val: TfVal,
         .flat
     )
   else:
-    tad = sharding_proto.tile_assignment_devices  # type: ignore
+    tad = sharding_proto.tile_assignment_devices
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
   xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(

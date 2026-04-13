@@ -150,10 +150,10 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
               if type(ct) is ad.Zero else ct for ct in cts_in]
     out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
-    cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
+    cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.primitive_transposes[fused_p] = _fused_transpose

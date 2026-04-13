@@ -894,7 +894,7 @@ def partial_eval_jaxpr_custom(
       jaxpr, in_unknowns, in_inst, ensure_out_unknowns, ensure_out_inst, saveable)
   if num_res_ref:
     raise ValueError("Cannot use `partial_eval_jaxpr_custom` with stateful jaxprs.")
-  return *outs,  # type: ignore
+  return *outs,  # pyrefly: ignore[bad-return]
 
 def partial_eval_jaxpr_stateful(
     jaxpr: Jaxpr,
@@ -996,7 +996,7 @@ def _partial_eval_jaxpr_custom_cached(
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), resvars)
-        assert all(o.aval.memory_space == core.mem_kind_to_space(policy.src)  # type: ignore
+        assert all(o.aval.memory_space == core.mem_kind_to_space(policy.src)  # pyrefly: ignore[missing-attribute]
                    for o in eqn.outvars)
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
@@ -1257,14 +1257,14 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[int | None]:
   fwds: dict[Var, Atom] = dict(zip(jaxpr.invars, jaxpr.invars))
   for eqn in jaxpr.eqns:
     if eqn.primitive in forwarding_rules:
-      eqn = eqn.replace(invars=[a if type(a) is Literal else fwds.get(a, a)  # type: ignore
+      eqn = eqn.replace(invars=[a if type(a) is Literal else fwds.get(a, a)
                                 for a in eqn.invars])
       fwd_idx, _ = forwarding_rules[eqn.primitive](eqn)
       for v_orig, idx in zip(eqn.outvars, fwd_idx):
         if idx is not None:
           fwds[v_orig] = eqn.invars[idx]
   idxs: dict[Var, int] = {v: i for i, v in enumerate(jaxpr.invars)}
-  return [None if type(v) is Literal else idxs.get(fwds.get(v))  # type: ignore
+  return [None if type(v) is Literal else idxs.get(fwds.get(v))  # pyrefly: ignore[bad-argument-type]
           for v in jaxpr.outvars]
 
 
@@ -1609,12 +1609,14 @@ core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   sentinel = object()
   jaxpr_effects = set()
-  all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
+  all_vars: dict[Var, int | None] = {
+      v: i for i, v in enumerate(it.chain(constvars, invars))
+  }
   mut_arrays = set()
   for eqn in eqns:
     if eqn.primitive in core._ref_allocating_primitives:
       outvar, = eqn.outvars
-      all_vars[outvar] = None  # type: ignore
+      all_vars[outvar] = None
       mut_arrays.add(outvar)
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
@@ -1902,7 +1904,7 @@ class DynamicJaxprTrace(core.Trace):
         aval = typeof(c)
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace or core.eval_trace):
-          aval = core.AvalQDD(aval, core.cur_qdd(c))  # type: ignore
+          aval = core.AvalQDD(aval, core.cur_qdd(c))  # pyrefly: ignore[bad-assignment]
       tracer = self._new_const(aval, c, source_info)
     return tracer
 

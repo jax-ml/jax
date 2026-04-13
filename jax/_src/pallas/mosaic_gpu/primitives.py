@@ -979,7 +979,7 @@ def _barrier_arrive_lowering(
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = barrier_aval.inner_aval.dtype  # type: ignore
+  sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -1068,7 +1068,7 @@ def _barrier_wait_lowering(
   assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # type: ignore
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
@@ -1967,7 +1967,8 @@ def _tcgen05_mma_lowering(
             f"Unsupported transforms for LHS: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
-      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)  # type: ignore
+      assert lhs_swizzle is not None
+      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
       if lhs_tiling != (8, swizzle_elems):
         raise ValueError("MMA lhs tiling does not fit swizzle. "
                         f"{lhs_tiling=} expected={(8, swizzle_elems)}")
@@ -4274,10 +4275,10 @@ def _atomic_store_lowering_rule(
         )
       value.store_tiled(
           ref, swizzle=swizzle, tiling_rank=len(tiling),
-          atomic=atomic_type.value,  # type: ignore
+          atomic=atomic_type.value,  # pyrefly: ignore[bad-argument-type]
       )
     case ():
-      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # type: ignore
+      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # pyrefly: ignore[bad-argument-type]
     case _:
       raise NotImplementedError(
           f"Unsupported transforms for atomic_store: {remaining_transforms}"
