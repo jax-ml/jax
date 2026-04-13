@@ -36,7 +36,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
-from jax._src import frozen_dict
 from jax._src import hashable_array
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
@@ -739,7 +738,7 @@ class LoweringCacheKey:
   eqn_ctx: core.JaxprEqnContext
   avals_in: tuple[core.AbstractValue, ...]
   effects: effects_lib.Effects
-  params: frozen_dict.FrozenDict[str, Any]
+  params: tuple[tuple[str, Any], ...]
   platforms: tuple[str, ...]
 
 @dataclasses.dataclass(frozen=True)
@@ -2193,7 +2192,7 @@ def _cached_lowering(
       eqn_ctx=eqn.ctx,
       avals_in=avals_in,
       effects=frozenset(eqn.effects),
-      params=frozen_dict.FrozenDict(eqn.params),
+      params=tuple(sorted(eqn.params.items())),
       platforms=tuple(ctx.platforms),
   )
   try:
