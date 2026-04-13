@@ -480,6 +480,20 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  preferred_element_type=jax.numpy.float32)
     jax.jacrev(f)(x)  # don't crash!
 
+  def testConvPreferredElementType(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/31592
+    x = jax.numpy.ones((1, 8, 4), dtype=jax.numpy.bfloat16)
+    w = jax.numpy.ones((3, 4, 8), dtype=jax.numpy.bfloat16)
+
+    def f(x, w):
+      return jax.lax.conv_general_dilated(
+          x, w, window_strides=(1,), padding="VALID",
+          rhs_dilation=(1,), dimension_numbers=("NLC", "LIO", "NLC"),
+          preferred_element_type=jax.numpy.float32,
+      ).sum()
+
+    jax.grad(f, argnums=(0, 1))(x, w)  # don't crash!
+
   @jtu.sample_product(
     shape=[(), (2, 3)],
     dtype=float_dtypes,
