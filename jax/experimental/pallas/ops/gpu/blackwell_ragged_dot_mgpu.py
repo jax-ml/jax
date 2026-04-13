@@ -302,7 +302,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
     def _scoped(**ref_kwargs):
       @plgpu.nd_loop(grid=(linear_grid,),
                      collective_axes="sm")
-      def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      def mn_loop(loop_info: plgpu.NDLoopInfo):
         linear_idx, = loop_info.index
         local_index = loop_info.local_index  # type: ignore
         m_index, n_index = plgpu.planar_snake(

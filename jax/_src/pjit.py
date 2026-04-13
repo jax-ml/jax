@@ -1200,7 +1200,7 @@ def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
   # This way there won't be a strong reference to the jaxpr from the output
   # function.
   jaxpr = weakref.ref(jaxpr)
-  return lambda *args: core.jaxpr_as_fun(jaxpr())(*args)  # pylint: disable=unnecessary-lambda
+  return lambda *args: core.jaxpr_as_fun(jaxpr())(*args)
 
 
 def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,

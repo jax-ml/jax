@@ -174,7 +174,7 @@ def _resolve_memory_spaces(
     input_memory_spaces = tuple(
         i
         if i
-        in {  # pylint: disable=g-long-ternary
+        in {
             tpu_custom_call.MemorySpace.HBM,
             tpu_custom_call.MemorySpace.VMEM,
             tpu_custom_call.MemorySpace.SMEM,

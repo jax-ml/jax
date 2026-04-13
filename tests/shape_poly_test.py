@@ -2858,7 +2858,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 polymorphic_shapes=["b, b, ..."],
                 override_jax_config_flags={"jax_export_ignore_forward_compatibility": True}),
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",
           lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
@@ -2920,7 +2920,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "lu", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
           lax.linalg.lu,
           arg_descriptors=[RandArg(shape, dtype)],
@@ -2937,7 +2937,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "eigh", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{lower=}",
           lambda x, lower: lax.linalg.eigh(x, lower=lower),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(lower)],
@@ -2951,7 +2951,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "eigh_shape_error", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
           lambda x: lax.linalg.eigh(x, symmetrize_input=False),
           arg_descriptors=[RandArg(shape, dtype)],
@@ -2965,7 +2965,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "svd", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}_{compute_uv=}",
           lambda x, full_matrices, compute_uv: lax.linalg.svd(x, full_matrices=full_matrices, compute_uv=compute_uv),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],

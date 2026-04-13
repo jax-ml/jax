@@ -107,8 +107,8 @@ DIM_UPPER_BOUND = np.iinfo(np.int32).max
 DIM_LOWER_BOUND = -128
 
 partial = functools.partial
-map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
-zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 # Extended types that should not be converted to physical types in lowering.
 PHYSICAL_EXTENDED_DTYPES = {pallas_core.semaphore_dtype}

@@ -2838,7 +2838,7 @@ class FragmentedArray:
         assert lane_idx is not None and swizzle_warp_idx is not None
         out_regs[unreduced_index] = reduce_stored(
             # pyrefly: ignore[unbound-name]
-            reg_ty, i, lane_idx, swizzle_warp_idx  # pylint: disable=undefined-variable
+            reg_ty, i, lane_idx, swizzle_warp_idx
         )
       utils.warpgroup_barrier()
     del unreduced_indices
@@ -4029,7 +4029,7 @@ def plan_tiled_transfer(
         if not has_bank_conflicts(transform):
           # We've found a strategy that avoids bank conflicts!
           return StaggeredTransferPlan(  # type: ignore[call-arg]
-              stagger, dim, tiles_shape[dim], group_stride  # pylint: disable=too-many-function-args
+              stagger, dim, tiles_shape[dim], group_stride
           )
   raise ValueError(
       "Failed to synthesize a transfer pattern that avoids bank conflicts"
@@ -4095,7 +4095,7 @@ def optimization_barrier(*arrays):
     if isinstance(dtype, ir.F32Type) or dtype == i32:
       if isinstance(reg_ty, ir.VectorType):
         [vec_len] = ir.VectorType(reg_ty).shape
-        array_regs = [  # pylint: disable=g-complex-comprehension
+        array_regs = [
             vector.extract(
                 reg,
                 dynamic_position=[],

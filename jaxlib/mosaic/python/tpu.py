@@ -17,11 +17,11 @@
 # ruff: noqa: F401
 # ruff: noqa: F403
 
-from ._tpu_enum_gen import *  # pylint: disable=wildcard-import
+from ._tpu_enum_gen import *
 from . import _tpu_ops_gen
-from ._tpu_ops_gen import *  # pylint: disable=wildcard-import
+from ._tpu_ops_gen import *
 from ._tpu_ops_gen import _Dialect
-from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import
+from jaxlib.mlir._mlir_libs._tpu_ext import *
 try:
   from jaxlib.mlir.dialects._ods_common import _cext
 except ImportError:

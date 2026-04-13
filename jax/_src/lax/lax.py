@@ -8829,7 +8829,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))
   # bool(obj) for an ndarray raises an error, so we check len
-  if not len(obj):  # pylint: disable=g-explicit-length-test
+  if not len(obj):
     return
   obj_arr = np.array(obj)
   if obj_arr.ndim != 1:

@@ -15,8 +15,6 @@
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
-
-# pylint: disable=useless-import-alias
 from jax.experimental.colocated_python.api import (
     colocated_cpu_devices as colocated_cpu_devices,
     colocated_python as colocated_python,

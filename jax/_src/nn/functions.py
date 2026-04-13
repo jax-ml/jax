@@ -930,7 +930,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
         precision=precision,
         preferred_element_type=logits_dtype,
     )
-  except:  # pylint: disable=bare-except
+  except:
     logits = jnp_einsum.einsum(
         "BTNH,BSNH->BNTS",
         query,

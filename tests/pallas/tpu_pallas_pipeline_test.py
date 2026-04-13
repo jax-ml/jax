@@ -1346,7 +1346,7 @@ class PipelineHijaxTest(jtu.JaxTestCase):
       def ref_get_to_lojax(
           self, ref: state.TransformedRef | jax.Ref, idx: indexing.NDIndexer
       ):
-        tup_ref, transforms = ref._refs, ref.transforms  # pylint: disable=protected-access
+        tup_ref, transforms = ref._refs, ref.transforms
         assert isinstance(transforms, tuple)
         transforms += (idx,)
 
@@ -1375,7 +1375,7 @@ class PipelineHijaxTest(jtu.JaxTestCase):
           val: ArrayTuple,
           idx: indexing.NDIndexer,
       ):
-        tup_ref, transforms = ref._refs, ref.transforms  # pylint: disable=protected-access
+        tup_ref, transforms = ref._refs, ref.transforms
         assert isinstance(transforms, tuple)
         transforms += (idx,)
 
@@ -1417,8 +1417,8 @@ class PipelineHijaxTest(jtu.JaxTestCase):
         dst_aval = jax.typeof(dst_ref.ref).inner_aval
         assert isinstance(dst_aval, ShapedArrayTuple)
 
-        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms  # pylint: disable=protected-access
-        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms  # pylint: disable=protected-access
+        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms
+        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms
 
         def _run_dma(
             src_ref,
@@ -1471,8 +1471,8 @@ class PipelineHijaxTest(jtu.JaxTestCase):
         assert isinstance(jax.typeof(src_ref.ref).inner_aval, ShapedArrayTuple)
         assert isinstance(jax.typeof(dst_ref.ref).inner_aval, ShapedArrayTuple)
 
-        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms  # pylint: disable=protected-access
-        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms  # pylint: disable=protected-access
+        src_ref, src_transforms = src_ref.ref._refs, src_ref.transforms
+        dst_ref, dst_transforms = dst_ref.ref._refs, dst_ref.transforms
 
         def _run_dma(
             src_ref, dst_ref, src_sem, dst_sem, device_id, device_id_type

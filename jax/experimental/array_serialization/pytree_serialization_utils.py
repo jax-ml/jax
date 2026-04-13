@@ -27,7 +27,7 @@ import jax
 from jax._src.export.serialization import (flatbuffers, _serialize_pytreedef,
                                            _deserialize_pytreedef_to_pytree,
                                            ser_flatbuf)
-from jax.export import register_pytree_node_serialization  # pylint: disable=unused-import
+from jax.export import register_pytree_node_serialization
 
 T = TypeVar("T")
 PickleModule = ModuleType

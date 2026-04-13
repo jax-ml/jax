@@ -65,8 +65,6 @@ _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
 _make_index = tc_lowering._make_index
 _transform_ref = tc_lowering._transform_ref
 
-# pylint: disable=protected-access
-
 
 def dynamic_shape_replacement_fn(x):
   return x

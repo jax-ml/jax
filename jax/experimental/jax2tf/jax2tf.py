@@ -46,7 +46,6 @@ from jax._src.lib import xla_client
 import tensorflow as tf
 
 # These don't have public equivalents.
-# pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla
 from tensorflow.compiler.xla import xla_data_pb2
 try:
@@ -55,7 +54,6 @@ except ModuleNotFoundError:
   # This can be removed when TF 2.10 support is no longer needed.
   from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding
 from tensorflow.python.eager import context as tf_context
-# pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape  # TODO: deprecate

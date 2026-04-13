@@ -2435,7 +2435,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           (sm_steps, 4, 33), collective_axes="sm", init_carry=0
       )(body)
 
-    result, steps = kernel()  # pylint: disable=unpacking-non-sequence
+    result, steps = kernel()
     for sm_step in range(sm_steps):
       np.testing.assert_array_equal(steps, jnp.full((132,), sm_steps))
 

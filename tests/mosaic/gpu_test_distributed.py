@@ -25,7 +25,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +33,6 @@ import jax.experimental.mosaic.gpu as mgpu
 import jax.experimental.mosaic.gpu.fragmented_array as fa
 
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 P = jax.sharding.PartitionSpec
 
 

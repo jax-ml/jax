@@ -19,8 +19,6 @@ import os
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
-
-# pylint: disable=g-import-not-at-top
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401

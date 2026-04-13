@@ -2641,7 +2641,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
-    def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
+    def f(x, y, z, a, b, c):
       return c @ c.T
 
     inp = jnp.arange(4)
@@ -2661,7 +2661,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_pjit_keep_unused_default_false(self):
     @pjit
-    def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
+    def f(x, y, z, a, b, c):
       return c @ c.T
 
     inp = jax.device_put(jnp.arange(4), jax.devices()[0])
@@ -6520,7 +6520,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @config.numpy_rank_promotion('allow')
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_manual_mode_mix_map(self, mesh):  # pylint: disable=unused-argument
+  def test_manual_mode_mix_map(self, mesh):
     def simple_func(w, x):
       return jnp.sum(w * x, axis=-1)
 
@@ -6533,7 +6533,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
       def map_fn(x, w):
         return jax.lax.map(partial(simple_func, w), x.squeeze(0),
-            batch_size=batch_size)  # pylint: disable=cell-var-from-loop
+            batch_size=batch_size)
       map_fn(x, w)  # doesn't crash
 
   @jtu.with_explicit_mesh((4,), ('x',))

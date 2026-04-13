@@ -101,7 +101,7 @@ def random_dense(
 ) -> jnp.ndarray:
   if limit is None:
     limit = 1 / np.prod(shape)
-  x = jax.random.uniform(key, shape, dtype, minval=-limit, maxval=limit)  # pylint: disable=invalid-unary-operand-type
+  x = jax.random.uniform(key, shape, dtype, minval=-limit, maxval=limit)
   return x.astype(jnp.bfloat16).astype(dtype)
 
 def dot(
@@ -301,7 +301,7 @@ class GroupedMatmulTest(jtu.JaxTestCase):
               rhs,
               group_sizes,
               out_dtype,
-              group_offset=jnp.array(group_offset, dtype=jnp.int32),  # pylint: disable=cell-var-from-loop
+              group_offset=jnp.array(group_offset, dtype=jnp.int32),
               existing_out=out,
           ),
           lhs,

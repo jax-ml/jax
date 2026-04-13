@@ -24,7 +24,7 @@ from jax._src import mesh as mesh_lib
 from jax._src import mesh_utils
 from jax._src import test_util
 from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
-from jax.sharding import Mesh  # pylint: disable=g-importing-member
+from jax.sharding import Mesh
 import numpy as np
 
 # pyformat: disable

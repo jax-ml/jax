@@ -13,8 +13,6 @@
 # limitations under the License.
 
 # pyrefly: ignore-errors
-# pylint: disable=missing-function-docstring
-# pylint: disable=g-doc-args
 
 """Pipeline scheduler implementations."""
 

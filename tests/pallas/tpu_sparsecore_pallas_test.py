@@ -1996,7 +1996,7 @@ class VectorSubcoreTest(PallasSCTest):
       o1_ref[...] = jnp.sort(x_ref[...], descending=True)
       o2_ref[...] = jnp.flip(x_ref[...], axis=-1)
 
-    sorted_desc, reversed_keys = kernel(keys)  # pylint: disable=unpacking-non-sequence
+    sorted_desc, reversed_keys = kernel(keys)
     np.testing.assert_array_equal(
         sorted_desc, jnp.arange(vec_dim, dtype=dtype)[::-1])
     np.testing.assert_array_equal(reversed_keys, keys[::-1])

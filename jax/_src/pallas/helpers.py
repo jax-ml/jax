@@ -189,7 +189,7 @@ def _make_kernel(body,
   return wrapper
 
 
-def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),  # pylint: disable=g-bare-generic
+def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
            out_shape: object | None = None,
            *,
            mesh: pl_core.Mesh,

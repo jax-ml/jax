@@ -1924,7 +1924,7 @@ def _reshape_pull_rule(
       )
     new_block_shape = (*block_shape[:-2], total_block_size)
 
-    def new_block_index_transform(*idxs):  # pylint: disable=function-redefined
+    def new_block_index_transform(*idxs):
       *idx, second_to_last, last = block_transform.block_index_transform(*idxs)
       # last should always be 0
       if not isinstance(last, int) and last != 0:

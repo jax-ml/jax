@@ -1972,7 +1972,7 @@ class MeshExecutable(stages.Executable):
       check_array_xla_sharding_layout_match(
           args_after_dce, self._in_shardings, self._xla_in_layouts,
           arg_names_after_dce)
-    return self.unsafe_call(*args)  # pylint: disable=not-callable
+    return self.unsafe_call(*args)
 
   def create_cpp_call(self, params: stages.CompiledCallParams):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and

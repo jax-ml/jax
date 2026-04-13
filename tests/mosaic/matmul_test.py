@@ -22,7 +22,7 @@ from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 import jax.numpy as jnp
 import numpy as np
 

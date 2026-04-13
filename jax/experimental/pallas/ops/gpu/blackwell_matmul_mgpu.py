@@ -105,7 +105,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     is_lead_block = cluster_idx == 0
 
     @plgpu.dynamic_scheduling_loop(grid_names=("mn_linear",), thread_axis="wg")
-    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+    def mn_loop(loop_info: plgpu.NDLoopInfo):
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index
       m_index, n_index = plgpu.planar_snake(

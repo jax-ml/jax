@@ -416,7 +416,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -436,7 +436,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error
 
     if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
       return DLDeviceType.kDLCPU, 0
@@ -541,7 +541,7 @@ class ArrayImpl(basearray.Array):
     If a `Shard` is not addressable, then its `data` will be `None`.
     """
     self._check_if_deleted()
-    if self.is_fully_addressable:  # pylint: disable=using-constant-test
+    if self.is_fully_addressable:
       return self.addressable_shards
 
     out = []

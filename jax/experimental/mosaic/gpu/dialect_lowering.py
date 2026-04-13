@@ -2622,7 +2622,7 @@ def _should_lower(op: ir.OpView) -> bool:
       or inference_utils.should_have_transforms(op)
       or inference_utils.should_have_tmem_layout(op)
       # Does it have subblocks?
-      or any(bool(b) for r in op.regions for b in r)  # pylint: disable=g-complex-comprehension
+      or any(bool(b) for r in op.regions for b in r)
   )
 
 

@@ -164,7 +164,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                       dtype=np.bool_)
     indices = np.array([0, 1], dtype=np.int32)
     for axis in [0, 1]:
-      f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
+      f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))
       self.ConvertAndCompare(f_jax, values, indices)
 
   def test_gather_rank_change(self):

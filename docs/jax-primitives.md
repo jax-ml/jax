@@ -94,7 +94,7 @@ def _trace_unindent(msg=None):
 def trace(name):
   """A decorator for functions to trace arguments and results."""
 
-  def trace_func(func):  # pylint: disable=missing-docstring
+  def trace_func(func):
     def pp(v):
         """Print certain values more succinctly"""
         vtype = str(type(v))

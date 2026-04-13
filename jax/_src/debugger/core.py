@@ -159,7 +159,7 @@ debug_lock = threading.Lock()
 
 def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
                num_frames: int | None = None, ordered: bool = False,
-               token = None, **kwargs):  # pylint: disable=redefined-builtin
+               token = None, **kwargs):
   """Enters a breakpoint at a point in a program.
 
   Args:

@@ -212,7 +212,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testNestedWhile(self):
 
-    def outer_loop(num):  # pylint: disable=missing-docstring
+    def outer_loop(num):
       def cond_fun(state):
         num, i, _ = state
         return lax.lt(i, num)
@@ -225,7 +225,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _, i, count = lax.while_loop(cond_fun, body_fun, init_val)
       return (i, count)
 
-    def inner_loop(i, count):  # pylint: disable=missing-docstring
+    def inner_loop(i, count):
       def cond_fun(state):
         i, j, _ = state
         return lax.le(j, i)
@@ -354,7 +354,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       val = lax.reshape(val, [1, 1])
       return lax.dynamic_update_slice(arr, val, (i, j))
 
-    def outer_loop(arr):  # pylint: disable=missing-docstring
+    def outer_loop(arr):
 
       def cond_fun(state):
         i, num, _, _ = state
@@ -369,7 +369,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
-    def inner_loop(i, arr, out):  # pylint: disable=missing-docstring
+    def inner_loop(i, arr, out):
 
       def cond_fun(state):
         i, j, _, _ = state
@@ -393,7 +393,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(cloop(arr), np.tril(arr), check_dtypes=False)
 
   def testLoopWithConjunctionCondition(self):
-    def sum_first_n(arr, num):  # pylint: disable=missing-docstring
+    def sum_first_n(arr, num):
       def cond_fun(state):
         arr, num, i, _ = state
         return lax.bitwise_and(lax.lt(i, num), lax.lt(i, arr.shape[0]))

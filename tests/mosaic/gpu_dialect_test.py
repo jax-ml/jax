@@ -40,8 +40,8 @@ from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 
 try:
-  import hypothesis as hp  # pylint: disable=g-import-not-at-top
-  import hypothesis.strategies as hps  # pylint: disable=g-import-not-at-top
+  import hypothesis as hp
+  import hypothesis.strategies as hps
   htu.setup_hypothesis()
 except ImportError:
   hp = hps = None

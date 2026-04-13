@@ -225,14 +225,14 @@ def paged_flash_attention_kernel(
     return async_copy_k, async_copy_v
 
   @pl.when(i * bk < length)
-  def flash_attention():  # pylint: disable=unused-variable
+  def flash_attention():
     init_flag = init_flag_ref[0]
     init_flag_ref[0] = 0
     buffer_index = buffer_index_ref[0]
     next_b, next_h, next_i = compute_block_indices(b, h, i + 1)
 
     @pl.when(init_flag)
-    def prefetch_first_block():  # pylint: disable=unused-variable
+    def prefetch_first_block():
       async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
           b, h, i, buffer_index
       )
@@ -240,13 +240,13 @@ def paged_flash_attention_kernel(
       async_copy_v.start()
 
     @pl.when(i == 0)
-    def init():  # pylint: disable=unused-variable
+    def init():
       m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
       l_ref[...] = jnp.zeros_like(l_ref)
       o_ref[...] = jnp.zeros_like(o_ref)
 
     @pl.when(next_b < batch_size)
-    def prefetch_next_block():  # pylint: disable=unused-variable
+    def prefetch_next_block():
       next_buffer_index = jnp.where(buffer_index == 0, 1, 0)
       async_copy_next_k, async_copy_next_v = create_kv_async_copy_descriptors(
           next_b, next_h, next_i, next_buffer_index

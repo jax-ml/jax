@@ -22,8 +22,8 @@ from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
 from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
-from jax.experimental.pallas.ops.tpu.random import philox  # pylint: disable=unused-import  # noqa: F401
-from jax.experimental.pallas.ops.tpu.random import threefry  # pylint: disable=unused-import  # noqa: F401
+from jax.experimental.pallas.ops.tpu.random import philox  # noqa: F401
+from jax.experimental.pallas.ops.tpu.random import threefry  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
 

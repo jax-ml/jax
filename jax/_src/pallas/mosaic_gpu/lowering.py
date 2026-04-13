@@ -637,7 +637,7 @@ class LoweringResult:
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
 
 
-class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
+class LoweringError(Exception):
   pass
 
 

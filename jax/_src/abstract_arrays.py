@@ -31,7 +31,7 @@ AbstractToken = core.AbstractToken
 abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
 
-numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
+numpy_scalar_types: set[type] = {
     dtypes.int4, np.int8, np.int16, np.int32, np.int64,
     dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
@@ -48,7 +48,7 @@ if dtypes.int1 is not None:
   numpy_scalar_types.add(dtypes.int1)
   numpy_scalar_types.add(dtypes.uint1)
 
-array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
+array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types
 
 
 def masked_array_error(*args, **kwargs):

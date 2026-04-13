@@ -34,10 +34,8 @@ from jaxlib import _jax as _xla
 
 # Most functions are snake_case for consistency with other modules, some
 # method names are CamelCase for consistency with XLA.
-# pylint: disable=invalid-name
 
 # Pylint has false positives for type annotations.
-# pylint: disable=invalid-sequence-index
 
 ifrt_programs = _xla.ifrt_programs
 

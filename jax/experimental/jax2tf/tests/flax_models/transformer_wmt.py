@@ -15,8 +15,6 @@
 
 https://github.com/google/flax/tree/main/examples/wmt
 """
-
-# pylint: disable=attribute-defined-outside-init,g-bare-generic
 # See issue #620.
 
 from __future__ import annotations

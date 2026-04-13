@@ -43,7 +43,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import inference_utils
 from jax.experimental.mosaic.gpu import launch_context
@@ -79,7 +79,6 @@ except ImportError:
 
 
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 def nd_loop(bounds, body, *, _idxs = ()):
@@ -932,7 +931,7 @@ class I8Type:
   """
 
   @staticmethod
-  def get():  # pylint: disable=no-method-argument
+  def get():
     return ir.IntegerType.get_signless(8)
 
 
@@ -5670,7 +5669,7 @@ def set_in_transforms(
     return
 
   in_transforms = []
-  smem_refs = filter(inference_utils.is_transformable_smem_memref, op.operands)  # pylint: disable=undefined-variable
+  smem_refs = filter(inference_utils.is_transformable_smem_memref, op.operands)
   for _, result_transforms in jax._src.util.safe_zip(smem_refs, transforms):
     in_transforms.append(
         ir.ArrayAttr.get([t.attr() for t in result_transforms])

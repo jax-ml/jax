@@ -357,7 +357,7 @@ def rev(operand, dimensions):
 
 select = np.where
 
-def slice(operand, start_indices, limit_indices, strides=None):  # pylint: disable=redefined-builtin
+def slice(operand, start_indices, limit_indices, strides=None):
   if strides is None:
     strides = np.ones(len(start_indices)).astype(int)
   slices = tuple(_map(_slice, start_indices, limit_indices, strides))
@@ -379,7 +379,7 @@ def dynamic_update_slice(operand, update, start_indices):
 
 transpose = np.transpose
 
-def reduce(operand, init_value, computation, dimensions):  # pylint: disable=redefined-builtin
+def reduce(operand, init_value, computation, dimensions):
   reducer = _make_reducer(computation, init_value)
   return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 

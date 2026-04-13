@@ -23,8 +23,6 @@ import uuid
 from jax._src.debugger import colab_lib
 from jax._src.debugger import core as debugger_core
 from jax._src.debugger import cli_debugger
-
-# pylint: disable=g-import-not-at-top
 # pytype: disable=import-error
 if colab_lib.IS_COLAB_ENABLED:
   from google.colab import output
@@ -36,7 +34,6 @@ try:
 except ImportError:
   IS_PYGMENTS_ENABLED = False
 # pytype: enable=import-error
-# pylint: enable=g-import-not-at-top
 
 
 class CodeViewer(colab_lib.DynamicDOMElement):

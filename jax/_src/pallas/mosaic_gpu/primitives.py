@@ -4218,9 +4218,9 @@ def _atomic_store_lowering_rule_wg(
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
-  value = lowering._ensure_ir_value(value, value_aval.dtype)  # pylint: disable=protected-access
+  value = lowering._ensure_ir_value(value, value_aval.dtype)
   assert isinstance(ref_aval, state_types.AbstractRef)
-  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+  ref, _, remaining_transforms = lowering._handle_transforms(
       ctx, ref_aval, ref, list(transforms_avals), list(transforms)
   )
   if remaining_transforms:
@@ -4258,9 +4258,9 @@ def _atomic_store_lowering_rule(
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
-  value = lowering._ensure_fa(value, value_aval.dtype)  # pylint: disable=protected-access
+  value = lowering._ensure_fa(value, value_aval.dtype)
   assert isinstance(ref_aval, state_types.AbstractRef)
-  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+  ref, _, remaining_transforms = lowering._handle_transforms(
       ctx, ref_aval, ref, list(transforms_avals), list(transforms)
   )
   match remaining_transforms:

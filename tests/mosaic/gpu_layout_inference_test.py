@@ -13,8 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 """Layout inference tests for the Mosaic GPU MLIR dialect."""
-
-# pylint: disable=g-complex-comprehension
 import dataclasses
 
 from absl.testing import parameterized

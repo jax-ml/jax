@@ -31,8 +31,8 @@ from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.lax import lax
 
-map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
-zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 _cost_rules = {}
 

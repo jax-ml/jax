@@ -16,7 +16,7 @@
 
 import os
 
-from absl.testing import absltest, parameterized  # pylint: disable=g-multiple-import
+from absl.testing import absltest, parameterized
 import jax
 from jax import random
 from jax._src import config

@@ -409,13 +409,10 @@ def emit_pipeline(
       ):
         fetch_step = step + (max_concurrent_steps - delay_release)
         fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
-
-        # pylint: disable=cell-var-from-loop
         def do_fetch():
           for bref in in_brefs:
             if getattr(bref.spec, "delay_release", 0) == delay_release:
               bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
-        # pylint: enable=cell-var-from-loop
 
         jax.lax.cond(
             lax.bitwise_and(step >= delay_release, fetch_step < num_steps),

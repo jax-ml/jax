@@ -40,7 +40,7 @@ class TpuDeviceTest(jt_multiprocess.MultiProcessTest):
   def test_missing_attribute(self):
     for device in jax.local_devices():
       with self.assertRaises(AttributeError):
-        device.gpu_type  # pylint: disable=pointless-statement
+        device.gpu_type
 
   def test_memory(self):
     for device in jax.devices():

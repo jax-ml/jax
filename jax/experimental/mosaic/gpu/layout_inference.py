@@ -216,7 +216,7 @@ def _default_tmem_layout_for_variable(
   value = variable.key.value
   parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
-    return tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+    return tcgen05._infer_tmem_layout(
         tuple(value.type.shape), bool(parent.collective), packing=1
     )
   return None
@@ -1413,7 +1413,7 @@ def _tcgen05_mma_constraint_system(
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
-  acc_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+  acc_layout = tcgen05._infer_tmem_layout(
       tuple(acc_type.shape), bool(op.collective), packing=1
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
@@ -1458,7 +1458,7 @@ def _tcgen05_mma_constraint_system(
     a_type = ir.ShapedType(op.a.type)
     a_var = ctx.producer_ref(a)
     packing = 32 // utils.bitwidth(a_type.element_type)
-    a_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+    a_layout = tcgen05._infer_tmem_layout(
         tuple(a_type.shape), bool(op.collective), packing
     )
     assignments[a_var] = cs.TMEMLayout(a_layout)

@@ -32,8 +32,6 @@ import numpy as np
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
-# pylint: disable=no-value-for-parameter
-
 
 config.parse_flags_with_absl()
 

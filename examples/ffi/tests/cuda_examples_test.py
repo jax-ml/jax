@@ -28,7 +28,7 @@ class CudaE2eTests(jtu.JaxTestCase):
       self.skipTest("Unsupported platform")
 
     # Import here to avoid trying to load the library when it's not built.
-    from jax_ffi_example import cuda_examples  # pylint: disable=g-import-not-at-top
+    from jax_ffi_example import cuda_examples
 
     self.foo = cuda_examples.foo
 

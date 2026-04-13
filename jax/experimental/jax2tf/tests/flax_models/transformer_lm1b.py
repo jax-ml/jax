@@ -15,8 +15,6 @@
 
 https://github.com/google/flax/tree/main/examples/lm1b
 """
-
-# pylint: disable=attribute-defined-outside-init
 # See issue #620.
 
 from __future__ import annotations

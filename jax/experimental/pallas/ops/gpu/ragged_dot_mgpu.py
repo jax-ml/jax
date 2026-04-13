@@ -130,7 +130,7 @@ def ragged_dot(
     grid = (grid_m * grid_n,)
 
     @plgpu.nd_loop(grid, collective_axes="sm")
-    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+    def mn_loop(loop_info: plgpu.NDLoopInfo):
       mi, ni = plgpu.planar_snake(
           loop_info.index[0],
           (grid_m, grid_n),
@@ -169,7 +169,7 @@ def ragged_dot(
           pl.run_scoped,
           o_smem=plgpu.SMEM((block_m, block_n), dtype=o_gmem.dtype)
       )
-      def store_scope(o_smem):  # pylint: disable=unused-variable
+      def store_scope(o_smem):
         o_smem[...] = acc.astype(o_smem.dtype)
         plgpu.commit_smem()
 

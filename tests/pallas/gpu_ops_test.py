@@ -41,7 +41,6 @@ import jax.numpy as jnp
 import numpy as np
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
-# pylint: disable=no-value-for-parameter
 
 config.parse_flags_with_absl()
 

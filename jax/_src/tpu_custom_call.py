@@ -377,7 +377,7 @@ def _avals_to_layouts(avals) -> Sequence[Sequence[int]]:
 
 def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
-    *in_nodes,  # pylint: disable=missing-function-docstring
+    *in_nodes,
     config: CustomCallBackendConfig,
     has_side_effects: TpuSideEffectType,
     kernel_name: str | None,
