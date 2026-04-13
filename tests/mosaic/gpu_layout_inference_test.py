@@ -728,17 +728,25 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
-      lcast = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
+      lcast = layout_cast(x.result, layouts.to_layout_attr(layout)).owner
 
     ctx = layout_inference.DerivationContext()
     _, x_mapping = _undef_constraint_system(ctx, x)
-    _, lc_mapping = layout_inference._layout_cast_constraint_system(ctx, lcast)
+    lc_cs, lc_mapping = layout_inference._layout_cast_constraint_system(
+        ctx, lcast
+    )
     [constraint] = layout_inference.derive_relayout_constraints(
         x_mapping | lc_mapping
     )
     [x_variable] = x_mapping.keys()
-    [lc_variable] = lc_mapping.keys()
-    self.assertEqual(constraint, cs.Relayout(x_variable, lc_variable, 16))
+    [lc_op_variable, lc_res_variable] = lc_mapping.keys()
+    self.assertEqual(
+        lc_cs.constraints,
+        [cs.Relayout(lc_op_variable, lc_res_variable, 16, strict=False)],
+    )
+    self.assertEqual(
+        constraint, cs.Relayout(x_variable, lc_op_variable, 16, strict=True)
+    )
 
   @parameterized.parameters(*layout_inference.MemorySpace)
   def test_relayout_only_derived_for_registers(self, memory_space):
@@ -772,7 +780,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
       if memory_space == layout_inference.MemorySpace.REG:
-        self.assertEqual(relayouts, [cs.Relayout(r_var, o_var, 32)])
+        self.assertEqual(
+            relayouts, [cs.Relayout(r_var, o_var, 32, strict=True)]
+        )
       else:
         self.assertEmpty(relayouts)
 

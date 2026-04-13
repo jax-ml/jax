@@ -81,6 +81,21 @@ class ConstraintSystemTest(parameterized.TestCase):
         ).holds()
     )
 
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_LAYOUT, True),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_TRANSPOSED_LAYOUT, False),
+      (mgpu.WGSplatFragLayout((128, 128)), mgpu.WGMMA_LAYOUT, True),
+      (
+          mgpu.WGSplatFragLayout((128, 128)),
+          mgpu.WGStridedFragLayout((128, 128), vec_size=1),
+          True,
+      ),
+  )
+  def test_strict_relayout_constraint_holds(self, src, tgt, holds):
+    self.assertEqual(
+        cs.Relayout(RL(src), RL(tgt), 32, strict=True).holds(), holds
+    )
+
   def test_not_of_type_constraint_holds_for_different_types(self):
     layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertTrue(cs.NotOfType(layout, mgpu.WGSplatFragLayout).holds())
@@ -292,6 +307,21 @@ class ConstraintSystemTest(parameterized.TestCase):
     source_shape, target_shape = (2, 128, 8), (256, 8)
     eq = cs.Reshape(layout, source_shape, target_shape)
     self.assertEqual(cs.reduce_expression(eq, {}), layout)
+
+  def test_reduce_strict_relayout_produces_equals_constraint(self):
+    layout = RL(mgpu.WGStridedFragLayout((128, 128), vec_size=1))
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, {}), cs.Equals(layout, V(0))
+    )
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, {}), cs.Equals(layout, V(0))
+    )
+    layout = RL(mgpu.WGSplatFragLayout((128, 128)))
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(cs.reduce_constraint(relayout, {}), relayout)
 
   def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
       self,

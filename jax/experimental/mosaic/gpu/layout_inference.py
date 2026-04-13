@@ -990,19 +990,24 @@ def _layout_cast_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   operand = ValueSite(op, VariableType.OPERAND, 0)
+  operand_var = cs.Variable(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
-  variable = cs.Variable(operand)
+  result_var = cs.Variable(result)
   out_layout = layouts_lib.from_layout_attr(op.new_layout)
   if not is_valid_register_layout_assignment(operand.shape, out_layout):
     raise ValueError(
         f"Cannot cast to layout {out_layout}: the layout is not compatible"
         f" with the operand shape {operand.shape} in {op}."
     )
+  bitwidth = utils.bitwidth(op.x.type.element_type)
   return (
       cs.ConstraintSystem(
-          assignments={variable: cs.RegisterLayout(out_layout)}
+          assignments={result_var: cs.RegisterLayout(out_layout)},
+          constraints=[
+              cs.Relayout(operand_var, result_var, bitwidth, strict=False),
+          ],
       ),
-      {variable: [operand, result]},
+      {operand_var: [operand], result_var: [result]},
   )
 
 
@@ -2211,7 +2216,9 @@ def derive_relayout_constraints(
         if producer_variable not in visited:
           # The producer of a variable must be relayout-able to the variable.
           constraints.append(
-              cs.Relayout(producer_variable, variable, elt_bitwidth)
+              cs.Relayout(
+                  producer_variable, variable, elt_bitwidth, strict=True
+              )
           )
       elif value_site.type in (VariableType.RESULT, VariableType.ARGUMENT):
         for co in consumer_operands(value_site):
@@ -2221,7 +2228,9 @@ def derive_relayout_constraints(
           if consumer_variable not in visited:
             # A variable must be relayout-able to its consumers.
             constraints.append(
-                cs.Relayout(variable, consumer_variable, elt_bitwidth)
+                cs.Relayout(
+                    variable, consumer_variable, elt_bitwidth, strict=True
+                )
             )
     visited.add(variable)
   return constraints

@@ -320,11 +320,29 @@ class Relayout:
   We include here the bitwidth of the element type we want to associate with
   this constraint, as certain relayouts are only supported for specific
   bitwidths.
+
+  If `strict` is `True`, only allows relayout from splat layouts and force
+  layout equality otherwise.
   """
 
   source: Expression
   target: Expression
   bitwidth: int
+  strict: bool = False
+
+  def canonicalize(self) -> Constraint:
+    match self:
+      # The only valid strict tiled and strided relayout is the identity.
+      case Relayout(
+          source=RegisterLayout(
+              value=fa.TiledLayout() | fa.WGStridedFragLayout()
+          ) as cst,
+          target=target,
+          strict=True,
+      ):
+        return Equals(lhs=cst, rhs=target)
+      case _:
+        return self
 
   def holds(self) -> bool | None:
     """Returns whether the relayout constraint holds.
@@ -351,7 +369,7 @@ class Relayout:
         return layouts_lib.splat_is_compatible_with_tiled(
             source_layout, target_layout  # pyrefly: ignore[bad-argument-type]  # pyrefly#2857
         )
-      case fa.TiledLayout(), fa.TiledLayout():
+      case fa.TiledLayout(), fa.TiledLayout() if not self.strict:
         return _is_supported_tiled_relayout(
             # pyrefly: ignore [bad-argument-type]
             source_layout, target_layout, self.bitwidth
@@ -636,14 +654,17 @@ def reduce_constraint(
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
       return Equals(lhs_red, rhs_red)
-    case Relayout(source=source, target=target, bitwidth=bitwidth):
+    case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
-      return Relayout(source_red, target_red, bitwidth)
+      reduced = dataclasses.replace(
+          relayout, source=source_red, target=target_red
+      )
+      return reduced.canonicalize()
     case NotOfType(expr=expr, type=ty):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
