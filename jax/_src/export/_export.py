@@ -796,15 +796,16 @@ def _export_lowered(
     out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
   # Log and then check the module.
-  logmsg = (f"fun_name={fun_name} version={version} "
-            f"lowering_platforms={lowering._platforms} "  # type: ignore[attribute-error]
-            f"disabled_checks={disabled_checks}")
-  logger.debug("Exported JAX function: %s\n", logmsg)
-  logger.debug(mlir.dump_module_message(mlir_module, "export"))
-  logger.debug(
-      "Size of mlir_module_serialized: %d byte",
-      len(mlir_module_serialized),
-  )
+  if logger.isEnabledFor(logging.DEBUG):
+    logmsg = (f"fun_name={fun_name} version={version} "
+              f"lowering_platforms={lowering._platforms} "  # type: ignore[attribute-error]
+              f"disabled_checks={disabled_checks}")
+    logger.debug("Exported JAX function: %s\n", logmsg)
+    logger.debug(mlir.dump_module_message(mlir_module, "export"))
+    logger.debug(
+        "Size of mlir_module_serialized: %d byte",
+        len(mlir_module_serialized),
+    )
 
   _check_module(mlir_module,
                 disabled_checks=disabled_checks,
