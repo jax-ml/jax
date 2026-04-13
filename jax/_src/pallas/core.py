@@ -933,7 +933,7 @@ class GridMapping:
   @property
   def slice_index_ops(self):
     """Returns a slice object to select the index operands to a kernel.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     return slice(0, self.num_index_operands)
 
@@ -941,9 +941,9 @@ class GridMapping:
   def slice_block_ops(self):
     """Returns a slice to select the block operands to a kernel.
 
-    The block operands are: *ins, *outs, the same for which we
+    The block operands are: ``*ins``, ``*outs``, the same for which we
     have `self.block_mappings`.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     return slice(self.num_index_operands,
                  self.num_index_operands + len(self.block_mappings))
@@ -951,7 +951,7 @@ class GridMapping:
   @property
   def slice_scratch_ops(self):
     """Returns a slice object to select the scratch operands to a kernel.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     if self.num_scratch_operands:
       return slice(-self.num_scratch_operands, None)
@@ -960,7 +960,7 @@ class GridMapping:
 
   @property
   def in_shapes(self) -> Iterable[jax_core.ShapeDtypeStruct]:
-    """The shapes of *index, *inputs."""
+    """The shapes of ``*index``, ``*inputs``."""
     index_shapes = (
         # pyrefly: ignore[missing-attribute]
         jax_core.ShapeDtypeStruct(ia.shape, ia.dtype)
