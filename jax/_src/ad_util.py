@@ -55,7 +55,7 @@ def add_abstract(x, y):
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
-    return aval.vspace_zero()  # pytype: disable=attribute-error
+    return aval.vspace_zero()
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 

@@ -2246,7 +2246,7 @@ def reshard(xs, out_shardings):
           'Reshard should only be used with out_shardings which are non-None '
           f'and have a non-empty mesh. Got sharding {s}.'
       )
-    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
+    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))
     cmesh = (s.mesh if (isinstance(s, NamedSharding) and
                         isinstance(s.mesh, mesh_lib.Mesh))
              else None)

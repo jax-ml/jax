@@ -59,7 +59,7 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.sharding._internal_device_list  # pytype: disable=attribute-error
+  devices = a.sharding._internal_device_list
   if len(devices) != 1:
     raise ValueError(
         "When making an array from single-device arrays the input arrays must "
@@ -481,7 +481,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise ValueError("__cuda_array_interface__() is supported only for "
                        "unsharded arrays.")
-    return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
+    return self._arrays[0].__cuda_array_interface__  # bind-properties
 
   @use_cpp_method()
   def on_device_size_in_bytes(self):
@@ -586,7 +586,7 @@ class ArrayImpl(basearray.Array):
 
   @use_cpp_method()
   def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
-    ...  # pytype: disable=bad-return-type
+    ...
 
   @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):

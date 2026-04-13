@@ -181,7 +181,7 @@ def lower_pipelined_jaxpr_into_module(
 
   if dimension_semantics is None:
     dimension_semantics = ("arbitrary",) * len(grid)
-  dimension_semantics: Sequence[tpu_core.LiteralDimensionSemantics] = tuple(  # pyrefly: ignore[redefinition]  # pytype: disable=annotation-type-mismatch
+  dimension_semantics: Sequence[tpu_core.LiteralDimensionSemantics] = tuple(  # pyrefly: ignore[redefinition]
       map(tc_lowering._canonicalize_dimension_semantic, dimension_semantics)
   )
 
@@ -332,7 +332,7 @@ def lower_pipelined_jaxpr_into_module(
           )
       ),
   )
-  dimension_semantics = [  # pytype: disable=annotation-type-mismatch
+  dimension_semantics = [
       ds
       for axis, ds in enumerate(dimension_semantics)
       if which_parallel[axis]
@@ -344,7 +344,7 @@ def lower_pipelined_jaxpr_into_module(
         grid_mapping,
         new_jaxpr,
         name=name,
-        dimension_semantics=dimension_semantics,  # pytype: disable=wrong-arg-types
+        dimension_semantics=dimension_semantics,
         kernel_type=kernel_type,
         mesh=mesh,
     )
@@ -782,7 +782,7 @@ def _debug_print_lowering_rule(
     case []:
       tpu.log(inputs=[], tag=fmt)
     case [arg] if isinstance(arg.type, ir.MemRefType):
-      tpu.log_buffer(arg, ctx.avals_in[0].shape, fmt)  # pytype: disable=attribute-error
+      tpu.log_buffer(arg, ctx.avals_in[0].shape, fmt)
     case [arg]:
       tpu.log(inputs=[arg], tag=fmt)
     case _:
@@ -1167,7 +1167,7 @@ def _jaxpr_call_lowering_rule(
 def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
   del ty, memory_space
   [aval_out] = ctx.avals_out
-  return _alloc_value(aval_out, ctx=ctx)  # pytype: disable=wrong-arg-types
+  return _alloc_value(aval_out, ctx=ctx)
 
 
 @register_lowering_rule(

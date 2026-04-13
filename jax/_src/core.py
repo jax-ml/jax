@@ -1006,14 +1006,14 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     return self  # Override for object equivalence checking
 
   def __bool__(self):
-    if is_concrete(self): return bool(self.to_concrete_value())  # pytype: disable=wrong-arg-types
+    if is_concrete(self): return bool(self.to_concrete_value())
     check_bool_conversion(self)
     if not hasattr(self.aval, "_bool"):
       raise TypeError(f"Value of type {type(self)} is not convertible to boolean.")
     return self.aval._bool(self)
 
   def __int__(self):
-    if is_concrete(self): return int(self.to_concrete_value())  # pytype: disable=wrong-arg-types
+    if is_concrete(self): return int(self.to_concrete_value())
     check_scalar_conversion(self)
     if not hasattr(self.aval, "_int"):
       raise TypeError(f"Value of type {type(self)} is not convertible to integer.")
@@ -1032,21 +1032,21 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     return self.aval._complex(self)
 
   def __hex__(self):
-    if is_concrete(self): return hex(self.to_concrete_value())  # pytype: disable=wrong-arg-types
+    if is_concrete(self): return hex(self.to_concrete_value())
     check_integer_conversion(self)
     if not hasattr(self.aval, "_hex"):
       raise TypeError(f"Value of type {type(self)} is not convertible to hex.")
     return self.aval._hex(self)
 
   def __oct__(self):
-    if is_concrete(self): return oct(self.to_concrete_value())  # pytype: disable=wrong-arg-types
+    if is_concrete(self): return oct(self.to_concrete_value())
     check_integer_conversion(self)
     if not hasattr(self.aval, "_oct"):
       raise TypeError(f"Value of type {type(self)} is not convertible to oct.")
     return self.aval._oct(self)
 
   def __index__(self):
-    if is_concrete(self): return operator.index(self.to_concrete_value())  # pytype: disable=wrong-arg-types
+    if is_concrete(self): return operator.index(self.to_concrete_value())
     check_integer_conversion(self)
     if not hasattr(self.aval, "_index"):
       raise TypeError(f"Value of type {type(self)} is not convertible to integer index.")

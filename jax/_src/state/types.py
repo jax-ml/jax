@@ -414,7 +414,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def shape(self):
     try:
-      return self.inner_aval.shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.shape  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `shape`."
@@ -423,7 +423,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def dtype(self):
     try:
-      return self.inner_aval.dtype  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `dtype`."
@@ -432,7 +432,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def sharding(self):
     try:
-      return self.inner_aval.sharding  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.sharding  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `sharding`."
@@ -441,7 +441,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def manual_axis_type(self):
     try:
-      return self.inner_aval.manual_axis_type  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.manual_axis_type  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `manual_axis_type`."
@@ -606,6 +606,6 @@ class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None
 
-  shape = property(lambda self: self.inner_aval.shape)  # pytype: disable=attribute-error
-  dtype = property(lambda self: self.inner_aval.dtype)  # pytype: disable=attribute-error
-  ndim = property(lambda self: self.inner_aval.ndim)  # pytype: disable=attribute-error
+  shape = property(lambda self: self.inner_aval.shape)
+  dtype = property(lambda self: self.inner_aval.dtype)
+  ndim = property(lambda self: self.inner_aval.ndim)

@@ -1831,7 +1831,7 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
-  jaxpr = property(lambda self: self.fun.args[2])  # pytype: disable=attribute-error
+  jaxpr = property(lambda self: self.fun.args[2])
 
   def __call__(self, out_ct, *extra_args):
     if extra_args:
@@ -2047,7 +2047,7 @@ def make_jaxpr(
 
 def _infer_src_sharding(src, x, x_aval) -> Sharding | None:
   if src is not None:
-    return src  # pytype: disable=bad-return-type
+    return src
   if isinstance(x, array.ArrayImpl):
     return x.sharding
   if isinstance(x, core.Tracer):

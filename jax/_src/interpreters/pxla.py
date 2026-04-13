@@ -766,7 +766,7 @@ def _create_device_list(
     device_assignment: tuple[xc.Device, ...] | xc.DeviceList | None
     ) -> xc.DeviceList | None:
   if device_assignment is None or isinstance(device_assignment, xc.DeviceList):
-    return device_assignment  # pytype: disable=bad-return-type
+    return device_assignment
   return _create_device_list_cached(device_assignment)
 
 
@@ -881,7 +881,7 @@ def hoist_constants_as_args(
     kept_var_idx = set(range(num_const_args)).union(
         {kv + num_const_args for kv in kept_var_idx})
     if inout_aliases is not None:
-      inout_aliases = (None,) * num_const_args + inout_aliases  # pytype: disable=unsupported-operands
+      inout_aliases = (None,) * num_const_args + inout_aliases
     if mut is not None:
       mut = MutationData(
           in_mut=mut.in_mut,
@@ -1078,7 +1078,7 @@ def lower_sharding_computation(
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       it.chain(unique_in_shardings, unique_out_shardings,
-               unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
+               unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))
 
   if all_default_mem_kind:
     propagated_out_mem_kinds = (None,) * len(global_out_avals)
@@ -1589,7 +1589,7 @@ def _maybe_get_and_check_in_shardings(
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
@@ -1633,12 +1633,12 @@ def _maybe_get_and_check_out_shardings(
         new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and aval.size != 0 and
           (not op_shardings.are_hlo_shardings_equal(xla_hlo_s, orig_hlo_s) or
-           xla_s.memory_kind != orig.memory_kind)):  # pytype: disable=attribute-error
+           xla_s.memory_kind != orig.memory_kind)):
         raise AssertionError(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
             "(User sharding)")

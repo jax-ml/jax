@@ -903,7 +903,7 @@ class LoweringRuleContext:
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
     self.tokens_out = tokens_out
 
-  def replace(self, **kw): return dataclasses.replace(self, **kw)  # pytype: disable=wrong-arg-types  # dataclasses-replace-types
+  def replace(self, **kw): return dataclasses.replace(self, **kw)  # dataclasses-replace-types
 
   def is_forward_compat(self) -> bool:
     """Returns true if the lowering parameters are in forward compatibility mode.
@@ -1097,7 +1097,7 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron"]
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
   mesh = axis_ctx.mesh.abstract_mesh
-  sharding_mesh = sharding.mesh.abstract_mesh  # pytype: disable=attribute-error
+  sharding_mesh = sharding.mesh.abstract_mesh
   if (isinstance(sharding, sharding_impls.NamedSharding) and
       sharding_mesh.shape == mesh.shape):
     out_mesh, spec = sharding_mesh, sharding.spec
@@ -1931,7 +1931,7 @@ def lower_jaxpr_to_fun(
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
-              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+              (s is None or all_unconstrained(rs, a))) else o
           for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
                                  arg_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
@@ -1996,7 +1996,7 @@ def lower_jaxpr_to_fun(
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
-              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+              (s is None or all_unconstrained(rs, a))) else o
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]

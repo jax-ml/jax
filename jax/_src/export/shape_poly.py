@@ -2164,7 +2164,7 @@ def _solve_dim_equations(
     if not eqns:
       add_explicit_symbolic_constraints(shape_env)
       # SUCCESS
-      return shape_env, shape_constraints  # pytype: disable=bad-return-type
+      return shape_env, shape_constraints
     elif len(eqns) >= nr_eqns:
       break
 

@@ -176,7 +176,7 @@ def include_dir() -> str:
 
 
 def _aval_shape(aval: core.AbstractValue) -> Shape:
-  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pyrefly: ignore[missing-attribute]
 
 
 def _convert_layout_for_lowering(

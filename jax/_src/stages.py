@@ -320,13 +320,13 @@ class ArgInfo:
   def shape(self):
     if not hasattr(self._aval, "shape"):
       raise TypeError(f"No shape attribute with aval of type {type(self._aval)}")
-    return self._aval.shape  # pytype: disable=attribute-error
+    return self._aval.shape
 
   @property
   def dtype(self):
     if not hasattr(self._aval, "dtype"):
       raise TypeError(f"No dtype attribute with aval of type {type(self._aval)}")
-    return self._aval.dtype  # pytype: disable=attribute-error
+    return self._aval.dtype
 
 
 class Stage:
@@ -767,12 +767,12 @@ class Compiled(Stage):
   def input_shardings(self):  # -> PyTree[sharding.Sharding]
     # Including dead args, but not const_args
     shardings_flat = self._input_shardings_flat()
-    return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.in_tree, shardings_flat)
 
   @property
   def output_shardings(self):  # -> PyTree[sharding.Sharding]
     shardings_flat = self._executable._out_shardings  # pyrefly: ignore[missing-attribute]
-    return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.out_tree, shardings_flat)
 
   def _input_layouts_flat(self):
     nr_const_args = len(self._params.const_args)
@@ -790,7 +790,7 @@ class Compiled(Stage):
     layouts_flat = self._input_layouts_flat()
     shardings_flat = self._input_shardings_flat()
     formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
-    return tree_util.tree_unflatten(self.in_tree, formats_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.in_tree, formats_flat)
 
   @property
   def _output_formats_flat(self):
@@ -802,7 +802,7 @@ class Compiled(Stage):
   @property
   def output_formats(self):
     formats_flat = self._output_formats_flat
-    return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.out_tree, formats_flat)
 
   @staticmethod
   def call(*args, **kwargs):
@@ -1039,7 +1039,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
 
   if len(mismatched_args_msg) == 2:
-    first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
+    first, second = mismatched_args_msg
     extra_msg = f" Got {first} and {second}"
   elif len(mismatched_args_msg) == 1:
     first, second = fails
