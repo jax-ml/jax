@@ -842,6 +842,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
   * Added two new configuration flags, `jax_exec_time_optimization_effort` and `jax_memory_fitting_effort`, to control the amount of effort the compiler spends minimizing execution time and memory usage, respectively.  Valid values are between -1.0 and 1.0, default is 0.0.
+  * Added {func}`jax.scipy.special.loggamma`
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

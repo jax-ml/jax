@@ -45,6 +45,7 @@ from jax._src.scipy.special import (
   kl_div as kl_div,
   log_ndtr as log_ndtr,
   log_softmax as log_softmax,
+  loggamma as loggamma,
   logit as logit,
   logsumexp as logsumexp,
   lpmn as _deprecated_lpmn,

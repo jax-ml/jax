@@ -71,6 +71,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         test_name="gamma_complex"
     ),
     op_record(
+        "loggamma", 1, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "loggamma", 1, jtu.dtypes.complex, jtu.rand_default, False,
+        test_name="loggamma_complex"
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
