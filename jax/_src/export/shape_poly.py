@@ -583,13 +583,13 @@ class _DimExpr:
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedTerms, i1: int, f1: int,
-      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...  # type: ignore[bad-return-type]
 
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedFactors, i1: int, f1: int,
-      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...  # type: ignore[bad-return-type]
 
   @staticmethod
   def _linear_combination_sorted_pairs(
@@ -875,7 +875,7 @@ class _DimExpr:
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
-      while is_symbolic_dim(dividend) and not dividend._is_constant:  # type: ignore[attribute-error,unused-ignore]
+      while is_symbolic_dim(dividend) and not dividend._is_constant:  # type: ignore[attribute-error]
         mon, count = dividend._leading_term
         if isinstance(divisor, _DimExpr):
           dterm, dcount = divisor._leading_term
@@ -1051,9 +1051,9 @@ class SymbolicScope:
       if cmp_pos < 0:
         raise ValueError("Constraint parsing error: must contain one of '==' or '>=' or '<='")
     e1_str = c_str[:cmp_pos]
-    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()  # type: ignore[name-error]
     e2_str = c_str[cmp_pos + 2:]
-    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()  # type: ignore[name-error]
     if cmp == Comparator.GEQ and not is_geq:
       e1, e2 = e2, e1
 
@@ -1078,7 +1078,7 @@ class SymbolicScope:
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
 
-      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error,unused-ignore]
+      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error]
       if before in self._normalization_rules:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
@@ -1546,7 +1546,7 @@ class _Parser:
   def next_tok(self) -> tokenize.TokenInfo:
     while True:
       try:
-        t = next(self.tokstream)  # type: ignore[attribute-error,unused-ignore]
+        t = next(self.tokstream)  # type: ignore[attribute-error]
       except StopIteration:
         raise self.parse_err(None, "unexpected end of string")
       if t.exact_type not in [tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT]:
@@ -1658,7 +1658,7 @@ class _Parser:
 
       acc = acc * f if acc is not None else f
       if tok.exact_type in self.FOLLOW_TERM:
-        return acc, tok  # type: ignore[bad-return-type,unused-ignore]
+        return acc, tok  # type: ignore[bad-return-type]
       tok = self.consume_token(tok, tokenize.STAR)
 
   def factor(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
@@ -2102,9 +2102,9 @@ def _solve_dim_equations(
                 solution_err_msg_trailer_errors]))
 
       if not isinstance(var_value, _DimExpr):
-        assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error,unused-ignore]
+        assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error]
       shape_env[var] = var_value  # type: ignore
-      solution_error_message_pieces.extend([  # type: ignore[container-type-mismatch,unused-ignore]
+      solution_error_message_pieces.extend([  # type: ignore[container-type-mismatch]
         f"'{var}' = ", var_value,
         f" from specification '{eqn.aval_dim_expr}' "
         f"for dimension {eqn.dim_name} (= ",
