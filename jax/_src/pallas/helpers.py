@@ -67,7 +67,7 @@ def empty_ref_like(x: object) -> jax_typing.Array:
 
 def when(
     condition: bool | jax_typing.ArrayLike, /
-) -> Callable[[Callable[[], None]], Callable[[], None]]:
+) -> Callable[[Callable[[], None]], None]:
   """Calls the decorated function when the condition is met.
 
   Args:
