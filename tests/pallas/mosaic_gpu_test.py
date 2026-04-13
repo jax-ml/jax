@@ -25,7 +25,7 @@ import sys
 import tempfile
 import traceback
 import types
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -66,20 +66,24 @@ def do_not_call_me_directly(*args, **kwargs):
       "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
   )
 
-# Clone the modules locally because the functions may be called from other
-# modules.
-pl = types.ModuleType("_pl_local")
-pl.__dict__.update(_pl.__dict__)
+if TYPE_CHECKING:
+  pl = _pl
+  plgpu = _plgpu
+else:
+  # Clone the modules locally because the functions may be called from other
+  # modules.
+  pl = types.ModuleType("_pl_local")
+  pl.__dict__.update(_pl.__dict__)
 
-plgpu = types.ModuleType("_plgpu_local")
-plgpu.__dict__.update(_plgpu.__dict__)
+  plgpu = types.ModuleType("_plgpu_local")
+  plgpu.__dict__.update(_plgpu.__dict__)
 
-_pallas_call = _pl.pallas_call
-_kernel = _plgpu.kernel
-del _pl, _plgpu
+  _pallas_call = _pl.pallas_call
+  _kernel = _plgpu.kernel
+  del _pl, _plgpu
 
-plgpu.kernel = do_not_call_me_directly
-pl.pallas_call = do_not_call_me_directly
+  plgpu.kernel = do_not_call_me_directly
+  pl.pallas_call = do_not_call_me_directly
 
 
 def _fori_loop(force_while: bool, lb, ub, body, init):
