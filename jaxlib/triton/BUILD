@@ -58,7 +58,7 @@ genrule(
     for src in $(SRCS); do
       base=$$(basename $$src)
       out=$(RULEDIR)/$${base//_raw/}
-      echo '# pytype: skip-file' > $${out} && \
+      echo '# pyrefly: ignore-errors' > $${out} && \
           cat $${src} |
           sed -e 's/^from \\.\\./from jaxlib\\.mlir\\./g' |
           sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' >> $${out}

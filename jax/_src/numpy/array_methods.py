@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pytype: skip-file
 """Define methods which are dynamically added to JAX's Arrays and Tracers.
 
 This is done dynamically in order to avoid circular imports.

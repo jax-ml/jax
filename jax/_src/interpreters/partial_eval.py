@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pytype: skip-file
 from __future__ import annotations
 
 from collections import namedtuple
@@ -982,7 +981,7 @@ def _partial_eval_jaxpr_custom_cached(
         foreach(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
-        from jax._src.dispatch import device_put_p, ArrayCopySemantics
+        from jax._src.dispatch import device_put_p, ArrayCopySemantics  # pyrefly: ignore[missing-import]
         resvars = [Var(v.aval.update(memory_space=core.mem_kind_to_space(policy.dst)))
                    for v in eqn.outvars]
         offload_eqn = core.JaxprEqn(
@@ -1160,7 +1159,7 @@ def closed_call_partial_eval_custom_rule(
   # TODO(sharadmv,mattjj): dedup this rule with call_partial_eval_custom_rule.
   disallow_output_fwds = tuple(isinstance(v, DropVar) for v in eqn.outvars)
   # TODO(mattjj): this is just for pjit... but let's delete all this code
-  from jax._src.sharding_impls import UNSPECIFIED
+  from jax._src.sharding_impls import UNSPECIFIED  # pyrefly: ignore[missing-import]
   in_shardings, in_layouts = eqn.params.get('in_shardings'), eqn.params.get('in_layouts')
   if in_shardings is not None:
     assert in_layouts is not None

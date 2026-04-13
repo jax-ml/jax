@@ -81,8 +81,6 @@ from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
 
-# TODO(sharadmv): enable type checking
-
 NDIndexer = indexing.NDIndexer
 AnyMemorySpace = (
     pallas_core.MemorySpace | tpu_core.MemorySpace | tpu_core.CoreMemorySpace

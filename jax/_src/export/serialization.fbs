@@ -20,7 +20,6 @@
 //  3.  Add back the licence comment at the start
 //  4.  Add back the following:
 //        # pyrefly: ignore-errors
-//        # pytype: skip-file
 //      before the "# automatically generated ..." comment
 //
 
