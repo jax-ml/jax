@@ -60,6 +60,20 @@ jobs:
           key: pre-commit-${{ steps.get-date.outputs.date }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
       - run: $PYTHON_BIN -m pre_commit run --show-diff-on-failure --color=always --all-files
 
+  zizmor:
+    name: GitHub Actions Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7.3.1
+      - name: Run zizmor
+        run: uvx zizmor --format=github .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     # Don't execute in fork due to runner type
     if: github.repository == 'jax-ml/jax'

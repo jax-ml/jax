@@ -1,0 +1,18 @@
+rules:
+  obfuscation:
+    # Disable because many workflows use expressions of this type in their names, e.g.:
+    # "Build ${{ format('{0}', 'jaxlib') }} artifacts"
+    disable: true
+  dangerous-triggers:
+    ignore:
+      - "upload_metadata.yml"
+  unpinned-images:
+    # Disable non-pinned images only for ROCM workflows
+    ignore:
+      - "build_rocm_artifacts.yml"
+      - "pytest_rocm.yml"
+      - "bazel_rocm.yml"
+  misfeature:
+    ignore:
+      # allow the workflow to use cmd shell
+      - "build_artifacts.yml:175"
