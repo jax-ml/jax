@@ -35,8 +35,6 @@ from jaxlib import _jax as _xla
 # Most functions are snake_case for consistency with other modules, some
 # method names are CamelCase for consistency with XLA.
 
-# Pylint has false positives for type annotations.
-
 ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
