@@ -1380,6 +1380,7 @@ nanobind_pywrap_extension(
         "@shardy//shardy/dialect/mpmd/ir:dialect",
         "@shardy//shardy/dialect/mpmd/ir:fragment_execution_rules",
         "@shardy//shardy/dialect/mpmd/transforms/import:mesh_assignment_map",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/integrations/python/jax/mpmd/jaxlib:mpmd_program",
         "@xla//xla:util",
         "@xla//xla/pjrt:pjrt_common",

@@ -917,7 +917,13 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
 
-  if jaxlib_extension_version >= 440:
+  if jaxlib_extension_version >= 443:
+    sdy_version = sdy.get_version_from_compatibility_requirement(
+        sdy.CompatibilityRequirement.WEEK_4)
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        module, target_version, xb.get_backend().serialize_with_sdy,
+        sdy_version=sdy_version)
+  elif jaxlib_extension_version >= 440:
     module_serialized = _jax.mlir.serialize_portable_artifact(
         module, target_version, xb.get_backend().serialize_with_sdy)
   else:
