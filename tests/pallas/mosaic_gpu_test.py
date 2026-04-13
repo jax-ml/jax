@@ -869,6 +869,32 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.parameters(*plgpu.L2CachePolicy)
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_under_pytest("Test fails under pytest in CI")
+  def test_copy_gmem_to_smem_with_cache_policy(self, cache_policy):
+    self.skip_if_wg_semantics()
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
+
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+          in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+          scratch_shapes=[plgpu.SMEM((256,), jnp.float32), plgpu.Barrier()],
+      )
+      def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+        plgpu.copy_gmem_to_smem(
+            x_ref_gmem, scratch_ref, barrier_ref, cache_policy=cache_policy
+        )
+        plgpu.barrier_wait(barrier_ref)
+        o_ref[...] = scratch_ref[...] + 1
+
+      x = jnp.arange(256).astype(jnp.float32)
+      np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+    self.assertIn(str(cache_policy), output())
+
   def test_collective_copy_gmem_to_smem(self):
     @functools.partial(
         self.kernel,
