@@ -212,7 +212,6 @@ def create_dot_product_attention_backend_config_base(
     cudnn_fmha_backend_config = {**cudnn_fmha_backend_config, **fwd_dot_number}
   backend_config = {
     "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
     "cudnn_fmha_backend_config": cudnn_fmha_backend_config
   }
   return backend_config
