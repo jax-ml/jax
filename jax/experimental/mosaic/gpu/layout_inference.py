@@ -222,18 +222,6 @@ def _default_tmem_layout_for_variable(
   return None
 
 
-def _extract_tiling_candidate(
-    divide_constraint: cs.Divides, num_tiled_dims: int
-) -> Iterator[tuple[cs.Variable, cs.Constant]]:
-  if not isinstance(divide_constraint.expr, cs.Variable):
-    return
-  if num_tiled_dims > len(divide_constraint.tiling_multiple):
-    # The tiling's rank cannot be larger than the size of `tiling_multiple`.
-    return
-  tiling = divide_constraint.tiling_multiple[-num_tiled_dims:]
-  yield divide_constraint.expr, cs.SMEMTiling(lc.TileTransform(tiling))
-
-
 def _register_layouts_for_optimized_transfer_to_smem(
     shaped_type: ir.ShapedType,
     smem_layout: cs.SMEMTiling,
@@ -314,18 +302,17 @@ def _extract_layout_candidates_from_smem_registers_transfer(
     layout = constant.value
     assert variable.key.memory_space == MemorySpace.SMEM
     if inference_utils.is_mma_layout(layout):
+      divide_constraint = division_constraint_per_var.get(variable)
       tiling = _infer_tiling_for_mma_ref(
           variable.key.value.type,
           max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
       )
-      divide = cs.Divides(variable, tiling)
-      if (divide2 := division_constraint_per_var.get(variable)) is not None:
-        # This is done on two lines to satisfy type checkers.
-        # TODO(b/447079781): clean up the `merge_divides_constraints` to
-        # avoid the need for this.
-        [merged] = cs.merge_divides_constraints([divide, divide2])
-        divide = cast(cs.Divides, merged)
-      yield from _extract_tiling_candidate(divide, len(tiling))
+      if divide_constraint is not None:
+        # Apply existing multiplicity constraints to the conjured tiling.
+        tiling = cs.merge_divides_constraints(
+            divide_constraint, cs.Divides(variable, tiling)
+        ).tiling_multiple
+      yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
     return
 
   assert isinstance(constant, cs.SMEMTiling)

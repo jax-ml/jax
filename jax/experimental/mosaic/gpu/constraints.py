@@ -895,8 +895,7 @@ def compute_transitively_equal_vars(
 def saturate_divides_constraints_for_equal_vars(
     system: ConstraintSystem,
 ) -> ConstraintSystem:
-  """Saturates Divides constraints between all transitively equal vars.
-  """
+  """Saturates Divides constraints between all transitively equal vars."""
   equal_vars = compute_transitively_equal_vars(system)
   new_constraints: list[Constraint] = []
   for constraint in system.constraints:
@@ -908,37 +907,42 @@ def saturate_divides_constraints_for_equal_vars(
             new_constraints.append(Divides(equal_var, tiling_multiple))
       case _:
         pass
-  new_constraints = merge_divides_constraints(new_constraints)
+  new_constraints = _merge_all_divides_constraints(new_constraints)
   return dataclasses.replace(system, constraints=new_constraints)
 
 
-# TODO(bchetioui): clean up API.
-def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
+def _merge_all_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
   """Merges Divides constraints that can be merged."""
   result: list[Constraint] = []
-  var_to_tiling_multiples : dict[Variable, tuple[int, ...]] = {}
+  var_to_divides : dict[Variable, Divides] = {}
   for constraint in constraints:
     match constraint:
-      case Divides(expr=Variable() as v, tiling_multiple=tiling_multiple):
+      case Divides(expr=Variable() as v) as d1:
         assert isinstance(v, Variable)  # make pytype happy
-        if (previous_tiling_multiple := var_to_tiling_multiples.get(v)) is None:
-          var_to_tiling_multiples[v] = tiling_multiple
+        if (d0 := var_to_divides.get(v)) is None:
+          var_to_divides[v] = d1
           continue
-        # If the two tuples are of different lengths, the larger tuple will
-        # be truncated (removing initial multiples) to the length of the
-        # smaller tuple. This preserves the semantics of the Divides constraints
-        # where a tiling's rank cannot exceed the size of tiling_multiple.
-        min_len = min(len(tiling_multiple), len(previous_tiling_multiple))
-        new_tiling_multiple = []
-        if min_len > 0:
-          for x, y in zip(tiling_multiple[-min_len:], previous_tiling_multiple[-min_len:], strict=True):
-            new_tiling_multiple.append(math.gcd(x, y))
-        var_to_tiling_multiples[v] = tuple(new_tiling_multiple)
+        var_to_divides[v] = merge_divides_constraints(d0, d1)
       case _:
         result.append(constraint)
-  for expr, tiling_multiple in var_to_tiling_multiples.items():
-    result.append(Divides(expr, tiling_multiple))
+  result.extend(var_to_divides.values())
   return result
+
+
+def merge_divides_constraints(d0: Divides, d1: Divides) -> Divides:
+  if d0.expr != d1.expr:
+    raise ValueError("Divides constraints must apply to the same expression.")
+  # If the two tuples are of different lengths, the larger tuple will be
+  # truncated to the length of the smaller tuple. This preserves the semantics
+  # of the Divides constraints where a tiling's rank cannot exceed the size of
+  # tiling_multiple.
+  min_len = min(len(d0.tiling_multiple), len(d1.tiling_multiple))
+  if min_len == 0:
+    return Divides(d0.expr, ())
+  tiling_multiple = []
+  for t0, t1 in zip(d0.tiling_multiple[-min_len:], d1.tiling_multiple[-min_len:], strict=True):
+    tiling_multiple.append(math.gcd(t0, t1))
+  return Divides(d0.expr, tuple(tiling_multiple))
 
 
 def _reduce_system_once(
@@ -985,7 +989,7 @@ def _reduce_system_once(
           case True:
             changed = True
 
-  new_constraints = merge_divides_constraints(constraints)
+  new_constraints = _merge_all_divides_constraints(constraints)
   changed |= len(new_constraints) != len(constraints)
   constraints = new_constraints
 
