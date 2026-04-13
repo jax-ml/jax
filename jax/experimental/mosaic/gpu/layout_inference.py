@@ -114,7 +114,7 @@ class ValueSite:
   @property
   def shape(self) -> tuple[int, ...]:
     """Returns the shape of the underlying value."""
-    return tuple(self.value.type.shape)  # pytype: disable=attribute-error
+    return tuple(self.value.type.shape)
 
   @property
   def memory_space(self) -> MemorySpace:
@@ -151,7 +151,7 @@ def extract_assignment_candidates_from_reduce_equation(
     keep_dims: bool,
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
-  large_shape = large.key.shape  # pytype: disable=attribute-error
+  large_shape = large.key.shape
 
   if isinstance(small.value, fa.WGSplatFragLayout):
     yield cs.RegisterLayout(fa.WGSplatFragLayout(large_shape))
@@ -276,8 +276,8 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    assert variable.key.memory_space == MemorySpace.TMEM  # pytype: disable=attribute-error
-    dtype = ir.MemRefType(variable.key.value.type).element_type  # pytype: disable=attribute-error
+    assert variable.key.memory_space == MemorySpace.TMEM
+    dtype = ir.MemRefType(variable.key.value.type).element_type
     for packing in (1, 32 // utils.bitwidth(dtype)):
       for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
           packing
@@ -287,7 +287,7 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
     return
 
   assert isinstance(constant, cs.TMEMLayout)
-  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  assert variable.key.memory_space == MemorySpace.REG
   layout = constant.value
   packing = layout.vector_length
   for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
@@ -312,7 +312,7 @@ def _extract_layout_candidates_from_smem_registers_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    assert variable.key.memory_space == MemorySpace.SMEM  # pytype: disable=attribute-error
+    assert variable.key.memory_space == MemorySpace.SMEM
     if inference_utils.is_mma_layout(layout):
       tiling = _infer_tiling_for_mma_ref(
           variable.key.value.type,
@@ -329,7 +329,7 @@ def _extract_layout_candidates_from_smem_registers_transfer(
     return
 
   assert isinstance(constant, cs.SMEMTiling)
-  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  assert variable.key.memory_space == MemorySpace.REG
   for layout in _register_layouts_for_optimized_transfer_to_smem(
       variable.key.value.type, constant, arch
   ):
@@ -512,7 +512,7 @@ def find_assignments_for(
       )
     variable, expr = assignment
     assert isinstance(expr, cs.Constant)
-    if not is_valid_assignment(variable.key.shape, expr):  # pytype: disable=name-error
+    if not is_valid_assignment(variable.key.shape, expr):
       continue
     # Trying one valid assignment consumes fuel.
     fuel -= 1
@@ -574,7 +574,7 @@ class DerivationContext:
 
   def producer_ref(self, operand: ValueSite) -> cs.Variable:
     """Returns the producer reference variable for the given operand."""
-    return self.variable_for_value_site[producer_result(operand)]  # pytype: disable=name-error
+    return self.variable_for_value_site[producer_result(operand)]
 
 
 ValueSitesForVariable = dict[cs.Variable, list[ValueSite]]
@@ -608,7 +608,7 @@ def _add_constraint_system_derivation_rule(op: type[ir.OpView]):
   def wrapper(rule: ConstraintSystemDerivationRule):
     if op is not None:
       assert hasattr(op, "OPERATION_NAME")
-      _constraint_system_derivation_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+      _constraint_system_derivation_rules[op.OPERATION_NAME] = rule
     return rule
 
   return wrapper
@@ -631,7 +631,7 @@ def _pointwise_op_constraint_system(
     op: ir.OpView,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
-  all_value_sites = vector_value_sites(op)  # pytype: disable=name-error
+  all_value_sites = vector_value_sites(op)
   variable = cs.Variable(all_value_sites[-1])
   return cs.ConstraintSystem(), {variable: all_value_sites}
 
@@ -2174,9 +2174,9 @@ def producer_result(operand: ValueSite) -> ValueSite:
     return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
-    index = list[ir.Value](producer.arguments).index(value)  # pytype: disable=attribute-error
-    region_index = list(producer.owner.regions).index(producer.region)  # pytype: disable=attribute-error
-    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)  # pytype: disable=attribute-error
+    index = list[ir.Value](producer.arguments).index(value)
+    region_index = list(producer.owner.regions).index(producer.region)
+    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
@@ -2218,7 +2218,7 @@ def derive_relayout_constraints(
       if value_site.memory_space != MemorySpace.REG:
         continue
 
-      elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)  # pytype: disable=attribute-error
+      elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)
         producer_variable = variable_for_value_site[pr]
@@ -2391,7 +2391,7 @@ def infer_layout(
     )
     if not should_have_layout:
       return
-    rule = _constraint_system_derivation_rules.get(op.OPERATION_NAME, None)  # pytype: disable=attribute-error
+    rule = _constraint_system_derivation_rules.get(op.OPERATION_NAME, None)
     if rule is None:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
     rule_result = rule(ctx, op)

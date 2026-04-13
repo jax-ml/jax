@@ -271,7 +271,7 @@ def main(unused_argv):
       )
     assert runtime is not None
     assert best_runtime is not None
-    if runtime < best_runtime:  # pytype: disable=unsupported-operands
+    if runtime < best_runtime:
       best_runtime = runtime
       best_kwargs = kwargs
   if not best_kwargs:

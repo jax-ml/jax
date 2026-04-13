@@ -81,8 +81,8 @@ class MultiPageAsyncCopyDescriptor:
   def _make_scales_async_copy(self, i):
     page_index = self._page_indices[self._page_indices_start_offset + i]
     return pltpu.make_async_copy(
-        self._scales_pages_hbm_ref.at[page_index],  # pytype: disable=attribute-error
-        self._scales_vmem_buffer.at[i],  # pytype: disable=attribute-error
+        self._scales_pages_hbm_ref.at[page_index],
+        self._scales_vmem_buffer.at[i],
         self._sem,
     )
 
@@ -440,7 +440,7 @@ def paged_attention(
   if k_pages.shape != v_pages.shape:
     raise ValueError(
         f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"
-        f" {v_pages.shape}"  # pytype: disable=attribute-error
+        f" {v_pages.shape}"
     )
   if num_q_heads % num_kv_heads != 0:
     raise ValueError(
@@ -569,7 +569,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            k_scales_pages.dtype,  # pytype: disable=attribute-error
+            k_scales_pages.dtype,
         ),  # k_scales_pages buffer
         pltpu.VMEM(
             (
@@ -587,7 +587,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            v_scales_pages.dtype,  # pytype: disable=attribute-error
+            v_scales_pages.dtype,
         ),  # v_scales_pages buffer
         pltpu.SemaphoreType.DMA((2,)),
         pltpu.SemaphoreType.DMA((2,)),

@@ -449,7 +449,7 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   output_aval = core.ShapedArray(output_shape, x_aval.dtype)
   _, reserve_space_size = (
       # pyrefly: ignore[missing-attribute]
-      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
+      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(
           input_size, hidden_size, num_layers, batch_size, max_seq_length,
           dropout, bidirectional, cudnn_allow_tf32))
   reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)

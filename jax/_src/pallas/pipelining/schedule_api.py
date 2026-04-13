@@ -15,7 +15,6 @@
 # pyrefly: ignore-errors
 # pylint: disable=missing-function-docstring
 # pylint: disable=g-doc-args
-# pytype: disable=wrong-keyword-args
 
 """Internal API for the Pallas pipelining scheduler."""
 

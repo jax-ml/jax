@@ -146,7 +146,7 @@ if TYPE_CHECKING:
   # - Confirm that types from *.pyi files are correctly pulled-in
   # - Confirm that non-trivial overloads are behaving as expected.
   #
-  from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
+  from typing import assert_type  # py311-upgrade
 
   mat = jnp.zeros((2, 5))
   vals = jnp.arange(5)

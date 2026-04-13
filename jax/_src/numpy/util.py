@@ -147,8 +147,8 @@ def ensure_arraylike(fun_name: str, /, *args: Any) -> Array | tuple[Array, ...]:
   """Check that arguments are arraylike and convert them to arrays."""
   check_arraylike(fun_name, *args)
   if len(args) == 1:
-    return _arraylike_asarray(args[0])  # pytype: disable=bad-return-type
-  return tuple(_arraylike_asarray(arg) for arg in args)  # pytype: disable=bad-return-type
+    return _arraylike_asarray(args[0])
+  return tuple(_arraylike_asarray(arg) for arg in args)
 
 
 def ensure_arraylike_tuple(fun_name: str, tup: Sequence[Any]) -> tuple[Array, ...]:

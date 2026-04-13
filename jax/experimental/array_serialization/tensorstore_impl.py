@@ -206,7 +206,7 @@ def verify_tensorstore_spec(spec: dict[str, Any], arr: jax.Array | None,
     if isinstance(arr, jax.Array):
       local_shape = arr.sharding.shard_shape(arr.shape)
     else:  # np.ndarray
-      local_shape = arr.shape  # pytype: disable=attribute-error
+      local_shape = arr.shape
     if spec.get("driver", "") == "zarr3":
       chunk_shape = metadata['chunk_grid']['configuration']['chunk_shape']
       if not _divides(local_shape, chunk_shape):

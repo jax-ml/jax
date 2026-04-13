@@ -18,9 +18,6 @@ https://github.com/google/flax/tree/main/examples/wmt
 
 # pylint: disable=attribute-defined-outside-init,g-bare-generic
 # See issue #620.
-# pytype: disable=wrong-arg-count
-# pytype: disable=wrong-keyword-args
-# pytype: disable=attribute-error
 
 from __future__ import annotations
 

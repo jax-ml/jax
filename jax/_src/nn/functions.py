@@ -718,7 +718,7 @@ def _one_hot(x: Array, num_classes: int, *,
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
   # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
-  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))  # pytype: disable=attribute-error
+  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))
   rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
                              out_sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)

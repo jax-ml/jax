@@ -565,4 +565,4 @@ def _pallas_ragged_dot_general_impl(
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
           precision=precision,
           preferred_element_type=preferred_element_type,
-      )  # pytype: disable=bad-return-type
+      )

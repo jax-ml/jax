@@ -17,7 +17,6 @@ https://github.com/google/flax/tree/main/examples/seq2seq
 """
 
 # See issue #620.
-# pytype: disable=wrong-keyword-args
 
 import functools
 from typing import Any

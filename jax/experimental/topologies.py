@@ -44,7 +44,7 @@ def get_topology_desc(
     )
   try:
     topology = xb.make_pjrt_topology(platform, topology_name, **kwargs)
-    return TopologyDescription(topology._make_compile_only_devices())  # pytype: disable=attribute-error
+    return TopologyDescription(topology._make_compile_only_devices())
   except _jax.JaxRuntimeError as e:
     msg, *_ = e.args
     if msg.startswith("UNIMPLEMENTED"):

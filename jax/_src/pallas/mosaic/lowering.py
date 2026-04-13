@@ -127,7 +127,7 @@ def should_physicalize_dtype(dtype: DTypeLike) -> bool:
 
 def _maybe_physicalize_block_shape(aval, block_shape):
   if should_physicalize_dtype(aval.dtype):
-    physical_element_aval = jax_core.physical_element_aval(aval.dtype)  # pytype: disable=wrong-arg-types
+    physical_element_aval = jax_core.physical_element_aval(aval.dtype)
     block_shape += physical_element_aval.shape
   return block_shape
 
@@ -343,10 +343,10 @@ def aval_to_ir_type(
   if allow_extended_types and should_physicalize_dtype(aval.dtype):
     if isinstance(aval, state.AbstractRef):
       # pyrefly: ignore[bad-argument-type]
-      inner_aval = _physical_aval(aval.inner_aval)  # pytype: disable=wrong-arg-types
+      inner_aval = _physical_aval(aval.inner_aval)
       physical_aval = aval.update(inner_aval=inner_aval)
     else:
-      physical_aval = _physical_aval(aval)  # pytype: disable=wrong-arg-types
+      physical_aval = _physical_aval(aval)
     if shape is not None:
       shape = jax_core.physical_shape(shape, aval.dtype)
     return aval_to_ir_type(
@@ -434,9 +434,9 @@ def register_lowering_rule(
 
 
 def _get_aval_physical_dtype_shape(aval):
-  if should_physicalize_dtype(aval.dtype):  # pytype: disable=attribute-error
-    physical_aval = _physical_aval(aval)  # pytype: disable=wrong-arg-types
-    return physical_aval.shape[len(aval.shape) :]  # pytype: disable=attribute-error
+  if should_physicalize_dtype(aval.dtype):
+    physical_aval = _physical_aval(aval)
+    return physical_aval.shape[len(aval.shape) :]
   else:
     return ()
 
@@ -889,7 +889,7 @@ def lower_jaxpr_into_module(
 
       # If we have an extended dtype, we need to add the block shape for the
       # remaining physical dtype.
-      block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))  # pytype: disable=wrong-arg-types
+      block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))
       block_shape = dynamic_shape_replacement_fn(block_shape)
       window_shape = ir.DenseI64ArrayAttr.get(block_shape)
       block_params: dict[str, ir.Attribute] = dict(
@@ -1302,7 +1302,7 @@ def jaxpr_subcomp(
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     eqn_name_stack = ctx.name_stack + eqn.source_info.name_stack
-    loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
+    loc = mlir.source_info_to_location(
         ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
     )
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
@@ -1502,7 +1502,7 @@ def _indexer_to_start_size_stride(
   assert next_index is None, (indexer.indices, ref_block_shape)
   new_ref_block_shape = tuple(s for s, squeeze in zip(sizes, squeeze_dims)
                               if not squeeze)
-  return (  # pytype: disable=bad-return-type
+  return (
       tuple(starts),
       tuple(sizes),
       tuple(strides),
@@ -1730,7 +1730,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
     return _prng_key_load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
   if should_physicalize_dtype(aval_out.dtype):
     # pyrefly: ignore[bad-argument-type]
-    physical_element_aval = jax_core.physical_element_aval(aval_out.dtype)  # pytype: disable=wrong-arg-types
+    physical_element_aval = jax_core.physical_element_aval(aval_out.dtype)
     idx = cast(NDIndexer, idx)
     if idx.int_indexer_shape:
       raise NotImplementedError()

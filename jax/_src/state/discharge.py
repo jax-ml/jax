@@ -551,7 +551,7 @@ def transform_swap_array(x, transforms, val):
               intermediate, indexer, transpose_order
           )
         arrays = _convert_to_gather_arrays(indexer)
-        new_x = intermediate.at[arrays].set(new_x)  # pytype: disable=attribute-error
+        new_x = intermediate.at[arrays].set(new_x)
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
           new_x = new_x.transpose(transpose_order_inversed)

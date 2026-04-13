@@ -1251,7 +1251,7 @@ class _SpecError(Exception):
   pass
 
 def _check_mats(mesh, specs, avals):
-  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)  # pytype: disable=attribute-error
+  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
     raise _RepError(fail, avals.tree)
@@ -1844,7 +1844,7 @@ def _partial_eval_jaxpr_custom_rule(
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   nv = core.gensym()
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
-  lns = lambda a: a.nospec(mesh, check_vma, all_names)  # pytype: disable=attribute-error
+  lns = lambda a: a.nospec(mesh, check_vma, all_names)
   residuals, staged_in_res_specs = unzip2(
       [(nv(unshard_aval(mesh, check_vma, (rn := lns(var.aval)), var.aval)), rn)
        for var, w in zip(jaxpr_staged.invars[:num_res], which) if w])

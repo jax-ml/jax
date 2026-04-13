@@ -862,7 +862,7 @@ def _export_lowered(
         apply_jit=True,
         flat_primal_fun=True,
         mesh=cur_mesh)  # type: ignore[arg-type]
-    return export(fun_vjp_jax,  # pytype: disable=wrong-arg-types
+    return export(fun_vjp_jax,
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
@@ -1003,7 +1003,7 @@ def _wrap_main_func(
       new_arg_attrs = []
       for idx in new_main_arg_indices:
         new_arg_attr: dict[str, ir.Attribute] = {}
-        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]  # pytype: disable=attribute-error
+        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]
           if attr.name == "tf.aliasing_output":
             i = new_main_result_indices.index(attr.attr.value)
             new_arg_attr[attr.name] = ir.IntegerAttr.get(
@@ -1556,7 +1556,7 @@ def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
   # pyrefly: ignore[missing-attribute]
-  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)  # pytype: disable=attribute-error
+  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
   axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
     return mesh_lib.empty_abstract_mesh

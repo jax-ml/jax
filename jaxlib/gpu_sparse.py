@@ -30,7 +30,7 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
           (name, value, int(name.endswith("_ffi")))
           for name, value in module.registrations().items()
       )
-  return registrations  # pytype: disable=bad-return-type
+  return registrations
 
 def batch_partitionable_targets() -> list[str]:
   targets: list[str] = []

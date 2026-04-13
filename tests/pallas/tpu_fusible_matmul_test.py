@@ -75,9 +75,9 @@ def matmul_kernel(
 
 
 def _fusible_matmul(
-    x: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
-    y: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
-    z: fuser.Fusion[[jax.Array], jax.Array] | None,  # pytype: disable=invalid-annotation
+    x: fuser.Fusion[[], jax.Array],
+    y: fuser.Fusion[[], jax.Array],
+    z: fuser.Fusion[[jax.Array], jax.Array] | None,
     *,
     bm: int,
     bk: int,

@@ -121,7 +121,7 @@ class DebuggerFrame:
     except OSError:
       source = []
       offset = None
-    return DebuggerFrame(  # pytype: disable=wrong-arg-types
+    return DebuggerFrame(
         filename=frame_info.filename,
         locals=frame_info.frame.f_locals,
         globals={},

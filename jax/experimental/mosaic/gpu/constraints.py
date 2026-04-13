@@ -177,7 +177,7 @@ def reduce_reshape_expression(
           # Therefore, we can return the tiled layout as is.
           return RegisterLayout(tiled_layout)
     case _:
-      return dataclasses.replace(reshape, expression=reduced_expr)  # pytype: disable=bad-return-type
+      return dataclasses.replace(reshape, expression=reduced_expr)
 
 
 def reduce_transpose_expression(

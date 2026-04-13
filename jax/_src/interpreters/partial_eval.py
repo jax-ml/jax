@@ -411,7 +411,7 @@ class JaxprTracer(Tracer[JaxprTrace]):
     if self.pval.is_known():
       return get_referent(self.pval.get_known())
     elif isinstance(self.recipe, (FreeVar, ConstVar, Literal)):
-      return get_referent(self.recipe.val)  # pytype: disable=attribute-error
+      return get_referent(self.recipe.val)
     else:
       return self
 
@@ -860,7 +860,7 @@ def _partial_eval_jaxpr_nounits(
   jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(
       lu.wrap_init(fun, debug_info=f.debug_info.with_unknown_names()),
       known_avals)
-  (out_unknowns, jaxpr_unknown, res_avals, fwds), = cell  # pytype: disable=bad-unpacking
+  (out_unknowns, jaxpr_unknown, res_avals, fwds), = cell
 
   if config.enable_checks.value:
     core.check_jaxpr(jaxpr_known)

@@ -150,7 +150,7 @@ class MutableHiType(core.AbstractValue):
   def __eq__(self, other): assert False, "must override"
 
   # define lowering from (mutable) hijax type to (immutable) lojax types
-  def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pytype: disable=signature-mismatch  # pyrefly: ignore[bad-override]
+  def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pyrefly: ignore[bad-override]
     assert False, "must override"
   def lo_ty(self):
     assert False, "mutable hitypes should use lo_ty_qdd instead"

@@ -239,7 +239,7 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
     hash_obj.update(
         topology.fingerprint().to_bytes(8, byteorder="big")
         if jaxlib_extension_version >= 423
-        else topology.serialize()  # pyrefly: ignore[not-callable]  # pytype: disable=not-callable
+        else topology.serialize()  # pyrefly: ignore[not-callable]
     )
   except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized

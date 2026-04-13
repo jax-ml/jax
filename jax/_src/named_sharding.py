@@ -495,7 +495,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   for i in range(max_index + 1):
     axis = reverse_map[i]
     if axis:
-      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))  # pytype: disable=container-type-mismatch
+      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))
     else:
       partitions.append(None)
   return PartitionSpec(*partitions)

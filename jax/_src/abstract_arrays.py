@@ -153,7 +153,7 @@ dtypes.canonicalize_value_handlers[np.ma.MaskedArray] = _canonicalize_masked_arr
 
 def _canonicalize_python_scalar(literal_type, typ):
   def canonicalize_scalar(x):
-    return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))  # pytype: disable=wrong-arg-types
+    return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))
   return canonicalize_scalar
 
 dtypes.canonicalize_value_handlers[bool] = lambda x: x

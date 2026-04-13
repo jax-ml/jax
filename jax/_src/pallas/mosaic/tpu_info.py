@@ -567,7 +567,7 @@ def infer_tiling(
       return (*(1,) * len(leading_dims), factor, tiling.shape[1])
     case Tiling.SPARSE_CORE:
       [tile_size] = tiling.shape
-      return (*(1,) * len(leading_dims), tile_size * packing)  # pytype: disable=bad-return-type
+      return (*(1,) * len(leading_dims), tile_size * packing)
 
 
 def get_device_kind() -> str:

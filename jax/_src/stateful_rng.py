@@ -105,7 +105,7 @@ class StatefulPRNG:
       raise ValueError("cannot operate on split stateful generator")
 
     key = random.fold_in(self._base_key, ref_primitives.ref_get(self._counter))
-    ref_primitives.ref_addupdate(self._counter, ..., 1)  # pytype: disable=wrong-arg-types  # pytype bug?
+    ref_primitives.ref_addupdate(self._counter, ..., 1)  # pytype bug?
     shape_tuple = _canonicalize_size(shape)
     return random.split(key, shape_tuple) if shape_tuple else key
 

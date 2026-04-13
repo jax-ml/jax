@@ -39,7 +39,7 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
       registrations[platform].extend(
           (*i, 1) for i in module.registrations().items()
       )
-  return registrations  # pytype: disable=bad-return-type
+  return registrations
 
 
 def batch_partitionable_targets() -> list[str]:

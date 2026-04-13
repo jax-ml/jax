@@ -130,8 +130,8 @@ class BufferedRef:
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
-        self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
-        self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
+        self.gmem_ref.at[gmem_slices],
+        self.smem_ref.at[slot],
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
     )
@@ -142,9 +142,9 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
-        self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
+        self.smem_ref.at[slot],
         # pyrefly: ignore[bad-index]
-        self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
+        self.gmem_ref.at[gmem_slices],
         predicate=predicate,
         commit_group=False,
     )
@@ -1023,7 +1023,7 @@ def emit_pipeline_warp_specialized(
         for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
           if manual_consumed_barriers:
             assert consumed_barrier is not None
-            gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
+            gpu_primitives.barrier_wait(consumed_barrier.at[slot])
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
           bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)

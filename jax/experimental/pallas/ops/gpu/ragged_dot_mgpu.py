@@ -294,7 +294,7 @@ def main(unused_argv):
       else:
         assert runtime is not None
         print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
-      if runtime < best_runtime:  # pytype: disable=unsupported-operands
+      if runtime < best_runtime:
         best_runtime = runtime
         best_kwargs = kwargs
     if not best_kwargs:

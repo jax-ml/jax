@@ -17,7 +17,6 @@ https://github.com/google/flax/tree/main/examples/imagenet
 """
 
 # See issue #620.
-# pytype: disable=wrong-arg-count
 
 from collections.abc import Callable, Sequence
 from functools import partial

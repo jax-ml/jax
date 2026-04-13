@@ -797,7 +797,7 @@ class FragmentedArray:
               "Register array shape does not match the tiled layout"
           ) from None
         [vec_len] = self.registers.flat[0].type.shape
-        assert vec_len == self.layout.vector_length  # pytype: disable=attribute-error
+        assert vec_len == self.layout.vector_length
 
       case _:
         raise NotImplementedError
@@ -2892,7 +2892,7 @@ class FragmentedArray:
             _is_signed=self.is_signed,
         )
       case TiledLayout():
-        base_tile_shape = self.layout.base_tile_shape  # pytype: disable=attribute-error
+        base_tile_shape = self.layout.base_tile_shape
         assert base_tile_shape
         old_shape_suffix = self.shape[-len(base_tile_shape):]
         new_shape_suffix = shape[-len(base_tile_shape):]
@@ -3164,7 +3164,7 @@ class FragmentedArray:
       registers = np.empty(layout.registers_shape(shape), dtype=object)
       vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
       # pyrefly: ignore[bad-argument-type]
-      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):  # pytype: disable=wrong-arg-types
+      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
         ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
         update(registers, utils.multimem_load_reduce(vec_ty, ptr, reduction, is_signed))
       return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
@@ -3864,7 +3864,7 @@ class StaggeredTransferPlan(TransferPlan):
 
   @property
   def tile_index_transforms(self):
-    dim = self.dim  # pytype: disable=attribute-error
+    dim = self.dim
     def rotate(idx: tuple[int, ...]) -> tuple[int, ...]:
       return (
           *idx[:dim], (idx[dim] + self.stagger) % self.size, *idx[dim + 1 :],
@@ -4167,7 +4167,7 @@ def optimization_barrier(*arrays):
         )
     )
   # pytype cannot type check the return type of an overloaded function.
-  return results[0] if len(arrays) == 1 else results  # pytype: disable=bad-return-type
+  return results[0] if len(arrays) == 1 else results
 
 
 def tiled_copy_smem_gmem_layout(

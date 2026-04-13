@@ -1237,7 +1237,7 @@ class DialectBarrierRef:
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             # TODO(slebedev): Why is it safe to use None here?
-            phases=None,  # pyrefly: ignore[bad-argument-type]  # pytype: disable=wrong-arg-types
+            phases=None,  # pyrefly: ignore[bad-argument-type]
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         ),
         orders_tensor_core=memref_type.element_type.orders_tensor_core,

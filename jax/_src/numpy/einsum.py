@@ -307,7 +307,7 @@ def einsum(
   operands, contractions = contract_path(
         *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
-  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)  # pytype: disable=attribute-error
+  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
   num_contractions = len(contractions)
 
   out_sharding = canonicalize_sharding(out_sharding, 'einsum')

@@ -40,7 +40,6 @@ def dumps(obj: Any) -> bytes:
     # Fixes for dataclass internal singleton object serialization.
     # Bug: https://github.com/cloudpipe/cloudpickle/issues/386
     # pylint: disable=protected-access
-    # pytype: disable=module-attr
     dispatch_table[dataclasses._FIELD_BASE] = lambda x: f'{x.name}'  # type: ignore[missing-attribute]
     dispatch_table[dataclasses._MISSING_TYPE] = lambda _: 'MISSING'
     dispatch_table[dataclasses._HAS_DEFAULT_FACTORY_CLASS] = (  # type: ignore[missing-attribute]

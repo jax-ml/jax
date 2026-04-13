@@ -408,7 +408,7 @@ class OnDeviceProfiler:
       gpu.barrier()  # Make sure all warpgroups are done.
 
       block_idx = c(0, index)
-      for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
+      for dim in gpu.Dimension:
         block_idx = arith.addi(
             arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
         )

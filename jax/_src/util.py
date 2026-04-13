@@ -311,7 +311,7 @@ memoize = cache(max_size=None)
 def _ignore(): return None
 
 P = ParamSpec("P")
-R = TypeVar("R", covariant=True)  # pytype: disable=not-supported-yet
+R = TypeVar("R", covariant=True)
 
 class WeakrefCachedFunc(Protocol, Generic[P, R]):
   def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...

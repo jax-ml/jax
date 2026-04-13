@@ -41,7 +41,7 @@ def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
 
 
 def avals_to_layouts(avals):
-  return [list(reversed(range(aval.ndim))) for aval in avals]  # pytype: disable=attribute-error
+  return [list(reversed(range(aval.ndim))) for aval in avals]
 
 
 def pallas_call_lowering(
