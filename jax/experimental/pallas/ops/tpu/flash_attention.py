@@ -284,10 +284,10 @@ def _flash_attention_bwd(
       m,
       do,
       di,
-      block_q_major=block_sizes.block_q_major_dkv,
-      block_k_major=block_sizes.block_k_major_dkv,
-      block_k=block_sizes.block_k_dkv,
-      block_q=block_sizes.block_q_dkv,
+      block_q_major=block_sizes.block_q_major_dkv,  # pyrefly: ignore[bad-argument-type]
+      block_k_major=block_sizes.block_k_major_dkv,  # pyrefly: ignore[bad-argument-type]
+      block_k=block_sizes.block_k_dkv,  # pyrefly: ignore[bad-argument-type]
+      block_q=block_sizes.block_q_dkv,  # pyrefly: ignore[bad-argument-type]
       sm_scale=sm_scale,
       causal=causal,
       mask_value=DEFAULT_MASK_VALUE,
@@ -304,9 +304,9 @@ def _flash_attention_bwd(
       m,
       do,
       di,
-      block_q_major=block_sizes.block_q_dq,
-      block_k_major=block_sizes.block_k_major_dq,
-      block_k=block_sizes.block_k_dq,
+      block_q_major=block_sizes.block_q_dq,  # pyrefly: ignore[bad-argument-type]
+      block_k_major=block_sizes.block_k_major_dq,  # pyrefly: ignore[bad-argument-type]
+      block_k=block_sizes.block_k_dq,  # pyrefly: ignore[bad-argument-type]
       sm_scale=sm_scale,
       causal=causal,
       mask_value=DEFAULT_MASK_VALUE,
@@ -949,10 +949,10 @@ def _flash_attention_bwd_dkv(
     do,
     di,
     *,
-    block_q_major: int | None,
-    block_q: int | None,
-    block_k_major: int | None,
-    block_k: int | None,
+    block_q_major: int,
+    block_q: int,
+    block_k_major: int,
+    block_k: int,
     sm_scale: float,
     causal: bool = False,
     mask_value: float = DEFAULT_MASK_VALUE,
@@ -1103,14 +1103,14 @@ def _flash_attention_bwd_dkv(
   dkv_spec = pl.BlockSpec((1, 1, block_k_major, head_dim), dkv_index_map)
   out_specs = [dkv_spec, dkv_spec]
   scratch_shapes = [
-      pltpu.VMEM((block_k_major, head_dim), jnp.float32),  # type: ignore
-      pltpu.VMEM((block_k_major, head_dim), jnp.float32),  # type: ignore
+      pltpu.VMEM((block_k_major, head_dim), jnp.float32),
+      pltpu.VMEM((block_k_major, head_dim), jnp.float32),
   ]
 
   kernel = functools.partial(
       _flash_attention_dkv_kernel,
-      block_q=block_q,  # type: ignore
-      block_k=block_k,  # type: ignore
+      block_q=block_q,
+      block_k=block_k,
       sm_scale=sm_scale,
       causal=causal,
       mask_value=mask_value,
@@ -1267,7 +1267,7 @@ def _flash_attention_dq_kernel(
     should_not_run = lax.select(should_run, False, True)
   else:
     should_run = True
-    should_not_run = False  # type: ignore
+    should_not_run = False
 
   @pl.when(should_run)
   def run():
@@ -1295,9 +1295,9 @@ def _flash_attention_bwd_dq(
     do,
     di,
     *,
-    block_q_major: int | None,
-    block_k_major: int | None,
-    block_k: int | None,
+    block_q_major: int,
+    block_k_major: int,
+    block_k: int,
     sm_scale: float,
     causal: bool,
     mask_value: float,
@@ -1441,14 +1441,14 @@ def _flash_attention_bwd_dq(
       dq_spec,
       dab_spec,
   ]
-  scratch_shapes = [pltpu.VMEM((block_q_major, head_dim), jnp.float32)]  # type: ignore
+  scratch_shapes = [pltpu.VMEM((block_q_major, head_dim), jnp.float32)]
 
   kernel = functools.partial(
       _flash_attention_dq_kernel,
       sm_scale=sm_scale,
       causal=causal,
       mask_value=mask_value,
-      block_k=block_k,  # type: ignore
+      block_k=block_k,
       kv_seq_len=kv_seq_len,
   )
   name_scope = f"flash_mha_bwd_dq_{block_q_major=}_{block_k_major=}_{block_k=}"

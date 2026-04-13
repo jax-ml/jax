@@ -3657,7 +3657,7 @@ def _roll_lowering_rule(
   if jaxlib_extension_version < 425:
     # When removing this, also remove "type: ignore" below
     (out_aval,) = ctx.avals_out
-    return tpu.dynamic_rotate(  # type: ignore
+    return tpu.dynamic_rotate(
         ctx.aval_to_ir_type(out_aval),
         x,
         shift,
@@ -3665,7 +3665,7 @@ def _roll_lowering_rule(
         stride=stride,
         stride_dimension=stride_axis,
     )
-  return tpu.dynamic_rotate(  # type: ignore
+  return tpu.dynamic_rotate(
       x,
       shift,
       axis,

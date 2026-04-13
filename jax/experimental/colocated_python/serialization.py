@@ -290,7 +290,7 @@ def _make_specs_for_serialized_specs(
       mesh, jax.sharding.PartitionSpec()
   )
   return api.ShapeDtypeStruct(
-      shape=(), dtype=np.dtypes.StringDType(), sharding=replicated_sharding  # type: ignore
+      shape=(), dtype=np.dtypes.StringDType(), sharding=replicated_sharding
   )
 
 
@@ -313,7 +313,7 @@ def _serialize_specs(
 
   s_bytes = _serialize((specs_treedef, specs_leaves))
   s_str = base64.b64encode(s_bytes).decode("ascii")
-  s_np_array = np.array(s_str, dtype=np.dtypes.StringDType())  # type: ignore
+  s_np_array = np.array(s_str, dtype=np.dtypes.StringDType())
 
   # TODO(jmudigonda): Revisit this when JAX supports HLO sharding for making
   # jax.Array via make_array_from_single_device_arrays. We should then use a

@@ -3603,7 +3603,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
     )
     if use_x_sharding:
-      sharding = x.sharding  # type: ignore
+      sharding = x.sharding  # pyrefly: ignore[missing-attribute]
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
   val, _ = full_like_insert_pvary(val, x)
@@ -3611,7 +3611,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
 
 
 def full_like_insert_pvary(val, x):
-  from jax._src.state.types import TransformedRef  # type: ignore
+  from jax._src.state.types import TransformedRef  # pyrefly: ignore[missing-import]
   if isinstance(x, TransformedRef):
     all_varying = frozenset.union(*[
         typeof(x).mat.varying for x in tree_util.FlatTree.flatten(x).vals

@@ -143,7 +143,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info),
                      out_tangents)
   jaxpr, consts = tangent_trace.to_jaxpr(
-      out_tangents, debug_info.with_unknown_names(), source_info)  # type: ignore
+      out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is _tag) for c in consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
@@ -399,7 +399,7 @@ def backward_pass3(
       v, = eqn.outvars
       lin_eqns.append(eqn)
       if eqn.primitive is core.ref_p or eqn.primitive is core.empty_ref_p:
-        env[v] = RefAccum(v.aval.inner_aval)  # type: ignore
+        env[v] = RefAccum(v.aval.inner_aval)  # pyrefly: ignore[missing-attribute]
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval)
       elif eqn.primitive is core.accum_grad_in_ref_p:
@@ -520,7 +520,7 @@ def ct_check(primal, ct):
   if config.disable_bwd_checks.value:
     return
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
-  ct_aval_expected = primal.aval.to_ct_aval()  # type: ignore
+  ct_aval_expected = primal.aval.to_ct_aval()
   if not core.typematch(ct_aval, ct_aval_expected, no_dtype_check=True):
     # TODO(yashkatariya, mattjj): Add primitive name here for better error?
     raise ValueError(
@@ -1208,7 +1208,7 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
     args = unproject_accums(specs, primals_ctrefs)
     backward_pass3(call_jaxpr, False, (), args, cts)
     cts_out = [x.freeze() if isinstance(x, ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out
 
   update_params = call_transpose_param_updaters.get(primitive)
@@ -1217,7 +1217,7 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
                            [type(x) is not Zero for x in cts])
 
   out_flat = primitive.bind(*flat_args, subfuns=(transposed,), **params)
-  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # type: ignore
+  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # pyrefly: ignore[missing-attribute]
     if isinstance(x, ValAccum): x.accum(ct)
 fancy_transposes[core.call_p] = partial(call_transpose_fancy, call_p)
 

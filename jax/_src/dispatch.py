@@ -688,12 +688,13 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
-  results, dp_cts = [None] * len(cts), []
+  results: list[Any | None] = [None] * len(cts)
+  dp_cts = []
   for i, (ct, arg, device, src, cp) in enumerate(zip(
       cts, args, devices, srcs, copy_semantics)):
     if ad.is_undefined_primal(arg):
       if type(ct) is ad.Zero:
-        results[i] = ad.Zero(arg.aval.to_ct_aval())  # type: ignore
+        results[i] = ad.Zero(arg.aval.to_ct_aval())
       else:
         dp_cts.append((i, ct, arg, device, src, cp))
 

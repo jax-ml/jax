@@ -344,7 +344,8 @@ def mma(
     k_group_elems = 64
   scale_block: int | None = None
   if is_scaled:
-    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16  # type: ignore
+    assert a_scale is not None
+    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16
     if is_sparse:
       scale_block *= 2
     k_group_elems = max(k_group_elems, 4 * scale_block)
@@ -514,9 +515,9 @@ def mma(
   n_col_groups = n_groups // n_lane_groups
   assert d.layout.base_tile_shape[0] % 4 == 0
   lanes_per_n_group = d.layout.base_tile_shape[0] // 4
-  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None  # type: ignore
-  a_scale_addr_base = a_scale.address if is_scaled else None  # type: ignore
-  b_scale_addr_base = b_scale.address if is_scaled else None  # type: ignore
+  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None
+  a_scale_addr_base = a_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
+  b_scale_addr_base = b_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
   # B scales are padded when N is short, so it can't be derived from n_collective_group_elems.
   # Same for A scales when M is short.
   if is_scaled:
@@ -688,7 +689,7 @@ def _do_mma(
       )
     extra_constraints = extra_ptx = ""
 
-    def create_scaled_instr_descriptor(*args):  # type: ignore
+    def create_scaled_instr_descriptor(*args):
       raise NotImplementedError
 
   num_cta = 2 if collective else 1
@@ -1161,7 +1162,7 @@ class TMEMRef:
     if math.prod(addr_ref_ty.shape) != 1:
       raise ValueError(f"tmem_addr_ref must contain a single element, got: {addr_ref_ty}")
     i0 = arith.ConstantOp.create_index(0)
-    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)
+    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)  # pyrefly: ignore[bad-argument-type]
     if shape[0] < 32:
       raise ValueError(f"TMEM refs must have at least 32 rows, got: {shape[0]}")
     if layout is None:

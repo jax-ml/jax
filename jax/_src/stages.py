@@ -893,7 +893,7 @@ def _apply_himut(final_qdds, hi_args, out_mut):
   for i, a in enumerate(final_qdds):
     if isinstance(a, core.AvalQDD):
       lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
-      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # type: ignore
+      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # pyrefly: ignore[missing-attribute]
   assert next(out_mut_, None) is None
 
 # TODO(mattjj): de-dup with partial_eval.py
@@ -976,11 +976,11 @@ class DeviceAssignmentMismatch:
 
   @property
   def device_ids(self) -> Sequence[int]:
-    return [d.id for d in self.da]  # type: ignore
+    return [d.id for d in self.da]  # pyrefly: ignore[not-iterable]
 
   @property
   def platform(self) -> str:
-    return self.da[0].platform.upper()  # type: ignore
+    return self.da[0].platform.upper()  # pyrefly: ignore[bad-index]
 
   def _maybe_api_name(self, api_name) -> str:
     return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""

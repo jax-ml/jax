@@ -48,5 +48,5 @@ class FrozenDict(Mapping[K, V]):
   def __len__(self) -> int:
     return len(self._d)
 
-  def get(self, key: K) -> V | None:  # type: ignore
+  def get(self, key: K) -> V | None:  # pyrefly: ignore[bad-override]
     return self._d.get(key, None)

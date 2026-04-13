@@ -136,8 +136,8 @@ def _switch_internal(
     branches: Sequence[Callable],
     operands: Sequence[Any], *,
     branches_platforms: BranchesPlatforms | None):
-  if (config.disable_jit.value and core.is_concrete(index)):
-    return branches[int(index)](*operands)  # type: ignore
+  if config.disable_jit.value and core.is_concrete(index):
+    return branches[int(index)](*operands)  # pyrefly: ignore[bad-argument-type]
 
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
@@ -864,12 +864,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
                else None for x, inst in zip(args, inst_out)]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 
 
 def _cond_typecheck(bind_time, *in_atoms, branches, **params):

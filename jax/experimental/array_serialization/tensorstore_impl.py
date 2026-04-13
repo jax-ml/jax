@@ -558,7 +558,7 @@ async def async_deserialize(
     # TODO(yashkatariya): This is a band-aid fix. Figure out a better way to
     # make this work.
     if out.dtype == jnp.int4:
-      out = jnp.asarray(out)  # type: ignore
+      out = jnp.asarray(out)
     result = jax.device_put(
         out, Format(layout, make_single_device_sharding(device)))
     if byte_limiter is not None:

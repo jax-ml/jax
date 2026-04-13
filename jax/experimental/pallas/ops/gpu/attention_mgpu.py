@@ -607,8 +607,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       partial(kernel_dq, block_q=config.block_q_dq, block_kv=config.block_kv_dq),
       out_shape=q,
       scratch_shapes=[
-          (q_scratch, do_scratch, lse_scratch, delta_scratch),  # type: ignore
-          (plgpu.Barrier(num_barriers=compute_wgs),) * 4  # type: ignore
+          (q_scratch, do_scratch, lse_scratch, delta_scratch),
+          (plgpu.Barrier(num_barriers=compute_wgs),) * 4
       ],
       compiler_params=plgpu.CompilerParams(approx_math=True),
       grid=(num_q_heads, num_q_tiles, batch_size),
@@ -628,8 +628,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     partial(kernel_dkv, block_q=config.block_q_dkv, block_kv=config.block_kv_dkv),
     out_shape=[out_shape_kv, out_shape_kv],
     scratch_shapes=[
-        (k_scratch, v_scratch),  # type: ignore
-        (plgpu.Barrier(num_barriers=compute_wgs),) * 2  # type: ignore
+        (k_scratch, v_scratch),
+        (plgpu.Barrier(num_barriers=compute_wgs),) * 2
   ],
     compiler_params=plgpu.CompilerParams(approx_math=True),
     grid=(num_q_heads, num_kv_tiles, batch_size),
@@ -796,9 +796,9 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       thread_name="wg",
             out_shape=out_shape,
       scratch_shapes=(
-          tuple(smem_scratch),  # type: ignore
-          plgpu.Barrier(num_barriers=compute_wgs),  # type: ignore
-          plgpu.Barrier(num_arrivals=compute_wgs),),  # type: ignore
+          tuple(smem_scratch),
+          plgpu.Barrier(num_barriers=compute_wgs),
+          plgpu.Barrier(num_arrivals=compute_wgs),),
       compiler_params=plgpu.CompilerParams(
           approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
       ),

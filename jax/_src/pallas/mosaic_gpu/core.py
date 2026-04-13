@@ -430,7 +430,7 @@ def infer_tmem_layout(
     packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
-  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
+  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)
 
 
 def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:

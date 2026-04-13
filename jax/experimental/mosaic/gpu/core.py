@@ -295,7 +295,7 @@ def _mosaic_gpu_lowering_rule(
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
-  ).results  # type: ignore
+  ).results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -795,7 +795,7 @@ def _infer_arch() -> tuple[int, int]:
         f"Mosaic GPU does not yet support AMD ROCm devices. "
         f"Got compute_capability: {arch_name}"
     )
-  return tuple(map(int, arch_name.split(".")))  # type: ignore
+  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
 
 
 def _lower_as_gpu_kernel(

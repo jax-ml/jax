@@ -308,7 +308,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         # We log the HLO dialect for easier comparison with TF
         logging.info("[%s] JAX NON_OPT HLO\n%s",
                      self._testMethodName,
-                     jax_lowered.compiler_ir(dialect="hlo").as_hlo_text())  # type: ignore
+                     jax_lowered.compiler_ir(dialect="hlo").as_hlo_text())
 
         tf_args_signature = _make_tf_input_signature(*args)
         # If we give the signature, we cannot pass scalars

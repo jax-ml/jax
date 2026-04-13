@@ -2246,7 +2246,7 @@ class FragmentedArray:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
       check_supported_rounding(allowed_rounding)
-      return rounding.ptx  # type: ignore
+      return rounding.ptx
 
     # f8 <-> f32
     if cur_dtype == f32 and new_dtype in f8_types:

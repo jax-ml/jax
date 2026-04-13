@@ -1169,7 +1169,7 @@ def _pjit_call_impl_python(
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
-        args, compiled._in_shardings, compiled._in_layouts,  # type: ignore
+        args, compiled._in_shardings, compiled._in_layouts,  # pyrefly: ignore[missing-attribute]
         jaxpr.jaxpr.debug_info.safe_arg_names(len(args)))
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
@@ -1898,12 +1898,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
     args = ad.unproject_accums(specs, primals_ctrefs)
     ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # type: ignore
+    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache

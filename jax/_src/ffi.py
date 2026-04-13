@@ -487,13 +487,13 @@ def ffi_call(
 
   output_layouts_: Sequence[FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
-    output_layouts_ = output_layouts  # type: ignore
+    output_layouts_ = output_layouts  # pyrefly: ignore[bad-assignment]
     multiple_results = True
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
     result_avals = _result_avals([result_shape_dtypes])
-    output_layouts_ = (output_layouts,)  # type: ignore
+    output_layouts_ = (output_layouts,)  # pyrefly: ignore[bad-assignment]
 
   if custom_call_api_version >= 4 and legacy_backend_config is not None:
     raise ValueError(
@@ -631,7 +631,7 @@ def ffi_call_abstract_eval(
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else
                r.update(sharding=(core.get_cur_mesh_sharding()
-                                  if r.sharding.mesh.empty else r.sharding))  # type: ignore
+                                  if r.sharding.mesh.empty else r.sharding))  # pyrefly: ignore[missing-attribute]
                for r in result_avals), effects
 
 
