@@ -172,8 +172,10 @@ class LRUCache(CacheInterface):
     if not self.eviction_enabled:
       return
 
-    # a priority queue, each element is a tuple `(file_atime, key, file_size)`
-    h: list[tuple[int, str, int]] = []
+    target_size = self.max_size - additional_size
+
+    # --- Fast-path: accumulate sizes only; skip atime reads if no eviction needed ---
+    cache_files: list[tuple[str, int]] = []  # (key, file_size)
     dir_size = 0
     for cache_path in self.path.glob(f"*{_CACHE_SUFFIX}"):
       file_stat = cache_path.stat()
@@ -184,13 +186,23 @@ class LRUCache(CacheInterface):
       file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # type: ignore[missing-attribute]
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
-      atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
-      file_atime = int.from_bytes(atime_path.read_bytes(), "little")
-
       dir_size += file_size
+      cache_files.append((key, file_size))
+
+    if dir_size <= target_size:
+      return  # cache is within budget; skip expensive atime reads entirely
+
+    # --- Slow-path: build a min-heap by atime and evict LRU entries ---
+    # a priority queue, each element is a tuple `(file_atime, key, file_size)`
+    h: list[tuple[int, str, int]] = []
+    for key, file_size in cache_files:
+      atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
+      try:
+        file_atime = int.from_bytes(atime_path.read_bytes(), "little")
+      except FileNotFoundError:
+        file_atime = 0  # treat missing atime as oldest; evict it first
       heapq.heappush(h, (file_atime, key, file_size))
 
-    target_size = self.max_size - additional_size
     # evict files until the directory size is less than or equal
     # to `target_size`
     while dir_size > target_size:
@@ -203,6 +215,6 @@ class LRUCache(CacheInterface):
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
 
       cache_path.unlink()
-      atime_path.unlink()
+      atime_path.unlink(missing_ok=True)
 
       dir_size -= file_size
