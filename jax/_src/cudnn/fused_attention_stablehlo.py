@@ -879,9 +879,23 @@ def _dot_product_attention_bwd_batcher(
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
 
-  activation = jnp.reshape(activation, (B, N, T))
-  fwd_output = jnp.reshape(fwd_output, (B,) + query.shape[-3:])
-  grad_output = jnp.reshape(grad_output, (B,) + query.shape[-3:])
+  # activation (idx 10), fwd_output (idx 11), and grad_output (idx 12) may
+  # not carry the vmap batch axis (batch_dims[i] is None) when the cotangent
+  # is uniform across vmap lanes (e.g. grad_output from a scalar loss
+  # reduction).  Handle by inserting a size-1 axis and broadcasting to match
+  # the vmap axis size before flattening into the single B dimension.
+  def _reshape_residual(tensor, bdim, target_shape):
+    if bdim is not None:
+      return jnp.reshape(tensor, target_shape)
+    tensor = jnp.expand_dims(tensor, axis=0)
+    tensor = jnp.broadcast_to(tensor, (Bs[0],) + tensor.shape[1:])
+    return jnp.reshape(tensor, target_shape)
+
+  activation = _reshape_residual(activation, batch_dims[10], (B, N, T))
+  fwd_output = _reshape_residual(
+      fwd_output, batch_dims[11], (B,) + query.shape[-3:])
+  grad_output = _reshape_residual(
+      grad_output, batch_dims[12], (B,) + query.shape[-3:])
 
   grads = _dot_product_attention_bwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
