@@ -409,7 +409,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
 
 
 def _manual_spec(manual_axes, spec: P, mesh) -> P:
-  out: list[str | tuple[str, ...] | None] = []
+  out: list[str | tuple[str | None, ...] | None] = []
   s: str | None | tuple[str, ...]
   for s in spec:
     if s is None:
@@ -420,7 +420,7 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
         temp.pop()
       if None in temp:
         raise ValueError(f"Invalid spec: {spec}")
-      out.append(None if len(temp) == 0 else tuple(temp))  # type: ignore[arg-type]
+      out.append(None if len(temp) == 0 else tuple(temp))
     else:
       out.append(s if s in manual_axes else None)
   _check_unreduced(SpecErrorType.input, mesh, manual_axes, spec)

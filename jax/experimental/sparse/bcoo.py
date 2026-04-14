@@ -639,7 +639,8 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *,
                                preferred_element_type=preferred_element_type)
     return BCOO(bufs, shape=shape)
   elif isinstance(lhs, BCOO):
-    return _bcoo_dot_general(lhs.data, lhs.indices, rhs, dimension_numbers=dimension_numbers,  # type: ignore[arg-type]
+    assert not isinstance(rhs, BCOO)
+    return _bcoo_dot_general(lhs.data, lhs.indices, rhs, dimension_numbers=dimension_numbers,
                              preferred_element_type=preferred_element_type,
                              lhs_spinfo=lhs._info)
   elif isinstance(rhs, BCOO):

@@ -33,13 +33,13 @@ class SourceMapDump:
 
 class CompileFn(Protocol):
 
-  def __call__(self, work_dir, fn, f_args, f_kwargs, **kwargs) -> Any:
+  def __call__(self, work_dir, fn, f_args, f_kwargs, /, **kwargs) -> Any:
     ...
 
 
 class GenerateDumpFn(Protocol):
 
-  def __call__(self, compile_result: Any, **kwargs) -> SourceMapDump:
+  def __call__(self, compile_result: Any, /, **kwargs) -> SourceMapDump:
     ...
 
 

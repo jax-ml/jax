@@ -455,7 +455,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
     return lax.full_like(a, fill_value, dtype, shape,
                          sharding=util.canonicalize_device_to_sharding(device))
   else:
-    shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
+    shape = np.shape(a) if shape is None else shape  # pyrefly: ignore[no-matching-overload]
     dtype = dtypes.result_type(a) if dtype is None else dtype
     return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)

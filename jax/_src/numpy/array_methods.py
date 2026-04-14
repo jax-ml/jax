@@ -514,10 +514,12 @@ def _compute_newshape(arr: Array, newshape: DimSize | Shape) -> Shape:
   """Fixes a -1 value in newshape, if present."""
   orig_newshape = newshape  # for error messages
   try:
-    iter(newshape)  # type: ignore[arg-type]
-  except:
+    iter(newshape)  # pyrefly: ignore[no-matching-overload]
+  except TypeError:
     newshape = [newshape]
-  newshape = core.canonicalize_shape(newshape)  # type: ignore[arg-type]
+  else:
+    newshape: Sequence[DimSize]  # pyrefly: ignore[redefinition]
+  newshape = core.canonicalize_shape(newshape)
   neg1s = [i for i, d in enumerate(newshape) if type(d) is int and d == -1]
   if len(neg1s) > 1:
     raise TypeError("can only specify one unknown axis size with a `-1` value, "

@@ -23,7 +23,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, NamedTuple, TypeVar, Union, cast as type_cast, overload
+from typing import Any, NamedTuple, Never, TypeVar, Union, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -3374,8 +3374,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     weak_type = dtypes.is_weakly_typed(fill_value)
     fill_dtype = _dtype(fill_value)
   else:
-    if dtypes.issubdtype(dtype, dtypes.extended):
-      return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
+    if isinstance(dtype, dtypes.ExtendedDType):
+      return dtype._rules.full(shape, fill_value, dtype)
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
@@ -3579,11 +3579,11 @@ def full_like(x: ArrayLike | DuckTypedArray,
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
+  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-  if dtypes.issubdtype(dtype, dtypes.extended):
-    return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
+  if isinstance(dtype, dtypes.ExtendedDType):
+    return dtype._rules.full(fill_shape, fill_value, dtype)
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
@@ -3601,7 +3601,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and (x.sharding._is_concrete or not get_concrete_mesh().empty)
         and getattr(x, '_committed', True)
         and not weak_type
-        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
+        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # pyrefly: ignore[no-matching-overload]
     )
     if use_x_sharding:
       sharding = x.sharding  # pyrefly: ignore[missing-attribute]
@@ -7160,7 +7160,7 @@ def _merge_on_one_axis(operand, new_sizes):
   return _split_on_one_axis(new_sizes, operand.shape)
 
 
-def raise_reshape_error(operand, new_sizes):
+def raise_reshape_error(operand, new_sizes) -> Never:
   raise core.ShardingTypeError(
       'This reshape is not supported. Please specify the sharding of the'
       ' output via the `out_sharding` argument of jax.lax.reshape. Got'
@@ -7181,16 +7181,16 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
     is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
-  if is_split:  # type: ignore
-    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,  # type: ignore
+  if is_split:
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
                                         dimensions)
 
   try:
     is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
-  if is_merge:  # type: ignore
-    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,  # type: ignore
+  if is_merge:
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
                                         dimensions)
   raise_reshape_error(operand, new_sizes)
 

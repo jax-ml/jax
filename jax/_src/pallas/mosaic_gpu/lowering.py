@@ -3025,7 +3025,7 @@ def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:
   return arith_dialect.divui(result, _as_index(cluster_size[dim.value]))
 
 
-def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
+def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: Hashable):
   if not axis_names:
     raise LookupError(
         "No axis names are available. Make sure you are using `pl.core_map`"

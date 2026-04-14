@@ -963,7 +963,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
   """
   x, y = util.ensure_arraylike("histogram2d", x, y)
   try:
-    N = len(bins)  # type: ignore[arg-type]
+    N = len(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     N = 1
 
@@ -1043,19 +1043,18 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
   N, D = np.shape(sample)
 
   if range is not None and (
-      len(range) != D or any(r is not None and np.shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
+      len(range) != D or any(r is not None and np.shape(r)[0] != 2 for r in range)):  # pyrefly: ignore[no-matching-overload]
     raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    num_bins = len(bins)  # type: ignore[arg-type]
+    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
     bins_per_dimension: list[ArrayLike] = D * [bins]  # type: ignore[assignment]
   else:
-    if num_bins != D:
+    if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
-    bins_per_dimension = list(bins)  # type: ignore[arg-type]
 
   bin_idx_by_dim: list[Array] = []
   bin_edges_by_dim: list[Array] = []
@@ -4469,11 +4468,9 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   """
   A = util.ensure_arraylike("tile", A)
   try:
-    iter(reps)  # type: ignore[arg-type]
+    reps_tup = tuple(iter(reps))  # pyrefly: ignore[no-matching-overload]
   except TypeError:
     reps_tup: tuple[DimSize, ...] = (reps,)
-  else:
-    reps_tup = tuple(reps)  # type: ignore[arg-type]
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                    for rep in reps_tup)
   # lax.tile expects reps and A.shape to have the same rank.
@@ -7635,7 +7632,7 @@ def delete(
 
   # Case 1: obj is a static integer.
   try:
-    obj = operator.index(obj)  # type: ignore[arg-type]
+    obj = operator.index(obj)  # pyrefly: ignore[bad-argument-type]
     obj = _canonicalize_axis(obj, a.shape[axis])
   except TypeError:
     pass

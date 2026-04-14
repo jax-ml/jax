@@ -259,7 +259,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   # check that shape is concrete
-  shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
+  shape = core.canonicalize_shape(shape)  # pyrefly: ignore[bad-argument-type]
   arr_shape = np.shape(arr)
   if (core.definitely_equal_shape(arr_shape, shape) and
       (sharding is None or core.typeof(arr).sharding == sharding)):
@@ -363,7 +363,7 @@ def ndim(a: ArrayLike | SupportsNdim) -> int:
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.ndim if available.
-  return np.ndim(a)  # type: ignore[arg-type]
+  return np.ndim(a)  # pyrefly: ignore[bad-argument-type]
 
 
 @export
@@ -456,6 +456,6 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | Sequence[int] 
   check_arraylike("size", a, emit_warning=True)
   if axis is None and hasattr(a, "size"):
     return a.size
-  _shape = shape(a)  # type: ignore[arg-type]
+  _shape = shape(a)  # pyrefly: ignore[bad-argument-type]
   axis = canonicalize_axis_tuple(axis, len(_shape), allow_duplicate=False)
   return math.prod(_shape[i] for i in axis)

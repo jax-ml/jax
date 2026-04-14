@@ -1129,7 +1129,7 @@ def lower_sharding_computation(
        len(const_args), tuple(global_in_avals),
        semantic_in_shardings, semantic_out_shardings,
        in_layouts, out_layouts, num_devices,
-       tuple(device_list) if prim_requires_devices else None,  # type: ignore[arg-type]
+       tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
        donated_invars, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
        lowering_parameters=lowering_parameters,
@@ -1630,7 +1630,7 @@ def _maybe_get_and_check_out_shardings(
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         xla_s = sharding_impls.logical_sharding(aval.shape, aval.dtype, xla_s)
       try:
-        new_out_shardings.append(_gspmd_to_named_sharding(xla_s, aval, orig))  # type: ignore[arg-type]
+        new_out_shardings.append(_gspmd_to_named_sharding(xla_s, aval, orig))  # pyrefly: ignore[bad-argument-type]
       except:
         new_out_shardings.append(xla_s)
     else:

@@ -699,7 +699,7 @@ def tracers_to_jaxpr(
   outvars = map(get_atom, out_tracers)
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
-  jaxpr = Jaxpr(const_vars, invars,  # type: ignore[arg-type]
+  jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
                 outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!

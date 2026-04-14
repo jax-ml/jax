@@ -2675,7 +2675,7 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   # Case 1: concrete integer scalar powers:
   if core.is_concrete(x2):
     try:
-      x2 = operator.index(x2)  # type: ignore[arg-type]
+      x2 = operator.index(x2)  # pyrefly: ignore[bad-argument-type]
     except TypeError:
       pass
     else:

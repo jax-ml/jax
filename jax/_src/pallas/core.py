@@ -1160,8 +1160,8 @@ def get_grid_mapping(
   else:
     dim_check: Any = jax_core.is_constant_dim
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
-  grid_mapping_grid = tuple(
-      dynamic_grid_dim if (
+  grid_mapping_grid: GridMappingGrid = tuple(
+      dynamic_grid_dim if (  # pyrefly: ignore[bad-argument-type]
           d is None or (not jax_core.is_constant_dim(d) and not dynamic_shapes_export_enabled())
       ) else d
       for d in grid_spec.grid
@@ -1252,7 +1252,7 @@ def get_grid_mapping(
       out_avals,
   )
   grid_mapping = GridMapping(
-      grid=grid_mapping_grid,  # type: ignore[arg-type]
+      grid=grid_mapping_grid,
       grid_names=grid_spec.grid_names,
       block_mappings=(*in_block_mappings, *out_block_mappings),
       index_map_avals=index_map_avals,
@@ -1708,7 +1708,7 @@ def lower_as_mlir(
     exported = export(f, platforms=platforms)(*args, **kwargs)
     stablehlo = exported.mlir_module()
 
-  return stablehlo  # type: ignore[return-value]
+  return stablehlo
 
 
 _out_shape_to_aval_mapping: dict[

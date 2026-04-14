@@ -1522,7 +1522,7 @@ def _partition_grid(
       partition_dimension,
       grid_offset,
   )
-  return new_grid, offsets  # type: ignore[return-value]
+  return new_grid, offsets
 
 
 def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):

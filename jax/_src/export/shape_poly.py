@@ -2105,7 +2105,7 @@ def _solve_dim_equations(
       if not isinstance(var_value, _DimExpr):
         assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error]
       shape_env[var] = var_value  # pyrefly: ignore[unsupported-operation]
-      solution_error_message_pieces.extend([  # type: ignore[container-type-mismatch]
+      solution_error_message_pieces.extend([
         f"'{var}' = ", var_value,
         f" from specification '{eqn.aval_dim_expr}' "
         f"for dimension {eqn.dim_name} (= ",

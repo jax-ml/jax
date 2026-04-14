@@ -3408,10 +3408,10 @@ def _dynamic_slice_indices(
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
     raise ValueError(msg.format(len(start_indices), operand.shape))
-  if not isinstance(start_indices, (tuple, list)):
-    if start_indices.ndim != 1:  # type: ignore[union-attr]
+  if not isinstance(start_indices, Sequence):
+    if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
-                       .format(start_indices.shape))  # type: ignore[union-attr]
+                       .format(start_indices.shape))
     start_indices = list(start_indices)
   result: list[ArrayLike] = []
   if isinstance(allow_negative_indices, bool):

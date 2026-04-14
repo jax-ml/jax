@@ -864,7 +864,7 @@ def emit_python_callback(
   call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
     callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore
+    def _wrapped_callback(token, *args):
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (

@@ -1824,7 +1824,7 @@ def interpret_pallas_call(
   )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
-      a if a is not pallas_core.dynamic_grid_dim
+      a if not isinstance(a, pallas_core.DynamicGridDim)
       else next(dynamic_grid_args_iter)
       for a in grid_mapping.grid
   )
@@ -1996,7 +1996,7 @@ def interpret_pallas_call(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
 
   if grid:
-    num_iterations = functools.reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    num_iterations = functools.reduce(jnp.multiply, grid)
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -2007,14 +2007,14 @@ def interpret_pallas_call(
     randomized_grid_coordinates = (jnp.array((), dtype=jnp.int32),) * len(grid)
   else:
     randomized_grid_coordinates = _get_randomized_grid_coordinates(
-        grid, mosaic_params, interpret_params.random_seed  # type: ignore[arg-type]
+        grid, mosaic_params, interpret_params.random_seed
     )
 
   parallel_dim_semantics = _get_parallel_dim_semantics(
       mosaic_params, len(grid)
   )
   parallel_subgrid_size = _get_parallel_subgrid_size(
-      parallel_dim_semantics, grid  # type: ignore[arg-type]
+      parallel_dim_semantics, grid
   )
   num_points_in_parallel_subgrid_per_core = (
       parallel_subgrid_size + interpret_params.num_cores_per_device - 1
