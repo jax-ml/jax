@@ -1266,7 +1266,8 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
     dVL_raw = dot(vl, Fmat_L * P_L)
     # Normalization correction: enforce real(VL^H dVL)_{jj} = 0
     VLH_dVL = dot(_H(vl), dVL_raw)
-    dVL = dVL_raw - vl * _extract_diagonal(VLH_dVL.real)[..., np.newaxis, :]
+    norm_corr_L = _extract_diagonal(VLH_dVL.real).astype(vl.dtype)
+    dVL = dVL_raw - vl * norm_corr_L[..., np.newaxis, :]
 
     out_primals.append(vl)
     out_tangents.append(dVL)
@@ -1276,7 +1277,8 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
     dVR_raw = dot(vr, Fmat * P)
     # Normalization correction: enforce real(VR^H dVR)_{jj} = 0
     VRH_dVR = dot(_H(vr), dVR_raw)
-    dVR = dVR_raw - vr * _extract_diagonal(VRH_dVR.real)[..., np.newaxis, :]
+    norm_corr_R = _extract_diagonal(VRH_dVR.real).astype(vr.dtype)
+    dVR = dVR_raw - vr * norm_corr_R[..., np.newaxis, :]
 
     out_primals.append(vr)
     out_tangents.append(dVR)
