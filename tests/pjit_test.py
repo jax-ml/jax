@@ -2641,7 +2641,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
-    def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
+    def f(x, y, z, a, b, c):
       return c @ c.T
 
     inp = jnp.arange(4)
@@ -2661,7 +2661,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_pjit_keep_unused_default_false(self):
     @pjit
-    def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
+    def f(x, y, z, a, b, c):
       return c @ c.T
 
     inp = jax.device_put(jnp.arange(4), jax.devices()[0])
@@ -3693,8 +3693,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = literals.TypedNdArray(np.arange(8, dtype=np.float32),
-                                  weak_type=False)
+    const = literals.TypedNdArray(np.arange(8, dtype=np.float32))
 
     @jax.jit
     def f(x):
@@ -6520,7 +6519,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @config.numpy_rank_promotion('allow')
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_manual_mode_mix_map(self, mesh):  # pylint: disable=unused-argument
+  def test_manual_mode_mix_map(self, mesh):
     def simple_func(w, x):
       return jnp.sum(w * x, axis=-1)
 
@@ -6533,7 +6532,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       @partial(jax.shard_map, out_specs=P('x'), axis_names={'x'})
       def map_fn(x, w):
         return jax.lax.map(partial(simple_func, w), x.squeeze(0),
-            batch_size=batch_size)  # pylint: disable=cell-var-from-loop
+            batch_size=batch_size)
       map_fn(x, w)  # doesn't crash
 
   @jtu.with_explicit_mesh((4,), ('x',))
@@ -7365,6 +7364,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np.arange(8), P('x'))
     out = f(arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_cumsum_sharded(self, mesh):
+    np_inp = np.arange(16).reshape(2, 8)
+
+    @jax.jit
+    def f(x):
+      return jnp.cumsum(x, axis=0)
+
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "Input should be unsharded over the axis being reduced"):
+      f(arr)
+
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'x')))
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+    self.assertArraysEqual(out, np.cumsum(np_inp, axis=0))
+
+    @jax.jit
+    def g(x):
+      return jnp.cumsum(x)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'x')))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "The input should be fully replicated"):
+      g(arr)
 
   def test_device_put_under_set_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -8413,6 +8439,110 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr = jax.device_put(np_inp, P(None, None, 'x'))
       out = jnp.reshape(arr, (-1, arr.shape[-1]))
       self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
+  @parameterized.parameters(
+      ((4,), P(('x', 'y')), (2, 2), P('x', 'y')),
+      ((8,), P(('x', 'y')), (2, 4), P('x', 'y')),
+      ((8,), P(('x', 'y')), (4, 2), P(('x', 'y'), None)),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_split_one_dim_multi_axes(
+      self, in_shape, in_spec, out_shape, out_spec, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return jnp.reshape(x, out_shape)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, in_spec))
+
+  @parameterized.parameters(
+      ((8,), P(('x', 'y', 'z')), (2, 2, 2), P('x', 'y', 'z')),
+      ((8,), P(('x', 'y', 'z')), (2, 4), P('x', ('y', 'z'))),
+      ((8,), P(('x', 'y', 'z')), (4, 2), P(('x', 'y'), 'z')),
+      ((4, 2), P(('x', 'y'), 'z'), (2, 2, 2), P('x', 'y', 'z')),
+      ((16,), P(('x', 'y', 'z')), (2, 2, 2, 2), P('x', 'y', 'z', None)),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshape_split_one_dim_multi_axes_3_mesh_axes(
+      self, in_shape, in_spec, out_shape, out_spec, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return jnp.reshape(x, out_shape)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, in_spec))
+
+  @parameterized.parameters(
+      ((2, 2), P('x', 'y'), (4,), P(('x', 'y'))),
+      ((2, 4), P('x', 'y'), (8,), P(('x', 'y'))),
+      ((4, 2), P(('x', 'y'), None), (8,), P(('x', 'y'))),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_merge_one_dim_multi_axes(
+      self, in_shape, in_spec, out_shape, out_spec, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return jnp.reshape(x, out_shape)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, in_spec))
+
+  @parameterized.parameters(
+      ((2, 2, 2), P('x', 'y', 'z'), (8,), P(('x', 'y', 'z'))),
+      ((2, 4), P('x', ('y', 'z')), (8,), P(('x', 'y', 'z'))),
+      ((4, 2), P(('x', 'y'), 'z'), (8,), P(('x', 'y', 'z'))),
+      ((2, 2, 2), P('x', 'y', 'z'), (4, 2), P(('x', 'y'), 'z')),
+      ((2, 2, 2, 2), P('x', 'y', 'z', None), (16,), P(('x', 'y', 'z'))),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshape_merge_one_dim_multi_axes_3_mesh_axes(
+      self, in_shape, in_spec, out_shape, out_spec, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return jnp.reshape(x, out_shape)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, in_spec))
+
+  @parameterized.parameters(
+      ((2, 2, 2), P('x', None, 'y'), (8,)),
+      ((12,), P(('x', 'y')), (3, 4)),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_split_merge_error(self, in_shape, in_spec, out_shape, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return jnp.reshape(x, out_shape)
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(arr)
 
   @config.numpy_dtype_promotion('standard')
   @jtu.with_explicit_mesh((2,), 'x')

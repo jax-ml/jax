@@ -55,9 +55,6 @@ from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
 
-# TODO(sharadmv): Enable type checking.
-# pytype: skip-file
-
 _T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map

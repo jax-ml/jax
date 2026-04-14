@@ -1159,7 +1159,7 @@ def _lower_pin(ctx, x_op, *, to):
             ])
         })
     }
-    config = dict(backend_config=backend_config)
+    config: dict[str, Any] = dict(backend_config=backend_config)
   else:
     config = {}
   out_aval, = ctx.avals_out
@@ -1167,7 +1167,7 @@ def _lower_pin(ctx, x_op, *, to):
       "Pin",
       operands=mlir.flatten_ir_values([x_op]),
       result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
-      **config,  # type: ignore
+      **config,
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
 

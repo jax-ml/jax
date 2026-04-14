@@ -37,6 +37,7 @@ from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
     CopyPartition as CopyPartition,
+    OOBFillMode as OOBFillMode,
     TMAReductionOp as TMAReductionOp,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,

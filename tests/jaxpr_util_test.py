@@ -110,6 +110,39 @@ class JaxprStatsTest(jtu.JaxTestCase):
         {"sampleType", "sample", "stringTable", "location", "function"},
         set(profile.keys()))
 
+  def test_all_eqns_with_traceback(self):
+    @jit
+    def g(x):
+      return jax.lax.sin(x)
+
+    def f(x):
+      return g(x) + 1.
+
+    jaxpr = make_jaxpr(f)(1.)
+
+    eqns = list(jaxpr_util._all_eqns_with_traceback(jaxpr.jaxpr, None, set()))
+
+    self.assertGreater(len(eqns), 1)
+
+    jit_tb = None
+    sin_tb = None
+
+    for tb, eqn in eqns:
+      if eqn.primitive.name == 'jit':
+        jit_tb = tb
+      elif eqn.primitive.name == 'sin':
+        sin_tb = tb
+
+    self.assertIsNotNone(jit_tb)
+    self.assertIsNotNone(sin_tb)
+
+    jit_frames = jit_tb.raw_frames()[0]
+    sin_frames = sin_tb.raw_frames()[0]
+
+    self.assertGreater(len(sin_frames), len(jit_frames))
+    self.assertEqual(sin_frames[-len(jit_frames):], jit_frames)
+
+
   def test_count_eqns(self):
     # Test a simple flat jaxpr
     def f(x):

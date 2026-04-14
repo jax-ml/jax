@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# pylint: disable=g-importing-member
 import asyncio
 from dataclasses import dataclass
 from functools import partial
@@ -55,7 +53,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 import tensorstore as ts
-# pylint: enable=g-importing-member
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -849,7 +846,7 @@ class UserPytreeAPITest(UserAPITestCase):
     return pathlib.Path(tempdir.name).resolve()
 
   @parameterized.product(tree=[{'a': 1}, [1, 2, 3], (1, 2, 3), 1, 2, 3])
-  def test_save_then_load(self, tree):  # pylint: disable=redefined-outer-name
+  def test_save_then_load(self, tree):
     path = self.create_tempdir()
     tree = jax.tree.map(jnp.array, tree)
     tree_save(tree, path)
@@ -921,11 +918,7 @@ class UserPytreeAPITest(UserAPITestCase):
   def test_flax_frozen_dict(self):
     path = self.create_tempdir()
     try:
-      # pylint: disable=g-import-not-at-top
-      # pylint: disable=g-importing-member
       from flax.core.frozen_dict import FrozenDict
-      # pylint: enable=g-importing-member
-      # pylint: enable=g-import-not-at-top
     except ImportError:
       logging.warning('Skipping Flax FrozenDict tests as flax is not installed')
       return

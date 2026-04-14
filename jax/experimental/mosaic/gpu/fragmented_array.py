@@ -797,7 +797,7 @@ class FragmentedArray:
               "Register array shape does not match the tiled layout"
           ) from None
         [vec_len] = self.registers.flat[0].type.shape
-        assert vec_len == self.layout.vector_length  # pytype: disable=attribute-error
+        assert vec_len == self.layout.vector_length
 
       case _:
         raise NotImplementedError
@@ -2246,7 +2246,7 @@ class FragmentedArray:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
       check_supported_rounding(allowed_rounding)
-      return rounding.ptx  # type: ignore
+      return rounding.ptx
 
     # f8 <-> f32
     if cur_dtype == f32 and new_dtype in f8_types:
@@ -2838,7 +2838,7 @@ class FragmentedArray:
         assert lane_idx is not None and swizzle_warp_idx is not None
         out_regs[unreduced_index] = reduce_stored(
             # pyrefly: ignore[unbound-name]
-            reg_ty, i, lane_idx, swizzle_warp_idx  # pylint: disable=undefined-variable
+            reg_ty, i, lane_idx, swizzle_warp_idx
         )
       utils.warpgroup_barrier()
     del unreduced_indices
@@ -2892,7 +2892,7 @@ class FragmentedArray:
             _is_signed=self.is_signed,
         )
       case TiledLayout():
-        base_tile_shape = self.layout.base_tile_shape  # pytype: disable=attribute-error
+        base_tile_shape = self.layout.base_tile_shape
         assert base_tile_shape
         old_shape_suffix = self.shape[-len(base_tile_shape):]
         new_shape_suffix = shape[-len(base_tile_shape):]
@@ -3122,12 +3122,16 @@ class FragmentedArray:
         if swizzle != 16:
           raise ValueError("Only TiledLayouts support swizzling")
         assert isinstance(self.layout, WGStridedFragLayout)
-        if atomic is not None and isinstance(ref, utils.MultimemRef):
-          raise NotImplementedError("Multimem refs do not support atomic stores")
         # pyrefly: ignore[bad-argument-type]
         for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
           if isinstance(ref, utils.MultimemRef):
-            ref.store(get(self.registers), idx)
+            ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
+            if atomic is not None:
+              self._store_register_atomic(
+                  ptr, get(self.registers), atomic, is_smem=False, multimem=True,
+              )
+            else:
+              utils.multimem_store(ptr, get(self.registers))
           elif atomic is not None:
             is_smem = utils.is_smem_ref(ref)
             memory_space = 3 if is_smem else None
@@ -3164,7 +3168,7 @@ class FragmentedArray:
       registers = np.empty(layout.registers_shape(shape), dtype=object)
       vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
       # pyrefly: ignore[bad-argument-type]
-      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):  # pytype: disable=wrong-arg-types
+      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
         ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
         update(registers, utils.multimem_load_reduce(vec_ty, ptr, reduction, is_signed))
       return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
@@ -3298,11 +3302,20 @@ class FragmentedArray:
       vreg: ir.Value,
       atomic: Literal["add", "max", "min", "and", "or", "xor"],
       is_smem: bool,
+      multimem: bool = False,
   ):
     i32 = ir.IntegerType.get_signless(32)
-    scope = "cta" if is_smem else "gpu"
-    space = ".shared::cta" if is_smem else ""
-    ptr_constraint = "r" if is_smem else "l"
+    if multimem:
+      assert not is_smem
+      red = "multimem.red"
+      scope = "sys"
+      space = ".global"
+      ptr_constraint = "l"
+    else:
+      red = "red"
+      scope = "cta" if is_smem else "gpu"
+      space = ".shared::cta" if is_smem else ""
+      ptr_constraint = "r" if is_smem else "l"
     element_type = self.mlir_dtype
     element_bitwidth = utils.bitwidth(element_type)
     noftz = ""
@@ -3320,12 +3333,12 @@ class FragmentedArray:
         raise NotImplementedError(
             f"f16/bf16 only supports add, min, max atomics, got {atomic}"
         )
-      if is_smem and atomic != "add":
+      if (is_smem or multimem) and atomic != "add":
         raise NotImplementedError(
-            f"f16/bf16 SMEM atomics only support add, got {atomic}"
+            f"f16/bf16 SMEM/multimem atomics only support add, got {atomic}"
         )
       ptx_type = f"{element_type}x2"
-      noftz = ".noftz"
+      noftz = "" if multimem else ".noftz"
     else:
       raise NotImplementedError(
           f"Unsupported element type for atomic stores: {element_type}"
@@ -3369,7 +3382,7 @@ class FragmentedArray:
                   llvm.extractelement(pair, arith.constant(i32, 0)),
                   llvm.extractelement(pair, arith.constant(i32, 1)),
               ],
-              f"red.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
+              f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
               f"{ptr_constraint},h,h",
               has_side_effects=True,
           )
@@ -3378,7 +3391,7 @@ class FragmentedArray:
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
               [ptr, *regs_slice],
-              f"red.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
+              f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
               f"{ptr_constraint}" + ",r" * width,
               has_side_effects=True,
           )
@@ -3388,7 +3401,7 @@ class FragmentedArray:
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [ptr, reg],
-            f"red{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
+            f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
             f"{ptr_constraint},r",
             has_side_effects=True,
         )
@@ -3405,19 +3418,19 @@ class FragmentedArray:
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
     if atomic is not None:
-      if isinstance(ref, utils.MultimemRef):
-        raise NotImplementedError("Multimem refs do not support atomic stores")
       if any(isinstance(d, Replicated) for d in layout.warp_dims + layout.lane_dims):
         raise NotImplementedError(
             "Atomic stores not supported for layouts with replicated dims"
         )
-      is_smem = utils.is_smem_ref(ref)
+      multimem = isinstance(ref, utils.MultimemRef)
+      is_smem = not multimem and utils.is_smem_ref(ref)
       stores = self.transfer_tiled(
-          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
+          ref.ref if multimem else ref,
+          swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank,
       )
       for get, _update, _idx, base_ptr in stores:
         self._store_register_atomic(
-            base_ptr, get(self.registers), atomic, is_smem,
+            base_ptr, get(self.registers), atomic, is_smem, multimem=multimem,
         )
       return
     # Note that the loop below will "race" for layouts that replicate data.
@@ -3864,7 +3877,7 @@ class StaggeredTransferPlan(TransferPlan):
 
   @property
   def tile_index_transforms(self):
-    dim = self.dim  # pytype: disable=attribute-error
+    dim = self.dim
     def rotate(idx: tuple[int, ...]) -> tuple[int, ...]:
       return (
           *idx[:dim], (idx[dim] + self.stagger) % self.size, *idx[dim + 1 :],
@@ -4016,7 +4029,7 @@ def plan_tiled_transfer(
         if not has_bank_conflicts(transform):
           # We've found a strategy that avoids bank conflicts!
           return StaggeredTransferPlan(  # type: ignore[call-arg]
-              stagger, dim, tiles_shape[dim], group_stride  # pylint: disable=too-many-function-args
+              stagger, dim, tiles_shape[dim], group_stride
           )
   raise ValueError(
       "Failed to synthesize a transfer pattern that avoids bank conflicts"
@@ -4082,7 +4095,7 @@ def optimization_barrier(*arrays):
     if isinstance(dtype, ir.F32Type) or dtype == i32:
       if isinstance(reg_ty, ir.VectorType):
         [vec_len] = ir.VectorType(reg_ty).shape
-        array_regs = [  # pylint: disable=g-complex-comprehension
+        array_regs = [
             vector.extract(
                 reg,
                 dynamic_position=[],
@@ -4167,7 +4180,7 @@ def optimization_barrier(*arrays):
         )
     )
   # pytype cannot type check the return type of an overloaded function.
-  return results[0] if len(arrays) == 1 else results  # pytype: disable=bad-return-type
+  return results[0] if len(arrays) == 1 else results
 
 
 def tiled_copy_smem_gmem_layout(

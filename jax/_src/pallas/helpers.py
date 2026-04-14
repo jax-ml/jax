@@ -67,7 +67,7 @@ def empty_ref_like(x: object) -> jax_typing.Array:
 
 def when(
     condition: bool | jax_typing.ArrayLike, /
-) -> Callable[[Callable[[], None]], Callable[[], None]]:
+) -> Callable[[Callable[[], None]], None]:
   """Calls the decorated function when the condition is met.
 
   Args:
@@ -189,7 +189,7 @@ def _make_kernel(body,
   return wrapper
 
 
-def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),  # pylint: disable=g-bare-generic
+def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
            out_shape: object | None = None,
            *,
            mesh: pl_core.Mesh,

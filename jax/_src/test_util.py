@@ -309,7 +309,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
   counts = collections.Counter()
   thread_local_state.lower_jaxpr_to_fun_counts = counts
   def get():
-    key, *others = {k for k in counts if fun_name in k}  # pytype: disable=bad-unpacking
+    key, *others = {k for k in counts if fun_name in k}
     if others: raise Exception(f"ambiguous name: {fun_name}")
     return counts[key]
   try:
@@ -547,22 +547,22 @@ class CudaArchSpecificTest:
 
   def skip_unless_sm90a(self):
     if not is_cuda_compute_capability_equal("9.0"):
-      self.skipTest("Only works on GPU with capability sm90a")  # pytype: disable=attribute-error
+      self.skipTest("Only works on GPU with capability sm90a")
 
   def skip_unless_tcgen05(self):
     if not is_device_cuda():
-      self.skipTest("Only works on GPU")  # pytype: disable=attribute-error
+      self.skipTest("Only works on GPU")
     else:
       d, *_ = xla_bridge.local_devices(backend="gpu")
       target_major, _ = map(int, d.compute_capability.split(".", 1))
       if target_major not in (10, 11):
-        self.skipTest("Only works on GPU with tcgen05 instructions")  # pytype: disable=attribute-error
+        self.skipTest("Only works on GPU with tcgen05 instructions")
 
   def skip_unless_tcgen05_int8(self):
     self.skip_unless_tcgen05()
     if not any(map(is_cuda_compute_capability_equal, ("10.0", "10.1", "11.0"))):
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-instructions-mma-ws
-      self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")  # pytype: disable=attribute-error
+      self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -657,7 +657,7 @@ def request_cpu_devices(nr_devices: int):
 
 def skip_on_flag(flag_name, skip_value):
   """A decorator for test methods to skip the test when flags are set."""
-  def skip(test_method):        # pylint: disable=missing-docstring
+  def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
       flag_value = config._read(flag_name)
@@ -1709,11 +1709,10 @@ def parameterized_filterable(*,
       for kw in kwargs]
   else:
     for kw in kwargs:
-      testcase_name = kw.get("testcase_name")
-      if testcase_name is None:
-        testcase_name = "_".join(f"{k}={kw[k]}"  # type: ignore
-                                 for k in sorted(kw.keys()))
-      kw["testcase_name"] = sanitize_test_name(testcase_name)  # type: ignore
+      kw_testcase_name = kw.get("testcase_name")
+      if kw_testcase_name is None:
+        kw_testcase_name = "_".join(f"{k}={kw[k]}" for k in sorted(kw))
+      kw["testcase_name"] = sanitize_test_name(kw_testcase_name)
 
     kwargs_with_testcase_name = kwargs
   if one_containing is not None:

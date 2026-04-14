@@ -203,7 +203,7 @@ def test_converters():
       try:
         apply_tf = converter.convert_fn(harness)
         print("=== Conversion OK!")
-      except Exception as e:  # pylint: disable=broad-except
+      except Exception as e:
         error_msg = "Conversion error\n" + _crop_convert_error(repr(e))
         print(f"=== {error_msg}")
         _maybe_reraise(e)

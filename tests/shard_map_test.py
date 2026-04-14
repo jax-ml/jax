@@ -61,7 +61,7 @@ zip, unsafe_zip = safe_zip, zip
 # Helper for some tests.
 def create_inputs(a_sharding, b_sharding, dtype=None):
   mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
-  b, e, f = 8, 8, 8  # pylint: disable=invalid-name
+  b, e, f = 8, 8, 8
   m1 = jax.device_put(
       jnp.arange(b * e, dtype=dtype).reshape((b, e)),
       jax.sharding.NamedSharding(mesh, a_sharding))

@@ -366,7 +366,7 @@ def canonicalize_dtype(
 @export
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # pytype: disable=bad-return-type
+  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)
 
 class InvalidInputException(Exception):
   pass
@@ -597,7 +597,7 @@ _complex_types: list[JAXType] = [
 # does not participate in promotions at the moment. Similarly, `_dtype_kinds` is
 # only meant for the `jnp.isdtype` and we want to be conservative and not allow
 # StringDType to be used in there.
-string_dtype = np.dtypes.StringDType()  # pytype: disable=module-attr
+string_dtype = np.dtypes.StringDType()
 
 _jax_dtype_set = {
     float0,
@@ -1150,7 +1150,7 @@ class PrimalTangentDType(ExtendedDType):
   type = primal_tangent_dtype_scalar
   def __repr__(self): return self.name
   @property
-  def _rules(self):  # type: ignore
+  def _rules(self):  # pyrefly: ignore[bad-override]
     return types.SimpleNamespace(
       physical_element_aval=
       lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),

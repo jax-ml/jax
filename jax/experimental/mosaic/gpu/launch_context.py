@@ -459,7 +459,7 @@ class Scratch:
       alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
       load_op = llvm.LoadOp(empty_arr_ty, alloc_op.result)
 
-    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):  # pytype: disable=attribute-error
+    with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
       builtin.unrealized_conversion_cast([ptr_ty], [load_op.result])
 
   def _find_alloc_load_and_device_ptr(
@@ -604,6 +604,12 @@ def _tma_dma_type(
 class AsyncCopyImplementation(enum.Enum):
   TMA = enum.auto()
   CP_ASYNC = enum.auto()
+
+
+class OOBFillMode(enum.IntEnum):
+  UNDEFINED = 0
+  PROMISE_IN_BOUNDS = 1
+  ZEROS = 2
 
 
 @dataclasses.dataclass()
@@ -993,7 +999,7 @@ class LaunchContext:
     # and tiling change that order and if we picked a partition based on the
     # untransformed slice shape, we might have ended up with a non-contiguous
     # SMEM window, which would no longer be realizable in a single TMA transfer.
-    collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
+    collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1 and not isinstance(leader_tracked, _Partitioned):
       assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
@@ -1080,6 +1086,7 @@ class LaunchContext:
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
+      oob_mode: OOBFillMode = OOBFillMode.ZEROS,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1110,6 +1117,7 @@ class LaunchContext:
       into their SMEM but only the first block in the collective tracks
       progress via barrier arrivals. This uses the `cta_group::2` mode.
     """
+    del oob_mode  # Unused.
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)

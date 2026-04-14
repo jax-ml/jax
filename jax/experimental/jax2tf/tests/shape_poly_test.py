@@ -143,7 +143,7 @@ class PolyHarness(Harness):
             [d if isinstance(d, int) else None for d in a.shape],
             dtype=a.dtype) for a in args_specs]
     else:
-      input_signature = self.input_signature  # type: ignore
+      input_signature = self.input_signature
 
     expect_error_type, expect_error_regex = self.expect_error
     if self.skip_jax_run and not self.arg_descriptors:
@@ -203,7 +203,7 @@ class PolyHarness(Harness):
           logging.info(log_message(
               f"Running custom_assert with tol={tol} due "
               f"to {custom_assert_lims[0]}"))
-          custom_assert_lims[0].custom_assert(tst, res_jax, res_tf, args=args,  # type: ignore
+          custom_assert_lims[0].custom_assert(tst, res_jax, res_tf, args=args,
                                               tol=tol, err_msg=None)
         return res_tf
       else:

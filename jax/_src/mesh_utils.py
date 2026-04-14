@@ -731,7 +731,7 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       ] = d
 
   # Check there is no "hole" in the mesh we constructed.
-  if (out == None).any():  # pylint: disable=singleton-comparison
+  if (out == None).any():
     raise AssertionError(
         'Constructed mesh contains a "hole"; probable cause: coordinates '
         f'of jax_devices are not a contiguous cuboid: {jax_devices}'

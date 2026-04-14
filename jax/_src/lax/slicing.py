@@ -1554,7 +1554,7 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
     operand_aval, = lax_utils.ensure_shaped(operand.aval)
     zeros = lax.full(operand_aval.shape, 0, operand_aval.dtype,
                      sharding=operand_aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))  # type: ignore
+    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
     operand.accum(dynamic_update_slice_p.bind(zeros, out_ct, *start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
@@ -2371,9 +2371,9 @@ def _scatter_dtype_rule(operand, indices, updates, **kwargs):
 
 def _get_updates_batching_dims(indices_batching_dims, update_window_dims,
                                index_vector_dim, updates_shape):
-  scatter_dim_in_updates = list(range(index_vector_dim))
+  scatter_dim_in_updates: list[int | None] = list(range(index_vector_dim))
   for i in update_window_dims:
-    scatter_dim_in_updates.insert(i, None)  # type: ignore
+    scatter_dim_in_updates.insert(i, None)
   assert len(scatter_dim_in_updates) == len(updates_shape)
   return tuple(scatter_dim_in_updates.index(i) for i in indices_batching_dims)
 
@@ -3446,7 +3446,7 @@ def _dynamic_slice_indices(
       continue
     if allow_negative_index:
       d_arr = lax.convert_element_type(d, _dtype(i))
-      # pyrefly: ignore [unsupported-operation]
+      # pyrefly: ignore[unsupported-operation]
       result.append(lax.select(i < 0, i + d_arr, i))
     else:
       result.append(i)

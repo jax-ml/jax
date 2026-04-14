@@ -88,7 +88,7 @@ def _mma_single_tile(
   )
   num_acc_regs, num_a_regs, num_b_regs = 4, 4, 2
 
-  acc_regs = [  # pylint: disable=g-complex-comprehension
+  acc_regs = [
       vector.extract(
           reg,
           dynamic_position=[],

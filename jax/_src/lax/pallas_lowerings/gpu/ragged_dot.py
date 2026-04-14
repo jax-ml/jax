@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial  # pylint: disable=g-importing-member
+from functools import partial
 import math
 import typing
 from types import SimpleNamespace
@@ -565,4 +565,4 @@ def _pallas_ragged_dot_general_impl(
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
           precision=precision,
           preferred_element_type=preferred_element_type,
-      )  # pytype: disable=bad-return-type
+      )

@@ -231,7 +231,7 @@ class JetTrace(core.Trace):
       return val, zero_series
 
   def process_primitive(self, primitive, tracers, params, /):
-    order = self.order              # pytype: disable=attribute-error
+    order = self.order
     primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
 
     if all(t is zero_series for t in series_in):

@@ -116,7 +116,7 @@ def _get_cpu_device_map() -> dict[int, jax.Device]:
   # under colocated_python.
 
   # Look for CPU devices in the default backend.
-  for d in xb.local_devices()[0].client._get_all_devices():  # pylint: disable=protected-access
+  for d in xb.local_devices()[0].client._get_all_devices():
     if d.device_kind == "cpu":
       if d.id in cpu_device_map:
         raise ValueError(
@@ -129,7 +129,7 @@ def _get_cpu_device_map() -> dict[int, jax.Device]:
 
   # Fall back to searching CPU devices in all backends.
   for backend in xb.backends().values():
-    for d in backend._get_all_devices():  # pylint: disable=protected-access
+    for d in backend._get_all_devices():
       if d.device_kind == "cpu":
         if d.id in cpu_device_map:
           raise ValueError(
@@ -245,7 +245,7 @@ def _serialize(obj: Any) -> bytes:
         {jax.sharding.NamedSharding: _reduce_named_sharding},  # pyrefly: ignore[bad-argument-type]
         {DeviceList: _reduce_device_list},  # pyrefly: ignore[bad-argument-type]
         {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},  # pyrefly: ignore[bad-argument-type]
-        cloudpickle.CloudPickler.dispatch_table,  # pylint: disable=attribute-error  # pyrefly: ignore[bad-argument-type]
+        cloudpickle.CloudPickler.dispatch_table,  # pyrefly: ignore[bad-argument-type]
     )
     dispatch = dispatch_table
 
@@ -290,7 +290,7 @@ def _make_specs_for_serialized_specs(
       mesh, jax.sharding.PartitionSpec()
   )
   return api.ShapeDtypeStruct(
-      shape=(), dtype=np.dtypes.StringDType(), sharding=replicated_sharding  # type: ignore
+      shape=(), dtype=np.dtypes.StringDType(), sharding=replicated_sharding
   )
 
 
@@ -313,7 +313,7 @@ def _serialize_specs(
 
   s_bytes = _serialize((specs_treedef, specs_leaves))
   s_str = base64.b64encode(s_bytes).decode("ascii")
-  s_np_array = np.array(s_str, dtype=np.dtypes.StringDType())  # type: ignore
+  s_np_array = np.array(s_str, dtype=np.dtypes.StringDType())
 
   # TODO(jmudigonda): Revisit this when JAX supports HLO sharding for making
   # jax.Array via make_array_from_single_device_arrays. We should then use a

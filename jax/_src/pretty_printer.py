@@ -34,8 +34,7 @@ from typing import Any
 
 from jax._src import config
 from jax._src.lib import _pretty_printer as _pretty_printer
-# pyrefly: ignore [missing-import]
-from jax._src.util import use_cpp_class, use_cpp_method
+from jax._src.util import use_cpp_class, use_cpp_method  # pyrefly: ignore[missing-import]
 
 
 _PPRINT_USE_COLOR = config.bool_state(
@@ -119,17 +118,17 @@ class Doc:
 
 def nil() -> Doc:
   """An empty document."""
-  return _pretty_printer.nil()  # type: ignore
+  return _pretty_printer.nil()  # pyrefly: ignore[bad-return]
 
 
 def text(text: str, annotation: str | None = None) -> Doc:
   """Literal text."""
-  return _pretty_printer.text(text, annotation)  # type: ignore
+  return _pretty_printer.text(text, annotation)  # pyrefly: ignore[bad-return]
 
 
 def concat(children: Sequence[Doc]) -> Doc:
   """Concatenation of documents."""
-  return _pretty_printer.concat(children)  # type: ignore
+  return _pretty_printer.concat(children)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 def brk(text: str = " ") -> Doc:
@@ -137,7 +136,7 @@ def brk(text: str = " ") -> Doc:
 
   Prints either as a newline or as `text`, depending on the enclosing group.
   """
-  return _pretty_printer.brk(text)  # type: ignore
+  return _pretty_printer.brk(text)  # pyrefly: ignore[bad-return]
 
 
 def group(doc: Doc) -> Doc:
@@ -147,12 +146,12 @@ def group(doc: Doc) -> Doc:
   entire group would fit on the line when printed that way. Otherwise, breaks
   inside the group as printed as newlines.
   """
-  return _pretty_printer.group(doc)  # type: ignore
+  return _pretty_printer.group(doc)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 def nest(n: int, doc: Doc) -> Doc:
   """Increases the indentation level by `n`."""
-  return _pretty_printer.nest(n, doc)  # type: ignore
+  return _pretty_printer.nest(n, doc)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 def color(
@@ -166,7 +165,7 @@ def color(
   Overrides the foreground/background/intensity of the text for the child doc.
   Requires use_colors=True to be set when printing; otherwise does nothing.
   """
-  return _pretty_printer.color(child, foreground, background, intensity)  # type: ignore
+  return _pretty_printer.color(child, foreground, background, intensity)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 def source_map(doc: Doc, source: Any) -> Doc:
@@ -178,7 +177,7 @@ def source_map(doc: Doc, source: Any) -> Doc:
   equality. A text region to source object mapping can be populated as a side
   output of the ``format`` method.
   """
-  return _pretty_printer.source_map(doc, source)  # type: ignore
+  return _pretty_printer.source_map(doc, source)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 type_annotation = partial(color, intensity=Intensity.NORMAL,

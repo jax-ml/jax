@@ -1831,7 +1831,7 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
-  jaxpr = property(lambda self: self.fun.args[2])  # pytype: disable=attribute-error
+  jaxpr = property(lambda self: self.fun.args[2])
 
   def __call__(self, out_ct, *extra_args):
     if extra_args:
@@ -2047,7 +2047,7 @@ def make_jaxpr(
 
 def _infer_src_sharding(src, x, x_aval) -> Sharding | None:
   if src is not None:
-    return src  # pytype: disable=bad-return-type
+    return src
   if isinstance(x, array.ArrayImpl):
     return x.sharding
   if isinstance(x, core.Tracer):
@@ -2187,7 +2187,7 @@ def device_put(
       _check_sharding(aval, d)
     if core.trace_state_clean():
       out_flat = dispatch._batched_device_put_impl(
-          *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
+          *x_flat, devices=device_flat, srcs=src_flat,
           copy_semantics=copy_semantics, dst_avals=dst_avals)
     else:
       out_flat = dispatch.device_put_p.bind(
@@ -2452,7 +2452,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   float32
   """
   if type(fun) is xc._xla.PjitFunction:
-    return fun.trace(*args, **kwargs).out_info  # type: ignore
+    return fun.trace(*args, **kwargs).out_info  # pyrefly: ignore[missing-attribute]
   try: hash(fun)
   except TypeError: fun = partial(fun)
   return jit(fun).trace(*args, **kwargs).out_info

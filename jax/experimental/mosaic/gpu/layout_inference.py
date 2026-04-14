@@ -114,7 +114,7 @@ class ValueSite:
   @property
   def shape(self) -> tuple[int, ...]:
     """Returns the shape of the underlying value."""
-    return tuple(self.value.type.shape)  # pytype: disable=attribute-error
+    return tuple(self.value.type.shape)
 
   @property
   def memory_space(self) -> MemorySpace:
@@ -151,7 +151,7 @@ def extract_assignment_candidates_from_reduce_equation(
     keep_dims: bool,
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
-  large_shape = large.key.shape  # pytype: disable=attribute-error
+  large_shape = large.key.shape
 
   if isinstance(small.value, fa.WGSplatFragLayout):
     yield cs.RegisterLayout(fa.WGSplatFragLayout(large_shape))
@@ -216,22 +216,10 @@ def _default_tmem_layout_for_variable(
   value = variable.key.value
   parent = value.owner
   if isinstance(parent, mgpu.TmemAllocOp):
-    return tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+    return tcgen05._infer_tmem_layout(
         tuple(value.type.shape), bool(parent.collective), packing=1
     )
   return None
-
-
-def _extract_tiling_candidate(
-    divide_constraint: cs.Divides, num_tiled_dims: int
-) -> Iterator[tuple[cs.Variable, cs.Constant]]:
-  if not isinstance(divide_constraint.expr, cs.Variable):
-    return
-  if num_tiled_dims > len(divide_constraint.tiling_multiple):
-    # The tiling's rank cannot be larger than the size of `tiling_multiple`.
-    return
-  tiling = divide_constraint.tiling_multiple[-num_tiled_dims:]
-  yield divide_constraint.expr, cs.SMEMTiling(lc.TileTransform(tiling))
 
 
 def _register_layouts_for_optimized_transfer_to_smem(
@@ -261,6 +249,34 @@ def _register_layouts_for_optimized_transfer_to_smem(
   yield from candidate_layouts
 
 
+def _conjure_tilings_for_smem_ref(
+    ref_ty: ir.MemRefType
+) -> Iterator[tuple[int, ...]]:
+  if len(ref_ty.shape) < 2:
+    return
+  bitwidth = utils.bitwidth(ref_ty.element_type)
+  strides, _ = ref_ty.get_strides_and_offset()
+  rank = len(strides)
+  dim_order = np.argsort(strides)
+
+  # We want to tile only the last two dimensions.
+  if {dim_order[0], dim_order[1]} != {rank - 1, rank - 2}:
+    return
+
+  minor_dim = ref_ty.shape[dim_order[0]]
+  second_to_minor_dim = ref_ty.shape[dim_order[1]]
+
+  # The second to minor dimension must be tileable by 8.
+  if second_to_minor_dim % 8 != 0:
+    return
+
+  transposed = dim_order[0] != rank - 1
+  for swizzle in [128, 64, 32]:
+    swizzle_elems = 8 * swizzle // bitwidth
+    if minor_dim % swizzle_elems == 0:
+      yield (swizzle_elems, 8) if transposed else (8, swizzle_elems)
+
+
 def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
@@ -276,8 +292,8 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    assert variable.key.memory_space == MemorySpace.TMEM  # pytype: disable=attribute-error
-    dtype = ir.MemRefType(variable.key.value.type).element_type  # pytype: disable=attribute-error
+    assert variable.key.memory_space == MemorySpace.TMEM
+    dtype = ir.MemRefType(variable.key.value.type).element_type
     for packing in (1, 32 // utils.bitwidth(dtype)):
       for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
           packing
@@ -287,7 +303,7 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
     return
 
   assert isinstance(constant, cs.TMEMLayout)
-  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  assert variable.key.memory_space == MemorySpace.REG
   layout = constant.value
   packing = layout.vector_length
   for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
@@ -312,24 +328,26 @@ def _extract_layout_candidates_from_smem_registers_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    assert variable.key.memory_space == MemorySpace.SMEM  # pytype: disable=attribute-error
-    if inference_utils.is_mma_layout(layout):
-      tiling = _infer_tiling_for_mma_ref(
-          variable.key.value.type,
-          max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-      )
-      divide = cs.Divides(variable, tiling)
-      if (divide2 := division_constraint_per_var.get(variable)) is not None:
-        # This is done on two lines to satisfy type checkers.
-        # TODO(b/447079781): clean up the `merge_divides_constraints` to
-        # avoid the need for this.
-        [merged] = cs.merge_divides_constraints([divide, divide2])
-        divide = cast(cs.Divides, merged)
-      yield from _extract_tiling_candidate(divide, len(tiling))
+    assert variable.key.memory_space == MemorySpace.SMEM
+    if isinstance(layout, fa.TiledLayout) and len(variable.key.shape) >= 2:
+      # Maintain a set of yielded tilings to avoid duplicates caused by existing
+      # divides constraints.
+      yielded = set()
+      divide_constraint = division_constraint_per_var.get(variable)
+      for tiling in _conjure_tilings_for_smem_ref(variable.key.value.type):
+        if divide_constraint is not None:
+          # Apply existing multiplicity constraints to the conjured tiling.
+          tiling = cs.merge_divides_constraints(
+              divide_constraint, cs.Divides(variable, tiling)
+          ).tiling_multiple
+        if tiling in yielded:
+          continue
+        yielded.add(tiling)
+        yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
     return
 
   assert isinstance(constant, cs.SMEMTiling)
-  assert variable.key.memory_space == MemorySpace.REG  # pytype: disable=attribute-error
+  assert variable.key.memory_space == MemorySpace.REG
   for layout in _register_layouts_for_optimized_transfer_to_smem(
       variable.key.value.type, constant, arch
   ):
@@ -512,7 +530,7 @@ def find_assignments_for(
       )
     variable, expr = assignment
     assert isinstance(expr, cs.Constant)
-    if not is_valid_assignment(variable.key.shape, expr):  # pytype: disable=name-error
+    if not is_valid_assignment(variable.key.shape, expr):
       continue
     # Trying one valid assignment consumes fuel.
     fuel -= 1
@@ -574,7 +592,7 @@ class DerivationContext:
 
   def producer_ref(self, operand: ValueSite) -> cs.Variable:
     """Returns the producer reference variable for the given operand."""
-    return self.variable_for_value_site[producer_result(operand)]  # pytype: disable=name-error
+    return self.variable_for_value_site[producer_result(operand)]
 
 
 ValueSitesForVariable = dict[cs.Variable, list[ValueSite]]
@@ -608,7 +626,7 @@ def _add_constraint_system_derivation_rule(op: type[ir.OpView]):
   def wrapper(rule: ConstraintSystemDerivationRule):
     if op is not None:
       assert hasattr(op, "OPERATION_NAME")
-      _constraint_system_derivation_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+      _constraint_system_derivation_rules[op.OPERATION_NAME] = rule
     return rule
 
   return wrapper
@@ -631,7 +649,7 @@ def _pointwise_op_constraint_system(
     op: ir.OpView,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
-  all_value_sites = vector_value_sites(op)  # pytype: disable=name-error
+  all_value_sites = vector_value_sites(op)
   variable = cs.Variable(all_value_sites[-1])
   return cs.ConstraintSystem(), {variable: all_value_sites}
 
@@ -972,54 +990,25 @@ def _layout_cast_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   operand = ValueSite(op, VariableType.OPERAND, 0)
+  operand_var = cs.Variable(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
-  variable = cs.Variable(operand)
+  result_var = cs.Variable(result)
   out_layout = layouts_lib.from_layout_attr(op.new_layout)
   if not is_valid_register_layout_assignment(operand.shape, out_layout):
     raise ValueError(
         f"Cannot cast to layout {out_layout}: the layout is not compatible"
         f" with the operand shape {operand.shape} in {op}."
     )
+  bitwidth = utils.bitwidth(op.x.type.element_type)
   return (
       cs.ConstraintSystem(
-          assignments={variable: cs.RegisterLayout(out_layout)}
+          assignments={result_var: cs.RegisterLayout(out_layout)},
+          constraints=[
+              cs.Relayout(operand_var, result_var, bitwidth, strict=False),
+          ],
       ),
-      {variable: [operand, result]},
+      {operand_var: [operand], result_var: [result]},
   )
-
-
-def _infer_tiling_for_mma_ref(
-    ref_ty: ir.MemRefType, max_swizzle: mgpu.SwizzlingMode
-) -> tuple[int, int]:
-  element_bytewidth = utils.bytewidth(ref_ty.element_type)
-  strides, _ = ref_ty.get_strides_and_offset()
-  min_dim_index = np.argmin(strides)
-  minor_dim = ref_ty.shape[min_dim_index]
-
-  # Try tiling with all swizzling modes starting from the largest one.
-  for swizzle in [
-      mgpu.SwizzlingMode.k128ByteSwizzle,
-      mgpu.SwizzlingMode.k64ByteSwizzle,
-      mgpu.SwizzlingMode.k32ByteSwizzle,
-      mgpu.SwizzlingMode.kNoSwizzle,
-  ]:
-    if swizzle > max_swizzle:
-      continue
-    swizzle_elems = swizzle // element_bytewidth
-    if minor_dim % swizzle_elems == 0:
-      minor_tiling = swizzle_elems
-      break
-  else:
-    # No valid tile transform can be inferred.
-    raise ValueError(f"{ref_ty.shape} is not a valid WGMMA shape")
-
-  major_tiling = 8
-  transposed = min_dim_index != len(strides) - 1
-  if transposed:
-    tiling = (minor_tiling, major_tiling)
-  else:
-    tiling = (major_tiling, minor_tiling)
-  return tiling
 
 
 @_add_constraint_system_derivation_rule(mgpu.WGMMAOp)
@@ -1424,7 +1413,7 @@ def _tcgen05_mma_constraint_system(
   acc = ValueSite(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
-  acc_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+  acc_layout = tcgen05._infer_tmem_layout(
       tuple(acc_type.shape), bool(op.collective), packing=1
   )
   assignments[acc_variable] = cs.TMEMLayout(acc_layout)
@@ -1469,7 +1458,7 @@ def _tcgen05_mma_constraint_system(
     a_type = ir.ShapedType(op.a.type)
     a_var = ctx.producer_ref(a)
     packing = 32 // utils.bitwidth(a_type.element_type)
-    a_layout = tcgen05._infer_tmem_layout(  # pylint: disable=protected-access
+    a_layout = tcgen05._infer_tmem_layout(
         tuple(a_type.shape), bool(op.collective), packing
     )
     assignments[a_var] = cs.TMEMLayout(a_layout)
@@ -2174,9 +2163,9 @@ def producer_result(operand: ValueSite) -> ValueSite:
     return ValueSite(producer, VariableType.RESULT, index)
 
   if isinstance(producer, ir.Block):
-    index = list[ir.Value](producer.arguments).index(value)  # pytype: disable=attribute-error
-    region_index = list(producer.owner.regions).index(producer.region)  # pytype: disable=attribute-error
-    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)  # pytype: disable=attribute-error
+    index = list[ir.Value](producer.arguments).index(value)
+    region_index = list(producer.owner.regions).index(producer.region)
+    return ValueSite(producer.owner, VariableType.ARGUMENT, index, region_index)
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
@@ -2218,7 +2207,7 @@ def derive_relayout_constraints(
       if value_site.memory_space != MemorySpace.REG:
         continue
 
-      elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)  # pytype: disable=attribute-error
+      elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)
       if value_site.type == VariableType.OPERAND:
         pr = producer_result(value_site)
         producer_variable = variable_for_value_site[pr]
@@ -2227,7 +2216,9 @@ def derive_relayout_constraints(
         if producer_variable not in visited:
           # The producer of a variable must be relayout-able to the variable.
           constraints.append(
-              cs.Relayout(producer_variable, variable, elt_bitwidth)
+              cs.Relayout(
+                  producer_variable, variable, elt_bitwidth, strict=True
+              )
           )
       elif value_site.type in (VariableType.RESULT, VariableType.ARGUMENT):
         for co in consumer_operands(value_site):
@@ -2237,7 +2228,9 @@ def derive_relayout_constraints(
           if consumer_variable not in visited:
             # A variable must be relayout-able to its consumers.
             constraints.append(
-                cs.Relayout(variable, consumer_variable, elt_bitwidth)
+                cs.Relayout(
+                    variable, consumer_variable, elt_bitwidth, strict=True
+                )
             )
     visited.add(variable)
   return constraints
@@ -2391,7 +2384,7 @@ def infer_layout(
     )
     if not should_have_layout:
       return
-    rule = _constraint_system_derivation_rules.get(op.OPERATION_NAME, None)  # pytype: disable=attribute-error
+    rule = _constraint_system_derivation_rules.get(op.OPERATION_NAME, None)
     if rule is None:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
     rule_result = rule(ctx, op)

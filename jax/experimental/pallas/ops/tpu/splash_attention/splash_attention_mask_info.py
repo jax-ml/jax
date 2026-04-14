@@ -287,8 +287,9 @@ def _get_mask_info_for_shard(
       assert coord_m is not None
       is_next_mask = idx > coord_m
       if is_next_mask:
+        assert mask_coords_iter is not None
         try:
-          coord_m = next(mask_coords_iter)  # type: ignore
+          coord_m = next(mask_coords_iter)
         except StopIteration:
           coord_m = first_m
 

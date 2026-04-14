@@ -31,7 +31,7 @@ AbstractToken = core.AbstractToken
 abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
 
-numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
+numpy_scalar_types: set[type] = {
     dtypes.int4, np.int8, np.int16, np.int32, np.int64,
     dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
@@ -48,7 +48,7 @@ if dtypes.int1 is not None:
   numpy_scalar_types.add(dtypes.int1)
   numpy_scalar_types.add(dtypes.uint1)
 
-array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
+array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types
 
 
 def masked_array_error(*args, **kwargs):
@@ -130,7 +130,7 @@ _ndarray_dtype_cache_lock = threading.Lock()
 @weakref_lru_cache.weak_key_weak_value_cache
 def _canonicalize_ndarray_dtype(x):
   dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
+  return literals.TypedNdArray(np.asarray(x, dtype))
 
 dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 
@@ -141,7 +141,7 @@ def _canonicalize_masked_array_dtype(x):
 
 def _canonicalize_numpy_scalar(x):
   dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
+  return literals.TypedNdArray(np.asarray(x, dtype))
 
 dtypes.canonicalize_value_handlers.update(
     (t, _canonicalize_numpy_scalar) for t in numpy_scalar_types)
@@ -153,7 +153,7 @@ dtypes.canonicalize_value_handlers[np.ma.MaskedArray] = _canonicalize_masked_arr
 
 def _canonicalize_python_scalar(literal_type, typ):
   def canonicalize_scalar(x):
-    return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))  # pytype: disable=wrong-arg-types
+    return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))
   return canonicalize_scalar
 
 dtypes.canonicalize_value_handlers[bool] = lambda x: x

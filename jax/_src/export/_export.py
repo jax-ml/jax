@@ -39,8 +39,7 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-# pyrefly: ignore [missing-import]
-from jax._src.lax import linalg
+from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -660,7 +659,7 @@ def _export_internal(
 
 
 def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
-  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation]
   for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
     # Static args may have no `shape` attribute.
     if not hasattr(aval, "shape"):
@@ -793,18 +792,19 @@ def _export_lowered(
     # This is currently the case for pjit
     out_avals_flat = lowering.compile_args["global_out_avals"]
   else:
-    out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
+    out_avals_flat = lowered.compile_args["out_avals"]  # pyrefly: ignore[missing-attribute]
 
   # Log and then check the module.
-  logmsg = (f"fun_name={fun_name} version={version} "
-            f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
-            f"disabled_checks={disabled_checks}")
-  logger.debug("Exported JAX function: %s\n", logmsg)
-  logger.debug(mlir.dump_module_message(mlir_module, "export"))
-  logger.debug(
-      "Size of mlir_module_serialized: %d byte",
-      len(mlir_module_serialized),
-  )
+  if logger.isEnabledFor(logging.DEBUG):
+    logmsg = (f"fun_name={fun_name} version={version} "
+              f"lowering_platforms={lowering._platforms} "  # type: ignore[attribute-error]
+              f"disabled_checks={disabled_checks}")
+    logger.debug("Exported JAX function: %s\n", logmsg)
+    logger.debug(mlir.dump_module_message(mlir_module, "export"))
+    logger.debug(
+        "Size of mlir_module_serialized: %d byte",
+        len(mlir_module_serialized),
+    )
 
   _check_module(mlir_module,
                 disabled_checks=disabled_checks,
@@ -838,7 +838,7 @@ def _export_lowered(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering._device_list  # type: ignore
+  device_assignment = lowering._device_list  # pyrefly: ignore[missing-attribute]
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
@@ -862,7 +862,7 @@ def _export_lowered(
         apply_jit=True,
         flat_primal_fun=True,
         mesh=cur_mesh)  # type: ignore[arg-type]
-    return export(fun_vjp_jax,  # pytype: disable=wrong-arg-types
+    return export(fun_vjp_jax,
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
@@ -879,7 +879,7 @@ def _export_lowered(
       out_shardings_hlo=(None,) * len(out_named_shardings),
 
       nr_devices=nr_devices,
-      platforms=lowering._platforms,  # type: ignore
+      platforms=lowering._platforms,  # pyrefly: ignore[missing-attribute]
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=tuple(disabled_checks),
@@ -1003,7 +1003,7 @@ def _wrap_main_func(
       new_arg_attrs = []
       for idx in new_main_arg_indices:
         new_arg_attr: dict[str, ir.Attribute] = {}
-        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]  # pytype: disable=attribute-error
+        for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]
           if attr.name == "tf.aliasing_output":
             i = new_main_result_indices.index(attr.attr.value)
             new_arg_attr[attr.name] = ir.IntegerAttr.get(
@@ -1333,7 +1333,7 @@ def _get_named_sharding(
     mem_kind = core.mem_space_to_kind(aval.memory_space)
 
   return sharding_impls.cached_named_sharding(
-      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # type: ignore
+      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # pyrefly: ignore[bad-argument-type]
       memory_kind=mem_kind)
 
 
@@ -1388,7 +1388,7 @@ def _get_vjp_fun(
             vjp_in_avals))
       vjp_out_shardings = tuple(
         _get_named_sharding(has_named_shardings, named_sharding,
-                            hlo_sharding, aval, mesh)  # type: ignore
+                            hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
         for named_sharding, hlo_sharding, aval in zip(
           in_named_shardings, in_shardings_hlo, in_avals))
     else:
@@ -1556,7 +1556,7 @@ def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
   # pyrefly: ignore[missing-attribute]
-  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)  # pytype: disable=attribute-error
+  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
   axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
     return mesh_lib.empty_abstract_mesh
@@ -1784,8 +1784,8 @@ def wrap_with_sharding(
   if x_sharding is None:
     return x
   if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
+    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
   else:
-    x_sharding = x_sharding.to_proto()  # type: ignore
+    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
   return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
                                     allow_shardy_lowering=use_shardy)

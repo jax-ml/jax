@@ -67,7 +67,7 @@ class WGMMAAccumulator:
     if m % 64 or n % 8:
       raise ValueError("WGMMA requires m and n to be multiples of 64 and 8, "
                        f"got {m} and {n}")
-    if is_signed is False:  # pylint: disable=g-bool-id-comparison
+    if is_signed is False:
       raise TypeError("PTX does not support unsigned WGMMA accumulators")
     f32 = ir.F32Type.get()
     if dtype is None:

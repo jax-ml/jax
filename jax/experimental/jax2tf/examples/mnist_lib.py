@@ -39,7 +39,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import optax
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
 
 _MOCK_DATA = flags.DEFINE_boolean("mock_data", False,
                                   "Use fake data, for testing.")

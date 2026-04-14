@@ -22,8 +22,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
 import jax.numpy as jnp
-
-# pylint: disable=g-import-not-at-top
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401

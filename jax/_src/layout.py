@@ -48,7 +48,7 @@ class Layout:
   @staticmethod
   def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
     xla_layout = pjrt_layout._xla_layout()
-    return Layout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
+    return Layout(xla_layout.minor_to_major()[::-1],
                   xla_layout.tiling(),  # pyrefly: ignore[bad-argument-type]
                   xla_layout.element_size_in_bits())
 
@@ -101,7 +101,7 @@ class Layout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[Layout, None, AutoLayout]  # pytype: disable=invalid-annotation
+LayoutOptions = Union[Layout, None, AutoLayout]
 ShardingOptions = Union[Sharding, None, AutoSharding]
 
 

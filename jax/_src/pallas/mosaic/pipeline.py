@@ -964,7 +964,7 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
     @pl.when(pred)
     def _start():
-      bref.copy_in(src_ref, next_indices_offset)  # pylint: disable=cell-var-from-loop
+      bref.copy_in(src_ref, next_indices_offset)
     next_copy_in = cumulative_copy_in + as_uint32(pred)
     next_next_indices = increment_indices(next_indices)
     return next_indices, next_next_indices, next_copy_in
@@ -1203,7 +1203,7 @@ class Scheduler:
           @pl.when(self.first_step)
           def _start():
             buffered_ref.copy_in(src_ref,
-              self.add_offset(buffered_ref.next_fetch_indices))  # pylint: disable=cell-var-from-loop
+              self.add_offset(buffered_ref.next_fetch_indices))
           buffered_ref = buffered_ref.advance_copy_in_slot(self.first_step)
         else:
           buffered_ref, _ = fetch_with_lookahead(
@@ -1225,9 +1225,9 @@ class Scheduler:
           prev_block_indices = buffered_ref.compute_index(*prev_grid_indices)
           block_changed = _tuples_differ(block_indices, prev_block_indices)
           predicate = self.first_step & block_changed
-        @pl.when(predicate)  # pylint: disable=cell-var-from-loop
+        @pl.when(predicate)
         def _start():
-          buffered_ref.copy_in(src_ref, fetch_indices)  # pylint: disable=cell-var-from-loop
+          buffered_ref.copy_in(src_ref, fetch_indices)
         buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
     return buffered_ref
 

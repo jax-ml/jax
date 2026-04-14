@@ -381,7 +381,7 @@ def gmm(
   del n_rem
 
   # Create the metadata we need for computation.
-  group_metadata, num_active_tiles = make_group_metadata(  # pylint: disable=unbalanced-tuple-unpacking
+  group_metadata, num_active_tiles = make_group_metadata(
       group_sizes=group_sizes,
       m=m,
       tm=tm,

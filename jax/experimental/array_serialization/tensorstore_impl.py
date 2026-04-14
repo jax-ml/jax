@@ -206,7 +206,7 @@ def verify_tensorstore_spec(spec: dict[str, Any], arr: jax.Array | None,
     if isinstance(arr, jax.Array):
       local_shape = arr.sharding.shard_shape(arr.shape)
     else:  # np.ndarray
-      local_shape = arr.shape  # pytype: disable=attribute-error
+      local_shape = arr.shape
     if spec.get("driver", "") == "zarr3":
       chunk_shape = metadata['chunk_grid']['configuration']['chunk_shape']
       if not _divides(local_shape, chunk_shape):
@@ -558,7 +558,7 @@ async def async_deserialize(
     # TODO(yashkatariya): This is a band-aid fix. Figure out a better way to
     # make this work.
     if out.dtype == jnp.int4:
-      out = jnp.asarray(out)  # type: ignore
+      out = jnp.asarray(out)
     result = jax.device_put(
         out, Format(layout, make_single_device_sharding(device)))
     if byte_limiter is not None:

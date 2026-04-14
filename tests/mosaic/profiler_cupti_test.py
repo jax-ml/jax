@@ -26,7 +26,6 @@ else:
   from jax.experimental.mosaic.gpu import profiler
 
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 class ProfilerCuptiTest(parameterized.TestCase):

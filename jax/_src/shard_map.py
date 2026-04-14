@@ -1251,7 +1251,7 @@ class _SpecError(Exception):
   pass
 
 def _check_mats(mesh, specs, avals):
-  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)  # pytype: disable=attribute-error
+  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
     raise _RepError(fail, avals.tree)
@@ -1417,7 +1417,7 @@ class ShardMapTracer(core.Tracer[ShardMapTrace]):
     size = prod(trace.mesh.shape[n] for n in mat.varying)
     out = core.mapped_aval(size, 0, aval)
     manual_mesh = _as_manual_mesh(trace.amesh, trace.manual_axes)
-    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # type: ignore
+    spec = core.modify_spec_for_auto_manual(out.sharding.spec, manual_mesh)  # pyrefly: ignore[missing-attribute]
     new_sharding = NamedSharding(manual_mesh, spec)
     mat_out = mat if trace.check else core.empty_mat
     computed_aval = out.update(sharding=new_sharding, manual_axis_type=mat_out)
@@ -1577,7 +1577,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
     tangents_out = [None if not nz else t for t, nz in zip(tangents_out, which_nz_out)]
     tangents_out_ft = FlatTree.flatten(list(tangents_out))
     out_primals_tangents = FlatTree.pack((primals_out_ft, tangents_out_ft))
-    return out_primals_tangents.with_aux(which_nz_out).with_aux(new_out_specs)  # type: ignore
+    return out_primals_tangents.with_aux(which_nz_out).with_aux(new_out_specs)
 
   params = dict(mesh=mesh, in_specs=(*in_specs, *tangent_in_specs),
                 check_vma=check_vma, manual_axes=manual_axes,
@@ -1654,7 +1654,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
       raval = next(res_avals_iter)
       res_specs.append(raval.nospec(mesh, check_vma, all_names))
   env_specs = [_repspec(typeof(e)) for e in env]
-  unk_in_specs = (*res_specs, *env_specs, *unk_in_specs)  # type: ignore
+  unk_in_specs = (*res_specs, *env_specs, *unk_in_specs)
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.to_jaxpr_tracer, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -1698,7 +1698,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
     res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
            for x in res]
     res_and_primal = FlatTree.pack((FlatTree.flatten(res), primals_out))
-    return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)  # type: ignore
+    return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
 
   fwd_params = dict(
       mesh=mesh, in_specs=in_specs,
@@ -1844,11 +1844,11 @@ def _partial_eval_jaxpr_custom_rule(
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   nv = core.gensym()
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
-  lns = lambda a: a.nospec(mesh, check_vma, all_names)  # pytype: disable=attribute-error
+  lns = lambda a: a.nospec(mesh, check_vma, all_names)
   residuals, staged_in_res_specs = unzip2(
       [(nv(unshard_aval(mesh, check_vma, (rn := lns(var.aval)), var.aval)), rn)
        for var, w in zip(jaxpr_staged.invars[:num_res], which) if w])
-  out_res_specs_known = [var.aval.nospec(mesh, check_vma, all_names)  # type: ignore
+  out_res_specs_known = [var.aval.nospec(mesh, check_vma, all_names)  # pyrefly: ignore[missing-attribute]
                          for var, w in zip(res_vars, which) if w]
   params_known, params_staged = _pe_custom_params(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, in_fwd, out_fwd,
@@ -1993,7 +1993,7 @@ def _shard_map_discharge(
                if isinstance(invar.aval, AbstractRef)]
   params = dict(jaxpr=discharged_jaxpr, out_specs=(*out_specs, *ref_specs))
   params_ = shard_map_p.get_bind_params(params)
-  f, = params_.pop('subfuns')  # type: ignore
+  f, = params_.pop('subfuns')
   debug_info = params_['debug_info']
   out_and_ref_vals = shard_map_p.bind(
       *args, subfuns=(f,), mesh=mesh, in_specs=in_specs, manual_axes=manual_axes,

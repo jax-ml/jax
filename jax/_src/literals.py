@@ -113,20 +113,22 @@ class TypedNdArray(np.ndarray):
   * it can be weakly typed.
   """
 
-  weak_type: bool
   aval: ShapedArray
 
-  def __new__(cls, val: np.ndarray, weak_type: bool = False):
+  def __new__(cls, val: np.ndarray, aval: ShapedArray | None = None):
     obj = np.asarray(val).view(cls)
-    obj.aval = ShapedArray(obj.shape, obj.dtype, weak_type=weak_type)
-    obj.weak_type = weak_type
+    obj.aval = (ShapedArray(obj.shape, obj.dtype, weak_type=False)
+                if aval is None else aval)
     return obj
 
   def __array_finalize__(self, obj):
-    if obj is None:
-      return
-    self.weak_type = getattr(obj, 'weak_type', False)
-    self.aval = ShapedArray(self.shape, self.dtype, weak_type=self.weak_type)
+    if obj is None: return
+    weak_type = obj.aval.weak_type if isinstance(obj, TypedNdArray) else False
+    self.aval = ShapedArray(self.shape, self.dtype, weak_type=weak_type)
+
+  @property
+  def weak_type(self) -> bool:
+    return self.aval.weak_type
 
   @property
   def val(self) -> np.ndarray:
@@ -145,7 +147,7 @@ class TypedNdArray(np.ndarray):
 
   def __repr__(self):
     prefix = 'TypedNdArray('
-    if self.weak_type:
+    if self.aval.weak_type:
       dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
     else:
       dtype_str = f'dtype={self.dtype.name})'
@@ -168,10 +170,10 @@ class TypedNdArray(np.ndarray):
     return f'{prefix}{s},{sep}{dtype_str}'
 
   def __reduce__(self):
-    return (TypedNdArray, (np.asarray(self), self.weak_type))
+    return (TypedNdArray, (np.asarray(self), self.aval.weak_type))
 
   def __getnewargs__(self):
-    return (np.asarray(self), self.weak_type)
+    return (np.asarray(self), self.aval.weak_type)
 
 
 _jax.set_typed_ndarray_type(TypedNdArray)

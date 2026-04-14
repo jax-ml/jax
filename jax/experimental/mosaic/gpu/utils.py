@@ -45,8 +45,6 @@ DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
 MBARRIER_BYTES = 8
 
-# pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
-
 
 def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
   match address_space:
@@ -1237,7 +1235,7 @@ class DialectBarrierRef:
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             # TODO(slebedev): Why is it safe to use None here?
-            phases=None,  # pyrefly: ignore[bad-argument-type]  # pytype: disable=wrong-arg-types
+            phases=None,  # pyrefly: ignore[bad-argument-type]
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         ),
         orders_tensor_core=memref_type.element_type.orders_tensor_core,
@@ -1845,7 +1843,7 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
 ReductionKind = nvvm.ReductionKind
 
 
-def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):  # type: ignore
+def redux(x: ir.Value, mask: ir.Value, kind: ReductionKind):
   i32 = ir.IntegerType.get_signless(32)
   if isinstance(vec_ty := x.type, ir.VectorType):
     if bitwidth(vec_ty.element_type) != 32:
@@ -2204,7 +2202,7 @@ def get_cluster_ref(
     raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
-  flat_block = arith.index_cast(i32, cluster_idx(gpu.Dimension, idxs))  # type: ignore
+  flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
   return ptr_as_memref(
       get_cluster_ptr(memref_ptr(ref, memory_space=3), flat_block, generic),
       result_type,

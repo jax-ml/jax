@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pytype: skip-file
 """
 Implements the NumPy API, using the primitives in :mod:`jax.lax`.
 
@@ -5582,7 +5581,7 @@ def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
 
   .. _DLPack: https://dmlc.github.io/dlpack
   """
-  from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
+  from jax.dlpack import from_dlpack
   return from_dlpack(x, device=device, copy=copy)
 
 

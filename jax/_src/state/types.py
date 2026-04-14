@@ -376,13 +376,13 @@ class AbstractRef(core.AbstractValue):
   def lower_val(self, ref):
     if not self.is_high:
       return [ref]
-    return self.inner_aval.lower_val(ref._refs)  # type: ignore
+    return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
 
   def raise_val(self, *vals):
     if not self.is_high:
       ref, = vals
       return ref
-    return core.Ref(self, self.inner_aval.raise_val(*vals))  # type: ignore
+    return core.Ref(self, self.inner_aval.raise_val(*vals))  # pyrefly: ignore[missing-attribute]
 
   @property
   def weak_type(self) -> bool:
@@ -414,7 +414,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def shape(self):
     try:
-      return self.inner_aval.shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.shape  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `shape`."
@@ -423,7 +423,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def dtype(self):
     try:
-      return self.inner_aval.dtype  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `dtype`."
@@ -432,7 +432,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def sharding(self):
     try:
-      return self.inner_aval.sharding  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.sharding  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `sharding`."
@@ -441,7 +441,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def manual_axis_type(self):
     try:
-      return self.inner_aval.manual_axis_type  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.manual_axis_type  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `manual_axis_type`."
@@ -597,7 +597,7 @@ def zeros_like_abstract_ref(aval: AbstractRef) -> core.Ref:
 # TODO(dougalm): this is nonsense but it's here because in places like
 # custom_vjp we assume that all arguments have tangent spaces. We could have
 # a distinct NotATangentType value instead.
-ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # type: ignore
+ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ignore[unsupported-operation]
 
 # === pinned, chained LinearVals ===
 
@@ -606,6 +606,6 @@ class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None
 
-  shape = property(lambda self: self.inner_aval.shape)  # pytype: disable=attribute-error
-  dtype = property(lambda self: self.inner_aval.dtype)  # pytype: disable=attribute-error
-  ndim = property(lambda self: self.inner_aval.ndim)  # pytype: disable=attribute-error
+  shape = property(lambda self: self.inner_aval.shape)
+  dtype = property(lambda self: self.inner_aval.dtype)
+  ndim = property(lambda self: self.inner_aval.ndim)

@@ -344,7 +344,7 @@ def paged_attention(
   if k_pages.shape != v_pages.shape:
     raise ValueError(
         f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"
-        f" {v_pages.shape}"  # pytype: disable=attribute-error
+        f" {v_pages.shape}"
     )
   if num_heads % num_kv_heads != 0:
     raise ValueError(

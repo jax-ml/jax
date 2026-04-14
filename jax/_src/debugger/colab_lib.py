@@ -24,12 +24,10 @@ from typing import Any, Union
 
 IS_COLAB_ENABLED = "google.colab" in sys.modules
 if IS_COLAB_ENABLED:
-  # pylint: disable=g-import-not-at-top
   # pytype: disable=import-error
   from google.colab import output
   from IPython import display
   # pytype: enable=import-error
-  # pylint: enable=g-import-not-at-top
 
 
 class DOMElement(metaclass=abc.ABCMeta):

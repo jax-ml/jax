@@ -18,7 +18,7 @@ import functools
 import os
 
 from absl.testing import absltest
-from absl.testing import parameterized  # pylint: disable=g-multiple-import
+from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random

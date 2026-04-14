@@ -68,7 +68,7 @@ def pallas_call_lowering(
     print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
     print(grid_mapping)
 
-  mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
+  mgpu.dialect.register_dialect(ctx.module_context.context)
 
   if compiler_params is None:
     gpu_params = gpu_core.CompilerParams()

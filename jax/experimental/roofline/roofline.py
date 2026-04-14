@@ -283,8 +283,9 @@ def roofline(
     def make_sharded_shape_dtype_struct(
       shape: api.ShapeDtypeStruct, out_spec: Specs
     ) -> api.ShapeDtypeStruct:
+      assert mesh is not None
       return api.ShapeDtypeStruct(
-        shape.shape, shape.dtype, sharding=NamedSharding(mesh, out_spec)  # type: ignore
+        shape.shape, shape.dtype, sharding=NamedSharding(mesh, out_spec)
       )
 
     if out_specs is not None and mesh is not None:

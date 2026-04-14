@@ -42,8 +42,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
 
-# TODO(sharadmv): Enable type checking.
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
@@ -279,7 +277,7 @@ def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):
     return _physicalize_rules[primitive]
 
   # pyrefly: ignore[missing-attribute]
-  fusion_types = {aval.dtype for aval in avals if _is_fusion_type(aval)}  # pytype: disable=attribute-error
+  fusion_types = {aval.dtype for aval in avals if _is_fusion_type(aval)}
   if len(fusion_types) == 0:
     return None
   elif len(fusion_types) > 1:
@@ -517,7 +515,7 @@ def _pack_dtype_pull_rule(
     dtype: FusionDType,
 ):
   aval_out = ctx.avals_out[0]
-  return dtype.pull_block_spec_one_step(aval_out, block_spec)  # pytype: disable=attribute-error
+  return dtype.pull_block_spec_one_step(aval_out, block_spec)
 
 
 @block_spec.register_push_block_spec_rule(unpack_dtype_p)
@@ -528,7 +526,7 @@ def _unpack_dtype_push_rule(
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
-  return aval_in.dtype.unpack_push_block_spec(aval_in, block_spec)  # pytype: disable=attribute-error
+  return aval_in.dtype.unpack_push_block_spec(aval_in, block_spec)
 
 
 @block_spec.register_pull_block_spec_rule(unpack_dtype_p)

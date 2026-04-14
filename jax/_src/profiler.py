@@ -242,7 +242,7 @@ def stop_trace():
     profile_session = _profile_state.profile_session
     if profile_session is None:
       raise RuntimeError("No profile started")
-    profile_session.stop_and_export(str(_profile_state.log_dir))  # pytype: disable=attribute-error
+    profile_session.stop_and_export(str(_profile_state.log_dir))
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)  # type: ignore[bad-argument-type]
       if _profile_state.create_perfetto_link:

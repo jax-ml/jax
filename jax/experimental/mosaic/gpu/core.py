@@ -295,7 +295,7 @@ def _mosaic_gpu_lowering_rule(
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
-  ).results  # type: ignore
+  ).results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -795,7 +795,7 @@ def _infer_arch() -> tuple[int, int]:
         f"Mosaic GPU does not yet support AMD ROCm devices. "
         f"Got compute_capability: {arch_name}"
     )
-  return tuple(map(int, arch_name.split(".")))  # type: ignore
+  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
 
 
 def _lower_as_gpu_kernel(
@@ -1013,8 +1013,8 @@ def _kernel_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    layout_inference.infer_layout(module, arch=_infer_arch())  # pytype: disable=attribute-error
-    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
+    layout_inference.infer_layout(module, arch=_infer_arch())
+    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)
 
   launch_ctx.scratch.finalize_size()
   module.operation.verify()

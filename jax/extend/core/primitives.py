@@ -238,3 +238,8 @@ from jax._src.prng import (
 )
 
 from jax._src.random import random_gamma_p as random_gamma_p
+
+from jax._src.state.primitives import (
+  get_p as get_p,
+  swap_p as swap_p,
+)

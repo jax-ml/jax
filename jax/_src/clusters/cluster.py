@@ -42,7 +42,6 @@ class ClusterEnv:
 
 
   @classmethod
-  # pytype: disable=bad-return-type
   def auto_detect_unset_distributed_params(cls,
                                            coordinator_address: str | None,
                                            num_processes: int | None,
@@ -55,7 +54,7 @@ class ClusterEnv:
     # First, we check the spec detection method because it will ignore submitted values
     # If if succeeds.
     if cluster_detection_method is not None:
-      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )  # pytype: disable=attribute-error
+      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )
       if env is None:
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {cluster_detection_method} is not supported.")

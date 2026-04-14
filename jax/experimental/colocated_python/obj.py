@@ -91,7 +91,7 @@ def _make_method(
 
     def _first_call(self):
       def initializer():
-        return obj_backend._ConsumableRef(cls(*init_args, **init_kwargs))  # pylint: disable=protected-access
+        return obj_backend._ConsumableRef(cls(*init_args, **init_kwargs))
 
       retrieved = obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
           uid, initializer
@@ -111,7 +111,7 @@ def _make_method(
         # It is possible that no one has ever consumed the _ConsumableRef. So
         # consume it now.
         obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
-            uid, lambda: obj_backend._ConsumableRef(None)  # pylint: disable=protected-access
+            uid, lambda: obj_backend._ConsumableRef(None)
         )()
 
   # Colocated Python callable for the controller.

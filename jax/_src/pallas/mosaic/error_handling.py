@@ -82,7 +82,7 @@ def mlir_error_to_verification_error(
     base_err: ir.MLIRError,
 ) -> VerificationError:
   """Reformats MLIRError to include a Python traceback."""
-  diagnostic = base_err.error_diagnostics[0]  # pytype: disable=attribute-error
+  diagnostic = base_err.error_diagnostics[0]
   def _get_diagnostic_message(diagnostic) -> str:
     current_msg = diagnostic.message
     for d in diagnostic.notes:

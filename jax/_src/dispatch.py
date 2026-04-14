@@ -472,7 +472,7 @@ def _device_put_sharding_impl(
 
     if (s_is_fully_addressable and x_is_jax_array and
         x_is_fully_addressable and s.num_devices > 1 and
-        s._internal_device_list != x_sharding._internal_device_list and  # pytype: disable=attribute-error
+        s._internal_device_list != x_sharding._internal_device_list and
         s.device_set == x_sharding.device_set):
       assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
@@ -510,7 +510,7 @@ def _device_put_sharding_impl(
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):  # pytype: disable=attribute-error
+        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -623,7 +623,7 @@ def _batched_device_put_impl(
       dca_indices.append(i)
       dca_xs.append(y.x)
       dca_shardings.append(y.dst_sharding)
-      dca_device_lists.append(y.dst_sharding._internal_device_list) # pytype: disable=attribute-error
+      dca_device_lists.append(y.dst_sharding._internal_device_list)
       dca_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
@@ -688,12 +688,13 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
-  results, dp_cts = [None] * len(cts), []
+  results: list[Any | None] = [None] * len(cts)
+  dp_cts = []
   for i, (ct, arg, device, src, cp) in enumerate(zip(
       cts, args, devices, srcs, copy_semantics)):
     if ad.is_undefined_primal(arg):
       if type(ct) is ad.Zero:
-        results[i] = ad.Zero(arg.aval.to_ct_aval())  # type: ignore
+        results[i] = ad.Zero(arg.aval.to_ct_aval())
       else:
         dp_cts.append((i, ct, arg, device, src, cp))
 

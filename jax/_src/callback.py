@@ -712,7 +712,7 @@ def _emit_tpu_python_callback(
     # TODO(sharadmv,chky): Enable this fix in the runtime as opposed to in
     # MLIR builder.
     callback_without_args = _wrapped_callback
-    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+    def _wrapped_callback(*args):
       del args
       return callback_without_args()
     send_channel = ctx.module_context.new_channel()
@@ -735,7 +735,7 @@ def _emit_tpu_python_callback(
     # token from the recv is used as an indication that the callback is
     # complete. Without this, we would only wait for the send to finish.
     callback_without_results = _wrapped_callback
-    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+    def _wrapped_callback(*args):
       callback_without_results(*args)
       return 0.0,
     dummy_recv_aval = core.ShapedArray((), np.float32)
@@ -864,7 +864,7 @@ def emit_python_callback(
   call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
     callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+    def _wrapped_callback(token, *args):  # type: ignore
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (

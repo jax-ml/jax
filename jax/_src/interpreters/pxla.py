@@ -198,7 +198,8 @@ for _t in dtypes.python_scalar_types:
 def _shard_typed_scalar(xs, shardings, layouts, copy_semantics):
   return _shard_np_array(
       [literals.TypedNdArray(
-        np.array(x, dtype=x.dtype), weak_type=True)
+        np.array(x, dtype=x.dtype),
+        aval=core.ShapedArray((), x.dtype, weak_type=True))
        for x in xs],
       shardings, layouts, copy_semantics
   )
@@ -565,13 +566,14 @@ def _get_and_check_device_assignment(
               stages.DeviceAssignmentMismatch(
                   arr_device_assignment, s_type, source_info)])
 
+  device_assignment: tuple[xc.Device, ...]
   if (first_sharding_info is None and not ctx_mesh.empty and
       isinstance(ctx_mesh, Mesh)):
-    device_assignment = ctx_mesh._flat_devices_tuple  # type: ignore
+    device_assignment = ctx_mesh._flat_devices_tuple
   elif first_sharding_info is None:
     device_assignment = (get_default_device(),)
   else:
-    device_assignment = first_sharding_info[0]
+    device_assignment = first_sharding_info[0]  # pyrefly: ignore[bad-assignment]
 
   backend = xb.get_device_backend(device_assignment[0])
 
@@ -582,7 +584,7 @@ def _get_and_check_device_assignment(
         f" device assignment size: {len(device_assignment)}")
 
   if any_concrete_sharding or abstract_mesh is None:
-    return backend, device_assignment, len(device_assignment)  # type: ignore
+    return backend, device_assignment, len(device_assignment)
   else:
     return backend, None, abstract_mesh.size
 
@@ -766,7 +768,7 @@ def _create_device_list(
     device_assignment: tuple[xc.Device, ...] | xc.DeviceList | None
     ) -> xc.DeviceList | None:
   if device_assignment is None or isinstance(device_assignment, xc.DeviceList):
-    return device_assignment  # pytype: disable=bad-return-type
+    return device_assignment
   return _create_device_list_cached(device_assignment)
 
 
@@ -881,7 +883,7 @@ def hoist_constants_as_args(
     kept_var_idx = set(range(num_const_args)).union(
         {kv + num_const_args for kv in kept_var_idx})
     if inout_aliases is not None:
-      inout_aliases = (None,) * num_const_args + inout_aliases  # pytype: disable=unsupported-operands
+      inout_aliases = (None,) * num_const_args + inout_aliases
     if mut is not None:
       mut = MutationData(
           in_mut=mut.in_mut,
@@ -892,7 +894,7 @@ def hoist_constants_as_args(
     else:
       arg_names = (("",) * num_const_args + all_args_info.debug_info.arg_names)
     all_args_info = AllArgsInfo(
-        list(const_arg_avals) + all_args_info.in_avals,  # type: ignore
+        [*const_arg_avals, *all_args_info.in_avals],
         all_args_info.debug_info._replace(arg_names=arg_names))
 
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
@@ -1023,7 +1025,7 @@ def lower_sharding_computation(
            for js, source_info in unique_intermediate_shardings)),
       context_mesh)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
-  unique_in_shardings = unique_in_shardings | unique_const_shardings  # type: ignore
+  unique_in_shardings = unique_in_shardings | unique_const_shardings  # pyrefly: ignore[unsupported-operation]
   del unique_const_shardings
 
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
@@ -1078,7 +1080,7 @@ def lower_sharding_computation(
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       it.chain(unique_in_shardings, unique_out_shardings,
-               unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
+               unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))
 
   if all_default_mem_kind:
     propagated_out_mem_kinds = (None,) * len(global_out_avals)
@@ -1329,7 +1331,7 @@ def get_out_shardings_from_executable(
   # put the sharding on ROOT instead of the tuple.
   # TODO(b/245667823): Remove this when XLA fixes this.
   if len(out_op_shardings) == 1 and len(out_op_shardings) < num_out_avals:
-    out_op_shardings = out_op_shardings * num_out_avals  # type: ignore
+    out_op_shardings = list(out_op_shardings) * num_out_avals
 
   assert len(out_op_shardings) == num_out_avals == len(omk), (
       len(out_op_shardings), num_out_avals, len(omk))
@@ -1372,7 +1374,7 @@ def _get_mesh_pspec_shardings_from_executable(
           [NamedSharding(mesh, o) for o in out_pspec])
 
 
-_orig_out_sharding_handlers = {}
+_orig_out_sharding_handlers: dict[Any, Any] = {}
 
 def _gspmd_to_named_sharding(
     out_s: GSPMDSharding, out_aval, orig_in_s: NamedSharding) -> NamedSharding:
@@ -1395,7 +1397,7 @@ def _gspmd_to_single_device_sharding(
   assert isinstance(orig_in_s, SingleDeviceSharding)
   return SingleDeviceSharding(
       out_s._device_assignment[0], memory_kind=out_s.memory_kind)
-_orig_out_sharding_handlers[SingleDeviceSharding] = _gspmd_to_single_device_sharding  # type: ignore
+_orig_out_sharding_handlers[SingleDeviceSharding] = _gspmd_to_single_device_sharding
 
 
 def _get_out_sharding_from_orig_sharding(
@@ -1589,7 +1591,7 @@ def _maybe_get_and_check_in_shardings(
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
@@ -1633,12 +1635,12 @@ def _maybe_get_and_check_out_shardings(
         new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and aval.size != 0 and
           (not op_shardings.are_hlo_shardings_equal(xla_hlo_s, orig_hlo_s) or
-           xla_s.memory_kind != orig.memory_kind)):  # pytype: disable=attribute-error
+           xla_s.memory_kind != orig.memory_kind)):
         raise AssertionError(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
             "(User sharding)")
@@ -1972,7 +1974,7 @@ class MeshExecutable(stages.Executable):
       check_array_xla_sharding_layout_match(
           args_after_dce, self._in_shardings, self._xla_in_layouts,
           arg_names_after_dce)
-    return self.unsafe_call(*args)  # pylint: disable=not-callable
+    return self.unsafe_call(*args)
 
   def create_cpp_call(self, params: stages.CompiledCallParams):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and

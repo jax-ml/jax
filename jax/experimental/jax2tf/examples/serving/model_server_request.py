@@ -15,7 +15,7 @@
 
 See README.md for instructions.
 """
-import grpc  # type: ignore
+import grpc  # pyrefly: ignore[missing-import]
 import json
 import logging
 import requests

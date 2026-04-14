@@ -53,6 +53,7 @@ from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition
+from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
 import jax.numpy as jnp
 import numpy as np
 
@@ -260,6 +261,7 @@ def _copy_smem_to_gmem_lowering(
         predicate=predicate,
         arrive=commit_group,
         reduction_op=reduction_op,
+        oob_mode=OOBFillMode.UNDEFINED,
         **copy_params,
     )
     return ()
@@ -520,6 +522,7 @@ def _copy_gmem_to_smem_lowering(
     barrier_transforms_treedef,
     collective_axes,
     leader_tracked,
+    oob_mode,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -658,6 +661,7 @@ def _copy_gmem_to_smem_lowering(
         arrive=False,
         collective=collective,
         leader_tracked=leader_tracked,
+        oob_mode=oob_mode,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
@@ -706,6 +710,7 @@ def _copy_gmem_to_smem_lowering(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
       leader_tracked=leader_tracked_attr,
+      oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value)  # pyrefly: ignore[unexpected-keyword]
   )
   return ()
 
@@ -716,6 +721,7 @@ def copy_gmem_to_smem(
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
+    oob_mode: OOBFillMode = OOBFillMode.ZEROS,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -751,6 +757,8 @@ def copy_gmem_to_smem(
      observe the completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
      performs a partitioned collective copy along the given axis. If
      ``CopyPartition.REPLICATED``, all blocks load the same data.
+    oob_mode: The optional out-of-bounds fill mode. Can be ``OOBFillMode.UNDEFINED``,
+     ``OOBFillMode.PROMISE_IN_BOUNDS`` or ``OOBFillMode.ZEROS``.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -792,6 +800,7 @@ def copy_gmem_to_smem(
       barrier_transforms_treedef=barrier_transforms_treedef,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
+      oob_mode=oob_mode,
   )
   return None
 
@@ -979,7 +988,7 @@ def _barrier_arrive_lowering(
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  sem_dtype = barrier_aval.inner_aval.dtype  # type: ignore
+  sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -1068,7 +1077,7 @@ def _barrier_wait_lowering(
   assert isinstance(barrier_aval, state_types.AbstractRef)
   transforms = transforms_treedef.unflatten(flat_transforms)
   orders_tensor_core = getattr(
-      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # type: ignore
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
   base_index = _extract_barrier_slice_base(transforms)
   if base_index is not None:
@@ -1967,7 +1976,8 @@ def _tcgen05_mma_lowering(
             f"Unsupported transforms for LHS: {a_transforms}."
         )
     if not isinstance(a_ref, tcgen05.TMEMRef):
-      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)  # type: ignore
+      assert lhs_swizzle is not None
+      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
       if lhs_tiling != (8, swizzle_elems):
         raise ValueError("MMA lhs tiling does not fit swizzle. "
                         f"{lhs_tiling=} expected={(8, swizzle_elems)}")
@@ -4218,9 +4228,9 @@ def _atomic_store_lowering_rule_wg(
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
-  value = lowering._ensure_ir_value(value, value_aval.dtype)  # pylint: disable=protected-access
+  value = lowering._ensure_ir_value(value, value_aval.dtype)
   assert isinstance(ref_aval, state_types.AbstractRef)
-  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+  ref, _, remaining_transforms = lowering._handle_transforms(
       ctx, ref_aval, ref, list(transforms_avals), list(transforms)
   )
   if remaining_transforms:
@@ -4258,9 +4268,9 @@ def _atomic_store_lowering_rule(
 ):
   ref, transforms, value = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, value_aval = args_tree.unflatten(ctx.avals_in)
-  value = lowering._ensure_fa(value, value_aval.dtype)  # pylint: disable=protected-access
+  value = lowering._ensure_fa(value, value_aval.dtype)
   assert isinstance(ref_aval, state_types.AbstractRef)
-  ref, _, remaining_transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+  ref, _, remaining_transforms = lowering._handle_transforms(
       ctx, ref_aval, ref, list(transforms_avals), list(transforms)
   )
   match remaining_transforms:
@@ -4274,10 +4284,10 @@ def _atomic_store_lowering_rule(
         )
       value.store_tiled(
           ref, swizzle=swizzle, tiling_rank=len(tiling),
-          atomic=atomic_type.value,  # type: ignore
+          atomic=atomic_type.value,  # pyrefly: ignore[bad-argument-type]
       )
     case ():
-      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # type: ignore
+      value.store_untiled(ref, optimized=False, atomic=atomic_type.value)  # pyrefly: ignore[bad-argument-type]
     case _:
       raise NotImplementedError(
           f"Unsupported transforms for atomic_store: {remaining_transforms}"

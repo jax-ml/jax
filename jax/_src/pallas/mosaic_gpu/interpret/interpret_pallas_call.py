@@ -36,7 +36,7 @@ InterpretParams = interpret_utils.InterpretGPUParams
 
 
 def get_interpret_effects() -> Set[effects.Effect]:
-  return {callback._OrderedIOEffect}  # pylint: disable=protected-access
+  return {callback._OrderedIOEffect}
 
 
 def get_races() -> gpu_callbacks.RaceDetectionState:
@@ -143,7 +143,7 @@ def _allocate_buffers_for_outputs(
   output_buffer_keys_and_values = []
 
   block_shapes = [
-      pallas_core._get_block_shape(bm.block_shape)  # pylint: disable=protected-access
+      pallas_core._get_block_shape(bm.block_shape)
       for bm in grid_mapping.block_mappings
   ]
   num_inputs = grid_mapping.num_inputs

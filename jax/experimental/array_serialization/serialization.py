@@ -36,7 +36,6 @@ from jax._src.layout import Format
 from jax._src.lib import _jax
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
 # ruff: noqa: F401
-# pylint: disable=unused-import
 # import tensorstore-backed methods for backward compatibility.
 from jax.experimental.array_serialization.tensorstore_impl import (
     _run_deserialization as run_deserialization,
@@ -50,7 +49,6 @@ _get_metadata = functools.partial(ts_impl._get_tensorstore_metadata,
                                   driver='zarr')
 get_tensorstore_spec = functools.partial(ts_impl.get_tensorstore_spec,
                                          driver='zarr', ocdbt=False)
-# pylint: enable=unused-import
 
 
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
@@ -237,7 +235,7 @@ class AsyncManager:
           '/jax/checkpoint/write/async/thread_duration_sec',
           time.time() - thread_start_time)
 
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
       self._exception = e
 
   def _start_async_commit(self, on_commit_callback):
@@ -256,7 +254,7 @@ class AsyncManager:
           'DEADLINE_EXCEEDED: Barrier timed out' in str(exception)):
         raise BarrierTimeoutError(
             '\n'.join([str(exception), _BARRIER_TIMED_OUT_MSG]))
-      raise exception  # pylint: disable=raising-bad-type
+      raise exception
 
   def wait_until_finished(self):
     if self._thread is not None:

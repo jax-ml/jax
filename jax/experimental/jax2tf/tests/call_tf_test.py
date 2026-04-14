@@ -713,7 +713,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     x = jnp.zeros((10), dtype=jnp.float32)
 
     @tf.function(jit_compile=True, autograph=False)
-    def fun_tf(x):  # pylint: disable=unused-argument
+    def fun_tf(x):
       return
 
     fun_jax_1 = jax2tf.call_tf(fun_tf, output_shape_dtype=None)

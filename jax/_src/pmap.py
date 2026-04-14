@@ -281,7 +281,7 @@ def pmap(
   axis_name, static_broadcasted_tuple, donate_tuple = _prepare_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
       out_axes)
-  if isinstance(axis_name, core._TempAxisName):  # pylint: disable=protected-access
+  if isinstance(axis_name, core._TempAxisName):
     axis_name = repr(axis_name)
   wrapped_fun = _pmap_wrap_init(fun, static_broadcasted_tuple)
   out_axes_flat, out_axes_tree = tree_flatten(out_axes)
@@ -332,10 +332,10 @@ def pmap(
     # NOTE(dsuo): Calling .compile()(*inputs) will fail because our jitted function
     # has no notion of host-local <> global conversion.
     return stages.Lowered(
-        lowered._lowering,  # pylint: disable=protected-access
+        lowered._lowering,
         args_info,
         lowered.out_tree,
-        no_kwargs=lowered._no_kwargs,  # pylint: disable=protected-access
+        no_kwargs=lowered._no_kwargs,
     )
 
   wrapped.lower = lower  # pyrefly: ignore[missing-attribute]
@@ -348,7 +348,7 @@ def _prepare_pmap(fun, axis_name, static_broadcasted_argnums,
   # aggregate size (across all processes) size of the mapped axis must match the
   # given value.
   check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name  # pylint: disable=protected-access
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(
       _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)
@@ -713,13 +713,11 @@ def _get_mesh_devices(devices, backend, local_axis_size, axis_size,
     # performance. This matches the old pmap's device ordering which uses
     # local_devices(process_index) in a nested loop, ensuring devices from
     # the same host are contiguous in the mesh.
-    # pylint: disable=g-complex-comprehension
     mesh_devices = tuple(
         d
         for process_index in range(process_count)
         for d in xb.local_devices(process_index, backend)
     )
-    # pylint: enable=g-complex-comprehension
   elif backend is not None:
     mesh_devices = tuple(xb.devices(backend=backend))
   else:
@@ -820,8 +818,8 @@ def host_local_array_to_global_array(
       continue
     if typ is not array.ArrayImpl:
       if typ is prng.PRNGKeyArray:
-        prng_impl = arr.dtype._impl  # pylint: disable=protected-access
-        arr = arr._base_array  # pylint: disable=protected-access
+        prng_impl = arr.dtype._impl
+        arr = arr._base_array
       arr = np.asarray(arr)
       dtype = arr.dtype
       if dtype == dtypes.float0:
@@ -838,7 +836,7 @@ def host_local_array_to_global_array(
       # Fast path: rewrap without copy (shares buffers with original).
       # For donated args, jit's donation will invalidate the shared buffers,
       # which is the expected behavior - original arrays become invalid.
-      dyn_args_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+      dyn_args_flat[i] = arr._rewrap_with_aval_and_sharding(
           global_aval, global_sharding
       )
     else:
@@ -852,7 +850,7 @@ def host_local_array_to_global_array(
           global_sharding,
           arrays,
           list(local_sharding._device_assignment),
-      )  # pylint: disable=protected-access
+      )
       if donated and typ is array.ArrayImpl:
         warnings.warn(
             "Donated pmap argument required resharding. This causes a brief "
@@ -902,8 +900,8 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
       continue
     if typ is not array.ArrayImpl:
       if typ is prng.PRNGKeyArray:
-        prng_impl = arr.dtype._impl  # pylint: disable=protected-access
-        arr = arr._base_array  # pylint: disable=protected-access
+        prng_impl = arr.dtype._impl
+        arr = arr._base_array
       try:
         _ = arr.shape
       except AttributeError:
@@ -920,7 +918,7 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
     if typ == array.ArrayImpl:
       if not _is_sharding_equivalent(arr.sharding, global_sharding, len(shape)):
         arr = api.device_put(arr, global_sharding)
-      out_flat[i] = arr._rewrap_with_aval_and_sharding(  # pylint: disable=protected-access
+      out_flat[i] = arr._rewrap_with_aval_and_sharding(
           local_aval, local_sharding
       )
     else:
@@ -932,7 +930,7 @@ def global_array_to_host_local_array(out, cached, trace_state_clean):
           local_sharding,
           arrays,
           list(local_sharding._device_assignment),
-      )  # pylint: disable=protected-access
+      )
     if prng_impl is not None:
       out_flat[i] = prng.PRNGKeyArray(prng_impl, out_flat[i])
 

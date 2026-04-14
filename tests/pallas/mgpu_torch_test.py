@@ -29,8 +29,6 @@ try:
   import torch
 except ImportError:
   torch = None
-
-# pylint: disable=g-import-not-at-top
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401

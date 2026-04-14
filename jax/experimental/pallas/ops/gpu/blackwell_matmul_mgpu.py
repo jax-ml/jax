@@ -105,7 +105,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     is_lead_block = cluster_idx == 0
 
     @plgpu.dynamic_scheduling_loop(grid_names=("mn_linear",), thread_axis="wg")
-    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+    def mn_loop(loop_info: plgpu.NDLoopInfo):
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index
       m_index, n_index = plgpu.planar_snake(
@@ -209,7 +209,7 @@ def matmul_kernel(a, b, config: TuningConfig):
         orders_tensor_core=True,
     )
   else:
-    store_done_barrier = plgpu.Barrier(  # type: ignore
+    store_done_barrier = plgpu.Barrier(
         num_arrivals=1, num_barriers=2, orders_tensor_core=True
     )
   f = plgpu.kernel(
@@ -307,7 +307,7 @@ def main(_) -> None:
           # Accumulator layout mismatch triggers for tile_n=256 on some configs.
           continue
         raise
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:
@@ -330,7 +330,7 @@ def main(_) -> None:
     )(a, b)
     assert runtimes_ms is not None
     runtime_ms = statistics.median(runtimes_ms)
-    runtime_us = runtime_ms * 1e3   # type: ignore
+    runtime_us = runtime_ms * 1e3
     optimal_time = matmul_flops / peak_flops * 1e6  # us
     achieved_tc_util = optimal_time / runtime_us * 100
     print(f"\tReference: {achieved_tc_util:4.1f}%")

@@ -42,7 +42,6 @@ config.parse_flags_with_absl()
 
 # We disable the whitespace continuation check in this file because otherwise it
 # makes the test name formatting unwieldy.
-# pylint: disable=bad-continuation
 
 
 ARRAY_MSG = r"Using a non-tuple sequence for multidimensional indexing is not allowed.*arr\[array\(seq\)\]"

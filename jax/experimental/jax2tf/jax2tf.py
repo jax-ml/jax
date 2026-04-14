@@ -46,7 +46,6 @@ from jax._src.lib import xla_client
 import tensorflow as tf
 
 # These don't have public equivalents.
-# pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla
 from tensorflow.compiler.xla import xla_data_pb2
 try:
@@ -55,7 +54,6 @@ except ModuleNotFoundError:
   # This can be removed when TF 2.10 support is no longer needed.
   from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding
 from tensorflow.python.eager import context as tf_context
-# pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape  # TODO: deprecate
@@ -143,8 +141,8 @@ def convert(fun_jax: Callable,
             polymorphic_shapes: str | PolyShape | None | Sequence[str | PolyShape | None] = None,
             polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
-            enable_xla: bool = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
-            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
+            enable_xla: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
+            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
@@ -291,7 +289,7 @@ def convert(fun_jax: Callable,
     try:
       impl.before_conversion()
 
-      outs_tree: tree_util.PyTreeDef = None  # type: ignore
+      outs_tree: tree_util.PyTreeDef | None = None
       if with_gradient:
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient_tf(*args_flat_tf: TfVal) -> TfVal:
@@ -320,6 +318,7 @@ def convert(fun_jax: Callable,
     finally:
       impl.after_conversion()
 
+    assert outs_tree is not None
     outs_flat_tf = [tf.identity(x, "jax2tf_out") for x in outs_flat_tf]
     out_tf = tree_util.tree_unflatten(outs_tree, outs_flat_tf)
     return out_tf
@@ -844,7 +843,7 @@ def _shard_value(val: TfVal,
         .flat
     )
   else:
-    tad = sharding_proto.tile_assignment_devices  # type: ignore
+    tad = sharding_proto.tile_assignment_devices
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
   xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(

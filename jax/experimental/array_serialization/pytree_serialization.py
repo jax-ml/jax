@@ -138,7 +138,7 @@ def _norm_path(path: str | PathLike[str]) -> Any:
 
 def _rm_dir(root: Any) -> None:
   if _is_remote_path(root):
-    root.rmtree()  # pytype: disable=attribute-error
+    root.rmtree()
   else:
     shutil.rmtree(root)
 

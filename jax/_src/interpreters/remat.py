@@ -41,7 +41,8 @@ def remat_transform(policy, f, *args):
     trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
     args_ft = FlatTree.flatten_static_argnums_argnames(args, {}, (), ())
     in_tracers = args_ft.map(
-        lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # noqa F821  # type: ignore
+        # pyrefly: ignore[bad-argument-type]
+        lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # noqa F821
     with core.set_current_trace(trace):
       args, kwargs = in_tracers.unflatten()
       ans_pytree = f(*args, **kwargs)
@@ -62,7 +63,7 @@ class RematTracer(core.Tracer['RematTrace']):
   _trace: RematTrace
 
   def __init__(self, trace, x, jaxpr_tracer):
-    super().__init__(trace, core.typeof(x))  # pytype: disable=name-error
+    super().__init__(trace, core.typeof(x))
     self.val = x
     self.tracer = jaxpr_tracer
 
@@ -121,7 +122,7 @@ def _remat_jaxpr(jaxpr, policy):
   src = source_info_util.current()
 
   def new_arg(a):
-    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821  # pytype: disable=name-error
+    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):

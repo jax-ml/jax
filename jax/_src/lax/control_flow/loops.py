@@ -122,7 +122,7 @@ class Scan3(hijax.VJPHiPrimitive):
         unroll=unroll)    # TODO: don't ignore
     super().__init__()
 
-  def expand(self, args):  # type: ignore
+  def expand(self, args):  # pyrefly: ignore[bad-override]
     # TODO(dougalm): use empty_ref instead of new_ref
     # (requires empty_ref to have an impl rule)
     outs = [core.new_ref(ad_util.zeros_like_aval(aval)) for aval in self.out_aval]
@@ -2928,6 +2928,10 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   return x.shape
 
 def _cumred_sharding_rule(x, *, axis: int, reverse: bool):
+  if x.sharding.spec[axis] is not None:
+    raise core.ShardingTypeError(
+        'Input should be unsharded over the axis being reduced. Got input'
+        f' type={x} and {axis=}')
   return x.sharding
 
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):

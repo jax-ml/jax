@@ -34,9 +34,7 @@ def in_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an in_layouts attribute.
   """
-  if "in_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_layouts attribute.")
-  return op.attributes["in_layouts"]  # type: ignore
+  return _array_attr(op, "in_layouts")
 
 
 def out_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -45,9 +43,7 @@ def out_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an out_layouts attribute.
   """
-  if "out_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_layouts attribute.")
-  return op.attributes["out_layouts"]  # type: ignore
+  return _array_attr(op, "out_layouts")
 
 
 def in_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
@@ -56,9 +52,7 @@ def in_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   Raises:
     ValueError: If the operation does not have an in_transforms attribute.
   """
-  if "in_transforms" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_transforms attribute.")
-  return op.attributes["in_transforms"]  # type: ignore
+  return _array_attr(op, "in_transforms")  # pyrefly: ignore[bad-return]
 
 
 def out_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
@@ -67,9 +61,7 @@ def out_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   Raises:
     ValueError: If the operation does not have an out_transforms attribute.
   """
-  if "out_transforms" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_transforms attribute.")
-  return op.attributes["out_transforms"]  # type: ignore
+  return _array_attr(op, "out_transforms")  # pyrefly: ignore[bad-return]
 
 
 def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -78,9 +70,7 @@ def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an in_tmem_layouts attribute.
   """
-  if "in_tmem_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_tmem_layouts attribute.")
-  return op.attributes["in_tmem_layouts"]  # type: ignore
+  return _array_attr(op, "in_tmem_layouts")
 
 
 def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -89,9 +79,17 @@ def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an out_tmem_layouts attribute.
   """
-  if "out_tmem_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_tmem_layouts attribute.")
-  return op.attributes["out_tmem_layouts"]  # type: ignore
+  return _array_attr(op, "out_tmem_layouts")
+
+
+def _array_attr(op: MlirOperation, name: str) -> Sequence[ir.Attribute]:
+  try:
+    result = op.attributes[name]
+  except KeyError:
+    raise ValueError(f"{op} does not have an {name} attribute") from None
+  if not isinstance(result, ir.ArrayAttr):
+    raise TypeError(f"{op} has {name} of an unexpected type: {result}")
+  return result  # pyrefly: ignore[bad-return]
 
 
 def should_have_in_tmem_layout(op: MlirOperation) -> bool:
@@ -159,7 +157,8 @@ def attr_element(
   attr = op.attributes[attr_name]
   if not attr:
     return None
-  return op.attributes[attr_name][index]  # type: ignore
+  assert isinstance(attr, ir.ArrayAttr)
+  return attr[index]
 
 
 def _in_attr_for_operand(

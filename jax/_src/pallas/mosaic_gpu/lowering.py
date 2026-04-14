@@ -74,9 +74,6 @@ from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
-
-# TODO(slebedev): Enable type checking.
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
@@ -640,7 +637,7 @@ class LoweringResult:
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
 
 
-class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
+class LoweringError(Exception):
   pass
 
 
@@ -1114,7 +1111,7 @@ def lower_jaxpr_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    mgpu.infer_layout(module, arch=mgpu_core._infer_arch())  # pytype: disable=attribute-error
+    mgpu.infer_layout(module, arch=mgpu_core._infer_arch())
     mgpu.lower_mgpu_dialect(
         module, launch_ctx, auto_barriers=not params.unsafe_no_auto_barriers
     )
@@ -1216,7 +1213,7 @@ def lower_jaxpr_to_mosaic_gpu(
   for i, eqn in enumerate(jaxpr.eqns):
     invals = map(read_env, eqn.invars)
     eqn_name_stack = module_ctx.name_stack + eqn.source_info.name_stack
-    loc = mlir.source_info_to_location(  # pytype: disable=wrong-arg-types
+    loc = mlir.source_info_to_location(
         module_ctx,
         eqn.primitive,
         eqn_name_stack,
@@ -1785,7 +1782,7 @@ def _ndindexer_indices(
   indices: list[Any] = []
   for idx in indexer.indices:
     if (isinstance(idx, mgpu.FragmentedArray) and idx.shape) or (
-        isinstance(idx, ir.Value) and isinstance(idx.type, ir.VectorType)  # pytype: disable=attribute-error
+        isinstance(idx, ir.Value) and isinstance(idx.type, ir.VectorType)
     ):
       if not allow_arrays:
         raise ValueError("Arrays are not supported as indices.")

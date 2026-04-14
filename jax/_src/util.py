@@ -311,7 +311,7 @@ memoize = cache(max_size=None)
 def _ignore(): return None
 
 P = ParamSpec("P")
-R = TypeVar("R", covariant=True)  # pytype: disable=not-supported-yet
+R = TypeVar("R", covariant=True)
 
 class WeakrefCachedFunc(Protocol, Generic[P, R]):
   def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
@@ -440,7 +440,7 @@ def multi_weakref_lru_cache(
   other arguments. The cache entry is removed if any of the weakref
   arguments dies.
   """
-  cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(  # type: ignore
+  cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(
       config.trace_context if trace_context_in_key else _ignore,
       call,
       maxsize=maxsize,

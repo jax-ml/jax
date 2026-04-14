@@ -1470,6 +1470,7 @@ jax_multiplatform_test(
         "cpu_x32": ["--jax_num_generated_cases=30"],
         "gpu_a100": ["--jax_num_generated_cases=40"],
         "gpu_h100": ["--jax_num_generated_cases=40"],
+        "gpu_h100_tfrt": ["--jax_num_generated_cases=40"],
         "gpu_p100": ["--jax_num_generated_cases=40"],
         "gpu_v100": ["--jax_num_generated_cases=40"],
         "tpu_v3": ["--jax_num_generated_cases=40"],

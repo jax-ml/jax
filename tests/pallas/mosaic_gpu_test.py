@@ -25,7 +25,7 @@ import sys
 import tempfile
 import traceback
 import types
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -66,20 +66,24 @@ def do_not_call_me_directly(*args, **kwargs):
       "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
   )
 
-# Clone the modules locally because the functions may be called from other
-# modules.
-pl = types.ModuleType("_pl_local")
-pl.__dict__.update(_pl.__dict__)
+if TYPE_CHECKING:
+  pl = _pl
+  plgpu = _plgpu
+else:
+  # Clone the modules locally because the functions may be called from other
+  # modules.
+  pl = types.ModuleType("_pl_local")
+  pl.__dict__.update(_pl.__dict__)
 
-plgpu = types.ModuleType("_plgpu_local")
-plgpu.__dict__.update(_plgpu.__dict__)
+  plgpu = types.ModuleType("_plgpu_local")
+  plgpu.__dict__.update(_plgpu.__dict__)
 
-_pallas_call = _pl.pallas_call
-_kernel = _plgpu.kernel
-del _pl, _plgpu
+  _pallas_call = _pl.pallas_call
+  _kernel = _plgpu.kernel
+  del _pl, _plgpu
 
-plgpu.kernel = do_not_call_me_directly
-pl.pallas_call = do_not_call_me_directly
+  plgpu.kernel = do_not_call_me_directly
+  pl.pallas_call = do_not_call_me_directly
 
 
 def _fori_loop(force_while: bool, lb, ub, body, init):
@@ -1755,6 +1759,57 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(
+      (0, plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+      (80, plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+      (0, plgpu.OOBFillMode.ZEROS),
+      (112, plgpu.OOBFillMode.ZEROS),
+      (192, plgpu.OOBFillMode.ZEROS),
+      (208, plgpu.OOBFillMode.ZEROS),
+      (0, plgpu.OOBFillMode.UNDEFINED),
+      (112, plgpu.OOBFillMode.UNDEFINED),
+      (192, plgpu.OOBFillMode.UNDEFINED),
+      (208, plgpu.OOBFillMode.UNDEFINED),
+  )
+  def test_out_of_bounds_tma_reads(self, start_offset, oob_mode):
+    dtype = jnp.int8
+    gmem_size = 208
+    smem_size = 128
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((smem_size,), dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((smem_size,), dtype), plgpu.Barrier()],
+        grid=(1,),
+    )
+    def kernel(start_idx, x_ref, o_ref, scratch_ref, barrier):
+      # Initialize SMEM with -1s to indicate OOB values.
+      scratch_ref[...] = jnp.full(scratch_ref.shape, -1, dtype)
+      plgpu.commit_smem()
+
+      idx = pl.ds(start_idx[...], smem_size)
+      plgpu.copy_gmem_to_smem(
+          x_ref.at[idx], scratch_ref, barrier, oob_mode=oob_mode
+      )
+      plgpu.barrier_wait(barrier)
+      o_ref[...] = scratch_ref[...]
+
+    x = jnp.arange(gmem_size, dtype=dtype)
+    start_idx_val = jnp.array(start_offset, dtype=jnp.int32)
+
+    out = kernel(start_idx_val, x)
+
+    valid_slice = x[start_offset : start_offset + smem_size]
+    np.testing.assert_array_equal(out[:valid_slice.size], valid_slice)
+
+    if oob_mode == plgpu.OOBFillMode.ZEROS:
+      np.testing.assert_array_equal(out[valid_slice.size:], 0)
+
   def test_num_programs(self):
     @functools.partial(
         self.pallas_call,
@@ -2431,7 +2486,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           (sm_steps, 4, 33), collective_axes="sm", init_carry=0
       )(body)
 
-    result, steps = kernel()  # pylint: disable=unpacking-non-sequence
+    result, steps = kernel()
     for sm_step in range(sm_steps):
       np.testing.assert_array_equal(steps, jnp.full((132,), sm_steps))
 

@@ -35,7 +35,7 @@ from jax.experimental.jax2tf.examples import saved_model_lib
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
 
 _MODEL = flags.DEFINE_enum(
     "model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],

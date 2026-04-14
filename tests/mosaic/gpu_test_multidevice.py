@@ -19,7 +19,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -31,7 +31,6 @@ else:
   import jax.experimental.mosaic.gpu as mgpu
 
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 

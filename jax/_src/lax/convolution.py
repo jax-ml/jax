@@ -542,6 +542,8 @@ def _conv_general_dilated_transpose_lhs(
       window_strides, np.take(g.shape, out_sdims), padding, lhs_dilation,
       rhs_dilation)
   revd_weights = lax.rev(rhs, rhs_sdims)
+  if g.dtype != revd_weights.dtype:
+    revd_weights = lax.convert_element_type(revd_weights, g.dtype)
   out = conv_general_dilated(
       g, revd_weights, window_strides=lhs_dilation, padding=padding,
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
@@ -550,6 +552,8 @@ def _conv_general_dilated_transpose_lhs(
       batch_group_count=1, precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=lhs.aval.sharding)
+  if out.dtype != lhs.aval.dtype:
+    out = lax.convert_element_type(out, lhs.aval.dtype)
   if batch_group_count > 1:
     out = _reshape_axis_out_of(lhs_spec[1], batch_group_count, out)
     out = _reshape_axis_into(lhs_spec[1], lhs_spec[0], out)
@@ -579,7 +583,9 @@ def _conv_general_dilated_transpose_rhs(
       np.take(lhs_shape, lhs_sdims), np.take(rhs_shape, rhs_sdims),
       window_strides, np.take(g.shape, out_sdims), padding, lhs_dilation,
       rhs_dilation)
-  return conv_general_dilated(
+  if g.dtype != lhs.dtype:
+    lhs = lax.convert_element_type(lhs, g.dtype)
+  out = conv_general_dilated(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers,
@@ -587,6 +593,9 @@ def _conv_general_dilated_transpose_rhs(
       batch_group_count=batch_group_count, precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=rhs.aval.sharding)
+  if out.dtype != rhs.aval.dtype:
+    out = lax.convert_element_type(out, rhs.aval.dtype)
+  return out
 
 def _conv_general_dilated_batch_rule(
     axis_data,

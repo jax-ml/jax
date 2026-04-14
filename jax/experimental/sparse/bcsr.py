@@ -889,7 +889,7 @@ class BCSR(JAXSparse):
       n_dense = self.n_dense
       dtype = self.dtype
       shape = list(self.shape)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:
       repr_ = f"{name}(<invalid>)"
     else:
       extra = f", {nse=}"

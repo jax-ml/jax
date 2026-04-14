@@ -71,7 +71,7 @@ class LoweringContext:
         assert self._single_thread_per_warp_predicate is not None
         return self._single_thread_per_warp_predicate
       case _:
-        assert_never(self.thread_semantics)  # pytype: disable=wrong-arg-types,bad-return-type
+        assert_never(self.thread_semantics)
 
   def check_collective(self, op: ir.OpView) -> None:
     """Checks that the collective attribute is consistent across operations.
@@ -94,7 +94,7 @@ class LoweringContext:
       return
 
     # pyrefly: ignore[missing-attribute]
-    if (name := op.OPERATION_NAME) not in _lowerings:  # pytype: disable=attribute-error
+    if (name := op.OPERATION_NAME) not in _lowerings:
       raise NotImplementedError(f"Missing lowering rule for {op}")
 
     lowering_rule = _lowerings[name]
@@ -202,7 +202,7 @@ def _fragmented_array_from_ir(
     layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
-  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
+  producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]  # pyrefly: ignore[missing-attribute]
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
@@ -212,13 +212,13 @@ def _fragmented_array_from_ir(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
+  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]
   for attribute in conversion_cast.attributes:
     reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
   registers = np.array(list(converted_outputs)).reshape(
     [
-        attr.value  # pyrefly: ignore[missing-attribute]  # pytype: disable=attribute-error
+        attr.value  # pyrefly: ignore[missing-attribute]
         for attr in ir.ArrayAttr(conversion_cast.attributes["registers_shape"])
     ]
   )
@@ -275,7 +275,7 @@ def _register_lowering(
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
     if op is not None:
-      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pyrefly: ignore[missing-attribute]
       _lowerings[op_name] = f
       if support_warp_semantics:
         _supported_warp_lowerings.add(op_name)
@@ -551,13 +551,13 @@ def _vector_store_op_lowering_rule(
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
 
       def store_tiled(optimized: bool):
-        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized, atomic=atomic)  # pytype: disable=wrong-arg-types
+        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized, atomic=atomic)
 
       _retry_on_failure(store_tiled, optimized)
     else:
 
       def store_untiled(optimized: bool):
-        fragmented_array.store_untiled(ref, optimized=optimized, atomic=atomic)  # pytype: disable=wrong-arg-types
+        fragmented_array.store_untiled(ref, optimized=optimized, atomic=atomic)
       _retry_on_failure(store_untiled, optimized)
   else:
     raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
@@ -805,7 +805,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
       result = result.min(acc)
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
-  assert result.layout == layouts_lib.from_layout_attr(out_layout)  # pytype: disable=attribute-error
+  assert result.layout == layouts_lib.from_layout_attr(out_layout)
   return [fragmented_array_to_ir(result, op.result.type)]
 
 
@@ -967,7 +967,7 @@ def transform_type(
   # TODO(bchetioui): this should be trivial to relax if ever necessary.
   if len(transforms) > 1 or not isinstance(transforms[0], lc.TileTransform):
     raise NotImplementedError(f"Unsupported transforms: {transforms}")
-  tile_transform: lc.TileTransform = transforms[0]  # pytype: disable=attribute-error
+  tile_transform: lc.TileTransform = transforms[0]
 
   strides, offset = ref_ty.get_strides_and_offset()
   tiled_shape = tile_transform.transform_shape(ref_ty.shape)
@@ -1079,6 +1079,7 @@ def _mgpu_async_load_op_lowering_rule(
     utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   # TODO(dasenov): Add support for the remaining op properties.
+  oob_mode = lc.OOBFillMode(ir.IntegerAttr(load_op.oob_fill_mode).value)  # pyrefly: ignore[missing-attribute]
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
@@ -1089,6 +1090,7 @@ def _mgpu_async_load_op_lowering_rule(
       swizzle=swizzle,
       gmem_transform=transforms,
       leader_tracked=leader_tracked,
+      oob_mode=oob_mode,
       **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
@@ -1166,7 +1168,8 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       **predicate,  # pyrefly: ignore[bad-argument-type]
       arrive=arrive,
-      reduction_op=reduction_op  # pyrefly: ignore[bad-argument-type]
+      reduction_op=reduction_op,  # pyrefly: ignore[bad-argument-type]
+      oob_mode=lc.OOBFillMode.UNDEFINED,
   )
   return []
 
@@ -1265,7 +1268,7 @@ def _conversion_op_lowering_rule(
   if in_layout != layout:
     raise ValueError("Layout mismatch")
 
-  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
+  target_ty = op.result.type.element_type
   operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
   converted = operand.astype(target_ty, is_signed=target_is_signed)
   return [fragmented_array_to_ir(converted, op.result.type)]
@@ -1423,7 +1426,7 @@ def _cmpi_op_lowering_rule(
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   # pyrefly: ignore[missing-attribute]
-  impl, is_signed = CMPI_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
+  impl, is_signed = CMPI_IMPLS[op.predicate.value]
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
   rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
@@ -1448,7 +1451,7 @@ def _cmpf_op_lowering_rule(
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   # pyrefly: ignore[missing-attribute]
-  impl = CMPF_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
+  impl = CMPF_IMPLS[op.predicate.value]
   lhs = _fragmented_array_from_ir(op.lhs, layout)
   rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
@@ -1655,7 +1658,7 @@ def _mgpu_slice_smem_op_lowering_rule(
 
 def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
   if isinstance(owner := offset.owner, arith.ConstantOp):
-    cst_offset = ir.IntegerAttr(owner.value).value  # pytype: disable=attribute-error
+    cst_offset = ir.IntegerAttr(owner.value).value
     size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
     if cst_offset + size > smem_size:
       raise ValueError("Ran out of shared memory.")
@@ -1976,7 +1979,7 @@ def _memref_expand_shape_op_lowering_rule(
 
   start_index = len(op.static_output_shape)
   for i in range(start_index, start_index + num_tiling_dims):
-    reassociation.append([i])  # pyrefly: ignore[bad-argument-type]  # pytype: disable=container-type-mismatch
+    reassociation.append([i])  # pyrefly: ignore[bad-argument-type]
 
   new_expand_shape_op = memref.ExpandShapeOp(
       out_transformed_ty,
@@ -2617,12 +2620,12 @@ def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
       # pyrefly: ignore[missing-attribute]
-      op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
+      op.OPERATION_NAME.startswith("mosaic_gpu.")
       or inference_utils.should_have_layout(op)
       or inference_utils.should_have_transforms(op)
       or inference_utils.should_have_tmem_layout(op)
       # Does it have subblocks?
-      or any(bool(b) for r in op.regions for b in r)  # pylint: disable=g-complex-comprehension
+      or any(bool(b) for r in op.regions for b in r)
   )
 
 

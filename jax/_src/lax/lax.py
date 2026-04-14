@@ -1625,7 +1625,7 @@ def convert_element_type(operand: ArrayLike,
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
-  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
+  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
@@ -1684,8 +1684,9 @@ def _convert_element_type(
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literals.TypedNdArray(
-        np.asarray(operand).astype(new_dtype), weak_type=weak_type)
+    arr = np.asarray(operand).astype(new_dtype)
+    aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
+    operand = literals.TypedNdArray(arr, aval=aval)
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
@@ -3603,7 +3604,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # type: ignore[arg-type]
     )
     if use_x_sharding:
-      sharding = x.sharding  # type: ignore
+      sharding = x.sharding  # pyrefly: ignore[missing-attribute]
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
   val, _ = full_like_insert_pvary(val, x)
@@ -3611,7 +3612,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
 
 
 def full_like_insert_pvary(val, x):
-  from jax._src.state.types import TransformedRef  # type: ignore
+  from jax._src.state.types import TransformedRef  # pyrefly: ignore[missing-import]
   if isinstance(x, TransformedRef):
     all_varying = frozenset.union(*[
         typeof(x).mat.varying for x in tree_util.FlatTree.flatten(x).vals
@@ -4982,7 +4983,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    return [literals.TypedNdArray(out, weak_type=out_aval.weak_type)]
+    return [literals.TypedNdArray(out, aval=out_aval)]
   return None
 
 def _convert_elt_type_fwd_rule(eqn):
@@ -5324,7 +5325,7 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
   lhs_tensored_shape = tuple_delete(lhs_shape, lhs_contract_or_batch)
   rhs_group = ()
   if isinstance(dimension_numbers, RaggedDotDimensionNumbers):
-    rhs_group = tuple(dimension_numbers.rhs_group_dimensions)  # pytype: disable=attribute-error
+    rhs_group = tuple(dimension_numbers.rhs_group_dimensions)
   rhs_contract_or_batch_or_group = tuple(
       sorted(tuple(rhs_contracting) + tuple(rhs_batch) + rhs_group)
   )
@@ -6115,7 +6116,7 @@ def _ragged_dot_general_transpose_rule(
         unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
       case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH | _:
         raise unimplemented('grad_x_dims', mode)
-    return dims, unsorted_axes  # pytype: disable=name-error
+    return dims, unsorted_axes
 
   def grad_y_dims():
     match mode:
@@ -6134,7 +6135,7 @@ def _ragged_dot_general_transpose_rule(
         )
       case RaggedDotMode.RAGGED_CONTRACTING | RaggedDotMode.RAGGED_BATCH | _:
         raise unimplemented('grad_y_dims', mode)
-    return dims, unsorted_axes  # pytype: disable=name-error
+    return dims, unsorted_axes
 
   def _ragged_dot_grad(lhs, rhs, dims_fn, aval):
     dims, unsorted_axes = dims_fn()
@@ -6332,7 +6333,7 @@ def _ragged_dot_general_impl(
           lhs,
           rhs,
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
-      )  # pytype: disable=bad-return-type
+      )
 
 
 # TODO(rdyro): Remove this flag and the python transpose once the C++ transpose
@@ -7159,6 +7160,13 @@ def _merge_on_one_axis(operand, new_sizes):
   return _split_on_one_axis(new_sizes, operand.shape)
 
 
+def raise_reshape_error(operand, new_sizes):
+  raise core.ShardingTypeError(
+      'This reshape is not supported. Please specify the sharding of the'
+      ' output via the `out_sharding` argument of jax.lax.reshape. Got'
+      f' operand type: {operand}, new sizes: {new_sizes}')
+
+
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
@@ -7172,29 +7180,20 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   try:
     is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
   except ReshapeExplicitError:
-    raise core.ShardingTypeError(
-        'This reshape is not supported. Please specify the sharding of'
-        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-        f' operand type: {operand}, new sizes: {new_sizes}')
-  if is_split:
-    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
+    raise_reshape_error(operand, new_sizes)
+  if is_split:  # type: ignore
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,  # type: ignore
                                         dimensions)
 
   try:
     is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
   except ReshapeExplicitError:
-    raise core.ShardingTypeError(
-        'This reshape is not supported. Please specify the sharding of'
-        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-        f' operand type: {operand}, new sizes: {new_sizes}')
-  if is_merge:
-    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
+    raise_reshape_error(operand, new_sizes)
+  if is_merge:  # type: ignore
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,  # type: ignore
                                         dimensions)
+  raise_reshape_error(operand, new_sizes)
 
-  raise core.ShardingTypeError(
-      'This reshape is not supported. Please specify the sharding of'
-      ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-      f' operand type: {operand}, new sizes: {new_sizes}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -7209,48 +7208,64 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
       new_spec.append(sp)
   return operand.sharding.update(spec=new_spec)
 
-def _get_spec_size(sp, mesh):
-  tup_sp = sp if isinstance(sp, tuple) else (sp,)
-  return math.prod(mesh.shape[t] for t in tup_sp)
+def split_partitions(mesh, tup_sp, out, operand, new_sizes):
+  iter_sp = iter(tup_sp)
+  partitions = []
+  for o in out:
+    dim_partitions = []
+    while o > 1:
+      ns = next(iter_sp, None)
+      if ns is None:
+        break
+      axis_size = mesh.shape[ns]
+      o, remainder = divmod(o, axis_size)
+      if remainder != 0:
+        raise_reshape_error(operand, new_sizes)
+      dim_partitions.append(ns)
+    partitions.append(tuple(dim_partitions))
+  assert next(iter_sp, None) is None
+  return partitions
 
 def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
-  for out, sp in safe_zip(out_split, operand.sharding.spec):
+  for out, sp in zip(out_split, operand.sharding.spec):
     if isinstance(out, list):
       if sp is None:
         new_spec.extend([None] * len(out))
-      elif dimensions is None and out[0] % _get_spec_size(sp, mesh) == 0:
-        new_spec.extend([sp] + [None] * (len(out) - 1))
+      elif dimensions is None:
+        tup_sp = sp if isinstance(sp, tuple) else (sp,)
+        partitions = split_partitions(mesh, tup_sp, out, operand, new_sizes)
+        new_spec.extend(partitions)
       else:
-        raise core.ShardingTypeError(
-            'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
-            f' operand type: {operand}, new sizes: {new_sizes}')
+        raise_reshape_error(operand, new_sizes)
     else:
       new_spec.append(sp)
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.update(spec=new_spec)
 
+def strip_trailing_nones(lst):
+  while lst[-1] is None:
+    lst.pop()
+  return tuple(lst)
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
   op_spec = iter(operand.sharding.spec)
-  for new_size, op_merge in zip(new_sizes, operand_merge):
+  for ns, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
-      sp = [next(op_spec) for _ in op_merge]
-      if all(s is None for s in sp):
+      tup_sp = tuple(next(op_spec) for _ in op_merge)
+      if all(s is None for s in tup_sp):
         new_spec.append(None)
-      elif (sp[0] is not None and all(s is None for s in sp[1:]) and
-            dimensions is None):
-        assert new_size % _get_spec_size(sp[0], mesh) == 0
-        new_spec.append(sp[0])
+      elif dimensions is None:
+        tup_sp = strip_trailing_nones(flatten_spec(tup_sp))
+        if None in tup_sp:
+          raise_reshape_error(operand, new_sizes)
+        partitions = split_partitions(mesh, tup_sp, [ns], operand, new_sizes)
+        new_spec.extend(partitions)
       else:
-        raise core.ShardingTypeError(
-            'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
-            f' operand type: {operand}, new sizes: {new_sizes}')
+        raise_reshape_error(operand, new_sizes)
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
@@ -8829,7 +8844,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))
   # bool(obj) for an ndarray raises an error, so we check len
-  if not len(obj):  # pylint: disable=g-explicit-length-test
+  if not len(obj):
     return
   obj_arr = np.array(obj)
   if obj_arr.ndim != 1:
@@ -8852,7 +8867,7 @@ def _const(example, val):
   if dtypes.is_python_scalar(example):
     val = dtypes.scalar_type_of(example)(val)
     return val if dtype == _dtype(val) else np.array(val, dtype)
-  return literals.TypedNdArray(np.array(val, dtype), weak_type=False)
+  return literals.TypedNdArray(np.array(val, dtype))
 
 _zeros: Callable = partial(full_like, fill_value=0)
 

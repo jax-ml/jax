@@ -108,7 +108,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
     x = np.arange(elems_per_host) + jax.process_index() * elems_per_host
     out = multihost_utils.broadcast_one_to_all((x, x))
     jax.tree.map(
-        lambda x: np.testing.assert_array_equal(  # pylint: disable=g-long-lambda
+        lambda x: np.testing.assert_array_equal(
             x, np.arange(elems_per_host)
         ),
         out,
@@ -131,7 +131,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       x = np.arange(elems_per_host) + jax.process_index() * elems_per_host
       out = multihost_utils.broadcast_one_to_all((x, x))
       jax.tree.map(
-          lambda x: np.testing.assert_array_equal(  # pylint: disable=g-long-lambda
+          lambda x: np.testing.assert_array_equal(
               x, np.arange(elems_per_host)
           ),
           out,
@@ -148,7 +148,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
          jax.process_index() * elems_per_host)
     out = multihost_utils.broadcast_one_to_all((x, x))
     jax.tree.map(
-        lambda x: np.testing.assert_array_equal(  # pylint: disable=g-long-lambda
+        lambda x: np.testing.assert_array_equal(
             x, np.arange(elems_per_host, dtype=jnp.uint8)
         ),
         out,

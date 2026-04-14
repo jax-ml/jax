@@ -174,7 +174,7 @@ def _resolve_memory_spaces(
     input_memory_spaces = tuple(
         i
         if i
-        in {  # pylint: disable=g-long-ternary
+        in {
             tpu_custom_call.MemorySpace.HBM,
             tpu_custom_call.MemorySpace.VMEM,
             tpu_custom_call.MemorySpace.SMEM,
@@ -289,7 +289,7 @@ def _lower_to_custom_call(
         raise ValueError("Metadata already contains mesh axes.")
       mesh_axes_list = list(mesh_axes)
       if all(isinstance(a, str) for a in mesh_axes):
-        mesh_axes_list = sorted(mesh_axes)  # type: ignore
+        mesh_axes_list = sorted(mesh_axes)  # pyrefly: ignore[bad-specialization]
       dict_metadata["mesh_axes"] = json.dumps(mesh_axes_list)
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,

@@ -32,8 +32,7 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
 
-# ruff: noqa: F405
-# pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access
+# ruff: noqa: F405 wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access
 
 SmemRef = ir.Value
 
@@ -78,7 +77,7 @@ class WGMMADefaultImpl:
 
   @staticmethod
   def wgmma(
-      smem_scratch: Any,  # pylint: disable=unused-argument
+      smem_scratch: Any,
       acc: WGMMAAccumulator,
       a_slice: SmemRef,
       b_slice: SmemRef,

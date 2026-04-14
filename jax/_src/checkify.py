@@ -240,7 +240,8 @@ class Error:
             cur_effect = error_effect
 
       if cur_effect is not None:
-        return tree_unflatten(self._metadata[int(min_code)],  # type: ignore
+        assert min_code is not None
+        return tree_unflatten(self._metadata[int(min_code)],
                               self._payload[cur_effect])
     return None
 
@@ -259,14 +260,15 @@ class Error:
       min_code: Int | None = None
       cur_effect: ErrorEffect | None = None
       for error_effect, code in self._code.items():
-        if self._pred[error_effect][idx]:   # type: ignore
-          if min_code is None or code[idx] < min_code:  # type: ignore[index]
-            min_code = code[idx]   # type: ignore
+        if self._pred[error_effect][idx]:  # pyrefly: ignore[bad-index]
+          if min_code is None or code[idx] < min_code:  # pyrefly: ignore[bad-index]
+            min_code = code[idx]  # pyrefly: ignore[bad-index]
             cur_effect = error_effect
 
       if cur_effect is not None:
+        assert min_code is not None
         payload = tree_map(lambda x, i=idx: x[i], self._payload[cur_effect])
-        jax_error = tree_unflatten(self._metadata[int(min_code)], payload)  # type: ignore
+        jax_error = tree_unflatten(self._metadata[int(min_code)], payload)
         error_mapping[idx] = jax_error
     if error_mapping:
       return BatchedError(error_mapping)

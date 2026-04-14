@@ -31,6 +31,8 @@ pytype_strict_library(
         ":backend",
         ":core",
         ":linear_util",
+        ":lowering",
+        ":pallas",
         ":random",
         ":sharding",
         ":source_info_util",
@@ -53,6 +55,24 @@ py_library_providing_imports_info(
         "//jax/_src:custom_derivatives",
         "//jax/_src:lax",
         "//jax/_src:random",
+    ],
+)
+
+pytype_strict_library(
+    name = "lowering",
+    srcs = ["lowering.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src:mlir",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas",
+    srcs = ["pallas.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src/pallas",
     ],
 )
 

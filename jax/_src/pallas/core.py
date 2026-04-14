@@ -917,7 +917,7 @@ class GridMapping:
   def static_grid(self) -> StaticGrid:
     if self.num_dynamic_grid_bounds:
       raise ValueError("Expected a grid with fully static bounds")
-    return self.grid  # type: ignore
+    return self.grid  # pyrefly: ignore[bad-return]
 
   @contextlib.contextmanager
   def trace_env(self):
@@ -933,7 +933,7 @@ class GridMapping:
   @property
   def slice_index_ops(self):
     """Returns a slice object to select the index operands to a kernel.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     return slice(0, self.num_index_operands)
 
@@ -941,9 +941,9 @@ class GridMapping:
   def slice_block_ops(self):
     """Returns a slice to select the block operands to a kernel.
 
-    The block operands are: *ins, *outs, the same for which we
+    The block operands are: ``*ins``, ``*outs``, the same for which we
     have `self.block_mappings`.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     return slice(self.num_index_operands,
                  self.num_index_operands + len(self.block_mappings))
@@ -951,7 +951,7 @@ class GridMapping:
   @property
   def slice_scratch_ops(self):
     """Returns a slice object to select the scratch operands to a kernel.
-    This works on a sequence that contains *index, *ins, *outs, *scratch.
+    This works on a sequence that contains ``*index``, ``*ins``, ``*outs``, ``*scratch``.
     """
     if self.num_scratch_operands:
       return slice(-self.num_scratch_operands, None)
@@ -960,7 +960,7 @@ class GridMapping:
 
   @property
   def in_shapes(self) -> Iterable[jax_core.ShapeDtypeStruct]:
-    """The shapes of *index, *inputs."""
+    """The shapes of ``*index``, ``*inputs``."""
     index_shapes = (
         # pyrefly: ignore[missing-attribute]
         jax_core.ShapeDtypeStruct(ia.shape, ia.dtype)
@@ -1131,14 +1131,14 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # type: ignore
+      grid_names, grid = util.unzip2(grid)  # pyrefly: ignore[bad-argument-type]
 
     # TODO(b/353730556): allow NumPy scalars in grids
-    if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
+    if not all(_is_valid_grid_dim(g) for g in grid):  # pyrefly: ignore[bad-argument-type]
       raise ValueError(
           f"Grid must be a tuple of integers or jax.Array, got {grid}"
       )
-    self.grid = grid  # type: ignore
+    self.grid = grid  # pyrefly: ignore[bad-assignment]
     self.grid_names = grid_names
 
   def _make_scalar_ref_aval(self, aval):

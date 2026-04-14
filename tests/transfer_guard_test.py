@@ -114,7 +114,7 @@ class TransferGuardTest(jtu.JaxTestCase):
     """Asserts that a transfer in the context is allowed."""
     try:
       yield
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
       raise RuntimeError(
           f"Expected a transfer to be allowed while running: {func_name}"
       ) from e
@@ -133,7 +133,7 @@ class TransferGuardTest(jtu.JaxTestCase):
     try:
       with self.assertRaises(Exception):
         yield
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
       raise RuntimeError(
           f"Expected a transfer to be disallowed while running: {func_name}"
       ) from e

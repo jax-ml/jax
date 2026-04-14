@@ -86,7 +86,7 @@ class _DecisionByElimination:
     # how the order matters for inequalities).
     for constr in self.scope._explicit_constraints:
       if not core.is_constant_dim(constr.diff):
-        self.add_implicit_constraints_expr(constr.diff)  # type: ignore
+        self.add_implicit_constraints_expr(constr.diff)  # pyrefly: ignore[bad-argument-type]
 
       self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
                                       constr.debug_str)
@@ -244,7 +244,7 @@ class _DecisionByElimination:
                 (new_eq == Comparator.EQ and const != 0)):
               raise ValueError(f"Unsatisfiable constraints: {debug_str or str(e) + ' >= 0'}")
           else:
-            combinations.add((new_eq, new_e))  # type: ignore
+            combinations.add((new_eq, new_e))  # pyrefly: ignore[bad-argument-type]
     return combinations
 
   def bounds(self, e: DimSize,

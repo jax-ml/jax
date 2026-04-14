@@ -430,7 +430,7 @@ def infer_tmem_layout(
     packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
-  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
+  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)
 
 
 def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
@@ -1537,9 +1537,9 @@ class Layout(SomeLayout, enum.Enum):
         check_no_args()
         return mgpu.fragmented_array.WGMMA_LAYOUT_ACC_32BIT
       case Layout.WG_SPLAT:
-        return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return mgpu.WGSplatFragLayout(*args, **kwargs)
       case Layout.WG_STRIDED:
-        return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return mgpu.WGStridedFragLayout(*args, **kwargs)
       case Layout.TILED:
         return mgpu.TiledLayout(*args, **kwargs)
       case Layout.TCGEN05:
@@ -1553,9 +1553,9 @@ class Layout(SomeLayout, enum.Enum):
           return mgpu.tmem_native_layout(*args, **kwargs)
         return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
-        return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return tcgen05.fa_m64_collective_layout(*args, **kwargs)
       case Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
-        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()  # pytype: disable=missing-parameter
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
@@ -1587,7 +1587,7 @@ class TMEMLayout(enum.Enum):
       case TMEMLayout.SPARSE_METADATA_LAYOUT:
         return tcgen05.sparse_meta_layout(*args, **kwargs)
       case TMEMLayout.M64_COLLECTIVE_LAYOUT:
-        return tcgen05.tmem_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs)
       case TMEMLayout.SCALES_M64_COLLECTIVE_LAYOUT:
         return tcgen05.b_scales_m64_collective_layout(*args, **kwargs)
     raise ValueError(f"Invalid TMEMLayout: {self}")

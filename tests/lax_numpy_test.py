@@ -3501,6 +3501,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     y = jax.vmap(f)(x)
     self.assertIsNot(x, y)
 
+  def testArrayContains(self):
+    self.assertIn(1, jnp.arange(4))
+    self.assertNotIn(100, jnp.arange(4))
+
+    with self.assertRaisesRegex(
+        ValueError, "Array.__contains__: search array must be one-dimensional"):
+      _ = 1 in jnp.array(1)
+
+    with self.assertRaisesRegex(
+        ValueError, "Array.__contains__: query value must be a scalar"):
+      _ = jnp.arange(2) in jnp.arange(2)
+
+    with self.assertRaisesRegex(
+        TypeError, "Array.__contains__: unsupported operand type.*"
+    ):
+      _ = "abc" in jnp.arange(2)
+
+    with self.assertRaisesRegex(
+        TypeError, "Array.__contains__: unsupported operand type.*"
+    ):
+      _ = None in jnp.arange(2)
+
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(
         TypeError, 'JAX only supports number, bool, and string dtypes.*'
@@ -6364,16 +6386,16 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'frompyfunc': ['kwargs'],
       'fromstring': ['like'],
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
-      'nanpercentile': ['interpolation', 'weights'],
-      'nanquantile': ['interpolation', 'weights'],
+      'nanpercentile': ['interpolation'],
+      'nanquantile': ['interpolation'],
       'nanstd': ['correction'],
       'nanvar': ['correction'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
-      'percentile': ['interpolation', 'weights'],
+      'percentile': ['interpolation'],
       'promote_types': ['type1', 'type2'],
-      'quantile': ['interpolation', 'weights'],
+      'quantile': ['interpolation'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'tri': ['like'],

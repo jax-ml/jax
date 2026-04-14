@@ -499,8 +499,6 @@ def sdy_sharding_rule_to_mlir(
       batching_group = _get_batching_group(value[0])
       value = value[1:]
       if batching_group in batching_group_to_rank:
-        #  This type check error is not correct, disable it:
-        # Incompatible types in assignment (expression has type "int | None"
         current_batching_rank = batching_group_to_rank[batching_group]
       else:
         raise ValueError("Unreachabled code")
@@ -509,11 +507,10 @@ def sdy_sharding_rule_to_mlir(
       batching_group = None
 
     for j in range(current_batching_rank):
-      #  This type check error is not correct, disable it:
-      # Argument 1 to "_get_batching_dim_factor_name" has incompatible type "str | None"; expected "str"  [arg-type]
+      assert batching_group is not None
       dim_mappings.append(
         sdy.DimMappingAttr.get(factor_indices=[
-          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]])) # type: ignore
+          factors_to_indices_sizes[_get_batching_dim_factor_name(batching_group, j)][0]]))
 
     for j, dim in enumerate(value):
       if isinstance(dim, str):

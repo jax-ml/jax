@@ -173,7 +173,7 @@ def _compile_to_executable(
         program, compile_options
     )
     out_handlers = pxla.global_avals_to_results_handler(
-        out_sdss, out_shardings, committed=True  # type: ignore
+        out_sdss, out_shardings, committed=True
     ).handlers
 
     def call(*args, **kwargs):

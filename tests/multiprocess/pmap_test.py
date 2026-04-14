@@ -22,7 +22,7 @@ from jax._src import api
 from jax._src import array
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version  # pylint: disable=g-importing-member
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -48,7 +48,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     out = f(y)
 
     expected_out = np.array([
-        np.arange(i, i + elems_per_host) + p * elems_per_host  # pylint: disable=g-complex-comprehension
+        np.arange(i, i + elems_per_host) + p * elems_per_host
         for p in range(jax.process_count()) for i in range(len(devices))
     ])
 

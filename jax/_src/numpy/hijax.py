@@ -324,7 +324,7 @@ def _searchsorted_scan_impl(
         in_axes=(None, 0),
     )(sorted_arr, query)
 
-  op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator  # pylint: disable=protected-access
+  op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator
   unsigned_dtype = np.uint64 if dtypes.iinfo(dtype).bits == 64 else np.uint32
   def body_fun(state, _):
     low, high = state
@@ -373,7 +373,7 @@ def _searchsorted_compare_all_impl(
 ) -> Array:
   assert sorted_arr.ndim == 1
   assert side in ["left", "right"]
-  op = lax._sort_lt_comparator if side == "left" else lax._sort_le_comparator  # pylint: disable=protected-access
+  op = lax._sort_lt_comparator if side == "left" else lax._sort_le_comparator
   comparisons = api.vmap(op, in_axes=(0, None))(sorted_arr, query)
   return comparisons.sum(dtype=dtype, axis=0)
 

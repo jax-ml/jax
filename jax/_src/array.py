@@ -59,7 +59,7 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.sharding._internal_device_list  # pytype: disable=attribute-error
+  devices = a.sharding._internal_device_list
   if len(devices) != 1:
     raise ValueError(
         "When making an array from single-device arrays the input arrays must "
@@ -416,7 +416,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -436,7 +436,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error
 
     if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
       return DLDeviceType.kDLCPU, 0
@@ -481,7 +481,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise ValueError("__cuda_array_interface__() is supported only for "
                        "unsharded arrays.")
-    return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
+    return self._arrays[0].__cuda_array_interface__  # bind-properties
 
   @use_cpp_method()
   def on_device_size_in_bytes(self):
@@ -541,7 +541,7 @@ class ArrayImpl(basearray.Array):
     If a `Shard` is not addressable, then its `data` will be `None`.
     """
     self._check_if_deleted()
-    if self.is_fully_addressable:  # pylint: disable=using-constant-test
+    if self.is_fully_addressable:
       return self.addressable_shards
 
     out = []
@@ -586,7 +586,7 @@ class ArrayImpl(basearray.Array):
 
   @use_cpp_method()
   def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
-    ...  # pytype: disable=bad-return-type
+    ...
 
   @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
@@ -758,9 +758,9 @@ def make_array_from_callback(
     r = dtypes.canonicalize_value(r)
     if isinstance(r, (literals.TypedInt, literals.TypedFloat,
                       literals.TypedComplex)):
-      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype))
     elif isinstance(r, bool):
-      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_))
     return r
 
   if sharding.is_fully_replicated:
@@ -1260,7 +1260,7 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     def handler(xs):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
-                                   weak_type=False)
+                                   aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
     return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
                                    _skip_checks=True).wrap(handler)

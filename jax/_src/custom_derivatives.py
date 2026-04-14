@@ -256,7 +256,7 @@ class custom_jvp(Generic[ReturnValue]):
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_jvp.__call__")
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
     primal_name = debug.func_name
@@ -686,7 +686,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)
     if not self.fwd or not self.bwd:

@@ -81,7 +81,7 @@ def _colocated_cpu_devices_cached(
     devices: tuple[jax.Device, ...],
 ) -> Sequence[jax.Device]:
   cpu_devices_by_colocation_id = collections.defaultdict(list)
-  for device in devices[0].client._get_all_devices():  # pylint: disable=protected-access
+  for device in devices[0].client._get_all_devices():
     if device.device_kind == "cpu":
       cpu_devices_by_colocation_id[device.colocation_id].append(device)
   if not cpu_devices_by_colocation_id:
