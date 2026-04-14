@@ -286,21 +286,21 @@ class DebugInfo(NamedTuple):
   traced_for: str             # e.g. 'jit', 'scan', etc
 
   func_src_info: str
-  """e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
-  no source location information. The first word is always the function name,
-  which may be '<unknown>'.
+  """e.g. ``f'{fun.__name__} at {filename}:{lineno}'`` or ``'{fun.__name__}'`` if
+  we have no source location information. The first word is always the function
+  name, which may be '<unknown>'.
   """
 
   arg_names: tuple[str, ...] | None
   """The paths of the flattened non-static argnames,
-  e.g. `('x', 'dict_arg["a"]', ... )`.
+  for example ``('x', 'dict_arg["a"]', ...)``.
   Uses the empty string for the args that do not correspond to
-  user-named arguments, e.g., tangent args in `jax.jvp`, or for arguments that
-  we are not yet tracking properly. The value `None` denotes argument names.
+  user-named arguments, e.g., tangent args in ``jax.jvp``, or for arguments that
+  we are not yet tracking properly. The value ``None`` denotes argument names.
 
-  At the moment, `arg_names` accuracy is best-effort.
-  Use `safe_arg_names` to detect and handle an unexpected
-  number of elements in `arg_names`.
+  At the moment, ``arg_names`` accuracy is best-effort.
+  Use ``safe_arg_names`` to detect and handle an unexpected
+  number of elements in ``arg_names``.
   """
 
   result_paths: tuple[str, ...] | InitialResultPaths | Callable[[], tuple[str, ...]] | None
