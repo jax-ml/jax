@@ -43,7 +43,6 @@ from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -1697,7 +1696,7 @@ def lower_as_mlir(
     static_argnames=(),
     platforms=None,
     **kwargs,
-) -> str:
+) -> mlir.ir.Module:
   """Lower the function to MLIR.
 
   Unlike jax.export, the exported artifact provides no stability guarantees.
@@ -1707,11 +1706,9 @@ def lower_as_mlir(
     if platforms is None:
       platforms = ["tpu"]
     exported = export(f, platforms=platforms)(*args, **kwargs)
-    if jaxlib_extension_version >= 435:
-      with mlir.make_ir_context():
-        return mlir.module_to_string(exported.mlir_module())
-    else:
-      return exported.mlir_module()
+    stablehlo = exported.mlir_module()
+
+  return stablehlo
 
 
 _out_shape_to_aval_mapping: dict[

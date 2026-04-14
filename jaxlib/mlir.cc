@@ -22,11 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/IRCore.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
-#include "mlir/CAPI/IR.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -57,7 +53,6 @@ namespace nb = nanobind;
 
 namespace jax {
 namespace {
-using mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
 
 std::string PrintModule(mlir::ModuleOp module) {
   std::string s;
@@ -162,17 +157,17 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
-absl::StatusOr<MlirModule> PyDeserializePortableArtifact(
-    const nb::bytes& bytecode_str, DefaultingPyMlirContext ctx) {
-  MlirContext c_context = ctx->get();
-  mlir::MLIRContext* context = unwrap(c_context);
-  context->loadDialect<mlir::sdy::SdyDialect, mlir::mpmd::MpmdDialect>();
+absl::StatusOr<std::string> PyDeserializePortableArtifact(
+    const nb::bytes& bytecode_str) {
+  mlir::MLIRContext context;
+  context.loadDialect<mlir::sdy::SdyDialect, mlir::mpmd::MpmdDialect>();
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::stablehlo::deserializePortableArtifact(
-          std::string_view(bytecode_str.c_str(), bytecode_str.size()), context);
+          std::string_view(bytecode_str.c_str(), bytecode_str.size()),
+          &context);
   if (!module)
     return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
-  return wrap(module.release());
+  return PrintModule(*module);
 }
 
 }  // namespace
@@ -255,9 +250,7 @@ void BuildMlirSubmodule(nb::module_& m) {
       nb::arg("use_mixed_serialization") = false);
   mlir_module.def("deserialize_portable_artifact",
                   xla::ValueOrThrowWrapper(PyDeserializePortableArtifact),
-                  nb::arg("mlir_module"), nb::arg("context") = nb::none(),
-                  nb::sig("def deserialize_portable_artifact(mlir_module: "
-                          "bytes, context: typing.Any = None) -> typing.Any"));
+                  nb::arg("mlir_module"));
   mlir_module.def(
       "refine_polymorphic_shapes",
       [](nb::bytes bytecode, bool enable_shape_assertions,

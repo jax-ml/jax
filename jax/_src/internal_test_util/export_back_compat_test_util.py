@@ -101,7 +101,6 @@ from jax._src import xla_bridge as xb
 from jax._src.export import _export
 from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
-from jax._src.interpreters import mlir
 from jax._src.typing import Array
 
 del shape_poly_decision  # Imported for its side-effect only.
@@ -332,8 +331,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         for target in allow_unstable_custom_call_targets)
     )(*args_specs)
 
-    with mlir.make_ir_context():
-      module_str = str(exported.mlir_module())
+    module_str = str(exported.mlir_module())
     serialized = exported.mlir_module_serialized
     module_version = exported.calling_convention_version
     nr_devices = exported.nr_devices

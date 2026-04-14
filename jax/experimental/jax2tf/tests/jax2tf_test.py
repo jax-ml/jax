@@ -35,7 +35,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
-from jax._src.interpreters import mlir
 
 import numpy as np
 try:
@@ -1220,11 +1219,10 @@ class Jax2TfTest(JaxToTfTestCase):
         platforms=("tpu",)
     )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
-    with mlir.make_ir_context():
-      if transform1 == "shard_map":
-        self.assertIn("stablehlo.all_gather", str(exported.mlir_module()))
-      else:
-        self.assertIn("stablehlo.reduce_window", str(exported.mlir_module()))
+    if transform1 == "shard_map":
+      self.assertIn("stablehlo.all_gather", str(exported.mlir_module()))
+    else:
+      self.assertIn("stablehlo.reduce_window", str(exported.mlir_module()))
 
   def test_cross_platform_error(self):
     f_tf = jax2tf.convert(jnp.sin,

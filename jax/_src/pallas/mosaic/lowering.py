@@ -1036,21 +1036,16 @@ def lower_jaxpr_into_module(
             ),
             keep_unused=True,
         )
-        exported_dim = export(
+        stablehlo = export(
             jitted_eval, platforms=[str(jax.devices()[0].platform)]
         )(
             (dim_expr,), tuple(args_dimvars), *(env[v] for v in args_dimvars)
-        )
-        if jaxlib_extension_version >= 435:
-          with mlir.make_ir_context():
-            stablehlo_str = mlir.module_to_string(exported_dim.mlir_module())
-        else:
-          stablehlo_str = exported_dim.mlir_module()
+        ).mlir_module()
         arg_names = args_dimvars
         # See Note - On Export Placeholders for more details.
         module.operation.attributes[
             "tpu.dynamic_dimension_mapping_module_" + str(placeholder)
-        ] = ir.StringAttr.get(stablehlo_str)
+        ] = ir.StringAttr.get(str(stablehlo))
         arg_locs_attr = []
         for arg_name in arg_names:
           if arg_name not in location_of_dimvar:

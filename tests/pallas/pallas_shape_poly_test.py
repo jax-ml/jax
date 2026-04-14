@@ -45,8 +45,6 @@ except ImportError:
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax import export
-from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 
@@ -413,13 +411,8 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     with core.pallas_export_experimental(dynamic_shapes=True):
       f_k = f_e(x_shape, y_shape)
 
-    if jaxlib_extension_version >= 435:
-      with mlir.make_ir_context():
-        module_str = mlir.module_to_string(f_k.mlir_module())
-    else:
-      module_str = f_k.mlir_module()
     self.assertRegex(
-        module_str,
+        f_k.mlir_module(),
         r"stablehlo.custom_call"
         r" @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"",
     )
@@ -500,13 +493,8 @@ class ExportTestWithTriton(jtu.JaxTestCase):
     super().setUp()
 
   def _check_cuda_export(self, exp):
-    if jaxlib_extension_version >= 435:
-      with mlir.make_ir_context():
-        module_str = mlir.module_to_string(exp.mlir_module())
-    else:
-      module_str = exp.mlir_module()
     self.assertRegex(
-        module_str,
+        exp.mlir_module(),
         r"stablehlo.custom_call"
         r" @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"",
     )
@@ -553,13 +541,8 @@ class ExportTestWithTriton(jtu.JaxTestCase):
 
     # Check that we use the proper kernels names
     if "tpu" in platforms:
-      if jaxlib_extension_version >= 435:
-        with mlir.make_ir_context():
-          module_str = mlir.module_to_string(exp.mlir_module())
-      else:
-        module_str = exp.mlir_module()
       self.assertRegex(
-          module_str,
+          exp.mlir_module(),
           r"stablehlo.custom_call"
           r" @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"",
       )
@@ -583,13 +566,8 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
     self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
 
   def _check_cuda_export(self, exp):
-    if jaxlib_extension_version >= 435:
-      with mlir.make_ir_context():
-        module_str = mlir.module_to_string(exp.mlir_module())
-    else:
-      module_str = exp.mlir_module()
     self.assertRegex(
-        module_str,
+        exp.mlir_module(),
         r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name",
     )
 
