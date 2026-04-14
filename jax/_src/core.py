@@ -196,7 +196,7 @@ class Jaxpr:
       self, source_info=source_info, print_shapes=print_shapes,
       custom_pp_eqn_rules=custom_pp_eqn_rules, name_stack=name_stack,
       print_effects=print_effects)
-    return doc.format(**kwargs)  # pyrefly: ignore[missing-attribute]
+    return doc.format(**kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
@@ -575,7 +575,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
-    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
+    from jax._src.array import ArrayImpl
     do_lit_array = not for_ad
     if isinstance(x, ArrayImpl):
       return do_lit_array
@@ -1124,7 +1124,7 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     return base
 
   def __repr__(self):
-    return self._pretty_print(verbose=False).format()  # pyrefly: ignore[missing-attribute]
+    return self._pretty_print(verbose=False).format()
 
   def _contents(self):
     try:

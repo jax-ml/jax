@@ -2290,7 +2290,6 @@ def is_valid_register_layout_assignment(
         return False
       return True
     case _:
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
       assert_never(layout)
 
 

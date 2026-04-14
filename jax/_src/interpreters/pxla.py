@@ -664,7 +664,7 @@ def _move_mutable_consts(
 def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   from jax._src.state.discharge import discharge_state  # pytype: disable=import-error
   jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
-  jaxpr_._debug_info = jaxpr.jaxpr._debug_info  # pyrefly: ignore[missing-attribute]
+  jaxpr_._debug_info = jaxpr.jaxpr._debug_info
   return core.ClosedJaxpr(jaxpr_, consts)
 
 

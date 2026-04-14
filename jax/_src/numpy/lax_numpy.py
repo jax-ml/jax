@@ -9178,7 +9178,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
       raise RuntimeError("incompatible numbers of samples and aweights")
     # Ensure positive aweights: note that numpy raises an error for negative aweights.
     aweights = abs(aweights)
-    w = asarray(aweights if w is None else w * aweights) # pyrefly: ignore[unsupported-operation]
+    w = asarray(aweights if w is None else w * aweights)
 
   if dtype is not None:
     X = X.astype(dtype)

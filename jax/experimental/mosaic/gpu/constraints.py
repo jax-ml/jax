@@ -129,7 +129,7 @@ Expression = (
 
 def reduce_reshape_expression(
     reshape: Reshape, assignments: dict[Variable, Constant]
-) -> Expression | Unsatisfiable:  # pyrefly: ignore[bad-return]  # pyrefly#2853
+) -> Expression | Unsatisfiable:
   reduced_expr = reduce_expression(reshape.expression, assignments)
   match reduced_expr:
     case Unsatisfiable():
@@ -367,11 +367,10 @@ class Relayout:
         return splat.shape == strided.shape
       case fa.WGSplatFragLayout(), fa.TiledLayout():
         return layouts_lib.splat_is_compatible_with_tiled(
-            source_layout, target_layout  # pyrefly: ignore[bad-argument-type]  # pyrefly#2857
+            source_layout, target_layout
         )
       case fa.TiledLayout(), fa.TiledLayout() if not self.strict:
         return _is_supported_tiled_relayout(
-            # pyrefly: ignore [bad-argument-type]
             source_layout, target_layout, self.bitwidth
         )
       case _:
@@ -695,7 +694,7 @@ def reduce_constraint(
         return Unsatisfiable()
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case _ as never:
-      assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
+      assert_never(never)
 
 
 @dataclasses.dataclass
@@ -731,7 +730,7 @@ class ConstraintSystem:
         case Transpose(expression=e):
           extract_variables(e)
         case _:
-          assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
+          assert_never(never)
     for constraint in self.constraints:
       match constraint:
         case Equals(lhs=lhs, rhs=rhs):
@@ -753,7 +752,7 @@ class ConstraintSystem:
           extract_variables(src)
           extract_variables(dst)
         case _ as never:
-          assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2853
+          assert_never(never)
     return free_variables
 
   def __and__(

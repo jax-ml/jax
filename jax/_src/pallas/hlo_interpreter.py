@@ -430,7 +430,7 @@ def pallas_call_hlo_interpret(
       local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
     else:
       local_grid_env = tuple(
-          pallas_core.GridAxis(idx, b)  # pyrefly: ignore[bad-argument-type]
+          pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.vmapped_dims
       )

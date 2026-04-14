@@ -1302,7 +1302,7 @@ def _interleave(xs, ys):
 
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
-custom_lin_p.multiple_results = True  # pyrefly: ignore[missing-attribute]
+custom_lin_p.multiple_results = True
 
 def raise_custom_vjp_error_on_jvp(*_, **__):
   raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "

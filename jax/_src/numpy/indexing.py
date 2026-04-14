@@ -110,7 +110,7 @@ class IndexType(enum.Enum):
 
 class ParsedIndex(NamedTuple):
   """Structure for tracking an indexer parsed within the context of an array shape."""
-  index: Index  # pyrefly: ignore[bad-override]
+  index: Index
   typ: IndexType
   consumed_axes: tuple[int, ...]
 
