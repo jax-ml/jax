@@ -30,7 +30,7 @@ from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
-from jax._src.pallas.mosaic.interpret.interpret_pallas_call import InterpretParams as InterpretParams
+from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_interpret_mode as force_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode

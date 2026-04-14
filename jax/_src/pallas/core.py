@@ -49,6 +49,16 @@ from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 
+try:
+  import jax._src.pallas.mosaic.interpret.params as mosaic_tpu_interpret
+except ImportError:
+  mosaic_tpu_interpret = None
+
+try:
+  import jax._src.pallas.mosaic_gpu.interpret.params as mosaic_gpu_interpret
+except ImportError:
+  mosaic_gpu_interpret = None
+
 split_list = util.split_list
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -1474,20 +1484,12 @@ kernel_local_effects: effects.EffectTypeSet = effects.EffectTypeSet()
 
 
 def get_interpret_effects(interpret: Any) -> Set[effects.Effect]:
-  try:
-    from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
-  except ImportError:
-    pass
-  else:
-    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-      return mosaic_tpu_interpret.get_interpret_effects()
-  try:
-    from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # Avoid circular dependency.
-  except ImportError:
-    pass
-  else:
-    if isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-      return mosaic_gpu_interpret.get_interpret_effects()
+  if (mosaic_tpu_interpret is not None
+      and isinstance(interpret, mosaic_tpu_interpret.InterpretParams)):
+    return mosaic_tpu_interpret.get_interpret_effects()
+  if (mosaic_gpu_interpret is not None
+      and isinstance(interpret, mosaic_gpu_interpret.InterpretGPUParams)):
+    return mosaic_gpu_interpret.get_interpret_effects()
   return effects.no_effects
 
 

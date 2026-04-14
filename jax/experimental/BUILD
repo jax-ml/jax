@@ -468,6 +468,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:tpu_info",
         "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
+        "//jax/_src/pallas/mosaic/interpret:params",
     ],
 )
 
