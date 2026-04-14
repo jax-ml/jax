@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <functional>
+#include <tuple>
 #include <utility>
 
 #include "absl/hash/hash.h"
@@ -96,6 +97,16 @@ class ReentrantHashMap {
   std::pair<std::pair<const Key, Value>*, bool> insert(
       const std::pair<Key, Value>& kv) {
     auto res = set_.insert(kv);
+    return {reinterpret_cast<std::pair<const Key, Value>*>(res.first),
+            res.second};
+  }
+
+  template <typename K, typename... Args>
+  std::pair<std::pair<const Key, Value>*, bool> try_emplace(const K& key,
+                                                            Args&&... args) {
+    auto res = set_.try_emplace(
+        key, std::piecewise_construct, std::forward_as_tuple(key),
+        std::forward_as_tuple(std::forward<Args>(args)...));
     return {reinterpret_cast<std::pair<const Key, Value>*>(res.first),
             res.second};
   }

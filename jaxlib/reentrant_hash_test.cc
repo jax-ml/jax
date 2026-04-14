@@ -118,6 +118,15 @@ TEST(ReentrantHashSetTest, Basic) {
   EXPECT_EQ(set.find(42), set.end());
 }
 
+TEST(ReentrantHashSetTest, TryEmplace) {
+  ReentrantHashSet<int> set;
+  EXPECT_TRUE(set.try_emplace(42, 42).second);
+  EXPECT_FALSE(set.try_emplace(42, 42).second);
+  ASSERT_NE(set.find(42), set.end());
+  EXPECT_EQ(*set.find(42), 42);
+  EXPECT_EQ(set.size(), 1);
+}
+
 TEST(ReentrantHashMapTest, Basic) {
   ReentrantHashMap<int, int> map;
   EXPECT_EQ(map.find(42), map.end());
@@ -131,6 +140,15 @@ TEST(ReentrantHashMapTest, Basic) {
   map.erase(it1);
   EXPECT_EQ(map.size(), 0);
   EXPECT_EQ(map.find(42), map.end());
+}
+
+TEST(ReentrantHashMapTest, TryEmplace) {
+  ReentrantHashMap<int, int> map;
+  EXPECT_TRUE(map.try_emplace(42, 100).second);
+  EXPECT_FALSE(map.try_emplace(42, 200).second);
+  ASSERT_NE(map.find(42), map.end());
+  EXPECT_EQ(map.find(42)->second, 100);
+  EXPECT_EQ(map.size(), 1);
 }
 
 struct StringHash {
@@ -164,6 +182,22 @@ TEST(ReentrantHashMapTest, HeterogeneousLookup) {
   ASSERT_NE(it1, map.end());
   map.erase(it1);
   EXPECT_EQ(map.size(), 0);
+}
+
+TEST(ReentrantHashSetTest, TryEmplaceHeterogeneous) {
+  ReentrantHashSet<std::string, StringHash, StringEq> set;
+  EXPECT_TRUE(set.try_emplace("hello", "hello").second);
+  EXPECT_FALSE(set.try_emplace("hello", "hello").second);
+  ASSERT_NE(set.find("hello"), set.end());
+  EXPECT_EQ(*set.find("hello"), "hello");
+}
+
+TEST(ReentrantHashMapTest, TryEmplaceHeterogeneous) {
+  ReentrantHashMap<std::string, int, StringHash, StringEq> map;
+  EXPECT_TRUE(map.try_emplace("hello", 42).second);
+  EXPECT_FALSE(map.try_emplace("hello", 100).second);
+  ASSERT_NE(map.find("hello"), map.end());
+  EXPECT_EQ(map.find("hello")->second, 42);
 }
 
 TEST(ReentrantHashSetTest, ReentrantCallbackRehash) {

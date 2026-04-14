@@ -183,6 +183,18 @@ struct WeakKey {
 // efficient to construct from the Python vectorcall protocol; we need never
 // build a dictionary.
 struct PointerStrongKey;
+
+// StrongKeyView is used for heterogeneous lookup in Call to avoid copies on
+// hits. It uses value comparison for context and args, which may release the
+// GIL.
+struct StrongKeyView {
+  nb::object context;
+  absl::Span<nb::object const> kwnames;
+  absl::Span<nb::object const> args;
+  const PyTreeDef* treedef;
+  size_t cached_hash;
+};
+
 class StrongKey {
  public:
   StrongKey(nb::object context, absl::InlinedVector<nb::object, 2> kwnames,
@@ -194,6 +206,7 @@ class StrongKey {
         treedef_(std::move(treedef)) {
     cached_hash_ = absl::HashOf(*this);
   }
+  explicit StrongKey(const StrongKeyView& lkey);
 
   bool operator==(const StrongKey& other) const;
 
@@ -218,11 +231,15 @@ class StrongKey {
     // invalidate references.
     bool operator()(StrongKey a, StrongKey b) const { return a == b; }
     bool operator()(StrongKey a, const PointerStrongKey& b) const;
+    bool operator()(StrongKey a, const StrongKeyView& b) const;
   };
 
   struct CachedHash {
     size_t operator()(StrongKey key) const { return key.cached_hash_; }
     size_t operator()(const PointerStrongKey& key) const;
+    size_t operator()(const StrongKeyView& key) const {
+      return key.cached_hash;
+    }
   };
 
   nb::object context() const { return context_; }
@@ -311,6 +328,30 @@ struct PointerStrongKey {
   const PyTreeDef* treedef;
   size_t cached_hash;
 };
+
+StrongKey::StrongKey(const StrongKeyView& lkey)
+    : context_(lkey.context),
+      kwnames_(lkey.kwnames.begin(), lkey.kwnames.end()),
+      args_(lkey.args.begin(), lkey.args.end()),
+      treedef_(lkey.treedef ? std::optional<PyTreeDef>(*lkey.treedef)
+                            : std::nullopt),
+      cached_hash_(lkey.cached_hash) {}
+
+bool StrongKey::SafeEqual::operator()(StrongKey a,
+                                      const StrongKeyView& b) const {
+  if (a.treedef_.has_value() != (b.treedef != nullptr)) return false;
+  if (a.treedef_ && !(*a.treedef_ == *b.treedef)) return false;
+  if (!a.context_.equal(b.context)) return false;
+  if (a.kwnames_.size() != b.kwnames.size()) return false;
+  for (size_t i = 0; i < a.kwnames_.size(); ++i) {
+    if (a.kwnames_[i].ptr() != b.kwnames[i].ptr()) return false;
+  }
+  if (a.args_.size() != b.args.size()) return false;
+  for (size_t i = 0; i < a.args_.size(); ++i) {
+    if (!a.args_[i].equal(b.args[i])) return false;
+  }
+  return true;
+}
 
 bool StrongKey::SafeEqual::operator()(StrongKey a,
                                       const PointerStrongKey& b) const {
@@ -696,8 +737,13 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
     cache_ptr = it_weak->second;
     Cache& cache = *cache_ptr;
 
-    // NOTE: cache.insert may release the lock and may throw exceptions.
-    auto [it_strong, strong_inserted] = cache.insert(key, nullptr);
+    StrongKeyView lkey{.context = key.context(),
+                       .kwnames = key.kwnames(),
+                       .args = key.args_span(),
+                       .treedef = key.treedef(),
+                       .cached_hash = key.cached_hash()};
+    // NOTE: cache.try_emplace may release the lock and may throw exceptions.
+    auto [it_strong, strong_inserted] = cache.try_emplace(lkey, nullptr);
 
     if (strong_inserted) {
       inserted = true;
