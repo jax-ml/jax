@@ -1501,7 +1501,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     key_func = arr_func = lambda x: func(x, *args)
     self.check_shape(key_func, keys)
-    self.check_against_reference(key_func, arr_func, keys)
+    if func != jnp.empty_like:
+      self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_like_with_key_fillvalue(self):
     keys = random.split(random.key(789543))
@@ -1521,7 +1522,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     key_func = arr_func = lambda x: func(x.shape, dtype=x.dtype, **kwds)
     self.check_shape(key_func, keys)
-    self.check_against_reference(key_func, arr_func, keys)
+    if func != jnp.empty:
+      self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_with_key_fillvalue(self):
     keys = random.split(random.key(789543))

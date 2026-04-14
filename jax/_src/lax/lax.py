@@ -8998,7 +8998,7 @@ def empty(shape, dtype, *, out_sharding=None):
     Uninitialized array of the specified shape, dtype, and sharding.
 
   Examples:
-    >>> jnp.empty(3, jnp.float32)  # doctest: +SKIP
+    >>> lax.empty(3, jnp.float32)  # doctest: +SKIP
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
 
   .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html

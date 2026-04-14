@@ -855,7 +855,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     def to_elt(x):
       assert x.ndim == 2
       assert x.n_sparse == 2
-      return jnp.empty(x.shape, x.dtype)
+      return jnp.zeros(x.shape, x.dtype)
 
     with self.subTest('to_elt'):
       M_out = vmap(to_elt)(Msp)
@@ -892,7 +892,9 @@ class SparseObjectTest(sptu.SparseTestCase):
     M = sparse.empty(shape, sparse_format=sparse_format)
     self.assertIsInstance(M, cls)
     self.assertEqual(M.nse, 0)
-    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+    MD = M.todense()
+    self.assertEqual(MD.shape, tuple(shape))
+    self.assertEqual(MD.dtype, jnp.empty(()).dtype)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}{(N, M, k)}",
@@ -924,7 +926,9 @@ class SparseObjectTest(sptu.SparseTestCase):
   def test_empty_nse(self, shape, nse=2):
     M = sparse.empty(shape, nse=nse)
     self.assertEqual(M.nse, nse)
-    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+    MD = M.todense()
+    self.assertEqual(MD.shape, tuple(shape))
+    self.assertEqual(MD.dtype, jnp.empty(()).dtype)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}

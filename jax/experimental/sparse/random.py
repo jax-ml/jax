@@ -88,7 +88,7 @@ def random_bcoo(key: Array,
   @vmap
   def _indices(key):
     if not sparse_shape:
-      return jnp.empty((nse, n_sparse), dtype=indices_dtype)
+      return jnp.zeros((nse, n_sparse), dtype=indices_dtype)
     flat_ind = random.choice(key, sparse_size, shape=(nse,),
                              replace=not unique_indices).astype(indices_dtype)
     return jnp.column_stack(jnp.unravel_index(flat_ind, sparse_shape))

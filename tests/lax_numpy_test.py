@@ -2951,8 +2951,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((1, 2, 3), np.dtype("int32"))
     self.assertArraysEqual(jnp.zeros_like(x), jnp.zeros(x.shape, x.dtype))
     self.assertArraysEqual(jnp.ones_like(x), jnp.ones(x.shape, x.dtype))
-    self.assertArraysEqual(jnp.empty_like(x), jnp.empty(x.shape, x.dtype))
     self.assertArraysEqual(jnp.full_like(x, 2), jnp.full(x.shape, 2, x.dtype))
+
+    self.assertEqual(jnp.empty_like(x).shape, jnp.empty(x.shape, x.dtype).shape)
+    self.assertEqual(jnp.empty_like(x).dtype, jnp.empty(x.shape, x.dtype).dtype)
 
   @jtu.sample_product(
     [dict(func=func, args=args)
