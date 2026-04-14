@@ -184,6 +184,7 @@ jax.scipy.special
    log_ndtr
    log_softmax
    logit
+   loggamma
    logsumexp
    lpmn
    lpmn_values
