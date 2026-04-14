@@ -48,7 +48,6 @@ def dumps(obj: Any) -> bytes:
       dispatch_table[dataclasses._KW_ONLY_TYPE] = (
           lambda _: '_KW_ONLY_TYPE'
       )  # Added in Python 3.10.
-    # pytype: enable=module-attr
 
   with io.BytesIO() as file:
     Pickler(file).dump(obj)

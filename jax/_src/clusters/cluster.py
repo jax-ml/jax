@@ -89,7 +89,6 @@ class ClusterEnv:
       logger.debug('Could not find a known environment for initializing distributed JAX. '
         'Known environments: %s', ', '.join(e.__name__ for e in cls._cluster_types))
     return (coordinator_address, num_processes, process_id, local_device_ids)
-  # pytype: enable=bad-return-type
 
   @classmethod
   def is_env_present(cls) -> bool:
