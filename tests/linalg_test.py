@@ -143,6 +143,36 @@ def _normalizing_eigh(H: np.ndarray, lower: bool, symmetrize_input: bool):
   return e, v
 
 
+# (complex) Eigenvectors of a general matrix are only unique up to a complex phase, making
+# finite-difference gradient checks unreliable. We normalize each eigenvector so that its first
+# component has phase 0 (i.e. is real and positive), which yields a smooth, unique representative
+# as long as the first component is non-zero.
+def _normalizing_eig(a, compute_left_eigenvectors=False,
+                     compute_right_eigenvectors=True):
+  results = lax.linalg.eig(
+      a,
+      compute_left_eigenvectors=compute_left_eigenvectors,
+      compute_right_eigenvectors=compute_right_eigenvectors,
+  )
+  w = results[0]
+  out = [w]
+  idx = 1
+
+  def _normalize_cols(v):
+    """Rotate each column so its first element is real and positive."""
+    top = v[..., 0:1, :]       # shape (..., 1, n)
+    angle = -jnp.angle(top)
+    phase = lax.complex(jnp.cos(angle), jnp.sin(angle))
+    return v * phase
+
+  if compute_left_eigenvectors:
+    out.append(_normalize_cols(results[idx]))
+    idx += 1
+  if compute_right_eigenvectors:
+    out.append(_normalize_cols(results[idx]))
+  return tuple(out)
+
+
 # (complex) singular vectors are only unique up to an arbitrary phase. This makes the gradient
 # tests based on finite differences unstable, since perturbing the input matri may cause an
 # arbitrary sign flip of one or more of the singular vectors. To remedy this, we normalize the
@@ -419,6 +449,34 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = 1e-4 if dtype in (np.float64, np.complex128) else 1e-1
     jtu.check_grads(lambda x: jnp.linalg.eigvals(x), (a,), order=1,
                     modes=['fwd', 'rev'], rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (5, 5), (7, 6, 6)],
+    dtype=float_types + complex_types,
+    compute_left_eigenvectors=[False, True],
+    compute_right_eigenvectors=[False, True],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGrad(self, shape, dtype, compute_left_eigenvectors,
+                  compute_right_eigenvectors):
+    # Test that eig JVP and VJP (transpose of JVP) are correct for
+    # eigenvalues and eigenvectors of a general matrix.
+    #
+    # Eigenvectors are unique only up to complex phase, so we fix a gauge
+    # by normalizing each vector so its first element is real and positive
+    # (see _normalizing_eig). Finite-difference checks can still fail if a
+    # perturbation causes two eigenvalues to swap order; we restrict to small
+    # matrices where this is unlikely for random inputs.
+    if not (compute_left_eigenvectors or compute_right_eigenvectors):
+      # Eigenvalue-only gradients are already covered by testEigvalsGrad.
+      self.skipTest("eigenvalue-only case covered by testEigvalsGrad")
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    f = partial(_normalizing_eig,
+                compute_left_eigenvectors=compute_left_eigenvectors,
+                compute_right_eigenvectors=compute_right_eigenvectors)
+    tol = 1e-4 if dtype in (np.float64, np.complex128) else 5e-2
+    jtu.check_grads(f, (a,), order=1, modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
