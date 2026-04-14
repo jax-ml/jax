@@ -37,7 +37,7 @@ class StringArrayTest(jtu.JaxTestCase):
       device = cpu_devices[0]
 
     numpy_string_array = np.array(
-        ["abcd", "efgh"], dtype=np.dtypes.StringDType()  # type: ignore
+        ["abcd", "efgh"], dtype=np.dtypes.StringDType()
     )
     jax_string_array = jax.device_put(numpy_string_array, device=device)
     jax_string_array.block_until_ready()
@@ -54,7 +54,7 @@ class StringArrayTest(jtu.JaxTestCase):
       self.skipTest("Skipping this test because no CPU devices are available.")
 
     numpy_string_array = np.array(
-        ["abcdefghijklmnopqrstuvwxyz", "cba"], dtype=np.dtypes.StringDType()  # type: ignore
+        ["abcdefghijklmnopqrstuvwxyz", "cba"], dtype=np.dtypes.StringDType()
     )
     if asarray:
       jax_string_array = jnp.asarray(numpy_string_array, device=cpu_devices[0])
@@ -65,7 +65,7 @@ class StringArrayTest(jtu.JaxTestCase):
     jax_string_array.block_until_ready()
 
     array_read_back = jax.device_get(jax_string_array)
-    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())  # type: ignore
+    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())
     np.testing.assert_array_equal(array_read_back, numpy_string_array)
 
   @parameterized.named_parameters(
@@ -82,7 +82,7 @@ class StringArrayTest(jtu.JaxTestCase):
       )
 
     numpy_string_array = np.array(
-        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()  # type: ignore
+        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
     )
     mesh = jax.sharding.Mesh(np.array(cpu_devices)[:2].reshape((2, 1)), ("x", "y"))
     sharding = jax.sharding.NamedSharding(
@@ -96,7 +96,7 @@ class StringArrayTest(jtu.JaxTestCase):
     jax_string_array.block_until_ready()
 
     array_read_back = jax.device_get(jax_string_array)
-    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())  # type: ignore
+    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())
     np.testing.assert_array_equal(array_read_back, numpy_string_array)
 
   @jtu.run_on_devices("cpu")
@@ -107,13 +107,13 @@ class StringArrayTest(jtu.JaxTestCase):
 
     # Explicitly specifying the dtype should work with StringDType numpy arrays.
     numpy_string_array = np.array(
-        ["abcd", "efgh"], dtype=np.dtypes.StringDType()  # type: ignore
+        ["abcd", "efgh"], dtype=np.dtypes.StringDType()
     )
     jax_string_array = jnp.asarray(
         numpy_string_array,
         device=cpu_devices[0],
         dtype=np.dtypes.StringDType(),
-    )  # type: ignore
+    )
     jax_string_array.block_until_ready()
 
     # Cannot make a non-StringDType array from a StringDType numpy array.
@@ -138,7 +138,7 @@ class StringArrayTest(jtu.JaxTestCase):
       jnp.asarray(
           numpy_int_array,
           device=cpu_devices[0],
-          dtype=np.dtypes.StringDType(),  # type: ignore
+          dtype=np.dtypes.StringDType(),
       )
 
   @parameterized.named_parameters(
@@ -152,7 +152,7 @@ class StringArrayTest(jtu.JaxTestCase):
       self.skipTest("Skipping this test because no devices are available.")
 
     numpy_string_array = np.array(
-        ["abcdefghijklmnopqrstuvwxyz", "cba"], dtype=np.dtypes.StringDType()  # type: ignore
+        ["abcdefghijklmnopqrstuvwxyz", "cba"], dtype=np.dtypes.StringDType()
     )
     with self.assertRaisesRegex(
         TypeError, "String arrays can only be sharded to CPU devices"

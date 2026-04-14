@@ -5562,7 +5562,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         grid_names=("_"),
         cluster_names=("x",),
         cluster=(2,),
-        scratch_shapes=(  # type: ignore
+        scratch_shapes=(
             plgpu.SMEM(partitioned_block_size, jnp.float32),
             plgpu.SMEM(partitioned_block_size, jnp.float32),
             plgpu.Barrier(num_arrivals=1),
@@ -5616,7 +5616,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
-        scratch_shapes=(  # type: ignore
+        scratch_shapes=(
             plgpu.Barrier(num_arrivals=1, orders_tensor_core=True),
         ),
     )

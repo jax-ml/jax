@@ -606,7 +606,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
         .runtime_executable()
     )
     serialized_executable = backend.serialize_executable(executable)
-    deserialized_executable = backend.deserialize_executable(  # type: ignore
+    deserialized_executable = backend.deserialize_executable(
         serialized_executable,
         xc.DeviceList(tuple(jax.local_devices(backend=backend))), None)
     self.assertEqual(

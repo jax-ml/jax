@@ -821,7 +821,7 @@ class JaxExportTest(jtu.JaxTestCase):
   # shapes. We use export.call and we also run the shape check
   # module.
   @jtu.parameterized_filterable(
-    testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",  # type: ignore
+    testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",
     kwargs=[
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
@@ -874,7 +874,7 @@ class JaxExportTest(jtu.JaxTestCase):
   # An inner function is exported with polymorphic shapes inner_poly_spec, and
   # is called from an outer function, which is exported with outer_poly_spec.
   @jtu.parameterized_filterable(
-    testcase_name=lambda kw:f"inner={kw['inner_poly_spec']}_outer={kw['outer_poly_spec']}",  # type: ignore
+    testcase_name=lambda kw:f"inner={kw['inner_poly_spec']}_outer={kw['outer_poly_spec']}",
     #one_containing="",
     # By default arg_shape = (3, 4, 12) for both the outer function and the inner
     # The inner function is exported for f32.

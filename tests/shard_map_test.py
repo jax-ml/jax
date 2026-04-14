@@ -5512,12 +5512,12 @@ def make_out_specs(
     out_reps: set[core.AxisName] | Sequence[set[core.AxisName]]
   ) -> Chooser:
   if type(out_types) is not tuple:
-    out_spec = yield from make_out_spec(mesh, out_types, out_reps)  # type: ignore
+    out_spec = yield from make_out_spec(mesh, out_types, out_reps)
     return out_spec
   else:
     out_specs = []
     for ty, rep in zip(out_types, out_reps):
-      out_spec = yield from make_out_spec(mesh, ty, rep)  # type: ignore
+      out_spec = yield from make_out_spec(mesh, ty, rep)
       out_specs.append(out_spec)
     return tuple(out_specs)
 

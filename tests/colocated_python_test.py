@@ -496,7 +496,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     # Make a string array.
     numpy_string_array = np.array(
-        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()  # type: ignore
+        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
     )
     mesh = jax.sharding.Mesh(
         np.array(cpu_devices[:2]).reshape((2, 1)), ("x", "y")

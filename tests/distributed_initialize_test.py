@@ -34,7 +34,7 @@ class DistributedInitializeTest(jtu.JaxTestCase):
       in the same process. pytest runs multiple tests in the same process."""
   )
   def test_is_distributed_initialized(self):
-    port = portpicker.pick_unused_port()  # type: ignore
+    port = portpicker.pick_unused_port()
     self.assertFalse(jax.distributed.is_initialized())
     jax.distributed.initialize(f"localhost:{port}", 1, 0)
     self.assertTrue(jax.distributed.is_initialized())

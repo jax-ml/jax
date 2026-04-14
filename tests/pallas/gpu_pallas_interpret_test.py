@@ -219,7 +219,7 @@ class InterpretTest(jtu.JaxTestCase):
         @pl.core_map(
             mesh,
             interpret=mosaic_interpret.InterpretParams(detect_races=True),
-        )  # type: ignore[wrong-arg-types]
+        )
         def _():
           def body(ref):
             @pl.when(jax.lax.axis_index('n') == 0)

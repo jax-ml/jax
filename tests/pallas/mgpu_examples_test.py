@@ -885,7 +885,7 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         raise
       assert runtimes_ms is not None
       runtime_ms = statistics.median(runtimes_ms)
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       achieved_tc_util = optimal_time_us / runtime_us * 100
       print(f"{config} {achieved_tc_util:.2f}% TC utilization")
       if achieved_tc_util > best_util:
@@ -899,7 +899,7 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         iterations=100,
     )(a, b)
     runtime_ms = statistics.median(runtimes_ms)
-    runtime_us = runtime_ms * 1e3   # type: ignore
+    runtime_us = runtime_ms * 1e3
     achieved_tc_util = optimal_time_us / runtime_us * 100
     print(f"Reference: {achieved_tc_util:.2f}% TC utilization")
 

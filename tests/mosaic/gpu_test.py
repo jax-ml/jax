@@ -480,7 +480,7 @@ class MemRefTest(TestCase):
   @jtu.thread_unsafe_test()  # Modifies `os.environ``.
   def test_cluster_id_simplify(self):
     def kernel(ctx, dst, _):
-      idx = mgpu.utils.cluster_idx(gpu.Dimension)  # type: ignore
+      idx = mgpu.utils.cluster_idx(gpu.Dimension)
       idx = arith.index_cast(ir.IntegerType.get_signless(32), idx)
       memref.store(idx, dst, [gpu.block_id(gpu.Dimension.y)])
 
