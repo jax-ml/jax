@@ -1875,6 +1875,18 @@ class PallasControlFlowTest(ptu.PallasTest):
         f(x), jnp.full_like(x, sum(range(start, stop, step or 1)))
     )
 
+  def test_loop_accumulates(self):
+    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: error on TPU")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32)
+    )
+    def f(x_ref):
+      x_ref[...] = pl.loop(0, 5, init_carry=32)(lambda i, acc: acc + i)
+
+    self.assertEqual(f(), 42)  # 32 + 0 + 1 + 2 + 3 + 4 = 42
+
   def test_fori_loop_simple(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")
