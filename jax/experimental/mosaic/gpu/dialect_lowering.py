@@ -952,11 +952,18 @@ def tile_strides(
         "Can not tile strides when tiled dimensions have been transposed with "
         f"untiled dimensions. Strides: {strides}, tiling: {tiling}"
     )
-  tiled_ordered_strides = ordered_strides[-len(tiling):]
   untiled_strides, tiled_strides = strides[:-len(tiling)], strides[-len(tiling):]
 
-  to_ordered = lambda i: tiled_ordered_strides.index(tiled_strides[i])
-  from_ordered = lambda i: tiled_strides.index(tiled_ordered_strides[i])
+  # Zip the strides and tiling together, in order to sort them together. This
+  # allows handling cases where multiple tiling dimensions have the same stride,
+  # which can occur with size-1 dimensions.
+  tiled_strides_and_tiling: list[tuple[int, int]] = list(
+      zip(tiled_strides, tiling, strict=True))
+  tiled_ordered_strides_and_tiling = sorted(
+      tiled_strides_and_tiling, reverse=True)
+
+  to_ordered = lambda i: tiled_ordered_strides_and_tiling.index(tiled_strides_and_tiling[i])
+  from_ordered = lambda i: tiled_strides_and_tiling.index(tiled_ordered_strides_and_tiling[i])
 
   ordered_tiling = [tiling[from_ordered(i)] for i in range(len(tiling))]
   ordered_tiled_strides = [tiled_strides[from_ordered(i)] for i in range(len(tiling))]

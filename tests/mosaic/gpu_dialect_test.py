@@ -2239,6 +2239,26 @@ class DialectLoweringTest(MosaicGpuTest):
     # Check that everything in the type is identical (especially the strides).
     self.assertEqual(tile_then_transpose.type, transpose_then_tile_ty)
 
+  def test_transform_type_with_tiling_over_size_one_dimensions(self):
+    i32 = ir.IntegerType.get_signless(32)
+    shape, tiling = (128, 1), (32, 1)
+    ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
+    tiled_ty = lowering.transform_type(ref_ty, (launch_context.TileTransform(tiling),))
+    tiled_strides, _ = tiled_ty.get_strides_and_offset()
+    self.assertEqual(tuple(tiled_ty.shape), (4, 1, 32, 1))
+    self.assertEqual(tuple(tiled_strides), (32, 32, 1, 1))
+
+  def test_transform_transposed_type_with_tiling_over_size_one_dimensions(self):
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (32, 1, 128, 1)
+    ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
+    [ref] = undefs(ref_ty)
+    transposed_ref_ty = mgpu_utils.memref_transpose(ref, (2, 1, 3, 0)).type
+    tiling = (8, 1, 1, 4)
+    tiled_ty = lowering.transform_type(transposed_ref_ty, (launch_context.TileTransform(tiling),))
+    tiled_strides, _ = tiled_ty.get_strides_and_offset()
+    self.assertEqual(tuple(tiled_ty.shape), (16, 1, 1, 8, 8, 1, 1, 4))
+    self.assertEqual(tuple(tiled_strides), (32, 512, 32, 512, 1, 8, 1, 8))
 
 if hp is not None:
   @hps.composite
