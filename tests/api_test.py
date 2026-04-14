@@ -542,7 +542,7 @@ class JitTest(jtu.BufferDonationTestCase):
       jax.NamedSharding(mesh, P("x", None)),
     )
     expanded_mesh = jax.sharding.Mesh(
-      np.array(jax.devices()[:2]).reshape((1, 2, 1)), ("replicas", 'x', 'y')
+      np.array(jax.devices()[:2]).reshape((1, 2, 1)), ("replicas", "x", "y")
     )
     dst_sharding = jax.NamedSharding(expanded_mesh, P("x", None))
     # No transfer should happen because the array is aliased to compatible
