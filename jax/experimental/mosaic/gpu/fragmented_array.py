@@ -3688,18 +3688,6 @@ class FragmentedArray:
       tiles_strides[d] = (0,) * len(tiles_strides[d])
     tiles_shape = list(itertools.chain.from_iterable(tiles_shape))
     tiles_strides = list(itertools.chain.from_iterable(tiles_strides))
-    warp_shape = list(itertools.chain.from_iterable(
-        (d.times,) if isinstance(d, Replicated) else tiled_nested_shape[d] for d in layout.warp_dims
-    ))
-    warp_strides = list(itertools.chain.from_iterable(
-        (0,) if isinstance(d, Replicated) else tiled_nested_strides[d] for d in layout.warp_dims
-    ))
-    lane_shape = list(itertools.chain.from_iterable(
-        (d.times,) if isinstance(d, Replicated) else tiled_nested_shape[d] for d in layout.lane_dims
-    ))
-    lane_strides = list(itertools.chain.from_iterable(
-        (0,) if isinstance(d, Replicated) else tiled_nested_strides[d] for d in layout.lane_dims
-    ))
     vector_length = layout.vector_length
 
     element_bits = mgpu.bitwidth(dtype)
@@ -3737,10 +3725,7 @@ class FragmentedArray:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
       plan = plan_tiled_transfer(
-          tiles_shape, tiles_strides,
-          warp_shape, warp_strides,
-          lane_shape, lane_strides,
-          vector_length, element_bits, swizzle
+        nested_ref_shape, nested_ref_strides, layout, element_bits, swizzle,
       )
     else:
       plan = TrivialTransferPlan()
@@ -3922,33 +3907,48 @@ class StaggeredTransferPlan(TransferPlan):
 
 
 def plan_tiled_transfer(
-    tiles_shape: Sequence[int],
-    tiles_strides: Sequence[int],
-    warp_shape: Sequence[int],
-    warp_strides: Sequence[int],
-    lane_shape: Sequence[int],
-    lane_strides: Sequence[int],
-    vector_length: int,
+    nested_ref_shape: Sequence[Sequence[int]],
+    nested_ref_strides: Sequence[Sequence[int]],
+    layout: TiledLayout,
     element_bits: int,
     swizzle: int,
 ) -> TransferPlan:
   """Plans the tiled transfer in a way that avoids SMEM bank conflicts.
 
-  Note that while xyz_shape length should always match the length of
-  xyz_strides, we do not require the iteration spaces of tiles/warps/lanes to
-  have the same rank.
-
   Arguments:
-    tiles_shape: The nd-iteration space over tiles.
-    tiles_strides: The memory strides (in elements) for each tile dimension.
-    warp_shape: The nd-iteration space over warps in warpgroup.
-    warp_strides: The memory strides (in elements) for each warp dimension.
-    lane_shape: The nd-iteration space over lanes in a warp.
-    lane_strides: The memory strides (in elements) for each lane dimension.
-    vector_length: The length of a single transfer.
+    nested_ref_shape: The nested shape of the reference. For a logical ref with
+      shape (2, 8, 16) and tiling (2, 8), this would be ((2,), (4, 2), (2, 8)).
+    nested_ref_strides: The strides associated with the `nested_ref_shape`.
+    layout: The layout of the value in registers being transferred.
     element_bits: Element bitwidth.
     swizzle: The swizzle pattern length.
   """
+  tiling = layout.tiling
+  tiled_nested_shape, tiled_nested_strides = tiling.tile_nested_shape_strides(
+      nested_ref_shape, nested_ref_strides
+  )
+
+  tiles_shape = list(tiled_nested_shape)
+  tiles_strides = list(tiled_nested_strides)
+  for d in (*layout.partitioned_warp_dims, *layout.partitioned_lane_dims, layout.vector_dim):
+    tiles_shape[d] = (1,) * len(tiles_shape[d])
+    tiles_strides[d] = (0,) * len(tiles_strides[d])
+  tiles_shape = list(itertools.chain.from_iterable(tiles_shape))
+  tiles_strides = list(itertools.chain.from_iterable(tiles_strides))
+
+  warp_shape = list(itertools.chain.from_iterable(
+      (d.times,) if isinstance(d, Replicated) else tiled_nested_shape[d] for d in layout.warp_dims
+  ))
+  warp_strides = list(itertools.chain.from_iterable(
+      (0,) if isinstance(d, Replicated) else tiled_nested_strides[d] for d in layout.warp_dims
+  ))
+  lane_shape = list(itertools.chain.from_iterable(
+      (d.times,) if isinstance(d, Replicated) else tiled_nested_shape[d] for d in layout.lane_dims
+  ))
+  lane_strides = list(itertools.chain.from_iterable(
+      (0,) if isinstance(d, Replicated) else tiled_nested_strides[d] for d in layout.lane_dims
+  ))
+  vector_length = layout.vector_length
   # TODO(apaszke): Rewrite this function in terms of transfer_bytes (that we get
   # from the caller).
   swizzle_tile_elems = (16 * 8) // element_bits
