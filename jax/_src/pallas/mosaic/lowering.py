@@ -1045,7 +1045,7 @@ def lower_jaxpr_into_module(
         # See Note - On Export Placeholders for more details.
         module.operation.attributes[
             "tpu.dynamic_dimension_mapping_module_" + str(placeholder)
-        ] = ir.StringAttr.get(str(stablehlo))
+        ] = ir.StringAttr.get(stablehlo)
         arg_locs_attr = []
         for arg_name in arg_names:
           if arg_name not in location_of_dimvar:

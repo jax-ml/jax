@@ -1696,7 +1696,7 @@ def lower_as_mlir(
     static_argnames=(),
     platforms=None,
     **kwargs,
-) -> mlir.ir.Module:
+) -> str:
   """Lower the function to MLIR.
 
   Unlike jax.export, the exported artifact provides no stability guarantees.
@@ -1706,9 +1706,7 @@ def lower_as_mlir(
     if platforms is None:
       platforms = ["tpu"]
     exported = export(f, platforms=platforms)(*args, **kwargs)
-    stablehlo = exported.mlir_module()
-
-  return stablehlo
+    return exported.mlir_module()
 
 
 _out_shape_to_aval_mapping: dict[

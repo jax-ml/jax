@@ -14,7 +14,7 @@
 
 """MLIR/XLA integration"""
 
-from typing import overload
+from typing import Any, overload
 
 from . import XlaComputation as _XlaComputation
 
@@ -40,7 +40,9 @@ def serialize_portable_artifact(
 def serialize_portable_artifact(
     mlir_module: str, target: str, use_mixed_serialization: bool = ...
 ) -> bytes: ...
-def deserialize_portable_artifact(mlir_module: bytes) -> str: ...
+def deserialize_portable_artifact(
+    mlir_module: bytes, context: Any = None
+) -> Any: ...
 def refine_polymorphic_shapes(
     mlir_module: bytes,
     enable_shape_assertions: bool = ...,
