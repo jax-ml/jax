@@ -1006,6 +1006,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "eigh_test",
+    srcs = ["eigh_test.py"],
+    shard_count = 10,
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "linalg_sharding_test",
     srcs = ["linalg_sharding_test.py"],
     enable_backends = [
