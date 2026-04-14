@@ -54,7 +54,6 @@ class LBFGSResults(NamedTuple):
     status: integer describing the status:
       0 = nominal  ,  1 = max iters reached  ,  2 = max fun evals reached
       3 = max grad evals reached  ,  4 = insufficient progress (ftol)
-      5 = line search failed
     ls_status: integer describing the end status of the last line search
   """
   converged: Array
