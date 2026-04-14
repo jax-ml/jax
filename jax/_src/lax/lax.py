@@ -2650,7 +2650,7 @@ def ragged_dot_general(
 
 def broadcast(operand: ArrayLike, sizes: Sequence[int], *, out_sharding=None
               ) -> Array:
-  """Broadcasts an array, adding new leading dimensions
+  """Broadcasts an array, adding new leading dimensions only.
 
   Args:
     operand: an array
@@ -2658,10 +2658,20 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int], *, out_sharding=None
       to add to the front of the array.
 
   Returns:
-    An array containing the result.
+    The result array, of shape ``(*sizes, *operand.shape)`` containing broadcasted
+    values of ``operand``.
 
-  See Also:
-    jax.lax.broadcast_in_dim : add new dimensions at any location in the array shape.
+  See also:
+    - :func:`jax.lax.broadcast_in_dim` : general broadcasting at any dimension in the array.
+    - :func:`jax.numpy.broadcast_to` : NumPy-style API for general broadcasting.
+
+  Examples:
+    >>> import jax.numpy as jnp
+    >>> from jax import lax
+    >>> arr = jnp.zeros((4, 5))
+    >>> result = lax.broadcast(arr, (2, 3))
+    >>> result.shape
+    (2, 3, 4, 5)
   """
   if len(sizes) == 0 and out_sharding is None:
     return asarray(operand)
@@ -2672,9 +2682,9 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int], *, out_sharding=None
 def broadcast_in_dim(operand: ArrayLike, shape: Shape,
                      broadcast_dimensions: Sequence[int], *, out_sharding=None
                      ) -> Array:
-  """Wraps XLA's `BroadcastInDim
-  <https://www.openxla.org/xla/operation_semantics#broadcastindim>`_
-  operator.
+  """General broadcasting operation.
+
+  This function lowers directly to the `stablehlo.broadcast_in_dim`_ operation.
 
   Args:
     operand: an array
@@ -2686,8 +2696,42 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   Returns:
     An array containing the result.
 
-  See Also:
-    jax.lax.broadcast : simpler interface to add new leading dimensions.
+  See also:
+    - :func:`jax.lax.broadcast` : simpler interface to add new leading dimensions.
+    - :func:`jax.numpy.broadcast_to` : NumPy-style API for general broadcasting.
+
+  Examples:
+    Here is an example of implementing simple NumPy-style broadcasting:
+
+    >>> import jax.numpy as jnp
+    >>> from jax import lax
+    >>> import numpy as np
+
+    >>> arr = jnp.arange(3).reshape(3, 1)
+    >>> target_shape = (2, 3, 4)
+    >>> result = lax.broadcast_in_dim(arr, target_shape, broadcast_dimensions=(1, 2))
+    >>> result.shape
+    (2, 3, 4)
+
+    The above is equivalent to :func:`jax.numpy.broadcast_to`:
+
+    >>> result_jnp = jnp.broadcast_to(result, target_shape)
+    >>> np.testing.assert_array_equal(result, result_jnp)
+
+    However, :func:`broadcast_in_dim` is more general, allowing implicit transposes
+    as part of the single broadcasting operation:
+
+    >>> result = lax.broadcast_in_dim(arr, target_shape, broadcast_dimensions=(1, 0))
+    >>> result.shape
+    (2, 3, 4)
+
+    This more general operation has no direct equivlant in the NumPy-style broadcasting
+    API, but can be replicated by appropriately adding and transposing input dimensions:
+
+    >>> result_jnp = jnp.broadcast_to(jnp.expand_dims(arr, 0).transpose(), target_shape)
+    >>> np.testing.assert_array_equal(result, result_jnp)
+
+  .. _stablehlo.broadcast_in_dim: https://openxla.org/stablehlo/spec#broadcast_in_dim
   """
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
