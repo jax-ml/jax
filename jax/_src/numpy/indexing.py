@@ -858,19 +858,20 @@ def take_along_axis(
     lst[axis_int] = val
     return tuple(lst)
 
-  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
-  indices = lax.convert_element_type(indices, index_dtype)
-
   axis_size = a.shape[axis_int]
   arr_shape = replace(a.shape, 1)
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
     return lax.full(out_shape, 0, a.dtype)
 
+  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
+  indices = lax.convert_element_type(indices, index_dtype)
+  if mode != "promise_in_bounds":
+    indices = _normalize_index(indices, axis_size)
+
   if mode == "one_hot":
     from jax import nn  # pytype: disable=import-error
 
-    indices = _normalize_index(indices, axis_size)
     hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:
       return einsum.einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
@@ -891,7 +892,7 @@ def take_along_axis(
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
 
   gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)
-  gather_indices = []
+  gather_indices = lax.reshape(indices, gather_index_shape)
   slice_sizes = []
   offset_dims = []
   start_index_map = []
@@ -907,9 +908,6 @@ def take_along_axis(
   j = 0
   for i in range(rank):
     if i == axis_int:
-      if mode != 'promise_in_bounds':
-        indices = _normalize_index(indices, axis_size)
-      gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
       start_index_map.append(new_i)
       collapsed_slice_dims.append(new_i)
@@ -940,14 +938,13 @@ def take_along_axis(
 
   # Squeeze a to remove singleton dimensions.
   a = lax.squeeze(a, dims_to_squeeze)
-  gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = slicing.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return slicing.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
+  return slicing.gather(a, gather_indices, dnums, tuple(slice_sizes),
                         mode="fill" if mode is None else mode, fill_value=fill_value)
 
 
