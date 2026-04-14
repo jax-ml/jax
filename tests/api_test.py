@@ -65,12 +65,8 @@ from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name
-from jax.errors import (
-  UnexpectedTracerError,
-  TracerIntegerConversionError,
-  ConcretizationTypeError,
-  TracerBoolConversionError,
-)
+from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
+                        ConcretizationTypeError, TracerBoolConversionError)
 from jax.interpreters import ad
 from jax.interpreters import batching
 import jax.numpy as jnp
@@ -94,12 +90,11 @@ class JitTest(jtu.BufferDonationTestCase):
   def test_jit_repr(self):
     def my_function():
       return
-
     jitted = jit(my_function)
     self.assertEqual(repr(jitted), f"<PjitFunction of {repr(my_function)}>")
 
   def test_jit_decorator_factory(self):
-    @jit(static_argnames=["flag"])
+    @jit(static_argnames=['flag'])
     def func(x, flag):
       return x if flag else -x
 
@@ -140,8 +135,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_jit_repr_errors(self):
     class Callable:
-      def __call__(self):
-        pass
+      def __call__(self): pass
 
       def __repr__(self):
         raise ValueError("invalid repr")
@@ -155,20 +149,17 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(repr(jitted), "<PjitFunction>")
 
   def test_jit_of_noncallable(self):
-    self.assertRaisesRegex(
-      TypeError, "Expected a callable value.*", lambda: jit(3)
-    )
+    self.assertRaisesRegex(TypeError, "Expected a callable value.*", 
+                           lambda: jit(3))
 
   def test_jit_of_generator(self):
 
     def gen(x):
       yield x
 
-    self.assertRaisesRegex(
-      TypeError,
-      "Expected a function, got a generator function.*",
-      lambda: jit(gen),
-    )
+    self.assertRaisesRegex(TypeError,
+                          "Expected a function, got a generator function.*",
+                          lambda: jit(gen))
 
   @parameterized.parameters([
     # Integer support
@@ -218,6 +209,8 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_static_args_equality(self):
     class A:
+
+
       def __hash__(self):
         return 1
 
@@ -225,7 +218,6 @@ class JitTest(jtu.BufferDonationTestCase):
         return isinstance(other, A)
 
     side = []
-
     def f(x, static_arg):
       del static_arg
       side.append(None)
@@ -278,9 +270,8 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_jit_device(self):
     device = jax.devices()[-1]
-    with jtu.ignore_warning(
-      category=DeprecationWarning, message="backend and device argument"
-    ):
+    with jtu.ignore_warning(category=DeprecationWarning, 
+                            message="backend and device argument"):
       x = jit(lambda x: x, device=device)(3.0)
     _check_instance(self, x)
     self.assertEqual(x.devices(), {device})
@@ -308,13 +299,11 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with jax.default_device(test_device):
       # Explicit `device` or `backend` argument to jit overrides default_device
-      with jtu.ignore_warning(
-        category=DeprecationWarning, message="backend and device argument"
-      ):
+      with jtu.ignore_warning(category=DeprecationWarning, 
+                              message="backend and device argument"):
         self.assertEqual(
           jax.jit(f, device=system_default_device)(1).devices(),
-          system_default_devices,
-        )
+          system_default_devices)
         out = jax.jit(f, backend="cpu")(1)
       self.assertEqual(next(iter(out.devices())).platform, "cpu")
 
@@ -348,13 +337,17 @@ class JitTest(jtu.BufferDonationTestCase):
 
   @parameterized.parameters("static_argnums", "donate_argnums")
   def test_jit_argnums_overflow_error(self, argnum_type: str):
-    def f(a, b, c): ...
+    def f(a, b, c):
+      ...
 
-    def g(a, /, b, *, c): ...
+    def g(a, /, b, *, c):
+      ...
 
-    def h(a, *args): ...
+    def h(a, *args):
+      ...
 
-    def i(): ...
+    def i():
+      ...
 
     # Simplest cases
     jit(f, **{argnum_type: (0, 1)})
@@ -384,11 +377,14 @@ class JitTest(jtu.BufferDonationTestCase):
 
   @parameterized.parameters("static_argnames", "donate_argnames")
   def test_jit_argnames_validation(self, argnum_type: str):
-    def f(a, b, c): ...
+    def f(a, b, c):
+      ...
 
-    def g(a, b, **kwargs): ...
+    def g(a, b, **kwargs):
+      ...
 
-    def h(a, /, b, c, *args, **kwargs): ...
+    def h(a, /, b, c, *args, **kwargs):
+      ...
 
     # Simplest case
     jit(f, **{argnum_type: ("b", "c")})
@@ -426,23 +422,20 @@ class JitTest(jtu.BufferDonationTestCase):
       @property
       def __signature__(self):
         raise TypeError("no signature")
-
       def __call__(self, *args, **kwargs):
         return None
-
     fun = NoSignature()
 
     inp = np.arange(4)
     with self.assertRaisesRegex(
       ValueError,
       "Getting the signature of function.*failed. Pass donate_argnums "
-      "instead of donate_argnames.",
-    ):
+      "instead of donate_argnames."):
       jax.jit(fun, donate_argnames="a")(inp, inp)
 
   @parameterized.named_parameters(
     ("argnums", "donate_argnums", (0, 1)),
-    ("argnames", "donate_argnames", ("x", "y")),
+    ("argnames", "donate_argnames", ('x', 'y')),
   )
   def test_jit_donate_warning_raised(self, argnum_type, argnum_val):
     x = jnp.array([1.0, 2.0], jnp.float32)
@@ -471,7 +464,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   @parameterized.named_parameters(
     ("donate_argnums", "donate_argnums", (2, 3)),
-    ("donate_argnames", "donate_argnames", ("c", "d")),
+    ("donate_argnames", "donate_argnames", ('c', 'd')),
   )
   @jtu.device_supports_buffer_donation()
   def test_jit_donate_static_argnums(self, argnum_type, argnum_val):
@@ -494,7 +487,7 @@ class JitTest(jtu.BufferDonationTestCase):
     jit_fun = jit(
       lambda a, b, c, d, e: ((a + b + c), (a + b + d), (a + b + e)),
       static_argnums=(0, 1),
-      donate_argnames=("d", "e"),
+      donate_argnames=('d', 'e'),
     )
 
     c = jax.device_put(jnp.array([2.0, 2.0]))
@@ -542,14 +535,14 @@ class JitTest(jtu.BufferDonationTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = jax.sharding.Mesh(
-      np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y")
+      np.array(jax.devices()[:2]).reshape((2, 1)), ('x', 'y')
     )
     x = jax.device_put(
       np.arange(16).reshape((4, 4)),
       jax.NamedSharding(mesh, P("x", None)),
     )
     expanded_mesh = jax.sharding.Mesh(
-      np.array(jax.devices()[:2]).reshape((1, 2, 1)), ("replicas", "x", "y")
+      np.array(jax.devices()[:2]).reshape((1, 2, 1)), ("replicas", 'x', 'y')
     )
     dst_sharding = jax.NamedSharding(expanded_mesh, P("x", None))
     # No transfer should happen because the array is aliased to compatible
@@ -559,8 +552,8 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(dst_sharding, res.sharding)
 
   @parameterized.named_parameters(
-    ("argnums", "donate_argnums", 0),
-    ("argnames", "donate_argnames", "x"),
+    ('argnums', 'donate_argnums', 0),
+    ('argnames', 'donate_argnames', 'x'),
   )
   @jtu.device_supports_buffer_donation()
   def test_jit_donate_weak_type(self, argnum_type, argnum_val):
@@ -571,8 +564,8 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   @parameterized.named_parameters(
-    ("argnums", "donate_argnums", (0,)),
-    ("argnames", "donate_argnames", ("array",)),
+    ('argnums', 'donate_argnums', (0,)),
+    ('argnames', 'donate_argnames', ('array',)),
   )
   def test_jnp_array_copy(self, argnum_type, argnum_val):
     # https://github.com/jax-ml/jax/issues/3412
@@ -666,26 +659,26 @@ class JitTest(jtu.BufferDonationTestCase):
       result.block_until_ready()
 
   @parameterized.named_parameters(
-    ("argnames", {"donate_argnames": ("z", "y")}),
-    ("argnums", {"donate_argnums": (0, 1)}),
+    ('argnames', {'donate_argnames': ('z', 'y')}),
+    ('argnums', {'donate_argnums': (0, 1)}),
   )
   def test_dict_donation(self, jit_kwargs):
     @jax.jit(**jit_kwargs)
     def f(z, y, x):
       return z, y, x
 
-    z = {"c": 3.0}
-    y = {"b": 2.0}
-    x = {"a": 1.0}
+    z = {'c': 3.0}
+    y = {'b': 2.0}
+    x = {'a': 1.0}
 
     _, kwargs_info = f.lower(z=z, y=y, x=x).args_info
-    self.assertTrue(kwargs_info["z"]["c"].donated)
-    self.assertTrue(kwargs_info["y"]["b"].donated)
-    self.assertFalse(kwargs_info["x"]["a"].donated)
+    self.assertTrue(kwargs_info['z']['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
 
   @parameterized.named_parameters(
-    ("argnames", {"donate_argnames": ("z", "y")}),
-    ("argnums", {"donate_argnums": (0, 1)}),
+    ('argnames', {'donate_argnames': ('z', 'y')}),
+    ('argnums', {'donate_argnums': (0, 1)}),
   )
   def test_dict_donation_args_kwargs(self, jit_kwargs):
     @jax.jit(**jit_kwargs)
@@ -697,9 +690,9 @@ class JitTest(jtu.BufferDonationTestCase):
     x = {"a": 1.0}
 
     args_info, kwargs_info = f.lower(z, y=y, x=x).args_info
-    self.assertTrue(args_info[0]["c"].donated)
-    self.assertTrue(kwargs_info["y"]["b"].donated)
-    self.assertFalse(kwargs_info["x"]["a"].donated)
+    self.assertTrue(args_info[0]['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
 
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
