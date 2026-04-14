@@ -37,6 +37,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import ffi
 from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import pjit
@@ -61,6 +62,7 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive)
 from jax._src.core import typeof, getu, getr
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -8673,8 +8675,9 @@ batching.defvectorized(copy_p)
 
 # The dce_sink_p primitive marks a value as "used" from the perspective of DCE
 # so the computation producing it won't be eliminated.
-def dce_sink(val):
-  tree_util.tree_map(dce_sink_p.bind, val)
+def dce_sink(val, *, prevent_mlir_dce: bool = False):
+  sink = partial(dce_sink_p.bind, prevent_mlir_dce=prevent_mlir_dce)
+  tree_util.tree_map(sink, val)
 
 class NoDCEEffect(effects.Effect):
   # we don't inherit these from `object` due to serialization.py
@@ -8685,12 +8688,22 @@ effects.control_flow_allowed_effects.add_type(NoDCEEffect)
 effects.lowerable_effects.add_type(NoDCEEffect)
 
 dce_sink_p = core.Primitive('dce_sink')
-dce_sink_p.def_impl(lambda _: [])
+dce_sink_p.def_impl(lambda _, **__: [])
 dce_sink_p.multiple_results = True
-dce_sink_p.def_effectful_abstract_eval(lambda _: ([], {no_dce_effect}))
-mlir.register_lowering(dce_sink_p, lambda ctx, _: [])
-ad.deflinear(dce_sink_p, lambda _: [])
-batching.primitive_batchers[dce_sink_p] = lambda x, bd: (x, bd)
+dce_sink_p.def_effectful_abstract_eval(lambda _, **__: ([], {no_dce_effect}))
+ad.deflinear(dce_sink_p, lambda _, **__: [])
+batching.primitive_batchers[dce_sink_p] = lambda x, bd, **_: (x, bd)
+
+@partial(mlir.register_lowering, dce_sink_p)
+def _dce_sink_lowering(ctx, x, *, prevent_mlir_dce):
+  if not prevent_mlir_dce:
+    return []
+  if jaxlib_extension_version >= 438:
+    rule = ffi.ffi_lowering("dce_sink", has_side_effect=True)
+    return rule(ctx, x)
+  else:
+    raise RuntimeError("prevent_mlir_dce=True requires jaxlib_extension_version >= 438")
+
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT,

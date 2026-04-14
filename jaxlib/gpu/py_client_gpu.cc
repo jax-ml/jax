@@ -316,5 +316,16 @@ XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
                          kXlaBufferPythonGpuCallbackCmdBuffer);
 
+xla::ffi::Error DceSinkImpl(xla::ffi::AnyBuffer x) {
+  return xla::ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(dce_sink_gpu_ffi, DceSinkImpl,
+                              xla::ffi::Ffi::Bind().Arg<xla::ffi::AnyBuffer>());
+
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "dce_sink",
+                         absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
+                         dce_sink_gpu_ffi);
+
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

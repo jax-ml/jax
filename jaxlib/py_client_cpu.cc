@@ -244,4 +244,14 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_buffer_python_cpu_callback",
                          "HOST", kXlaBufferPythonCpuCallback);
 
+namespace {
+ffi::Error DceSinkImpl(ffi::AnyBuffer x) { return ffi::Error::Success(); }
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(dce_sink_cpu_ffi, DceSinkImpl,
+                              ffi::Ffi::Bind().Arg<ffi::AnyBuffer>());
+}  // namespace
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "dce_sink", "HOST",
+                         dce_sink_cpu_ffi);
+
 }  // namespace jax
