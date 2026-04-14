@@ -473,7 +473,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
 def _infer_scan_length(
     xs_flat: list[Any], xs_avals: list[AbstractValue],
-    length: int | None) -> int:
+    length: Any | None) -> int:
 
   # TODO(dougalm): put this in some sort of `scannable` typeclass
   from jax._src.hijax import HiType
@@ -503,7 +503,7 @@ def _infer_scan_length(
       msg = ('The `length` argument to `scan` expects a concrete `int` value.'
              ' For scan-like iteration with a dynamic length, use `while_loop`'
              ' or `fori_loop`.')
-      raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
+      raise core.ConcretizationTypeError(length, msg) from None
     else:
       if not all(length == l for l in lengths):
         msg = ("scan got `length` argument of {} which disagrees with "

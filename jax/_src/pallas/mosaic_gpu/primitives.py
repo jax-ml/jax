@@ -839,7 +839,9 @@ def _async_prefetch_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    predicate_kwarg = dict(predicate=ctx.module_ctx.single_lane_predicate)
+    predicate_kwarg: dict[str, Any] = dict(
+        predicate=ctx.module_ctx.single_lane_predicate
+    )
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       # Gathers are a warpgroup-level collective and can't take a predicate.
@@ -851,7 +853,7 @@ def _async_prefetch_lowering(
         collective=collective,
         leader_tracked=leader_tracked,
         **copy_params,
-        **predicate_kwarg,  # type: ignore[arg-type]
+        **predicate_kwarg,
     )
     return ()
 
@@ -4073,7 +4075,7 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
   i32 = ir.IntegerType.get_signless(32)
   # Divide out the cluster dimensions.
   for axis in ctx.module_ctx.axis_names.cluster:
-    dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)  # type: ignore[arg-type]
+    dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
     cta_grid[dim] = arith_dialect.divui(
         cta_grid[dim],
         mgpu.c(ctx.launch_ctx.cluster_size[dim], i32))

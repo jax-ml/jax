@@ -21,7 +21,7 @@ import enum
 from functools import partial, reduce
 import math
 import types
-from typing import Any
+from typing import Any, cast
 
 from jax._src import ad_util
 from jax._src import api
@@ -833,7 +833,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
   )
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    num_iterations = reduce(jnp.multiply, grid)  # pyrefly: ignore[bad-argument-type]
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -1261,7 +1261,7 @@ def _pallas_call_state_discharge_rule(
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
-          array_aval=ref_aval.inner_aval,  # type: ignore[arg-type]
+          array_aval=cast(jax_core.ShapedArray, ref_aval.inner_aval),
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,

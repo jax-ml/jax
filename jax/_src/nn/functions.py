@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from functools import partial
 import operator
 import numpy as np
-from typing import Any, Literal, overload
+from typing import Any, Literal, overload, SupportsIndex
 import warnings
 
 from jax._src import api
@@ -705,7 +705,7 @@ def _one_hot(x: Array, num_classes: int, *,
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # type: ignore[arg-type]
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     axis_size = lax.axis_size(axis)
     if num_classes != axis_size:
@@ -713,7 +713,8 @@ def _one_hot(x: Array, num_classes: int, *,
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
     return jnp.asarray(x == axis_idx, dtype=dtype)
-  axis = operator.index(axis)  # type: ignore[arg-type]
+  assert isinstance(axis, SupportsIndex)
+  axis = operator.index(axis)
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)

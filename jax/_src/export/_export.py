@@ -827,7 +827,7 @@ def _export_lowered(
       if isinstance(sharding, sharding_impls.NamedSharding):
         cur_mesh = sharding.mesh
         break
-    if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
+    if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
       cur_mesh = cur_mesh.abstract_mesh
 
   in_named_shardings = tuple(
@@ -861,7 +861,7 @@ def _export_lowered(
         device_assignment=device_assignment,
         apply_jit=True,
         flat_primal_fun=True,
-        mesh=cur_mesh)  # type: ignore[arg-type]
+        mesh=cur_mesh)
     return export(fun_vjp_jax,
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
@@ -1381,7 +1381,7 @@ def _get_vjp_fun(
     if has_named_shardings or mesh:
       vjp_in_shardings = tuple(
           _get_named_sharding(has_named_shardings, named_sharding,
-                              hlo_sharding, aval, mesh)  # type: ignore[arg-type]
+                              hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
           for named_sharding, hlo_sharding, aval in zip(
             itertools.chain(in_named_shardings, out_named_shardings),
             itertools.chain(in_shardings_hlo, out_shardings_hlo),
@@ -1787,5 +1787,5 @@ def wrap_with_sharding(
     x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
   else:
     x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,
                                     allow_shardy_lowering=use_shardy)

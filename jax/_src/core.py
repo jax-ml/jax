@@ -575,7 +575,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
-    from jax._src.array import ArrayImpl  # type: ignore
+    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
     do_lit_array = not for_ad
     if isinstance(x, ArrayImpl):
       return do_lit_array
@@ -659,7 +659,7 @@ class Primitive:
   def bind_with_trace(self, trace, args, avals, params, /):
     if self.is_high(*avals, **params) and trace.requires_low:
       with set_current_trace(trace):
-        return self.to_lojax(*args, **params)  # type: ignore
+        return self.to_lojax(*args, **params)  # pyrefly: ignore[not-callable]
     return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
@@ -1740,10 +1740,10 @@ class AbstractValue:
     return add_jaxvals(x, y)
 
   def raise_val2(self, lo_vals_ft):
-    return self.raise_val(*lo_vals_ft.unflatten())  # type: ignore
+    return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
 
   def lower_val2(self, hi_val):
-    return FlatTree.flatten(self.lower_val(hi_val))  # type: ignore
+    return FlatTree.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
@@ -1924,19 +1924,19 @@ class AvalQDD:
     return self.aval.lo_ty_qdd(self.qdd)
 
   def read_loval(self, val):
-    return self.aval.read_loval(self.qdd, val)  # type: ignore
+    return self.aval.read_loval(self.qdd, val)  # pyrefly: ignore[missing-attribute]
 
   def read_loval_in(self, val):
-    return self.aval.read_loval_in(self.qdd, val)  # type: ignore
+    return self.aval.read_loval_in(self.qdd, val)  # pyrefly: ignore[missing-attribute]
 
   def read_loval_out(self, val):
-    return self.aval.read_loval_out(self.qdd, val)  # type: ignore
+    return self.aval.read_loval_out(self.qdd, val)  # pyrefly: ignore[missing-attribute]
 
   def new_from_loval(self, *lovals):
-    return self.aval.new_from_loval(self.qdd, *lovals)  # type: ignore
+    return self.aval.new_from_loval(self.qdd, *lovals)  # pyrefly: ignore[missing-attribute]
 
   def to_tangent_aval(self):
-    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # type: ignore
+    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # pyrefly: ignore[missing-attribute]
 
 @dataclass(frozen=True)
 class AvalMutableQDD:
@@ -3149,7 +3149,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
       return operator.index(d)
     except:
       # Is a _DimExpr
-      return d._evaluate(env)  # type: ignore
+      return d._evaluate(env)  # pyrefly: ignore[missing-attribute]
   return tuple(eval_one_dim(d) for d in shape)
 
 def dim_value_dtype():
@@ -3215,7 +3215,7 @@ closed_call_p.def_effectful_abstract_eval(
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
   from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
-    return aval.dec_rank(size, axis)  # type: ignore
+    return aval.dec_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
@@ -3230,7 +3230,7 @@ def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
   from jax._src.hijax import HiType  # pytype: disable=import-error
   if isinstance(aval, HiType):
-    return aval.inc_rank(size, axis)  # type: ignore
+    return aval.inc_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, explicit_mesh_axis, aval)
@@ -3523,7 +3523,9 @@ def _check_jaxpr(
 
   # Check each eqn.
   sentinel = object()
-  in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
+  in_idx: dict[Var, int | None] = {
+      v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))
+  }
   mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
@@ -3548,7 +3550,7 @@ def _check_jaxpr(
       if prim.ref_primitive:
         if prim in _ref_allocating_primitives:
           outvar, = eqn.outvars
-          in_idx[outvar] = None  # type: ignore
+          in_idx[outvar] = None
           mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
