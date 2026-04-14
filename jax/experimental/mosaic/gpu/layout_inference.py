@@ -734,6 +734,21 @@ def _vector_load_constraint_system(
   return system, value_sites_for_variable
 
 
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "MultimemLoadReduceOp"):
+  @_add_constraint_system_derivation_rule(mgpu.MultimemLoadReduceOp)
+  def _multimem_load_reduce_constraint_system(
+      _: DerivationContext,
+      op: mgpu.MultimemLoadReduceOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    dest = ValueSite(op, VariableType.RESULT, 0)
+    dest_var = cs.Variable(dest)
+    system = cs.ConstraintSystem(
+        constraints=[cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
+    )
+    return system, {dest_var: [dest]}
+
+
 @_add_constraint_system_derivation_rule(mgpu.VectorStoreOp)
 def _vector_store_constraint_system(
     ctx: DerivationContext,

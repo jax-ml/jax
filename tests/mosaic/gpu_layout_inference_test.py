@@ -284,6 +284,37 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertNotIn("in_layouts", load_op.attributes)
     self.checkOutLayouts(load_op, [strided_layout_attr])
 
+  def test_multimem_load_reduce_infer_layout(self):
+    shape = (256,)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, ir.IntegerType.get_signless(32))
+      [source] = undefs(ref_ty)
+      out = mgpu.dialect.multimem_load_reduce(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+
+    mgpu.infer_layout(self.module)
+
+    self.checkOutLayouts(out.owner, [mgpu.WGStridedFragLayout(shape=shape, vec_size=2)])
+
+  def test_multimem_load_reduce_does_not_allow_splat_result(self):
+    shape = (256,)
+
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, ir.F16Type.get())
+      [ref] = undefs(ref_ty)
+      out = mgpu.dialect.multimem_load_reduce(
+          source=ref,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+      layout_cast(out, mgpu.WGSplatFragLayout(shape=shape))
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_layout_cast_layout(self):
     shape = (128, 64)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
