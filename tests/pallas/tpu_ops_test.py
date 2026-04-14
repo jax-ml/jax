@@ -548,28 +548,34 @@ class OpsTest(ptu.PallasTPUTest):
     ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
     np.testing.assert_array_equal(out, ref)
 
-  @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
-  def test_dynamic_gather_along_axis(self, axis, mode):
-    if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
-        axis == 1 and not jtu.is_device_tpu_at_least(version=4)
+  @parameterized.product(
+      idx_shape=[(8, 128), (2, 32, 256)],
+      axis=[-2, -1],
+      mode=["promise_in_bounds", None],
+  )
+  def test_dynamic_gather_along_axis(self, idx_shape, axis, mode):
+    if (axis == -2 and not jtu.is_device_tpu_at_least(version=5)) or (
+        axis == -1 and not jtu.is_device_tpu_at_least(version=4)
     ):
-      self.skipTest("Requires TPUv5+ for axis=0 and TPUv4+ for axis=1")
+      self.skipTest("Requires TPUv5+ for axis=-2 and TPUv4+ for axis=-1")
     dtype = jnp.int32
-    shape = (8, 128)
+    x_shape = list(idx_shape)
+    # Only a single vreg along the gather axis is supported
+    x_shape[axis] = (8, 128)[axis]
 
     def kernel(x, indices, out):
       out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
 
-    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    x = np.arange(np.prod(x_shape), dtype=dtype).reshape(x_shape)
     idx = jax.random.randint(
         key=jax.random.key(1234),
-        shape=shape,
+        shape=idx_shape,
         minval=0,
-        maxval=shape[axis],
+        maxval=x_shape[axis],
         dtype=jnp.int32,
     )
     actual = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+        kernel, out_shape=jax.ShapeDtypeStruct(idx_shape, dtype)
     )(x, idx)
     expected = np.take_along_axis(x, idx, axis=axis)
     np.testing.assert_array_equal(actual, expected)

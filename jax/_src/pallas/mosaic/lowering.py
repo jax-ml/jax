@@ -2564,48 +2564,47 @@ def _gather_lowering_rule(
   indices_aval = ctx.avals_in[1]
   out_aval = ctx.avals_out[0]
 
-  if len(in_aval.shape) != 2:
-    raise NotImplementedError("Only 2D gather is supported")
-  if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
-    raise ValueError("Shape mismatch in input, indices and output")
+  if (
+      len(in_aval.shape) != len(out_aval.shape)
+      or indices_aval.shape[:-1] != out_aval.shape
+      or indices_aval.shape[-1] != 1
+  ):
+    raise NotImplementedError("Only take_along_axis-like gathers supported")
+  rank = len(out_aval.shape)
 
   # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
   # to the end of the indices array. We should reshape it back to the original
   # shape before lowering to Mosaic and rely on MLIR canonicalization to remove
   # the reshapes.
-  assert indices_aval.shape == in_aval.shape + (1,)
   recovered_indices = vector.shape_cast(
       ir.VectorType.get(
-          ctx.lowering_context.dynamic_shape_replacement_fn(in_aval.shape),
-          indices.type.element_type),
+          ctx.lowering_context.dynamic_shape_replacement_fn(out_aval.shape),
+          indices.type.element_type,
+      ),
       indices,
   )
   # Note: current support for lax.gather is still very limited.
   del fill_value
-  if (
-      slice_sizes == (1, 1)
-      and mode
-      in (
-          lax.GatherScatterMode.FILL_OR_DROP,
-          lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-      )
+
+  def get_dimension_numbers(axis):
+    """Get the dimension numbers for a gather along the given axis."""
+    batch_dims = tuple(i for i in range(rank) if i != axis)
+    return lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(axis,),
+        start_index_map=(axis,),
+        operand_batching_dims=batch_dims,
+        start_indices_batching_dims=batch_dims,
+    )
+
+  if slice_sizes == (1,) * rank and mode in (
+      lax.GatherScatterMode.FILL_OR_DROP,
+      lax.GatherScatterMode.PROMISE_IN_BOUNDS,
   ):
-    if dimension_numbers == lax.GatherDimensionNumbers(
-        offset_dims=(),
-        collapsed_slice_dims=(0,),
-        start_index_map=(0,),
-        operand_batching_dims=(1,),
-        start_indices_batching_dims=(1,),
-    ):
-      return tpu.dynamic_gather(x, recovered_indices, [0])
-    if dimension_numbers == lax.GatherDimensionNumbers(
-        offset_dims=(),
-        collapsed_slice_dims=(1,),
-        start_index_map=(1,),
-        operand_batching_dims=(0,),
-        start_indices_batching_dims=(0,),
-    ):
-      return tpu.dynamic_gather(x, recovered_indices, [1])
+    if dimension_numbers == get_dimension_numbers(rank - 2):
+      return tpu.dynamic_gather(x, recovered_indices, [rank - 2])
+    if dimension_numbers == get_dimension_numbers(rank - 1):
+      return tpu.dynamic_gather(x, recovered_indices, [rank - 1])
   raise NotImplementedError("Unsupported gather")
 
 
