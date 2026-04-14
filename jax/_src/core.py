@@ -2449,18 +2449,16 @@ class ShapedArray(AbstractValue):
     return f'{wt_str}{self.str_short()}'
 
   def to_tangent_aval(self):
-    return ShapedArray(
+    return ShapedArray._create(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, sharding=self.sharding, manual_axis_type=self.mat,
-        memory_space=self.memory_space)
+        self.weak_type, self.sharding, self.mat, self.memory_space)
 
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     ct_mat = self.mat.to_ct_mat()
-    return ShapedArray(
-        self.shape, dtype, self.weak_type, sharding=sharding,
-        manual_axis_type=ct_mat, memory_space=self.memory_space)
+    return ShapedArray._create(
+        self.shape, dtype, self.weak_type, sharding, ct_mat, self.memory_space)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
