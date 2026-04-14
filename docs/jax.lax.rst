@@ -49,6 +49,7 @@ Operators
     population_count
     broadcast
     broadcast_in_dim
+    broadcast_like
     broadcast_shapes
     broadcast_to_rank
     broadcasted_iota
