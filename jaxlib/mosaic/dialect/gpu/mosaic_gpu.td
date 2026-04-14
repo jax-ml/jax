@@ -491,6 +491,48 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
   let results = (outs AnyFixedVectorOfNonZeroRank);
 }
 
+def MosaicGPU_MultimemLoadReductionType : I32EnumAttr<"MultimemLoadReductionType",
+    "Reduction operation for multimem reduction.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Min", 1, "min">,
+      I32EnumAttrCase<"Max", 2, "max">,
+      I32EnumAttrCase<"And", 3, "and">,
+      I32EnumAttrCase<"Or", 4, "or">,
+      I32EnumAttrCase<"Xor", 5, "xor">,
+      I32EnumAttrCase<"Umin", 6, "umin">,
+      I32EnumAttrCase<"Umax", 7, "umax">,
+      I32EnumAttrCase<"Smin", 8, "smin">,
+      I32EnumAttrCase<"Smax", 9, "smax">,
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
+def MosaicGPU_MultimemLoadReduceOp : Op<MosaicGPU_Dialect, "multimem_load_reduce",
+      [DeclareOpInterfaceMethods<InferTypeOpInterface>, MemoryEffects<[MemRead]>]> {
+  let summary = "Loads from a multicast memref and reduces the values into a single output.";
+  let description = [{
+    Loads from a multicast memref specified by the `source` and reduces the
+    loaded values into a single output using hardware-accelerated multimem
+    instructions.
+
+    The reduction is defined by `reduction_op` and the devices which participate
+    in the operation are backed by a multicast pointer `source`.
+
+    And, Or and Xor reduction types are compatible only with int inputs.
+    Umin, Umax, Smin and Smax may only be specified for int types.
+  }];
+
+  let arguments = (ins
+    AnyNon0RankedMemRef:$source,
+    // Attrs
+    MosaicGPU_MultimemLoadReductionType:$reduction_type
+  );
+  let results = (outs AnyFixedVectorOfNonZeroRank);
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AtomicOpType : I32EnumAttr<"AtomicOpType",
     "Atomic store operation type",
     [

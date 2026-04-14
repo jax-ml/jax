@@ -958,6 +958,62 @@ llvm::LogicalResult VectorLoadOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult MultimemLoadReduceOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::PropertyRef,
+    mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
+}
+
+llvm::LogicalResult MultimemLoadReduceOp::verify() {
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::Type source_element_type = source_type.getElementType();
+  MultimemLoadReductionType reduction_type = getReductionType();
+
+  if (auto int_type = llvm::dyn_cast<mlir::IntegerType>(source_element_type)) {
+    int bitwidth = int_type.getIntOrFloatBitWidth();
+    if (bitwidth != 32 && bitwidth != 64) {
+      return emitOpError() << "Only supported 32 and 64 bit integer operations";
+    }
+    if (reduction_type == MultimemLoadReductionType::Min ||
+        reduction_type == MultimemLoadReductionType::Max) {
+      return emitOpError() << "Integer Min, or Max reductions must specify "
+                              "signedness (use Umin, Smin, Umax, Smax).";
+    }
+  } else if (llvm::isa<mlir::FloatType>(source_element_type)) {
+    if (reduction_type != MultimemLoadReductionType::Add &&
+        reduction_type != MultimemLoadReductionType::Max &&
+        reduction_type != MultimemLoadReductionType::Min) {
+      return emitOpError() << "Only Add, Max and Min reductions are supported "
+                              "on float source.";
+    }
+    if (llvm::isa<mlir::Float32Type>(source_element_type) &&
+        reduction_type != MultimemLoadReductionType::Add) {
+      return emitOpError() << "Only Add is supported for F32 source type.";
+    }
+
+    if (!llvm::isa<mlir::Float32Type, mlir::Float16Type, mlir::BFloat16Type,
+                   mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(
+            source_element_type)) {
+      return emitOpError() << "Unsupported source type: "
+                           << source_element_type;
+    }
+  } else {
+    return emitOpError() << "Unsupported source type: " << source_element_type;
+  }
+
+  if (source_type.getMemorySpace()) {
+    return emitOpError() << "Expected the ref to be in GMEM.";
+  }
+
+  return mlir::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();

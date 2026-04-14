@@ -845,6 +845,85 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_multimem_load_reduce_unsupported_int_bitwidth(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(16)))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Only supported 32 and 64 bit integer operations"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_missing_signedness(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Max,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Integer Min, or Max reductions must specify signedness"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_unsupported_float_reduction(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.And,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Only Add, Max and Min reductions are supported"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_unsupported_f32_reduction(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.F32Type.get()))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Min,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Only Add is supported for F32 source type"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_unsupported_float_type(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.F64Type.get()))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Unsupported source type"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_source_not_in_gmem(self):
+    smem = mgpu_utils.smem()
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get(), memory_space=smem))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, "Expected the ref to be in GMEM"):
+      self.module.operation.verify()
+
+  def test_multimem_load_reduce_valid_int(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+  def test_multimem_load_reduce_valid_float(self):
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
+      mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+    self.assertTrue(self.module.operation.verify())
+
   def test_warp_map_op_invalid_operand(self):
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get([128, 160], ir.F16Type.get())
