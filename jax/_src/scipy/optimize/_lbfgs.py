@@ -198,10 +198,8 @@ def _minimize_lbfgs(
     )
     y_k = g_kp1 - state.g_k
     rho_k_inv = jnp.real(_dot(y_k, s_k))
-    rho_k = jnp.where(
-      rho_k_inv == 0., jnp.array(1000., dtype=y_k.dtype),
-      jnp.reciprocal(rho_k_inv).astype(y_k.dtype),
-    )
+    rho_k = jnp.reciprocal(rho_k_inv).astype(y_k.dtype)
+    rho_k_valid = jnp.isfinite(rho_k) & (rho_k_inv != 0.)
     y_dot_y = jnp.real(_dot(jnp.conj(y_k), y_k))
     gamma = jnp.where(y_dot_y > 0, rho_k_inv / y_dot_y, state.gamma)
 
@@ -224,9 +222,21 @@ def _minimize_lbfgs(
       x_k=x_kp1.astype(state.x_k.dtype),
       f_k=f_kp1.astype(state.f_k.dtype),
       g_k=g_kp1.astype(state.g_k.dtype),
-      s_history=_update_history_vectors(history=state.s_history, new=s_k),
-      y_history=_update_history_vectors(history=state.y_history, new=y_k),
-      rho_history=_update_history_scalars(history=state.rho_history, new=rho_k),
+      s_history=jnp.where(
+        rho_k_valid,
+        _update_history_vectors(history=state.s_history, new=s_k),
+        state.s_history,
+      ),
+      y_history=jnp.where(
+        rho_k_valid,
+        _update_history_vectors(history=state.y_history, new=y_k),
+        state.y_history,
+      ),
+      rho_history=jnp.where(
+        rho_k_valid,
+        _update_history_scalars(history=state.rho_history, new=rho_k),
+        state.rho_history,
+      ),
       gamma=gamma.astype(state.g_k.dtype),
       status=jnp.where(converged, 0, status),
       ls_status=ls_results.status,
