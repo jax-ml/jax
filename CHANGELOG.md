@@ -64,6 +64,20 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.scipy.stats.rankdata` now returns floating point values in
     all cases, following a similar change in the SciPy 1.18 release.
 
+* Deprecations:
+  * A number of internal APIs in `jax.core` have been newly deprecated and
+    some have been moved to `jax.extend.core`. These include `CallPrimitive`,
+    `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`,
+    `gensym`, `get_opaque_trace_state`, `jaxprs_in_params`, `new_jaxpr_eqn`,
+    `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`,
+    `JaxprPpSettings`, `OutputType`, `abstract_token`, `aval_mapping_handlers`,
+    `call`, `concretization_function_error`, `custom_typechecks`, `is_concrete`,
+    `is_constant_dim`, `is_constant_shape`, `literalable_types`, `no_axis_name`,
+    `pytype_aval_mappings`, and `trace_ctx`.
+
 * Changes:
   * The minimum supported SciPy version is now 1.14.
   * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
