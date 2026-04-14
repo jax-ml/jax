@@ -41,11 +41,9 @@ def main():
     runfiles = Runfiles.Create()
     stubgen_path = runfiles.Rlocation("nanobind/src/stubgen.py")
     spec = importlib.util.spec_from_file_location("stubgen", stubgen_path)
-    # pyrefly: ignore [bad-argument-type]
-    stubgen = importlib.util.module_from_spec(spec)
+    stubgen = importlib.util.module_from_spec(spec)  # pyrefly: ignore [bad-argument-type]
     sys.modules["stubgen"] = stubgen
-    # pyrefly: ignore [missing-attribute]
-    spec.loader.exec_module(stubgen)
+    spec.loader.exec_module(stubgen)  # pyrefly: ignore [missing-attribute]
     stubgen.main(
         ["-m", args.module, "-r", "--include-private", "-O", args.output]
     )
