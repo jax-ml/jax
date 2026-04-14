@@ -6468,9 +6468,8 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,
     raise TypeError(msg.format(
         tuple(core.replace_tracer_for_error_message(d) for d in operand.shape),
         shape, broadcast_dimensions))
-  if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
-      tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
-    msg = ("broadcast_in_dim broadcast_dimensions must be strictly increasing; "
+  if len(broadcast_dimensions) != len(set(broadcast_dimensions)):
+    msg = ("broadcast_in_dim broadcast_dimensions must not contain duplicates, "
            "got broadcast_dimensions {}")
     raise TypeError(msg.format(broadcast_dimensions))
   return shape

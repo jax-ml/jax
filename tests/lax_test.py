@@ -1477,6 +1477,8 @@ class LaxTest(jtu.JaxTestCase):
               ([2], [2, 3], [0]),
               ([], [2, 3], []),
               ([1], [2, 3], [1]),
+              ([3, 1], [2, 3, 4], [1, 2]),
+              ([3, 1], [2, 3, 4], [1, 0]),
           ]
       ],
       dtype=lax_test_util.default_dtypes,
@@ -1508,7 +1510,7 @@ class LaxTest(jtu.JaxTestCase):
                           'dimensions')),
       ([2], [3], [0], ('operand dimension sizes must either be 1, or be '
                        'equal to their corresponding dimensions in the target broadcast shape')),
-      ([2, 2], [2, 2], [1, 0], ('broadcast_dimensions must be strictly increasing')),
+      ([2, 2], [2, 2], [0, 0], ('broadcast_in_dim broadcast_dimensions must not contain duplicates')),
     ])
   def testBroadcastInDimShapeCheck(self, inshape, outshape, broadcast_dimensions, err_msg):
     rng = jtu.rand_default(self.rng())
