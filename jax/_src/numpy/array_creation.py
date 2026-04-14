@@ -180,9 +180,9 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
     - :func:`jax.numpy.full`
 
   Examples:
-    >>> jnp.empty(4)
+    >>> jnp.empty(4)  # doctest: +SKIP
     Array([0., 0., 0., 0.], dtype=float32)
-    >>> jnp.empty((2, 3), dtype=bool)
+    >>> jnp.empty((2, 3), dtype=bool)  # doctest: +SKIP
     Array([[False, False, False],
            [False, False, False]], dtype=bool)
 
@@ -380,11 +380,11 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
 
   Examples:
     >>> x = jnp.arange(4)
-    >>> jnp.empty_like(x)
+    >>> jnp.empty_like(x)  # doctest: +SKIP
     Array([0, 0, 0, 0], dtype=int32)
-    >>> jnp.empty_like(x, dtype=bool)
+    >>> jnp.empty_like(x, dtype=bool)  # doctest: +SKIP
     Array([False, False, False, False], dtype=bool)
-    >>> jnp.empty_like(x, shape=(2, 3))
+    >>> jnp.empty_like(x, shape=(2, 3))  # doctest: +SKIP
     Array([[0, 0, 0],
            [0, 0, 0]], dtype=int32)
   """

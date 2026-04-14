@@ -870,7 +870,7 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
     out_axes = list(map(int, np.argsort(permutation)))
 
     # Determine whether efficient approach is possible:
-    placeholder_data = jnp.empty((lhs_indices.ndim - 2) * (1,) + (lhs_indices.shape[-2],))
+    placeholder_data = jnp.zeros((lhs_indices.ndim - 2) * (1,) + (lhs_indices.shape[-2],))
     placeholder_shape = tuple(lhs_indices.shape[:-2]) + lhs_indices.shape[-1] * (1,)
     try:
       _validate_permutation(placeholder_data, lhs_indices, permutation, placeholder_shape)
@@ -1142,7 +1142,7 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_data = jnp.where(overlap & lhs_valid[:, None] & rhs_valid[None, :],
                        lhs_data[:, None] * rhs_data[None, :], 0).ravel()
 
-  out_indices = jnp.empty([lhs.nse, rhs.nse, lhs_j.shape[-1] + rhs_j.shape[-1]],
+  out_indices = jnp.zeros([lhs.nse, rhs.nse, lhs_j.shape[-1] + rhs_j.shape[-1]],
                           dtype=jnp.result_type(lhs_indices, rhs_indices))
   out_indices = out_indices.at[:, :, :lhs_j.shape[-1]].set(lhs_j[:, None])
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
@@ -1420,7 +1420,7 @@ def _bcoo_sum_duplicates_impl(data, indices, *, spinfo, nse):
   indices_out = _adjust_indices_nse(indices_out, nse=nse, shape=spinfo.shape)
   if props.n_sparse == 0:
     data = data.sum(props.n_batch, keepdims=True, dtype=data.dtype)
-  data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
+  data_out = jnp.zeros((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
   permute = nfold_vmap(permute, props.n_batch)
@@ -1542,7 +1542,7 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   if props.n_sparse == 0:
     data = data.sum(props.n_batch, keepdims=True, dtype=data.dtype)
     data_dot = data_dot.sum(props.n_batch, keepdims=True, dtype=data_dot.dtype)
-  data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
+  data_out = jnp.zeros((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
   # This check is because scatter-add on zero-sized arrays has poorly defined
@@ -1883,7 +1883,7 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
 
   # Reshape the sparse dimensions: this is accomplished by re-indexing.
   if not new_sparse_shape:
-    indices = jnp.empty_like(indices, shape=(*new_batch_shape, mat.nse, 0))
+    indices = jnp.zeros_like(indices, shape=(*new_batch_shape, mat.nse, 0))
   elif sparse_shape:
     index_cols = tuple(indices[..., i] for i in sparse_perm)
     sparse_shape = [int(mat.shape[mat.n_batch + i]) for i in sparse_perm]

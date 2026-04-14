@@ -1459,7 +1459,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Array | float | None, *,
   if a.size == 0:
     s = array_creation.empty(0, dtype=a.dtype)
     rank = jnp.array(0, dtype=int)
-    x = array_creation.empty((n, *b.shape[1:]), dtype=a.dtype)
+    x = array_creation.zeros((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
       rcond = float(jnp.finfo(dtype).eps) * max(n, m)

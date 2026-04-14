@@ -187,7 +187,6 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(M.n_batch, n_batch)
     self.assertEqual(M.n_dense, n_dense)
     self.assertEqual(M.dtype, dtype)
-    self.assertArraysEqual(M.todense(), jnp.empty(shape, dtype))
 
   @jtu.sample_product(
       [
