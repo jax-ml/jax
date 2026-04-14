@@ -793,7 +793,7 @@ def det(a: ArrayLike) -> Array:
 
 
 @export
-def eig(a: ArrayLike) -> EigResult:
+def eig(a: ArrayLike, *, allow_eigvec_deriv: bool = False) -> EigResult:
   """
   Compute the eigenvalues and eigenvectors of a square array.
 
@@ -801,6 +801,10 @@ def eig(a: ArrayLike) -> EigResult:
 
   Args:
     a: array of shape ``(..., M, M)`` for which to compute the eigenvalues and vectors.
+    allow_eigvec_deriv: If ``False`` (default), differentiating through eigenvectors
+      raises an error. Set to ``True`` to enable eigenvector differentiation, asserting
+      that your downstream computation does not depend on the arbitrary complex phase of
+      the eigenvectors. See :func:`jax.lax.linalg.eig` for details.
 
   Returns:
     A namedtuple ``(eigenvalues, eigenvectors)``. The namedtuple has fields:
@@ -816,8 +820,6 @@ def eig(a: ArrayLike) -> EigResult:
     - At present, non-symmetric eigendecomposition is only implemented on the CPU and
       GPU backends. For more details about the GPU implementation, see the
       documentation for :func:`jax.lax.linalg.eig`.
-    - Currently autodiff is not supported for computation of non-symmetric eigenvectors;
-      see https://github.com/jax-ml/jax/issues/2748.
 
   See also:
     - :func:`jax.lax.linalg.eig`: similar function with different eigenvector options
@@ -838,7 +840,8 @@ def eig(a: ArrayLike) -> EigResult:
   """
   a = ensure_arraylike("jnp.linalg.eig", a)
   a, = promote_dtypes_inexact(a)
-  w, v = lax_linalg.eig(a, compute_left_eigenvectors=False)
+  w, v = lax_linalg.eig(a, compute_left_eigenvectors=False,
+                        allow_eigvec_deriv=allow_eigvec_deriv)
   return EigResult(w, v)
 
 
