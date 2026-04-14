@@ -4478,6 +4478,46 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     )
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  def test_simple_warp_specialized_matmul(self):
+    m = n = 128
+    dtype = jnp.float16
+    k = swizzle = 128
+    transforms = self.default_transforms(dtype=dtype, swizzle=swizzle)
+
+    def kernel(a_ref, b_ref, out_ref, a_smem, b_smem, acc_tmem, tma_barrier, mma_barrier):
+      plgpu.copy_gmem_to_smem(a_ref, a_smem, tma_barrier)
+      plgpu.copy_gmem_to_smem(b_ref, b_smem, tma_barrier)
+      plgpu.barrier_wait(tma_barrier)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.tcgen05_mma(acc_tmem,
+                            a_smem,
+                            b_smem,
+                            mma_barrier,
+                            accumulate=False)
+      plgpu.barrier_wait(mma_barrier)
+      # We don't await the load because acc_tmem is never modified again.
+      out_ref[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=(
+            plgpu.SMEM((m, k), dtype, transforms=transforms),
+            plgpu.SMEM((k, n), dtype, transforms=transforms),
+            plgpu.TMEM((m, n), jnp.float32, packed=False),
+            plgpu.Barrier(num_arrivals=2),
+            plgpu.Barrier(orders_tensor_core=True),
+        ),
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=(m, k), dtype=dtype)
+    y = jax.random.uniform(jax.random.key(1), shape=(k, n), dtype=dtype)
+    np.testing.assert_allclose(f(x, y), x @ y, rtol=1e-3)
+
   @parameterized.product(
       m=[256],
       n=[128, 256],

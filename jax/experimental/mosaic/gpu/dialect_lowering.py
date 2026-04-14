@@ -2151,7 +2151,7 @@ def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
   return conversion_cast.result
 
 
-@_register_lowering(mgpu.TcGen05MMAOp)
+@_register_lowering(mgpu.TcGen05MMAOp, support_warp_semantics=True)
 def _tcgen05_mma_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TcGen05MMAOp
 ) -> Sequence[ir.Value]:

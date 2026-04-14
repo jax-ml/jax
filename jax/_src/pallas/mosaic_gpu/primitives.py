@@ -2121,9 +2121,8 @@ def _tcgen05_mma_lowering(
   return []
 
 
-@lowering.register_lowering_rule(
-    tcgen05_mma_p, mgpu.LoweringSemantics.Warpgroup
-)
+@lowering.register_lowering_rule(tcgen05_mma_p, mgpu.LoweringSemantics.Warpgroup)
+@lowering.register_lowering_rule(tcgen05_mma_p, *gpu_core.WGxWARP_SEMANTICS)
 def _tcgen05_mma_lowering_wg(
     ctx: lowering.LoweringRuleContext,
     acc_ref,
