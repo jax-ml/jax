@@ -629,6 +629,9 @@ class Primitive:
   skip_canonicalization: bool = False
   # hook for converting a hijax primitive to a lojax primitive
   to_lojax: Callable[..., Any] | None = None
+  # set for primitives that allocate references
+  ref_allocating: bool = False
+
 
   is_effectful = None
 
@@ -2770,6 +2773,7 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
+ref_p.ref_allocating = True
 
 ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
 def _ref_to_lojax(init_val, *, memory_space, kind):
@@ -2802,6 +2806,7 @@ def empty_ref(ty, memory_space=None):
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
+empty_ref_p.ref_allocating = True
 
 
 @empty_ref_p.def_effectful_abstract_eval
@@ -3457,7 +3462,7 @@ class MutableTypecheckVal:
   mutable_qdd : MutableQuasiDynamicData
 
 
-_ref_allocating_primitives = {ref_p, empty_ref_p}
+
 
 
 def _check_jaxpr(
@@ -3548,7 +3553,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim in _ref_allocating_primitives:
+        if prim.ref_allocating:
           outvar, = eqn.outvars
           in_idx[outvar] = None
           mut_arrays.add(outvar)

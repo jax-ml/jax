@@ -1614,7 +1614,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   }
   mut_arrays = set()
   for eqn in eqns:
-    if eqn.primitive in core._ref_allocating_primitives:
+    if eqn.primitive.ref_allocating:
       outvar, = eqn.outvars
       all_vars[outvar] = None
       mut_arrays.add(outvar)
@@ -1961,9 +1961,9 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): make custom_lin have hashable params.
     # TODO(dougalm): add an attribute to primitives to mark primitives with
     # effectful abstract_eval rules.
-    if (primitive.name in ("custom_lin", "call_hi_primitive_linearized",
-                           "call_hi_primitive") or
-        primitive.is_effectful and primitive.is_effectful(params)):
+    if (primitive.ref_allocating or
+        primitive.name in ("custom_lin", "call_hi_primitive_linearized",
+                           "call_hi_primitive")):
       out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
     else:
       try:
