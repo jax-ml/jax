@@ -80,6 +80,7 @@ python build/build.py build --wheels="$artifact" \
   $bazel_startup_options \
   --bazel_options=--config=rocm_release_wheel \
   --bazel_options=--config=rocm_rbe \
+  --bazel_options=--remote_download_toplevel \
   --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
   --verbose --detailed_timestamped_log \
   --output_path="$JAXCI_OUTPUT_DIR" \
