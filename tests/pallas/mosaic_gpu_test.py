@@ -43,7 +43,6 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
-from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -3447,9 +3446,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
-    expected_missing_primitives = {
-        mgpu_primitives.multimem_load_reduce_p,
-    }
+    expected_missing_primitives = set()
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 

@@ -146,6 +146,10 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if not hasattr(mgpu.dialect, "WarpMapOp"):
       self.skip_if_wg_semantics()
 
+    # TODO(olechwierowicz): Remove this check once min jaxlib version is 0.10.0
+    if not hasattr(mgpu.dialect, "MultimemLoadReduceOp"):
+      self.skip_if_wg_semantics()
+
     self.monkey_patched_api_was_used = False
     super().setUp()
 
@@ -921,8 +925,6 @@ class PallasCallMultimemTest(TestCase):
       (jnp.float8_e4m3fn, 16, "add"),
   )
   def test_multimem_load_reduce(self, dtype, vector_length, reduction, tiled_layout=False):
-    # TODO(bchetioui): support for multimem load reduce.
-    self.skip_if_wg_semantics()
     if dtype in (
         jnp.float8_e5m2,
         jnp.float8_e4m3fn,
@@ -1027,7 +1029,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       vec_size=None,
       num_blocks=None,
   ):
-    self.skip_if_wg_semantics()  # Support multimem_load_reduce under WG.
     if jax.process_index() > 2:
       return
 
@@ -1137,7 +1138,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       num_blocks=None,
   ):
     """Helper function to test all-reduce functionality."""
-    self.skip_if_wg_semantics()  # Support multimem_load_reduce under WG.
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     x = jax.random.normal(jax.random.key(42), (2, *shape), dtype)
