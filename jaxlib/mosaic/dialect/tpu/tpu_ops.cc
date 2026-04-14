@@ -1453,7 +1453,7 @@ LogicalResult EnqueueDMAOp::verify() {
   if (getSourceSemaphore() &&
       getRefCoreType(getSourceSemaphore()).value_or(issuing_core) !=
           issuing_core) {
-    return emitOpError("Target semaphore and target ref core type mismatched");
+    return emitOpError("Source semaphore and source ref core type mismatched");
   }
   if (target_core != issuing_core && getCoreId() == nullptr) {
     return emitOpError(
