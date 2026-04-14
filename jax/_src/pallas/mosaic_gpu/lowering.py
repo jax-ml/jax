@@ -1044,9 +1044,9 @@ def lower_jaxpr_to_module(
 
   prof_spec = None
   if params.profile_space:
-    # Each range is 2 events, each event is 4 bytes.
+    # Each range is 2 events, each event costs 2 entries.
     prof_spec = mgpu_profiler.ProfilerSpec(
-        params.profile_space * 2 * 4, dump_path=params.profile_dir
+        params.profile_space * 2 * 2, dump_path=params.profile_dir
     )
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 

@@ -376,7 +376,7 @@ class PallasCallRemoteDMATest(TestCase):
                   plgpu.SemaphoreType.REGULAR,
               ],
               compiler_params=plgpu.CompilerParams(
-                  profile_space=1, profile_dir=tmpdir
+                  profile_space=2, profile_dir=tmpdir
               ),
           )(x)
 

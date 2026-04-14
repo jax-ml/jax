@@ -2157,6 +2157,27 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         self.assertEqual(data.count('"name": "store"'), 2)
       np.testing.assert_array_equal(y, x + x)
 
+  def test_profiler_computes_correct_allocation_size(self):
+    def kernel(x_ref, o_ref):
+      with jax.named_scope("copy"):
+        o_ref[...] = x_ref[...]
+    with tempfile.TemporaryDirectory() as tmpdir:
+      # For each range that we record, we need 2xi32 for each of the start and
+      # end of the range---i.e. 4xi32 in total per event.
+      num_profiler_ranges = 200_000
+      expected_allocation_size_bytes = num_profiler_ranges * 4 * 4
+      with self.assertRaisesRegex(
+          ValueError,
+          f"exceeds available shared memory: smem_bytes={expected_allocation_size_bytes}"
+      ):
+        self.kernel(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+            compiler_params=plgpu.CompilerParams(
+                profile_space=num_profiler_ranges, profile_dir=tmpdir
+            ),
+        )(jnp.arange(256).astype(jnp.float32))
+
   @parameterized.product(
       dtypes=[
           (jnp.float16, jnp.float16),  # Noop
@@ -7334,7 +7355,7 @@ class SemaphoreTest(PallasTest):
       np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
     self.assertIn(
         r"(tensor<128xf32>, tensor<2xi32>) ->"
-        r" (tensor<128xf32>, tensor<2xi32>, tensor<512xui32>)",
+        r" (tensor<128xf32>, tensor<2xi32>, tensor<256xui32>)",
         text,
     )
 
