@@ -3374,8 +3374,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     weak_type = dtypes.is_weakly_typed(fill_value)
     fill_dtype = _dtype(fill_value)
   else:
-    if isinstance(dtype, dtypes.ExtendedDType):
-      return dtype._rules.full(shape, fill_value, dtype)
+    if dtypes.issubdtype(dtype, dtypes.extended):
+      return dtype._rules.full(shape, fill_value, dtype)  # pyrefly: ignore[missing-attribute]
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
@@ -3582,8 +3582,8 @@ def full_like(x: ArrayLike | DuckTypedArray,
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return dtype._rules.full(fill_shape, fill_value, dtype)
+  if dtypes.issubdtype(dtype, dtypes.extended):
+    return dtype._rules.full(fill_shape, fill_value, dtype)  # pyrefly: ignore[missing-attribute]
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
