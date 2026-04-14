@@ -23,6 +23,8 @@ limitations under the License.
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <unordered_map>
+#include <functional>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
@@ -789,6 +791,25 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
               *hlo_module.entry_computation(), /*label=*/"",
               hlo_module.config().debug_options(), RenderedGraphFormat::kDot));
         });
+  int ComputeCriticalPathLength(const HloModule& module) {
+    std::unordered_map<const HloInstruction*, int> memo;
+    std::function<int(const HloInstruction*)> get_length = [&](const HloInstruction* instr) -> int {
+      auto it = memo.find(instr);
+      if (it != memo.end()) return it->second;
+      int max_dep = 0;
+      for (const HloInstruction* operand : instr->operands()) {
+        max_dep = std::max(max_dep, get_length(operand));
+      }
+      int length = 1 + max_dep;
+      memo[instr] = length;
+      return length;
+    };
+    int max_length = 0;
+    for (const HloInstruction* instr : module.entry_computation()->instructions()) {
+      max_length = std::max(max_length, get_length(instr));
+    }
+    return max_length;
+  }
   m.def(
       "hlo_module_cost_analysis",
       xla::ValueOrThrowWrapper([](jax::PyClient* client,
@@ -803,6 +824,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
         analysis->properties().ForEach([&](std::string_view key, float val) {
           ret[nb::str(key.data(), key.size())] = nb::cast(val);
         });
+        ret["critical_path_length"] = nb::cast(ComputeCriticalPathLength(module));
         return ret;
       }));
   m.def("hlo_module_from_text",
