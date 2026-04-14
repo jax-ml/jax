@@ -74,7 +74,7 @@ Value = ir.Value
 
 # IR Helpers
 
-# TODO(slebedev): Fix all callers and uncomment this.
+# IrValues can be a non-singleton tuple of IR values, see _is_ir_values.
 IrValues = ir.Value | tuple[ir.Value, ...]
 
 
@@ -1906,7 +1906,7 @@ def lower_jaxpr_to_fun(
     const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
-      const_arg_values = [ir_constants(c, aval=aval)
+      const_arg_values = [ir_constant(c, aval=aval)
                           for c, aval in const_args_and_avals]
     const_lowering: dict[tuple[int, core.AbstractValue], IrValues] = {
         (id(c), aval): c_arg
