@@ -52,9 +52,6 @@ class Fusible(hijax.VJPHiPrimitive):
     self.effects = frozenset(jaxpr.effects)
     super().__init__()
 
-  def is_high(self, *avals, **params) -> bool:
-    raise RuntimeError
-
   def expand(self, *consts_and_args):
     consts, args = util.split_list(consts_and_args, [self.num_consts])
     flat_args = tree_util.tree_leaves(args)
