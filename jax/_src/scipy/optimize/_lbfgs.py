@@ -156,7 +156,7 @@ def _minimize_lbfgs(
 
     # compute initial step size from old_old_fval (same as BFGS)
     dphi0 = jnp.real(_dot(state.g_k, p_k))
-    candidate = 1.01 * 2 * (state.f_k - state.old_old_fval) / dphi0
+    candidate = 1.01 * 2 * (state.f_k - state.old_old_fval) / (dphi0 + 1e-30)
     alpha0 = jnp.where(
       (dphi0 != 0) & (state.f_k < state.old_old_fval),
       jnp.clip(candidate, 1e-10, 1.0),
@@ -219,8 +219,8 @@ def _minimize_lbfgs(
       converged=converged,
       failed=(status > 0) & (~converged),
       k=state.k + 1,
-      nfev=state.nfev + ls_results.nfev,
-      ngev=state.ngev + ls_results.ngev,
+      nfev=state.nfev + ls_results.nfev + jnp.where(ls_ok, 0, 1),
+      ngev=state.ngev + ls_results.ngev + jnp.where(ls_ok, 0, 1),
       x_k=x_kp1.astype(state.x_k.dtype),
       f_k=f_kp1.astype(state.f_k.dtype),
       g_k=g_kp1.astype(state.g_k.dtype),

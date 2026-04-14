@@ -168,7 +168,7 @@ class _DCSRCHState(NamedTuple):
   stp: Array
   f: Array
   g: Array
-  g_full: Array  # full gradient vector at stp
+  g_full: Array
   stx: Array
   fx: Array
   gx: Array
@@ -245,7 +245,8 @@ def line_search_dcsrch(f, xk, pk, old_fval=None, old_old_fval=None,
     dphi = jnp.real(_dot(grad, pk))
     return val, dphi, grad
 
-  if old_fval is None or gfk is None:
+  need_initial_eval = old_fval is None or gfk is None
+  if need_initial_eval:
     phi0, dphi0, gfk = full_eval(jnp.array(0.0))
   else:
     phi0 = old_fval
@@ -255,7 +256,7 @@ def line_search_dcsrch(f, xk, pk, old_fval=None, old_old_fval=None,
     alpha0 = jnp.array(1.0)
 
   xtrapu = 4.0
-  init_nfev = jnp.where((old_fval is None) | (gfk is None), 1, 0)
+  init_nfev = 1 if need_initial_eval else 0
 
   init_state = _DCSRCHState(
     stp=alpha0,
