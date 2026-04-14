@@ -621,6 +621,29 @@ class PJitTest(jtu.BufferDonationTestCase):
       should_be_tracing = False
       pjit(f, in_shardings=P(('x', 'y')), out_shardings=None)(x)
 
+  def test_jax_set_mesh_trace_only_once(self):
+    all_devices = jax.devices()
+    if len(all_devices) < 4:
+      raise unittest.SkipTest('Test requires at least 4 devices')
+
+    x_struct = jax.ShapeDtypeStruct((4,), jnp.float32)
+    mesh_a = Mesh(np.array(all_devices[:2]), ('x',))
+    mesh_b = Mesh(np.array(all_devices[2:4]), ('x',))
+
+    s = NamedSharding(mesh_a.abstract_mesh, P('x'))
+
+    @jax.jit(in_shardings=s, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      with jax.set_mesh(mesh_a):
+        _ = f.trace(x_struct)
+      with jax.set_mesh(mesh_b):
+        ft = f.trace(x_struct)
+        ft.lower()
+    self.assertEqual(tracing_count(), 2)  # 1 for `f` and 1 for `*`
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testNested(self):
     # Add a constant captured by the nested pjit to make things more complicated
