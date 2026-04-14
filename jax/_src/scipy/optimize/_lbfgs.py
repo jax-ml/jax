@@ -26,12 +26,11 @@ from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy import linalg as jnp_linalg
-from jax._src.scipy.optimize.line_search import line_search
+from jax._src.scipy.optimize.dcsrch import line_search_dcsrch as line_search
 from jax._src.typing import Array
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
-
 
 
 class LBFGSResults(NamedTuple):
@@ -72,6 +71,7 @@ class LBFGSResults(NamedTuple):
   gamma: float | Array
   status: int | Array
   ls_status: int | Array
+  old_old_fval: float | Array
 
 
 def _minimize_lbfgs(
@@ -144,6 +144,7 @@ def _minimize_lbfgs(
     gamma=1.,
     status=0,
     ls_status=0,
+    old_old_fval=f_0 + jnp_linalg.norm(g_0) / 2,
   )
 
   def cond_fun(state: LBFGSResults):
@@ -153,6 +154,14 @@ def _minimize_lbfgs(
     # find search direction
     p_k = _two_loop_recursion(state)
 
+    # compute initial step size from old_old_fval (same as BFGS)
+    dphi0 = jnp.real(_dot(state.g_k, p_k))
+    candidate = 1.01 * 2 * (state.f_k - state.old_old_fval) / dphi0
+    alpha0 = jnp.where(
+      (dphi0 != 0) & (state.f_k < state.old_old_fval),
+      jnp.clip(candidate, 1e-10, 1.0),
+      1.0,
+    )
     # line search
     ls_results = line_search(
       f=fun,
@@ -161,17 +170,40 @@ def _minimize_lbfgs(
       old_fval=state.f_k,
       gfk=state.g_k,
       maxiter=maxls,
+      alpha0=alpha0,
+    )
+
+    # If line search failed, fall back to a small gradient descent step
+    # instead of stopping. This mirrors scipy's fallback behavior.
+    gnorm = jnp_linalg.norm(state.g_k)
+    fallback_alpha = jnp.where(gnorm > 0, 1e-4 / gnorm, 1e-4)
+    safe_alpha = jnp.where(
+      ls_results.failed | ~jnp.isfinite(ls_results.a_k) | (ls_results.a_k <= 0),
+      fallback_alpha,
+      ls_results.a_k,
     )
 
     # evaluate at next iterate
-    s_k = jnp.asarray(ls_results.a_k).astype(p_k.dtype) * p_k
+    ls_ok = (
+      ~ls_results.failed & jnp.isfinite(ls_results.a_k) & (ls_results.a_k > 0)
+    )
+    s_k = jnp.asarray(safe_alpha).astype(p_k.dtype) * p_k
     x_kp1 = state.x_k + s_k
-    f_kp1 = ls_results.f_k
-    g_kp1 = ls_results.g_k
+    # reuse line search results when available, only re-evaluate on fallback
+    f_kp1, g_kp1 = lax.cond(
+      ls_ok,
+      lambda _: (ls_results.f_k, ls_results.g_k),
+      lambda _: api.value_and_grad(fun)(x_kp1),
+      None,
+    )
     y_k = g_kp1 - state.g_k
     rho_k_inv = jnp.real(_dot(y_k, s_k))
-    rho_k = jnp.reciprocal(rho_k_inv).astype(y_k.dtype)
-    gamma = rho_k_inv / jnp.real(_dot(jnp.conj(y_k), y_k))
+    rho_k = jnp.where(
+      rho_k_inv == 0., jnp.array(1000., dtype=y_k.dtype),
+      jnp.reciprocal(rho_k_inv).astype(y_k.dtype),
+    )
+    y_dot_y = jnp.real(_dot(jnp.conj(y_k), y_k))
+    gamma = jnp.where(y_dot_y > 0, rho_k_inv / y_dot_y, state.gamma)
 
     # replacements for next iteration
     status = jnp.array(0)
@@ -179,7 +211,6 @@ def _minimize_lbfgs(
     status = jnp.where(state.ngev >= maxgrad, 3, status)
     status = jnp.where(state.nfev >= maxfun, 2, status)
     status = jnp.where(state.k >= maxiter, 1, status)
-    status = jnp.where(ls_results.failed, 5, status)
 
     converged = jnp_linalg.norm(g_kp1, ord=norm) < gtol
 
@@ -199,6 +230,7 @@ def _minimize_lbfgs(
       gamma=gamma.astype(state.g_k.dtype),
       status=jnp.where(converged, 0, status),
       ls_status=ls_results.status,
+      old_old_fval=state.f_k,
     )
 
     return state

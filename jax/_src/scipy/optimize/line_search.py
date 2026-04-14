@@ -116,7 +116,7 @@ def _zoom(restricted_func_and_grad, wolfe_one: ConditionFn, wolfe_two: Condition
   def body(state):
     # Body of zoom algorithm. We use boolean arithmetic to avoid using jax.cond
     # so that it works on GPU/TPU.
-    dalpha = (state.a_hi - state.a_lo)
+    dalpha = jnp.abs(state.a_hi - state.a_lo)
     a = jnp.minimum(state.a_hi, state.a_lo)
     b = jnp.maximum(state.a_hi, state.a_lo)
     cchk = delta1 * dalpha
@@ -300,7 +300,11 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
     dphi_0 = jnp.real(_dot(gfk, pk))
   if old_old_fval is not None:
     candidate_start_value = 1.01 * 2 * (phi_0 - old_old_fval) / dphi_0
-    start_value = jnp.where(candidate_start_value > 1, 1.0, candidate_start_value)
+    start_value = jnp.where(
+      (candidate_start_value > 0) & (candidate_start_value <= 1),
+      candidate_start_value,
+      1.0,
+    )
   else:
     start_value = 1
 
