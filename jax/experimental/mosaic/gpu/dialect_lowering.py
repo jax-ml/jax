@@ -1079,6 +1079,7 @@ def _mgpu_async_load_op_lowering_rule(
     utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   # TODO(dasenov): Add support for the remaining op properties.
+  oob_mode = lc.OOBFillMode(ir.IntegerAttr(load_op.oob_fill_mode).value)  # pyrefly: ignore[missing-attribute]
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
@@ -1089,6 +1090,7 @@ def _mgpu_async_load_op_lowering_rule(
       swizzle=swizzle,
       gmem_transform=transforms,
       leader_tracked=leader_tracked,
+      oob_mode=oob_mode,
       **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
@@ -1166,7 +1168,8 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       **predicate,  # pyrefly: ignore[bad-argument-type]
       arrive=arrive,
-      reduction_op=reduction_op  # pyrefly: ignore[bad-argument-type]
+      reduction_op=reduction_op,  # pyrefly: ignore[bad-argument-type]
+      oob_mode=lc.OOBFillMode.UNDEFINED,
   )
   return []
 

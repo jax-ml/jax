@@ -606,6 +606,12 @@ class AsyncCopyImplementation(enum.Enum):
   CP_ASYNC = enum.auto()
 
 
+class OOBFillMode(enum.IntEnum):
+  UNDEFINED = 0
+  PROMISE_IN_BOUNDS = 1
+  ZEROS = 2
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
@@ -1080,6 +1086,7 @@ class LaunchContext:
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
+      oob_mode: OOBFillMode = OOBFillMode.ZEROS,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1110,6 +1117,7 @@ class LaunchContext:
       into their SMEM but only the first block in the collective tracks
       progress via barrier arrivals. This uses the `cta_group::2` mode.
     """
+    del oob_mode  # Unused.
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)

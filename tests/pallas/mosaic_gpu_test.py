@@ -1759,6 +1759,57 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(
+      (0, plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+      (80, plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+      (0, plgpu.OOBFillMode.ZEROS),
+      (112, plgpu.OOBFillMode.ZEROS),
+      (192, plgpu.OOBFillMode.ZEROS),
+      (208, plgpu.OOBFillMode.ZEROS),
+      (0, plgpu.OOBFillMode.UNDEFINED),
+      (112, plgpu.OOBFillMode.UNDEFINED),
+      (192, plgpu.OOBFillMode.UNDEFINED),
+      (208, plgpu.OOBFillMode.UNDEFINED),
+  )
+  def test_out_of_bounds_tma_reads(self, start_offset, oob_mode):
+    dtype = jnp.int8
+    gmem_size = 208
+    smem_size = 128
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((smem_size,), dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((smem_size,), dtype), plgpu.Barrier()],
+        grid=(1,),
+    )
+    def kernel(start_idx, x_ref, o_ref, scratch_ref, barrier):
+      # Initialize SMEM with -1s to indicate OOB values.
+      scratch_ref[...] = jnp.full(scratch_ref.shape, -1, dtype)
+      plgpu.commit_smem()
+
+      idx = pl.ds(start_idx[...], smem_size)
+      plgpu.copy_gmem_to_smem(
+          x_ref.at[idx], scratch_ref, barrier, oob_mode=oob_mode
+      )
+      plgpu.barrier_wait(barrier)
+      o_ref[...] = scratch_ref[...]
+
+    x = jnp.arange(gmem_size, dtype=dtype)
+    start_idx_val = jnp.array(start_offset, dtype=jnp.int32)
+
+    out = kernel(start_idx_val, x)
+
+    valid_slice = x[start_offset : start_offset + smem_size]
+    np.testing.assert_array_equal(out[:valid_slice.size], valid_slice)
+
+    if oob_mode == plgpu.OOBFillMode.ZEROS:
+      np.testing.assert_array_equal(out[valid_slice.size:], 0)
+
   def test_num_programs(self):
     @functools.partial(
         self.pallas_call,
