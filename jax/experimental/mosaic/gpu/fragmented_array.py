@@ -3238,6 +3238,7 @@ class FragmentedArray:
       swizzle: int | None,
       optimized: bool = True,
       tiling_rank: int | None = None,
+      atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ):
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
@@ -3267,6 +3268,13 @@ class FragmentedArray:
     stores = self.transfer_tiled(
         cluster_ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
     )
+    if atomic is not None:
+      for get, _update, _idx, cluster_ptr in stores:
+        self._store_register_atomic(
+            cluster_ptr, get(self.registers), atomic, is_smem=False,
+            cluster_barrier_ptr=cluster_barrier_ptr,
+        )
+      return
     for get, _update, _idx, cluster_ptr in stores:
       reg = get(self.registers)
       reg_ty = ir.VectorType(reg.type)
@@ -3303,9 +3311,17 @@ class FragmentedArray:
       atomic: Literal["add", "max", "min", "and", "or", "xor"],
       is_smem: bool,
       multimem: bool = False,
+      cluster_barrier_ptr: ir.Value | None = None,
   ):
     i32 = ir.IntegerType.get_signless(32)
-    if multimem:
+    if cluster_barrier_ptr is not None:
+      assert not is_smem and not multimem
+      assert cluster_barrier_ptr.type == ir.Type.parse("!llvm.ptr<7>"), cluster_barrier_ptr.type
+      red = "red.async"
+      scope = "cluster.shared::cluster.mbarrier::complete_tx::bytes"
+      space = ""
+      ptr_constraint = "l"
+    elif multimem:
       assert not is_smem
       red = "multimem.red"
       scope = "sys"
@@ -3320,6 +3336,8 @@ class FragmentedArray:
     element_bitwidth = utils.bitwidth(element_type)
     noftz = ""
     if isinstance(element_type, ir.F32Type):
+      if cluster_barrier_ptr is not None:
+        raise NotImplementedError("f32 not supported for async atomics")
       if atomic != "add":
         raise NotImplementedError(f"f32 only supports add atomics, got {atomic}")
       ptx_type = "f32"
@@ -3329,6 +3347,8 @@ class FragmentedArray:
       else:
         ptx_type = "s32" if self.is_signed else "u32"
     elif isinstance(element_type, (ir.F16Type, ir.BF16Type)):
+      if cluster_barrier_ptr is not None:
+        raise NotImplementedError("f16/bf16 not supported for async atomics")
       if atomic not in ("add", "min", "max"):
         raise NotImplementedError(
             f"f16/bf16 only supports add, min, max atomics, got {atomic}"
@@ -3398,11 +3418,18 @@ class FragmentedArray:
       else:
         ptx_t = f"{element_type}x2" if element_bitwidth == 16 else ptx_type
         [reg] = regs_slice
+        operands = [ptr, reg]
+        barrier_op = ""
+        constraints = f"{ptr_constraint},r"
+        if cluster_barrier_ptr is not None:
+          operands.append(cluster_barrier_ptr)
+          barrier_op = ", [$2]"
+          constraints += ",l"
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [ptr, reg],
-            f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1;",
-            f"{ptr_constraint},r",
+            operands,
+            f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1{barrier_op};",
+            constraints,
             has_side_effects=True,
         )
 

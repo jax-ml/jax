@@ -551,6 +551,82 @@ class MemRefTest(TestCase):
     )
     np.testing.assert_array_equal(f(x), np.flip(x, axis=0))
 
+  @parameterized.parameters(
+      ("add", False),
+      ("add", True),
+      ("min", False),
+      ("max", False),
+      ("and", False),
+      ("or", False),
+      ("xor", False),
+  )
+  def test_cluster_red_async(self, op, is_signed):
+    index = ir.IndexType.get()
+    jax_dtype = jnp.int32 if is_signed else jnp.uint32
+    def kernel(ctx, src, dst, scratch):
+      smem, barrier, cluster_barrier = scratch
+      cluster_idx = gpu.cluster_block_id(gpu.Dimension.x)
+      peer_idx = arith.subi(arith.constant(index, 1), cluster_idx)
+      a = mgpu.FragmentedArray.load_tiled(
+          memref_slice(src, cluster_idx),
+          layout=mgpu.WGMMA_LAYOUT,
+          swizzle=128,
+          is_signed=is_signed,
+          optimized=False,
+      )
+      identity = {
+          "add": 0, "or": 0, "xor": 0,
+          "min": np.iinfo(jax_dtype).max,
+          "max": np.iinfo(jax_dtype).min,
+          "and": -1,
+      }[op]
+      mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
+      mgpu.FragmentedArray.splat(
+          c(identity, mlir_dtype), a.shape,
+          is_signed=is_signed, layout=a.layout,
+      ).store_tiled(smem, swizzle=128)
+      cluster_barrier.arrive()
+      cluster_barrier.wait()
+      tx_bytes = math.prod(a.shape) * mgpu.bitwidth(a.mlir_dtype) // 8 // 128
+      barrier.arrive_expect_tx(tx_bytes)
+      a.store_tiled_async(
+          smem,
+          barrier,
+          cluster_dim=gpu.Dimension.x,
+          cluster_idx=peer_idx,
+          swizzle=128,
+          atomic=op,
+      )
+      barrier.wait()
+      cluster_barrier.arrive()
+      cluster_barrier.wait()
+      mgpu.FragmentedArray.load_strided(smem, is_signed=is_signed).store_untiled(
+          memref_slice(dst, cluster_idx)
+      )
+
+    cluster_barrier = mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,))
+    barrier = mgpu.Barrier(arrival_count=128)
+    x = np.arange(1, 2 * 64 * 32 + 1, dtype=jax_dtype).reshape(2, 8, 1, 8, 32)
+    smem = jax.ShapeDtypeStruct(shape=x.shape[1:], dtype=jax_dtype)
+    f = mgpu.as_gpu_kernel(
+        kernel, (2, 1, 1), (128, 1, 1), x, x, (smem, barrier, cluster_barrier),
+        cluster=(2, 1, 1),
+    )
+    result = f(x)
+    np_op = {
+        "add": np.add, "min": np.minimum, "max": np.maximum,
+        "and": np.bitwise_and, "or": np.bitwise_or, "xor": np.bitwise_xor,
+    }[op]
+    id_val = {
+        "add": 0, "or": 0, "xor": 0,
+        "min": np.iinfo(jax_dtype).max,
+        "max": np.iinfo(jax_dtype).min,
+        "and": np.iinfo(jax_dtype).max,
+    }[op]
+    id_arr = np.full_like(x[0], id_val, dtype=jax_dtype)
+    np.testing.assert_array_equal(result[0], np_op(id_arr, x[1]))
+    np.testing.assert_array_equal(result[1], np_op(id_arr, x[0]))
+
 
 def get_packed_shape(strides, shape):
   perm = sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
