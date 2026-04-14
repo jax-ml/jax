@@ -543,18 +543,66 @@ MemRefType getMemRefType(Value value) {
   return cast<MemRefType>(value.getType());
 }
 
-template <typename Op>
-bool checkBothOperandsDivisible(Value value, int64_t divisor, int64_t fuel) {
-  if (auto op = value.getDefiningOp<Op>()) {
-    return isGuaranteedDivisible(op.getLhs(), divisor, fuel / 2) &&
-           isGuaranteedDivisible(op.getRhs(), divisor, (fuel + 1) / 2);
+std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel);
+
+namespace {
+// Returns true if divisibilities of both lhs and rhs can be proven.
+// Returns false if divisibilities of both lhs and rhs can be disproven.
+// Returns nullopt if any of the two divisibilities is not known.
+std::optional<bool> areAllDivisible(Value lhs, Value rhs, int64_t divisor,
+                                    int64_t fuel) {
+  std::optional<bool> lhs_divisible = isDivisible(lhs, divisor, fuel / 2);
+  // If either is known to be false, the result is false.
+  if (lhs_divisible.has_value() && !*lhs_divisible) {
+    return false;
   }
-  return false;
+  std::optional<bool> rhs_divisible = isDivisible(rhs, divisor, (fuel + 1) / 2);
+  // If either is known to be false, the result is false.
+  if (rhs_divisible.has_value() && !*rhs_divisible) {
+    return false;
+  }
+
+  // If both are known to be true, the result is true.
+  if (lhs_divisible.has_value() && *lhs_divisible &&
+      rhs_divisible.has_value() && *rhs_divisible) {
+    return true;
+  }
+
+  // Otherwise, the result is unknown.
+  return std::nullopt;
 }
 
-bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
-  if (fuel <= 0) {
+// Returns true if we can prove that at least one of lhs or rhs is divisible.
+// Returns false if we can prove that neither lhs nor rhs is divisible.
+// Returns nullopt if we can't prove that at least one is divisible.
+std::optional<bool> areAnyDivisible(Value lhs, Value rhs, int64_t divisor,
+                                    int64_t fuel) {
+  std::optional<bool> lhs_divisible = isDivisible(lhs, divisor, fuel / 2);
+  // If either is known to be true, the result is true.
+  if (lhs_divisible.has_value() && *lhs_divisible) {
+    return true;
+  }
+  std::optional<bool> rhs_divisible = isDivisible(rhs, divisor, (fuel + 1) / 2);
+
+  // If either is known to be true, the result is true.
+  if (rhs_divisible.has_value() && *rhs_divisible) {
+    return true;
+  }
+
+  // If both are known to be false, the result is false.
+  if (lhs_divisible.has_value() && !*lhs_divisible &&
+      rhs_divisible.has_value() && !*rhs_divisible) {
     return false;
+  }
+
+  // Otherwise, the result is unknown.
+  return std::nullopt;
+}
+}  // namespace
+
+std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
+  if (fuel <= 0) {
+    return std::nullopt;
   }
   if (divisor == 1) {
     return true;
@@ -563,57 +611,90 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
     if (auto for_op =
             dyn_cast<scf::ForOp>(block_arg.getOwner()->getParentOp())) {
       if (for_op.getInductionVar() == value) {
-        return isGuaranteedDivisible(for_op.getLowerBound(), divisor,
-                                     fuel / 2) &&
-               isGuaranteedDivisible(for_op.getStep(), divisor, (fuel + 1) / 2);
+        return areAllDivisible(for_op.getLowerBound(), for_op.getStep(),
+                               divisor, fuel);
       }
     }
   }
   if (auto assume_op = value.getDefiningOp<tpu::AssumeMultipleOp>()) {
-    return assume_op.getMultiple() % divisor == 0;
+    if (assume_op.getMultiple() % divisor == 0) {
+      return true;
+    }
+    return isDivisible(assume_op.getOperand(), divisor, fuel - 1);
   }
   if (auto mul_op = value.getDefiningOp<arith::MulIOp>()) {
     // We check RHS first, because MLIR canonicalizes constants to the right.
     if (auto rhs_cst = mlir::getConstantIntValue(mul_op.getRhs())) {
       int64_t gcd = std::gcd(*rhs_cst, divisor);
       if (gcd > 1) {
-        return isGuaranteedDivisible(mul_op.getLhs(), divisor / gcd, fuel - 1);
+        return isDivisible(mul_op.getLhs(), divisor / gcd, fuel - 1);
       }
     }
     if (auto lhs_cst = mlir::getConstantIntValue(mul_op.getLhs())) {
       int64_t gcd = std::gcd(*lhs_cst, divisor);
       if (gcd > 1) {
-        return isGuaranteedDivisible(mul_op.getRhs(), divisor / gcd, fuel - 1);
+        return isDivisible(mul_op.getRhs(), divisor / gcd, fuel - 1);
       }
     }
-    return isGuaranteedDivisible(mul_op.getRhs(), divisor, fuel / 2) ||
-           isGuaranteedDivisible(mul_op.getLhs(), divisor, (fuel + 1) / 2);
+    return areAnyDivisible(mul_op.getRhs(), mul_op.getLhs(), divisor, fuel);
   }
   if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
     auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
-    return int_attr && int_attr.getInt() % divisor == 0;
+    if (int_attr == nullptr) {
+      // Floating point divisibility check is not supported.
+      return std::nullopt;
+    }
+    return int_attr.getInt() % divisor == 0;
   }
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
-    return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
+    return isDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
   if (auto div_op = value.getDefiningOp<arith::DivUIOp>()) {
     if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
-      return isGuaranteedDivisible(div_op.getLhs(), divisor * *rhs_cst,
-                                   fuel - 1);
+      return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
     }
   }
-  if (checkBothOperandsDivisible<arith::AddIOp>(value, divisor, fuel) ||
-      checkBothOperandsDivisible<arith::SubIOp>(value, divisor, fuel) ||
-      checkBothOperandsDivisible<arith::RemSIOp>(value, divisor, fuel) ||
-      checkBothOperandsDivisible<arith::MinSIOp>(value, divisor, fuel)) {
-    return true;
+  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
+    return areAllDivisible(add_op.getLhs(), add_op.getRhs(), divisor, fuel);
+  }
+  if (auto sub_op = value.getDefiningOp<arith::SubIOp>()) {
+    return areAllDivisible(sub_op.getLhs(), sub_op.getRhs(), divisor, fuel);
+  }
+  if (auto rem_op = value.getDefiningOp<arith::RemSIOp>()) {
+    return areAllDivisible(rem_op.getLhs(), rem_op.getRhs(), divisor, fuel);
+  }
+  if (auto min_op = value.getDefiningOp<arith::MinSIOp>()) {
+    return areAllDivisible(min_op.getLhs(), min_op.getRhs(), divisor, fuel);
   }
   if (auto select_op = value.getDefiningOp<arith::SelectOp>()) {
-    return isGuaranteedDivisible(select_op.getTrueValue(), divisor, fuel / 2) &&
-           isGuaranteedDivisible(select_op.getFalseValue(), divisor,
-                                 (fuel + 1) / 2);
+    auto true_val_divisible =
+        isDivisible(select_op.getTrueValue(), divisor, fuel / 2);
+    // If divisibility of either branch is unknown, the select op result
+    // divisibility is unknown.
+    if (!true_val_divisible.has_value()) {
+      return std::nullopt;
+    }
+    auto false_val_divisible =
+        isDivisible(select_op.getFalseValue(), divisor, (fuel + 1) / 2);
+    if (!false_val_divisible.has_value()) {
+      return std::nullopt;
+    }
+    // Divisibilities of both branches are known.
+    // If both branches are divisible, the select op result is divisible.
+    // If both branches are not divisible, the select op result is not
+    // divisible.
+    if (*true_val_divisible == *false_val_divisible) {
+      return *true_val_divisible;
+    }
+    // If divisibilities of the two branches are known and differ, the select op
+    // result divisibility is unknown.
+    return std::nullopt;
   }
-  return false;
+  return std::nullopt;
+}
+
+bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
+  return isDivisible(value, divisor, fuel).value_or(false);
 }
 
 DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,

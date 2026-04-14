@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -90,6 +91,12 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 // In Mosaic, we often strip tiled layouts from memrefs, for compatibility with
 // vector ops. This functions inverts the layout erasure applied to the value.
 MemRefType getMemRefType(Value value);
+
+// Returns true if `value` is guaranteed to be divisible by `divisor`, false if
+// value is known to not be divisible by `divisor`, and nullopt if the
+// divisibility is not known.
+std::optional<bool> isDivisible(Value value, int64_t divisor,
+                                int64_t fuel = 128);
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 128);
 
