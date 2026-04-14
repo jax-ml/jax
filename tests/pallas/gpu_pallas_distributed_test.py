@@ -16,6 +16,7 @@
 
 import dataclasses
 import functools
+import math
 import os
 import tempfile
 import types
@@ -773,6 +774,69 @@ class PallasCallRemoteDMATest(TestCase):
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
+  def test_contiguous_copy_tma(self):
+    self.skip_if_wg_semantics()
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (1024,)
+    tile = 512
+
+    def kernel(y_ref, smem_ref, sem):
+      dev_id = lax.axis_index("y")
+      other_dev_id = 1 - dev_id
+
+      # Device ID must be an int32.
+      zero = jnp.int32(0)
+
+      @pl.when(dev_id == zero)
+      def _store():
+        # Unrolling to test that offsets are applied correctly.
+        for i in range(2):
+          base_data = plgpu.layout_cast(
+              jnp.arange(tile, dtype=jnp.int32),
+              plgpu.Layout.WG_STRIDED((tile,), vec_size=1),
+          )
+          smem_ref[...] = base_data + (i * tile)
+          plgpu.commit_smem()
+
+          y_slice = pl.ds(i * tile, tile)
+          plgpu.copy_smem_to_gmem(
+              smem_ref,
+              plgpu.remote_ref(y_ref, (zero, dev_id)).at[y_slice]
+          )
+          plgpu.copy_smem_to_gmem(
+              smem_ref,
+              plgpu.remote_ref(y_ref, (zero, other_dev_id)).at[y_slice]
+          )
+          plgpu.wait_smem_to_gmem(0)
+
+      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM((tile,), jnp.int32),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jtu.create_mesh((1, 2), ("x", "y"))
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call,
+            mesh=mesh,
+            in_specs=(),
+            out_specs=P("y"),
+            check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
 
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
@@ -884,6 +948,61 @@ class PallasCallMultimemTest(TestCase):
     )()
     y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  def test_multimem_store_contiguous_tma(self):
+    self.skip_if_wg_semantics()
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (1024,)
+    tile = 512
+
+    def kernel(y_ref, smem_ref, sem):
+      @pl.when(lax.axis_index("x") == 0)
+      def _store():
+        for i in range(2):
+          base_data = plgpu.layout_cast(
+              jnp.arange(tile, dtype=jnp.int32),
+              plgpu.Layout.WG_STRIDED((tile,), vec_size=1),
+          )
+          smem_ref[...] = base_data + (i * tile)
+          plgpu.commit_smem()
+
+          y_slice = pl.ds(i * tile, tile)
+          plgpu.copy_smem_to_gmem(
+              smem_ref, plgpu.multicast_ref(y_ref, "x").at[y_slice]
+          )
+          plgpu.wait_smem_to_gmem(0)
+
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM(
+                (tile,),
+                jnp.int32,
+            ),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices(), ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call,
+            mesh=mesh,
+            in_specs=(),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   @parameterized.parameters(

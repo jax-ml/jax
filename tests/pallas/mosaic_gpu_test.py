@@ -817,6 +817,122 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     output_val = x.reshape(-1, 128).sum(axis=0)
     np.testing.assert_array_equal(output, output_val)
 
+  @parameterized.product(
+      case=[
+          ((256,), (...,)),
+          ((64, 128,), (...,)),
+          ((64, 128,), (slice(2, 3), slice(0, 128))),
+          ((3, 64, 128), (...,)),
+          ((3, 64, 1, 128), (0, slice(0, 32), 0, slice(0, 128))),
+          ((3, 64, 1, 128), (...,)),
+          ((5, 5, 512,), (4, 4)),
+          ((5, 1024,), (4,)),
+          ((8192,), (...,)),
+          ((8192,), (slice(4096, 8192),)),
+      ],
+      oob_mode=[
+          plgpu.OOBFillMode.UNDEFINED,
+          plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+          plgpu.OOBFillMode.ZEROS,
+      ],
+      dtype=[jnp.bfloat16, jnp.float32],
+  )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_under_pytest("Test fails under pytest in CI")
+  def test_copy_gmem_to_smem_contiguous(self, case, oob_mode, dtype):
+    shape, indexer = case
+
+    if max(shape) > 256 and oob_mode == plgpu.OOBFillMode.ZEROS:
+      self.skipTest(
+          "`OOBFillMode.ZEROS` not supported for shapes with max dimension > 256"
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[plgpu.SMEM(shape, dtype), plgpu.Barrier()],
+        grid=(1,),
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[indexer],
+          scratch_ref.at[indexer],
+          barrier_ref,
+          oob_mode=oob_mode,
+      )
+      plgpu.barrier_wait(barrier_ref)
+      scratch_ref[indexer] = scratch_ref[indexer] + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref.at[indexer], o_ref.at[indexer])
+      plgpu.wait_smem_to_gmem(0)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
+      x = jax.random.normal(jax.random.key(0), shape, dtype=dtype)
+      np.testing.assert_allclose(kernel(x)[indexer], x[indexer] + 1.0)
+
+    ptx = output()
+    # The copy out is always a simple contiguous transfer in this test.
+    self.assertIn("cp.async.bulk.global.shared::cta.bulk_group", ptx)
+
+    if oob_mode == plgpu.OOBFillMode.ZEROS:
+      self.assertNotIn("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes", ptx)
+      self.assertIn("cp.async.bulk.tensor", ptx)
+    else:
+      self.assertIn("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes", ptx)
+      self.assertNotIn("cp.async.bulk.tensor", ptx)
+
+      if oob_mode == plgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+        self.assertNotIn("min.u", ptx)
+
+  @parameterized.parameters(
+      plgpu.OOBFillMode.UNDEFINED, plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+  )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_copy_gmem_to_smem_clamped_arrivals(self, oob_mode):
+    # This test makes sure OOB reads don't deadlock when the transfer size is
+    # clamped.
+    gmem_shape = (8192,)
+    smem_shape = (4096,)
+    dtype = jnp.float32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(gmem_shape, dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        in_specs=(
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+        ),
+        scratch_shapes=[plgpu.SMEM(smem_shape, dtype), plgpu.Barrier()],
+        grid=(1,),
+    )
+    def kernel(x_ref_gmem, offset, o_ref, scratch_ref, barrier_ref):
+      gmem_indexer = (pl.dslice(offset[...], 4096),)
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[gmem_indexer],
+          scratch_ref,
+          barrier_ref,
+          oob_mode=oob_mode,
+      )
+      plgpu.barrier_wait(barrier_ref)
+
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref.at[gmem_indexer])
+      plgpu.wait_smem_to_gmem(0)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
+      x = jax.numpy.ones(gmem_shape, dtype=dtype)
+      kernel(x, 6000)
+
+    ptx = output()
+
+    if oob_mode == plgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+      self.assertNotIn("mbarrier.complete_tx", ptx)
+    else:
+      self.assertIn("mbarrier.complete_tx", ptx)
+
   @parameterized.named_parameters(
       {"testcase_name": "1d_none",
        "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
