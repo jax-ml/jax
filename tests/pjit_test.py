@@ -10794,6 +10794,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return x.at[:, -1].set(False, out_sharding=jax.typeof(x).sharding)
     f(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_broadcast_like(self, mesh):
+    like_arr = jax.device_put(np.arange(16).reshape(8, 2), P('x', None))
+    out = jax.lax.broadcast_like(np.arange(2), like_arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    arr = jax.device_put(np.arange(2), P('x'))
+    with self.assertRaisesRegex(ValueError, "Incompatible.*broadcasting"):
+      jax.lax.broadcast_like(arr, like_arr)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -59,6 +59,7 @@ from jax._src.lax.lax import (
   bitwise_or as bitwise_or,
   bitwise_xor as bitwise_xor,
   broadcast as broadcast,
+  broadcast_like as broadcast_like,
   broadcast_in_dim as broadcast_in_dim,
   broadcast_in_dim_p as broadcast_in_dim_p,
   broadcast_shapes as broadcast_shapes,

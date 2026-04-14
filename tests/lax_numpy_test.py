@@ -5574,7 +5574,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testBroadcastToIssue1522(self):
     self.assertRaisesRegex(
-        ValueError, "Incompatible shapes for broadcasting: .*",
+        ValueError, "Incompatible.*broadcasting: .*",
         lambda: jnp.broadcast_to(np.ones((2, 3)), (1, 3)))
 
   def testBroadcastToIntIssue1548(self):

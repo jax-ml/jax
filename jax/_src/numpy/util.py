@@ -134,15 +134,21 @@ def _check_jax_array_protocol(x: Any) -> Any:
 
 
 @overload
-def ensure_arraylike(fun_name: str, /) -> tuple[()]: ...
+def ensure_arraylike(fun_name: str, /) -> tuple[()]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, /) -> Array: ...
+def ensure_arraylike(fun_name: str, a1: Any, /) -> Array:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, /) -> tuple[Array, Array]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, /) -> tuple[Array, Array]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, /) -> tuple[Array, Array, Array]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, /) -> tuple[Array, Array, Array]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, a4: Any, /, *args: Any) -> tuple[Array, ...]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, a4: Any, /, *args: Any) -> tuple[Array, ...]:
+  ...
+
 def ensure_arraylike(fun_name: str, /, *args: Any) -> Array | tuple[Array, ...]:
   """Check that arguments are arraylike and convert them to arrays."""
   check_arraylike(fun_name, *args)
@@ -255,27 +261,12 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
                   ) -> Array:
   arr = ensure_arraylike("broadcast_to", arr)
-  arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   # check that shape is concrete
   shape = core.canonicalize_shape(shape)  # pyrefly: ignore[bad-argument-type]
-  arr_shape = np.shape(arr)
-  if (core.definitely_equal_shape(arr_shape, shape) and
-      (sharding is None or core.typeof(arr).sharding == sharding)):
-    return arr
-  elif len(shape) < len(arr_shape):
-    raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")
-  else:
-    nlead = len(shape) - len(arr_shape)
-    shape_tail = shape[nlead:]
-    compatible = all(core.definitely_equal_one_of_dim(arr_d, [1, shape_d])
-                     for arr_d, shape_d in safe_zip(arr_shape, shape_tail))
-    if nlead < 0 or not compatible:
-      msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
-      raise ValueError(msg.format(arr_shape, shape))
-    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
-                                out_sharding=sharding)
+  sharding = canonicalize_sharding(sharding, 'jnp.broadcast_to')
+  return lax.broadcast_to(arr, shape, sharding)
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like

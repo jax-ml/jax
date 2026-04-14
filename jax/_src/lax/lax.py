@@ -2648,6 +2648,45 @@ def ragged_dot_general(
   )
 
 
+def broadcast_to(arr: ArrayLike, shape: Shape,
+                 sharding: NamedSharding | None = None) -> Array:
+  arr_aval = core.typeof(arr)
+  arr_shape = arr_aval.shape
+  if (core.definitely_equal_shape(arr_shape, shape) and
+      (sharding is None or arr_aval.sharding == sharding)):
+    return asarray(arr)
+  elif len(shape) < len(arr_shape):
+    raise ValueError(
+        f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")
+
+  nlead = len(shape) - len(arr_shape)
+  shape_tail = shape[nlead:]
+  shape_compatible = all(core.definitely_equal_one_of_dim(arr_d, [1, shape_d])
+                          for arr_d, shape_d in zip(arr_shape, shape_tail))
+  if sharding is None:
+    sharding_compatible = True
+  else:
+    spec_tail = sharding.spec._normalized_spec_for_aval(len(shape))[nlead:]
+    sharding_compatible = all(
+        arr_s in [None, out_s]
+        for arr_s, out_s in zip(arr_aval.sharding.spec, spec_tail))
+  if nlead < 0 or not shape_compatible or not sharding_compatible:
+    exp_type = core.str_short_aval(
+        shape, arr_aval.dtype, None if sharding is None else sharding.mesh,
+        P(*[None] * len(shape)) if sharding is None else sharding.spec,
+        core.ManualAxisType(), core.MemorySpace.Device)
+    raise ValueError(
+        f'Incompatible types for broadcasting: input type={arr_aval} and'
+        f' requested type={exp_type}')
+  return broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
+                          out_sharding=sharding)
+
+
+def broadcast_like(arr, like_arr):
+  like_aval = core.typeof(like_arr)
+  return broadcast_to(arr, shape=like_aval.shape, sharding=like_aval.sharding)
+
+
 def broadcast(operand: ArrayLike, sizes: Sequence[int], *, out_sharding=None
               ) -> Array:
   """Broadcasts an array, adding new leading dimensions only.
