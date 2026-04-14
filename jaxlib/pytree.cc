@@ -1623,6 +1623,15 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   return 0;
 }
 
+int PyTreeDef::Traverse(visitproc visit, void* arg) const {
+  Py_VISIT(registry_ref_.ptr());
+  for (const auto& node : traversal_) {
+    int ret = node.tp_traverse(visit, arg);
+    if (ret) return ret;
+  }
+  return 0;
+}
+
 /* static */ int PyTreeDef::tp_traverse(PyObject* self, visitproc visit,
                                         void* arg) {
   Py_VISIT(Py_TYPE(self));
@@ -1630,11 +1639,7 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
     return 0;
   }
   PyTreeDef* treedef = nb::inst_ptr<PyTreeDef>(self);
-  Py_VISIT(treedef->registry_ref_.ptr());
-  for (const auto& node : treedef->traversal_) {
-    node.tp_traverse(visit, arg);
-  }
-  return 0;
+  return treedef->Traverse(visit, arg);
 }
 
 /* static */ int PyTreeDef::tp_clear(PyObject* self) {

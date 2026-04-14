@@ -186,10 +186,12 @@ struct PointerStrongKey;
 class StrongKey {
  public:
   StrongKey(nb::object context, absl::InlinedVector<nb::object, 2> kwnames,
-            absl::InlinedVector<nb::object, 4> args)
+            absl::InlinedVector<nb::object, 4> args,
+            std::optional<PyTreeDef> treedef = std::nullopt)
       : context_(std::move(context)),
         kwnames_(std::move(kwnames)),
-        args_(std::move(args)) {
+        args_(std::move(args)),
+        treedef_(std::move(treedef)) {
     cached_hash_ = absl::HashOf(*this);
   }
 
@@ -203,6 +205,9 @@ class StrongKey {
     }
     for (const auto& arg : key.args_) {
       h = H::combine(std::move(h), nb::hash(arg));
+    }
+    if (key.treedef_) {
+      h = H::combine(std::move(h), *key.treedef_);
     }
     return h;
   }
@@ -223,6 +228,7 @@ class StrongKey {
   nb::object context() const { return context_; }
   absl::Span<const nb::object> kwnames() const { return kwnames_; }
   absl::Span<const nb::object> args_span() const { return args_; }
+  const PyTreeDef* treedef() const { return treedef_ ? &*treedef_ : nullptr; }
   size_t cached_hash() const { return cached_hash_; }
 
   nb::object args() const;
@@ -240,11 +246,15 @@ class StrongKey {
   // are stored in the order they appear in kwnames.
   absl::InlinedVector<nb::object, 4> args_;
 
+  // The pytree definition of the arguments, if applicable.
+  std::optional<PyTreeDef> treedef_;
+
   // The cached hash value. See the comment on WeakKey.
   size_t cached_hash_;
 };
 
 bool StrongKey::operator==(const StrongKey& other) const {
+  if (treedef_ != other.treedef_) return false;
   if (!context_.equal(other.context_)) return false;
 
   if (kwnames_.size() != other.kwnames_.size()) return false;
@@ -287,6 +297,10 @@ int StrongKey::tp_traverse(visitproc visit, void* arg) const {
   for (const auto& a : args_) {
     Py_VISIT(a.ptr());
   }
+  if (treedef_) {
+    int ret = treedef_->Traverse(visit, arg);
+    if (ret) return ret;
+  }
   return 0;
 }
 
@@ -294,11 +308,14 @@ struct PointerStrongKey {
   nb::object context;
   absl::Span<nb::object const> kwnames;
   absl::Span<nb::object const> args;
+  const PyTreeDef* treedef;
   size_t cached_hash;
 };
 
 bool StrongKey::SafeEqual::operator()(StrongKey a,
                                       const PointerStrongKey& b) const {
+  if (a.treedef_.has_value() != (b.treedef != nullptr)) return false;
+  if (a.treedef_ && !(*a.treedef_ == *b.treedef)) return false;
   if (a.context_.ptr() != b.context.ptr()) return false;
   if (a.kwnames_.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames_.size(); ++i) {
@@ -540,7 +557,7 @@ void WeakrefLRUCacheBase::EvictLeastRecentlyUsed() {
 
   PointerStrongKey ptr_strong_key{
       tail->key.context(), absl::MakeConstSpan(tail->key.kwnames()),
-      absl::MakeConstSpan(tail->key.args_span()), tail->key.cached_hash()};
+      tail->key.args_span(), tail->key.treedef(), tail->key.cached_hash()};
   auto inner_it = cache_ptr->find(ptr_strong_key);
   if (inner_it == cache_ptr->end()) {
     return;
@@ -632,7 +649,7 @@ void WeakrefLRUCacheBase::EvictWeakref(PyObject* dying_weakref_ptr) {
       auto& [wr_key, cache_ptr] = *cache_it;
       PointerStrongKey ptr_strong_key{
           entry->key.context(), absl::MakeConstSpan(entry->key.kwnames()),
-          absl::MakeConstSpan(entry->key.args_span()),
+          entry->key.args_span(), entry->key.treedef(),
           entry->key.cached_hash()};
       auto inner_it = cache_ptr->find(ptr_strong_key);
       if (inner_it != cache_ptr->end()) {
@@ -1107,12 +1124,14 @@ PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
       }
     };
 
+    PyTreeDef combined_def(registry.get());
+    std::vector<nb::object> leaves;
+
     for (size_t i = 0; i < num_pos_args; ++i) {
-      auto [leaves, treedef] =
-          PyTreeDef::Flatten(nb::handle(args[i]), registry);
-      strong_args.push_back(std::move(treedef));
+      leaves.clear();
+      combined_def.Flatten(nb::handle(args[i]), leaves);
       for (auto& leaf : leaves) {
-        process_leaf(leaf);
+        process_leaf(std::move(leaf));
       }
     }
 
@@ -1135,16 +1154,17 @@ PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
       sorted_kwnames.reserve(num_kwargs);
       for (auto& [name, val] : sorted_kwargs) {
         sorted_kwnames.push_back(std::move(name));
-        auto [leaves, treedef] = PyTreeDef::Flatten(nb::handle(val), registry);
-        strong_args.push_back(std::move(treedef));
+        leaves.clear();
+        combined_def.Flatten(nb::handle(val), leaves);
         for (auto& leaf : leaves) {
-          process_leaf(leaf);
+          process_leaf(std::move(leaf));
         }
       }
     }
 
     WeakKey wrcache_key = WeakKey::Make(weak_leaves, self->weakref_callback_);
-    StrongKey key(context, std::move(sorted_kwnames), std::move(strong_args));
+    StrongKey key(context, std::move(sorted_kwnames), std::move(strong_args),
+                  std::move(combined_def));
 
     return self->Call(self_obj, args_span, nargsf, kwnames,
                       std::move(wrcache_key), key);
@@ -1276,8 +1296,7 @@ void RegisterWeakrefLruCache(nb::module_& m) {
             std::move(cache_context_fn), std::move(fn), maxsize.value_or(-1),
             std::move(explain), std::move(registry), std::move(weak_types));
       },
-      nb::arg("cache_context_fn"), nb::arg("fn"),
-      nb::kw_only(),
+      nb::arg("cache_context_fn"), nb::arg("fn"), nb::kw_only(),
       nb::arg("maxsize").none() = 2048,
       nb::arg("explain") = std::optional<nb::callable>(), nb::arg("registry"),
       nb::arg("weak_types"));
