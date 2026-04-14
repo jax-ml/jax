@@ -195,6 +195,7 @@ pytype_strict_library(
         if_building = [
             ":api",
             ":core",
+            ":mlir",
             ":stages",
             ":export",
             ":test_util",

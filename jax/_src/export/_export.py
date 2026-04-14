@@ -40,6 +40,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -227,9 +228,10 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
-  def mlir_module(self) -> str:
-    """A string representation of the ``mlir_module_serialized``."""
-    return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+  # TODO(phawkins): change the type to Module after jaxlib 0.10 is the minimum.
+  def mlir_module(self) -> Any:
+    """A string or Module representation of the ``mlir_module_serialized``."""
+    return _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -911,7 +913,7 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # StableHLO features from failing on older hardware.
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+  module_serialized = _jax.mlir.serialize_portable_artifact(
       mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
 
@@ -1584,7 +1586,11 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   _ensure_backends_initialized(exported.platforms)
   if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
-  submodule = ir.Module.parse(exported.mlir_module())
+  mlir_module = exported.mlir_module()
+  if jaxlib_extension_version < 435:
+    submodule = ir.Module.parse(mlir_module)
+  else:
+    submodule = mlir_module
 
   symtab = ir.SymbolTable(submodule.operation)
   shardy_enabled = has_sdy_mesh(symtab, submodule)

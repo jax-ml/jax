@@ -44,6 +44,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
 from jax._src import lib
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
@@ -259,7 +260,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
     x = jnp.arange(-20, 20, dtype=np.int32)
     exp_inner = export.export(inner)(x)
-    self.assertIn("@_where(", str(exp_inner.mlir_module()))
+    with mlir.make_ir_context():
+      self.assertIn("@_where(", str(exp_inner.mlir_module()))
 
     @jax.jit
     def outer(x):
@@ -319,7 +321,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
     exp = get_exported(f, _override_lowering_rules=(
         (lax.sin_p, my_lowering_rule),))(42.)
-    self.assertIn("stablehlo.cosine", exp.mlir_module())
+    with mlir.make_ir_context():
+      self.assertIn("stablehlo.cosine", str(exp.mlir_module()))
 
   def test_pytree(self):
     a = np.arange(4, dtype=np.float32)
@@ -553,7 +556,8 @@ class JaxExportTest(jtu.JaxTestCase):
       jax.jit(lambda a: a + test_primitive.bind(a)),
       disabled_checks=[export.DisabledSafetyCheck.custom_call("disallowed_call_target")]
     )(a)
-    self.assertIn("disallowed_call_target", exp.mlir_module())
+    with mlir.make_ir_context():
+      self.assertIn("disallowed_call_target", str(exp.mlir_module()))
 
   def test_lowering_parameters_for_export(self):
     # Test that we propagate properly the LoweringParameters.for_export
@@ -721,7 +725,8 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
 
     # Peek at the module
-    module_str = exp.mlir_module()
+    with mlir.make_ir_context():
+      module_str = str(exp.mlir_module())
     self.assertEqual(config.jax_export_calling_convention_version.value >= 7,
                      "shape_assertion" in module_str)
     self.assertIn("jax.uses_shape_polymorphism = true", module_str)
@@ -1692,14 +1697,15 @@ class JaxExportTest(jtu.JaxTestCase):
       # Try 2nd order grad as well
       exp_vjp2 = exp_vjp.vjp()
 
-    vjp_module_str = str(exp_vjp.mlir_module())
+    with mlir.make_ir_context():
+      vjp_module_str = str(exp_vjp.mlir_module())
 
     # The MHLO attributes of the args and the result of the main function
     # Arg0 are the primal inputs, arg1 are the output cotangent, res is the input cotangent
     arg0_attrs, arg1_attrs, res_attrs = re.search(
-        r"func.func public @main\(%arg0: tensor<10x20xf32> (.*)"
-        r", %arg1: tensor<20x10xf32> (.*)"
-        r"\) -> \(tensor<10x20xf32> (.*)",  # the result
+        r"func.func public @main\(%arg0: tensor<10x20xf32> *(.*)"
+        r", %arg1: tensor<20x10xf32> *(.*)"
+        r"\) -> \(tensor<10x20xf32> *(.*)",  # the result
         vjp_module_str).groups()
 
     if config.use_shardy_partitioner.value:
@@ -1814,7 +1820,8 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(jax.jit(_testing_multi_platform_func),
                        platforms=("tpu", "cpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
-    module_str = str(exp.mlir_module())
+    with mlir.make_ir_context():
+      module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
       r"%arg0: tensor<i..>.*jax.global_constant = \"_platform_index\".*, "
@@ -1845,7 +1852,8 @@ class JaxExportTest(jtu.JaxTestCase):
                         platforms=("cpu", "cuda", "rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
-    exp2_module_str = str(exp2.mlir_module())
+    with mlir.make_ir_context():
+      exp2_module_str = str(exp2.mlir_module())
     count_sine = len(re.findall("stablehlo.sine", exp2_module_str))
     self.assertEqual(1, count_sine)
 
@@ -1866,7 +1874,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(jax.jit(exp.call))(x)
-    module_str = str(exp2.mlir_module())
+    with mlir.make_ir_context():
+      module_str = str(exp2.mlir_module())
     self.assertIn("jax.uses_shape_polymorphism = true",
                   module_str)
     res2 = exp2.call(x)
@@ -2047,7 +2056,8 @@ class JaxExportTest(jtu.JaxTestCase):
                       sorted(str(e) for e in exp.ordered_effects))
       self.assertEqual(["ForTestingUnorderedEffect1()"],
                       [str(e) for e in exp.unordered_effects])
-      mlir_module_str = str(exp.mlir_module())
+      with mlir.make_ir_context():
+        mlir_module_str = str(exp.mlir_module())
 
       # Inner functions use stablehlo.token for all versions
       inner_fun_expected_re = (
@@ -2111,7 +2121,8 @@ class JaxExportTest(jtu.JaxTestCase):
         return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1")
       exp = get_exported(jax.jit(f_jax))(jax.ShapeDtypeStruct(
           export.symbolic_shape("b2, b1"), x.dtype))
-      mlir_module_str = str(exp.mlir_module())
+      with mlir.make_ir_context():
+        mlir_module_str = str(exp.mlir_module())
       wrapped_main_expected_re = (
         r"@_wrapped_jax_export_main\("
         r"%arg0: tensor<i..> {jax.global_constant = \"b1\".* "
@@ -2154,7 +2165,8 @@ class JaxExportTest(jtu.JaxTestCase):
           jax.jit(f_jax),
           platforms=("cpu", "tpu")
           )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
-      mlir_module_str = str(exp.mlir_module())
+      with mlir.make_ir_context():
+        mlir_module_str = str(exp.mlir_module())
       wrapped_main_expected_re = (
         r"@_wrapped_jax_export_main\("
         r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
@@ -2198,7 +2210,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
       f_jax = jax.jit(f_jax, donate_argnums=(0,))
       exp = export.export(f_jax)(x)
-      mlir_module_str = str(exp.mlir_module())
+      with mlir.make_ir_context():
+        mlir_module_str = str(exp.mlir_module())
       self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
       self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
 
