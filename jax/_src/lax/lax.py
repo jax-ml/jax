@@ -7159,6 +7159,13 @@ def _merge_on_one_axis(operand, new_sizes):
   return _split_on_one_axis(new_sizes, operand.shape)
 
 
+def raise_reshape_error(operand, new_sizes):
+  raise core.ShardingTypeError(
+      'This reshape is not supported. Please specify the sharding of the'
+      ' output via the `out_sharding` argument of jax.lax.reshape. Got'
+      f' operand type: {operand}, new sizes: {new_sizes}')
+
+
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
@@ -7172,29 +7179,20 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   try:
     is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
   except ReshapeExplicitError:
-    raise core.ShardingTypeError(
-        'This reshape is not supported. Please specify the sharding of'
-        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-        f' operand type: {operand}, new sizes: {new_sizes}')
-  if is_split:
-    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
+    raise_reshape_error(operand, new_sizes)
+  if is_split:  # type: ignore
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,  # type: ignore
                                         dimensions)
 
   try:
     is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
   except ReshapeExplicitError:
-    raise core.ShardingTypeError(
-        'This reshape is not supported. Please specify the sharding of'
-        ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-        f' operand type: {operand}, new sizes: {new_sizes}')
-  if is_merge:
-    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
+    raise_reshape_error(operand, new_sizes)
+  if is_merge:  # type: ignore
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,  # type: ignore
                                         dimensions)
+  raise_reshape_error(operand, new_sizes)
 
-  raise core.ShardingTypeError(
-      'This reshape is not supported. Please specify the sharding of'
-      ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-      f' operand type: {operand}, new sizes: {new_sizes}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -7209,48 +7207,64 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
       new_spec.append(sp)
   return operand.sharding.update(spec=new_spec)
 
-def _get_spec_size(sp, mesh):
-  tup_sp = sp if isinstance(sp, tuple) else (sp,)
-  return math.prod(mesh.shape[t] for t in tup_sp)
+def split_partitions(mesh, tup_sp, out, operand, new_sizes):
+  iter_sp = iter(tup_sp)
+  partitions = []
+  for o in out:
+    dim_partitions = []
+    while o > 1:
+      ns = next(iter_sp, None)
+      if ns is None:
+        break
+      axis_size = mesh.shape[ns]
+      o, remainder = divmod(o, axis_size)
+      if remainder != 0:
+        raise_reshape_error(operand, new_sizes)
+      dim_partitions.append(ns)
+    partitions.append(tuple(dim_partitions))
+  assert next(iter_sp, None) is None
+  return partitions
 
 def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
-  for out, sp in safe_zip(out_split, operand.sharding.spec):
+  for out, sp in zip(out_split, operand.sharding.spec):
     if isinstance(out, list):
       if sp is None:
         new_spec.extend([None] * len(out))
-      elif dimensions is None and out[0] % _get_spec_size(sp, mesh) == 0:
-        new_spec.extend([sp] + [None] * (len(out) - 1))
+      elif dimensions is None:
+        tup_sp = sp if isinstance(sp, tuple) else (sp,)
+        partitions = split_partitions(mesh, tup_sp, out, operand, new_sizes)
+        new_spec.extend(partitions)
       else:
-        raise core.ShardingTypeError(
-            'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
-            f' operand type: {operand}, new sizes: {new_sizes}')
+        raise_reshape_error(operand, new_sizes)
     else:
       new_spec.append(sp)
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.update(spec=new_spec)
 
+def strip_trailing_nones(lst):
+  while lst[-1] is None:
+    lst.pop()
+  return tuple(lst)
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
   op_spec = iter(operand.sharding.spec)
-  for new_size, op_merge in zip(new_sizes, operand_merge):
+  for ns, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
-      sp = [next(op_spec) for _ in op_merge]
-      if all(s is None for s in sp):
+      tup_sp = tuple(next(op_spec) for _ in op_merge)
+      if all(s is None for s in tup_sp):
         new_spec.append(None)
-      elif (sp[0] is not None and all(s is None for s in sp[1:]) and
-            dimensions is None):
-        assert new_size % _get_spec_size(sp[0], mesh) == 0
-        new_spec.append(sp[0])
+      elif dimensions is None:
+        tup_sp = strip_trailing_nones(flatten_spec(tup_sp))
+        if None in tup_sp:
+          raise_reshape_error(operand, new_sizes)
+        partitions = split_partitions(mesh, tup_sp, [ns], operand, new_sizes)
+        new_spec.extend(partitions)
       else:
-        raise core.ShardingTypeError(
-            'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
-            f' operand type: {operand}, new sizes: {new_sizes}')
+        raise_reshape_error(operand, new_sizes)
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
