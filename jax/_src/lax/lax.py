@@ -1684,8 +1684,9 @@ def _convert_element_type(
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literals.TypedNdArray(
-        np.asarray(operand).astype(new_dtype), weak_type=weak_type)
+    arr = np.asarray(operand).astype(new_dtype)
+    aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
+    operand = literals.TypedNdArray(arr, aval=aval)
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
@@ -4982,7 +4983,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    return [literals.TypedNdArray(out, weak_type=out_aval.weak_type)]
+    return [literals.TypedNdArray(out, aval=out_aval)]
   return None
 
 def _convert_elt_type_fwd_rule(eqn):
@@ -8866,7 +8867,7 @@ def _const(example, val):
   if dtypes.is_python_scalar(example):
     val = dtypes.scalar_type_of(example)(val)
     return val if dtype == _dtype(val) else np.array(val, dtype)
-  return literals.TypedNdArray(np.array(val, dtype), weak_type=False)
+  return literals.TypedNdArray(np.array(val, dtype))
 
 _zeros: Callable = partial(full_like, fill_value=0)
 

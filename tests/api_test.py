@@ -2139,12 +2139,11 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(
         np.dtype(np.int32),
         jax.device_put(literals.TypedNdArray(
-          np.array([1], dtype=np.int32), weak_type=False)).dtype)
+          np.array([1], dtype=np.int32))).dtype)
     self.assertEqual(
         np.dtype(np.int64),
         jax.device_put(literals.TypedNdArray(
-          np.array([1], dtype=np.int64), weak_type=False)).dtype)
-
+          np.array([1], dtype=np.int64))).dtype)
 
   def test_vmap_inconsistent_sizes_constructs_proper_error_message(self):
     def f(x1, x2, g):

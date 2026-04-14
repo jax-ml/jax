@@ -203,7 +203,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if dtype is not None:
       # If there is an explicit dtype, we've already canonicalized things and
       # device_put should not canonicalize again.
-      object = literals.TypedNdArray(object, weak_type=False)
+      object = literals.TypedNdArray(object)
     # Keep the output uncommitted.
     return api.device_put(object)
 

@@ -758,9 +758,9 @@ def make_array_from_callback(
     r = dtypes.canonicalize_value(r)
     if isinstance(r, (literals.TypedInt, literals.TypedFloat,
                       literals.TypedComplex)):
-      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype))
     elif isinstance(r, bool):
-      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_))
     return r
 
   if sharding.is_fully_replicated:
@@ -1260,7 +1260,7 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     def handler(xs):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
-                                   weak_type=False)
+                                   aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
     return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
                                    _skip_checks=True).wrap(handler)

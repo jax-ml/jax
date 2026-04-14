@@ -3693,8 +3693,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = literals.TypedNdArray(np.arange(8, dtype=np.float32),
-                                  weak_type=False)
+    const = literals.TypedNdArray(np.arange(8, dtype=np.float32))
 
     @jax.jit
     def f(x):

@@ -130,7 +130,7 @@ _ndarray_dtype_cache_lock = threading.Lock()
 @weakref_lru_cache.weak_key_weak_value_cache
 def _canonicalize_ndarray_dtype(x):
   dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
+  return literals.TypedNdArray(np.asarray(x, dtype))
 
 dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 
@@ -141,7 +141,7 @@ def _canonicalize_masked_array_dtype(x):
 
 def _canonicalize_numpy_scalar(x):
   dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype), weak_type=False)
+  return literals.TypedNdArray(np.asarray(x, dtype))
 
 dtypes.canonicalize_value_handlers.update(
     (t, _canonicalize_numpy_scalar) for t in numpy_scalar_types)

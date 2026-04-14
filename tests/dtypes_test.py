@@ -153,15 +153,13 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(
         np.dtype(np.int32),
         dtypes.canonicalize_value(
-            TypedNdArray(np.array([6], dtype=np.dtype(np.int32)),
-                         weak_type=False)
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int32)))
         ).dtype,
     )
     self.assertEqual(
         np.dtype(np.int64),
         dtypes.canonicalize_value(
-            TypedNdArray(np.array([6], dtype=np.dtype(np.int64)),
-                         weak_type=False)
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int64)))
         ).dtype,
     )
 
@@ -472,8 +470,8 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int32))), np.dtype(np.int32))
     self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
     self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32))), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64))), np.dtype(np.int64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):
