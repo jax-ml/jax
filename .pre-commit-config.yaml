@@ -36,7 +36,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 5baa9159e6c65fded74dc4f30fd95a4ef6a83e3e  # frozen: v0.60.2
+  rev: f0d6ae09431cf86ecc3dad5d8f323ae04fa81533  # frozen: v0.61.0
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)
@@ -76,4 +76,3 @@ repos:
   hooks:
     - id: actionlint
       files: .github/workflows/
-
