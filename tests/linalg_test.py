@@ -153,6 +153,7 @@ def _normalizing_eig(a, compute_left_eigenvectors=False,
       a,
       compute_left_eigenvectors=compute_left_eigenvectors,
       compute_right_eigenvectors=compute_right_eigenvectors,
+      allow_eigvec_deriv=True,
   )
   w = results[0]
   out = [w]
@@ -477,6 +478,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                 compute_right_eigenvectors=compute_right_eigenvectors)
     tol = 1e-4 if dtype in (np.float64, np.complex128) else 5e-2
     jtu.check_grads(f, (a,), order=1, modes=['fwd', 'rev'], rtol=tol, atol=tol)
+
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradRaisesWithoutAllowEigvecDeriv(self):
+    # Differentiating through eigenvectors should raise an error unless
+    # allow_eigvec_deriv=True is set.
+    rng = jtu.rand_default(self.rng())
+    a = rng((4, 4), np.float32)
+    f = lambda x: lax.linalg.eig(x, compute_right_eigenvectors=True,
+                                  compute_left_eigenvectors=False)[1]
+    with self.assertRaisesRegex(ValueError, "allow_eigvec_deriv"):
+      jax.jacfwd(f)(a)
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],

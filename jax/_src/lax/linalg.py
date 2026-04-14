@@ -141,6 +141,7 @@ def eig(
     compute_right_eigenvectors: bool = True,
     implementation: EigImplementation | None = None,
     use_magma: bool | None = None,
+    allow_eigvec_deriv: bool = False,
 ) -> list[Array]:
   """Eigendecomposition of a general matrix.
 
@@ -175,11 +176,30 @@ def eig(
   (repeated) eigenvalues are mathematically ill-defined and will produce
   numerically large or infinite values.
 
+  **Phase ambiguity in eigenvector gradients.** Eigenvectors are defined only
+  up to an arbitrary complex phase: if ``v`` is an eigenvector, so is
+  ``e^{iθ} v`` for any real ``θ``. This means eigenvector-dependent gradients
+  are only well-defined when the downstream computation does not depend on this
+  arbitrary phase choice. This is analogous to the ``holomorphic=True`` flag on
+  :func:`jax.grad`.
+
+  To prevent silently incorrect gradients, differentiation through eigenvectors
+  raises an error by default. Set ``allow_eigvec_deriv=True`` to opt in,
+  thereby asserting that your computation does not depend on the phase of the
+  eigenvectors. When this flag is set, the JVP projects out the full gauge
+  ambiguity (both norm and phase components) from the eigenvector tangents,
+  making the result well-defined regardless.
+
   Args:
     x: A batch of square matrices with shape ``[..., n, n]``.
     compute_left_eigenvectors: If true, the left eigenvectors will be computed.
     compute_right_eigenvectors: If true, the right eigenvectors will be
       computed.
+    allow_eigvec_deriv: If ``False`` (default), differentiating through
+      eigenvectors raises an error. Set to ``True`` to enable eigenvector
+      differentiation, asserting that your downstream computation does not
+      depend on the arbitrary phase of the eigenvectors. See the note on phase
+      ambiguity above.
     use_magma: Deprecated, please use ``implementation`` instead. Locally
       override the ``jax_use_magma`` flag. If ``True``, the eigendecomposition
       is computed using MAGMA. If ``False``, the computation is done using
@@ -219,7 +239,8 @@ def eig(
     )
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors,
-                    implementation=implementation)
+                    implementation=implementation,
+                    allow_eigvec_deriv=allow_eigvec_deriv)
 
 
 class EighImplementation(enum.Enum):
@@ -1011,7 +1032,7 @@ def _eig_compute_attr(compute):
   )
 
 def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors, implementation):
+                      compute_right_eigenvectors, implementation, **_):
   if implementation and implementation != EigImplementation.LAPACK:
     raise ValueError("Only the lapack implementation is supported on CPU.")
   operand_aval, = ctx.avals_in
@@ -1078,7 +1099,7 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
 
 def _eig_gpu_lowering(ctx, operand, *,
                       compute_left_eigenvectors, compute_right_eigenvectors,
-                      implementation, target_name_prefix):
+                      implementation, target_name_prefix, **_):
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
   n, m = operand_aval.shape[-2:]
@@ -1191,17 +1212,31 @@ def _eig_gpu_lowering(ctx, operand, *,
   return output
 
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
-                 compute_right_eigenvectors, implementation):
+                 compute_right_eigenvectors, implementation, allow_eigvec_deriv):
   # Formulas from https://arxiv.org/abs/1701.00392:
   #   eigenvalue JVP:       eqn 4.60
   #   right eigenvector JVP: eqn 4.63
   # Left eigenvectors of A are right eigenvectors of A^H, so their JVP is
   # derived by applying the right-eigenvector formula to (A^H, dA^H).
   #
-  # Normalization: LAPACK returns unit-norm eigenvectors. The raw perturbation
-  # formula gives dV that changes the norm to first order. We correct this by
-  # projecting out the real part of the diagonal of V^H dV, which enforces the
-  # unit-norm constraint d(||v_j||^2)/dt = 0.
+  # Gauge projection: eigenvectors are defined only up to a complex phase
+  # e^{iθ}. The raw JVP formula produces a tangent dV that may include a
+  # component in this ambiguous direction. We project it out by subtracting
+  # V * diag(V^H dV), which zeros the full complex diagonal of V^H dV
+  # (both the real/norm component and the imaginary/phase component).
+  # This makes the JVP well-defined when the downstream computation is
+  # independent of the eigenvector phase (the condition the user asserts
+  # by setting allow_eigvec_deriv=True).
+  if (compute_left_eigenvectors or compute_right_eigenvectors) and not allow_eigvec_deriv:
+    raise ValueError(
+        "Differentiation through eigenvectors of lax.linalg.eig is disabled "
+        "by default because eigenvectors are only defined up to an arbitrary "
+        "complex phase. Set allow_eigvec_deriv=True to enable eigenvector "
+        "differentiation, asserting that your downstream computation does not "
+        "depend on the phase of the eigenvectors. See the lax.linalg.eig "
+        "docstring for details."
+    )
+
   a, = primals
   da, = tangents
   n = a.shape[-1]
@@ -1215,6 +1250,7 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
         compute_left_eigenvectors=True,
         compute_right_eigenvectors=True,
         implementation=implementation,
+        allow_eigvec_deriv=allow_eigvec_deriv,
     )
   else:
     l, vr = eig_p.bind(
@@ -1222,6 +1258,7 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
         compute_left_eigenvectors=False,
         compute_right_eigenvectors=True,
         implementation=implementation,
+        allow_eigvec_deriv=allow_eigvec_deriv,
     )
 
   da = da.astype(l.dtype)
@@ -1264,10 +1301,11 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
       ) - eye_n
 
     dVL_raw = dot(vl, Fmat_L * P_L)
-    # Normalization correction: enforce real(VL^H dVL)_{jj} = 0
+    # Gauge projection: zero the full complex diagonal of VL^H dVL to remove
+    # both the norm component (Re diag) and the phase component (Im diag).
     VLH_dVL = dot(_H(vl), dVL_raw)
-    norm_corr_L = _extract_diagonal(VLH_dVL.real).astype(vl.dtype)
-    dVL = dVL_raw - vl * norm_corr_L[..., np.newaxis, :]
+    gauge_corr_L = _extract_diagonal(VLH_dVL).astype(vl.dtype)
+    dVL = dVL_raw - vl * gauge_corr_L[..., np.newaxis, :]
 
     out_primals.append(vl)
     out_tangents.append(dVL)
@@ -1275,10 +1313,11 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
   if compute_right_eigenvectors:
     # Right eigenvector JVP
     dVR_raw = dot(vr, Fmat * P)
-    # Normalization correction: enforce real(VR^H dVR)_{jj} = 0
+    # Gauge projection: zero the full complex diagonal of VR^H dVR to remove
+    # both the norm component (Re diag) and the phase component (Im diag).
     VRH_dVR = dot(_H(vr), dVR_raw)
-    norm_corr_R = _extract_diagonal(VRH_dVR.real).astype(vr.dtype)
-    dVR = dVR_raw - vr * norm_corr_R[..., np.newaxis, :]
+    gauge_corr_R = _extract_diagonal(VRH_dVR).astype(vr.dtype)
+    dVR = dVR_raw - vr * gauge_corr_R[..., np.newaxis, :]
 
     out_primals.append(vr)
     out_tangents.append(dVR)
