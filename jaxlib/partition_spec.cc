@@ -152,20 +152,6 @@ bool PartitionSpec::Eq(const nb::object& other) const {
   if (nb::try_cast<PartitionSpec*>(other, other_spec)) {
     return *this == *other_spec;
   }
-  nb::tuple other_tuple;
-  if (nb::try_cast<nb::tuple>(other, other_tuple)) {
-    if (unreduced().size() > 0 || reduced().size() > 0 ||
-        partitions().size() != other_tuple.size()) {
-      return false;
-    }
-    for (size_t i = 0; i < partitions().size(); ++i) {
-      if (!partitions()[i].equal(CanonicalizePartition(
-              *unconstrained_singleton_, other_tuple[i]))) {
-        return false;
-      }
-    }
-    return true;
-  }
   return false;
 }
 

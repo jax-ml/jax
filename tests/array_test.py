@@ -1037,7 +1037,6 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_pspec_tuple(self):
     pspec = P('x', 'y', 'z')
-    self.assertEqual(pspec, ('x', 'y', 'z'))
     self.assertEqual(pspec.index('z'), 2)
     self.assertEqual(hash(P(None, 'x', 'y', 'z')), hash(P((), 'x', 'y', 'z')))
 

@@ -11082,7 +11082,7 @@ class UtilTest(jtu.JaxTestCase):
     def roundtrip(spec):
       hlo_sharding = NamedSharding(mesh, spec)._to_xla_hlo_sharding(aval.ndim)
       recovered_spec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
-      self.assertEqual(recovered_spec[:len(spec)], spec)
+      self.assertEqual(recovered_spec[:len(spec)], tuple(spec))
       self.assertEqual(recovered_spec[len(spec):], ((),) * (len(recovered_spec) - len(spec)))
 
     special_specs = [P()]

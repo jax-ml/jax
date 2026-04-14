@@ -223,7 +223,8 @@ def broadcast_shardings(*avals):
   res_aval = _max(avals, key=lambda a: a.ndim)
   ndim = res_aval.ndim
   if ndim == 0 or all(
-      res_aval.sharding.spec[ndim - a.ndim:] == a.sharding.spec for a in avals):
+      P(*res_aval.sharding.spec[ndim - a.ndim:]) == a.sharding.spec
+      for a in avals):
     return res_aval.sharding
 
   # Next try singleton-broadcasting, padding out ranks using singletons.

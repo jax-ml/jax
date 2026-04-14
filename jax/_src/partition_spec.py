@@ -94,17 +94,6 @@ class P:
       return (self._partitions == other._partitions and
               self.unreduced == other.unreduced and
               self.reduced == other.reduced)
-    elif isinstance(other, tuple):
-      if self.unreduced:
-        raise TypeError(
-            f"other {other} cannot be of instance `tuple` when self {self} has"
-            " unreduced in `__eq__` of PartitionSpec.")
-      if self.reduced:
-        raise TypeError(
-            f"other {other} cannot be of instance `tuple` when self {self} has"
-            " reduced in `__eq__` of PartitionSpec.")
-      other_p = tuple(_canonicalize_partition(o) for o in other)
-      return self._partitions == other_p
     else:
       return False
 
