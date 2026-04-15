@@ -210,7 +210,6 @@ def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 if jaxlib_extension_version >= 427:
-  # pyrefly: ignore[missing-attribute]
   ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
 
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
@@ -2218,7 +2217,6 @@ def _cached_lowering(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     outs = jax_mlir_ext.inlined_func_call(
-        # pyrefly: ignore[bad-argument-type]
         cache_entry.func, args, ir.InsertionPoint.current.block)
   else:
     outs = func_dialect.CallOp(

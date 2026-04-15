@@ -1162,7 +1162,7 @@ class TMEMRef:
     if math.prod(addr_ref_ty.shape) != 1:
       raise ValueError(f"tmem_addr_ref must contain a single element, got: {addr_ref_ty}")
     i0 = arith.ConstantOp.create_index(0)
-    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)  # pyrefly: ignore[bad-argument-type]
+    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)
     if shape[0] < 32:
       raise ValueError(f"TMEM refs must have at least 32 rows, got: {shape[0]}")
     if layout is None:

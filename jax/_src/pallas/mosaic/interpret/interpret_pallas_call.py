@@ -1977,7 +1977,7 @@ def interpret_pallas_call(
       return grid_mapping.local_grid_env(grid_point, grid)
     else:
       return tuple(
-          pallas_core.GridAxis(idx, b)  # pyrefly: ignore[bad-argument-type]
+          pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(grid_point, grid))
           if dim not in grid_mapping.vmapped_dims
       )
