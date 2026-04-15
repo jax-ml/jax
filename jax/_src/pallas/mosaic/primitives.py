@@ -376,7 +376,7 @@ dma_start_p.multiple_results = True
 def _dma_is_high(*avals, **params):
   return any(aval.is_high for aval in avals)
 
-dma_start_p.is_high = _dma_is_high
+dma_start_p.is_high = _dma_is_high  # type: ignore[method-assign]
 
 def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
   (
@@ -684,7 +684,7 @@ state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_d
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
-dma_wait_p.is_high = _dma_is_high
+dma_wait_p.is_high = _dma_is_high  # type: ignore[method-assign]
 
 def _dma_wait_to_lojax(*args, tree, device_id_type):
   (

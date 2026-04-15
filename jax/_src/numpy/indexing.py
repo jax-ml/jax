@@ -336,7 +336,7 @@ class NDIndexer:
         if isinstance(idx.index, np.unsignedinteger):
           normed_index: Index = idx.index
         else:
-          normed_index = idx.index + size if idx.index < 0 else idx.index  # pyrefly: ignore[bad-assignment, unsupported-operation]
+          normed_index = idx.index + size if idx.index < 0 else idx.index  # type: ignore[assignment,operator]
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
       elif idx.typ in [IndexType.ARRAY, IndexType.INTEGER]:
         assert isinstance(idx.index, (Array, np.ndarray))

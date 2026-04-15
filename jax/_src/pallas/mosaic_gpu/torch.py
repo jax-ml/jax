@@ -106,7 +106,7 @@ def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
 
 
 def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
-  import torch  # pyrefly: ignore[missing-import]
+  import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   mgpu_call: hlo.CustomCallOp | None = None
   get_outputs = None
   to_evaluate: list[Callable] = []
@@ -227,7 +227,7 @@ def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
 @util.weakref_lru_cache
 def _compile_fn(fn, in_structs):
   try:
-    import torch  # pyrefly: ignore[missing-import]
+    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 

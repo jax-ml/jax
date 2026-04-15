@@ -30,7 +30,7 @@ from jax._src.util import canonicalize_axis
 
 class ModeResult(NamedTuple):
   mode: Array
-  count: Array
+  count: Array   # type: ignore[bad-override, assignment]
 
 
 @api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])

@@ -60,4 +60,4 @@ def make_jax_dump_dir(out_dir_path: str) -> pathlib.Path | None:
       )
   out_dir = Path(out_dir_path)
   out_dir.mkdir(parents=True, exist_ok=True)
-  return cast(pathlib.Path, out_dir)
+  return cast(pathlib.Path, out_dir)  # type: ignore[redundant-cast]

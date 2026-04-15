@@ -18,7 +18,7 @@ import io
 from typing import Any
 
 try:
-  import cloudpickle  # pyrefly: ignore[missing-import]
+  import cloudpickle  # type: ignore[import-not-found]
 except ImportError:
   cloudpickle = None
 
@@ -35,13 +35,13 @@ def dumps(obj: Any) -> bytes:
     """Customizes the behavior of cloudpickle."""
 
     # Make a copy to avoid modifying cloudpickle for other users.
-    dispatch_table = cloudpickle.CloudPickler.dispatch_table.copy()  # pyrefly: ignore[missing-attribute]
+    dispatch_table = cloudpickle.CloudPickler.dispatch_table.copy()  # type: ignore[missing-attribute]
 
     # Fixes for dataclass internal singleton object serialization.
     # Bug: https://github.com/cloudpipe/cloudpickle/issues/386
-    dispatch_table[dataclasses._FIELD_BASE] = lambda x: f'{x.name}'  # pyrefly: ignore[missing-attribute]
+    dispatch_table[dataclasses._FIELD_BASE] = lambda x: f'{x.name}'  # type: ignore[missing-attribute]
     dispatch_table[dataclasses._MISSING_TYPE] = lambda _: 'MISSING'
-    dispatch_table[dataclasses._HAS_DEFAULT_FACTORY_CLASS] = (  # pyrefly: ignore[missing-attribute]
+    dispatch_table[dataclasses._HAS_DEFAULT_FACTORY_CLASS] = (  # type: ignore[missing-attribute]
         lambda _: '_HAS_DEFAULT_FACTORY'
     )
     if hasattr(dataclasses, '_KW_ONLY_TYPE'):

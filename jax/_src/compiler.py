@@ -658,8 +658,8 @@ def _share_fdo_profiles(
     )
     return fdo_profile
 
-  if profile_key in _share_fdo_profiles.modules_profiles:  # pyrefly: ignore[missing-attribute]
-    return _share_fdo_profiles.modules_profiles[profile_key]  # pyrefly: ignore[missing-attribute]
+  if profile_key in _share_fdo_profiles.modules_profiles:  # type: ignore[missing-attribute]
+    return _share_fdo_profiles.modules_profiles[profile_key]  # type: ignore[missing-attribute]
 
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   if distributed.global_state.process_id == min_process_id:
@@ -679,11 +679,11 @@ def _share_fdo_profiles(
         profile_key, share_timeout
     )
 
-  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile  # pyrefly: ignore[missing-attribute]
+  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile  # type: ignore[missing-attribute]
   return fdo_profile
 
 
-_share_fdo_profiles.modules_profiles = {}  # pyrefly: ignore[missing-attribute]
+_share_fdo_profiles.modules_profiles = {}  # type: ignore[missing-attribute]
 
 
 # The process with the first_process_id should compile the module and write it
@@ -701,8 +701,8 @@ def _compile_and_share_module(
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
-  if cache_key in _compile_and_share_module.modules_cache:  # pyrefly: ignore[missing-attribute]
-    return _compile_and_share_module.modules_cache[cache_key]  # pyrefly: ignore[missing-attribute]
+  if cache_key in _compile_and_share_module.modules_cache:  # type: ignore[missing-attribute]
+    return _compile_and_share_module.modules_cache[cache_key]  # type: ignore[missing-attribute]
 
   if distributed.global_state.process_id == first_process_id:
     logger.debug("Process %d compiling and sharing module: %s",
@@ -733,11 +733,11 @@ def _compile_and_share_module(
     executable = backend.deserialize_executable(
         serialized_executable, executable_devices, compile_options)
 
-  _compile_and_share_module.modules_cache[cache_key] = executable  # pyrefly: ignore[missing-attribute]
+  _compile_and_share_module.modules_cache[cache_key] = executable  # type: ignore[missing-attribute]
   return executable
 
 
-_compile_and_share_module.modules_cache = {}  # pyrefly: ignore[missing-attribute]
+_compile_and_share_module.modules_cache = {}  # type: ignore[missing-attribute]
 
 
 def _compile_and_write_cache(

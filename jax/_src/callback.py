@@ -165,14 +165,14 @@ def _callback_op_sharding(
     if config.use_shardy_partitioner.value:
       op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
     else:
-      op_sharding = xc.OpSharding()
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
       op_sharding.type = xc.OpSharding.Type.MANUAL
     return op_sharding
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     if sharding is not None:
       if (isinstance(sharding, sharding_impls.NamedSharding) and
-          sharding.mesh.is_scalar):  # pyrefly: ignore[missing-attribute]
+          sharding.mesh.is_scalar):  # type: ignore[missing-attribute]
         pass
       elif not isinstance(sharding, SingleDeviceSharding):
         raise NotImplementedError(
@@ -208,7 +208,7 @@ def _callback_op_sharding(
               dim_shardings=[],
               logical_device_ids=(device_index,))])
     else:
-      op_sharding = xc.OpSharding()
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
       op_sharding.type = xc.OpSharding.Type.MAXIMAL
       op_sharding.tile_assignment_dimensions = [1]
       op_sharding.tile_assignment_devices = [device_index]

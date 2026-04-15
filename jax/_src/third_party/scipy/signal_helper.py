@@ -53,7 +53,7 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
     else:
       # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
       try:
-        from scipy.signal import get_window  # pyrefly: ignore[missing-import]
+        from scipy.signal import get_window  # pytype: disable=import-error  # type: ignore[missing-module-attribute]
       except ImportError as err:
         raise ImportError(f"scipy must be available to use {window=}") from err
       win = get_window(window, nperseg_int)

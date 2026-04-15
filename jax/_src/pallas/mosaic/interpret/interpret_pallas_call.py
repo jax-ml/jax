@@ -536,7 +536,7 @@ def get(
       else:
         ctx = source_info_util.user_context(
             traceback=source_info.traceback, name_stack=source_info.name_stack
-        )
+        )  # type: ignore[assignment]
       with ctx:
         if input_name is None:
           raise IndexError(
@@ -1966,7 +1966,7 @@ def interpret_pallas_call(
   ) // interpret_params.num_cores_per_device  # We round up here.
   num_iterations_per_point_in_parallel_subgrid = (
       # This is evenly divisible.
-      num_iterations // parallel_subgrid_size
+      num_iterations // parallel_subgrid_size  # type: ignore[operator]
   )
   num_iterations_per_core = (
       num_points_in_parallel_subgrid_per_core

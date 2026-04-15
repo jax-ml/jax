@@ -526,7 +526,7 @@ class BufferedRef(BufferedRefBase):
       buffer_count,
       grid_rank=None,
       use_lookahead=False,
-      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # pyrefly: ignore[not-a-type]
+      source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # type: ignore[valid-type]
       tiling: Tiling | None = None,
       is_trivial_windowing: bool = False,
   ) -> BufferedRef:

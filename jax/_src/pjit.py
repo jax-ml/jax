@@ -1037,7 +1037,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if isinstance(pjit_in_s, UnspecifiedValue):
       resolved_in_shardings.append(finalize_arg_sharding(arg_s, committed))
     else:
-      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and  # pyrefly: ignore[missing-attribute]
+      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1053,14 +1053,14 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
-        if pjit_in_s.memory_kind != arg_s.memory_kind:  # pyrefly: ignore[missing-attribute]
+        if pjit_in_s.memory_kind != arg_s.memory_kind:  # type: ignore[union-attr]
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
-              f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '
+              f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
               f'arg memory kind: {arg_s.memory_kind} for arg type: {arg.aval}')
         if (committed and
             not op_shardings.are_hlo_shardings_equal(
-                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # pyrefly: ignore[missing-attribute]
+                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore[union-attr]
                 arg_s._to_xla_hlo_sharding(arg.ndim))):
           raise ValueError('Sharding passed to jit does not match the sharding '
                            'on the respective arg. '
@@ -1672,7 +1672,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   unknown_ins = tuple(not k for k in known_ins)
   known_jaxpr, unknown_jaxpr, unknown_outs, res_out_avals, in_fwd_res = \
       pe.partial_eval_jaxpr_nounits_fwd(jaxpr, unknown_ins, instantiate=False)
-  unknown_outs = tuple(unknown_outs)
+  unknown_outs = tuple(unknown_outs)  # type: ignore[assignment]
   known_outs = tuple(not uk for uk in unknown_outs)
 
   # out_shardings and out_layouts for residual values output by known_jaxpr
@@ -2113,7 +2113,7 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
             'Target sharding contains a `jax.sharding.AbstractMesh` which'
             ' requires the input passed should be a `jax.Array`. Got'
             f' {type(x)} with shape {aval.str_short()}')
-      if not isinstance(x.sharding, NamedSharding) or x.sharding.mesh.is_scalar:  # pyrefly: ignore[missing-attribute]
+      if not isinstance(x.sharding, NamedSharding) or x.sharding.mesh.is_scalar:  # type: ignore[missing-attribute]
         raise TypeError(
             'The sharding on the input must be a `NamedSharding` since the'
             ' target sharding has an `AbstractMesh` in it. Got sharding type'

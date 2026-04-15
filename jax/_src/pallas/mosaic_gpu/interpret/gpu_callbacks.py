@@ -492,7 +492,7 @@ def _handle_out_of_bounds_read(
     else:
       ctx = source_info_util.user_context(
           traceback=source_info.traceback, name_stack=source_info.name_stack
-      )
+      )  # type: ignore[assignment]
     with ctx:
       if input_name is None:
         raise IndexError(

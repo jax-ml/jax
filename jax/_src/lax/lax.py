@@ -1628,7 +1628,7 @@ def convert_element_type(operand: ArrayLike,
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
-  return _convert_element_type(operand, new_dtype, weak_type=False)
+  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
@@ -3994,7 +3994,7 @@ def _iter(tracer):
               for i in range(n))
     else:
       return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
-ShapedArray._iter = staticmethod(_iter)  # pyrefly: ignore[bad-assignment]
+ShapedArray._iter = staticmethod(_iter)  # type: ignore[bad-assignment]
 
 def _add_arrays(x, y):
   if (isinstance(a := core.typeof(x), ShapedArray) and
@@ -8591,9 +8591,8 @@ class RandomAlgorithm(enum.IntEnum):
   RNG_PHILOX = 2
   "The Philox-4x32 PRNG algorithm."
 
-  def __str__(self):
-    return self.name
 
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[method-assign]
 
 def _rng_algorithm(algorithm: RandomAlgorithm):
   if algorithm == RandomAlgorithm.RNG_THREE_FRY:
