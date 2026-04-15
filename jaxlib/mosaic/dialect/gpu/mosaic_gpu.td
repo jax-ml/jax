@@ -660,9 +660,15 @@ def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
 }
 
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
-  let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
+  let summary = "Constructs a SMEM ref starting at the specified offset";
+  let description = [{
+    Constructs a SMEM ref starting at the specified offset.
 
-  let arguments = (ins ConfinedAttr<I32Attr, [IntNonNegative]>:$offset);
+    `slice_smem` may optionally carry an `alias_id` attribute that is used to
+    differentiate between potentially aliasing allocations.
+  }];
+
+  let arguments = (ins ConfinedAttr<I32Attr, [IntNonNegative]>:$offset, OptionalAttr<I32Attr>:$alias_id);
   let results = (outs AnyMemRef);
 }
 

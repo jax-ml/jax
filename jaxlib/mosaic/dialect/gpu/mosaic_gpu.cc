@@ -1132,8 +1132,8 @@ struct FoldMGPUReinterpretCastOfSliceSMEM
     }
 
     MemRefType result_type = op.getResult().getType();
-    rewriter.replaceOpWithNewOp<SliceSMEMOp>(op, result_type,
-                                             slice_op.getOffset());
+    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
+        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
     return mlir::success();
   }
 };

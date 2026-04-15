@@ -15,12 +15,14 @@
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
 from collections.abc import Callable
+import inspect
+
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
 from jax._src import config
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -1724,6 +1726,9 @@ ir.MLIRError,
     # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
     if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
       self.skipTest("ReinterpretCastOp is not available.")
+    # TODO(bchetioui): Remove once min version of jaxlib is 0.10.0.
+    if not "alias_id" in inspect.signature(mgpu.dialect.slice_smem).parameters:
+      self.skipTest("slice_smem does not support alias_id.")
 
     shape, new_shape = (4, 8), (16, 2)
     ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu_utils.smem())
@@ -1733,11 +1738,12 @@ ir.MLIRError,
         layout=ir.StridedLayoutAttr.get(0, [1, 16]),
         memory_space=ty.memory_space,
     )
+    alias_id = 0x1337
     with ir.InsertionPoint(self.module.body):
       fn = func.FuncOp("test_fn", ir.FunctionType.get([], [new_ty]))
       block = fn.add_entry_block()
       with ir.InsertionPoint(block):
-        ref = mgpu.dialect.slice_smem(ty, 0)
+        ref = mgpu.dialect.slice_smem(ty, 0, alias_id=alias_id)
         result = mgpu.dialect.reinterpret_cast(new_ty, ref)
         func.ReturnOp([result])
 
@@ -1751,6 +1757,7 @@ ir.MLIRError,
         lambda op: op.name == mgpu.dialect.SliceSMEMOp.OPERATION_NAME,
     )
     self.assertEqual(slice_smem_op.result.type, new_ty)
+    self.assertEqual(slice_smem_op.alias_id.value, alias_id)
 
   def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
     # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
