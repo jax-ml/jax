@@ -606,6 +606,18 @@ class AsyncCopyImplementation(enum.Enum):
   CP_ASYNC = enum.auto()
 
 
+def get_collective_metadata_size(num_params: int, num_peers: int) -> int:
+  """Returns the size of the collective metadata buffer for the given number of parameters and peers."""
+  return (
+      # Stores the collective metadata structure.
+      COLLECTIVE_METADATA_SIZE
+      # For each peer we need to store a pointer to each parameter.
+      + num_peers * num_params
+      # For each parameter we need to store a pointer to the multimem address.
+      + num_params
+  )
+
+
 class OOBFillMode(enum.IntEnum):
   UNDEFINED = 0
   PROMISE_IN_BOUNDS = 1
@@ -617,9 +629,9 @@ class LaunchContext:
   module: ir.Module
   scratch: Scratch
   cluster_size: tuple[int, int, int]
+  buffers: ir.Value
   profiler: OnDeviceProfiler | None = None
   device_collective_metadata: ir.Value | None = None
-  host_collective_metadata: ir.Value | None = None
   num_peers: int = 0
   num_params: int = 0
   tma_descriptors: dict[
@@ -635,6 +647,21 @@ class LaunchContext:
         yield
     else:
       yield
+
+  @property
+  def host_collective_metadata(self) -> ir.Value | None:
+    if self.device_collective_metadata is None:
+      return None
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    metadata_ty = ir.MemRefType.get(
+      (get_collective_metadata_size(self.num_params, self.num_peers),),
+      ir.IntegerType.get_signless(64),
+    )
+
+    host_metadata_ptr = llvm.load(
+      ptr_ty, utils.getelementptr(self.buffers, [self.num_params + 1], ptr_ty)
+    )
+    return utils.ptr_as_memref(host_metadata_ptr, metadata_ty)
 
   def _alloc_scratch(
       self,
