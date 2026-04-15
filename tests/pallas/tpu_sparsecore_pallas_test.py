@@ -1006,18 +1006,27 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes, dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
 
-  def test_ref_bitcast(self):
-    # TODO: b/443906446 - Remove the skip once we can lower such bitcasts.
-    self.skipTest("Ref bitcast is not supported yet")
-
+  def test_load_from_bitcast(self):
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.uint32),
+        out_shape=jax.ShapeDtypeStruct((1, self.num_lanes), jnp.uint32),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref.bitcast(o_ref.dtype)[...]
+      o_ref[0] = x_ref.bitcast(o_ref.dtype)[0]
 
-    x = jnp.arange(self.num_lanes, dtype=jnp.float32)
+    x = jnp.arange(self.num_lanes, dtype=jnp.float32)[None]
     np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
+
+  def test_store_to_bitcast(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(1, self.num_lanes), dtype=jnp.int32)
+    )
+    def kernel(o_ref):
+      o_ref_i16 = o_ref.bitcast(jnp.int16)
+      o_ref_i16[...] = jnp.ones_like(o_ref_i16)
+
+    out = kernel()
+    expected = jnp.full((1, self.num_lanes), 65537, dtype=jnp.int32)
+    np.testing.assert_array_equal(out, expected)
 
   @parameterized.product(
       pack_format=[*plsc.PackFormat],

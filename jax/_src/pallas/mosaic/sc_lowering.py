@@ -644,7 +644,7 @@ def _load_lowering_rule(
 
   _check_aval_is_supported("Get", out_aval)
   vec_type = ir.VectorType.get(
-      out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)
+      out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
   return tpu.vector_load(vec_type, ref, indices=starts, strides=[], mask=mask)
 
@@ -728,7 +728,7 @@ def _store_lowering_rule(
 
   _check_aval_is_supported("Swap", out_aval)
   vec_type = ir.VectorType.get(
-      out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)
+      out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
   old_val = tpu.vector_load(vec_type, ref, starts, strides=[], mask=mask)
   tpu.vector_store(val, ref, starts, strides=[], mask=mask, add=add)
