@@ -3693,7 +3693,6 @@ def _check_sharding(sharding, shape):
     sharding.check_compatible_aval(shape)
 
 @set_module("jax")
-@immutable
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
 
@@ -3707,22 +3706,12 @@ class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type",
                "manual_axis_type", "is_ref"]
 
-  shape: Any
-  dtype: Any
-  _sharding: Any
-  _dll: Any
-  weak_type: Any
-  manual_axis_type: Any
-  is_ref: Any
-
-  def __new__(cls, shape, dtype, *, sharding=None, weak_type=False,
+  def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
                manual_axis_type=None, is_ref=False):
-    obj = object.__new__(cls)
-    object.__setattr__(obj, 'shape', tuple(shape))
+    self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
-    dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    object.__setattr__(obj, 'dtype', dtype)
+    self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
     if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
       raise ValueError(
           "sharding should be an instance of `jax.sharding.Sharding`, "
@@ -3734,22 +3723,20 @@ class ShapeDtypeStruct:
       raise TypeError(
           "`Layout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    object.__setattr__(
-      obj, '_dll', sharding.layout if isinstance(sharding, Format) else None)
-    object.__setattr__(
-      obj, '_sharding', sharding.sharding if isinstance(sharding, Format) else sharding)
-    _check_sharding(obj._sharding, obj.shape)
-    object.__setattr__(obj, 'weak_type', weak_type)
+    self._sharding = (sharding.sharding if isinstance(sharding, Format)
+                      else sharding)
+    _check_sharding(self._sharding, self.shape)
+    self._dll = sharding.layout if isinstance(sharding, Format) else None
+    self.weak_type = weak_type
     if (manual_axis_type is not None
         and not isinstance(manual_axis_type, ManualAxisType)):
       raise TypeError(
           "`manual_axis_type` argument passed to ShapeDtypeStruct should be of"
           " type `jax.sharding.ManualAxisType`. Got type"
           f" {type(manual_axis_type)}")
-    object.__setattr__(obj, 'manual_axis_type',
-                       None if manual_axis_type is None else manual_axis_type)
-    object.__setattr__(obj, 'is_ref', is_ref)
-    return obj
+    self.manual_axis_type = (None if manual_axis_type is None
+                             else manual_axis_type)
+    self.is_ref = is_ref
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -3801,18 +3788,21 @@ class ShapeDtypeStruct:
                other.weak_type, other.manual_axis_type, other.is_ref))
 
   def __hash__(self):
+    # TODO(frostig): avoid the conversion from dict by addressing
+    # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self._dll,
                  self.weak_type, self.manual_axis_type, self.is_ref))
 
-  def __getnewargs_ex__(self):
-    return (), {
-        'shape': self.shape,
-        'dtype': self.dtype,
-        'sharding': self.format,
-        'weak_type': self.weak_type,
-        'manual_axis_type': self.manual_axis_type,
-        'is_ref': self.is_ref
-    }
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      if getattr(self, name) == value:
+        # This can happen if two threads race, for example if two threads
+        # are trying to hash the same SDS instance.
+        return
+      raise RuntimeError(
+          f"Cannot reassign attributes ({name}) of immutable ShapeDtypeStruct"
+          " objects")
+    super().__setattr__(name, value)
 
   def update(self, **kwargs):
     if 'sharding' in kwargs:
