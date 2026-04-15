@@ -250,7 +250,7 @@ def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
   if obj is None:
     obj = default_float_dtype()
   elif issubdtype(obj, extended):
-    return obj  # type: ignore[return-value]
+    return obj  # pyrefly: ignore[bad-return]
   elif isinstance(obj, type) and (f := _DEFAULT_TYPEMAP.get(obj)) is not None:
     obj = f()
   return np.dtype(obj, align=align, copy=copy)
@@ -1022,7 +1022,7 @@ def dtype(x: Any) -> DType:
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
   # TODO(jakevdp): fix return type annotation and remove this ignore.
-  return canonicalize_dtype(dt, allow_extended_dtype=True)  # type: ignore[return-value]
+  return canonicalize_dtype(dt, allow_extended_dtype=True)  # pyrefly: ignore[bad-return]
 
 def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))

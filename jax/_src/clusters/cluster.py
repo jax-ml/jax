@@ -83,8 +83,8 @@ class ClusterEnv:
       # Otherwise local_device_ids will remain unset,
       # which will default to all devices being visible.
       if (local_device_ids is None and not running_in_cloud_tpu_vm and
-          env.get_local_process_id() is not None):
-        local_device_ids = [env.get_local_process_id()] # type: ignore[list-item]
+          (pid := env.get_local_process_id()) is not None):
+        local_device_ids = [pid]
     else:
       logger.debug('Could not find a known environment for initializing distributed JAX. '
         'Known environments: %s', ', '.join(e.__name__ for e in cls._cluster_types))

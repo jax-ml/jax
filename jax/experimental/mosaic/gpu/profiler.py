@@ -38,7 +38,7 @@ from .utils import *  # noqa: F403
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
-  mosaic_gpu_lib = None  # type: ignore[assignment]
+  mosaic_gpu_lib = None
 
 # ruff: noqa: F405
 

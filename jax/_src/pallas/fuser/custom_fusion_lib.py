@@ -162,7 +162,7 @@ def _custom_fusion_impl(
     num_consts: int,
     pallas_num_consts: int,
     **_):
-  consts, _, args = util.split_list(args, [num_consts, pallas_num_consts])  # type: ignore[assignment]
+  consts, _, args = util.split_list(args, [num_consts, pallas_num_consts])
   return core.eval_jaxpr(jaxpr, consts, *args)
 
 mlir.register_lowering(custom_fusion_p, mlir.lower_fun(

@@ -1373,7 +1373,7 @@ core_map_p.multiple_results = True
 def _core_map_is_high(*avals, jaxpr, **params):
   del avals, params
   return jaxpr.is_high
-core_map_p.is_high = _core_map_is_high  # type: ignore[method-assign]
+core_map_p.is_high = _core_map_is_high
 
 def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
   closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)

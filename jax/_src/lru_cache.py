@@ -181,7 +181,7 @@ class LRUCache(CacheInterface):
       # `pathlib` and `etils[epath]` have different API for obtaining the size
       # of a file, and we need to support them both.
       # See also https://github.com/google/etils/issues/630
-      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # type: ignore[missing-attribute]
+      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # pyrefly: ignore[missing-attribute]
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"

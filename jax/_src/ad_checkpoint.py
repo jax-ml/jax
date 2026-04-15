@@ -798,7 +798,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts = in_cts[len(consts):]
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
-    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # type: ignore[missing-attribute]
+    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # pyrefly: ignore[missing-attribute]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
@@ -807,7 +807,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # type: ignore[missing-attribute]
+  return transposed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
