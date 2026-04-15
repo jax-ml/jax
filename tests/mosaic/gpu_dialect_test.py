@@ -1737,9 +1737,7 @@ ir.MLIRError,
       fn = func.FuncOp("test_fn", ir.FunctionType.get([], [new_ty]))
       block = fn.add_entry_block()
       with ir.InsertionPoint(block):
-        ref = mgpu.dialect.slice_smem(
-            ty, offset=mgpu_utils.c(0, ir.IntegerType.get_signless(32)),
-        )
+        ref = mgpu.dialect.slice_smem(ty, 0)
         result = mgpu.dialect.reinterpret_cast(new_ty, ref)
         func.ReturnOp([result])
 
@@ -1990,11 +1988,9 @@ class DialectLoweringTest(MosaicGpuTest):
 
   def test_lowering_slice_smem_op(self):
     with ir.InsertionPoint(self.module.body):
-      shift = 1234
       i32 = ir.IntegerType.get_signless(32)
-      memref_ty = ir.MemRefType.get((4, 32), i32, memory_space=mgpu_utils.smem())
-      offset = arith.constant(i32, shift)
-      op = mgpu.dialect.SliceSMEMOp(memref_ty, offset)
+      ty = ir.MemRefType.get((4, 32), i32, memory_space=mgpu_utils.smem())
+      op = mgpu.dialect.SliceSMEMOp(ty, 1234)
       op.attributes["out_transforms"] = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
 
     mgpu.lower_mgpu_dialect(self.module, None)

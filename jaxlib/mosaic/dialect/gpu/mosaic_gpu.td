@@ -61,7 +61,7 @@ def MosaicGPU_Barrier : MosaicGPU_Type<"Barrier", "barrier", [MemRefElementTypeI
     (`<` `orders_tensor_core` `=` $orders_tensor_core^ `>`)?
   }];
 }
- 
+
 def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;
 
 def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
@@ -662,7 +662,7 @@ def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
 
-  let arguments = (ins I32:$offset);
+  let arguments = (ins ConfinedAttr<I32Attr, [IntNonNegative]>:$offset);
   let results = (outs AnyMemRef);
 }
 

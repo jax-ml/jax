@@ -769,7 +769,7 @@ def _vector_reduction_op_lowering_rule(
   element_type = op.vector.type.element_type
   scratch = _slice_smem(
       ir.MemRefType.get([4], element_type, memory_space=utils.smem()),
-      arith.constant(None, op.attributes["offset"]),  # pyrefly: ignore[bad-argument-type]
+      ir.IntegerAttr(op.attributes["offset"]).value,
       ctx.smem_requested_bytes,
   )
   axes = range(op.vector.type.rank)
@@ -818,7 +818,7 @@ def _vector_multi_dim_reduction_op_lowering_rule(
     allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
     scratch = _slice_smem(
         ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
-        arith.constant(None, op.attributes["offset"]),  # pyrefly: ignore[bad-argument-type]
+        ir.IntegerAttr(op.attributes["offset"]).value,
         ctx.smem_requested_bytes,
     )
   else:
@@ -1682,36 +1682,35 @@ def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   ref_ty = ir.MemRefType(op.result.type)
+  offset = op.offset.value  # pyrefly: ignore[missing-attribute]
   if isinstance(ref_ty.element_type, mgpu.BarrierType):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
-    return [_slice_smem(ref_ty, op.offset, ctx.smem_requested_bytes)]
+    return [_slice_smem(ref_ty, offset, ctx.smem_requested_bytes)]
 
   [out_transforms] = inference_utils.out_transforms(op)
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   transformed_ref_ty = transform_type(ref_ty, transforms)
-  transformed_ref = _slice_smem(transformed_ref_ty, op.offset, ctx.smem_requested_bytes)
+  transformed_ref = _slice_smem(transformed_ref_ty, offset, ctx.smem_requested_bytes)
   return [wrap_transformed_memref(transformed_ref, op.result.type, out_transforms)]
 
 
-def _slice_smem(result: ir.MemRefType, offset: ir.Value, smem_size: int):
-  if isinstance(owner := offset.owner, arith.ConstantOp):
-    cst_offset = ir.IntegerAttr(owner.value).value
-    size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
-    if cst_offset + size > smem_size:
-      raise ValueError("Ran out of shared memory.")
+def _slice_smem(result: ir.MemRefType, offset: int, smem_size: int):
+  size = math.prod(result.shape) * utils.bitwidth(result.element_type) // 8
+  if offset + size > smem_size:
+    raise ValueError("Ran out of shared memory.")
 
   i8 = ir.IntegerType.get_signless(8)
   smem_base = gpu.dynamic_shared_memory(
       ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
   )
-  offset = arith.index_cast(ir.IndexType.get(), offset)
+  ir_offset = arith.constant(ir.IndexType.get(), offset)
   lowered_result_type = result
   if isinstance(result.element_type, mgpu.BarrierType):
     lowered_result_type = ir.MemRefType.get(
         result.shape, _lowered_barrier_type(), memory_space=utils.smem()
     )
-  view = memref.view(lowered_result_type, smem_base, offset, [])
+  view = memref.view(lowered_result_type, smem_base, ir_offset, [])
   if result == lowered_result_type:
     return view
   return builtin.unrealized_conversion_cast([result], [view])

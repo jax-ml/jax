@@ -548,7 +548,6 @@ class ModuleContext:
     """
     smem_base = None
     i8 = ir.IntegerType.get_signless(8)
-    i32 = ir.IntegerType.get_signless(32)
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       smem_base = gpu_dialect.dynamic_shared_memory(
           ir.MemRefType.get(
@@ -569,7 +568,7 @@ class ModuleContext:
       assert smem_base is not None
       view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
     else:
-      view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
+      view = mgpu.dialect.slice_smem(scratch_ty, off)  # pyrefly: ignore[bad-argument-type]
 
     off += gpu_core.align_to(
         math.prod(struct.shape)
@@ -1480,23 +1479,13 @@ def _extract_aliased_ref(
                   "The base ref for aliases must come from a slice_smem op."
               )
 
-            base_offset_op = ref.owner.offset.owner
-            if not isinstance(base_offset_op, arith_dialect.ConstantOp):
-              # This restriction exists in order to have an easy way to identify
-              # the RefUnion to which an alias belongs. The restriction can be
-              # lifted by uniquely identifying RefUnions in some other way, e.g.
-              # keeping a map[ref] -> unique_id in the lowering context.
-              raise NotImplementedError(
-                  "Only constant offsets are supported for base refs."
-              )
-            base_offset = base_offset_op.value.value
+            base_offset = ref.owner.offset.value  # pyrefly: ignore[missing-attribute]
             total_offset = base_offset + offset
-            total_offset_const = _i32_constant(total_offset)
 
             ref_ty = ir.MemRefType.get(
                 transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
             )
-            slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset_const)
+            slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset)
 
             # The alias ID that is generated here needs to be unique for each
             # alias across:

@@ -2007,10 +2007,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
-      i32 = ir.IntegerType.get_signless(32)
-      [offset] = undefs(i32)
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      slice_smem_op = mgpu.dialect.SliceSMEMOp(ref_ty, offset)
+      slice_smem_op = mgpu.dialect.SliceSMEMOp(ref_ty, 0)
 
       transforms = ir.ArrayAttr.get([])
       mgpu.infer_layout(self.module)
@@ -2022,11 +2020,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
-      i32 = ir.IntegerType.get_signless(32)
-      [offset] = undefs(i32)
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
 
-      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, offset) for _ in range(6)]
+      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, 0) for _ in range(6)]
       ops[2].attributes["alias_id"] = ir.StringAttr.get("a")
       ops[3].attributes["alias_id"] = ir.StringAttr.get("a")
       ops[4].attributes["alias_id"] = ir.StringAttr.get("b")
@@ -2067,11 +2063,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
-      i32 = ir.IntegerType.get_signless(32)
-      [offset] = undefs(i32)
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
 
-      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, offset) for _ in range(2)]
+      ops = [mgpu.dialect.SliceSMEMOp(ref_ty, 0) for _ in range(2)]
       ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
       ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
 

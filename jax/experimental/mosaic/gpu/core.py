@@ -418,14 +418,14 @@ class _TMEMDialectAlloc:
 def _slice_smem(
     result: ir.Type,
     smem_base: ir.Value,
-    offset: ir.Value,  # This should be an ir.IndexType.
+    offset: int,
     lowering_semantics: LoweringSemantics,
 ) -> ir.Value:
   if lowering_semantics == LoweringSemantics.Warpgroup:
-    offset = arith.index_cast(ir.IntegerType.get_signless(32), offset)
-    return dialect.slice_smem(result, offset)
+    return dialect.slice_smem(result, offset)  # pyrefly: ignore[bad-argument-type]
   else:
-    return memref.view(result, smem_base, offset, [])
+    ir_offset = arith.constant(ir.IndexType.get(), offset)
+    return memref.view(result, smem_base, ir_offset, [])
 
 
 def _construct_smem_reftree(
@@ -438,7 +438,6 @@ def _construct_smem_reftree(
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
-  index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
@@ -459,7 +458,7 @@ def _construct_smem_reftree(
       barrier_memref = _slice_smem(
             barrier_ty,
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
       dynamic_smem_offset += num_barriers * utils.MBARRIER_BYTES
@@ -513,7 +512,7 @@ def _construct_smem_reftree(
         addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=utils.smem()),
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
         packing = 1 if packing is None else packing
@@ -549,7 +548,7 @@ def _construct_smem_reftree(
         tile_smem = _slice_smem(
             ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=utils.smem()),
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
         dynamic_smem_offset += _count_buffer_bytes(ref_ty)
@@ -686,7 +685,7 @@ def _launch(
               memory_space=utils.smem(),
           ),
           dynamic_smem,
-          c(profiler_start, index),  # pyrefly: ignore[unbound-name]
+          profiler_start,  # pyrefly: ignore[unbound-name]
           lowering_semantics,
       )
       if lowering_semantics == LoweringSemantics.Warpgroup:
