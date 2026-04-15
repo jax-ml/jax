@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import basearray
@@ -175,6 +175,7 @@ def _validate_shape_and_dtype_for_per_device_arrays(
       )
 
 
+@use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
   aval: core.ShapedArray
   _sharding: Sharding
@@ -638,13 +639,6 @@ class ArrayImpl(basearray.Array):
       self._npy_value = npy_value
       self._npy_value.flags.writeable = False
     return self._npy_value
-
-
-# TODO(b/273265390): ideally we would write this as a decorator on the ArrayImpl
-# class, however this triggers a pytype bug. Workaround: apply the decorator
-# after the fact.
-if not TYPE_CHECKING:
-  ArrayImpl = use_cpp_class(xc.ArrayImpl)(ArrayImpl)
 
 
 def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
