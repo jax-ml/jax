@@ -400,38 +400,55 @@ class IsTransferableTmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
 
   In this case, one of `source` and `target` must be in TMEM, and the other must
-  be in registers.
+  be in registers. `bitwidth` is the bitwidth of the element type.
   """
+  bitwidth: int
 
-  def supported_tmem_transfers(
-      self, packing: int
-  ) -> list[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
-    """Returns the list of supported TMEM <-> Register transfers."""
+  def __post_init__(self):
     assert len(self.shape) == 2
-    columns = self.shape[1]
-    tmem_default_layout = tcgen05.tmem_default_layout(packing)
-    return [
-        (tmem_default_layout, fa.TCGEN05_LAYOUT),
-        (tmem_default_layout, fa.TMEM_NATIVE_LAYOUT),
-        (tcgen05.tmem_half_lane_layout(columns, packing), fa.WGMMA_LAYOUT),
-        (
-            tcgen05.tmem_m64_collective_layout(columns, packing),
-            tcgen05.fa_m64_collective_layout(columns),
-        ),
-    ]
+    assert 0 < self.bitwidth <= 32
 
-  def _is_valid_tmem_transfer(
+  def is_valid_tmem_transfer(
       self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
   ) -> bool:
+    if not isinstance(reg_layout, fa.TiledLayout):
+      return False
     packing = tmem_layout.vector_length
-    return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
+    columns = self.shape[1]
+    if (
+        reg_layout == fa.TCGEN05_LAYOUT
+        and tmem_layout == tcgen05.tmem_default_layout(packing)
+    ):
+      return True
+    if (
+        reg_layout == tmem_layout.as_tiled_layout()
+        and packing * self.bitwidth == 32
+    ):
+      return True
+    if (
+        reg_layout == fa.TMEM_NATIVE_LAYOUT
+        and tmem_layout == tcgen05.tmem_default_layout(packing)
+        and ((self.bitwidth == 16 and packing == 1) or self.bitwidth == 32)
+    ):
+      return True
+    if (
+        reg_layout == fa.WGMMA_LAYOUT
+        and tmem_layout == tcgen05.tmem_half_lane_layout(columns, packing)
+    ):
+      return True
+    if (
+        reg_layout == tcgen05.fa_m64_collective_layout(columns)
+        and tmem_layout == tcgen05.tmem_m64_collective_layout(columns, packing)
+    ):
+      return True
+    return False
 
   def holds(self) -> bool | None:
     match self.source, self.target:
       case RegisterLayout(value=src), TMEMLayout(value=dst):
-        return self._is_valid_tmem_transfer(dst, src)
+        return self.is_valid_tmem_transfer(dst, src)
       case TMEMLayout(value=src), RegisterLayout(value=dst):
-        return self._is_valid_tmem_transfer(src, dst)
+        return self.is_valid_tmem_transfer(src, dst)
       case Constant(), Constant():
         raise ValueError(
             f"{self.source} -> {self.target} is not a TMEM <-> Registers"

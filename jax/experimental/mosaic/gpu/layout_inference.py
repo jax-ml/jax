@@ -280,35 +280,49 @@ def _conjure_tilings_for_smem_ref(
 def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
-  src, tgt = constraint.source, constraint.target
-  match src, tgt:
-    case cs.Variable(), cs.Constant():
-      variable, constant = src, tgt
-    case cs.Constant(), cs.Variable():
-      variable, constant = tgt, src
-    case _:
+
+  def register_layout_candidates(
+      tmem_layout: cs.TMEMLayout,
+  ) -> Iterator[cs.RegisterLayout]:
+    columns = constraint.shape[1]
+    for candidate in (
+        fa.TCGEN05_LAYOUT,
+        tmem_layout.value.as_tiled_layout(),
+        fa.TMEM_NATIVE_LAYOUT,
+        fa.WGMMA_LAYOUT,
+        tcgen05.fa_m64_collective_layout(columns),
+    ):
+      if constraint.is_valid_tmem_transfer(tmem_layout.value, candidate):
+        yield cs.RegisterLayout(candidate)
+
+  def tmem_layout_candidates(
+      reg_layout: cs.RegisterLayout,
+  ) -> Iterator[cs.TMEMLayout]:
+    if not isinstance(reg_layout.value, fa.TiledLayout):
       return
-
-  assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
-  if isinstance(constant, cs.RegisterLayout):
-    layout = constant.value
-    assert variable.key.memory_space == MemorySpace.TMEM
-    dtype = ir.MemRefType(variable.key.value.type).element_type
-    for packing in (1, 32 // utils.bitwidth(dtype)):
-      for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
-          packing
+    columns = constraint.shape[1]
+    for packing in dict.fromkeys([32 // constraint.bitwidth, 1]):
+      for candidate in (
+          tcgen05.tmem_default_layout(packing),
+          tcgen05.tmem_half_lane_layout(columns, packing),
+          tcgen05.tmem_m64_collective_layout(columns, packing),
       ):
-        if layout == reg_layout:
-          yield variable, cs.TMEMLayout(tmem_layout)
-    return
+        if constraint.is_valid_tmem_transfer(candidate, reg_layout.value):
+          yield cs.TMEMLayout(candidate)
 
-  assert isinstance(constant, cs.TMEMLayout)
-  assert variable.key.memory_space == MemorySpace.REG
-  layout = constant.value
-  packing = layout.vector_length
-  for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
-    if layout == tmem_layout:
-      yield variable, cs.RegisterLayout(reg_layout)
+  match constraint.source, constraint.target:
+    case cs.Variable() as variable, cs.TMEMLayout() as layout:
+      for layout in register_layout_candidates(layout):
+        yield variable, layout
+    case cs.TMEMLayout() as layout, cs.Variable() as variable:
+      for layout in register_layout_candidates(layout):
+        yield variable, layout
+    case cs.Variable() as variable, cs.RegisterLayout() as layout:
+      for layout in tmem_layout_candidates(layout):
+        yield variable, layout
+    case cs.RegisterLayout() as layout, cs.Variable() as variable:
+      for layout in tmem_layout_candidates(layout):
+        yield variable, layout
 
 
 def _extract_layout_candidates_from_smem_registers_transfer(
@@ -399,7 +413,15 @@ def _extract_variable_assignments_from_constraints(
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to extract variable assignments from all constraints."""
   dpv = _divides_per_var(constraints)
-  for c in constraints:
+  def priority(constraint: cs.Constraint) -> int:
+    match constraint:
+      # We want to minimize the number of relayouts in the kernel, so we first
+      # try to satisfy relayout constraints via identity relayouts.
+      case cs.Relayout():
+        return 0  # Highest priority
+      case _:
+        return 1
+  for c in sorted(constraints, key=priority):
     match c:
       case cs.IsTransferableTmemRegisters():
         yield from _extract_layout_candidates_from_tmem_registers_transfer(c)
@@ -1558,6 +1580,7 @@ def _async_load_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
+      bitwidth=utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),
@@ -1682,6 +1705,7 @@ def _async_store_tmem_constraint_system(
       source_variable,
       destination_variable,
       tuple(ir.ShapedType(op.source.type).shape),
+      bitwidth=utils.bitwidth(op.source.type.element_type),
   )
   return (
       cs.ConstraintSystem(constraints=[constraint]),

@@ -777,6 +777,30 @@ class LayoutInferenceTest(parameterized.TestCase):
         constraint, cs.Relayout(x_variable, lc_op_variable, 16, strict=True)
     )
 
+  def test_conjure_assignment_prioritizes_relayout(self):
+    shape = (128, 128)
+
+    v1 = cs.Variable(
+        MockVariableKey(1, shape, layout_inference.MemorySpace.REG)
+    )
+    # Use a TiledLayout so it doesn't get pushed to low priority in conjure_assignment
+    layout = cs.RegisterLayout(mgpu.WGMMA_LAYOUT)
+    relayout_constraint = cs.Relayout(v1, layout, 16)
+
+    v2 = cs.Variable(
+        MockVariableKey(2, shape, layout_inference.MemorySpace.REG)
+    )
+    tmem_layout = tcgen05.tmem_default_layout(packing=1)
+    transfer_constraint = cs.IsTransferableTmemRegisters(
+        v2, cs.TMEMLayout(tmem_layout), shape, bitwidth=32
+    )
+
+    constraints = [transfer_constraint, relayout_constraint]
+    assignments = layout_inference.conjure_assignment(
+        [v1, v2], cs.ConstraintSystem(constraints=constraints), arch=(9, 0)
+    )
+    self.assertEqual(next(assignments), (v1, layout))
+
   @parameterized.parameters(*layout_inference.MemorySpace)
   def test_relayout_only_derived_for_registers(self, memory_space):
     with ir.InsertionPoint(self.module.body):
@@ -821,7 +845,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     v0 = V(MockVariableKey(0, (128, 128), layout_inference.MemorySpace.REG))
     tmem_layout = tcgen05.tmem_default_layout(packing=1)
     constraint = cs.IsTransferableTmemRegisters(
-        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128),
+        v0, cs.TMEMLayout(tmem_layout), shape=(128, 128), bitwidth=32
     )
     assignments, _ = layout_inference.find_assignments_for(
         {v0},

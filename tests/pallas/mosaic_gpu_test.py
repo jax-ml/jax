@@ -4297,7 +4297,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(160)
   )
   def test_tmem_store_load_collective(self, layout):
-    self.skip_if_wg_semantics()  # Failed to infer a possible set of layouts.
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((64, 160), jnp.float32),
@@ -4355,8 +4354,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:
       self.skipTest("m=64 not supported for LHS in TMEM")
-    if lhs_tmem:
-      self.skip_if_wg_semantics()  # Layout inference fails to find a solution.
     k = 128
     is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
     o_dtype = jnp.int32
