@@ -1188,19 +1188,53 @@ def _eig_gpu_lowering(ctx, operand, *,
     output.append(vr)
   return output
 
+def _eig_vec_jvp(dot, w, v, da):
+  # Nondegenerate perturbation theory, see e.g. Sec 3.1 of
+  # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+  # The eigenvalue equation A v_j = w_j v_j fixes v_j only up to a (complex)
+  # scalar. LAPACK's geev fixes that scalar by normalising each v_j to have unit
+  # 2-norm and real largest-magnitude component, and we differentiate through
+  # that choice. See https://github.com/jax-ml/jax/issues/2748 for discussion.
+  n = w.shape[-1]
+  eye_n = lax._eye(w.dtype, (n, n))
+  with config.numpy_rank_promotion('allow'):
+    Fmat = lax.reciprocal(eye_n + w[..., None, :] - w[..., None]) - eye_n
+  P = dot(_solve(v, da), v)
+  dw = _extract_diagonal(P)
+  U = dot(v, Fmat * P)
+  # The eigenvalue equation gives dv_j = u_j + c_j v_j with c_j free; the two
+  # real LAPACK normalisation constraints fix c_j to
+  #   c_j = -Re(v_j* . u_j) - i Im(u_{k_j j}) / v_{k_j j},  k_j = argmax_i |v_ij|.
+  k = lax.argmax(lax.abs(v), axis=v.ndim - 2, index_dtype=np.int32)
+  mask = (lax.broadcasted_iota(np.int32, v.shape, v.ndim - 2)
+          == lax.expand_dims(k, (v.ndim - 2,))).astype(v.dtype)
+  c = lax.complex(-(v.conj() * U).sum(-2).real,
+                  -(mask * U).sum(-2).imag / (mask * v).sum(-2).real)
+  return dw, U + v * lax.expand_dims(c, (v.ndim - 2,))
+
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
                  compute_right_eigenvectors, implementation):
-  if compute_left_eigenvectors or compute_right_eigenvectors:
-    raise NotImplementedError(
-        'The derivatives of non-symmetric eigenvectors are not supported. '
-        'Only first-order derivatives of eigenvalues are supported. See '
-        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
-  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
-  # https://arxiv.org/abs/1701.00392
   a, = primals
   da, = tangents
-  l, v = eig(a, compute_left_eigenvectors=False, implementation=implementation)
-  return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
+  outs = eig(a, compute_left_eigenvectors=compute_left_eigenvectors,
+             compute_right_eigenvectors=True, implementation=implementation)
+  w, vr = outs[0], outs[-1]
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+  da = da.astype(vr.dtype)
+  if not (compute_left_eigenvectors or compute_right_eigenvectors):
+    return [w], [(_solve(vr, da) * _T(vr)).sum(-1)]
+  dw, dvr = _eig_vec_jvp(dot, w, vr, da)
+  primal_out, tangent_out = [w], [dw]
+  if compute_left_eigenvectors:
+    vl = outs[1]
+    _, dvl = _eig_vec_jvp(dot, w.conj(), vl, _H(da))
+    primal_out.append(vl)
+    tangent_out.append(dvl)
+  if compute_right_eigenvectors:
+    primal_out.append(vr)
+    tangent_out.append(dvr)
+  return primal_out, tangent_out
 
 eig_p = linalg_primitive(
     _eig_dtype_rule, (_float | _complex,), (2,), _eig_shape_rule, "eig",

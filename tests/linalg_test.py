@@ -403,6 +403,23 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    shape=[(4, 4), (5, 5), (3, 4, 4)],
+    dtype=float_types + complex_types,
+    left_right=[(False, True), (True, False), (True, True)],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGrad(self, shape, dtype, left_right):
+    # Small matrices only; the eigenvector derivative blows up like
+    # 1/min|w_i - w_j| so close eigenvalues make the FD check noisy.
+    left, right = left_right
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    tol = 1e-4 if dtype in (np.float64, np.complex128) else 5e-1
+    f = partial(lax.linalg.eig, compute_left_eigenvectors=left,
+                compute_right_eigenvectors=right)
+    jtu.check_grads(f, (a,), order=1, modes=['fwd', 'rev'], rtol=tol, atol=tol)
+
+  @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )
