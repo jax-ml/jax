@@ -23,11 +23,18 @@ Pallas allows you to use the same JAX functions and APIs but operates at a
 
 Specifically, Pallas requires users to think about memory access and how to
 divide up computations across multiple compute units in a hardware accelerator.
-On GPUs, Pallas lowers to Triton and on TPUs, Pallas lowers to Mosaic.
+On GPUs, Pallas lowers to Mosaic GPU, and on TPUs, Pallas lowers to Mosaic.
 
 Let's dive into some examples.
 
 > Note: Pallas is still an experimental API and you may be broken by changes!
+
+> Note: when using the Mosaic GPU backend, only Hopper and newer GPUs are
+> supported.
+
+> Note: there also exists a Triton backend on GPU, but it is maintained only on
+> a best-effort basis, and is not recommended for use. The Triton backend
+> supports GPUs down to Ampere.
 
 +++
 
