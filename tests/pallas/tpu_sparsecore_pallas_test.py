@@ -494,7 +494,9 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_scatter_1d_array_from_transformed_src(self):
-    self.skip_if_tc_tiling()
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 20):
+      self.skipTest("Needs a newer libtpu")
+
     x = jnp.arange(2 * self.num_lanes).reshape(2, -1)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
 
@@ -528,7 +530,9 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d_to_transformed_dst(self, kind):
-    self.skip_if_tc_tiling()
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 20):
+      self.skipTest("Needs a newer libtpu")
+
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -1803,7 +1807,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scatter_add(self, dtype):
-    self.skip_if_tc_tiling()
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 20):
+      self.skipTest("Needs a newer libtpu")
 
     shape = (self.sc_info.num_subcores, 32)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
@@ -2104,7 +2109,7 @@ class VectorSubcoreTest(PallasSCTest):
     """Regression test: SC pipeline with grid > 64 previously deadlocked."""
     if not jtu.is_cloud_tpu_at_least(2026, 4, 26):
       self.skipTest("Needs newer libtpu")
-    self.skip_if_tc_tiling()
+
     n = self.num_lanes * grid
 
     @self.vector_subcore_kernel(
