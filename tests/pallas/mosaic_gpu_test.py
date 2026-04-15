@@ -3291,7 +3291,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     super().setUp()
 
   def test_axis_index(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((2, 128), jnp.int32))
     def kernel(y_ref):
@@ -3300,9 +3299,8 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         ones_smem_ref[:] = jnp.ones((1, 128), jnp.int32)
         threes_smem_ref[:] = jnp.ones((1, 128), jnp.int32) * 3
         plgpu.commit_smem()
-        @pl.core_map(warp_mesh)
-        def _():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _(warp_id):
           # We cannot load/store inside of core_map, so we issue async
           # copies instead to produce a testable result.
           @pl.when(warp_id == 1)
@@ -3323,7 +3321,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_axis_index_multi_warpgroup(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
                        num_threads=2,
@@ -3331,35 +3328,30 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                        )
     def kernel(out_ref):
       wg_idx = lax.axis_index("wg")
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         out_ref[wg_idx * 4 + warp_id] = warp_id
     result = kernel()
     expected = jnp.concatenate([jnp.arange(4, dtype=jnp.int32)] * 2)
     np.testing.assert_array_equal(result, expected)
 
   def test_scalar_load(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((), jnp.int32))
     def kernel(x_ref, y_ref):
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @pl.when(warp_id == 1)
         def _():
           y_ref[...] = x_ref[...]
     np.testing.assert_array_equal(kernel(4), 4)
 
   def test_non_scalar_load_raises(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32))
     def kernel(x_ref, y_ref):
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @pl.when(warp_id == 1)
         def _():
           y_ref[...] = x_ref[...]
@@ -3372,13 +3364,11 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     lax.gt, lax.lt, lax.ge, lax.le, lax.eq, lax.ne,
   )
   def test_scalar_binary_op(self, op):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((), jnp.int32))
     def kernel(y_ref):
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @pl.when(warp_id == 1)
         def _():
           x = jnp.array(1234, dtype=jnp.int32)
@@ -3393,14 +3383,13 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     # We currently do not allow closing over arrays when mapping over
     # a mesh, since we would need to present a view of the array local
     # to each warp.
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32),
                        scratch_shapes=[plgpu.SMEM((32, 32), jnp.float32)])
     def kernel(out_ref, smem_ref):
       arr = jnp.ones((32, 32), dtype=jnp.float32)
-      @pl.core_map(warp_mesh)
-      def _():
+      @plgpu.warp_map
+      def _(warp_id):
         smem_ref[...] = arr + 1
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, out_ref)
@@ -3412,7 +3401,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
       kernel()
 
   def test_inline_mgpu_in_warp(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
         self.kernel,
         out_shape=(
@@ -3421,9 +3409,8 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         ),
     )
     def kernel(y_ref, z_ref):
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @plgpu.inline_mgpu(
             arg_types=(plgpu.RefType(), plgpu.Layout.WG_SPLAT),
             return_type=plgpu.ShapeDtypeStruct(
@@ -3447,15 +3434,14 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     np.testing.assert_array_equal(z, 11)
 
   def test_inline_mgpu_in_warp_rejects_non_scalar(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(y_ref):
-      @pl.core_map(warp_mesh)
-      def _():
+      @plgpu.warp_map
+      def _(warp_id):
         @plgpu.inline_mgpu(
             arg_types=(),
             return_type=plgpu.ShapeDtypeStruct(
@@ -3475,7 +3461,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
 
   @parameterized.parameters(True, False)
   def test_single_warp_loop(self, force_while):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((10, 128), jnp.int32))
     def kernel(y_ref):
@@ -3484,9 +3469,8 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         for i in range(10):
           smem_ref[i, :] = jnp.ones_like(smem_ref.at[i]) * i
         plgpu.commit_smem()
-        @pl.core_map(warp_mesh)
-        def _():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _(warp_id):
           @pl.when(warp_id == 0)
           def _():
             def loop_body(i, _):
@@ -3501,16 +3485,14 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_debug_print(self):
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros(128, np.int32),
     )
     def kernel(ref):
       ref[...] = ref[...]  # Prevent kernel from being DCE'd
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         pl.debug_print("warp: {}", warp_id)
 
     with self.capture_stdout() as output:
@@ -3529,14 +3511,12 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def test_copy_gmem_to_smem_from_different_warps(self,
                                                   wait_smem_to_gmem_in_warp):
     # In this test, we issue a copy from from warp 0 and await it in warp 1.
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32))
     def kernel(x_ref, y_ref):
       def scope(smem_ref, tma_barrier):
-        @pl.core_map(warp_mesh)
-        def _():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _(warp_id):
           @pl.when(warp_id == 0)
           def _():
             plgpu.copy_gmem_to_smem(x_ref.at[32:64], smem_ref, tma_barrier)
@@ -4623,9 +4603,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.copy_gmem_to_smem(b_ref, b_smem, tma_barrier)
       plgpu.barrier_wait(tma_barrier)
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(acc_tmem,
@@ -5116,7 +5095,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   def test_async_copy_smem_to_tmem_warp_semantics(self):
     shape, dtype = (128, 64), jnp.int32
     transforms = self.default_transforms(dtype=dtype)
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
@@ -5130,9 +5108,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     def kernel(src_gmem, dst_gmem, smem, tmem, tma_barrier, tc_barrier):
       plgpu.copy_gmem_to_smem(src_gmem, smem, tma_barrier)
       plgpu.barrier_wait(tma_barrier)
-      @pl.core_map(warp_mesh)
-      def _():
-        warp_id = lax.axis_index("warp")
+      @plgpu.warp_map
+      def _(warp_id):
         @pl.when(warp_id == 0)
         def _():
           plgpu.async_copy_smem_to_tmem(smem, tmem)
@@ -5630,9 +5607,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
                         partitioned_block_size[0])
 
       if warp_level:
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _per_warp(warp_id):
           @pl.when(warp_id == 0)
           def _():
             plgpu.copy_gmem_to_smem(
@@ -5811,9 +5787,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         ],
     )
     def kernel(out_ref, bar):
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_idx = jax.lax.axis_index("warp")
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
 
         @pl.when(warp_idx < 2)
         def _():
@@ -7535,9 +7510,8 @@ class SemaphoreTest(PallasTest):
       @pl.when(wg_idx == 1)
       def _():
 
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_idx = jax.lax.axis_index("warp")
+        @plgpu.warp_map
+        def _per_warp(warp_idx):
           @pl.when(warp_idx == 0)
           def _():
             pl.semaphore_wait(sem_ref, decrement=True)
