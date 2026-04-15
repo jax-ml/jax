@@ -74,7 +74,7 @@ Value = ir.Value
 
 # IR Helpers
 
-# IrValues can be a non-singleton tuple of IR values, see _is_ir_values.
+# TODO(slebedev): Fix all callers and uncomment this.
 IrValues = ir.Value | tuple[ir.Value, ...]
 
 
@@ -210,6 +210,7 @@ def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 if jaxlib_extension_version >= 427:
+  # pyrefly: ignore[missing-attribute]
   ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
 
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
@@ -1905,8 +1906,9 @@ def lower_jaxpr_to_fun(
     const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
-      const_arg_values = [ir_constant(c, aval=aval)
-                          for c, aval in const_args_and_avals]
+      const_arg_values = [
+          ir_constants(c, aval=aval) for c, aval in const_args_and_avals
+      ]
     const_lowering: dict[tuple[int, core.AbstractValue], IrValues] = {
         (id(c), aval): c_arg
         for (c, aval), c_arg in zip(const_args_and_avals, const_arg_values)
@@ -2217,7 +2219,11 @@ def _cached_lowering(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     outs = jax_mlir_ext.inlined_func_call(
-        cache_entry.func, args, ir.InsertionPoint.current.block)  # pyrefly: ignore[bad-argument-type]
+        # pyrefly: ignore[bad-argument-type]
+        cache_entry.func,
+        args,
+        ir.InsertionPoint.current.block,
+    )
   else:
     outs = func_dialect.CallOp(
         flatten_ir_types(cache_entry.output_types),
