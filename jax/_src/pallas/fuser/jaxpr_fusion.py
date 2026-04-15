@@ -26,8 +26,7 @@ from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
-from jax._src.pallas.fuser.fusible import Fusible
-from jax._src import hijax
+from jax._src.pallas.fuser.fusible import fusible_p
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
@@ -256,20 +255,16 @@ def _construct_output_fusions(
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
 ):
-  fusion_eqn_index = -1
+  fusion_eqn_index = None
 
   # Collect input fusions
   for i, eqn in enumerate(jaxpr.eqns):
-    if (
-      eqn.primitive is hijax.call_hi_primitive_p
-      and isinstance(eqn.params.get("_prim"), Fusible)
-    ):
+    if eqn.primitive is fusible_p:
       fusion_eqn_index = i
       break
-  else:
+  if fusion_eqn_index is None:
     raise ValueError("No fusible eqn found")
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
-  fusible: Fusible = fusion_eqn.params["_prim"]
 
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of
   # the jaxpr have any dependence on the fusion at all?
@@ -299,19 +294,21 @@ def fuse_jaxpr(
           ),
           var,
       )
-      for var in fusion_eqn.invars[fusible.num_consts :]
+      for var in fusion_eqn.invars[fusion_eqn.params["num_consts"] :]
   ]
-  in_fusions = tree_util.tree_unflatten(fusible.args_tree, in_fusions_flat)
+  in_fusions = tree_util.tree_unflatten(
+      fusion_eqn.params["in_tree"], in_fusions_flat
+  )
   output_fusions, output_permutation = _construct_output_fusions(
       candidate_values,
       jaxpr,
       out_tree,
       fusion_eqn_index,
       fusion_eqn.outvars,
-      fusible.out_tree,
-      fusible.output_fusion_prefix,
+      fusion_eqn.params["out_tree"],
+      fusion_eqn.params["output_fusion_prefix"],
   )
-  out = fusible.func(*in_fusions, output_fusions)
+  out = fusion_eqn.params["func"](*in_fusions, output_fusions)
   flat_out = jax.tree.leaves(out)
   permuted_out = [flat_out[i] for i in output_permutation]
   assert len(permuted_out) == len(jaxpr.outvars), (

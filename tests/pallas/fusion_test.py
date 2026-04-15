@@ -19,7 +19,6 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
-from jax._src.pallas.fuser import fusible_dtype
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
@@ -317,71 +316,6 @@ class FusionTest(jtu.JaxTestCase):
     a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
-
-  def test_vjp_support(self):
-    @fuser.fusible
-    def f(x_fn, y_fn, z_fn):
-      x = x_fn()
-      y = y_fn()
-      z = x * y
-      if z_fn is None:
-        z_fn = lambda x: x
-      return z_fn(z)
-
-    x, y = jnp.array(2.0), jnp.array(3.0)
-    val, vjp_fun = jax.vjp(f, x, y)
-    np.testing.assert_allclose(val, 6.0)
-
-    grads = vjp_fun(jnp.array(1.0))
-    np.testing.assert_allclose(grads, (3.0, 2.0))
-
-  def test_vmap_support(self):
-    @fuser.fusible
-    def f(x_fn, y_fn, out_fn):
-      x = x_fn()
-      y = y_fn()
-      if out_fn is None:
-        out_fn = lambda x: x
-      return out_fn(x * y)
-
-    x = jnp.array([2.0])
-    y = jnp.array(4.0)
-
-    val = jax.vmap(f, in_axes=(0, None))(x, y)
-    np.testing.assert_allclose(val, jnp.array([8.0]))
-
-  def test_effect_support(self):
-    ref = jax.new_ref(jnp.array(0.0))
-
-    @fuser.fusible
-    def f(x_fn, y_fn, out_fn):
-      x = x_fn()
-      y = y_fn()
-      ref[...] = x + y
-      if out_fn is None:
-        out_fn = lambda x: x
-      return out_fn(x * y)
-
-    x, y = jnp.array(2.0), jnp.array(3.0)
-    closed_jaxpr = jax.make_jaxpr(f)(x, y)
-    self.assertLen(closed_jaxpr.jaxpr.effects, 1)
-
-    jax.core.eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, x, y)
-
-    np.testing.assert_allclose(ref[...], 5.0)
-
-  def test_physicalize_fusible(self):
-
-    @fuser.fusible
-    def f(x_fn, out_fn):
-      x = x_fn()
-      if out_fn is None:
-        out_fn = lambda x: x
-      return out_fn(x + 1.0)
-
-    x = jnp.array(1.0)
-    y = fusible_dtype.physicalize(f)(x)
-    np.testing.assert_allclose(y, 2.0)
 
 
 @dataclasses.dataclass(frozen=True)
