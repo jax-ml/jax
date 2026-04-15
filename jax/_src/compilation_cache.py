@@ -65,8 +65,9 @@ logger = logging.getLogger(__name__)
 # compatibility.
 # ---------------------------------------------------------------------------
 
-_HMAC_DIGEST_LEN: int = 32  # SHA-256 digest size in bytes
-_hmac_key: bytes = os.environb.get(b"JAX_CACHE_HMAC_KEY", b"")
+_HMAC_HASH_ALGO = hashlib.sha256
+_HMAC_DIGEST_LEN: int = _HMAC_HASH_ALGO().digest_size
+_hmac_key: bytes = os.environ.get("JAX_CACHE_HMAC_KEY", "").encode()
 
 
 def _sign_entry(data: bytes) -> bytes:
@@ -76,7 +77,7 @@ def _sign_entry(data: bytes) -> bytes:
   """
   if not _hmac_key:
     return data
-  tag = hmac.new(_hmac_key, data, hashlib.sha256).digest()
+  tag = hmac.new(_hmac_key, data, _HMAC_HASH_ALGO).digest()
   return tag + data
 
 
@@ -95,7 +96,7 @@ def _verify_entry(data: bytes) -> bytes:
         " The cache may be corrupt or was written without a HMAC key."
     )
   tag, payload = data[:_HMAC_DIGEST_LEN], data[_HMAC_DIGEST_LEN:]
-  expected = hmac.new(_hmac_key, payload, hashlib.sha256).digest()
+  expected = hmac.new(_hmac_key, payload, _HMAC_HASH_ALGO).digest()
   if not hmac.compare_digest(tag, expected):
     raise RuntimeError(
         "JAX compilation cache integrity check failed — the stored entry does"
@@ -205,7 +206,8 @@ class VerificationCache(CacheInterface):
         # The cache content is [timestamp] + [executable].
         # We decompress both and compare skip the timestamp which will
         # differ for fresh compilations.
-        decompressed_on_disk = decompress_executable(on_disk)
+        # Strip HMAC tag (if present) before decompressing for comparison.
+        decompressed_on_disk = decompress_executable(_verify_entry(on_disk))
         decompressed_new = decompress_executable(value)
         executable_on_disk, _ = extract_executable_and_time(decompressed_on_disk)
         executable_new, _ = extract_executable_and_time(decompressed_new)
