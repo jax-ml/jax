@@ -180,8 +180,7 @@ def eig(
   up to an arbitrary complex phase: if ``v`` is an eigenvector, so is
   ``e^{iθ} v`` for any real ``θ``. This means eigenvector-dependent gradients
   are only well-defined when the downstream computation does not depend on this
-  arbitrary phase choice. This is analogous to the ``holomorphic=True`` flag on
-  :func:`jax.grad`.
+  arbitrary phase choice.
 
   To prevent silently incorrect gradients, differentiation through eigenvectors
   raises an error by default. Set ``allow_eigvec_deriv=True`` to opt in,
