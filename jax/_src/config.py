@@ -95,7 +95,7 @@ class ValueHolder(Protocol[_T]):
 
   value: _T
 
-  def _set(self, value: _T) -> None: ...
+  def set(self, value: _T) -> None: ...
 
 
 class Config:
@@ -110,7 +110,7 @@ class Config:
   def update(self, name, val):
     if name not in self._value_holders:
       raise AttributeError(f"Unrecognized config option: {name}")
-    self._value_holders[name]._set(val)
+    self._value_holders[name].set(val)
 
   def read(self, name):
     if name in self._contextmanager_flags:
@@ -190,7 +190,7 @@ class Config:
         # should have called config_with_absl() later.
         continue
       if flag.present:
-        holder._set(flag.value)
+        holder.set(flag.value)
 
   def parse_flags_with_absl(self):
     """Parses command-line args that start with --jax.
@@ -276,7 +276,7 @@ class State(config_ext.Config[_T]):
         "(did you mean to use '{0}.value' instead?)".format(
             type(self).__name__))
 
-  def _set(self, value: _T) -> None:
+  def set(self, value: _T) -> None:
     if self._parser:
       value = self._parser(value)
     self.set_global(value)
@@ -898,7 +898,7 @@ class Flag(Generic[_T]):
                update_hook: Callable[[Any], None] | None = None):
     self._name = name
     self._update_hook = update_hook
-    self._set(default)
+    self.set(default)
 
   def __bool__(self) -> NoReturn:
     raise TypeError(
@@ -906,7 +906,7 @@ class Flag(Generic[_T]):
         "(did you mean to use '{0}.value' instead?)".format(
             type(self).__name__))
 
-  def _set(self, value: _T) -> None:
+  def set(self, value: _T) -> None:
     self.value = value
     if self._update_hook is not None:
       self._update_hook(value)
@@ -2049,7 +2049,7 @@ send_traceback_to_runtime = enum_class_state(
 )
 
 # Don't define a context manager since this isn't threadsafe.
-string_state(
+debug_log_modules = string_state(
     name='jax_debug_log_modules',
     default='',
     help=('Comma-separated list of module names (e.g. "jax" or '
@@ -2058,7 +2058,7 @@ string_state(
     update_global_hook=logging_config.update_debug_log_modules)
 
 # Don't define a context manager since this isn't threadsafe.
-optional_enum_state(
+logging_level = optional_enum_state(
     name='jax_logging_level',
     enum_values=['NOTSET', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
     default=logging.getLevelName(logging.getLogger("jax").level),
@@ -2208,4 +2208,10 @@ jax_pallas_verbose_errors = bool_flag(
     "jax_pallas_verbose_errors",
     default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
     help="If True, print verbose error messages for Pallas kernels.",
+)
+
+jax_mosaic_allow_hlo = bool_state(
+    name="jax_mosaic_allow_hlo",
+    default=False,
+    help="Allow hlo dialects in Mosaic",
 )

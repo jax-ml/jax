@@ -27,7 +27,39 @@ JAX configuration options can be set in several ways:
    .. code-block:: python
 
       import jax
-      jax.config.update("jax_enable_x64", True)
+
+      # Sets a flag's value
+      jax.config.enable_x64.set(True)
+
+      # Gets a flag's value
+      jax.config.enable_x64.value
+
+  Older versions of JAX expressed this as:
+
+   .. code-block:: python
+
+      import jax
+
+      # Sets a flag's value (DEPRECATED)
+      jax.config.update('jax_enable_x64', True)
+
+      # Gets a flag's value (DEPRECATED). The deprecate flag getter has a jax_
+      # prefix that is not present in the updated API.
+      jax.config.jax_enable_x64
+
+  Prefer the undeprecated forms for new code.
+
+  Some configuration options can also be set locally for a single thread using a context manager:
+
+   .. code-block:: python
+
+      import jax
+
+      with jax.config.enable_x64(True):
+          # Code runs with x64 enabled
+          pass
+
+   A thread-local value, if set, takes precedence over the global value.
 
 3. **Command-line flags** (using Abseil):
 
