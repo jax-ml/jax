@@ -438,12 +438,12 @@ class PGLEProfiler:
   def __init__(self, retries: int, percentile: int):
     self.retries: int = retries
     self.percentile: int = percentile
-    self.collected_fdo: str | None = None
+    self.collected_fdo: bytes | None = None
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
     self.current_session: _profiler.ProfilerSession | None = None
 
-  def consume_fdo_profile(self) -> str | None:
+  def consume_fdo_profile(self) -> bytes | None:
     if self.collected_fdo is not None:
       return self.collected_fdo
 
