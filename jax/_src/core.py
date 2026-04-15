@@ -576,6 +576,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
     from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
+    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import] # type: ignore
     do_lit_array = not for_ad
     if isinstance(x, ArrayImpl):
       return do_lit_array
@@ -4188,3 +4189,4 @@ def unsafe_get_axis_names() -> list[Any]:
 # TODO(douglam): deprecate/delete
 def axis_frame(axis_name):
   return trace_ctx.axis_env.axis_size(axis_name)
+
