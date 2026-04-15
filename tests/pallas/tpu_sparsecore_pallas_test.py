@@ -241,7 +241,7 @@ class DebugPrintTest(PallasSCTest):
         num_cores=self.sc_info.num_cores,
     )
     s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="scs_core", num_cores=self.sc_info.num_cores
+        axis_name="core", num_cores=self.sc_info.num_cores
     )
 
     nl = self.num_lanes
