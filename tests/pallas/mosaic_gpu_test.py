@@ -922,7 +922,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.copy_smem_to_gmem(scratch_ref, o_ref.at[gmem_indexer])
       plgpu.wait_smem_to_gmem(0)
 
-    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as output:
       x = jax.numpy.ones(gmem_shape, dtype=dtype)
       kernel(x, 6000)
 
