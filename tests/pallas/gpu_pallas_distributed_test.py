@@ -483,7 +483,9 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 4:
       return  # Only 4 processes needed.
     def kernel(x_ref, y_ref, recv_sem):
-      other_dev_id = {axis: 1 - lax.axis_index(axis)}
+      x_other_dev_id = 1 - lax.axis_index("x")
+      y_other_dev_id = 1 - lax.axis_index("y")
+      other_dev_id = {"x": x_other_dev_id, "y": y_other_dev_id}
       other_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
       other_y_ref[...] = x_ref[...]
       pl.semaphore_signal(recv_sem, device_id=other_dev_id)
