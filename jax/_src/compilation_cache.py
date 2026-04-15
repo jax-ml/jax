@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import os
 import threading
 import warnings
 import zlib
@@ -47,6 +50,59 @@ from jax._src.lru_cache import LRUCache
 
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Optional HMAC-SHA-256 integrity protection for cache entries.
+#
+# Set the environment variable JAX_CACHE_HMAC_KEY to a non-empty string to
+# enable signing.  When the key is present every cache entry is
+# authenticated on write and verified on read.  A mismatch raises
+# RuntimeError so that a poisoned or corrupted entry is never deserialized
+# by the XLA backend.
+#
+# When the variable is absent the behaviour is identical to the previous
+# implementation (no integrity check), preserving full backward
+# compatibility.
+# ---------------------------------------------------------------------------
+
+_HMAC_DIGEST_LEN: int = 32  # SHA-256 digest size in bytes
+_hmac_key: bytes = os.environb.get(b"JAX_CACHE_HMAC_KEY", b"")
+
+
+def _sign_entry(data: bytes) -> bytes:
+  """Prepend an HMAC-SHA-256 tag to *data* if a key is configured.
+
+  Returns *data* unchanged when no key is set.
+  """
+  if not _hmac_key:
+    return data
+  tag = hmac.new(_hmac_key, data, hashlib.sha256).digest()
+  return tag + data
+
+
+def _verify_entry(data: bytes) -> bytes:
+  """Strip and verify the HMAC-SHA-256 tag from *data* if a key is configured.
+
+  Returns the payload (without the tag) when verification succeeds.
+  Raises RuntimeError on a tag mismatch.
+  Returns *data* unchanged when no key is set.
+  """
+  if not _hmac_key:
+    return data
+  if len(data) < _HMAC_DIGEST_LEN:
+    raise RuntimeError(
+        "JAX compilation cache entry is too short to contain an integrity tag."
+        " The cache may be corrupt or was written without a HMAC key."
+    )
+  tag, payload = data[:_HMAC_DIGEST_LEN], data[_HMAC_DIGEST_LEN:]
+  expected = hmac.new(_hmac_key, payload, hashlib.sha256).digest()
+  if not hmac.compare_digest(tag, expected):
+    raise RuntimeError(
+        "JAX compilation cache integrity check failed — the stored entry does"
+        " not match its HMAC tag.  The cache may have been tampered with."
+        " Delete the cache directory and recompile."
+    )
+  return payload
 
 _cache: CacheInterface | None = None
 
@@ -296,6 +352,7 @@ def get_executable_and_time(
   if executable_and_time is None:
     return None, None
 
+  executable_and_time = _verify_entry(executable_and_time)
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
@@ -332,6 +389,7 @@ def put_executable_and_time(
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
   executable_and_time = compress_executable(executable_and_time)
+  executable_and_time = _sign_entry(executable_and_time)
 
   min_entry_size = config.persistent_cache_min_entry_size_bytes.value
   entry_size = len(executable_and_time)
