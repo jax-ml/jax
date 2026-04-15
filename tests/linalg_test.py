@@ -417,7 +417,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = 1e-4 if dtype in (np.float64, np.complex128) else 5e-1
     f = partial(lax.linalg.eig, compute_left_eigenvectors=left,
                 compute_right_eigenvectors=right)
-    jtu.check_grads(f, (a,), order=1, modes=['fwd', 'rev'], rtol=tol, atol=tol)
+    jtu.check_grads(f, (a,), order=1, rtol=tol, atol=tol)
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
