@@ -970,8 +970,8 @@ def _shard_map_lowering_shardy(
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   num_const_args = len(const_args)
-  const_arg_values = mlir.flatten_ir_values(
-      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+  const_arg_values = tuple(
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
   )
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from

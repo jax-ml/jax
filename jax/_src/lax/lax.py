@@ -1899,7 +1899,7 @@ def _composite_lowering(
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = tuple(
-      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
   )
   in_avals = (*const_avals, *ctx.avals_in)

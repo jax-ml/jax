@@ -68,9 +68,10 @@ for each unique constant appearing in the `Jaxpr` to which it corresponds.
 These arguments, referred to as `const_args`,
 come after the dimension variable arguments, after the
 token arguments, and just before the actual array arguments.
-During lowering we maintain a mapping `const_lowering: dict[int, mlir.IrValues]`
-from the `id` of the constants to the HLO values for the corresponding
-const args.
+During lowering we maintain a mapping
+`const_lowering: dict[tuple[int, core.AbstractValue], mlir.ir.Value]`
+from the `id` of the constants and their abstract values to the HLO values
+for the corresponding const args.
 This mapping is stored in the `mlir.LoweringRuleContext` and is used
 by `mlir.ir_constant`: when a constant is encountered, we just reuse
 the existing lowering from `const_lowering` instead of emitting a

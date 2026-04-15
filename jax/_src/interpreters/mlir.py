@@ -249,7 +249,7 @@ def get_constant_handler(type_: type) -> ConstantHandler:
 
 def ir_constant(
     val: Any, *,
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value] | None = None,
     aval: core.AbstractValue | None = None
 ) -> ir.Value:
   """Translate a Python ``val`` to an IR constant.
@@ -268,7 +268,6 @@ def ir_constant(
     A representation of the constant as an IR value.
 
   Raises:
-    ValueError: if the constant is represented by more than one IR value.
     TypeError: if no constant handler is registered for the type of `val`.
   """
   value = _ir_constant(val, const_lowering=const_lowering, aval=aval)
@@ -279,35 +278,8 @@ def ir_constant(
   return value
 
 
-def ir_constants(
-    val: Any, *,
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
-    aval: core.AbstractValue | None = None
-) -> tuple[ir.Value, ...]:
-  """Translate a Python ``val`` to a sequence of IR constants.
-
-  See https://docs.jax.dev/en/latest/internals/constants.html.
-
-  Args:
-    val: a Python value to be translated.
-    const_lowering: an optional dictionary with known lowering for some
-      constants, indexed by ``id``. This is used, e.g., when we pass constants
-      as MLIR function arguments.
-    aval: the abstract value of ``val``, if known. Required where ambiguous,
-      e.g. for Python scalars.
-
-  Returns:
-    A representation of the constant as a sequence of IR values.
-
-  Raises:
-    TypeError: if no constant handler is registered for the type of ``val``.
-  """
-  values = _ir_constant(val, const_lowering=const_lowering, aval=aval)
-  return values if isinstance(values, tuple) else (values,)
-
-
 def _ir_constant(val: Any, *,
-  const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value] | None = None,
   aval: core.AbstractValue | None = None
 ) -> IrValues:
   if const_lowering is not None:
@@ -887,7 +859,7 @@ class LoweringRuleContext:
   # This is used to implement passing along the constants that have been
   # hoisted as main function arguments down to where they are used.
   # See https://docs.jax.dev/en/latest/internals/constants.html
-  const_lowering: dict[tuple[int, core.AbstractValue], IrValues]
+  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value]
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   # The values for the dimension variables in same order as
   # module_context.shape_poly_state.dim_vars
@@ -1907,7 +1879,7 @@ def lower_jaxpr_to_fun(
       # If we did not hoist the constants out of this function, lower them now
       const_arg_values = [ir_constant(c, aval=aval)
                           for c, aval in const_args_and_avals]
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues] = {
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value] = {
         (id(c), aval): c_arg
         for (c, aval), c_arg in zip(const_args_and_avals, const_arg_values)
     }
@@ -2053,7 +2025,7 @@ def jaxpr_subcomp(
     consts_for_constvars: Sequence[IrValues],
     *args: IrValues,
     dim_var_values: Sequence[ir.Value],
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
     outer_traceback: xc.Traceback | None,
 ) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
@@ -2173,7 +2145,7 @@ def _cached_lowering(
     eqn: core.JaxprEqn,
     tokens_in: TokenSet,
     dim_var_values: tuple[ir.Value, ...],
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
     *args,
     **params,
 ) -> tuple[Sequence[IrValues], TokenSet]:
@@ -2210,7 +2182,7 @@ def _cached_lowering(
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
   const_arg_values = tuple(
-      ir_constants(c, const_lowering=const_lowering, aval=aval)
+      ir_constant(c, const_lowering=const_lowering, aval=aval)
       for c, aval in zip(cache_entry.const_args, cache_entry.const_arg_avals)
   )
   args = flatten_ir_values(
@@ -2270,7 +2242,7 @@ def _emit_lowering_rule_as_fun(
     dim_var_values, token_args, const_arg_values, unflattened_args = \
       util.split_list(unflattened_args,
                       [num_dim_vars, len(ordered_effects), len(const_args)])
-    const_lowering = {
+    const_lowering: dict[tuple[int, core.AbstractValue], ir.Value] = {  # pyrefly: ignore[bad-assignment]
         (id(c), aval): c_arg
         for c, aval, c_arg in zip(const_args, const_arg_avals, const_arg_values)
     }
@@ -2637,13 +2609,13 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
                   ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
-                  const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+                  const_lowering: dict[tuple[int, core.AbstractValue], ir.Value],
                   arg_names=None, result_names=None,
                   attributes: None | dict[str, Any] = None):
   assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
-  const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
+  const_arg_values = [ir_constant(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
   args = tuple(const_arg_values) + args
   if arg_names is not None:

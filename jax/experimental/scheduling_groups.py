@@ -79,8 +79,8 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, **meta):
   symbol_name = func_op.name.value
   flat_output_types = mlir.flatten_ir_types(output_types)
   tokens = [ctx.tokens_in.get(eff) for eff in effects]
-  hoisted_const_values = mlir.flatten_ir_values(
-      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+  hoisted_const_values = tuple(
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals)
   args = (*ctx.dim_var_values, *tokens, *hoisted_const_values, *args)
   call = func_dialect.CallOp(

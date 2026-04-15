@@ -1392,8 +1392,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       out_shardings, in_layouts, out_layouts, api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
-  hoisted_const_values = mlir.flatten_ir_values(
-      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+  hoisted_const_values = tuple(
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
   )
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
