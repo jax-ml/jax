@@ -671,7 +671,9 @@ def convert_jaxpr_to_computation(ctx, name, jaxpr, score_mod_args, is_bwd=False)
   output_aval = jaxpr.out_avals[0]
   attn_score = mlir.ir_constant(np.zeros(output_aval.shape, dtype=output_aval.dtype))
   aval_out = ctx.avals_out
+  aval_in = ctx.avals_in
   ctx.avals_out = jaxpr.out_avals
+  ctx.avals_in = jaxpr.in_avals
   if is_bwd:
     impl = mlir.core_call_lowering(
       ctx, attn_score, attn_score, *score_mod_args, name=name + "_bwd", call_jaxpr=jaxpr
@@ -681,6 +683,7 @@ def convert_jaxpr_to_computation(ctx, name, jaxpr, score_mod_args, is_bwd=False)
       ctx, attn_score, *score_mod_args, name=name, call_jaxpr=jaxpr
     )
   ctx.avals_out = aval_out
+  ctx.avals_in = aval_in
   call_op = impl[0].owner
   called_fn = call_op.attributes["callee"]
   return called_fn.value

@@ -285,8 +285,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
-    if jtu.is_cuda_version_at_least(13, 0):
-      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    # if jtu.is_cuda_version_at_least(13, 0):
+    #   self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[4],
@@ -780,10 +780,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     soft_cap_scalar = jax.random.normal(
         k4, (4, 4, 1024, 1024), dtype=jnp.float32)
 
-    # def soft_cap(attn_score):
-    #   return 3.0 * jax.lax.tanh(attn_score / 3.0)
-
-    def soft_cap(attn_score):
+    def soft_cap(attn_score, soft_cap_scalar):
       return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
 
     jitted_sdpa = jax.jit(
@@ -798,8 +795,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         dropout_rate=0, score_mod=soft_cap),
     )
 
-    out = jitted_sdpa(query, key, value, score_mod_args=())
-    out_ref = jitted_sdpa_ref(query, key, value, score_mod_args=())
+    out = jitted_sdpa(query, key, value, score_mod_args=(soft_cap_scalar,))
+    out_ref = jitted_sdpa_ref(query, key, value, score_mod_args=(soft_cap_scalar,))
     self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
 
   def test_sdpa_flex_attention_train(self):
@@ -818,9 +815,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
     def soft_cap(attn_score, soft_cap_scalar):
       return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
-
-    # def soft_cap(attn_score):
-    #   return attn_score * 3.0
 
     jitted_sdpa = jax.jit(
       partial(
