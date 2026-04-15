@@ -2217,7 +2217,7 @@ def _cached_lowering(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     outs = jax_mlir_ext.inlined_func_call(
-        cache_entry.func, args, ir.InsertionPoint.current.block)
+        cache_entry.func, args, ir.InsertionPoint.current.block)  # pyrefly: ignore[bad-argument-type]
   else:
     outs = func_dialect.CallOp(
         flatten_ir_types(cache_entry.output_types),

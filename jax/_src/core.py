@@ -575,7 +575,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
-    from jax._src.array import ArrayImpl
+    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
     do_lit_array = not for_ad
     if isinstance(x, ArrayImpl):
       return do_lit_array
