@@ -551,6 +551,13 @@ def find_assignments_for(
   return cs.Unsatisfiable(), fuel
 
 
+@dataclasses.dataclass(frozen=True)
+class _AliasKey:
+  source_ref: ir.Value | None
+  offset: int
+  alias_id: int
+
+
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
@@ -563,20 +570,18 @@ class DerivationContext:
       dataclasses.field(default_factory=dict, init=False)
   )
 
-  # A slice_smem or slice_tmem op can optionally have an alias_id which is a
-  # string. This is used in cases where multiple slices alias the same memory.
-  # If two aliases have different IDs, that means that they come from different
-  # refs and their layouts are independent. Conversely, aliases that have the
-  # same ID are considered to be identical refs and therefore must have the same
-  # layout. The layout vars are cached in the maps below so that they can be
-  # reused every time an existing alias ID is encountered.
+  # A `slice_smem` or `slice_tmem` op may carry an optional `alias_id`. It is
+  # used to disambiguate whether overlapping memory slices are independent or
+  # related for the purposes of layout inference.
   #
-  # SMEM and TMEM slices that do not have an alias ID cannot be aliases and
-  # therefore always have their own independent layout.
-  slice_smem_aliases: dict[str, cs.Variable] = dataclasses.field(
+  # Concretely, if a memory slice op shares the same base address,
+  # `offset` and `alias_id` with another memory slice op, then they are
+  # considered to be the same ref and must have the same layout. Otherwise,
+  # they are independent.
+  slice_smem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
-  slice_tmem_aliases: dict[str, cs.Variable] = dataclasses.field(
+  slice_tmem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
 
@@ -1647,13 +1652,15 @@ def _slice_tmem_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
+  # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
   if "alias_id" in op.attributes:
-    alias_id = ir.StringAttr(op.attributes["alias_id"]).value
-    if alias_id in ctx.slice_tmem_aliases:
-      result_variable = ctx.slice_tmem_aliases[alias_id]
+    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
+    alias_key = _AliasKey(None, op.offset.value, alias_id)  # pyrefly: ignore[missing-attribute]
+    if (cached_variable := ctx.slice_tmem_aliases.get(alias_key)) is not None:
+      result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_tmem_aliases[alias_id] = result_variable
+      ctx.slice_tmem_aliases[alias_key] = result_variable
   else:
     result_variable = cs.Variable(result)
   return (
@@ -1687,17 +1694,18 @@ def _slice_smem_constraint_system(
     ctx: DerivationContext,
     op: mgpu.SliceSMEMOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  res = ValueSite(op, VariableType.RESULT, 0)
+  result = ValueSite(op, VariableType.RESULT, 0)
   if "alias_id" in op.attributes:
-    alias_id = ir.StringAttr(op.attributes["alias_id"]).value
-    if alias_id in ctx.slice_smem_aliases:
-      res_var = ctx.slice_smem_aliases[alias_id]
+    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
+    alias_key = _AliasKey(None, op.offset.value, alias_id)  # pyrefly: ignore[missing-attribute]
+    if (cached_variable := ctx.slice_smem_aliases.get(alias_key)) is not None:
+      result_variable = cached_variable
     else:
-      res_var = cs.Variable(res)
-      ctx.slice_smem_aliases[alias_id] = res_var
+      result_variable = cs.Variable(result)
+      ctx.slice_smem_aliases[alias_key] = result_variable
   else:
-    res_var = cs.Variable(res)
-  return cs.ConstraintSystem(), {res_var: [res]}
+    result_variable = cs.Variable(result)
+  return cs.ConstraintSystem(), {result_variable: [result]}
 
 
 @_add_constraint_system_derivation_rule(memref.SubViewOp)

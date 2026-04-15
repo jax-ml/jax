@@ -1433,6 +1433,7 @@ def _extract_aliased_ref(
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
 ]:
+  i32 = ir.IntegerType.get_signless(32)
   # Looks for the first transform being an ExtractAliasedRef and pulls out the
   # Ref there, updating the transforms.
   match transforms:
@@ -1487,22 +1488,19 @@ def _extract_aliased_ref(
             )
             slice_op = mgpu.dialect.SliceSMEMOp(ref_ty, total_offset)
 
-            # The alias ID that is generated here needs to be unique for each
-            # alias across:
-            #  - different RefUnions.
-            #    - This is indicated by a different `base_offset`, since RefUnions
-            #      are separate SMEM allocations.
-            #  - different ref_groups within a RefUnion
-            #    - This is indicated by a different `alias_group_idx`.
-            #  - different elements within a ref_group
-            #    - This is indicated by a different `offset` which is the offset
-            #      of the particular element to the beginning of the RefUnion. We
-            #      assume there are no 0-sized refs, which don't serve a
-            #      practical purpose anyway.
-            #
-            # By combining `total_offset=base_offset + offset` and
-            # `alias_group_idx` to generate the alias ID, we ensure its uniqueness.
-            slice_op.attributes["alias_id"] = ir.StringAttr.get(f"{total_offset}-{alias_group_idx}")
+            # The composite key formed of `(total_offset, alias_group_idx)` is
+            # a unique identifier across:
+            #   - different RefUnions (different `total_offset`, since two
+            #     distinct RefUnions represent two non-overlapping SMEM
+            #     allocations);
+            #   - different ref_groups within a RefUnion (different
+            #     `alias_group_idx`);
+            #   - different elements within a ref_group (different
+            #     `total_offset` which is the offset of the particular element to
+            #     the beginning of the RefUnion added to the base offset of the
+            #     RefUnion). This only holds in the absence of 0-sized refs,
+            #     which don't serve a practical purpose anyway.
+            slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
             ref = slice_op.result
           else:
             ref_bytes = ref_bits // 8
@@ -1531,9 +1529,7 @@ def _extract_aliased_ref(
               transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
           )
           slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
-          slice_op.attributes["alias_id"] = ir.StringAttr.get(
-              f"{total_offset}-{alias_group_idx}"
-          )
+          slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
           ref = slice_op.result
         else:
           raise NotImplementedError("Unsupported memory space.")

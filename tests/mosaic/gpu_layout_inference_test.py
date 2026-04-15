@@ -2020,13 +2020,14 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
+      i32 = ir.IntegerType.get_signless(32)
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
 
       ops = [mgpu.dialect.SliceSMEMOp(ref_ty, 0) for _ in range(6)]
-      ops[2].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[3].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[4].attributes["alias_id"] = ir.StringAttr.get("b")
-      ops[5].attributes["alias_id"] = ir.StringAttr.get("b")
+      ops[2].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[3].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[4].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
+      ops[5].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
 
       transforms_0 = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 64)),
@@ -2063,11 +2064,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
+      i32 = ir.IntegerType.get_signless(32)
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
 
       ops = [mgpu.dialect.SliceSMEMOp(ref_ty, 0) for _ in range(2)]
-      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[0].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[1].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
 
       transforms_0 = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 64)),
@@ -2100,10 +2102,10 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
       ops = [mgpu.dialect.SliceTmemOp(dst_tmem_type, src, 64) for _ in range(4)]
-      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[2].attributes["alias_id"] = ir.StringAttr.get("b")
-      ops[3].attributes["alias_id"] = ir.StringAttr.get("b")
+      ops[0].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[1].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[2].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
+      ops[3].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
 
       layout_0 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
       mgpu.dialect.tmem_layout_cast(ops[0].result, layout_0)
@@ -2135,8 +2137,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
       ops = [mgpu.dialect.SliceTmemOp(dst_tmem_type, src, 64) for _ in range(2)]
-      ops[0].attributes["alias_id"] = ir.StringAttr.get("a")
-      ops[1].attributes["alias_id"] = ir.StringAttr.get("a")
+      ops[0].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
+      ops[1].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
 
       layout_0 = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
       mgpu.dialect.tmem_layout_cast(ops[0].result, layout_0)
