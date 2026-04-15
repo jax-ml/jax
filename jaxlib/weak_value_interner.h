@@ -52,6 +52,18 @@ class WeakValueInterner {
   // Do not use directly, call Create() instead.
   explicit WeakValueInterner(nanobind::callable fn) : fn_(std::move(fn)) {}
 
+ public:
+  // A non-owning view of a key, used for looking up a map entry by value
+  // equality.
+  struct KeyView {
+    absl::Span<nanobind::object const> kwnames;
+    absl::Span<nanobind::object const> args;
+    size_t cached_hash;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const KeyView& key);
+  };
+
   // A non-owning view of a key, used for looking up a map entry by pointer
   // equality rather than by value equality.
   struct PointerKey {
@@ -77,14 +89,17 @@ class WeakValueInterner {
     // We take keys by value to avoid invalidating references if the lock is
     // released during equality checks and the map is mutated.
     bool operator()(Key a, Key b) const;
+    bool operator()(Key a, KeyView b) const;
     bool operator()(Key a, PointerKey b) const;
   };
 
   struct KeyHash {
     size_t operator()(Key const& k) const { return k.cached_hash; }
+    size_t operator()(KeyView const& k) const { return k.cached_hash; }
     size_t operator()(PointerKey const& k) const { return k.cached_hash; }
   };
 
+ private:
   template <typename H>
   friend H AbslHashValue(H h, const PointerKey& key);
 

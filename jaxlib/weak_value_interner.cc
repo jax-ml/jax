@@ -35,7 +35,7 @@ namespace nb = nanobind;
 namespace jax {
 
 template <typename H>
-H AbslHashValue(H h, const WeakValueInterner::PointerKey& key) {
+H AbslHashValue(H h, const WeakValueInterner::KeyView& key) {
   for (const auto& name : key.kwnames) {
     h = H::combine(std::move(h), name.ptr());
   }
@@ -68,7 +68,7 @@ bool WeakValueInterner::KeyEqual::operator()(Key a, Key b) const {
   return true;
 }
 
-bool WeakValueInterner::KeyEqual::operator()(Key a, PointerKey b) const {
+bool WeakValueInterner::KeyEqual::operator()(Key a, KeyView b) const {
   if (a.kwnames.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames.size(); ++i) {
     if (a.kwnames[i].ptr() != b.kwnames[i].ptr()) return false;
@@ -76,6 +76,18 @@ bool WeakValueInterner::KeyEqual::operator()(Key a, PointerKey b) const {
   if (a.args.size() != b.args.size()) return false;
   for (size_t i = 0; i < a.args.size(); ++i) {
     if (!a.args[i].equal(b.args[i])) return false;
+  }
+  return true;
+}
+
+bool WeakValueInterner::KeyEqual::operator()(Key a, PointerKey b) const {
+  if (a.kwnames.size() != b.kwnames.size()) return false;
+  for (size_t i = 0; i < a.kwnames.size(); ++i) {
+    if (a.kwnames[i].ptr() != b.kwnames[i].ptr()) return false;
+  }
+  if (a.args.size() != b.args.size()) return false;
+  for (size_t i = 0; i < a.args.size(); ++i) {
+    if (a.args[i].ptr() != b.args[i].ptr()) return false;
   }
   return true;
 }
@@ -132,7 +144,7 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
       }
     }
 
-    PointerKey ptr_key{sorted_kwnames, strong_args, 0};
+    KeyView ptr_key{sorted_kwnames, strong_args, 0};
     size_t hash = absl::HashOf(ptr_key);
     ptr_key.cached_hash = hash;
 
