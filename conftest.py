@@ -73,12 +73,23 @@ def pytest_collection() -> None:
         "CUDA_VISIBLE_DEVICES", str(xdist_worker_number % num_cuda_devices)
     )
 
-  elif num_rocm_devices := os.environ.get("JAX_ENABLE_ROCM_XDIST", None):
-    num_rocm_devices = int(num_rocm_devices)
+  elif os.environ.get("JAX_ENABLE_ROCM_XDIST", None) is not None:
     xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "")
     if not xdist_worker_name.startswith("gw"):
       return
-    xdist_worker_number = int(xdist_worker_name[len("gw") :])
-    os.environ.setdefault(
-        "ROCR_VISIBLE_DEVICES", str(xdist_worker_number % num_rocm_devices)
-    )
+    xdist_worker_number = int(xdist_worker_name[len("gw"):])
+
+    visible_devices_env = os.environ.get("ROCR_VISIBLE_DEVICES", "")
+    if visible_devices_env:
+      visible_devices = visible_devices_env.split(",")
+    else:
+      num_rocm_devices = int(os.environ["JAX_ENABLE_ROCM_XDIST"])
+      visible_devices = [str(i) for i in range(num_rocm_devices)]
+
+    num_devices = len(visible_devices)
+    if num_devices == 0:
+      return
+    rotate_by = xdist_worker_number % num_devices
+    rotated_devices = (visible_devices[rotate_by:]
+                       + visible_devices[:rotate_by])
+    os.environ["ROCR_VISIBLE_DEVICES"] = ",".join(rotated_devices)
