@@ -25,10 +25,7 @@ running_in_cloud_tpu_vm: bool = False
 
 def maybe_import_libtpu():
   try:
-    # pytype: disable=import-error
-    import libtpu
-
-    # pytype: enable=import-error
+    import libtpu  # pyrefly: ignore[missing-import]
   except ImportError:
     return None
   else:
@@ -76,7 +73,7 @@ def cloud_tpu_init() -> None:
   """
   global running_in_cloud_tpu_vm
 
-  from jax import version  # pytype: disable=import-error
+  from jax import version  # pyrefly: ignore[missing-import]
 
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
   libtpu_path = get_tpu_library_path()

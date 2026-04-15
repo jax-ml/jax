@@ -47,7 +47,7 @@ from .dialect_lowering import (
     lower_mgpu_dialect as lower_mgpu_dialect,
 )
 
-from .layout_inference import (  # pytype: disable=import-error
+from .layout_inference import (  # pyrefly: ignore[missing-import]
     infer_layout as infer_layout,
 )
 

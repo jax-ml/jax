@@ -336,7 +336,7 @@ class ArrayImpl(basearray.Array):
       return repr(self)
 
   def __getitem__(self, idx, /):
-    from jax._src.numpy import indexing  # pytype: disable=import-error
+    from jax._src.numpy import indexing  # pyrefly: ignore[missing-import]
     self._check_if_deleted()
 
     return indexing.rewriting_take(self, idx)
@@ -417,7 +417,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error
+    from jax._src.dlpack import to_dlpack  # pyrefly: ignore[missing-import]
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -437,7 +437,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error
+    from jax._src.dlpack import DLDeviceType  # pyrefly: ignore[missing-import]
 
     if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
       return DLDeviceType.kDLCPU, 0

@@ -680,8 +680,8 @@ def ffi_batching_rule(
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,
 ):
-  from jax._src.lax import control_flow  # pytype: disable=import-error
-  from jax._src.lax import lax  # pytype: disable=import-error
+  from jax._src.lax import control_flow  # pyrefly: ignore[missing-import]
+  from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
                 if d is not batching.not_mapped}

@@ -1043,7 +1043,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
   See Also:
     :func:`jax.numpy.broadcast_to`
   """
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   a = jnp.asarray(a)
   if a.shape == shape:
     return a
@@ -1051,7 +1051,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
 
 @broadcast_to_p.def_impl
 def _broadcast_to_impl(a, *, shape):
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   return jnp.broadcast_to(a, shape)
 
 @broadcast_to_p.def_abstract_eval

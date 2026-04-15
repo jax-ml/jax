@@ -16,11 +16,11 @@
 
 try:
   try:
-    from jaxlib.mosaic.gpu import _mosaic_gpu_ext  # pytype: disable=import-error
+    from jaxlib.mosaic.gpu import _mosaic_gpu_ext  # pyrefly: ignore[missing-import]
   except ImportError:
     try:
-      from jax_cuda12_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
+      from jax_cuda12_plugin import _mosaic_gpu_ext  # pyrefly: ignore[missing-import]
     except ImportError:
-      from jax_cuda13_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
+      from jax_cuda13_plugin import _mosaic_gpu_ext  # pyrefly: ignore[missing-import]
 except ImportError as e:
   raise ModuleNotFoundError("Failed to import the Mosaic GPU bindings") from e

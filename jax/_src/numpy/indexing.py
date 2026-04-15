@@ -870,7 +870,7 @@ def take_along_axis(
     indices = _normalize_index(indices, axis_size)
 
   if mode == "one_hot":
-    from jax import nn  # pytype: disable=import-error
+    from jax import nn  # pyrefly: ignore[missing-import]
 
     hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:

@@ -21,7 +21,7 @@ from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 
 try:
-  import portpicker  # pytype: disable=import-error
+  import portpicker
 except ImportError:
   portpicker = None
 

@@ -2555,7 +2555,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun, ctx.avals_in, lower=True)
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
-      from jax._src.interpreters import pxla  # pytype: disable=import-error
+      from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]
       closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
       closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
       jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts

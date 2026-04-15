@@ -554,7 +554,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
     if config.custom_vjp3.value:
-      from jax._src.hijax import custom_vjp3  # pytype: disable=import-error
+      from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
       return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
     else:
       return super().__new__(cls)

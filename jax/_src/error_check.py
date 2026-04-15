@@ -155,7 +155,7 @@ def set_error_if(pred: Array, /, msg: str) -> None:
     msg: The corresponding error message to be raised later.
   """
   # TODO(jakevdp): remove this import and express the following using lax APIs.
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
 
   if _error_storage.ref is None:
     with core.eval_context():

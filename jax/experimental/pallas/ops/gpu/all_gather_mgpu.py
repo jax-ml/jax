@@ -224,5 +224,5 @@ def _run_example():
 
 
 if __name__ == "__main__":
-  from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
+  from jax._src import test_multiprocess as jt_multiprocess  # pyrefly: ignore[missing-module-attribute]
   jt_multiprocess.main(shard_main=_run_example)

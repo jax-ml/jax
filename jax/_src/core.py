@@ -1211,7 +1211,7 @@ class EvalTrace(Trace):
   def process_primitive(self, primitive, args, params, /):
     if config.debug_key_reuse.value:
       # Import here to avoid circular imports
-      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, *args, **params)
     else:
       # TODO(dougalm): delete. this shouldn't be necessary
@@ -1222,7 +1222,7 @@ class EvalTrace(Trace):
   def process_call(self, primitive, f, tracers, params, /):
     if config.debug_key_reuse.value:
       # Import here to avoid circular imports
-      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
     else:
       return primitive.impl(f, *tracers, **params)
@@ -1760,7 +1760,7 @@ class AbstractValue:
     return unshard_aval(mesh, check_vma, spec, self)
 
   def vspace_add(self, x, y):
-    from jax._src.ad_util import add_jaxvals  # pytype: disable=import-error
+    from jax._src.ad_util import add_jaxvals  # pyrefly: ignore[missing-import]
     return add_jaxvals(x, y)
 
   def raise_val2(self, lo_vals_ft):
@@ -2013,7 +2013,7 @@ def physical_aval(aval):
   if (isinstance(aval, ShapedArray) and
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
-    from jax._src.sharding_impls import physical_sharding  # pytype: disable=import-error
+    from jax._src.sharding_impls import physical_sharding  # pyrefly: ignore[missing-import]
     return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
                        sharding=physical_sharding(aval, aval.sharding),
                        manual_axis_type=aval.mat)
@@ -2126,7 +2126,7 @@ def canonicalize_value(primitive, val, aval):
   # Manual or Auto to allow casting.
   if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
     if aval.sharding.mesh.are_all_axes_auto:
-      from jax._src.pjit import reshard  # pytype: disable=import-error
+      from jax._src.pjit import reshard  # pyrefly: ignore[missing-import]
       return reshard(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
     elif aval.sharding.mesh._any_axis_explicit:
       raise NotImplementedError(
@@ -2703,7 +2703,7 @@ AxisSize = Union[int, Tracer, Var]
 
 class RefMeta(type):
   def __instancecheck__(self, inst):
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return (super().__instancecheck__(inst) or
             isinstance(inst, Tracer) and isinstance(inst.aval, AbstractRef))
 
@@ -2720,7 +2720,7 @@ class Ref(metaclass=RefMeta):
   _refs: PyTree  # list of ArrayRefImpl
 
   def __init__(self, aval, refs):
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     assert isinstance(aval, AbstractRef)
     self._aval = aval
     self._refs = refs
@@ -2755,7 +2755,7 @@ class ArrayRefImpl:
   _buf: Array  # mutable field
 
   def __init__(self, aval, buf):
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     assert isinstance(aval, AbstractRef) and isinstance(aval.inner_aval, ShapedArray)
     self._aval = aval
     self._buf = buf
@@ -2796,7 +2796,7 @@ ref_p.ref_allocating = True
 
 ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
 def _ref_to_lojax(init_val, *, memory_space, kind):
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
   return Ref(AbstractRef(val_ty), hival_of_refs)
@@ -2804,7 +2804,7 @@ ref_p.to_lojax = _ref_to_lojax
 
 @ref_p.def_effectful_abstract_eval
 def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
@@ -2813,8 +2813,8 @@ def _ref_impl(init_val, *, memory_space: Any, kind: Any):
   if memory_space is not None:
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  from jax._src.lax.lax import _array_copy  # pyrefly: ignore[missing-import]
   aval = AbstractRef(typeof(init_val), kind=kind)
   return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
@@ -2830,7 +2830,7 @@ empty_ref_p.ref_allocating = True
 
 @empty_ref_p.def_effectful_abstract_eval
 def _empty_ref_abstract_eval(*, ty, memory_space):
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   return (AbstractRef(ty, memory_space=memory_space),
           {internal_mutable_array_effect})
 
@@ -3237,7 +3237,7 @@ closed_call_p.def_effectful_abstract_eval(
 # ------------------- Map -------------------
 
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.dec_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
@@ -3252,7 +3252,7 @@ def mapped_leading_aval(size, aval) -> AbstractValue:
 # TODO(yashkatariya): take axis data
 def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.inc_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
@@ -3372,7 +3372,7 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
   """Determine whether `t1` and `t2` are equivalent. Ignores weak_type."""
   t1 = t1.normalize()
   t2 = t2.normalize()
-  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   if t1 == t2:
     return True
   elif isinstance(t1, ShapedArray) and isinstance(t2, ShapedArray):
@@ -3471,7 +3471,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   # Run key reuse checker after validating jaxpr:
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
-    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
+    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pyrefly: ignore[missing-import]
     check_key_reuse_jaxpr(jaxpr)
 
 # A place to track the quasi-dynamic data associated with a variable during typechecking
@@ -3535,7 +3535,7 @@ def _check_jaxpr(
 
   # # Don't return refs
   if config.mutable_array_checks.value:
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     for v in jaxpr.outvars:
       if isinstance(v.aval, AbstractRef):
         raise JaxprTypeError("returned a ref!")
@@ -3617,7 +3617,7 @@ def _check_jaxpr(
   # Check there are no output refs
   # TODO(mattjj): improve this error message
   if config.mutable_array_checks.value:
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     for v in jaxpr.outvars:
       if isinstance(v.aval, AbstractRef): raise TypeError("returned ref")
 
@@ -3831,7 +3831,7 @@ def _sds_aval_mapping(x):
       weak_type=x.weak_type)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
   if x.is_ref:
-    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
@@ -4143,7 +4143,7 @@ unshard_aval_handlers = {}
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.shard(mesh, manual_axes, check_vma, spec)
   if (handler := shard_aval_handlers.get(type(aval))):
@@ -4152,7 +4152,7 @@ def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
 
 def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
                  ) -> AbstractValue:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
     return aval.unshard(mesh, check_vma, spec)
   if (handler := unshard_aval_handlers.get(type(aval))):

@@ -957,7 +957,7 @@ _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
   if all(issubclass(t, _HANDLED_ARRAY_TYPES) for t in types):
-    import jax.numpy  # pytype: disable=import-error
+    import jax.numpy  # pyrefly: ignore[missing-import]
     return jax.numpy
   else:
     return NotImplemented

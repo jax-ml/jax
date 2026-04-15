@@ -71,12 +71,12 @@ class Mpi4pyCluster(clusters.ClusterEnv):
 
   @classmethod
   def get_process_count(cls) -> int:
-    from mpi4py import MPI  # pytype: disable=import-error
+    from mpi4py import MPI  # pyrefly: ignore[missing-import]
     return int(MPI.COMM_WORLD.Get_size())
 
   @classmethod
   def get_process_id(cls) -> int:
-    from mpi4py import MPI  # pytype: disable=import-error
+    from mpi4py import MPI  # pyrefly: ignore[missing-import]
     return int(MPI.COMM_WORLD.Get_rank())
 
   @classmethod
@@ -85,7 +85,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # Using mpi4py, split the global communicator into sub communicators
     # based on hostname.  mpi will assign them ranks and that will allow
     # a selection of the local process ID.
-    from mpi4py import MPI  # pytype: disable=import-error
+    from mpi4py import MPI  # pyrefly: ignore[missing-import]
     COMM_WORLD = MPI.COMM_WORLD
 
     # This is the alternative method that is simpler:

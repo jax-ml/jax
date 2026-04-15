@@ -71,7 +71,7 @@ class K8sCluster(clusters.ClusterEnv):
   def is_env_present(cls) -> bool:
     if 'KUBERNETES_SERVICE_HOST' in os.environ:
       try:
-        import kubernetes as k8s  # pytype: disable=import-error
+        import kubernetes as k8s  # pyrefly: ignore[missing-import]
       except (ImportError, ModuleNotFoundError):
         warnings.warn(
           '\n'.join([

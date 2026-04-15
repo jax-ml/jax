@@ -506,7 +506,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shapes and types as the corresponding arguments. If ``has_aux`` is True
     then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
-  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
+  from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
 
   if reduce_axes:
     raise NotImplementedError("reduce_axes argument to grad is deprecated")
@@ -931,7 +931,7 @@ def _insert_pvary(basis, leaf):
   return core.pvary(basis, tuple(core.typeof(leaf).mat.varying))
 
 def _std_basis(pytree):
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
@@ -961,7 +961,7 @@ def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
     output_pytree, 0, input_pytree_leaf, arr, specs)
 
 def _possible_downcast(x, example, spec):
-  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
+  from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
       not dtypes.issubdtype(_dtype(example), np.complexfloating)):
     x = x.real
@@ -1157,7 +1157,7 @@ def vmap(fun: F,
     # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  from jax._src import hijax  # pytype: disable=import-error
+  from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
   if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}
           or isinstance(in_axes, hijax.MappingSpec)):
     raise TypeError("vmap in_axes must be an int, None, or a tuple of entries corresponding "

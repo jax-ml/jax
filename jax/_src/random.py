@@ -1238,7 +1238,7 @@ def dirichlet(key: ArrayLike,
 
 @jit(static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
-  from jax._src.nn.functions import softmax  # pytype: disable=import-error
+  from jax._src.nn.functions import softmax  # pyrefly: ignore[missing-import]
 
   if not np.ndim(alpha) >= 1:
     msg = "dirichlet requires alpha.ndim >= 1, got alpha.ndim == {}"

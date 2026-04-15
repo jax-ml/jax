@@ -2275,7 +2275,7 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
 
 
 def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
-  from jax._src.shard_map import shard_map  # pytype: disable=import-error
+  from jax._src.shard_map import shard_map  # pyrefly: ignore[missing-import]
 
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'

@@ -1240,7 +1240,7 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
     )
 
   def _getitem(self, tracer, idx):
-    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load  # pytype: disable=import-error
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load  # pyrefly: ignore[missing-import]
     arr = wgmma_accumulator_load(tracer, wait_n=0)
     if not is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
@@ -1248,7 +1248,7 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
     return arr
 
   def _setitem(self, tracer, idx, value):
-    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_store  # pytype: disable=import-error
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_store  # pyrefly: ignore[missing-import]
     if not is_trivial_index(idx, tracer.shape):
       raise NotImplementedError(
           "Non-trivial indexing on WGMMAAbstractAccumulatorRef is not supported"

@@ -21,15 +21,13 @@ import os
 import pathlib
 import tempfile
 
-# pytype: disable=import-error
 from jax._src import profiler as jax_profiler
 try:
-  from xprof.convert import _pywrap_profiler_plugin
-  from xprof.convert import raw_to_tool_data as convert
+  from xprof.convert import _pywrap_profiler_plugin  # pyrefly: ignore[missing-import]
+  from xprof.convert import raw_to_tool_data as convert  # pyrefly: ignore[missing-import]
 except ImportError:
   raise ImportError(
       "This script requires `xprof` to be installed.")
-# pytype: enable=import-error
 
 
 _DESCRIPTION = """

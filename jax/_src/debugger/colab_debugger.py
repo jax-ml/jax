@@ -23,17 +23,15 @@ import uuid
 from jax._src.debugger import colab_lib
 from jax._src.debugger import core as debugger_core
 from jax._src.debugger import cli_debugger
-# pytype: disable=import-error
 if colab_lib.IS_COLAB_ENABLED:
-  from google.colab import output
+  from google.colab import output  # pyrefly: ignore[missing-import]
 try:
-  import pygments
-  import pygments.lexers
-  import pygments.formatters
+  import pygments  # pyrefly: ignore[missing-source-for-stubs]
+  import pygments.lexers  # pyrefly: ignore[missing-source-for-stubs]
+  import pygments.formatters  # pyrefly: ignore[missing-source-for-stubs]
   IS_PYGMENTS_ENABLED = True
 except ImportError:
   IS_PYGMENTS_ENABLED = False
-# pytype: enable=import-error
 
 
 class CodeViewer(colab_lib.DynamicDOMElement):

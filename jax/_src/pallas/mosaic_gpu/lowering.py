@@ -790,7 +790,7 @@ def lower_pipelined_jaxpr_to_module(
       d for axis, d in enumerate(grid) if which_parallel[axis]
   )
 
-  from jax._src.pallas.mosaic_gpu import pipeline  # pytype: disable=import-error
+  from jax._src.pallas.mosaic_gpu import pipeline  # pyrefly: ignore[missing-module-attribute]
 
   def ref_for_aval(aval: ShapedAbstractValue):
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):

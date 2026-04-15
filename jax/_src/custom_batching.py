@@ -392,7 +392,7 @@ def sequential_vmap(f):
   See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
   more details.
   """
-  from jax._src.lax import control_flow  # pytype: disable=import-error
+  from jax._src.lax import control_flow  # pyrefly: ignore[missing-import]
 
   f = custom_vmap(f)
 

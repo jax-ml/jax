@@ -110,7 +110,7 @@ class BitcastTransform(Transform):
       case AbstractRef():
         return x.update(inner_aval=self.transform_type(x.inner_aval))
       case core.ShapedArray():
-        from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
+        from jax._src.state.utils import eval_bitcast_shape  # pyrefly: ignore[missing-import]
 
         new_shape = eval_bitcast_shape(x, self.dtype)
         if not all(p is None for p in x.sharding.spec):
@@ -228,7 +228,7 @@ class RefIndexer:
   def __getitem__(self, slc) -> TransformedRef:
     if not isinstance(slc, tuple):
       slc = (slc,)
-    from jax._src.state import indexing  # pytype: disable=import-error
+    from jax._src.state import indexing  # pyrefly: ignore[missing-import]
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
     if isinstance(self.ref_or_view, TransformedRef):
       view = self.ref_or_view
@@ -299,26 +299,26 @@ class TransformedRef:
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
   def set(self, value, idx=()):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, idx, value)
 
   def swap(self, value, idx=()):
-    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_swap  # pyrefly: ignore[missing-import]
     return ref_swap(self, idx, value)
 
   def get(self, idx=()):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
 
   def __getattr__(self, name):
     return getattr(self.ref, name)
 
   def __getitem__(self, slc):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, slc)
 
   def __setitem__(self, slc, value):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, slc, value)
 
 class TransformedRefAvalError(Exception):
@@ -474,37 +474,37 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   @staticmethod
   def get(tracer, idx=()):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(tracer, idx)
 
   @core.aval_method
   @staticmethod
   def swap(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_swap  # pyrefly: ignore[missing-import]
     return ref_swap(tracer, idx, value)
 
   @core.aval_method
   @staticmethod
   def set(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(tracer, idx, value)
 
   @core.aval_method
   @staticmethod
   def addupdate(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
     ref_addupdate(tracer, idx, value)
 
   def _getitem(self, tracer, idx) -> Array:
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(tracer, idx)
 
   def _setitem(self, tracer, idx, value) -> None:
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(tracer, idx, value)
 
   def _addupdate(self, tracer, idx, value):
-    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
     ref_addupdate(tracer, idx, value)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:

@@ -449,7 +449,7 @@ class Traced(Stage):
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
     from jax._src.interpreters import partial_eval as pe  # type:ignore
-    from jax._src.pjit import _lojax_expand_params  # pytype: disable=import-error
+    from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
@@ -482,7 +482,7 @@ class Traced(Stage):
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      from jax._src.pjit import _resolve_and_lower  # pytype: disable=import-error
+      from jax._src.pjit import _resolve_and_lower  # pyrefly: ignore[missing-import]
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)

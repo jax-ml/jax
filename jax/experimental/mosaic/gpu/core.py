@@ -100,7 +100,7 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 
 
 try:
-  from nvidia import nvshmem  # pytype: disable=import-error
+  from nvidia import nvshmem  # pyrefly: ignore[missing-import]
 except ImportError:
   # Try to find the nvshmem library in Bazel test runfiles.
   if BAZEL_TEST == "1" and PYTHON_RUNFILES:

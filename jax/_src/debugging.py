@@ -729,14 +729,12 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
 
   # These imports are local so that they don't affect JAX import times.
-  # pytype: disable=import-error
-  import rich.align
-  import rich.console
-  import rich.box
-  import rich.padding
-  import rich.style
-  import rich.table
-  # pytype: enable=import-error
+  import rich.align  # pyrefly: ignore[missing-import]
+  import rich.console  # pyrefly: ignore[missing-import]
+  import rich.box  # pyrefly: ignore[missing-import]
+  import rich.padding  # pyrefly: ignore[missing-import]
+  import rich.style  # pyrefly: ignore[missing-import]
+  import rich.table  # pyrefly: ignore[missing-import]
 
   if len(shape) > 2 or len(shape) < 1:
     raise ValueError(
@@ -745,7 +743,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   use_color = use_color and console.color_system is not None
   if use_color and not color_map:
     try:
-      import matplotlib as mpl  # pytype: disable=import-error
+      import matplotlib as mpl  # pyrefly: ignore[missing-import]
       color_map = mpl.colormaps["tab20b"]
     except ModuleNotFoundError:
       use_color = False

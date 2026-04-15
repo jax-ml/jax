@@ -157,8 +157,8 @@ class Config:
     ```
 
     """
-    import absl.flags as absl_FLAGS  # noqa: F401  # pytype: disable=import-error
-    from absl import app, flags as absl_flags  # pytype: disable=import-error
+    import absl.flags as absl_FLAGS  # noqa: F401  # pyrefly: ignore[missing-import]
+    from absl import app, flags as absl_flags  # pyrefly: ignore[missing-import]
 
     self.use_absl = True
     self.absl_flags = absl_flags
@@ -212,7 +212,7 @@ class Config:
       jax_argv = itertools.takewhile(lambda a: a != '--', sys.argv)
       jax_argv = ['', *(a for a in jax_argv if a.startswith('--jax'))]
 
-      import absl.flags  # pytype: disable=import-error
+      import absl.flags  # pyrefly: ignore[missing-import]
       self.config_with_absl()
       absl.flags.FLAGS(jax_argv, known_only=True)
       self.complete_absl_config(absl.flags)

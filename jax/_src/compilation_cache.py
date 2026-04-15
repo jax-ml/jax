@@ -24,14 +24,14 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd  # pytype: disable=import-error
+  from compression import zstd  # pyrefly: ignore[missing-import]
 except ImportError:
   zstd = None
 
 if zstd is None:
   # TODO(phawkins): remove this case when we drop support for Python 3.13.
   try:
-    import zstandard  # pytype: disable=import-error
+    import zstandard  # pyrefly: ignore[missing-import]
   except ImportError:
     zstandard = None
 else:

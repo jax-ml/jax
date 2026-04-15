@@ -26,7 +26,7 @@ from jax._src.debugger import core as debugger_core
 
 @functools.cache
 def _web_pdb_version() -> tuple[int, ...]:
-  import web_pdb  # pytype: disable=import-error
+  import web_pdb  # pyrefly: ignore[missing-import]
   return tuple(map(int, web_pdb.__version__.split(".")))
 
 
@@ -48,7 +48,7 @@ class WebDebugger(cli_debugger.CliDebugger):
   def __init__(self, frames: list[debugger_core.DebuggerFrame], thread_id,
                completekey: str = "tab", host: str = "", port: int = 5555):
     if (host, port) not in _web_consoles:
-      import web_pdb  # pytype: disable=import-error
+      import web_pdb  # pyrefly: ignore[missing-import]
       _web_consoles[host, port] = web_pdb.WebConsole(host, port, self)
     # Clobber the debugger in the web console
     _web_console = _web_consoles[host, port]

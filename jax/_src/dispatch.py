@@ -254,7 +254,7 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
 @util.weakref_lru_cache
 def get_intermediate_shardings(
     jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
-  from jax._src import shard_map  # pytype: disable=import-error
+  from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
 
   out = []
   for eqn in jaxpr.eqns:
@@ -438,7 +438,7 @@ def _device_put_sharding_impl(
     device: Device | Sharding | None,
     copy: ArrayCopySemantics,
 ):
-  from jax.experimental import multihost_utils  # pytype: disable=import-error
+  from jax.experimental import multihost_utils  # pyrefly: ignore[missing-import]
 
   # Use a dynamic type, because the static type depends on the value of
   # ``x_is_jax_array``.

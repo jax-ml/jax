@@ -472,7 +472,7 @@ ad.primitive_transposes[io_callback_p] = io_callback_transpose_rule
 def io_callback_batching_rule(
     args, dims, callback, result_avals, sharding, ordered
 ):
-  from jax._src.lax.control_flow.loops import map as lax_map  # pytype: disable=import-error
+  from jax._src.lax.control_flow.loops import map as lax_map  # pyrefly: ignore[missing-import]
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
   is_batched = [d is not batching.not_mapped for d in dims]

@@ -57,7 +57,7 @@ from jax._src.util import (split_list, safe_map, safe_zip, unzip3,
 # and reference jax.experimental.shard_map without an explicit import.
 # TODO(yashkatariya): remove this once users are migrated to jax.shard_map.
 try:
-  import jax.experimental.shard_map as _  # pytype: disable=import-error  # noqa: F401
+  import jax.experimental.shard_map as _  # pyrefly: ignore[missing-import]  # noqa: F401
 except ImportError:
   pass
 

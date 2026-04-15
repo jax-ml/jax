@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 jax_plugins: Any | None
 try:
-  import jax_plugins  # pytype: disable=import-error
+  import jax_plugins  # pyrefly: ignore[missing-import]
 except ModuleNotFoundError:
   jax_plugins = None
 except ImportError as e:

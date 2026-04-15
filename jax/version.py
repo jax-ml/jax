@@ -122,8 +122,8 @@ def _write_version(fname: str) -> None:
 
 
 def _get_cmdclass(pkg_source_path):
-  from setuptools.command.build_py import build_py as build_py_orig  # pytype: disable=import-error
-  from setuptools.command.sdist import sdist as sdist_orig  # pytype: disable=import-error
+  from setuptools.command.build_py import build_py as build_py_orig  # pyrefly: ignore[missing-source-for-stubs]
+  from setuptools.command.sdist import sdist as sdist_orig  # pyrefly: ignore[missing-source-for-stubs]
 
   class _build_py(build_py_orig):
     def run(self):

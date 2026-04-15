@@ -24,10 +24,8 @@ from typing import Any, Union
 
 IS_COLAB_ENABLED = "google.colab" in sys.modules
 if IS_COLAB_ENABLED:
-  # pytype: disable=import-error
-  from google.colab import output
-  from IPython import display
-  # pytype: enable=import-error
+  from google.colab import output  # pyrefly: ignore[missing-import]
+  from IPython import display  # pyrefly: ignore[missing-import]
 
 
 class DOMElement(metaclass=abc.ABCMeta):

@@ -25,7 +25,7 @@ from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.indexing import Slice, dslice, ds  # noqa: F401
-from jax._src.state import types as state_types  # pytype: disable=import-error
+from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
 from jax._src.typing import Array
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
@@ -195,7 +195,7 @@ class NDIndexer(state_types.Transform):
     # We treat refs differently from scalars and arrays, because refs can have
     # a dynamic shape, making it impossible to statically determine the
     # broadcasted shape in the presence of other non-slice indexers.
-    from jax._src.state import types as state_types  # pytype: disable=import-error
+    from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
     if ref_indexers := [
         i
         for i in other_indexers
@@ -232,7 +232,7 @@ class NDIndexer(state_types.Transform):
       #
       # The local import avoids a circular dependency between primitives
       # and this module.
-      from jax._src.state import primitives as sp  # pytype: disable=import-error
+      from jax._src.state import primitives as sp  # pyrefly: ignore[missing-module-attribute]
       other_indexers = [
           sp.broadcast_to(i, indexer_shape) for i in other_indexers  # pyrefly: ignore[bad-argument-type]
       ]

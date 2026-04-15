@@ -39,7 +39,7 @@ def print_environment_info(return_string: bool = False) -> str | None:
   Args: return_string (bool) : if True, return the string rather than printing
   to stdout.
   """
-  from jax import version  # pytype: disable=import-error
+  from jax import version  # pyrefly: ignore[missing-import]
 
   # TODO(jakevdp): should we include other info, e.g. jax.config.values?
   python_version = sys.version.replace('\n', ' ')

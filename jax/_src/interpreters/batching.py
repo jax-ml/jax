@@ -52,7 +52,7 @@ FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
 MakeIotaHandler = Callable[[AxisSize], Array]
 
 def to_elt(trace: BatchTrace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
-  from jax._src import hijax  # pytype: disable=import-error
+  from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
   handler = to_elt_handlers.get(type(x))
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
@@ -88,7 +88,7 @@ from_elt_handlers: dict[type, FromEltHandler] = {}
 def make_iota(axis_size: AxisSize) -> Array:
   # Callers of this utility, via batch() or vtile(), must be in a context
   # where lax is importable.
-  from jax import lax  # pytype: disable=import-error
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
   handler = make_iota_handlers.get(type(axis_size))
   if handler:
     return handler(axis_size)
@@ -137,7 +137,7 @@ class BatchTracer(Tracer['BatchTrace']):
 
   def __init__(self, trace: BatchTrace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):
-    from jax._src import hijax  # pytype: disable=import-error
+    from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
 
     aval = core.typeof(val)
     if config.enable_checks.value:
@@ -645,7 +645,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
 def _handle_scalar_broadcasting(nd, x, d):
   # Callers of this utility, via broadcast_batcher() or defbroadcasting(),
   # must be in a context where lax is importable.
-  from jax import lax  # pytype: disable=import-error
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
   return (x if d is not_mapped or nd == np.ndim(x) else
           lax.expand_dims(x, tuple(range(np.ndim(x), nd))))
 
@@ -687,7 +687,7 @@ def expand_dims_batcher(prim, args, dims, **params):
 
 def broadcast(x, sz, axis, mesh_axis):
   # Callers of this utility must be in a context where lax is importable.
-  from jax import lax  # pytype: disable=import-error
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))

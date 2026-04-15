@@ -229,7 +229,7 @@ def lower_pipelined_jaxpr_into_module(
       d for axis, d in enumerate(grid) if which_parallel[axis]
   )
 
-  from jax._src.pallas.mosaic import pipeline  # pytype: disable=import-error
+  from jax._src.pallas.mosaic import pipeline  # pyrefly: ignore[missing-module-attribute]
 
   def pipeline_fn(*refs_and_scratch):
     refs, scratch_refs = util.split_list(refs_and_scratch, [len(is_semaphore)])

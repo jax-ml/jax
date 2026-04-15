@@ -31,8 +31,8 @@ coordinator_port = '8482'
 metadata_response_code_success = 200
 
 def get_metadata(key):
-  import requests  # pytype: disable=import-error
-  import time  # pytype: disable=import-error
+  import requests  # pyrefly: ignore[missing-source-for-stubs]
+  import time
   # Based on https://github.com/tensorflow/tensorflow/pull/40317
   gce_metadata_endpoint = 'http://' + os.environ.get(
       'GCE_METADATA_IP', 'metadata.google.internal')
