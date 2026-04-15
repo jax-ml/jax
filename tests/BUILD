@@ -1009,6 +1009,9 @@ jax_multiplatform_test(
     name = "eigh_test",
     srcs = ["eigh_test.py"],
     shard_count = 10,
+    tags = [
+        "noasan",  # Times out under asan.
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
