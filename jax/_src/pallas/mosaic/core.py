@@ -325,7 +325,7 @@ class TensorCore:
 
 
 @dataclasses.dataclass(frozen=True)
-class TensorCoreMesh:
+class TensorCoreMesh(pallas_core.Mesh):
   """A mesh of TensorCores."""
 
   devices: np.ndarray
@@ -362,6 +362,11 @@ class TensorCoreMesh:
     del effect
     return False
 
+  def check_is_compatible_with(self, other_mesh):
+    if isinstance(other_mesh, TensorCoreMesh) and self != other_mesh:
+      raise ValueError("You can't use two different TensorCoreMeshes.")
+    # TODO: Add support for mpmd with SparseCore meshes.
+    return super().check_is_compatible_with(other_mesh)
 
 def create_tensorcore_mesh(
     axis_name: str,

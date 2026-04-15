@@ -15,7 +15,7 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Hashable, Sequence
+from collections.abc import Callable, Collection, Hashable, Sequence, Mapping
 import contextlib
 import dataclasses
 import functools
@@ -65,6 +65,7 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
@@ -195,12 +196,15 @@ class LoweringContext:
   user_grid_indices: Sequence[ir.Value] | None
   block_shapes: Sequence[tuple[int | pallas_core.Squeezed, ...] | None]
   name_stack: source_info_util.NameStack
-  mesh_context: pallas_utils.MeshInfo | None
+  jax_mesh_context: pallas_utils.MeshInfo | None
   kernel_type: tpu_core.CoreType
   traceback_caches: mlir.TracebackCaches
   forward_compatible: bool
   backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
+  # TODO(rdyro): remove this once the ref mesh is available at trace time.
+  # Meshes for devices this lowering can address.
+  mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh]
 
   def replace(self, **changes: Any) -> LoweringContext:
     # The wrapper is necessary to convince pytype that this is a method.
@@ -753,6 +757,7 @@ def lower_jaxpr_to_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> ir.Module:
   module = ir.Module.create()
   lower_jaxpr_into_module(
@@ -765,6 +770,7 @@ def lower_jaxpr_to_module(
       kernel_type=kernel_type,
       mesh=mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      mpmd_meshes=mpmd_meshes,
   )
   return module
 
@@ -780,6 +786,7 @@ def lower_jaxpr_into_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
@@ -832,6 +839,7 @@ def lower_jaxpr_into_module(
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       backend=backend,
+      mpmd_meshes=mpmd_meshes,
   )
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type}>"
@@ -873,6 +881,7 @@ def lower_jaxpr_into_module(
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
           backend=backend,
+          mpmd_meshes=mpmd_meshes,
       )
       assert mlir_func.verify(), mlir_func
       block_shape = list(pallas_core._get_block_shape(bm.block_shape))
@@ -1080,6 +1089,7 @@ def lower_jaxpr_to_transform_func(
     forward_compatible: bool,
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -1103,12 +1113,13 @@ def lower_jaxpr_to_transform_func(
         None,
         arg_block_shapes,
         source_info_util.NameStack(),
-        mesh_context=mosaic_grid_mapping.mesh_info,
+        jax_mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        mpmd_meshes=mpmd_meshes,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -1139,6 +1150,7 @@ def lower_jaxpr_to_func(
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     dynamic_shape_replacement_enabled: bool,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -1156,6 +1168,7 @@ def lower_jaxpr_to_func(
   def body_func(*args):
     grid_indices, scalar_prefetch, operands_and_scratch = split_list(
         args, [num_grid, num_scalar_prefetch])
+    assert mpmd_meshes is not None, "mpmd_meshes must be provided."
     jaxpr_indices = mosaic_grid_mapping.get_grid_indices(
         grid_indices, maybe_include_mapped_dims=False
     )
@@ -1166,12 +1179,13 @@ def lower_jaxpr_to_func(
         jaxpr_indices,
         arg_block_shapes,
         source_info_util.NameStack(),
-        mesh_context=mosaic_grid_mapping.mesh_info,
+        jax_mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        mpmd_meshes=mpmd_meshes,
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -3923,26 +3937,87 @@ def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
     device_id_type: primitives.DeviceIdType,
-    device_id_aval: Any):
+    device_id_aval: Any,
+    dest_kernel_type: tpu_core.CoreType | None = None,
+):
+  kernel_type = ctx.lowering_context.kernel_type
+  if dest_kernel_type is None:
+    dest_kernel_type = kernel_type
+
+  # Get axis names of the mesh of the core type we're addressing.
+  assert ctx.lowering_context.mpmd_meshes is not None, (
+    "Lowering context needs mpmd_meshes when addressing another core type.")
+  assert dest_kernel_type in ctx.lowering_context.mpmd_meshes, (
+      f"MPMD mesh of type {dest_kernel_type} is missing from the lowering"
+      " context. Cannot address the core type without its mesh."
+  )
+  dest_mesh = ctx.lowering_context.mpmd_meshes[dest_kernel_type]
+
+  spmd_core_axis_names = set(ctx.lowering_context.grid_names or ())
+  core_axis_names = set(dest_mesh.shape.keys())
+  mpmd_core_axis_names = core_axis_names - spmd_core_axis_names
+
   def jax_fn(device_id_val):
-    logical_device_id, non_mesh_axes = primitives.device_id_to_logical(
-        ctx.lowering_context.mesh_context,
-        device_id_val,
-        device_id_type,
-        lambda name: lax.axis_index(name),
-    )
-    core_index = None
-    if non_mesh_axes and (grid_names := ctx.lowering_context.grid_names):
-      if len(grid_names) > 1:
-        raise NotImplementedError(
-            "Unable to determine core axis name if len(grid_names) > 1"
-        )
-      core_axis_name = grid_names[0]
-      core_index = non_mesh_axes.pop(core_axis_name, None)
-    if non_mesh_axes:
-      raise ValueError(
-          f"Unrecognized axes in device_id: {non_mesh_axes}"
+    if device_id_val is None:
+      logical_device_id, core_axis_indices = None, {}
+    else:
+      logical_device_id, core_axis_indices = primitives.device_id_to_logical(
+          ctx.lowering_context.jax_mesh_context,
+          device_id_val,
+          device_id_type,
+          lambda name: lax.axis_index(name),
       )
+    # resolve core axis names
+    specified_core_axes = set(core_axis_indices.keys())
+    missing_mpmd_axes = mpmd_core_axis_names - specified_core_axes
+    if dest_kernel_type != kernel_type and missing_mpmd_axes:
+      raise ValueError(
+          f"When addressing {dest_kernel_type} from {kernel_type} and"
+          f" specifying axes={set(core_axis_indices.keys())} the following axes"
+          f" are missing from the mesh: {missing_mpmd_axes}. My own grid names"
+          f" are {ctx.lowering_context.grid_names}."
+      )
+    # Resolve the core_indices for every core axis name.
+    core_index_map = {
+        core_axis_name: core_axis_indices.pop(core_axis_name, None)
+        for core_axis_name in core_axis_names
+    }
+    if core_axis_indices:
+      raise ValueError(f"Unrecognized axes in device_id: {core_axis_indices}")
+
+    # We resolve the axis indices in the code below. We already asserted that
+    # the required axis names are present in the current kernel type's mesh.
+    if dest_kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
+      assert isinstance(dest_mesh, sc_core.VectorSubcoreMesh)
+      sc_info = tpu_info.get_tpu_info().sparse_core
+      assert isinstance(sc_info, tpu_info.SparseCoreInfo)
+      if (core_id := core_index_map[dest_mesh.core_axis_name]) is None:
+        core_id = lax.axis_index(dest_mesh.core_axis_name)
+      if (subcore_id := core_index_map[dest_mesh.subcore_axis_name]) is None:
+        subcore_id = lax.axis_index(dest_mesh.subcore_axis_name)
+      core_index = sc_info.num_subcores * core_id + subcore_id
+    elif dest_kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
+      assert isinstance(dest_mesh, sc_core.ScalarSubcoreMesh)
+      if (core_id := core_index_map[dest_mesh.axis_name]) is None:
+        if kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          # TODO(rdyro): Mosaic requires resolving the core axis when the target
+          # is the scalar subcore, but the source is not. Remove this branch
+          # once fixed. We assert earlier that we have this axis name in our
+          # mesh.
+          # TODO(rdyro): Consider removing this permissive cross-core
+          # unspecified core axis special case.
+          core_id = lax.axis_index(dest_mesh.axis_name)
+      core_index = core_id
+    else:
+      assert dest_kernel_type == tpu_core.CoreType.TC, (
+          f"Unrecognized destination kernel type: {dest_kernel_type} != TC")
+      if len(core_index_map) == 0:
+        core_index = None
+      elif len(core_index_map) == 1:
+        (core_index,) = core_index_map.values()
+      else:
+        raise ValueError(
+            f"Expected zero or one core index, got {core_index_map=}.")
     return logical_device_id, core_index
 
   return lower_fun(jax_fn, in_avals=(device_id_aval,))(ctx, device_id)
@@ -3987,10 +4062,18 @@ def _semaphore_signal_lowering_rule(
       args_tree, args
   )
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
-  if device_id is not None:
-    device_id, core_id = _device_id_to_logical(
-        ctx, device_id, device_id_type, device_id_aval
-    )
+  kernel_type = ctx.lowering_context.kernel_type
+  if isinstance(sem_aval.memory_space, tpu_core.CoreMemorySpace):
+    dest_kernel_type = sem_aval.memory_space.core_type
+  else:
+    dest_kernel_type = kernel_type
+  if device_id is not None or dest_kernel_type != kernel_type:
+    # TODO(rdyro): Unify the `core_index` argument to use core meshes instead.
+    with ctx.lowering_context.grid_name_context():
+      device_id, core_id = _device_id_to_logical(
+          ctx, device_id, device_id_type, device_id_aval,
+          dest_kernel_type=dest_kernel_type
+      )
     if core_id is not None:
       if core_index is not None:
         raise ValueError(
@@ -4054,9 +4137,21 @@ def _dma_start_lowering_rule(
       dst_ref, dst_ref_aval, dst_ref_block_shape, dst_transforms
   )
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  kernel_type = ctx.lowering_context.kernel_type
+  if isinstance(sem_aval.memory_space, tpu_core.CoreMemorySpace):
+    dest_kernel_type = sem_aval.memory_space.core_type
+  else:
+    dest_kernel_type = kernel_type
   core_id = None
-  if device_id is not None:
-    device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type, device_id_aval)
+  if device_id is not None or dest_kernel_type != kernel_type:
+    # TODO(rdyro): There are potential cases where dest_kernel_type !=
+    # kernel_type, but device_id is None is ok. Consider removing this. We could
+    # then catch the unspecified device_id case earlier.
+    with ctx.lowering_context.grid_name_context():
+      device_id, core_id = _device_id_to_logical(
+          ctx, device_id, device_id_type, device_id_aval,
+          dest_kernel_type=dest_kernel_type
+      )
   tpu.enqueue_dma(
       src_ref,
       dst_ref,
@@ -4113,7 +4208,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
   # We are querying a named axis corresponding to a mesh dimension.
   device_id = tpu.device_id()
-  mesh_context = ctx.lowering_context.mesh_context
+  mesh_context = ctx.lowering_context.jax_mesh_context
   if mesh_context is None:
     raise ValueError("Mesh context is not set.")
   mesh_shape = mesh_context.mesh_shape

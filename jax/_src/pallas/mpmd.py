@@ -273,6 +273,38 @@ def _mpmd_map(
     grid_mappings = []
 
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(scratch_shapes)
+    if len(meshes_and_fns) > 1:
+      # TODO(rdyro): For MPMD with more than one mesh, come up with a better
+      # solution for how to enforce core_type presence in scratch_shape.
+      # TODO(rdyro): Check if we need to have a similar check for in-kernel
+      # allocations (e.g., run_scoped, empty_ref) or can we assume the
+      # core_type is inherited from the caller (we then need the core_type in
+      # the caller context during tracing).
+      # TODO(rdyro): Also check inputs and outputs for core type.
+      for scratch_shape in flat_scratch_shapes:
+        from jax._src.pallas.mosaic import core as tpu_core
+        if (not isinstance(scratch_shape.memory_space, tpu_core.CoreMemorySpace)
+            and scratch_shape.memory_space not in (
+              tpu_core.MemorySpace.HBM, tpu_core.MemorySpace.VMEM_SHARED)):
+          raise NotImplementedError(
+              "MPMD map with more than one mesh requires scratch_shape to have"
+              f" a `core_type` specified, but {scratch_shape=} is missing it."
+          )
+
+    # Check that meshes are compatible with each other (e.g, have a consistent
+    # core axis name in the sparsecore).
+    for i, (mesh, _) in enumerate(meshes_and_fns):
+      for other_mesh, _ in list(meshes_and_fns)[i+1:]:
+        mesh.check_is_compatible_with(other_mesh)
+
+    super_mesh_shape = {}
+    for mesh, _ in meshes_and_fns:
+      for k, v in mesh.shape.items():
+        # An extra check since `check_is_compatible_with` should catch it.
+        assert k not in super_mesh_shape or super_mesh_shape[k] == v, (
+            f"Conflicting size for axis {k}"
+        )
+        super_mesh_shape[k] = v
 
     for mesh, fn in meshes_and_fns:
       grid_spec = pallas_core.GridSpec(
@@ -325,7 +357,8 @@ def _mpmd_map(
       flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_in_tree
       )
-      with jax_core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(False):
+      with (jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+            config._check_vma(False)):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
             flat_fun, flat_kernel_avals
         )

@@ -159,9 +159,11 @@ def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class ScalarSubcoreMesh:
+class ScalarSubcoreMesh(pallas_core.Mesh):
   axis_name: str
-  num_cores: int
+  num_cores: int = dataclasses.field(
+      default_factory=lambda: get_sparse_core_info().num_cores
+  )
 
   def __post_init__(self):
     sc_info = get_sparse_core_info()
@@ -195,6 +197,17 @@ class ScalarSubcoreMesh:
     del effect  # Unused.
     return False
 
+  def check_is_compatible_with(self, other_mesh):
+    if isinstance(other_mesh, ScalarSubcoreMesh):
+      raise ValueError("You can't use two different ScalarSubcoreMeshes.")
+    elif isinstance(other_mesh, VectorSubcoreMesh):
+      if (self.axis_name == other_mesh.core_axis_name
+          and self.num_cores == other_mesh.num_cores):
+        return True
+      raise ValueError(f"{self} should have the same core axis name and number"
+                       f" of cores as the VectorSubcoreMesh {other_mesh}.")
+    # TODO: Add support for mpmd with the TensorCore mesh.
+    return super().check_is_compatible_with(other_mesh)
 
 def _scalar_subcore_mesh_discharge_rule(
     in_avals,
@@ -248,10 +261,12 @@ pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class VectorSubcoreMesh:
+class VectorSubcoreMesh(pallas_core.Mesh):
   core_axis_name: str
   subcore_axis_name: str
-  num_cores: int
+  num_cores: int = dataclasses.field(
+      default_factory=lambda: get_sparse_core_info().num_cores
+  )
   num_subcores: int = dataclasses.field(
       default_factory=lambda: get_sparse_core_info().num_subcores
   )
@@ -295,6 +310,18 @@ class VectorSubcoreMesh:
   def discharges_effect(self, effect):
     del effect  # Unused.
     return False
+
+  def check_is_compatible_with(self, other_mesh):
+    if isinstance(other_mesh, VectorSubcoreMesh):
+      raise ValueError("You can't use two different VectorSubcoreMeshes.")
+    elif isinstance(other_mesh, ScalarSubcoreMesh):
+      if (other_mesh.axis_name == self.core_axis_name
+          and other_mesh.num_cores == self.num_cores):
+        return True
+      raise ValueError(f"{self} should have the same core axis name and number"
+                       f" of cores as the ScalarSubcoreMesh {other_mesh}.")
+    # TODO: Add support for mpmd with the TensorCore mesh.
+    return super().check_is_compatible_with(other_mesh)
 
 
 def _vector_subcore_mesh_discharge_rule(

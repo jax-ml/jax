@@ -1338,6 +1338,9 @@ class Mesh:
   def discharges_effect(self, effect: jax_core.Effect) -> bool:
     return effect is _wgmma_pipeline_effect or effect is _memory_effect
 
+  def check_is_compatible_with(self, other_mesh):
+    raise NotImplementedError()
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class WarpMesh:
   """Represents a mesh over individual warps within a warpgroup.

@@ -1529,6 +1529,9 @@ def core_map_lowering_rule(ctx: mlir.LoweringRuleContext,
 mlir.register_lowering(core_map_p, core_map_lowering_rule)
 
 
+CoreType = Any  # TODO(rdyro): Unify this among backends.
+
+
 class Mesh(Protocol):
 
   @property
@@ -1539,9 +1542,23 @@ class Mesh(Protocol):
   def shape(self) -> collections.OrderedDict[object, int]:
     ...
 
+  @property
+  def kernel_type(self) -> CoreType:
+    # TODO(rdyro): Rename kernel_type property to core_type.
+    # the CoreType of the Mesh (e.g.,TensorCore, SpearCore-SCS, SpearCore-TEC)
+    ...
+
   def discharges_effect(self, effect: jax_core.Effect) -> bool:
     ...
 
+  def check_is_compatible_with(self, other_mesh):
+    """Raise if this mesh (e.g., its axes names) cannot be used with other_mesh.
+
+    For example, sparsecore scalar and vector subcore meshes are compatible only
+    if they have the same name for the core axis. By definition a mesh is also
+    compatible with itself.
+    """
+    raise ValueError(f"Mesh {self=} is not compatible with {other_mesh=}.")
 
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
 
