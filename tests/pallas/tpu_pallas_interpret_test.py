@@ -1344,11 +1344,11 @@ class InterpretTest(jtu.JaxTestCase):
       )
     pltpu.reset_tpu_interpret_mode_state()
 
-  def test_run_scoped_with_memory_space_is_none(self):
-    self.skipTest(
-        'Fails with a `KeyError` because the TPU kernel interpreter considers'
-        ' refs in a DMA that have memory space set to `None` to be HBM.'
-    )
+  @parameterized.parameters(
+      pl.BlockSpec(memory_space=None),
+      pl.no_block_spec,
+  )
+  def test_run_scoped_with_memory_space_is_none(self, out_block_spec):
     shape = (8, 128)
     dtype = jnp.float32
 

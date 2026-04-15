@@ -1509,6 +1509,13 @@ def _pallas_call(
         pallas_core._convert_out_shape_to_aval(v) for v in flat_out_shapes
     )
 
+    default_memory_space = None
+    if isinstance(interpret, InterpretParams):
+      # TODO(jburnim): Can we always set the default memory space for
+      # TPU kernels -- not just under TPU Interpret Mode?
+      import jax._src.pallas.mosaic.core as mosaic_core
+      default_memory_space = mosaic_core.MemorySpace.VMEM
+
     in_origins = tuple(f"args{tree_util.keystr(p)}" for p in in_paths)
     out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
     # TODO(necula): check that input_output_aliases is well-formed: no duplicates, etc.
@@ -1521,6 +1528,7 @@ def _pallas_call(
         out_tree,
         out_origins,
         debug,
+        default_memory_space=default_memory_space,
     )
     kernel_args, scratch_args = split_list(
         kernel_args, [len(kernel_args) - scratch_tree.num_leaves])

@@ -1164,6 +1164,7 @@ def get_grid_mapping(
     out_tree: tree_util.PyTreeDef,
     out_origins: Sequence[OriginStr],
     debug: bool = False,
+    default_memory_space: Any = None,
 ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
   if dynamic_shapes_export_enabled():
     dim_check: Any = jax_core.is_dim
@@ -1216,14 +1217,24 @@ def get_grid_mapping(
     flat_scratch_avals = ()
     jaxpr_scratch_avals = ()
 
+  def _with_default_memory_space(bs: BlockSpec):
+    if bs is no_block_spec:
+      return BlockSpec(memory_space=default_memory_space)
+    elif bs.memory_space is None:
+      return bs.replace(memory_space=default_memory_space)
+    else:
+      return bs
+
   if grid_spec.in_specs is not no_block_spec:
     flat_in_specs, in_specs_tree = tree_util.tree_flatten(grid_spec.in_specs)
     if in_specs_tree != in_tree:
       raise ValueError(
           pytreedef_mismatch_err_msg("`in_specs`", in_specs_tree,
                                      "`inputs`", in_tree))
+    flat_in_specs = [_with_default_memory_space(bs) for bs in flat_in_specs]
   else:
-    flat_in_specs = [no_block_spec] * len(in_avals)
+    flat_in_specs = (
+        [BlockSpec(memory_space=default_memory_space)] * len(in_avals))
 
   in_block_mappings = map(
       partial(
@@ -1245,8 +1256,10 @@ def get_grid_mapping(
       raise ValueError(
           pytreedef_mismatch_err_msg("`out_specs`", out_specs_tree,
                                      "`out_shape`", out_tree))
+    flat_out_specs = [_with_default_memory_space(bs) for bs in flat_out_specs]
   else:
-    flat_out_specs = [no_block_spec] * len(out_avals)
+    flat_out_specs = (
+        [BlockSpec(memory_space=default_memory_space)] * len(out_avals))
 
   out_block_mappings = map(
       partial(
