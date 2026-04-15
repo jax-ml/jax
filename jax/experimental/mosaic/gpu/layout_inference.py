@@ -1647,19 +1647,31 @@ def _slice_tmem_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
+  constraints = []
   if "alias_id" in op.attributes:
-    alias_id = ir.StringAttr(op.attributes["alias_id"]).value
-    if alias_id in ctx.slice_tmem_aliases:
-      result_variable = ctx.slice_tmem_aliases[alias_id]
+    key = ir.StringAttr(op.attributes["alias_id"]).value
+  else:
+    # TODO(bchetioui): change the way the map is keyed. A future change is
+    # already taking care of that.
+    # Use the offset as the key if no alias ID is present.
+    key = str(ir.IntegerAttr(op.attributes["offset"]).value)
+  if (cached_variable := ctx.slice_tmem_aliases.get(key)) is not None:
+    # It is possible that, due to simplifications, we match subslices of the
+    # same original TMEM allocation with different shapes. In this case, we
+    # want to create a new variable, since we want to query the type during
+    # layout inference.
+    if cached_variable.key.value.type == result.value.type:
+      result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_tmem_aliases[alias_id] = result_variable
+      constraints.append(cs.Equals(cached_variable, result_variable))
   else:
     result_variable = cs.Variable(result)
-  return (
-      cs.ConstraintSystem(),
-      {operand_variable: [operand], result_variable: [result]},
-  )
+    ctx.slice_tmem_aliases[key] = result_variable
+  return cs.ConstraintSystem(constraints=constraints), {
+      operand_variable: [operand],
+      result_variable: [result],
+  }
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncStoreTmemOp)
@@ -1687,17 +1699,29 @@ def _slice_smem_constraint_system(
     ctx: DerivationContext,
     op: mgpu.SliceSMEMOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  res = ValueSite(op, VariableType.RESULT, 0)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  constraints = []
   if "alias_id" in op.attributes:
-    alias_id = ir.StringAttr(op.attributes["alias_id"]).value
-    if alias_id in ctx.slice_smem_aliases:
-      res_var = ctx.slice_smem_aliases[alias_id]
-    else:
-      res_var = cs.Variable(res)
-      ctx.slice_smem_aliases[alias_id] = res_var
+    key = ir.StringAttr(op.attributes["alias_id"]).value
   else:
-    res_var = cs.Variable(res)
-  return cs.ConstraintSystem(), {res_var: [res]}
+    # TODO(bchetioui): change the way the map is keyed. A future change is
+    # already taking care of that.
+    # Use the offset as the key if no alias ID is present.
+    key = str(ir.IntegerAttr(op.attributes["offset"]).value)
+  if (cached_variable := ctx.slice_smem_aliases.get(key)) is not None:
+    # It is possible that, due to simplifications, we match subslices of the
+    # same original SMEM allocation with different shapes. In this case, we
+    # want to create a new variable, since we want to query the type during
+    # layout inference.
+    if cached_variable.key.value.type == result.value.type:
+      result_variable = cached_variable
+    else:
+      result_variable = cs.Variable(result)
+      constraints.append(cs.Equals(cached_variable, result_variable))
+  else:
+    result_variable = cs.Variable(result)
+    ctx.slice_smem_aliases[key] = result_variable
+  return cs.ConstraintSystem(constraints=constraints), {result_variable: [result]}
 
 
 @_add_constraint_system_derivation_rule(memref.SubViewOp)

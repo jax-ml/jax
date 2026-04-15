@@ -2048,10 +2048,8 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    empty_transforms = ir.ArrayAttr.get([])
-
     self.assertSequenceEqual(inference_utils.out_transforms(ops[0]), [transforms_0])
-    self.assertSequenceEqual(inference_utils.out_transforms(ops[1]), [empty_transforms])
+    self.assertSequenceEqual(inference_utils.out_transforms(ops[1]), [transforms_0])
 
     self.assertSequenceEqual(inference_utils.out_transforms(ops[2]), [transforms_1])
     self.assertSequenceEqual(inference_utils.out_transforms(ops[3]), [transforms_1])
@@ -2083,6 +2081,64 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
+
+  def test_slice_smem_constraint_system_enforces_equality_on_aliasing_slices_with_different_shapes(
+      self,
+  ):
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      ty0 = ir.MemRefType.get((64, 64), bf16, memory_space=mgpu.utils.smem())
+      ty1 = ir.MemRefType.get((64, 128), bf16, memory_space=mgpu.utils.smem())
+      op0 = mgpu.dialect.SliceSMEMOp(ty0, 0)
+      op1 = mgpu.dialect.SliceSMEMOp(ty1, 0)
+
+    ctx = layout_inference.DerivationContext()
+    sys0, variables0 = layout_inference._slice_smem_constraint_system(ctx, op0)
+    ctx.update(variables0)
+    sys1, variables1 = layout_inference._slice_smem_constraint_system(ctx, op1)
+
+    ref0_value_site = layout_inference.ValueSite(op0, layout_inference.VariableType.RESULT, 0)
+    ref1_value_site = layout_inference.ValueSite(op1, layout_inference.VariableType.RESULT, 0)
+
+    ref0 = cs.Variable(ref0_value_site)
+    ref1 = cs.Variable(ref1_value_site)
+
+    self.assertEqual(variables0, {ref0: [ref0_value_site]})
+    self.assertEqual(variables1, {ref1: [ref1_value_site]})
+
+    self.assertEqual(sys0.constraints, [])
+    self.assertEqual(sys1.constraints, [cs.Equals(ref0, ref1)])
+
+  def test_slice_tmem_constraint_system_enforces_equality_on_aliasing_slices_with_different_shapes(
+      self,
+  ):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      src_tmem_type = ir.MemRefType.get(
+          (128, 512), i32, memory_space=mgpu.utils.tmem()
+      )
+      [src] = undefs(src_tmem_type)
+      ty0 = ir.MemRefType.get((64, 64), i32, memory_space=mgpu.utils.tmem())
+      ty1 = ir.MemRefType.get((64, 128), i32, memory_space=mgpu.utils.tmem())
+      op0 = mgpu.dialect.SliceTmemOp(ty0, src, 0)
+      op1 = mgpu.dialect.SliceTmemOp(ty1, src, 0)
+
+    ctx = layout_inference.DerivationContext()
+    _, value_sites = _undef_constraint_system(ctx, src.owner)
+    ctx.update(value_sites)
+    sys0, variables0 = layout_inference._slice_tmem_constraint_system(ctx, op0)
+    ctx.update(variables0)
+    sys1, _ = layout_inference._slice_tmem_constraint_system(ctx, op1)
+
+    ref0_value_site = layout_inference.ValueSite(op0, layout_inference.VariableType.RESULT, 0)
+    ref1_value_site = layout_inference.ValueSite(op1, layout_inference.VariableType.RESULT, 0)
+
+    ref0 = cs.Variable(ref0_value_site)
+    ref1 = cs.Variable(ref1_value_site)
+
+    self.assertEqual(sys0.constraints, [])
+    self.assertEqual(sys1.constraints, [cs.Equals(ref0, ref1)])
+
 
   def test_slice_tmem_constraint_system_with_alias_ids_works_correctly(self):
     with ir.InsertionPoint(self.module.body):
