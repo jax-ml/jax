@@ -452,7 +452,7 @@ jobs:
           if [[ "${INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS}" == "1" ]]; then
             uv pip install "${JAX_WHEEL}[cuda${{ matrix.cuda-version }}]"
           else
-            uv pip install "${JAX_WHEEL}[cuda${{ matrix.cuda-version }}]" "$JAXLIB_WHEEL" "$JAX_CUDA_PJRT_WHEEL" "${JAX_CUDA_PLUGIN_WHEEL}[with-cuda]" "$EXTRA_INDEX"
+            uv pip install "${JAX_WHEEL}[cuda${{ matrix.cuda-version }}]" "$JAXLIB_WHEEL" "$JAX_CUDA_PJRT_WHEEL" "${JAX_CUDA_PLUGIN_WHEEL}[with-cuda]"
           fi
         env:
           INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
