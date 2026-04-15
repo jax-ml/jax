@@ -991,7 +991,7 @@ class PallasCallMultimemTest(TestCase):
             plgpu.SemaphoreType.REGULAR,
         ],
     )
-    mesh = jax.sharding.Mesh(jax.devices(), ["x"])
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     y = jax.jit(
         jax.shard_map(
             kernel_call,
