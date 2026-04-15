@@ -14,10 +14,10 @@
 """Tests for Pallas on SparseCore."""
 
 import collections
-import re
 import functools
 import itertools
 import math
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,8 +25,8 @@ import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
 from jax import lax
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.state import discharge as state_discharge
@@ -95,22 +95,24 @@ class PallasSCTest(jtu.JaxTestCase):
   def sc_info(self):
     return plsc.get_sparse_core_info()
 
-  def vector_subcore_kernel(self, **kwargs):
-    assert "compiler_params" not in kwargs
+  def vector_subcore_kernel(self, *, compiler_params=None, **kwargs):
+    if compiler_params is None:
+      compiler_params = pltpu.CompilerParams()
     return functools.partial(
         pl.pallas_call,
         **kwargs,
-        compiler_params=pltpu.CompilerParams(
+        compiler_params=compiler_params.replace(
             kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
             use_tc_tiling_on_sc=self.USE_TC_TILING,
         ),
     )
 
-  def kernel(self, **kwargs):
-    assert "compiler_params" not in kwargs
+  def kernel(self, compiler_params=None, **kwargs):
+    if compiler_params is None:
+      compiler_params = pltpu.CompilerParams()
     return functools.partial(
         pl.kernel,
-        compiler_params=pltpu.CompilerParams(
+        compiler_params=compiler_params.replace(
             use_tc_tiling_on_sc=self.USE_TC_TILING
         ),
         **kwargs,
@@ -354,6 +356,20 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(
         kernel(x), sum(x[..., idx] for idx in indices)
     )
+
+  def test_odd_load_store(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 20):
+      self.skipTest("Needs newer libtpu")
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(100,), dtype=jnp.int32),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(100)
+    np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_get_index(self, major_dim):

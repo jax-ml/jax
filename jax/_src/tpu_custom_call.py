@@ -625,8 +625,8 @@ def _lower_to_custom_call_config(
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
-  if needs_layout_passes is None:
-    needs_layout_passes = not device_type
+  # TC kernels always require layout passes.
+  needs_layout_passes = needs_layout_passes or not device_type
   lowered_module_asm, (
       has_communication,
       has_custom_barrier,

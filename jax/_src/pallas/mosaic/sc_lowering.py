@@ -58,7 +58,11 @@ MemorySpace = tpu_core.MemorySpace
 CoreMemorySpace = tpu_core.CoreMemorySpace
 
 ShapedAbstractValue = tc_lowering.ShapedAbstractValue
-LoweringContext = tc_lowering.LoweringContext
+
+@dataclasses.dataclass
+class LoweringContext(tc_lowering.LoweringContext):
+  needs_layout_passes: bool
+
 LoweringRuleContext = tc_lowering.LoweringRuleContext
 
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
@@ -140,6 +144,7 @@ def lower_pipelined_jaxpr_to_module(
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
+    needs_layout_passes: bool = False,
 ) -> ir.Module:
   module = ir.Module.create()
   lower_pipelined_jaxpr_into_module(
@@ -154,6 +159,7 @@ def lower_pipelined_jaxpr_to_module(
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       use_tc_tiling=use_tc_tiling,
       mpmd_meshes=mpmd_meshes,
+      needs_layout_passes=needs_layout_passes,
   )
   return module
 
@@ -171,6 +177,7 @@ def lower_pipelined_jaxpr_into_module(
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
+    needs_layout_passes: bool = False,
 ) -> None:
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
@@ -350,6 +357,7 @@ def lower_pipelined_jaxpr_into_module(
         kernel_type=kernel_type,
         mesh=mesh,
         mpmd_meshes=mpmd_meshes,
+        needs_layout_passes=needs_layout_passes,
     )
 
 
@@ -365,6 +373,7 @@ def lower_jaxpr_into_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
+    needs_layout_passes: bool = False,
 ):
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
   assert mpmd_meshes is not None, "mpmd_meshes must be provided."
@@ -390,6 +399,7 @@ def lower_jaxpr_into_module(
       forward_compatible=lowering_context.is_forward_compat(),
       backend=backend,
       mpmd_meshes=mpmd_meshes,
+      needs_layout_passes=needs_layout_passes,
   )
   module.body.append(func_op)
   sym_tab.insert(func_op)
@@ -473,6 +483,7 @@ def lower_jaxpr_to_func(
     forward_compatible: bool,
     backend: Any | None,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh] | None = None,
+    needs_layout_passes: bool = False,
 ) -> func.FuncOp:
   """Lowers a Jaxpr to a Mosaic SparseCore function."""
   assert mpmd_meshes is not None, "mpmd_meshes must be provided."
@@ -519,6 +530,7 @@ def lower_jaxpr_to_func(
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         mpmd_meshes=mpmd_meshes,
+        needs_layout_passes=needs_layout_passes,
     )
     return tc_lowering.jaxpr_subcomp(
           lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -642,7 +654,8 @@ def _load_lowering_rule(
       raise NotImplementedError("Get does not support masked scalar loads")
     return memref.load(ref, starts)
 
-  _check_aval_is_supported("Get", out_aval)
+  if not ctx.lowering_context.needs_layout_passes:  # pyrefly: ignore[missing-attribute]
+    _check_aval_is_supported("Get", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
@@ -726,7 +739,8 @@ def _store_lowering_rule(
     memref.store(val, ref, starts)
     return old_val
 
-  _check_aval_is_supported("Swap", out_aval)
+  if not ctx.lowering_context.needs_layout_passes:  # pyrefly: ignore[missing-attribute]
+    _check_aval_is_supported("Swap", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )

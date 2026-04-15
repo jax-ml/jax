@@ -319,6 +319,7 @@ def _lower_to_custom_call(
       skip_device_barrier=mosaic_params.skip_device_barrier,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
+      needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params),
   )
   _maybe_cast_to_bool = (
@@ -411,6 +412,7 @@ def pallas_call_tpu_lowering_rule(
       lower_jaxpr_to_module = functools.partial(
           sc_lowering.lower_pipelined_jaxpr_to_module,
           use_tc_tiling=mosaic_params.use_tc_tiling_on_sc,
+          needs_layout_passes=mosaic_params.needs_layout_passes,
       )
     case _:
       raise ValueError(f"Unsupported kernel type: {mosaic_params.kernel_type}")
@@ -513,16 +515,21 @@ def mpmd_map_tpu_lowering_rule(
 
       match kernel_type := mesh.kernel_type:
         case tpu_core.CoreType.TC:
-          if (mpmd_meshes_map is not None
-              and mpmd_meshes_map.keys() != {tpu_core.CoreType.TC}):
+          if mpmd_meshes_map is not None and mpmd_meshes_map.keys() != {
+              tpu_core.CoreType.TC
+          }:
             raise NotImplementedError(
-                "mpmd_map does not support TC kernels yet.")
+                "mpmd_map does not support TC kernels yet."
+            )
           lower_fn = lowering.lower_jaxpr_into_module
         case (
             tpu_core.CoreType.SC_SCALAR_SUBCORE
             | tpu_core.CoreType.SC_VECTOR_SUBCORE
         ):
-          lower_fn = sc_lowering.lower_jaxpr_into_module
+          lower_fn = functools.partial(
+              sc_lowering.lower_jaxpr_into_module,
+              needs_layout_passes=mosaic_params.needs_layout_passes,
+          )
         case _:
           raise ValueError(
               f"Unsupported kernel type: {kernel_type}"

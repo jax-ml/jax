@@ -111,6 +111,8 @@ class CompilerParams:
       without a custom barrier.
     use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is only
       used for ``SC_*_SUBCORE`` kernels.
+    needs_layout_passes: Whether to use vector layout inference passes. This
+      flag is temporary and will eventually be removed.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -128,6 +130,7 @@ class CompilerParams:
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
+  needs_layout_passes: bool = False
 
   def __init__(
       self,
@@ -146,6 +149,7 @@ class CompilerParams:
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
+      needs_layout_passes: bool | None = None,
   ):
     object.__setattr__(
         self,
@@ -182,6 +186,7 @@ class CompilerParams:
         self, "shape_invariant_numerics", shape_invariant_numerics
     )
     object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
+    object.__setattr__(self, "needs_layout_passes", needs_layout_passes)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
