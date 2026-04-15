@@ -1235,52 +1235,50 @@ def norm(x: ArrayLike, ord: int | str | None = None,
   else:
     axis = (canonicalize_axis(axis, ndim),)
 
-  num_axes = len(axis)
-  if num_axes == 1:
-    return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
-
-  elif num_axes == 2:
-    row_axis, col_axis = axis  # type: ignore[bad-unpacking]
-    if ord is None or ord in ('f', 'fro'):
-      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+  match axis:
+    case [_]:
+      return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
+    case [row_axis, col_axis]:
+      if ord is None or ord in ('f', 'fro'):
+        return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                         keepdims=keepdims))
-    elif ord == 1:
-      if not keepdims and col_axis > row_axis:
-        col_axis -= 1
-      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                             axis=col_axis, keepdims=keepdims, initial=0)
-    elif ord == -1:
-      if not keepdims and col_axis > row_axis:
-        col_axis -= 1
-      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                             axis=col_axis, keepdims=keepdims)
-    elif ord == np.inf:
-      if not keepdims and row_axis > col_axis:
-        row_axis -= 1
-      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims, initial=0)
-    elif ord == -np.inf:
-      if not keepdims and row_axis > col_axis:
-        row_axis -= 1
-      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims)
-    elif ord in ('nuc', 2, -2):
-      x = jnp.moveaxis(x, axis, (-2, -1))
-      s = svd(x, compute_uv=False)
-      if ord == 2:
-        y = reductions.amax(s, axis=-1, initial=0)
-      elif ord == -2:
-        y = reductions.amin(s, axis=-1)
+      elif ord == 1:
+        if not keepdims and col_axis > row_axis:
+          col_axis -= 1
+        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims, initial=0)
+      elif ord == -1:
+        if not keepdims and col_axis > row_axis:
+          col_axis -= 1
+        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims)
+      elif ord == np.inf:
+        if not keepdims and row_axis > col_axis:
+          row_axis -= 1
+        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims, initial=0)
+      elif ord == -np.inf:
+        if not keepdims and row_axis > col_axis:
+          row_axis -= 1
+        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims)
+      elif ord in ('nuc', 2, -2):
+        x = jnp.moveaxis(x, axis, (-2, -1))
+        s = svd(x, compute_uv=False)
+        if ord == 2:
+          y = reductions.amax(s, axis=-1, initial=0)
+        elif ord == -2:
+          y = reductions.amin(s, axis=-1)
+        else:
+          y = reductions.sum(s, axis=-1)
+        if keepdims:
+          y = jnp.expand_dims(y, axis)
+        return y
       else:
-        y = reductions.sum(s, axis=-1)
-      if keepdims:
-        y = jnp.expand_dims(y, axis)
-      return y
-    else:
-      raise ValueError(f"Invalid order '{ord}' for matrix norm.")
-  else:
-    raise ValueError(f"Improper number of axes for norm: {axis=}. Pass one axis to"
-                     " compute a vector-norm, or two axes to compute a matrix-norm.")
+        raise ValueError(f"Invalid order '{ord}' for matrix norm.")
+    case _:
+      raise ValueError(f"Improper number of axes for norm: {axis=}. Pass one axis to"
+                       " compute a vector-norm, or two axes to compute a matrix-norm.")
 
 @overload
 def qr(a: ArrayLike,
@@ -2196,7 +2194,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
+  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # pyrefly: ignore[no-matching-overload]
                        optimize='auto', precision=precision)
 
 

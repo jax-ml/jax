@@ -909,8 +909,8 @@ class LaunchContext:
               f" {slice_shape[partitioned]}"
           )
         slice_shape[partitioned] //= collective_size
-        dyn_base_indices = list(dyn_base_indices)  # type: ignore[assignment]
-        dyn_base_indices[partitioned] = arith.addi(  # type: ignore[index]
+        dyn_base_indices = list(dyn_base_indices)
+        dyn_base_indices[partitioned] = arith.addi(
             dyn_base_indices[partitioned],
             arith.muli(
                 utils.cluster_idx(collective),
@@ -1008,7 +1008,7 @@ class LaunchContext:
         nonlocal smem_ref
         slice_shape[dim] //= num_chunks
         block_offset = arith.muli(idx, c(slice_shape[dim], index))
-        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)  # type: ignore[index]
+        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
         if smem_ref is not None:
           smem_ref = utils.memref_slice(
               smem_ref,
@@ -1268,7 +1268,7 @@ class LaunchContext:
         if gmem_transform != (TileTransform((8, swizzle_elems)),):
           raise NotImplementedError(gmem_transform)
         layout = fa.tiled_copy_smem_gmem_layout(
-            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
+            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
         )
         gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
         dst_tiled_strides = [
@@ -1550,7 +1550,7 @@ class LaunchContext:
 
         # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
         total_elements = c(math.prod(gmem_ref_ty.shape), index)
-        linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]  # type: ignore[index]
+        linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]  # pyrefly: ignore[bad-index]
 
         # Equivalent to: max(0, total - offset)
         valid_offset_elems = arith.minui(linear_offset_elems, total_elements)

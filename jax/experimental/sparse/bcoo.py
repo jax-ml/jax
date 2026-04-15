@@ -671,7 +671,7 @@ def _bcoo_rdot_general(lhs: Array, rhs_data: Array, rhs_indices: Array, *,
                        dimension_numbers: DotDimensionNumbers,
                        preferred_element_type: Any, rhs_spinfo: SparseInfo) -> Array:
   # TODO(jakevdp): perhaps this should be part of the bcoo_dot_general primitive?
-  dimension_numbers_reversed: DotDimensionNumbers = tuple(d[::-1] for d in dimension_numbers)  # type: ignore[assignment]
+  dimension_numbers_reversed: DotDimensionNumbers = tuple(d[::-1] for d in dimension_numbers)  # pyrefly: ignore[bad-assignment]
   result = _bcoo_dot_general(rhs_data, rhs_indices, lhs, lhs_spinfo=rhs_spinfo,
                              dimension_numbers=dimension_numbers_reversed,
                              preferred_element_type=preferred_element_type)

@@ -59,26 +59,26 @@ class EArray(basearray.Array):
     raise NotImplementedError
 
   # forward to aval
-  shape = property(lambda self: self.aval.shape)  # type: ignore[assignment]
-  dtype = property(lambda self: self.aval.dtype)  # type: ignore[assignment]
+  shape = property(lambda self: self.aval.shape)  # pyrefly: ignore[bad-override]
+  dtype = property(lambda self: self.aval.dtype)  # pyrefly: ignore[bad-override]
 
   # computed from shape and dtype
-  ndim = property(lambda self: len(self.aval.shape))  # type: ignore[assignment]
-  size = property(lambda self: math.prod(self.aval.shape))  # type: ignore[assignment]
-  itemsize = property(lambda self: self.aval.dtype.itemsize)  # type: ignore[assignment]
+  ndim = property(lambda self: len(self.aval.shape))  # pyrefly: ignore[bad-override]
+  size = property(lambda self: math.prod(self.aval.shape))  # pyrefly: ignore[bad-override]
+  itemsize = property(lambda self: self.aval.dtype.itemsize)  # pyrefly: ignore[bad-override]
   def __len__(self):
     if self.ndim == 0: raise TypeError('len() of unsized object')
     return self.shape[0]
 
   # forward to self._data
-  devices = property(lambda self: self._data.devices)  # type: ignore[assignment]
+  devices = property(lambda self: self._data.devices)  # pyrefly: ignore[bad-override]
   _committed = property(lambda self: self._data._committed)
-  is_fully_addressable = property(lambda self: self._data.is_fully_addressable)  # type: ignore[assignment]
-  is_fully_replicated = property(lambda self: self._data.is_fully_replicated)  # type: ignore[assignment]
-  delete = property(lambda self: self._data.delete)  # type: ignore[assignment]
-  is_deleted = property(lambda self: self._data.is_deleted)  # type: ignore[assignment]
-  on_device_size_in_bytes = property(lambda self: self._data.on_device_size_in_bytes)  # type: ignore[assignment]
-  unsafe_buffer_pointer = property(lambda self: self._data.unsafe_buffer_pointer)  # type: ignore[assignment]
+  is_fully_addressable = property(lambda self: self._data.is_fully_addressable)  # pyrefly: ignore[bad-override]
+  is_fully_replicated = property(lambda self: self._data.is_fully_replicated)  # pyrefly: ignore[bad-override]
+  delete = property(lambda self: self._data.delete)  # pyrefly: ignore[bad-override]
+  is_deleted = property(lambda self: self._data.is_deleted)  # pyrefly: ignore[bad-override]
+  on_device_size_in_bytes = property(lambda self: self._data.on_device_size_in_bytes)  # pyrefly: ignore[bad-override]
+  unsafe_buffer_pointer = property(lambda self: self._data.unsafe_buffer_pointer)  # pyrefly: ignore[bad-override]
 
   # defer to extended dtype rules
   @property

@@ -1155,7 +1155,7 @@ def as_torch_gpu_kernel(
 
 def _compile_as_torch_gpu_kernel(module_asm: bytes):
   try:
-    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+    import torch  # pyrefly: ignore[missing-import]
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 
@@ -1164,9 +1164,9 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   # Get our hands on the compilation and unload functions
   try:
     try:
-      import jax_plugins.xla_cuda13 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
+      import jax_plugins.xla_cuda13 as cuda_plugin  # pyrefly: ignore[missing-import]
     except ImportError:
-      import jax_plugins.xla_cuda12 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
+      import jax_plugins.xla_cuda12 as cuda_plugin  # pyrefly: ignore[missing-import]
   except ImportError:
     dll = ctypes.CDLL(None)
   else:
@@ -1218,7 +1218,7 @@ def _as_torch_gpu_kernel(
 
   launch, unload = _compile_as_torch_gpu_kernel(module_asm)
   # _compile_as_torch_gpu_kernel checks that this succeeds
-  import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+  import torch  # pyrefly: ignore[missing-import]
 
   def as_torch_dtype(dtype):
     # torch contains NumPy-compatible dtypes in its top namespace

@@ -355,8 +355,8 @@ def LoadedExecutable_execute_with_token(self, arguments, device=None):
   )
 
 
-LoadedExecutable.execute = LoadedExecutable_execute  # type: ignore[method-assign]
-LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token  # type: ignore[method-assign]
+LoadedExecutable.execute = LoadedExecutable_execute
+LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
 
 
 class CustomCallTargetTraits(enum.IntFlag):

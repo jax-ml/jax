@@ -684,7 +684,7 @@ def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value:
 
 @overload
 def memref_reshape(ref: MultimemRef, shape: tuple[int, ...]) -> MultimemRef:
-  ...  # type: ignore[overload-cannot-match]
+  ...
 
 
 def memref_reshape(

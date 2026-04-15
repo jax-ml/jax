@@ -27,8 +27,8 @@ from jax.experimental.jax2tf.examples import mnist_lib
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore[import-not-found]
-from tensorflow_serving.apis import predict_pb2  # type: ignore[import-not-found]
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
+from tensorflow_serving.apis import predict_pb2  # pyrefly: ignore[missing-import]
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 

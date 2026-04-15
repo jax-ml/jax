@@ -767,8 +767,8 @@ class StrictABCMeta(abc.ABCMeta):
     del subclass  # Unused.
     raise NotImplementedError(f"{cls} does not support virtual subclasses")
 
-  __instancecheck__ = type.__instancecheck__  # type: ignore[assignment]
-  __subclasscheck__ = type.__subclasscheck__  # type: ignore[assignment]
+  __instancecheck__ = type.__instancecheck__
+  __subclasscheck__ = type.__subclasscheck__
 
 
 class StrictABC(metaclass=StrictABCMeta):

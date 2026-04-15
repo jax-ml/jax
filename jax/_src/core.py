@@ -157,7 +157,7 @@ class Jaxpr:
                # We want all calls to pass a DebugInfo object, but for backwards
                # compatibility we have to allow calls when the debug_info
                # is missing.
-               debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
+               debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
                is_high: bool = False,
                ):
     """
@@ -1950,7 +1950,7 @@ def cur_qdd(x):
   prev_trace = trace_ctx.trace
   trace_ctx.set_trace(eval_trace)
   try:
-    return prev_trace.cur_qdd(x)  # type: ignore[missing-attribute]
+    return prev_trace.cur_qdd(x)  # pyrefly: ignore[missing-attribute]
   finally:
     trace_ctx.set_trace(prev_trace)
 
@@ -2715,10 +2715,10 @@ class Ref(metaclass=RefMeta):
   dtype = property(lambda self: self._aval.dtype)
 
   # get operations from aval, munging the name
-  def __getitem__(self, idx): return self._aval._getitem(self, idx)  # type: ignore[missing-attribute]
-  def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)  # type: ignore[missing-attribute]
-  def __len__(self) -> int: return self._aval._len(self)  # type: ignore[missing-attribute]
-  def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)  # type: ignore[missing-attribute]
+  def __getitem__(self, idx): return self._aval._getitem(self, idx)  # pyrefly: ignore[missing-attribute]
+  def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)  # pyrefly: ignore[missing-attribute]
+  def __len__(self) -> int: return self._aval._len(self)  # pyrefly: ignore[missing-attribute]
+  def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)  # pyrefly: ignore[missing-attribute]
 
   # some attributes/methods only work for lojax refs
   sharding = property(lambda self: self._refs._buf.sharding)

@@ -46,7 +46,7 @@ _PPRINT_USE_COLOR = config.bool_state(
 def _can_use_color() -> bool:
   try:
     # Check if we're in IPython or Colab
-    ipython = get_ipython()  # type: ignore[name-defined]
+    ipython = get_ipython()  # pyrefly: ignore[unknown-name]
     shell = ipython.__class__.__name__
     if shell == "ZMQInteractiveShell":
       # Jupyter Notebook

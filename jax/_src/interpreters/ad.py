@@ -101,7 +101,7 @@ def linearize_subtrace_2(f: Callable, is_vjp: bool,
       del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
-  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)  # type: ignore[assignment]
+  out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)
   jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is tag) for c in consts]
@@ -976,7 +976,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     if user_facing_symbolic_zeros:
       zero_type = SymbolicZero
     else:
-      zero_type = Zero  # type: ignore[assignment]
+      zero_type = Zero
 
     with core.set_current_trace(trace):
       tangent_args = [trace.new_arg(pe.PartialVal.unknown(a)) if nz else make_zero(a)
