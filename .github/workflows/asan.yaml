@@ -29,7 +29,7 @@ jobs:
     if: github.repository == 'jax-ml/jax'
     runs-on: linux-x86-n4-64
     container:
-      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:8a170679629fafd60c75f33957bd11c7419436ef4117a2124d546111e51801a5
     strategy:
       fail-fast: false
     defaults:
