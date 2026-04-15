@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
 from typing import Any, Literal
@@ -129,17 +129,59 @@ class CompilerParams:
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
 
-  def __post_init__(self):
-    if self.dimension_semantics is not None:
-      object.__setattr__(
-          self, "dimension_semantics", tuple(self.dimension_semantics)
-      )
-    if self.allow_input_fusion is not None:
-      object.__setattr__(
-          self, "allow_input_fusion", tuple(self.allow_input_fusion)
-      )
-    if self.flags is not None:
-      object.__setattr__(self, "flags", FrozenDict(self.flags))
+  def __init__(
+      self,
+      dimension_semantics: Sequence[DimensionSemantics] | None = None,
+      allow_input_fusion: Sequence[bool] | None = None,
+      vmem_limit_bytes: int | None = None,
+      collective_id: int | None = None,
+      has_side_effects: bool | SideEffectType = False,
+      flags: Mapping[str, Any] | None = None,
+      internal_scratch_in_bytes: int | None = None,
+      serialization_format: int = 1,
+      kernel_type: CoreType = CoreType.TC,
+      disable_bounds_checks: bool = False,
+      disable_semaphore_checks: bool = False,
+      skip_device_barrier: bool = False,
+      allow_collective_id_without_custom_barrier: bool = False,
+      shape_invariant_numerics: bool = True,
+      use_tc_tiling_on_sc: bool | None = None,
+  ):
+    object.__setattr__(
+        self,
+        "dimension_semantics",
+        None if dimension_semantics is None else tuple(dimension_semantics),
+    )
+    object.__setattr__(
+        self,
+        "allow_input_fusion",
+        None if allow_input_fusion is None else tuple(allow_input_fusion),
+    )
+    object.__setattr__(self, "vmem_limit_bytes", vmem_limit_bytes)
+    object.__setattr__(self, "collective_id", collective_id)
+    object.__setattr__(self, "has_side_effects", has_side_effects)
+    object.__setattr__(
+        self, "flags", None if flags is None else FrozenDict(flags)
+    )
+    object.__setattr__(
+        self, "internal_scratch_in_bytes", internal_scratch_in_bytes
+    )
+    object.__setattr__(self, "serialization_format", serialization_format)
+    object.__setattr__(self, "kernel_type", kernel_type)
+    object.__setattr__(self, "disable_bounds_checks", disable_bounds_checks)
+    object.__setattr__(
+        self, "disable_semaphore_checks", disable_semaphore_checks
+    )
+    object.__setattr__(self, "skip_device_barrier", skip_device_barrier)
+    object.__setattr__(
+        self,
+        "allow_collective_id_without_custom_barrier",
+        allow_collective_id_without_custom_barrier,
+    )
+    object.__setattr__(
+        self, "shape_invariant_numerics", shape_invariant_numerics
+    )
+    object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
