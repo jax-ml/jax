@@ -17,7 +17,6 @@
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
-import itertools
 import math
 import operator
 from typing import Any, Literal, Protocol, assert_never, cast
@@ -361,63 +360,6 @@ def _arith_constant_op_lowering_rule(
   ]
 
 
-def _check_transforms_and_swizzle_are_supported(
-    ref_ty: ir.MemRefType,
-    transforms: Sequence[lc.MemRefTransform],
-    swizzle: mgpu.SwizzlingMode,
-    minimum_swizzle: mgpu.SwizzlingMode = mgpu.SwizzlingMode.kNoSwizzle,
-):
-  """Checks that the list of provided transforms and swizzle are supported.
-
-  Currently, we allow the following:
-    - any swizzle that is larger than or equal to `minimum_swizzle`;
-    - optionally, a single tile transform (with rank equal to the rank of the
-      memref being annotated);
-    - optionally, a single transpose transform.
-  """
-  if swizzle < minimum_swizzle:
-    raise NotImplementedError(
-        f"Unsupported swizzle {swizzle} smaller than {minimum_swizzle}."
-    )
-
-  partitioned_transforms = {
-      k: list(v)
-      for k, v in itertools.groupby(
-          transforms, lambda t: isinstance(t, lc.TileTransform)
-      )
-  }
-
-  tile_transforms = cast(
-      list[lc.TileTransform],
-      partitioned_transforms.get(True, []),
-  )
-  other_transforms = partitioned_transforms.get(False, [])
-
-  if len(tile_transforms) > 1:
-    raise NotImplementedError(
-        f"{tile_transforms} contains more than one tile transform."
-    )
-
-  if len(tile_transforms) == 1:
-    if len(tile_transforms[0].tiling) != len(ref_ty.shape):
-      raise NotImplementedError(
-          f"Only tile transforms with rank equal to the rank of the memref "
-          f"being annotated are supported but got {tile_transforms[0]} for "
-          f"{ref_ty}."
-      )
-
-  if len(other_transforms) > 1:
-    raise NotImplementedError(
-        f"{other_transforms} contains more than one transform."
-    )
-
-  if len(other_transforms) == 1:
-    if not isinstance(other_transforms[0], lc.TransposeTransform):
-      raise NotImplementedError(
-          f"{other_transforms[0]} is not a transpose transform."
-      )
-
-
 class _Transfer(Protocol):
   def __call__(self, optimized: bool) -> Any:
     ...
@@ -484,7 +426,6 @@ def _vector_load_op_lowering_rule(
   )
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
-    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
     transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
 
     def load_tiled(optimized: bool) -> fa.FragmentedArray:
@@ -578,7 +519,6 @@ def _vector_store_op_lowering_rule(
     )
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
-      _check_transforms_and_swizzle_are_supported(ref_type, transforms, swizzle)
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
 
       def store_tiled(optimized: bool):
@@ -1249,13 +1189,12 @@ def _async_store_smem_to_tmem_lowering_rule(
 ) -> Sequence[ir.Value]:
   ctx.check_collective(op)
   [transforms_attr] = inference_utils.in_transforms(op)
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+  swizzle, _ = swizzle_and_transforms_from_transforms_attr(
       transforms_attr
   )
   smem_ref = unwrap_transformed_memref(op.source, transforms_attr)
   smem_ref_ty = op.source.type
   assert isinstance(smem_ref_ty, ir.MemRefType)
-  _check_transforms_and_swizzle_are_supported(smem_ref_ty, transforms, swizzle)
 
   [in_layout_attr] = inference_utils.in_tmem_layouts(op)
   tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
@@ -1530,8 +1469,9 @@ def _select_op_lowering_rule(
 
 @_register_lowering(mgpu.WGMMAOp)
 def _mgpu_wgmma_op_lowering_rule(
-    _: LoweringContext, wgmma_op: mgpu.WGMMAOp
+    ctx: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
+  del ctx
   in_layouts = inference_utils.in_layouts(wgmma_op)
   assert in_layouts[0] == layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
   [out_layout] = inference_utils.out_layouts(wgmma_op)
@@ -1558,13 +1498,7 @@ def _mgpu_wgmma_op_lowering_rule(
     unwrapped_a_ref = unwrap_transformed_memref(wgmma_op.a, a_transforms)
     unwrapped_b_ref = unwrap_transformed_memref(wgmma_op.b, b_transforms)
 
-  b_swizzle, b_transforms = swizzle_and_transforms_from_transforms_attr(
-      b_transforms
-  )
-  minimum_swizzle = mgpu.SwizzlingMode.k32ByteSwizzle
-  _check_transforms_and_swizzle_are_supported(
-      ir.MemRefType(wgmma_op.b.type), b_transforms, b_swizzle, minimum_swizzle
-  )
+  b_swizzle, _ = swizzle_and_transforms_from_transforms_attr(b_transforms)
 
   if isinstance(wgmma_op.a.type, ir.VectorType):
     expected_a_layout = (
@@ -1576,12 +1510,7 @@ def _mgpu_wgmma_op_lowering_rule(
     a_operand = _fragmented_array_from_ir(wgmma_op.a, in_layouts[1], is_signed)
   else:
     assert a_transforms is not None
-    a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
-        a_transforms
-    )
-    _check_transforms_and_swizzle_are_supported(
-        ir.MemRefType(wgmma_op.a.type), a_transforms, a_swizzle, minimum_swizzle
-    )
+    a_swizzle, _ = swizzle_and_transforms_from_transforms_attr(a_transforms)
     if a_swizzle != b_swizzle:
       raise ValueError(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
