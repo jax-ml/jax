@@ -352,6 +352,9 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
     $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$valueToStore, "::mlir::Value":$base, "::mlir::ValueRange":$indices, CArg<"::mlir::Value", "nullptr">:$mask, CArg<"bool", "false">:$add)>
+  ];
 }
 
 // tpu.vector_load loads a vector from memory into a register.
@@ -379,6 +382,9 @@ def TPU_VectorLoadOp :TPU_Op<"vector_load", [DefaultMemRead, AttrSizedOperandSeg
     $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `,` type($result) `,` type($mask)
   }];
   let hasVerifier = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Type":$result_type, "::mlir::Value":$base, "::mlir::ValueRange":$indices, CArg<"::mlir::Value", "nullptr">:$mask)>
+  ];
 }
 
 def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {

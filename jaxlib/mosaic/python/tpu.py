@@ -20,7 +20,7 @@
 from ._tpu_enum_gen import *
 from . import _tpu_ops_gen
 from ._tpu_ops_gen import *
-from ._tpu_ops_gen import _Dialect
+from ._tpu_ops_gen import _Dialect, VectorLoadOp, VectorStoreOp
 from jaxlib.mlir._mlir_libs._tpu_ext import *
 try:
   from jaxlib.mlir.dialects._ods_common import _cext
@@ -55,3 +55,38 @@ class RegionOp(_tpu_ops_gen.RegionOp):  # noqa: F405
   @property
   def body(self):
     return self.regions[0].blocks[0]
+
+
+def vector_load(
+    result,
+    base,
+    indices,
+    *,
+    strides=None,
+    mask=None,
+    loc=None,
+    ip=None,
+):
+  if strides is None:
+    strides = []
+  return VectorLoadOp(
+      result, base, indices, strides, mask=mask, loc=loc, ip=ip
+  ).result
+
+
+def vector_store(
+    value_to_store,
+    base,
+    indices,
+    *,
+    strides=None,
+    add=False,
+    mask=None,
+    loc=None,
+    ip=None,
+):
+  if strides is None:
+    strides = []
+  return VectorStoreOp(
+      value_to_store, base, indices, strides, mask=mask, add=add, loc=loc, ip=ip
+  )

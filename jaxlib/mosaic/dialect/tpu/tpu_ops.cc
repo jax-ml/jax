@@ -828,6 +828,13 @@ LogicalResult VectorStoreOp::verify() {
   return verifyStoreOp(*this);
 }
 
+void VectorStoreOp::build(OpBuilder &builder, OperationState &state,
+                          Value valueToStore, Value base, ValueRange indices,
+                          Value mask, bool add) {
+  build(builder, state, valueToStore, base, indices,
+        /*strides=*/builder.getDenseI32ArrayAttr({}), mask, add);
+}
+
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
@@ -864,6 +871,13 @@ LogicalResult VectorLoadOp::verify() {
     return emitError("Not implemented: general vector load with strides.");
   }
   return verifyLoadOp(*this);
+}
+
+void VectorLoadOp::build(OpBuilder &builder, OperationState &state,
+                         Type result_type, Value base, ValueRange indices,
+                         Value mask) {
+  build(builder, state, result_type, base, indices,
+        /*strides=*/builder.getDenseI32ArrayAttr({}), mask);
 }
 
 LogicalResult VectorLoadIdxOp::verify() {
