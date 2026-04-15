@@ -611,7 +611,6 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   //   f(x)
   // may never free temporary buffers for copies of arguments.
   GlobalPyRefManager()->MaybeCollectGarbage();
-  InitializeThreadLocalState();
 
   if (GetDisableJit()) {
     if (!fun_.has_value()) {

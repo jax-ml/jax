@@ -80,20 +80,9 @@ nb_class_ptr<Config>& disable_jit_state = *new nb_class_ptr<Config>();
 nb_class_ptr<Config>& enable_x64_state = *new nb_class_ptr<Config>();
 nb_class_ptr<Config>& post_hook_state = *new nb_class_ptr<Config>();
 
-// Callback called the first time the C++ jit accesses thread-local state.
-nb::object& initialize_local_state = *new nb::object();
 
 }  // namespace
 
-void InitializeThreadLocalState() {
-  thread_local bool initialized = false;
-  if (!initialized) {
-    initialized = true;
-    // Set the flag first to avoid reentrant calls to the initialization
-    // function.
-    initialize_local_state();
-  }
-}
 
 bool GetDisableJit() {
   if (!disable_jit_state.ptr()) {
@@ -423,12 +412,6 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       "set_post_hook_state",
       [](nb_class_ptr<Config> config) { post_hook_state = config; },
       nb::sig("def set_post_hook_state(config: _Config) -> None"));
-
-  jitlib.def(
-      "set_thread_local_state_initialization_callback",
-      [](nb::object f) { initialize_local_state = f; },
-      nb::sig("def set_thread_local_state_initialization_callback("
-              "f: typing.Callable[[], None]) -> None"));
 
   nb::class_<PyArgSignature> arg_signature(jitlib, "PyArgSignature");
   arg_signature

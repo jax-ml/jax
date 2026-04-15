@@ -563,6 +563,7 @@ pytype_strict_library(
         ":config",
         ":dtypes",
         ":effects",
+        ":frozen_dict",
         ":layout",
         ":mesh",
         ":named_sharding",

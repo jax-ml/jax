@@ -949,14 +949,6 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 
 already_configured_with_absl = False
 
-
-trace_state = config_ext.Config('trace_state', None, include_in_jit_key=True)
-axis_env_state = config_ext.Config(
-    'axis_env_state',
-    (),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
 mesh_context_manager = config_ext.Config(
     'mesh_context_manager',
     (),

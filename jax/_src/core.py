@@ -38,6 +38,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
+from jax._src.frozen_dict import FrozenDict
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec as P
@@ -59,6 +60,7 @@ from jax._src.layout import Format, AutoLayout
 from jax._src.lib import _jax
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
+from jax._src.lib import jaxlib_extension_version
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
 from jax._src import xla_metadata_lib
@@ -1256,11 +1258,27 @@ AxisName = Hashable
 
 no_axis_name = object()
 
-@dataclass(frozen=True)
+@immutable
 class AxisEnv:
-  axis_sizes : dict[AxisName, int]
-  spmd_axis_names : set[AxisName]
+  __slots__ = ('axis_sizes', 'spmd_axis_names', 'explicit_mesh_axis_names',
+               '__weakref__')
+
+  axis_sizes : FrozenDict[AxisName, int]
+  spmd_axis_names : frozenset[AxisName]
   explicit_mesh_axis_names: frozenset[AxisName]
+
+  @staticmethod
+  @weak_value_interner
+  def _create(axis_sizes, spmd_axis_names, explicit_mesh_axis_names):
+    obj = object.__new__(AxisEnv)
+    object.__setattr__(obj, 'axis_sizes', axis_sizes)
+    object.__setattr__(obj, 'spmd_axis_names', spmd_axis_names)
+    object.__setattr__(obj, 'explicit_mesh_axis_names', explicit_mesh_axis_names)
+    return obj
+
+  def __new__(cls, axis_sizes=FrozenDict({}), spmd_axis_names=frozenset(),
+              explicit_mesh_axis_names=frozenset()):
+    return cls._create(axis_sizes, spmd_axis_names, explicit_mesh_axis_names)
 
   def axis_size(self, axis_name):
     if axis_name not in self.axis_sizes:
@@ -1275,20 +1293,20 @@ class AxisEnv:
     return tuple(k for k in self.axis_sizes)
 
   def pop_pure(self, axis_name):
-    new_sizes = self.axis_sizes.copy()
+    new_sizes = dict(self.axis_sizes)
     new_sizes.pop(axis_name)
-    return AxisEnv(new_sizes, self.spmd_axis_names,
+    return AxisEnv(FrozenDict(new_sizes), self.spmd_axis_names,
                    self.explicit_mesh_axis_names)
 
   def extend_pure(self, name_size_pairs):
-    new_sizes = self.axis_sizes.copy()
+    new_sizes = dict(self.axis_sizes)
     new_sizes.update((name, size) for name, size in name_size_pairs
                     if name is not no_axis_name)
-    return AxisEnv(new_sizes, self.spmd_axis_names,
+    return AxisEnv(FrozenDict(new_sizes), self.spmd_axis_names,
                    self.explicit_mesh_axis_names)
 
   def add_spmd_axis_names(self, axis_names):
-    new_spmd_axis_names = self.spmd_axis_names | set(axis_names)
+    new_spmd_axis_names = self.spmd_axis_names | frozenset(axis_names)
     return AxisEnv(self.axis_sizes, new_spmd_axis_names,
                    self.explicit_mesh_axis_names)
 
@@ -1300,41 +1318,56 @@ class AxisEnv:
     new_ema = self.explicit_mesh_axis_names - frozenset(axis_names)
     return AxisEnv(self.axis_sizes, self.spmd_axis_names, new_ema)
 
-  def as_hashable_key(self):
-    return tuple((name, size) for (name, size) in self.axis_sizes.items()
-                 if name is not no_axis_name)
-
 eval_trace = EvalTrace()
-top_axis_env = AxisEnv({}, set(), frozenset())
+top_axis_env = AxisEnv(FrozenDict({}), frozenset(), frozenset())
 
-class TracingContext(threading.local):
-  trace: Trace | None
-  axis_env : AxisEnv
+# Weak reference to the trace state. This is included in, e.g., the jit key.
+trace_state = config_ext.Config(
+    'trace_state', eval_trace._weakref, include_in_jit_key=True)
 
-  def __init__(self):
-    self.reset()
+# A strong reference to the trace state. This should not be included in any
+# jit or cache keys, but we need a thread-local strong reference to ensure it
+# remains alive.
+trace_state_strong_ref = config_ext.Config(
+  'trace_state_strong_ref', eval_trace, include_in_jit_key=False,
+  include_in_trace_context=False)
 
-  def reset(self):
-    self.trace = eval_trace
-    self.axis_env = top_axis_env
+axis_env_state = config_ext.Config(
+    'axis_env_state',
+    top_axis_env,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
+class TracingContext:
+  __slots__ = ()
+
+  @staticmethod
+  def reset():
+    trace_state.set_local(config_ext.unset)
+    trace_state_strong_ref.set_local(config_ext.unset)
+    axis_env_state.set_local(config_ext.unset)
+
+  @property
+  def trace(self):
+    return trace_state_strong_ref.value
+
+  @property
+  def axis_env(self):
+    return axis_env_state.value
 
   def is_top_level(self) -> bool:
     return (self.trace is eval_trace and
             self.axis_env is top_axis_env)
 
   def set_trace(self, trace):
-    self.trace = trace
+    trace_state_strong_ref.set_local(trace)
     ts = trace._weakref if trace is not None else None
-    config.trace_state.set_local(ts)
+    trace_state.set_local(ts)
 
   def set_axis_env(self, axis_env):
-    self.axis_env = axis_env
-    config.axis_env_state.set_local(axis_env.as_hashable_key())
-
-  def update_thread_local_jit_state(self):
-    ts = self.trace._weakref if self.trace is not None else None
-    config.trace_state.set_local(ts)
-    config.axis_env_state.set_local(self.axis_env.as_hashable_key())
+    axis_env_state.set_local(axis_env)
 
 trace_ctx = TracingContext()
 
@@ -1450,19 +1483,8 @@ remove_explicit_mesh_axis_names = RemoveExplicitMeshAxisNamesContextManager
 def get_axis_env():
   return trace_ctx.axis_env
 
-def _initialize_jax_jit_thread_local_state():
-  """Initializes the C++ thread-local context.
-
-  When the user spawns threads, the C++ `jax_jit.thread_local_state` is None.
-  The C++ accessor calls this function if it realizes the thread_local_state
-  is None (which means it's not yet initialized for this thread).
-
-  This function does not live in `config.py`, to prevent circular imports.
-  """
-  trace_ctx.update_thread_local_jit_state()
-
-jax_jit.set_thread_local_state_initialization_callback(
-    _initialize_jax_jit_thread_local_state)
+if jaxlib_extension_version < 439:
+  jax_jit.set_thread_local_state_initialization_callback(lambda: None)  # pyrefly: ignore[missing-attribute]
 
 def trace_state_clean() -> bool:
   return trace_ctx.is_top_level()
@@ -1471,7 +1493,6 @@ def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_ctx.is_top_level():
     trace_ctx.reset()
-    trace_ctx.update_thread_local_jit_state()
     return False
   else:
     return True
