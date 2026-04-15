@@ -14,7 +14,6 @@
 """Tests for Pallas on SparseCore."""
 
 import collections
-import re
 import functools
 import itertools
 import math
@@ -2294,21 +2293,6 @@ class MpmdMapTest(PallasSCTest):
   def setUp(self):
     super().setUp()
 
-  def test_mismatched_core_axis_name(self):
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="wrong_core", subcore_axis_name="subcore", num_cores=1
-    )
-    s_mesh = plsc.ScalarSubcoreMesh(axis_name="s_core", num_cores=1)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        r".*(Vector|Scalar)SubcoreMesh.*should have the same core axis name .*"
-    ):
-      mpmd.mpmd_map(
-          [(v_mesh, lambda *_: None), (s_mesh, lambda *_: None)],
-          out_shapes=jax.ShapeDtypeStruct([], jnp.int32),
-      )()
-
   @parameterized.product(use_tc_tiling=[False, True],
                          scratch_structure=[tuple, dict])
   def test_parallel_subkernels(self, use_tc_tiling, scratch_structure):
@@ -2316,12 +2300,12 @@ class MpmdMapTest(PallasSCTest):
       self.skipTest("Needs a newer libtpu")
 
     v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="s_core",
+        core_axis_name="core",
         subcore_axis_name="subcore",
         num_cores=self.sc_info.num_cores,
     )
     s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="s_core", num_cores=self.sc_info.num_cores
+        axis_name="scs_core", num_cores=self.sc_info.num_cores
     )
 
     x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
@@ -2371,114 +2355,6 @@ class MpmdMapTest(PallasSCTest):
     np.testing.assert_array_equal(out[:x.size], x + 2 * x)
     np.testing.assert_array_equal(out[x.size:], x + 3 * x)
 
-  @parameterized.product(
-      use_tc_tiling=(False, True), full_core_spec=(True, False),
-      signalling_direction=("scs_to_tec", "tec_to_scs", "both"),
-      subcores=(2, 16))
-  def test_parallel_subkernels_semaphores(
-      self, use_tc_tiling, full_core_spec, signalling_direction, subcores
-  ):
-    self.skipTest("Needs compiler support.")
-
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="s_core",
-        subcore_axis_name="subcore",
-        num_cores=self.sc_info.num_cores,
-        num_subcores=min(self.sc_info.num_subcores, subcores),
-    )
-    s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="s_core", num_cores=self.sc_info.num_cores
-    )
-
-    x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
-
-    def vector_subcore_fn(_, tec_sem, scs_sem):
-      device_id = ({"s_core": jax.lax.axis_index("s_core")} if full_core_spec
-                   else None)
-      if signalling_direction in ("tec_to_scs", "both"):
-        pl.semaphore_signal(scs_sem, 1, device_id=device_id)
-      if signalling_direction in ("scs_to_tec", "both"):
-        pl.semaphore_wait(tec_sem, 1)
-
-    def scalar_subcore_fn(_, tec_sem, scs_sem):
-      if signalling_direction in ("scs_to_tec", "both"):
-        for i in range(jax.lax.axis_size("subcore")):
-          device_id = {"subcore": i}
-          if full_core_spec:
-            device_id |= {"s_core": jax.lax.axis_index("s_core")}
-          pl.semaphore_signal(tec_sem, device_id=device_id)
-      if signalling_direction in ("tec_to_scs", "both"):
-        pl.semaphore_wait(scs_sem, jax.lax.axis_size("subcore"))
-
-    device_mesh = jax.make_mesh((jax.device_count(),), axis_names=("x",))
-
-    @functools.partial(jax.shard_map, out_specs=None, check_vma=False)
-    def test_mpmd_map():
-      _ = mpmd.mpmd_map(
-          [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
-          compiler_params=pltpu.CompilerParams(
-              use_tc_tiling_on_sc=use_tc_tiling,
-          ),
-          scratch_shapes=[
-            # SCS -> TEC
-            pltpu.SemaphoreType.REGULAR(()) @ pltpu.CoreType.SC_VECTOR_SUBCORE,
-            # TEC -> SCS
-            pltpu.SemaphoreType.REGULAR(()) @ pltpu.CoreType.SC_SCALAR_SUBCORE,
-          ],
-      )()
-
-    # TODO(rdyro): shard_map is technically unnecessary, but we need the tracing
-    # context to be aware of MPMD meshes to know that an extra axis is not a
-    # cross-device axis (e.g., subcore axis visible from the ScalarCore).
-    with jax.sharding.set_mesh(device_mesh):
-      test_mpmd_map()
-
-  def test_parallel_subkernels_semaphores_missing_subcore_axis(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skipTest("Need a newer libtpu")
-
-    v_mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="s_core",
-        subcore_axis_name="subcore",
-        num_cores=self.sc_info.num_cores,
-    )
-    s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="s_core", num_cores=self.sc_info.num_cores
-    )
-
-    def vector_subcore_fn(_, tec_sem):
-      pl.semaphore_wait(tec_sem, 1)
-
-    def scalar_subcore_fn(_, tec_sem):
-      # Signal TEC but "forget" to specify the subcore axis.
-      pl.semaphore_signal(
-          tec_sem, device_id={"s_core": jax.lax.axis_index("s_core")})
-
-    device_mesh = jax.make_mesh((jax.device_count(),), axis_names=("x",))
-
-    @functools.partial(jax.shard_map, out_specs=None, check_vma=False)
-    def test_mpmd_map():
-      mpmd.mpmd_map(
-          [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_shapes=jax.ShapeDtypeStruct([8], jnp.int32),
-          scratch_shapes=[
-              pltpu.SemaphoreType.REGULAR(())
-              @ pltpu.CoreType.SC_VECTOR_SUBCORE,
-          ],
-      )()
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.compile(
-            r"When addressing SC_VECTOR_SUBCORE from SC_SCALAR_SUBCORE and"
-            r" specifying .* the following axes are missing from the mesh:"
-            r" \{'subcore'\}",
-            re.IGNORECASE,
-        ),
-    ):
-      with jax.sharding.set_mesh(device_mesh):
-        test_mpmd_map()
 
 class PipelineTest(PallasSCTest):
 

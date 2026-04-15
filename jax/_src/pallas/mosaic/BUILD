@@ -100,7 +100,6 @@ pytype_strict_library(
         ":error_handling",
         ":primitives",
         ":random",
-        ":sc_core",
         ":tpu_info",
         "//jax",
         "//jax/_src:ad_util",
