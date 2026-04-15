@@ -112,19 +112,28 @@ class TypedNdArray(np.ndarray):
     mode
   * it can be weakly typed.
   """
-
-  aval: ShapedArray
+  __slots__ = ('_aval', '_weak_type')
 
   def __new__(cls, val: np.ndarray, aval: ShapedArray | None = None):
     obj = np.asarray(val).view(cls)
-    obj.aval = (ShapedArray(obj.shape, obj.dtype, weak_type=False)
-                if aval is None else aval)
+    if aval is not None:
+      obj._aval = aval
     return obj
 
   def __array_finalize__(self, obj):
-    if obj is None: return
-    weak_type = obj.aval.weak_type if isinstance(obj, TypedNdArray) else False
-    self.aval = ShapedArray(self.shape, self.dtype, weak_type=weak_type)
+    self._aval = None
+    self._weak_type = (obj.aval.weak_type
+                       if isinstance(obj, TypedNdArray) else False)
+
+  @property
+  def aval(self) -> ShapedArray:
+    result = self._aval
+    if result is None:
+      # It is possible that multiple threads might race to reach here. However
+      # this seems safe since they will all set the same value.
+      result = ShapedArray(self.shape, self.dtype, weak_type=self._weak_type)
+      self._aval = result
+    return result
 
   @property
   def weak_type(self) -> bool:
