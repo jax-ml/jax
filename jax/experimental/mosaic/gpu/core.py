@@ -63,6 +63,7 @@ from . import utils
 cuda_root = lib.cuda_path or "/usr/local/cuda"
 os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
+BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")
 
 _SMEM_SIZE_BOUND = None  # For test purposes.
 
@@ -101,18 +102,27 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 try:
   from nvidia import nvshmem  # pytype: disable=import-error
 except ImportError:
-  # Try to find the nvshmem library in Bazel runfiles.
-  if PYTHON_RUNFILES:
+  # Try to find the nvshmem library in Bazel test runfiles.
+  if BAZEL_TEST == "1" and PYTHON_RUNFILES:
     libdevice_path = os.path.join(
         PYTHON_RUNFILES, "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
     )
     if os.path.exists(libdevice_path):
       os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for root, _, files in os.walk(os.getcwd()):
-      if "/_solib" in root and "libnvshmem_host.so.3" in files:
-        os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
-            root, "libnvshmem_host.so.3"
-        )
+    for solib_path in ["_solib_linux_x86_64", "_solib_linux_aarch64"]:
+      if not os.path.exists(
+          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
+      ):
+        continue
+      for root, _, files in os.walk(
+          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
+      ):
+        if "libnvshmem_host.so.3" in files:
+          os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
+              root, "libnvshmem_host.so.3"
+          )
+          break
+      if "MOSAIC_GPU_NVSHMEM_SO_PATH" in os.environ:
         break
   else:
     pass
