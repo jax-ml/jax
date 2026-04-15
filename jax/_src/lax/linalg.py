@@ -184,7 +184,7 @@ def eig(
 
   To prevent silently incorrect gradients, differentiation through eigenvectors
   raises an error by default. Set ``allow_eigvec_deriv=True`` to opt in,
-  thereby asserting that your computation does not depend on the phase of the
+  thereby promising that your computation does not depend on the phase of the
   eigenvectors. When this flag is set, the JVP projects out the full gauge
   ambiguity (both norm and phase components) from the eigenvector tangents,
   making the result well-defined regardless.
