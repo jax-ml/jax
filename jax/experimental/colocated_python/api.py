@@ -116,12 +116,23 @@ def _colocated_cpu_devices_cached_fallback_to_cpu_backend(
     # PjRt-IFRT on a non-CPU platform currently defines CPU devices on a separae
     # CPU backend.
     cpu_backend_devices = jax.devices(backend="cpu")
-  device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
 
-  available_devices = devices[: min(len(cpu_backend_devices), len(devices))]
-  return [
-      cpu_backend_devices[device_index_map[d.id]] for d in available_devices
-  ]
+  cpu_device_map = collections.defaultdict(list)
+  for d in cpu_backend_devices:
+    cpu_device_map[d.process_index].append(d)
+
+  # Reverse each local CPU device list to make it cheaper to pop.
+  for process_index in cpu_device_map.keys():
+    cpu_device_map[process_index].reverse()
+
+  cpu_devices = []
+  for d in devices:
+    try:
+      cpu_devices.append(cpu_device_map[d.process_index].pop())
+    except IndexError:
+      raise ValueError(
+          f"Process {d.process_index} does not have enough local CPU devices")
+  return cpu_devices
 
 
 @util.cache(max_size=1024, trace_context_in_key=False)

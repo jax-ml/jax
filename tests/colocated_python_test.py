@@ -52,11 +52,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.skipTest(
         "ColocatedPythonTest depends on cloudpickle library"
       )
-    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
-      self.skipTest(
-        "Serialization in Colocated Python needs StringDType, and thus"
-        " requires NumPy 2.0.0 or later"
-      )
 
   def test_colocated_cpu_devices(self):
     mesh = jax.sharding.Mesh(
