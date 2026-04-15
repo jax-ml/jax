@@ -3906,6 +3906,11 @@ class StaggeredTransferPlan(TransferPlan):
     return arith.select(self.group_pred, *sides)
 
 
+class TransferPlanDerivationError(Exception):
+  """Raised when a transfer plan cannot be derived due to a known limitation."""
+  pass
+
+
 def plan_tiled_transfer(
     nested_ref_shape: Sequence[Sequence[int]],
     nested_ref_strides: Sequence[Sequence[int]],
@@ -3974,7 +3979,7 @@ def plan_tiled_transfer(
       swizzle_tile_elems % transfer_alignment
       and vector_length <= transfer_alignment
   ):
-    raise ValueError(
+    raise TransferPlanDerivationError(
         "Failed to prove that vector transfers don't cross swizzle tile"
         " boundaries. This check is incomplete, and does not guarantee that"
         f" this is a user error, but it might be. {transfer_alignment=}"
@@ -3986,9 +3991,13 @@ def plan_tiled_transfer(
   # that bank conflicts only don't occur if the addresses mapping to the same
   # bank are contiguous, but that's a more complicated check to perform.
   if transfer_bytes > SMEM_BANK_BYTES * 4:
-    raise NotImplementedError
+    raise TransferPlanDerivationError(
+        f"{transfer_bytes=} > {SMEM_BANK_BYTES * 4} not implemented"
+    )
   if element_bits > SMEM_BANK_BYTES * 8:
-    raise NotImplementedError
+    raise TransferPlanDerivationError(
+        f"{element_bits=} > {SMEM_BANK_BYTES * 8} not implemented"
+    )
   smem_bank_bytes = min(SMEM_BANK_BYTES, transfer_bytes)
   num_banks = SMEM_BANKS * (SMEM_BANK_BYTES // smem_bank_bytes)
   elems_per_bank = (smem_bank_bytes * 8) // element_bits
@@ -4058,7 +4067,7 @@ def plan_tiled_transfer(
           return StaggeredTransferPlan(  # type: ignore[call-arg]
               stagger, dim, tiles_shape[dim], group_stride
           )
-  raise ValueError(
+  raise TransferPlanDerivationError(
       "Failed to synthesize a transfer pattern that avoids bank conflicts"
   )
 

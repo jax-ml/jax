@@ -433,7 +433,7 @@ def _retry_on_failure(transfer: _Transfer, optimized: bool | None) -> Any:
   # a failed call to `transfer`.
   try:
     return transfer(optimized=True)
-  except ValueError:
+  except fa.TransferPlanDerivationError:
     return transfer(optimized=False)
 
 
