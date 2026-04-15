@@ -8,7 +8,8 @@ transfers, the user may configure a JAX transfer guard.
 JAX transfer guards distinguish between two types of transfers:
 
 * Explicit transfers: ``jax.device_put*()`` and ``jax.device_get()`` calls.
-* Implicit transfers: Other transfers (e.g., printing a ``DeviceArray``).
+* Implicit transfers: Other transfers (e.g., printing a ``DeviceArray``,
+  or copying arguments to a device for execution).
 
 A transfer guard can take an action based on its guard level:
 
@@ -42,10 +43,10 @@ and ``jax.config.transfer_guard_host_to_device``):
 * ``"host_to_device"``: Converting a Python value or NumPy array into a JAX
   on-device buffer.
 * ``"device_to_device"``: Copying a JAX on-device buffer to a different device.
-* ``"device_to_host"``: Fetching a JAX on-device buffer.
+* ``"device_to_host"``: Fetching a JAX on-device buffer to the host.
 
-Fetching a buffer on a CPU device is always allowed regardless of the transfer
-guard level.
+Fetching a buffer from a CPU device to the host (``device_to_host``)
+is always allowed regardless of the transfer guard level.
 
 The following shows an example of using the transfer guard.
 

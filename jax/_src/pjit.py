@@ -1020,8 +1020,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
   # If True, means that device or backend is set by the user on pjit and it
   # has the same semantics as device_put i.e. doesn't matter which device the
   # arg is on, reshard it to the device mentioned. So don't do any of the
-  # checks and just return the pjit_in_shardings directly. `shard_args` will
-  # handle the resharding.
+  # checks and just return the pjit_in_shardings directly. `shard_args` willhandle the resharding.
   if pxla.check_device_backend_on_shardings(pjit_in_shardings):
     return pjit_in_shardings
 
