@@ -14,10 +14,6 @@
 
 from functools import partial
 from absl.testing import absltest
-import os
-
-os.environ["XLA_FLAGS"] = \
-  "--xla_dump_to=./hlo --xla_dump_hlo_as_text"
 
 import numpy as np
 import jax

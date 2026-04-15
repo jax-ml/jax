@@ -667,26 +667,11 @@ def _dot_product_attention_bwd_abstract(
       ),  # grad value
     )
 
-def convert_jaxpr_to_computation(ctx, name, jaxpr, score_mod_args, is_bwd=False):
-  output_aval = jaxpr.out_avals[0]
-  attn_score = mlir.ir_constant(np.zeros(output_aval.shape, dtype=output_aval.dtype))
-  aval_out = ctx.avals_out
-  aval_in = ctx.avals_in
-  ctx.avals_out = jaxpr.out_avals
-  ctx.avals_in = jaxpr.in_avals
-  if is_bwd:
-    impl = mlir.core_call_lowering(
-      ctx, attn_score, attn_score, *score_mod_args, name=name + "_bwd", call_jaxpr=jaxpr
-    )
-  else:
-    impl = mlir.core_call_lowering(
-      ctx, attn_score, *score_mod_args, name=name, call_jaxpr=jaxpr
-    )
-  ctx.avals_out = aval_out
-  ctx.avals_in = aval_in
-  call_op = impl[0].owner
-  called_fn = call_op.attributes["callee"]
-  return called_fn.value
+def convert_jaxpr_to_computation(ctx, name, jaxpr, is_bwd=False):
+  func_op = mlir.lower_jaxpr_to_fun(
+      ctx.module_context, name + ("_bwd" if is_bwd else ""), jaxpr,
+      effects=[], num_const_args=0, in_avals=jaxpr.in_avals)
+  return func_op.sym_name.value
 
 def _dot_product_attention_fwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
@@ -741,7 +726,7 @@ def _dot_product_attention_fwd_cuda_lowering(
   if score_mod is not None:
     operands += score_mod_args
     name, call_jaxpr = score_mod
-    called_fn = convert_jaxpr_to_computation(ctx, name, call_jaxpr, score_mod_args)
+    called_fn = convert_jaxpr_to_computation(ctx, name, call_jaxpr)
     called_computations = [called_fn]
   else:
     called_computations = []
@@ -833,7 +818,7 @@ def _dot_product_attention_bwd_cuda_lowering(
   if score_mod is not None:
     operands += score_mod_args
     name, bwd_jaxpr = score_mod
-    bwd_called_fn = convert_jaxpr_to_computation(ctx, name, bwd_jaxpr, score_mod_args, True)
+    bwd_called_fn = convert_jaxpr_to_computation(ctx, name, bwd_jaxpr, True)
     called_computations = [bwd_called_fn]
   else:
     called_computations = []
