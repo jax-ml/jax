@@ -32,7 +32,6 @@ from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
-from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.state import indexing
 import numpy as np
 
@@ -122,7 +121,7 @@ def _initialize_shared_memory(
     num_gpus: int,
     num_threads_per_block: int,
     num_blocks_per_cluster: int,
-    interpret_params: InterpretGPUParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ):
   global _shared_memory, _races
 
@@ -163,7 +162,7 @@ def call_initialize_shared_memory(
     num_gpus: int,
     num_threads_per_block: int,
     num_blocks_per_cluster: int,
-    interpret_params: InterpretGPUParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ):
   callback.io_callback(
       functools.partial(

@@ -20,7 +20,7 @@ import functools
 import itertools
 import math
 import threading
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import jax
 from jax import lax
@@ -41,7 +41,6 @@ from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
-from jax._src.pallas.mosaic.interpret.params import InterpretParams
 from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -61,7 +60,60 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class InterpretParams(interpret_utils.InterpretParams):
+  """Parameters for TPU interpret mode.
 
+  TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
+  a TPU's shared memory (HBM, VMEM, etc.), communication (remote and local
+  DMAs), and synchronization operations (semaphores, barriers, etc.).  This mode
+  is intended for debugging and testing.
+
+  To run a kernel under TPU interpret mode, pass an instance of
+  ``InterpretParams`` as an argument for the ``interpret`` parameter of
+  :func:`jax.experimental.pallas.pallas_call` or
+  :func:`jax.experimental.pallas.core_map`.
+
+  NOTE: If an exception is raised while interpreting a kernel, you must call
+  :func:`reset_tpu_interpret_mode_state` before using TPU interpret mode
+  again in the same process.
+
+  Attributes:
+    dma_execution_mode:  If "eager", DMAs are executed as soon as they are
+      issued.  If "on_wait", DMA reads or writes are only executed when a device
+      is waiting on a DMA semaphore that will be signaled when the read or write
+      is complete.
+      Default: "on_wait".
+    random_seed: Seed for random number generator used during interpretation.
+      Currently random numbers are used to randomize the grid coordinates along
+      dimensions with 'parallel' semantics.
+      Default: None.
+    grid_point_recorder: Callback that is invoked by the interpreter for each
+      grid point in the order in which the grid points are traversed. The
+      callback is invoked with two arguments: - A tuple of grid coordinates. -
+      The local core ID of the core that is processing the grid point. This
+      callback is intended for inspecting - the randomization of coordinates
+      along grid dimensions with 'parallel' semantics and - the mapping of grid
+      points to local (i.e. per-device) cores.
+      Default: None.
+    allow_hbm_allocation_in_run_scoped: If `True`, allows the allocation of HBM
+      buffers (which are then shared across the cores in a device) in
+      `run_scoped`. While this behavior can be enabled in the interpreter,
+      allocating HBM buffers with `run_scoped` is not supported when executing
+      Pallas kernels on a real TPU.
+      Default: `False`.
+  """
+
+  dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
+  random_seed: int | None = None
+  grid_point_recorder: (
+      Callable[[tuple[np.int32, ...], np.int32], None] | None
+  ) = None
+  allow_hbm_allocation_in_run_scoped: bool = False
+
+  @property
+  def num_cores_per_device(self) -> int:
+    return self.num_cores_or_threads
 
 
 @contextlib.contextmanager
@@ -1338,9 +1390,9 @@ def _interpret_jaxpr(
                     ctx.device_id,
                     ctx.local_core_id,
                     TPU_MEMORY_SPACE_IDXS[memory_space],
-                    interpret_utils.get_uninitialized_array(
-                        v.aval.shape, v.aval.dtype,
-                        ctx.interpret_params.uninitialized_memory),
+                    ctx.interpret_params.get_uninitialized_array(
+                        v.aval.shape, v.aval.dtype
+                    ),
                     ordered=True,
                 )
             )
@@ -1727,6 +1779,10 @@ def _get_grid_point(
   return jnp.array(grid_point, dtype=np.int32)
 
 
+def get_interpret_effects():
+  return {callback._OrderedIOEffect}
+
+
 def interpret_pallas_call(
     *args,
     jaxpr: jax_core.Jaxpr,
@@ -1805,8 +1861,7 @@ def interpret_pallas_call(
   ]
   num_inputs = grid_mapping.num_inputs
   input_args = [
-      interpret_utils.pad_to_block_dimension(
-          a, bs, interpret_params.uninitialized_memory)
+      interpret_params.pad_to_block_dimension(a, bs)
       for a, bs in zip(input_args, block_shapes[:num_inputs])
   ]
 
@@ -1847,11 +1902,11 @@ def interpret_pallas_call(
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
     else:
-      out_val = interpret_utils.get_uninitialized_array(
-          bm.array_aval.shape, bm.array_aval.dtype,
-          interpret_params.uninitialized_memory)
-      padded_val = interpret_utils.pad_to_block_dimension(
-          out_val, output_block_shapes[i], interpret_params.uninitialized_memory
+      out_val = interpret_params.get_uninitialized_array(
+          bm.array_aval.shape, bm.array_aval.dtype
+      )
+      padded_val = interpret_params.pad_to_block_dimension(
+          out_val, output_block_shapes[i]
       )
       output_buffer_ids.append(
           callback.io_callback(
@@ -1922,9 +1977,9 @@ def interpret_pallas_call(
               device_id,
               None,  # local_core_id,
               TPU_MEMORY_SPACE_IDXS[memory_space],
-              interpret_utils.get_uninitialized_array(
-                  var.aval.shape, var.aval.dtype,  # pyrefly: ignore[missing-attribute]
-                  interpret_params.uninitialized_memory),
+              interpret_params.get_uninitialized_array(
+                  var.aval.shape, var.aval.dtype  # pyrefly: ignore[missing-attribute]
+              ),
               ordered=True,
           )
       )

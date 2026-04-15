@@ -23,7 +23,6 @@ import threading
 from typing import Any, Callable, Literal
 
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
-import jax._src.pallas.mosaic.interpret.params as params
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 import numpy as np
 
@@ -295,7 +294,7 @@ class SharedMemory:
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
-  logging_mode: params.LoggingMode | None = None
+  logging_mode: interpret_utils.LoggingMode | None = None
 
   # (memory_space, buffer_id, device_id, local_core_id) -> Allocation
   mem: dict[tuple[str, int, int, int], Allocation] = dataclasses.field(
@@ -355,7 +354,7 @@ class SharedMemory:
   def enable_logging(self) -> bool:
     return (
         self.logging_mode is not None
-        and params.LoggingMode.SHARED_MEMORY in self.logging_mode
+        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
     )
 
   def _log(self, message: str):
@@ -542,7 +541,7 @@ class SharedMemory:
               semaphore_id=i,
               enable_logging=(
                   self.logging_mode is not None
-                  and params.LoggingMode.SEMAPHORE in self.logging_mode
+                  and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
               ),
           )
 
@@ -571,7 +570,7 @@ class SharedMemory:
             shared_memory=self,
             enable_logging=(
                 self.logging_mode is not None
-                and params.LoggingMode.SEMAPHORE in self.logging_mode
+                and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
             ),
         )
 

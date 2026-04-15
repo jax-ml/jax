@@ -12,23 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 import dataclasses
 import math
 from typing import Any
 
 import jax
+from jax._src import callback
 from jax._src import core as jax_core
+from jax._src import effects
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.pallas.mosaic_gpu.interpret import jaxpr_interpret
-from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.typing import Array
 from jax._src.util import (safe_zip, split_list)
 from jax.experimental.pallas import mosaic_gpu as plgpu
+
+
+InterpretParams = interpret_utils.InterpretGPUParams
+
+
+def get_interpret_effects() -> Set[effects.Effect]:
+  return {callback._OrderedIOEffect}
 
 
 def get_races() -> gpu_callbacks.RaceDetectionState:
@@ -124,7 +132,7 @@ def _allocate_buffers_for_outputs(
     grid_mapping: pallas_core.GridMapping,
     input_buffer_keys: Sequence[jax.Array],
     input_vals: Sequence[jax.Array],
-    interpret_params: InterpretGPUParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[AllocationKeyAndValue]:
   """Allocates `GMEM` buffers for `pallas_call` outputs, respecting aliased inputs."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -153,12 +161,12 @@ def _allocate_buffers_for_outputs(
           )
       )
     else:
-      out_val = interpret_utils.get_uninitialized_array(
-          bm.array_aval.shape, bm.array_aval.dtype,
-          interpret_params.uninitialized_memory)
-      padded_val = interpret_utils.pad_to_block_dimension(
-          out_val, output_block_shapes[output_idx],
-          interpret_params.uninitialized_memory)
+      out_val = interpret_params.get_uninitialized_array(
+          bm.array_aval.shape, bm.array_aval.dtype
+      )
+      padded_val = interpret_params.pad_to_block_dimension(
+          out_val, output_block_shapes[output_idx]
+      )
       allocation_request = gpu_callbacks.make_allocation_request_array(
           device_id=device_id,
           # All outputs of a `pallas_call`/`core_map` that are arrays (i.e. that
@@ -187,7 +195,7 @@ def _get_kernel_buffers(
     invars: Sequence[Any],
     input_buffer_keys: Sequence[jax.Array],
     output_buffer_keys: Sequence[jax.Array],
-    interpret_params: InterpretGPUParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
 ) -> list[jax.Array]:
   """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -216,8 +224,8 @@ def _get_kernel_buffers(
           memory_space_id=gpu_callbacks.get_memory_space_idx(aval.memory_space),
           initial_ref_count=num_threads,
       )
-      init_val = interpret_utils.get_uninitialized_array(
-          aval.shape, aval.dtype, interpret_params.uninitialized_memory
+      init_val = interpret_params.get_uninitialized_array(
+          aval.shape, aval.dtype
       )
       kernel_buffer_keys.append(
           gpu_callbacks.call_allocate_buffer_for_all_threads(
@@ -328,7 +336,7 @@ def interpret_pallas_call(
     compiler_params: Mapping[str, Any],
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    interpret_params: InterpretGPUParams,
+    interpret_params: interpret_utils.InterpretGPUParams,
     metadata: Mapping[str, str] | None,
     **kwargs,
 ) -> Sequence[Array]:
