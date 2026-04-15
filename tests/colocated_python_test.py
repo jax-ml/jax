@@ -683,7 +683,9 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
 
     mesh = jax.sharding.Mesh(cpu_devices[0:2], "x")
-    sharding1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+    sharding1 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(None)
+    )
     sharding2 = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec("x")
     )
@@ -709,7 +711,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     x = np.array([1])
     x = jax.device_put(
-        x, jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+        x, jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(None))
     )
 
     out = value.add_sharding1(x)

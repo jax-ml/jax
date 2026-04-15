@@ -20,6 +20,7 @@ import collections
 from collections.abc import Callable, Sequence
 import functools
 import io
+import pickle
 import threading
 from typing import Any
 
@@ -177,12 +178,14 @@ def _reduce_named_sharding(
 ) -> tuple[Callable[..., jax.sharding.NamedSharding], Any]:
   assert isinstance(sharding.mesh, jax.sharding.Mesh), "Only Mesh is supported"
   reduced_mesh = _reduce_mesh(sharding.mesh)
+  reduced_spec = pickle.dumps(sharding.spec)
   return _unreduce_named_sharding, (
-      reduced_mesh, sharding.spec, sharding.memory_kind)
+      reduced_mesh, reduced_spec, sharding.memory_kind)
 
 
-def _unreduce_named_sharding(reduced_mesh, spec, memory_kind):
+def _unreduce_named_sharding(reduced_mesh, reduced_spec, memory_kind):
   mesh = reduced_mesh[0](*reduced_mesh[1])
+  spec = pickle.loads(reduced_spec)
   return jax.NamedSharding(mesh, spec, memory_kind=memory_kind)
 
 
