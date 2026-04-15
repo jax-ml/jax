@@ -2095,6 +2095,7 @@ def dot_product_attention(
       E.g, if 2 batches has 3 and 2 segments respectively, each segment has
       size 1, kv_offsets = [[0,1,2,-1], [0,1,-1,-1]]. kv_seqlen should be set
       to indicate the size of each segment.
+    score_mod_args: A list of args passed to score_mod.
     scale: Scale for the query.
     dropout_rate: Dropout rate.
     qkv_layout: Layout string, with supported formats being BTNH, BNTH, BSNH,
@@ -2104,6 +2105,8 @@ def dot_product_attention(
       is the index of each token. E.g., if sliding_window_length == 3 and the
       sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
     use_fp8: Whether to use FP8 attention mechanism.
+    score_mod: A callback function to modify attention score. The first argument
+      should always be the attention score.
     return_residual: Whether to return the logsumexp tensor of shape BTN
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
