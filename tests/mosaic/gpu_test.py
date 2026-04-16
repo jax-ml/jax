@@ -5778,7 +5778,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       self.skipTest(
           "Optimized loads not supported for TCGEN05_TMEM_NATIVE layout"
       )
-    shape = (128, 128)
+    # Use a 3D shape to exercise the path where tiling does not span all
+    # dimensions.
+    shape = (1, 128, 128)
     layout_attr = layout.to_layout_attr(shape, dtype)
 
     def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):

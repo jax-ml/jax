@@ -427,6 +427,8 @@ def _vector_load_op_lowering_rule(
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
     transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
+    [tiling_transform] = transforms
+    assert isinstance(tiling_transform, lc.TileTransform)
 
     def load_tiled(optimized: bool) -> fa.FragmentedArray:
       return fa.FragmentedArray.load_tiled(
@@ -435,6 +437,7 @@ def _vector_load_op_lowering_rule(
           is_signed=is_signed,
           layout=out_layout,
           optimized=optimized,
+          tiling_rank=len(tiling_transform.tiling)
       )
 
     fragmented_array = _retry_on_failure(load_tiled, optimized)
@@ -520,9 +523,15 @@ def _vector_store_op_lowering_rule(
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
+      [tiling_transform] = transforms
+      assert isinstance(tiling_transform, lc.TileTransform)
 
       def store_tiled(optimized: bool):
-        fragmented_array.store_tiled(unwrapped_ref, swizzle, optimized, atomic=atomic)
+        fragmented_array.store_tiled(
+            unwrapped_ref, swizzle, optimized,
+            tiling_rank=len(tiling_transform.tiling),
+            atomic=atomic
+        )
 
       _retry_on_failure(store_tiled, optimized)
     else:
