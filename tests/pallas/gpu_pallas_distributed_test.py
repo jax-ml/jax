@@ -727,8 +727,6 @@ class PallasCallRemoteDMATest(TestCase):
 
   @parameterized.parameters(False, True)
   def test_copy_tma(self, use_dict):
-    # TODO(bchetioui): support for remote refs.
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -753,7 +751,11 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=ids(zero, other_dev_id))
       pl.semaphore_wait(sem)
 
-    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+    transforms = (
+        (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+        if not self.is_wg_semantics()
+        else ()
+    )
     kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -913,8 +915,6 @@ class PallasCallMultimemTest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0), strict=True)
 
   def test_multimem_store_tma(self):
-    # TODO(bchetioui): support for multimem store.
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -929,7 +929,11 @@ class PallasCallMultimemTest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+    transforms = (
+        (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+        if not self.is_wg_semantics()
+        else ()
+    )
     kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),

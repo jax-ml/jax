@@ -266,22 +266,37 @@ def _copy_smem_to_gmem_lowering(
     )
     return ()
 
-  if "gmem_slice" not in copy_params:
+  if gmem_slice := copy_params.get("gmem_slice", ()):
+    indices, slice_lengths = _split_gmem_slice(gmem_slice)
+  else:
     i32 = ir.IntegerType.get_signless(32)
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
-  else:
-    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+
   assert copy_params.get("swizzle") is None
-  if copy_params.get("gmem_peer_id", None) is not None:
-    raise NotImplementedError(
-        "GMEM refs with peer ids are not supported in warpgroup lowering."
-    )
+  peer_id = copy_params.get("gmem_peer_id")
+  if peer_id is mgpu.GLOBAL_BROADCAST:
+    is_global_broadcast = True
+    peer_id = None
+  else:
+    is_global_broadcast = False
+
   assert not copy_params.get("gmem_transform")
   if reduction_op is not None:
     reduction_op_attr = getattr(mgpu.dialect.TMAReduction, reduction_op.capitalize())
   else:
     reduction_op_attr = None
+
+  # TODO(olechwierowicz): Remove this once min jaxlib version is 0.10.0
+  if hasattr(mgpu.dialect.AsyncStoreOp, "gmem_peer_id") and hasattr(
+      mgpu.dialect.AsyncStoreOp, "is_global_broadcast"
+  ):
+    kwargs = {
+        "gmem_peer_id": peer_id,
+        "is_global_broadcast": is_global_broadcast,
+    }
+  else:
+    kwargs = {}
   mgpu.dialect.async_store(
       src,
       dst,
@@ -290,6 +305,7 @@ def _copy_smem_to_gmem_lowering(
       predicate=predicate,
       commit_group=commit_group,
       reduction_op=reduction_op_attr,
+      **kwargs  # pyrefly: ignore[bad-argument-type]
   )
   return ()
 

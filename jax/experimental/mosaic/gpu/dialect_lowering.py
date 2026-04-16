@@ -1146,6 +1146,14 @@ def _mgpu_async_store_op_lowering_rule(
   else:
     reduction_op = None
 
+  peer_id: ir.Value | lc.GlobalBroadcast | None = None
+  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.0
+  if hasattr(store_op, "is_global_broadcast") and store_op.is_global_broadcast.value:
+    peer_id = lc.GLOBAL_BROADCAST
+  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.0
+  elif hasattr(store_op, "gmem_peer_id") and store_op.gmem_peer_id is not None:
+    peer_id = store_op.gmem_peer_id
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=unwrapped_source,
@@ -1156,6 +1164,7 @@ def _mgpu_async_store_op_lowering_rule(
       **predicate,  # pyrefly: ignore[bad-argument-type]
       arrive=arrive,
       reduction_op=reduction_op,  # pyrefly: ignore[bad-argument-type]
+      gmem_peer_id=peer_id,
       oob_mode=lc.OOBFillMode.UNDEFINED,
   )
   return []
