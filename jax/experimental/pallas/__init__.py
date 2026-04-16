@@ -28,6 +28,7 @@ from jax._src.pallas.core import core_map as core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import GridSpec as GridSpec
+from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace

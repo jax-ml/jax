@@ -362,7 +362,20 @@ class BoundedSlice:
   def __repr__(self):
     return f"BoundedSlice({self.block_size})"
 
-BlockDim: TypeAlias = Element | Squeezed | Blocked | BoundedSlice
+
+@dataclasses.dataclass(frozen=True)
+class Indirect:
+  """A dimension indexed by an array of indices.
+
+  Implies a gather for inputs and a scatter for outputs.
+  """
+  block_size: int
+
+  def __repr__(self):
+    return f"Indirect({self.block_size})"
+
+
+BlockDim: TypeAlias = Element | Squeezed | Blocked | BoundedSlice | Indirect
 
 
 def default_index_map(ndim: int) -> Callable:
@@ -375,7 +388,7 @@ def _canonicalize_block_dim(dim: BlockDim | int | None) -> BlockDim:
       return squeezed
     case int():
       return Blocked(int(dim))
-    case Squeezed() | Blocked() | Element() | BoundedSlice():
+    case Squeezed() | Blocked() | Element() | BoundedSlice() | Indirect():
       return dim
     case _:
       # Handle case where the dim is a symbolic dimension so we assume it is
@@ -399,11 +412,12 @@ def _get_block_dim_size(dim: BlockDim) -> int:
   match dim:
     case Squeezed():
       return 1
-    case Blocked(block_size):
-      return block_size
-    case Element():
-      return dim.block_size
-    case BoundedSlice(block_size):
+    case (
+        Blocked(block_size)
+        | Element(block_size)
+        | BoundedSlice(block_size)
+        | Indirect(block_size)
+    ):
       return block_size
     case _:
       raise ValueError(f"Unsupported block shape type: {type(dim)}")
@@ -415,7 +429,10 @@ def get_block_size(dim: BlockDim | int | None) -> int:
     case Squeezed() | None:
       return 1
     case (
-        Blocked(block_size) | Element(block_size, _) | BoundedSlice(block_size)
+        Blocked(block_size)
+        | Element(block_size)
+        | BoundedSlice(block_size)
+        | Indirect(block_size)
     ):
       return block_size
     case _:

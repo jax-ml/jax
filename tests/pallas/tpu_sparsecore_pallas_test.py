@@ -2591,6 +2591,65 @@ class PipelineTest(PallasSCTest):
     y = gather_emit(data, indices)
     np.testing.assert_array_equal(y, jnp.take(data, indices, axis=0))
 
+  @parameterized.product(kind=["ref", "array"])
+  def test_gather_via_indirect(self, kind):
+    self.skip_if_tc_tiling()
+
+    sc_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=2
+    )
+    num_rows = 32
+    num_steps = 4
+    x = jnp.arange(num_rows * self.num_lanes).reshape(num_rows, self.num_lanes)
+    keys = jax.random.split(jax.random.key(42), num_steps)
+    indices = jax.vmap(
+        lambda k: jax.random.permutation(
+            k, jnp.arange(num_rows, dtype=jnp.int32)
+        )[: self.num_lanes]
+    )(keys)
+
+    @self.kernel(
+        mesh=sc_mesh,
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(num_steps, self.num_lanes, self.num_lanes), dtype=jnp.int32
+        ),
+        scratch_shapes=dict(
+            indices_ref=pltpu.VMEM(indices.shape, indices.dtype),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_hbm_ref, o_hbm_ref, *, indices_ref):
+      pltpu.sync_copy(indices_hbm_ref, indices_ref)
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=(
+              pl.BlockSpec(
+                  (pl.Indirect(self.num_lanes), self.num_lanes),
+                  lambda i: (
+                      indices_ref.at[i] if kind == "ref" else indices_ref[i],
+                      0,
+                  ),
+              ),
+          ),
+          out_specs=pl.BlockSpec(
+              (pl.Squeezed(), self.num_lanes, self.num_lanes),
+              lambda i: (i, 0, 0),
+          ),
+          tiling=pltpu.Tiling.SPARSE_CORE,
+      )
+      def pipeline(x_ref, o_ref):
+
+        @pl.loop(0, self.num_lanes)
+        def _(j):
+          o_ref[j] = x_ref[j]
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(
+        kernel(x, indices), jnp.take(x, indices, axis=0)
+    )
+
   def test_explicit_sc_tiling_1d(self):
     self.skip_if_tc_tiling("The test uses SC tiling.")
 

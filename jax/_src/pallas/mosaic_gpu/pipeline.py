@@ -52,9 +52,8 @@ AbstractRefPytree: TypeAlias = Sequence[
     Union[state.AbstractRef, "AbstractRefPytree"]
 ]
 
-def _get_block_size(
-    bd: pl.Blocked | pl.Element | pl.Squeezed | pl.BoundedSlice | int | None,
-) -> int:
+
+def _get_block_size(bd: pl.BlockDim | int | None) -> int:
   match bd:
     case int():
       return bd
@@ -62,6 +61,7 @@ def _get_block_size(
       return bd.block_size
     case _:
       raise NotImplementedError(f"Unsupported block size type: {type(bd)}")
+
 
 def _get_block_shape(spec: pallas_core.BlockSpec):
   if spec.block_shape is None:

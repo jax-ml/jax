@@ -157,7 +157,7 @@ def _make_block_slice(
       return _create_bounded_slice(
           slice_start, slice_size, block_size, size, tiling
       )
-    case None | pl.Squeezed():
+    case None | pl.Squeezed() | pl.Indirect():
       return block_index
     case _:
       raise ValueError(f"Unsupported block dimension type: {block_size}")
@@ -192,7 +192,10 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
   for bs, fs in zip(spec.block_shape, full_shape):
     if bs is None:
       return False
-    if isinstance(bs, (pallas_core.BoundedSlice, pl.Squeezed, pl.Element)):
+    if isinstance(
+        bs,
+        (pl.BoundedSlice, pl.Indirect, pl.Squeezed, pl.Element),
+    ):
       return False
     if pallas_core.get_block_size(bs) != fs:
       return False
@@ -248,16 +251,17 @@ def _get_block_shape(spec: pl.BlockSpec) -> tuple[int, ...]:
   """Get the block shape for a given block spec."""
   def _get_dim_size(bd):
     match bd:
-      case pl.Blocked(block_size):
-        return block_size
-      case pl.Element(block_size):
-        return block_size
-      case pl.BoundedSlice(block_size):
-        return block_size
       case int():
         return bd
       case None | pl.Squeezed():
         return None
+      case (
+          pl.Blocked(block_size)
+          | pl.Element(block_size)
+          | pl.BoundedSlice(block_size)
+          | pl.Indirect(block_size)
+      ):
+        return block_size
       case _:
         raise ValueError(f"Unsupported block dimension type: {bd}")
   if spec.block_shape is None:
@@ -333,6 +337,13 @@ class BufferedRefBase:
   @property
   def block_shape(self) -> Sequence[pl.BlockDim | int | None] | None:
     return self.spec.block_shape
+
+  @property
+  def has_indirect(self) -> bool:
+    """Whether any block dimension uses indirect indexing."""
+    if self.block_shape is None:
+      return False
+    return any(isinstance(bd, pl.Indirect) for bd in self.block_shape)
 
   @property
   def has_allocated_buffer(self) -> bool:
@@ -1151,6 +1162,8 @@ class Scheduler:
   def has_changed(self, buffered_ref):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
       return False
+    if buffered_ref.has_indirect:
+      return True
     indices = buffered_ref.compute_index(*self.indices)
     prev_indices = buffered_ref.compute_index(*self.prev_indices)
     return _tuples_differ(indices, prev_indices)
@@ -1158,6 +1171,8 @@ class Scheduler:
   def will_change_current(self, buffered_ref):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
       return False
+    if buffered_ref.has_indirect:
+      return True
     indices = buffered_ref.compute_index(*self.indices)
     next_indices = buffered_ref.compute_index(*self.next_indices)
     return _tuples_differ(indices, next_indices)
@@ -1165,6 +1180,8 @@ class Scheduler:
   def will_change_fetch(self, buffered_ref):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
       return False
+    if buffered_ref.has_indirect:
+      return True
     if buffered_ref.buffer_count < 2:
       return self.has_changed(buffered_ref)
     indices = buffered_ref.compute_index(
