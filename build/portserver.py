@@ -35,8 +35,6 @@ import signal
 import socket
 import sys
 import psutil
-import subprocess
-from datetime import datetime, timezone, timedelta
 
 log = None  # Initialized to a logging.Logger by _configure_logging().
 
@@ -79,7 +77,7 @@ def _bind(port, socket_type, socket_proto):
         try:
             sock = socket.socket(family, socket_type, socket_proto)
             got_socket = True
-        except socket.error:
+        except OSError:
             continue
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -87,7 +85,7 @@ def _bind(port, socket_type, socket_proto):
             if socket_type == socket.SOCK_STREAM:
                 sock.listen(1)
             port = sock.getsockname()[1]
-        except socket.error:
+        except OSError:
             return None
         finally:
             sock.close()
@@ -136,7 +134,7 @@ async def _start_windows_server(client_connected_cb, path):
     return server
 
 
-class _PortInfo(object):
+class _PortInfo:
     """Container class for information about a given port assignment.
 
     Attributes:
@@ -153,7 +151,7 @@ class _PortInfo(object):
         self.start_time = 0.0
 
 
-class _PortPool(object):
+class _PortPool:
     """Manage available ports for processes.
 
     Ports are reclaimed when the reserving process exits and the reserved port
@@ -218,7 +216,7 @@ class _PortPool(object):
         self._port_queue.append(port_info)
 
 
-class _PortServerRequestHandler(object):
+class _PortServerRequestHandler:
     """A class to handle port allocation and status requests.
 
     Allocates ports to process ids via the dead simple port server protocol
@@ -271,7 +269,7 @@ class _PortServerRequestHandler(object):
         port = self._port_pool.get_port_for_process(pid)
         if port > 0:
             self._total_allocations += 1
-            writer.write('{:d}\n'.format(port).encode('utf-8'))
+            writer.write(f'{port:d}\n'.encode())
             log.debug('Allocated port %d to pid %d', port, pid)
         else:
             self._denied_allocations += 1
@@ -281,12 +279,12 @@ class _PortServerRequestHandler(object):
         log.info('Dumping statistics:')
         stats = []
         stats.append(
-            'client-request-errors {}'.format(self._client_request_errors))
-        stats.append('denied-allocations {}'.format(self._denied_allocations))
-        stats.append('num-ports-managed {}'.format(self._port_pool.num_ports()))
+            f'client-request-errors {self._client_request_errors}')
+        stats.append(f'denied-allocations {self._denied_allocations}')
+        stats.append(f'num-ports-managed {self._port_pool.num_ports()}')
         stats.append('num-ports-checked-for-last-request {}'.format(
             self._port_pool.ports_checked_for_last_request))
-        stats.append('total-allocations {}'.format(self._total_allocations))
+        stats.append(f'total-allocations {self._total_allocations}')
         for stat in stats:
             log.info(stat)
 

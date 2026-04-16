@@ -26,7 +26,7 @@ from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
 from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
-from typing import Sequence
+from collections.abc import Sequence
 
 
 @dataclasses.dataclass(frozen=True)

@@ -234,10 +234,10 @@ def gmm(
   size = RaggedDotSizes(m=x.shape[0], k=x.shape[1], n=n, g=A.shape[0])
 
   # normalize the block sizes for GPU
-  block_m, block_k, block_n = [
+  block_m, block_k, block_n = (
     pl.next_power_of_2(min(b, s))
     for b, s in zip([block_m, block_k, block_n], [size.m, size.k, size.n])
-  ]
+  )
   block_k, block_n = max(block_k, 16), max(block_n, 16)
 
   A_spec = pl.BlockSpec((size.g, size.k, block_n), lambda i, j: (0, 0, j))
@@ -373,10 +373,10 @@ def tgmm(
   block_m, block_n = min(block_m, m), min(block_n, n)
 
   # normalize the block sizes for GPU
-  block_m, block_k, block_n = [
+  block_m, block_k, block_n = (
     max(pl.next_power_of_2(min(b, s)), 16)
     for b, s in zip([block_m, block_k, block_n], [size.m, size.k, size.n])
-  ]
+  )
 
   group_offsets = reductions.cumsum(group_sizes) - group_sizes
   in_specs = [

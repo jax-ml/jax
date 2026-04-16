@@ -15,7 +15,8 @@
 
 from collections.abc import Callable
 import functools
-from typing import Any, Hashable, TypeVar, cast, overload
+from typing import Any, TypeVar, cast, overload
+from collections.abc import Hashable
 
 from jax._src import api
 from jax._src import checkify

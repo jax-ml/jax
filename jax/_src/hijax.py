@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from functools import partial, update_wrapper
 import inspect
 import itertools as it
-from typing import Any, Hashable, Callable
+from typing import Any
+from collections.abc import Hashable, Callable
 
 from jax._src import api
 from jax._src import config

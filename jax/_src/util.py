@@ -24,7 +24,7 @@ import logging
 import math
 import operator
 from typing import (Any, Generic, ParamSpec, Protocol, SupportsIndex,
-                    Type, TypeVar, overload, TYPE_CHECKING, cast)
+                    TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -414,7 +414,7 @@ def immutable(cls):
 
 # The types of arguments for which `multi_weakref_lru_cache` should keep
 # weak references.
-weakref_cache_key_types: set[Type] = set()
+weakref_cache_key_types: set[type] = set()
 
 
 _multi_weakref_registry = lib_pytree.PyTreeRegistry(

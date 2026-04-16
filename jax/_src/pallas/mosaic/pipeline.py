@@ -657,7 +657,7 @@ class BufferedRef(BufferedRefBase):
       copy_out_slot: int | jax.Array | None = None,
       wait_in_slot: int | jax.Array | None = None,
       wait_out_slot: int | jax.Array | None = None,
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Returns a new BufferedRef with the given slot index."""
     new_buf = self
     if copy_in_slot is not None:
@@ -780,7 +780,7 @@ class BufferedRef(BufferedRefBase):
           raise ValueError(f"Unsupported block dimension type: {type(bd)}")
     return tuple(indexer)
 
-  def initialize_slots(self) -> "BufferedRef":
+  def initialize_slots(self) -> BufferedRef:
     return dataclasses.replace(
         self,
         copy_in_slot=jnp.uint32(0) if self.buffer_type.is_input else None,
@@ -794,14 +794,14 @@ class BufferedRef(BufferedRefBase):
         ),
     )
 
-  def _advance_slot(self, reg_slot, slot_kwarg, predicate) -> "BufferedRef":
+  def _advance_slot(self, reg_slot, slot_kwarg, predicate) -> BufferedRef:
     assert reg_slot is not None
     new_current_slot = lax.select(predicate, reg_slot + 1, reg_slot)
     return self.with_slot_index(**{slot_kwarg: new_current_slot})
 
   def advance_copy_in_slot(
       self, predicate: bool | jax.Array = True
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Switch to the next copy slot."""
     if not self.is_buffered or not self.is_input:
       return self
@@ -809,7 +809,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_wait_in_slot(
       self, predicate: bool | jax.Array = True
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Switch to the next wait slot."""
     if not self.is_buffered or not self.is_input:
       return self
@@ -817,7 +817,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_copy_out_slot(
       self, predicate: bool | jax.Array = True
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Switch to the next copy slot."""
     if not self.is_buffered or not self.is_output:
       return self
@@ -825,7 +825,7 @@ class BufferedRef(BufferedRefBase):
 
   def advance_wait_out_slot(
       self, predicate: bool | jax.Array = True
-  ) -> "BufferedRef":
+  ) -> BufferedRef:
     """Switch to the next wait slot."""
     if not self.is_buffered or not self.is_output:
       return self
@@ -1231,7 +1231,7 @@ class Scheduler:
         buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
     return buffered_ref
 
-  def wait_in(self, buffered_ref, src_ref) -> "BufferedRef":
+  def wait_in(self, buffered_ref, src_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
@@ -1243,7 +1243,7 @@ class Scheduler:
         buffered_ref.wait_in(src_ref, self.indices)
     return buffered_ref
 
-  def copy_in(self, buffered_ref, src_ref) -> "BufferedRef":
+  def copy_in(self, buffered_ref, src_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = (self.will_change_fetch(buffered_ref) &
@@ -1271,7 +1271,7 @@ class Scheduler:
           pred & buffered_ref.is_input)
     return buffered_ref
 
-  def wait_out(self, buffered_ref, dst_ref) -> "BufferedRef":
+  def wait_out(self, buffered_ref, dst_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) & ~self.first_step
@@ -1288,7 +1288,7 @@ class Scheduler:
         buffered_ref.wait_out(dst_ref, self.prev_indices)
     return buffered_ref.advance_wait_out_slot(pred & buffered_ref.is_output)
 
-  def copy_out(self, buffered_ref, dst_ref) -> "BufferedRef":
+  def copy_out(self, buffered_ref, dst_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.will_change_current(buffered_ref) | self.last_step

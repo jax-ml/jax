@@ -328,7 +328,7 @@ def _is_zero(x):
 def _get_aval(x):
   return x.aval if _is_zero(x) else core.typeof(x)
 
-def immutbox_to_aval(box: ImmutBox) -> 'ImmutBoxTy':
+def immutbox_to_aval(box: ImmutBox) -> ImmutBoxTy:
   leaves, treedef = jax.tree.flatten(box._val, is_leaf=_is_zero)
   leaf_avals = tuple(map(_get_aval, leaves))
   return ImmutBoxTy(leaf_avals, treedef)

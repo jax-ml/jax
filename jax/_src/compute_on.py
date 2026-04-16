@@ -15,7 +15,7 @@
 from __future__ import annotations
 from contextlib import contextmanager
 from functools import partial
-from typing import Sequence
+from collections.abc import Sequence
 
 from jax._src import config
 from jax._src.lib import xla_client

@@ -38,7 +38,7 @@ AUTOSUMMARY_TAG = '.. autosummary::'
 AUTOCLASS_TAG = '.. autoclass::'
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def jax_docs_dir() -> str:
   """Return the string or path object pointing to the JAX docs."""
   try:
@@ -107,7 +107,7 @@ def extract_apis_from_rst_file(path: str) -> dict[str, list[str]]:
   currentmodule: str = '<none>'
   in_autosummary_block = False
   apis = collections.defaultdict(list)
-  with open(path, 'r') as f:
+  with open(path) as f:
     for line in f:
       stripped_line = line.strip()
       if not stripped_line:
@@ -136,7 +136,7 @@ def extract_apis_from_rst_file(path: str) -> dict[str, list[str]]:
   return dict(apis)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_all_documented_jax_apis() -> Mapping[str, list[str]]:
   """Get the list of APIs documented in all files in a directory (recursive)."""
   path = jax_docs_dir()
@@ -154,7 +154,7 @@ def get_all_documented_jax_apis() -> Mapping[str, list[str]]:
   return {key: sorted(vals) for key, vals in apis.items()}
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def list_public_jax_modules() -> Sequence[str]:
   """Return a list of the public modules defined in jax."""
   # We could use pkgutil.walk_packages, but we want to avoid traversing modules
@@ -177,7 +177,7 @@ def list_public_jax_modules() -> Sequence[str]:
   return [jax.__name__, *walk_public_modules(jax.__path__, jax.__name__)]
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def list_public_apis(module_name: str) -> Sequence[str]:
   """Return a list of public APIs within a specified module.
 
@@ -190,7 +190,7 @@ def list_public_apis(module_name: str) -> Sequence[str]:
           ]
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_all_public_jax_apis() -> Mapping[str, list[str]]:
   """Return a dictionary mapping jax submodules to their list of public APIs."""
   apis = {}

@@ -1448,7 +1448,7 @@ def layout_cast(x: Any, new_layout: SomeLayout):
 
 class SomeLayout:
 
-  def reduce(self, axes: int | Sequence[int]) -> "SomeLayout":
+  def reduce(self, axes: int | Sequence[int]) -> SomeLayout:
     if isinstance(axes, int):
       axes = (axes,)
     return ReducedLayout(self, axes)

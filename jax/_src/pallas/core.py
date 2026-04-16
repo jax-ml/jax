@@ -25,7 +25,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Optional, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Protocol, TypeAlias, Union, runtime_checkable
 
 from jax._src import api_util
 from jax._src import config
@@ -204,7 +204,7 @@ class Buffered:
   """
   buffer_count: int
   use_lookahead: bool = False
-  revisit: Optional[RevisitMode] = None
+  revisit: RevisitMode | None = None
 
 
 @dataclasses.dataclass(frozen=True)

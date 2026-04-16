@@ -18,7 +18,6 @@ import dataclasses
 import datetime
 import os
 import logging
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ class CommandResult:
   start_time: datetime.datetime = dataclasses.field(
     default_factory=datetime.datetime.now
   )
-  end_time: Optional[datetime.datetime] = None
+  end_time: datetime.datetime | None = None
 
 
 async def _process_log_stream(stream, result: CommandResult):
@@ -67,7 +66,7 @@ class SubprocessExecutor:
   Manages execution of subprocess commands with reusable environment and logging.
   """
 
-  def __init__(self, environment: Dict[str, str] = None):
+  def __init__(self, environment: dict[str, str] = None):
     """
 
     Args:

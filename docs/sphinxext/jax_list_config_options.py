@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from operator import itemgetter
-from typing import Any, List
+from typing import Any
 
 from docutils import nodes
 from sphinx.util import logging
@@ -61,7 +61,7 @@ class ConfigOptionDirective(SphinxDirective):
   optional_arguments = 0
   has_content = False
 
-  def run(self) -> List[nodes.Node]:
+  def run(self) -> list[nodes.Node]:
     from jax._src.config import config as jax_config
 
     config_options = sorted(jax_config.meta.items(), key=itemgetter(0))

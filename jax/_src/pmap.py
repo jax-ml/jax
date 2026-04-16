@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from collections.abc import Hashable
 from functools import partial
-from typing import Any, Callable, NamedTuple, Sequence, Iterable
+from typing import Any, NamedTuple
+from collections.abc import Callable, Sequence, Iterable
 import warnings
 
 from jax._src import api
