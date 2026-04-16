@@ -721,15 +721,6 @@ def _generic_effectful_abstract_eval(abstract_eval, prim):
 
 # -------------------- lifting --------------------
 
-# TODO(mattjj): replace this approach with a primitive-keyed table of rules
-def traverse_jaxpr_params(f, params):
-  """Applies f to each jaxpr parameter and returns a tuple of returned values."""
-  return {name: f(p)
-          for name, param in params.items()
-          for p in (param if isinstance(param, (tuple, list)) else [param])
-          if type(p) in (Jaxpr, ClosedJaxpr)}
-
-
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
