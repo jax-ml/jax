@@ -179,8 +179,7 @@ def eig(
       eigenvectors. The eigenvector derivative is taken under the LAPACK
       ``geev`` normalisation (each eigenvector has unit 2-norm and its
       largest-magnitude component is real). It is only valid when (i) all
-      eigenvalues are distinct, (ii) the eigenvectors returned by the backend
-      satisfy that normalisation, and (iii) no eigenvector has two components
+      eigenvalues are distinct and (ii) no eigenvector has two components
       tied for largest magnitude. Defaults to ``False`` because these
       conditions cannot be checked statically; see
       https://github.com/jax-ml/jax/issues/2748 for discussion.
@@ -1231,10 +1230,9 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
     if not enable_eigvec_derivs:
       raise NotImplementedError(
           'Derivatives of non-symmetric eigenvectors are only valid under '
-          'assumptions on the input that JAX cannot check (distinct '
-          'eigenvalues, and eigenvectors satisfying the LAPACK geev '
-          'normalisation). Pass enable_eigvec_derivs=True to '
-          'jax.lax.linalg.eig to opt in. See '
+          'assumptions on the input that JAX cannot check (see the '
+          'enable_eigvec_derivs argument to jax.lax.linalg.eig). Pass '
+          'enable_eigvec_derivs=True to jax.lax.linalg.eig to opt in. See '
           'https://github.com/jax-ml/jax/issues/2748 for discussion.')
   outs = eig(a, compute_left_eigenvectors=compute_left_eigenvectors,
              compute_right_eigenvectors=True,
