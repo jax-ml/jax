@@ -4467,21 +4467,19 @@ def _multimem_store_lowering_rule(
       raise NotImplementedError(
           f"Unhandled transforms for multimem_store: {transforms}"
       )
-  multicast_ref = lambda r: ctx.launch_ctx.to_remote_multicast(r)
+  multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
   scalar = not ctx.avals_in[0].shape
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     val = lowering._ensure_ir_value(value, ctx.avals_in[0].dtype)
     if scalar:
-      with lowering._wrap_in_custom_primitive_if_wg(ctx, [local_ref, val]) as [local_ref, val]:
-        multicast_ref(local_ref).store(val, indices=[])
+      with lowering._wrap_in_custom_primitive_if_wg(ctx, [multi_ref.ref, val]) as [multi_ref, val]:
+        mgpu_utils.MultimemRef(multi_ref).store(val, indices=[])
         if ctx.module_ctx.auto_barriers:
           mgpu.warpgroup_barrier()
     else:
-      mc_ref = multicast_ref(local_ref).ref
-      mgpu.dialect.vector_store(val, mc_ref, optimized=False, multimem=True)
+      mgpu.dialect.vector_store(val, multi_ref.ref, optimized=False, multimem=True)
     return ()
 
-  multi_ref = multicast_ref(local_ref)
   if scalar:
     multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_in[0].dtype), [])
   else:

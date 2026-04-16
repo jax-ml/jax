@@ -894,10 +894,6 @@ class PallasCallMultimemTest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
-    if jax.local_device_count() > 1:
-      # TODO(b/498152250): Support lowering a parameter id in the wg semantics.
-      self.skip_if_wg_semantics()
-
     def kernel(y_ref, sem):
       @pl.when(lax.axis_index('x') == 0)
       def _store():
