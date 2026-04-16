@@ -21,8 +21,6 @@ from typing import Union
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
-from . import fragmented_array as fa
-from . import tcgen05
 from . import utils
 
 MlirOperation = Union[ir.Operation, ir.OpView]
@@ -216,28 +214,6 @@ def is_transformable_smem_memref(v: ir.Value) -> bool:
       # barriers have no business being transformed
       and not isinstance(v.type.element_type, mgpu.BarrierType)
       and utils.is_smem_ref(v)
-  )
-
-
-def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
-  if not isinstance(layout, fa.TiledLayout):
-    return False
-  if layout in {
-      fa.WGMMA_LAYOUT,
-      fa.WGMMA_LAYOUT_ACC_32BIT,
-      fa.WGMMA_LAYOUT_UPCAST_2X,
-      fa.WGMMA_LAYOUT_UPCAST_4X,
-      fa.WGMMA_TRANSPOSED_LAYOUT,
-      fa.WGMMA_LAYOUT_8BIT,
-      fa.TCGEN05_LAYOUT,
-      fa.TCGEN05_TRANSPOSED_LAYOUT,
-  }:
-    return True
-  if len(layout.tiling.tiles[0]) != 2:
-    return False
-  columns = layout.tiling.tiles[0][1]
-  return columns % 16 == 0 and (
-      layout == tcgen05.fa_m64_collective_layout(columns)
   )
 
 
