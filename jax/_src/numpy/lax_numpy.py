@@ -464,7 +464,7 @@ def isscalar(element: Any) -> bool:
     return True
   elif isinstance(element, (np.ndarray, Array)):
     return element.ndim == 0
-  elif hasattr(element, '__jax_array__'):
+  elif getattr(element, '__jax_array__', None) is not None:
     return asarray(element).ndim == 0
   return False
 
@@ -7649,8 +7649,9 @@ def delete(
   # NB: pass both arrays to check for appropriate error message.
   util.check_arraylike("delete", a, obj)
   # Can't use ensure_arraylike here because obj may be static.
-  if hasattr(obj, "__jax_array__"):
-    obj = obj.__jax_array__()
+  m = getattr(obj, "__jax_array__", None)
+  if m is not None:
+    obj = m()
 
   # Case 3a: unique integer indices; delete in a JIT-compatible way
   if issubdtype(_dtype(obj), np.integer) and assume_unique_indices:

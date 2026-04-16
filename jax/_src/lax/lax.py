@@ -1635,8 +1635,9 @@ def _convert_element_type(
     weak_type: bool = False,
     sharding: Sharding | None = None,
     warn_on_complex_to_real_cast: bool = True):
-  if hasattr(operand, '__jax_array__'):
-    operand = operand.__jax_array__()
+  jax_array_method = getattr(operand, "__jax_array__", None)
+  if jax_array_method is not None:
+    operand = jax_array_method()
 
   old_dtype = dtypes.dtype(operand)
 

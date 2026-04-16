@@ -234,8 +234,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # corresponding data structures and it may not be available as
     # object.dtype. So, we'll resolve the protocols here before
     # evaluating object.dtype.
-    if hasattr(object, '__jax_array__'):
-      object = object.__jax_array__()
+    m = getattr(object, '__jax_array__', None)
+    if m is not None:
+      object = m()
     elif hasattr(object, '__cuda_array_interface__'):
       cai = object.__cuda_array_interface__
       backend = xla_bridge.get_backend()

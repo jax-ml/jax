@@ -119,18 +119,20 @@ _arraylike_types = (np.ndarray, Array)
 
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, _arraylike_types) or
-          hasattr(x, '__jax_array__') or np.isscalar(x))
+          getattr(x, '__jax_array__', None) is not None or np.isscalar(x))
 
 
 def _arraylike_asarray(x: Any) -> Array:
   """Convert an array-like object to an array."""
-  if hasattr(x, '__jax_array__'):
-    x = x.__jax_array__()
+  m = getattr(x, '__jax_array__', None)
+  if m is not None:
+    x = m()
   return lax.asarray(x)
 
 
 def _check_jax_array_protocol(x: Any) -> Any:
-  return x.__jax_array__() if hasattr(x, '__jax_array__') else x
+  m = getattr(x, '__jax_array__', None)
+  return m() if m is not None else x
 
 
 @overload
@@ -351,8 +353,9 @@ def ndim(a: ArrayLike | SupportsNdim) -> int:
     return a.ndim
   # Deprecation warning added 2025-2-20.
   check_arraylike("ndim", a, emit_warning=True)
-  if hasattr(a, "__jax_array__"):
-    a = a.__jax_array__()
+  m = getattr(a, "__jax_array__", None)
+  if m is not None:
+    a = m()
   # NumPy dispatches to a.ndim if available.
   return np.ndim(a)  # pyrefly: ignore[bad-argument-type]
 
@@ -395,8 +398,9 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
     return a.shape
   # Deprecation warning added 2025-2-20.
   check_arraylike("shape", a, emit_warning=True)
-  if hasattr(a, "__jax_array__"):
-    a = a.__jax_array__()
+  m = getattr(a, "__jax_array__", None)
+  if m is not None:
+    a = m()
   # NumPy dispatches to a.shape if available.
   return np.shape(a)
 

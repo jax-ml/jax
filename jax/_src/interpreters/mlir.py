@@ -320,8 +320,9 @@ def _ir_constant(val: Any, *,
       out = handler(val, aval)
       assert _is_ir_values(out), (type(val), out)
       return out
-  if hasattr(val, '__jax_array__'):
-    return ir_constant(val.__jax_array__())
+  m = getattr(val, '__jax_array__', None)
+  if m is not None:
+    return ir_constant(m())
   raise TypeError(f"No constant handler for type: {type(val)}")
 
 
@@ -491,8 +492,9 @@ def ir_attribute(val: Any) -> ir.Attribute:
       out = handler(val)
       assert isinstance(out, ir.Attribute), (type(val), out)
       return out
-  if hasattr(val, '__jax_array__'):
-    return ir_attribute(val.__jax_array__())
+  m = getattr(val, '__jax_array__', None)
+  if m is not None:
+    return ir_attribute(m())
   raise TypeError(f"No attribute handler defined for type: {type(val)}")
 
 # Source locations

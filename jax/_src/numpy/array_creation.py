@@ -290,8 +290,9 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
            [0, 0, 0]], dtype=int32)
   """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
-    if hasattr(a, '__jax_array__'):
-      a = a.__jax_array__()
+    m = getattr(a, '__jax_array__', None)
+    if m is not None:
+      a = m()
     util.check_arraylike("zeros_like", a)
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "zeros_like")
@@ -339,8 +340,9 @@ def ones_like(a: ArrayLike | DuckTypedArray,
            [1, 1, 1]], dtype=int32)
   """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
-    if hasattr(a, '__jax_array__'):
-      a = a.__jax_array__()
+    m = getattr(a, '__jax_array__', None)
+    if m is not None:
+      a = m()
     util.check_arraylike("ones_like", a)
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
@@ -389,8 +391,9 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
            [0, 0, 0]], dtype=int32)
   """
   if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
-    if hasattr(prototype, '__jax_array__'):
-      prototype = prototype.__jax_array__()
+    m = getattr(prototype, '__jax_array__', None)
+    if m is not None:
+      prototype = m()
     util.check_arraylike("ones_like", prototype)
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
@@ -445,8 +448,9 @@ def full_like(a: ArrayLike | DuckTypedArray,
     util.check_arraylike("full_like", 0, fill_value)
   else:
     util.check_arraylike("full_like", a, fill_value)
-    if hasattr(a, '__jax_array__'):
-      a = a.__jax_array__()
+    m = getattr(a, '__jax_array__', None)
+    if m is not None:
+      a = m()
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full_like")
   if shape is not None:

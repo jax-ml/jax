@@ -385,7 +385,7 @@ def canonicalize_value(x):
     handler = canonicalize_value_handlers.get(typ)
     if handler:
       return handler(x)
-  if hasattr(x, '__jax_array__'):
+  if getattr(x, '__jax_array__', None) is not None:
     raise ValueError(
         'Triggering __jax_array__() during abstractification is no longer'
         ' supported. To avoid this error, either explicitly convert your object'

@@ -2654,8 +2654,10 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("power", x1, x2)
 
   # Must do __jax_array__ conversion prior to dtype check.
-  x1 = x1.__jax_array__() if hasattr(x1, "__jax_array__") else x1
-  x2 = x2.__jax_array__() if hasattr(x2, "__jax_array__") else x2
+  m1 = getattr(x1, "__jax_array__", None)
+  x1 = m1() if m1 is not None else x1
+  m2 = getattr(x2, "__jax_array__", None)
+  x2 = m2() if m2 is not None else x2
 
   check_no_float0s("power", x1, x2)
 

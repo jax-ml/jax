@@ -907,6 +907,21 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
   size = _aval_property('size')
   shape = _aval_property('shape')
 
+  # dimension_as_value is frequently accessed, and we explicitly define it as
+  # None to avoid hitting the __getattr__ path, which constructs an error
+  # message (and is therefore slow).
+  dimension_as_value = None
+
+  # We define __jax_array__ as a property to delegate to self.aval.__jax_array__
+  # if it exists (e.g., for avals like Flax NNX variables).
+  # This avoids hitting the slow __getattr__ path for tracers that don't have it.
+  @property
+  def __jax_array__(self):
+    m = getattr(self.aval, '__jax_array__', None)
+    if m is not None:
+      return lambda: m.fun(self)
+    return None
+
   def __init__(self, trace: TraceType, aval: AbstractValue):
     self._trace = trace
     self.aval = aval
@@ -1817,7 +1832,7 @@ def shaped_abstractify(x):
       return aval_fn(x)
   if isinstance(x, AbstractValue):
     return x
-  if hasattr(x, '__jax_array__'):
+  if getattr(x, '__jax_array__', None) is not None:
     raise ValueError(
         'Triggering __jax_array__() during abstractification is no longer'
         ' supported. To avoid this error, either explicitly convert your object'
@@ -1847,7 +1862,7 @@ def typeof(x: Any) -> Any:
   for t in typ.__mro__[1:]:
     if (aval_fn := pytype_aval_mappings.get(t)):
       return aval_fn(x)
-  if hasattr(x, '__jax_array__'):
+  if getattr(x, '__jax_array__', None) is not None:
     raise ValueError(
         'Triggering __jax_array__() during abstractification is no longer'
         ' supported. To avoid this error, either explicitly convert your object'
@@ -2939,7 +2954,7 @@ def is_symbolic_dim(v: Any) -> bool:
   This should be used very rarely, because symbolic dimensions overload all
   operators, and should just work.
   """
-  return hasattr(v, "dimension_as_value")
+  return getattr(v, "dimension_as_value", None) is not None
 
 def is_constant_dim(d: DimSize) -> bool:
   # Whether the dimension is a static integer constant.
@@ -3060,7 +3075,8 @@ def dimension_as_value(d: DimSize):
      """
   if isinstance(d, (int, Tracer, np.int32, np.int64)): return d
   # For shape_poly._DimPolynomial
-  if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
+  m = getattr(d, "dimension_as_value", None)
+  if m is not None: return m()
   return operator.index(d)
 
 def canonicalize_slice(

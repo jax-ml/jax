@@ -47,8 +47,9 @@ _all = builtins.all
 Axis = Union[int, Sequence[int], None]
 
 def _isscalar(element: Any) -> bool:
-  if hasattr(element, '__jax_array__'):
-    element = element.__jax_array__()
+  m = getattr(element, '__jax_array__', None)
+  if m is not None:
+    element = m()
   return dtypes.is_python_scalar(element) or np.isscalar(element)
 
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:

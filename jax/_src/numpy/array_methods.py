@@ -665,8 +665,9 @@ _accepted_binop_types = (
 )
 
 def _operator_eq(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.equal(self, cast(ArrayLike, other))
   # Explicitly reject non-array inputs to avoid Python returning scalar False.
@@ -678,8 +679,9 @@ def _operator_eq(self, other):
   return NotImplemented
 
 def _operator_ne(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.not_equal(self, cast(ArrayLike, other))
   # Explicitly reject non-array inputs to avoid Python returning scalar True.
@@ -691,36 +693,41 @@ def _operator_ne(self, other):
   return NotImplemented
 
 def _operator_lt(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.less(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_le(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.less_equal(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_gt(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.greater(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_ge(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.greater_equal(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_add(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.add(self, cast(ArrayLike, other))
   # Explicitly reject sequences where __add__ may indicate concatenation.
@@ -731,8 +738,9 @@ def _operator_add(self, other):
   return NotImplemented
 
 def _operator_radd(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.add(cast(ArrayLike, other), self)
   # Explicitly reject sequences where __add__ may indicate concatenation.
@@ -743,22 +751,25 @@ def _operator_radd(self, other):
   return NotImplemented
 
 def _operator_sub(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.subtract(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rsub(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.subtract(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_mul(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.multiply(self, cast(ArrayLike, other))
   # Explicitly reject sequences where __mul__ may indicate concatenation.
@@ -769,8 +780,9 @@ def _operator_mul(self, other):
   return NotImplemented
 
 def _operator_rmul(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.multiply(cast(ArrayLike, other), self)
   # Explicitly reject sequences where __mul__ may indicate concatenation.
@@ -781,155 +793,177 @@ def _operator_rmul(self, other):
   return NotImplemented
 
 def _operator_truediv(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.true_divide(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rtruediv(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.true_divide(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_floordiv(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.floor_divide(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rfloordiv(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.floor_divide(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_divmod(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.divmod(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rdivmod(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.divmod(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_mod(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.mod(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rmod(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.mod(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_pow(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.power(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rpow(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.power(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_matmul(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return tensor_contractions.matmul(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rmatmul(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return tensor_contractions.matmul(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_and(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_and(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rand(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_and(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_or(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_or(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_ror(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_or(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_xor(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_xor(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rxor(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.bitwise_xor(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_lshift(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.left_shift(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rshift(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.right_shift(self, cast(ArrayLike, other))
   return NotImplemented
 
 def _operator_rlshift(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.left_shift(cast(ArrayLike, other), self)
   return NotImplemented
 
 def _operator_rrshift(self, other):
-  if hasattr(other, '__jax_array__'):
-    other = other.__jax_array__()
+  m = getattr(other, '__jax_array__', None)
+  if m is not None:
+    other = m()
   if isinstance(other, _accepted_binop_types):
     return ufuncs.right_shift(cast(ArrayLike, other), self)
   return NotImplemented

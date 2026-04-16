@@ -290,8 +290,10 @@ def einsum(
   path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
   # Extract __jax_array__ before passing to contract_path()
-  operands = tuple(op.__jax_array__() if hasattr(op, "__jax_array__") else op
-                   for op in operands)
+  def _convert(op):
+    m = getattr(op, "__jax_array__", None)
+    return m() if m is not None else op
+  operands = tuple(_convert(op) for op in operands)
 
   # Allow handling of shape polymorphism
   non_constant_dim_types = {

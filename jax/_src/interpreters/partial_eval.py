@@ -1855,9 +1855,10 @@ class DynamicJaxprTrace(core.Trace):
     if isinstance(x, DynamicJaxprTracer) and x._trace is self:
       return x
     else:
-      if hasattr(x, "dimension_as_value"):  # Used for shape_poly._DimExpr
+      m = getattr(x, "dimension_as_value", None)
+      if m is not None:
         with core.set_current_trace(self):
-          x = x.dimension_as_value()
+          x = m()
         return self.to_jaxpr_tracer(x, source_info)
       else:
         return self.new_const(x, source_info)
