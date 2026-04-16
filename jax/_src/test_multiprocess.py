@@ -36,7 +36,7 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import _jax
 
 try:
-  import portpicker  # pyrefly: ignore[missing-import]
+  import portpicker
 except ImportError:
   portpicker = None
 

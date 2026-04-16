@@ -297,7 +297,7 @@ def get_tensorstore_spec(
     spec['kvstore'] = {'driver': 'ocdbt', 'base': base_kvstore,
                        'path': entry_key}
   else:
-    spec['kvstore'] = base_kvstore  # pyrefly: ignore[bad-typed-dict-key]
+    spec['kvstore'] = base_kvstore
   # done writing tensorstore spec based on destination path
   # optionally, if array is provided, we can add metadata to the spec
   if arr is not None:

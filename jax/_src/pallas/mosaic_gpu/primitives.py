@@ -325,7 +325,7 @@ def _split_gmem_slice(gmem_slice):
         indices.append(mgpu.utils.c(idx.start, i32))
         slice_lengths.append(idx.stop - idx.start)
       case mgpu.DynamicSlice():
-        indices.append(arith_dialect.index_cast(i32, idx.base))  # pyrefly: ignore[bad-argument-type]
+        indices.append(arith_dialect.index_cast(i32, idx.base))
         slice_lengths.append(idx.length)
       case ir.Value() if isinstance(idx.type, ir.IndexType):
         indices.append(arith_dialect.index_cast(i32, idx))

@@ -787,7 +787,7 @@ def _process_mask(
           has_mask_next=has_mask_next,
           mask=current_mask,
           block_shape=block_shape,
-          coords_to_partial_mask_block_index=coords_to_partial_mask_block_index,  # pyrefly: ignore[bad-argument-type]
+          coords_to_partial_mask_block_index=coords_to_partial_mask_block_index,
           head_start=head_start,
           masks_per_head_shard=masks_per_head_shard,
           num_heads=1 if masks_per_head_shard == 1 else heads_per_shard,
