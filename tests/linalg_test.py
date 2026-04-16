@@ -476,8 +476,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     f = partial(_normalizing_eig,
                 compute_left_eigenvectors=compute_left_eigenvectors,
                 compute_right_eigenvectors=compute_right_eigenvectors)
+    order = 2 if dtype in (np.float64, np.complex128) else 1
     tol = 1e-4 if dtype in (np.float64, np.complex128) else 5e-2
-    jtu.check_grads(f, (a,), order=1, modes=['fwd', 'rev'], rtol=tol, atol=tol)
+    jtu.check_grads(f, (a,), order=order, modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @jtu.run_on_devices("cpu", "gpu")
   def testEigGradRaisesWithoutAllowEigvecDeriv(self):
