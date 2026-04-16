@@ -330,6 +330,20 @@ def wrap_key_data(key_bits_array: Array, *,
     A PRNG key array, whose dtype is a subdtype of ``jax.dtypes.prng_key``
       corresponding to ``impl``, and whose shape equals the leading shape
       of ``key_bits_array.shape`` up to the key bit dimensions.
+
+  Examples:
+    Construct a key, and extract its data and impl:
+
+    >>> import jax
+    >>> key = jax.random.key(42)
+    >>> data = jax.random.key_data(key)
+    >>> impl = jax.random.key_impl(key)
+
+    Reconstruct an equivalent key with :func:`wrap_key_data`:
+
+    >>> new_key = jax.random.wrap_key_data(data, impl=impl)
+    >>> key == new_key
+    Array(True, dtype=bool)
   """
   impl_obj = resolve_prng_impl(impl)
   return prng.random_wrap(key_bits_array, impl=impl_obj)
