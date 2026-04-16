@@ -1672,6 +1672,8 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
       axis at index ``axis`` in the output. When ``True``, ``axis`` has to
       refer to an existing positional dimension and the chunks will be
       concatenated into that dimension.
+    to: The output manual axis type, defaults to 'varying'. Valid options are:
+      'varying', 'reduced' and 'invarying'.
 
   Returns:
     Array(s) representing the result of an all-gather along the axis
