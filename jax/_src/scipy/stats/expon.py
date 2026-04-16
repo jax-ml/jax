@@ -237,7 +237,7 @@ def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 
 
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  r"""Exponential survival function.
+  r"""Exponential percent point function.
 
   JAX implementation of :obj:`scipy.stats.expon` ``ppf``.
 
@@ -245,26 +245,22 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   cumulative distribution function, :func:`jax.scipy.stats.expon.cdf`.
 
   Args:
-    x: arraylike, value at which to evaluate the PDF
+    q: arraylike, value at which to evaluate the PPF
     loc: arraylike, distribution offset parameter
     scale: arraylike, distribution scale parameter
 
   Returns:
-    array of pdf values.
+    array of ppf values.
 
   See Also:
     :func:`jax.scipy.stats.expon.cdf`
     :func:`jax.scipy.stats.expon.pdf`
-    :func:`jax.scipy.stats.expon.ppf`
-    :func:`jax.scipy.stats.expon.sf`
     :func:`jax.scipy.stats.expon.logcdf`
     :func:`jax.scipy.stats.expon.logpdf`
-    :func:`jax.scipy.stats.expon.logsf`
   """
   q, loc, scale = promote_args_inexact("expon.ppf", q, loc, scale)
-  neg_scaled_q = lax.div(lax.sub(loc, q), scale)
   return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
     np.nan,
-    lax.neg(lax.log1p(neg_scaled_q)),
+    lax.sub(loc, lax.mul(scale, lax.log1p(lax.neg(q)))),
   )
