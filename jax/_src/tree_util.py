@@ -1278,13 +1278,23 @@ def _prefix_error(
 
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):
+    # Handle PytreeLeaf and None specially: they are internal placeholder types
+    # that shouldn't appear in user-facing error messages.
+    def type_str(t):
+      if t is None or t is type(None):
+        return 'None'
+      if t.__name__ == 'PytreeLeaf':
+        return 'pytree leaf'
+      return t.__name__
+    prefix_type_str = type_str(type(prefix_tree))
+    full_type_str = type_str(type(full_tree))
     yield lambda name: ValueError(
       "pytree structure error: different types at key path\n"
       f"    {name}{keystr(key_path)}\n"
       f"At that key path, the prefix pytree {name} has a subtree of type\n"
-      f"    {type(prefix_tree)}\n"
+      f"    {prefix_type_str}\n"
       f"but at the same key path the full pytree has a subtree of different type\n"
-      f"    {type(full_tree)}.")
+      f"    {full_type_str}.")
     return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different numbers or keys of
