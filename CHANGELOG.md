@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.10.0 (April 16, 2026)
+
 * New features:
   * Added `ResizeMethod.CUBIC_PYTORCH` to {func}`jax.image.resize` to match
     PyTorch's bicubic resize ({jax-issue}`#15768`).
