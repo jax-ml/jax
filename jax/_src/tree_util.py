@@ -1472,6 +1472,14 @@ class FlatTree:
     return FlatTree(vals, tree, False, registry=registry)
 
   @staticmethod
+  def leaf(val):
+    return FlatTree([val], singleton_tree, False)
+
+  def from_leaf(self):
+    assert self.tree == singleton_tree
+    return list(self)[0]
+
+  @staticmethod
   def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> FlatTree:
     return FlatTree.flatten((arg_trees, {}), registry=registry)
 
@@ -1549,6 +1557,8 @@ class FlatTree:
 
   def __getitem__(self, i):
     assert False, "todo"
+
+_, singleton_tree = tracing_registry.flatten(0)
 
 def unwrap_statics(pytree, statics):
   if statics is False:

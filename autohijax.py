@@ -18,22 +18,21 @@ map, unsafe_map = safe_map, map
 
 lojax_traces = [jax_core.eval_trace]
 
-def start_djt(*tys) -> pe.DynamicJaxprTracer:
+def start_djt(tys) -> pe.DynamicJaxprTracer:
   trace = pe.DynamicJaxprTrace(None)
   jax_core.trace_ctx.set_trace(trace)
   lojax_traces.append(trace)
-  return [trace.new_arg(ty, None) for ty in tys]
+  return tys.map(lambda t: trace.new_arg(t, None))
 
 def end_djt(result) -> jax_core.Jaxpr:
   trace = lojax_traces.pop()
   jax_core.trace_ctx.set_trace(lojax_traces[-1])
-  jaxpr, consts = trace.frame.to_jaxpr(trace, [result], None, None)
+  jaxpr, consts = trace.frame.to_jaxpr(trace, list(result), None, None)
   return jax_core.ClosedJaxpr(jaxpr, consts)
 
 def emit_jit_call(jaxpr, args):
   # TODO: figure out how to generate jit params so we can do this without roundtripping
-  ans, = jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*args)
-  return ans
+  return jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*args)
 
 # === core ===
 
@@ -44,9 +43,12 @@ class TraceTimeContext:
 class Trace:
   bind_method_name : str
 
-def bind(op, *args):
+def bind(op, *args: FlatTree) -> FlatTree:
+  assert all(isinstance(arg, FlatTree) for arg in args)
   trace = ctx.cur_trace
-  return getattr(op, trace.bind_method_name)(trace, *args)
+  ans = getattr(op, trace.bind_method_name)(trace, *args)
+  assert isinstance(ans, FlatTree)
+  return ans
 
 @dataclass(frozen=True)
 class Ty:
@@ -82,37 +84,57 @@ class BaseTrace:
 
 ctx = TraceTimeContext(BaseTrace(jax_core.trace_ctx.trace))
 
+# === built-in HOPs ===
+
 @dataclass
 class EnterJitCtx(BaseTraceCtx):
   lo_args : tuple
 
 class EnterJit(Op):
-  def lower(self, trace, *args):
+  def lower(self, trace, args):
     # TODO: two levels of multiplicity: args can be a tree. And also
     # each arg can be a tree of lojax values.
-    trace.ctx.append(EnterJitCtx(tuple(arg.val for arg in args)))
-    arg_tys = [arg.ty for arg in args]
-    arg_lo_tys = [t.lo_ty() for t in arg_tys]
-    local_args_lo = start_djt(*arg_lo_tys)
-    return tuple(Val(x, t) for x, t in zip(local_args_lo, arg_tys))
+    arg_vals = args.map(lambda x: x.val)
+    arg_tys  = args.map(lambda x: x.ty)
+    trace.ctx.append(EnterJitCtx(arg_vals))
+    arg_lo_tys = arg_tys.map(lambda t: t.lo_ty())
+    local_args_lo = start_djt(arg_lo_tys)
+    return local_args_lo.map2(Val, arg_tys)
 
 class LeaveJit(Op):
   def lower(self, trace, result):
     enter_ctx = trace.ctx.pop()
     assert isinstance(enter_ctx, EnterJitCtx)
-    jaxpr = end_djt(result.val)
+    jaxpr = end_djt(result.map(lambda x: x.val))
     lo_ans = emit_jit_call(jaxpr, enter_ctx.lo_args)
-    return Val(lo_ans, result.ty)
+    return result.map2(lambda x, lo: Val(lo, x.ty), lo_ans)
 
 # TODO: cache and curry
 def jit_call(f, *args):
-  args = [lift(arg) for arg in args]
-  ans = f(*bind(EnterJit(), *args))
-  ans =  lift(ans)
-  return bind(LeaveJit(), ans)
+  args = FlatTree.flatten(args).map(lift)
+  local_args = bind(EnterJit(), args)
+  ans = f(*local_args.unflatten())
+  ans =  FlatTree.flatten(ans).map(lift)
+  return bind(LeaveJit(), ans).unflatten()
 jit = partial(partial, jit_call)
 
+# === helper for library-level ops ===
+
+class SimpleOp(Op):
+  def lower(self, _, *args):
+    args = tuple(arg.from_leaf() for arg in args)
+    arg_vals = tuple(arg.val for arg in args)
+    arg_tys  = tuple(arg.ty  for arg in args)
+    ans_ty  = self.simple_type_rule(*arg_tys)
+    ans_val = self.simple_lower(*arg_vals)
+    return FlatTree.leaf(Val(ans_val, ans_ty))
+
+def simple_bind(op, *args):
+  args = tuple(FlatTree.leaf(lift(arg)) for arg in args)
+  return bind(op, *args).from_leaf()
+
 # === library level ===
+
 
 literal_handlers[int] = lambda x: Val(x, ArrayTy((), np.int32))
 literal_handlers[float] = lambda x: Val(x, ArrayTy((), np.float32))
@@ -125,26 +147,26 @@ class ArrayTy(Ty):
   def lo_ty(self):
     return jax_core.ShapedArray(self.shape, self.dtype)
 
-class Add(Op):
-  def lower(self, _, x, y):
-    assert x.ty == y.ty
-    return Val(x.val + y.val, x.ty)
+class Add(SimpleOp):
+  def simple_type_rule(self, x_ty, y_ty):
+    assert x_ty == y_ty
+    return x_ty
 
-def add(x, y):
-  x_ = lift(x)
-  y_ = lift(y)
-  return bind(Add(), x_, y_)
+  def simple_lower(self, x, y):
+    return x + y
+
+add = partial(simple_bind, Add())
 
 @dataclass(frozen=True)
-class Mul(Op):
-  def lower(self, _, x, y):
-    assert x.ty == y.ty
-    return Val(x.val * y.val, x.ty)
+class Mul(SimpleOp):
+  def simple_type_rule(self, x_ty, y_ty):
+    assert x_ty == y_ty
+    return x_ty
 
-def mul(x, y):
-  x_ = lift(x)
-  y_ = lift(y)
-  return bind(Mul(), x_, y_)
+  def simple_lower(self, x, y): 
+    return x * y
+
+mul = partial(simple_bind, Mul())
 
 # === user level ===
 
