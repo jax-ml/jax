@@ -280,49 +280,39 @@ def _conjure_tilings_for_smem_ref(
 def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
+  match constraint.source, constraint.target:
+    case cs.Variable() as src, cs.Constant() as tgt:
+      variable, constant = src, tgt
+    case cs.Constant() as src, cs.Variable() as tgt:
+      variable, constant = tgt, src
+    case _:
+      return
 
-  def register_layout_candidates(
-      tmem_layout: cs.TMEMLayout,
-  ) -> Iterator[cs.RegisterLayout]:
-    columns = constraint.shape[1]
+  columns = constraint.shape[1]
+
+  if isinstance(constant, cs.TMEMLayout):
     for candidate in (
         fa.TCGEN05_LAYOUT,
-        tmem_layout.value.as_tiled_layout(),
+        constant.value.as_tiled_layout(),
         fa.TMEM_NATIVE_LAYOUT,
         fa.WGMMA_LAYOUT,
         tcgen05.fa_m64_collective_layout(columns),
     ):
-      if constraint.is_valid_tmem_transfer(tmem_layout.value, candidate):
-        yield cs.RegisterLayout(candidate)
+      if constraint.is_valid_tmem_transfer(constant.value, candidate):
+        yield variable, cs.RegisterLayout(candidate)
+    return
 
-  def tmem_layout_candidates(
-      reg_layout: cs.RegisterLayout,
-  ) -> Iterator[cs.TMEMLayout]:
-    if not isinstance(reg_layout.value, fa.TiledLayout):
-      return
-    columns = constraint.shape[1]
-    for packing in dict.fromkeys([32 // constraint.bitwidth, 1]):
-      for candidate in (
-          tcgen05.tmem_default_layout(packing),
-          tcgen05.tmem_half_lane_layout(columns, packing),
-          tcgen05.tmem_m64_collective_layout(columns, packing),
-      ):
-        if constraint.is_valid_tmem_transfer(candidate, reg_layout.value):
-          yield cs.TMEMLayout(candidate)
-
-  match constraint.source, constraint.target:
-    case cs.Variable() as variable, cs.TMEMLayout() as layout:
-      for layout in register_layout_candidates(layout):
-        yield variable, layout
-    case cs.TMEMLayout() as layout, cs.Variable() as variable:
-      for layout in register_layout_candidates(layout):
-        yield variable, layout
-    case cs.Variable() as variable, cs.RegisterLayout() as layout:
-      for layout in tmem_layout_candidates(layout):
-        yield variable, layout
-    case cs.RegisterLayout() as layout, cs.Variable() as variable:
-      for layout in tmem_layout_candidates(layout):
-        yield variable, layout
+  assert isinstance(constant, cs.RegisterLayout)
+  if not isinstance(constant.value, fa.TiledLayout):
+    return
+  for packing in dict.fromkeys([32 // constraint.bitwidth, 1]):
+    for candidate in (
+        tcgen05.tmem_default_layout(packing),
+        tcgen05.tmem_half_lane_layout(columns, packing),
+        tcgen05.tmem_m64_collective_layout(columns, packing),
+    ):
+      if constraint.is_valid_tmem_transfer(candidate, constant.value):
+        yield variable, cs.TMEMLayout(candidate)
 
 
 def _extract_layout_candidates_from_smem_registers_transfer(
