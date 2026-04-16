@@ -786,7 +786,6 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   def test_contiguous_copy_tma(self):
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -960,7 +959,6 @@ class PallasCallMultimemTest(TestCase):
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
   def test_multimem_store_contiguous_tma(self):
-    self.skip_if_wg_semantics()
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
