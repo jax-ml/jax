@@ -394,37 +394,111 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(
-      (mgpu.WGMMA_LAYOUT, (64, 64), True, True),
-      (mgpu.WGMMA_LAYOUT, (64, 64), False, False),
-      (mgpu.WGMMA_TRANSPOSED_LAYOUT, (64, 64), False, True),
-      (mgpu.WGMMA_TRANSPOSED_LAYOUT, (64, 64), True, False),
-      (mgpu.TCGEN05_LAYOUT, (128, 64), True, True),
-      (mgpu.TCGEN05_LAYOUT, (128, 64), False, False),
-      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, (128, 64), False, True),
-      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, (128, 64), True, False),
-      (mgpu.WGMMA_LAYOUT, (64,), True, False),
-      (mgpu.WGMMA_LAYOUT, None, True, False),
-      (mgpu.WGMMA_ROW_LAYOUT, None, True, True),
-      (mgpu.WGMMA_ROW_LAYOUT, (64,), True, False),
-      (mgpu.WGMMA_COL_LAYOUT, None, True, True),
-      (mgpu.WGMMA_COL_LAYOUT, (64,), True, False),
-      (mgpu.WGSplatFragLayout((16, 16)), None, True, True),
-      (mgpu.WGSplatFragLayout((16, 16)), (16,), True, False),
-      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), None, True, True),
-      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), (1,), True, False),
+      # Should work for any tiled layout.
+      mgpu.WGMMA_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      mgpu.WGMMA_ROW_LAYOUT,
+      mgpu.WGMMA_COL_LAYOUT,
+      mgpu.TCGEN05_ROW_LAYOUT,
+      mgpu.WGSplatFragLayout((128, 128)),
+      mgpu.WGStridedFragLayout((128, 128), vec_size=4),
   )
-  def test_smem_is_transferable(self, layout, tiling, contiguous_strides, expected):
-    eq_layout = cs.RegisterLayout(layout)
-    eq_tiling = cs.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
-    strides = (128, 1) if contiguous_strides else (1, 128)
+  def test_tiled_contiguous_smem_is_transferable_holds_unoptimized(self, layout):
+    holds = not isinstance(layout, (mgpu.WGStridedFragLayout, mgpu.WGSplatFragLayout))
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTiling(lc.TileTransform((64, 64)))
+    strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
-        eq_layout, eq_tiling, (128, 128), strides
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
     )
-    self.assertEqual(reg_to_smem.holds(), expected)
     smem_to_reg = cs.IsTransferableSmemRegisters(
-        eq_tiling, eq_layout, (128, 128), strides
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
     )
-    self.assertEqual(smem_to_reg.holds(), expected)
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
+
+  @parameterized.parameters(
+      # True only for specific transposed layouts.
+      (mgpu.WGMMA_LAYOUT, False),
+      (mgpu.TCGEN05_LAYOUT, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGSplatFragLayout((128, 128)), False),
+      (mgpu.WGStridedFragLayout((128, 128), vec_size=4), False),
+  )
+  def test_tiled_non_contiguous_smem_is_transferable_holds_unoptimized(self, layout, holds):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTiling(lc.TileTransform((64, 64)))
+    strides = (1, 128)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
+
+  @parameterized.parameters(
+      # Should hold for any layout.
+      mgpu.WGMMA_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      mgpu.WGMMA_ROW_LAYOUT,
+      mgpu.WGMMA_COL_LAYOUT,
+      mgpu.TCGEN05_ROW_LAYOUT,
+      mgpu.WGSplatFragLayout((128, 128)),
+      mgpu.WGStridedFragLayout((128, 128), vec_size=4),
+  )
+  def test_untiled_contiguous_smem_is_transferable_holds_downgradable(self, layout):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTiling(None)
+    strides = (128, 1)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
+    )
+    self.assertTrue(reg_to_smem.holds())
+    self.assertTrue(smem_to_reg.holds())
+
+  @parameterized.parameters(
+      # Works for some tiled layouts.
+      (mgpu.WGMMA_LAYOUT, False),
+      (mgpu.TCGEN05_LAYOUT, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGMMA_ROW_LAYOUT, True),
+      (mgpu.WGMMA_COL_LAYOUT, True),
+      (mgpu.TCGEN05_ROW_LAYOUT, True),
+      # True for non-tiled layouts.
+      (mgpu.WGSplatFragLayout((128, 128)), True),
+      (mgpu.WGStridedFragLayout((128, 128), vec_size=4), True),
+  )
+  def test_untiled_contiguous_smem_is_transferable_holds_optimized(self, layout, holds):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTiling(None)
+    strides = (128, 1)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
 
   def test_transpose_expression(self):
     def transpose(tiling):

@@ -5774,7 +5774,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       self.skipTest("WG_SPLAT is not supported for `vector.load`.")
     # We don't infer optimized transfer-compatible transforms for load/store to
     # registers with TCGEN05_TMEM_NATIVE layout.
-    if optimized and layout == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:
+    load_optimized = optimized != False
+    if load_optimized and layout == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:
       self.skipTest(
           "Optimized loads not supported for TCGEN05_TMEM_NATIVE layout"
       )
@@ -8665,6 +8666,8 @@ if hp is not None:
       @hp.example(((128, 128), fa.TMEM_NATIVE_LAYOUT))
       def run(args):
         shape, layout = args
+        # Attempt to avoid spills by keeping the shape small enough.
+        hp.assume(math.prod(shape) <= 128 * 128)
         dtype = jnp.float32
         layout_attr = layouts.to_layout_attr(layout)
 
@@ -8676,7 +8679,9 @@ if hp is not None:
           # Registers -> SMEM
           mgpu_dialect.vector_store(reg, smem)
           # SMEM -> Registers
-          reg = mgpu_dialect.vector_load(smem)
+          # Use a non-optimized load to ensure that we don't fail due to
+          # unoptimizable loads.
+          reg = mgpu_dialect.vector_load(smem, optimized=False)
           reg = mgpu_dialect.layout_cast(reg, layout_attr)
           # Registers -> GMEM
           mgpu_dialect.vector_store(reg, result)

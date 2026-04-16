@@ -1397,7 +1397,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     var = cs.Variable(value_site)
     is_transferable = cs.IsTransferableSmemRegisters(
-        cs.RegisterLayout(fa.WGMMA_LAYOUT), cs.Variable(value_site), shape, strides
+        cs.RegisterLayout(fa.WGMMA_LAYOUT), cs.Variable(value_site), shape,
+        strides, bitwidth=32, optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
     )
     [(_, tiling)] = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
@@ -1422,7 +1423,8 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     var = cs.Variable(value_site)
     is_transferable = cs.IsTransferableSmemRegisters(
-        cs.RegisterLayout(layout), var, shape, (128, 1)
+        cs.RegisterLayout(layout), var, shape, (128, 1), bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
     )
     assignments = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
@@ -1448,7 +1450,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     var = cs.Variable(value_site)
     transfer_constraint = lambda reg_layout: cs.IsTransferableSmemRegisters(
-        reg_layout, var, shape, tuple(strides)
+        reg_layout, var, shape, tuple(strides), bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
     )
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
@@ -1980,15 +1983,16 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     shape = (128, 128)
     elt_ty = ir.BF16Type.get()
+    optimized = layout != mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
     layout = layout.to_mgpu(shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       [smem_ref] = undefs(smem_ty)
-      op = mgpu.dialect.VectorLoadOp(smem_ref)
+      op = mgpu.dialect.VectorLoadOp(smem_ref, optimized=optimized)
       layout_cast(op.result, layout)
 
-    if inference_utils.is_mma_layout(layout):
+    if isinstance(layout, fa.TiledLayout):
       expected_transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 64)),
           mgpu.dialect.SwizzleTransformAttr.get(128),
@@ -2005,6 +2009,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_vector_store_op(self, layout):
     shape = (128, 128)
     elt_ty = ir.BF16Type.get()
+    optimized = layout != mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
     layout = layout.to_mgpu(shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
@@ -2012,9 +2017,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       value_ty = ir.VectorType.get(shape, elt_ty)
       [smem_ref, value_to_store] = undefs(smem_ty, value_ty)
       value_to_store = layout_cast(value_to_store, layout)
-      op = mgpu.dialect.VectorStoreOp(value_to_store, smem_ref)
+      op = mgpu.dialect.VectorStoreOp(value_to_store, smem_ref, optimized=optimized)
 
-    if inference_utils.is_mma_layout(layout):
+    if isinstance(layout, fa.TiledLayout):
       expected_transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 64)),
           mgpu.dialect.SwizzleTransformAttr.get(128),
@@ -2025,6 +2030,31 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
         inference_utils.in_transforms(op), [expected_transforms]
+    )
+
+  def test_infer_transforms_for_vector_store_op_downgrades_when_unspecified(self):
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+      value_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
+      [smem0, smem1, value0, value1] = undefs(smem_ty, smem_ty, value_ty, value_ty)
+      value0 = layout_cast(value0, fa.TMEM_NATIVE_LAYOUT)
+      store0 = mgpu.dialect.VectorStoreOp(value0, smem0)
+      value1 = layout_cast(value1, fa.WGMMA_LAYOUT)
+      store1 = mgpu.dialect.VectorStoreOp(value1, smem1)
+
+    mgpu.infer_layout(self.module)
+
+    # There is no optimized schedule here, we allow a downgrade.
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(store0), [ir.ArrayAttr.get([])]
+    )
+    # There is an optimized schedule here, so we actually infer the transforms.
+    expected_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(store1), [expected_transforms]
     )
 
   def test_slice_smem_gets_empty_by_default(self):

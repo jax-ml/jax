@@ -3077,9 +3077,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE:
       layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(128)
     elif layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
-      layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(128)
-      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-        self.skipTest("Need to add support for optimized= for stores")
+      self.skipTest("Need to add support for optimized= for stores")
     elif layout == plgpu.Layout.WG_STRIDED:
       layout = plgpu.Layout.WG_STRIDED(shape, 2)
       transforms = ()

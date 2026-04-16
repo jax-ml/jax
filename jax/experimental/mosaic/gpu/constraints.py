@@ -19,9 +19,13 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 import dataclasses
+import enum
 import math
 from typing import Any, assert_never, final
 
+import numpy as np
+
+from . import dialect_lowering as lowering
 from . import fragmented_array as fa
 from . import inference_utils
 from . import launch_context as lc
@@ -461,6 +465,27 @@ class IsTransferableTmemRegisters(IsTransferable):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
 
 
+class OptimizedTransferKind(enum.Enum):
+  """A classification of the type of SMEM <-> Registers transfer.
+
+  Specifically, this refers to whether the transfer should be optimized to
+  avoid bank conflicts, if optimization is not requested, or if optimization
+  should be done, but downgrading is acceptable.
+  """
+  # Denotes a conflict-free transfer.
+  OPTIMIZED = enum.auto()
+  # Denotes an unoptimized transfer.
+  UNOPTIMIZED = enum.auto()
+  # Denotes a transfer that we are willing to downgrade to UNOPTIMIZED in
+  # certain circumstances. This mode is necessary to accurately model the
+  # Pallas behavior for SMEM stores with certain combinations of layouts and
+  # transforms.
+  #
+  # TODO(bchetioui): implement symmetric default behaviours for load/store in
+  # Pallas, and remove/harden this mode.
+  DOWNGRADABLE = enum.auto()
+
+
 @dataclasses.dataclass(frozen=True)
 class IsTransferableSmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
@@ -469,26 +494,70 @@ class IsTransferableSmemRegisters(IsTransferable):
   be in registers.
   """
   strides: tuple[int, ...]
+  bitwidth: int
+  optimized: OptimizedTransferKind
 
   def _is_supported_smem_transfer(
       self,
       smem_layout: lc.TileTransform | None,
       reg_layout: fa.FragmentedLayout,
   ) -> bool:
-    # TODO(b/447079781): This is way too restrictive. We need to make it more
-    # precise by:
-    # - Consider whether the op is annotated with optimized copies or not.
-    # - If copies do not have to be optimized, always return True.
-    # - If copies have to be optimized, determine if the transfer is optimal by
-    #   calling fragmented_array.plan_tiled_transfer.
-    if inference_utils.is_mma_layout(reg_layout):
-      if smem_layout is None or len(smem_layout.tiling) != 2:
-        return False
-      transposed_layouts = {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
-      if list(self.strides[-2:]) != sorted(self.strides[-2:], reverse=True):
-        return reg_layout in transposed_layouts
-      return reg_layout not in transposed_layouts
-    return smem_layout is None
+    if not isinstance(reg_layout, fa.TiledLayout):
+      return smem_layout is None
+    if len(self.strides) < 2:
+      smem_transposed = False
+    else:
+      smem_transposed = self.strides[-1] > self.strides[-2]
+    tiling = smem_layout.tiling if smem_layout is not None else ()
+    tiling_rank = len(tiling)
+    # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
+    # possible to do so.
+    if smem_transposed:
+      regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      return tiling_rank == 2 and regs_transposed
+    # For a given `TiledLayout`, all transfers are possible if optimization is
+    # not required.
+    if self.optimized == OptimizedTransferKind.UNOPTIMIZED:
+      return True
+
+    if tiling_rank == 0 and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
+      # Model the Pallas behavior of downgrading to unoptimized transfers in
+      # this case.
+      return True
+
+    # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
+    # is implemented in `load_untiled` and `store_untiled`.
+    if tiling_rank == 0:
+      tiling = self.shape
+      tiling_rank = len(tiling)
+      tiled_strides = lowering.tile_strides(self.strides, tiling)
+      # Mirrors the logic in `swap_p` and `get_p` lowering, in the untiled case.
+      swizzle = 16
+    else:
+      tiled_strides = lowering.tile_strides(self.strides, tiling)
+      minor_tiling = tiling[np.argmin(tiled_strides[-len(tiling):])]
+      swizzle = inference_utils.compute_swizzle(minor_tiling, self.bitwidth)
+
+    first_tiled_dim = len(self.shape) - tiling_rank
+    nested_ref_shape = tuple(
+        (self.shape[i] // tiling[i - first_tiled_dim], tiling[i - first_tiled_dim])
+        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
+        else (self.shape[i],)
+        for i in range(len(self.shape))
+    )
+    nested_ref_strides = tuple(
+        (tiled_strides[i], tiled_strides[i + tiling_rank])
+        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
+        else (tiled_strides[i],)
+        for i in range(len(self.shape))
+    )
+
+    try:
+      fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
+                             reg_layout, self.bitwidth, swizzle)
+      return True
+    except fa.TransferPlanDerivationError:
+      return False
 
   def holds(self) -> bool | None:
     match self.source, self.target:
