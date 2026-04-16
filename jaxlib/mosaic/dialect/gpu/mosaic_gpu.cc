@@ -52,6 +52,7 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
@@ -1146,6 +1147,46 @@ struct FoldMGPUReinterpretCastOfSliceSMEM
 void ReinterpretCastOp::getCanonicalizationPatterns(
     mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
   patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
+}
+
+namespace {
+
+struct HoistReinterpretCastOutOfWarpMap
+    : public mlir::OpRewritePattern<WarpMapOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
+    bool modified = false;
+    mlir::Block& body = op->getRegion(0).getBlocks().front();
+    for (auto [i, operand, body_operand] :
+        llvm::enumerate(op->getOperands(), body.getArguments())) {
+      // It is not safe to rewrite the type of the argument if it has other
+      // uses, as this would affect other operations that we currently do not
+      // handle.
+      if (body_operand.hasOneUse()) {
+        mlir::Operation* user = *body_operand.user_begin();
+        if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
+          mlir::IRMapping mapping;
+          mapping.map(rc_op.getOperand(), operand);
+          rewriter.modifyOpInPlace(op, [&]() {
+            op->setOperand(i, rewriter.clone(*rc_op, mapping)->getResult(0));
+            body_operand.setType(rc_op.getType());
+          });
+          rewriter.replaceAllUsesWith(rc_op, body_operand);
+          rewriter.eraseOp(rc_op);
+          modified = true;
+        }
+      }
+    }
+    return modified ? mlir::success() : mlir::failure();
+  }
+};
+}  // namespace
+
+void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
+                                            mlir::MLIRContext* context) {
+  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
 }
 
 void MosaicGPUDialect::initialize() {

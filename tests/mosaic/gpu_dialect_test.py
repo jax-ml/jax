@@ -1810,6 +1810,25 @@ ir.MLIRError,
     self.assertEqual(slice_smem_op.result.type, new_ty)
     self.assertEqual(slice_smem_op.alias_id.value, alias_id)
 
+  def test_reinterpret_cast_inside_warp_map_is_hoisted(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
+      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
+      [ref] = undefs(ref_ty0)
+      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
+      with ir.InsertionPoint(warp_map.body):
+        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+    [rc_op] = find_if(
+        self.module,
+        lambda op: isinstance(op, mgpu.dialect.ReinterpretCastOp),
+    )
+    [use] = rc_op.result.uses
+    self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
+
   def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
     # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
     if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
