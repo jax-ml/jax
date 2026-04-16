@@ -416,7 +416,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a = rng(shape, dtype)
     tol = 1e-3 if dtype == np.complex128 else 5e-1
     f = partial(lax.linalg.eig, compute_left_eigenvectors=left,
-                compute_right_eigenvectors=right)
+                compute_right_eigenvectors=right, enable_eigvec_derivs=True)
     jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
 
   @jtu.sample_product(
@@ -436,9 +436,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = 1e-3 if dtype == np.float64 else 5e-1
     def f(a):
       out = lax.linalg.eig(a, compute_left_eigenvectors=left,
-                           compute_right_eigenvectors=right)
+                           compute_right_eigenvectors=right,
+                           enable_eigvec_derivs=True)
       return (out[0],) + tuple(v * v for v in out[1:])
     jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
+
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradEigvecsDisabledByDefault(self):
+    a = jnp.eye(3)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "enable_eigvec_derivs=True"):
+      jax.jvp(jnp.linalg.eig, (a,), (a,))
+    with self.assertRaisesRegex(NotImplementedError,
+                                "enable_eigvec_derivs=True"):
+      jax.jvp(partial(lax.linalg.eig, compute_left_eigenvectors=True,
+                      compute_right_eigenvectors=False), (a,), (a,))
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
