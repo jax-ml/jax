@@ -1610,6 +1610,7 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    assert next(nz_tangents_out_, None) is None
     return tangents_out
 
   def _filter_zeros(is_nz_l, l):
@@ -1631,7 +1632,6 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   ans = subs_list(in_fwd, primals_in, ans)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
   residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], residuals_ans)
-
   return primal_ans, nzs_out, residuals_ans, tangent_fun
 ad.primitive_linearizations[jit_p] = _pjit_linearize
 

@@ -477,6 +477,16 @@ class XlaMetadataTest(jtu.JaxTestCase):
     text = jax.jit(scan_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
 
+  def test_grad_xla_metadata_call(self):
+    @xla_metadata_call(inlineable="false")
+    @jax.jit
+    def f(x):
+      for _ in range(2):
+        x = jax.nn.celu(x)
+      return x
+
+    jax.jit(jax.grad(f))(3.)  # doesn't crash
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

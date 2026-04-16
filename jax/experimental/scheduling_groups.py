@@ -117,25 +117,28 @@ def _xla_metadata_call_jvp(primals, tangents, *, jaxpr, **meta):
 ad.primitive_jvps[xla_metadata_call_p] = _xla_metadata_call_jvp
 
 
-def _xla_metadata_call_lin(_is_vjp, nzs, *primals, jaxpr, **meta):
-  # TODO(mattjj,yashkatariya): should use ad.linearize_jaxpr here
-  jaxpr_jvp, out_nzs = ad.jvp_jaxpr(jaxpr, nzs, False)
-  lin_outs = [False] * len(out_nzs) + [True] * sum(out_nzs)
-  jaxpr_lin_, used_inputs = pe.dce_jaxpr(jaxpr_jvp.jaxpr, lin_outs, False)
-  jaxpr_lin = pe.close_jaxpr(jaxpr_lin_)
-  primals_out = xla_metadata_call_p.bind(*primals, jaxpr=jaxpr, **meta)
+def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, **meta):
+  primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  def xla_metadata_call_lin(primals, *tangents):
-    nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
-    inputs = [x for x, u in zip([*primals, *nz_tangents], used_inputs) if u]
-    nz_outs = xla_metadata_call_p.bind(*inputs, jaxpr=jaxpr_lin, **meta)
+  def _filter_zeros(is_nz_l, l):
+    return tuple(x for nz, x in zip(is_nz_l, l) if nz)
+
+  def tangent_fun(residuals, *tangents):
+    tangents_nz = _filter_zeros(nzs, tangents)
+    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz,
+                                       jaxpr=tangent_jaxpr, **meta)
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
-            for nz, a in zip(out_nzs, tangent_avals_out)]
+            for nz, a in zip(nzs_out, tangent_avals_out)]
     assert next(nz_outs_, None) is None
     return outs
-  return primals_out, out_nzs, primals, xla_metadata_call_lin
+
+  ans = xla_metadata_call_p.bind(*primals, jaxpr=primal_jaxpr, **meta)
+  primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
+  return primal_ans, nzs_out, residuals_ans, tangent_fun
 ad.primitive_linearizations[xla_metadata_call_p] = _xla_metadata_call_lin
 
 

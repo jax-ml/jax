@@ -1141,7 +1141,7 @@ def defbilinear(prim, lhs_rule, rhs_rule):
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
 
 def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
-  assert isinstance(x, GradAccum) ^ isinstance(y, GradAccum)
+  assert isinstance(x, GradAccum) ^ isinstance(y, GradAccum), (x, y)
   if isinstance(x, GradAccum):
     if type(cotangent) is not Zero and not isinstance(x, NullAccum):
       x.accum(lhs_rule(cotangent, x, y, **kwargs))
