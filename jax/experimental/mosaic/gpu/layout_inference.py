@@ -1274,9 +1274,12 @@ def _extract_strided_slice_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   result = ValueSite(op, VariableType.RESULT, 0)
   variable = cs.Variable(operand)
-  offsets: tuple[int, ...] = tuple(ir.IntegerAttr(o).value for o in op.offsets)
+  tiling_multiple = tuple(
+      math.gcd(ir.IntegerAttr(o).value, operand.shape[i], result.shape[i])
+      for i, o in enumerate(op.offsets)
+  )
   constraints = [
-      cs.Divides(variable, offsets),
+      cs.Divides(variable, tiling_multiple),
       # TODO(allanrenucci): Remove once vectors with splat and strided layouts
       # can be sliced.
       cs.NotOfType(variable, fa.WGSplatFragLayout),
