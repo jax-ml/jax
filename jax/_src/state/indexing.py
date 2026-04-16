@@ -277,10 +277,11 @@ class NDIndexer(state_types.Transform):
         return x.update(inner_aval=self.transform_type(x.inner_aval))
       case core.ShapedArray():
         self._validate_sharding(x.sharding)
-        if self.is_dynamic_size:
-          return DShapedArray(self.get_indexer_shape(), x.dtype,
+        indexer_shape = self.get_indexer_shape()
+        if self.is_dynamic_size or any(not isinstance(d, int) for d in indexer_shape):
+          return DShapedArray(indexer_shape, x.dtype,
                               weak_type=x.weak_type)
-        return x.update(shape=self.get_indexer_shape())
+        return x.update(shape=indexer_shape)
       case _:
         if type(x) in indexer_transform_type_registry:
           assert hasattr(x, "transform_ndindexer")
@@ -334,24 +335,48 @@ class NDIndexer(state_types.Transform):
     return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])
 
 
-class DShapedArray:
-  def __init__(self, shape, dtype, weak_type=False):
-    self.shape = shape
-    self.dtype = core._dtype_object(dtype)
-    self.weak_type = weak_type
+class DShapedArray(core.ShapedArray):
+
+  def __new__(
+      cls,
+      shape,
+      dtype,
+      weak_type=False,
+      *,
+      sharding=None,
+      manual_axis_type=None,
+      memory_space=None,
+      **kwargs,
+  ):
+    obj = object.__new__(cls)
+    object.__setattr__(obj, "shape", shape)
+    object.__setattr__(obj, "dtype", core._dtype_object(dtype))
+    object.__setattr__(obj, "weak_type", weak_type)
+
+    if sharding is None:
+      sharding = core._empty_sharding(len(shape))
+    if manual_axis_type is None:
+      manual_axis_type = core.empty_mat
+    if memory_space is None:
+      memory_space = core.MemorySpace.Device
+
+    object.__setattr__(obj, "sharding", sharding)
+    object.__setattr__(obj, "manual_axis_type", manual_axis_type)
+    object.__setattr__(obj, "memory_space", memory_space)
+    return obj
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
   def lo_ty(self): return [self]
 
-  def update(self, shape=None, dtype=None, weak_type=None):
+  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    return DShapedArray(shape, dtype, weak_type)
+    return DShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -382,11 +407,11 @@ class DShapedArray:
     wt_str = "~" if self.weak_type else ""
     return f'{wt_str}{self.str_short()}'
 
-  def str_short(self):
+  def str_short(self, *_):  # pyrefly: ignore[bad-override]
     return (f"DShapedArray(shape={self.shape}, dtype={self.dtype},"
             f" weak_type={self.weak_type})")
 
-  def _len(self, _):
+  def _len(self, _):  # pyrefly: ignore[bad-param-name-override
     try:
       return self.shape[0]
     except IndexError as err:
