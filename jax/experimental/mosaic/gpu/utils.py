@@ -407,7 +407,7 @@ def _warp_bcast(val, lane_idx=0):
   i32 = ir.IntegerType.get_signless(32)
   mask = c(0xFFFFFFFF, i32)
   return nvvm.shfl_sync(
-      val.type, mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
+      mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
   )
 
 
@@ -1647,7 +1647,6 @@ def warp_tree_reduce(value, op, group_size):
   iters = int(iters)
   for i in range(iters):
     other_result = nvvm.shfl_sync(
-        result.type,
         c(0xFFFFFFFF, i32),
         result,
         c(1 << i, i32),
@@ -1822,7 +1821,6 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
       return bitcast(y, result_type)
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
-      i32,
       c(0xFFFFFFFF, i32),
       x,
       distance,
@@ -2138,7 +2136,7 @@ def nvvm_mbarrier_arrive_expect_tx(
     barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None
 ):
   return nvvm.mbarrier_arrive_expect_tx(
-      None, barrier, expect_tx, predicate=predicate
+      barrier, expect_tx, predicate=predicate
   )
 
 
