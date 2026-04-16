@@ -880,7 +880,6 @@ def non_splat_variables(
   for constraint in constraints:
     match constraint:
       case NotOfType(expr=Variable() as v, type=fa.WGSplatFragLayout):
-        assert isinstance(v, Variable)  # make pytype happy
         vs.add(v)
   return vs
 
@@ -978,8 +977,6 @@ def compute_transitively_equal_vars(
   for constraint in system.constraints:
     match constraint:
       case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
-        assert isinstance(lhs, Variable)  # make pytype happy
-        assert isinstance(rhs, Variable)  # make pytype happy
         all_vars.add(lhs)
         all_vars.add(rhs)
         union(lhs, rhs)
@@ -1024,7 +1021,6 @@ def _merge_all_divides_constraints(constraints: Sequence[Constraint]) -> list[Co
   for constraint in constraints:
     match constraint:
       case Divides(expr=Variable() as v) as d1:
-        assert isinstance(v, Variable)  # make pytype happy
         if (d0 := var_to_divides.get(v)) is None:
           var_to_divides[v] = d1
           continue
@@ -1084,11 +1080,10 @@ def _reduce_system_once(
         if not try_assign(var, cst):
           return Unsatisfiable()
         changed = True
-      case _ as new_constraint:
-        assert isinstance(new_constraint, Constraint)  # make pytype happy
-        match new_constraint.holds():
+      case new_constraint:
+        match new_constraint.holds():  # pyrefly: ignore[missing-attribute]
           case None:
-            constraints.append(new_constraint)
+            constraints.append(new_constraint)  # pyrefly: ignore[bad-argument-type]
             changed |= new_constraint != constraint
           case False:
             return Unsatisfiable()

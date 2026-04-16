@@ -3372,12 +3372,9 @@ def typematch(t1: AbstractValue, t2: AbstractValue,
     return t1.dtype == t2.dtype and cmp_shape_shd_mat_memsp(t1, t2)
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    # TODO(slebedev): Remove these aliases once we migrate off pytype.
-    t1_any: Any = t1
-    t2_any: Any = t2
-    return (typematch(t1_any.inner_aval, t2_any.inner_aval, no_dtype_check) and
-            (t1_any.memory_space is None or t2_any.memory_space is None or
-             t1_any.memory_space == t2_any.memory_space))
+    return (typematch(t1.inner_aval, t2.inner_aval, no_dtype_check) and
+            (t1.memory_space is None or t2.memory_space is None or
+             t1.memory_space == t2.memory_space))
   else:
     return False
 

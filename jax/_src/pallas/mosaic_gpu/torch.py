@@ -220,7 +220,6 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
 
 
 def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
-  # pytype does not see ``hlo.CustomCallOp``.
   return isinstance(op, hlo.CustomCallOp) and op.call_target_name.value == name
 
 

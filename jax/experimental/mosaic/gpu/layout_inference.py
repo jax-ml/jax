@@ -1951,8 +1951,6 @@ def _vector_value_sites_and_assignments_for_async_ops(
       base_operand_index = 2
     case mgpu.AsyncPrefetchOp():
       base_operand_index = 1
-    case _:
-      raise ValueError(f"Unsupported op type: {op}")  # make pytype happy
 
   for i, idx in enumerate(op.indices):
     if isinstance(idx.type, ir.VectorType):
@@ -2172,7 +2170,7 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
     ) -> list[ir.ArrayAttr]:
       all_attrs: list[ir.ArrayAttr] = []
       for tl in transforms:
-        assert isinstance(tl.layout, cs.SMEMTiling)  # make pytype happy
+        assert isinstance(tl.layout, cs.SMEMTiling)
         attrs = []
         if tl.layout.value is not None:
           attrs.append(layouts_lib.to_transform_attr(tl.layout.value))

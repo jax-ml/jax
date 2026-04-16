@@ -4215,7 +4215,6 @@ def optimization_barrier(*arrays):
             _is_signed=array.is_signed,
         )
     )
-  # pytype cannot type check the return type of an overloaded function.
   return results[0] if len(arrays) == 1 else results
 
 

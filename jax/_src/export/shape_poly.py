@@ -1630,10 +1630,9 @@ class _Parser:
       tok = self.next_tok()
     elif tok.exact_type == tokenize.PLUS:
       tok = self.next_tok()
-    # TODO(slebedev): Change to _DimExpr once we migrate off pytype.
-    acc: Any | None = None
+    acc: DimSize | None = None
     while True:
-      t: Any
+      t: DimSize
       t, tok = self.term(tok)
       t_sign = - t if next_t_negated else t
       acc = acc + t_sign if acc is not None else t_sign
@@ -1647,10 +1646,9 @@ class _Parser:
 
   def term(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A term is product of factors. Each factor may be raised to an integer power.
-    # TODO(slebedev): Change to _DimExpr once we migrate off pytype.
-    acc: Any | None = None
+    acc: DimSize | None = None
     while True:
-      f: Any
+      f: DimSize
       f, tok = self.factor(tok)
       if tok.exact_type == tokenize.CIRCUMFLEX:
         tok = self.next_tok()

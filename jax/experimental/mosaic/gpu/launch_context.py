@@ -1395,7 +1395,7 @@ class LaunchContext:
       # The rest can be anything, and we will unroll the transfers over them.
       if smem_ref is src_ref:
         raise NotImplementedError("Scatter unsupported for the TMA implementation")
-      assert barrier is not None  # for pytype
+      assert barrier is not None
       barrier_ptr = barrier.get_ptr()
       if squeezed_dims:
         raise NotImplementedError("Gather/scatter unsupported when using integer indexing")
@@ -1599,7 +1599,7 @@ class LaunchContext:
           gmem_base_ptr = utils.memref_ptr(remote_ref)
 
       if gmem_ref is src_ref:
-        assert barrier is not None  # for pytype
+        assert barrier is not None
         barrier_ptr = barrier.get_ptr()
         if arrive:
           utils.nvvm_mbarrier_arrive_expect_tx(
@@ -1650,7 +1650,7 @@ class LaunchContext:
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]
     if gmem_ref is src_ref:
-      assert barrier is not None  # for pytype
+      assert barrier is not None
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
       if collective_size > 1 and leader_tracked is not None:

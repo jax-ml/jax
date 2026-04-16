@@ -271,7 +271,7 @@ class _BoxMeta(type):
             isinstance(core.typeof(instance), BoxTy))
 
 class Box(metaclass=_BoxMeta):  # noqa: F811
-  _val = None  # always clobbered by __new__, but pytype likes this
+  _val: Any
 
   # We want `Box(x)` to bind a primitive, so we override __new__ and provide a
   # raw `_new` method below.

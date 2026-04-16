@@ -613,9 +613,7 @@ class LoweringRuleContext:
   avals_out: Sequence[ShapedAbstractValue]
   out_layout_hint: mgpu.FragmentedLayout | None
 
-  def replace(self, **changes: Any) -> LoweringRuleContext:
-    # The wrapper is necessary to convince pytype that this is a method.
-    return dataclasses.replace(self, **changes)
+  replace = dataclasses.replace
 
   @property
   def estimator_ctx(self) -> ResourceEstimatorContext:
@@ -2023,9 +2021,7 @@ def _swap_lowering_rule(
       match value.layout:
         case mgpu.TiledLayout():
           if transposed:
-            assert isinstance(
-                transforms[0], state_types.TransposeTransform
-            )  # silence pytype
+            assert isinstance(transforms[0], state_types.TransposeTransform)
             permutation = transforms[0].permutation
             x_smem = mgpu.memref_transpose(x_smem, permutation)
           old_value = mgpu.FragmentedArray.load_untiled(

@@ -36,7 +36,7 @@ import warnings
 # __getattr__ = _deprecation_getattr(__name__, _deprecations)
 # del _deprecation_getattr
 
-# Note that type checkers such as Pytype will not know about the deprecated
+# Note that type checkers such as Pyrefly will not know about the deprecated
 # names. If it is desirable that a deprecated name is known to the type checker,
 # add:
 # import typing

@@ -206,9 +206,7 @@ class LoweringContext:
   # Meshes for devices this lowering can address.
   mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh]
 
-  def replace(self, **changes: Any) -> LoweringContext:
-    # The wrapper is necessary to convince pytype that this is a method.
-    return dataclasses.replace(self, **changes)
+  replace = dataclasses.replace
 
   @property
   def grid_rank(self):
@@ -253,9 +251,7 @@ class LoweringRuleContext:
   avals_out: Sequence[ShapedAbstractValue]
   block_shapes: Sequence[tuple[int | pallas_core.Squeezed, ...] | None]
 
-  def replace(self, **changes: Any) -> LoweringRuleContext:
-    # The wrapper is necessary to convince pytype that this is a method.
-    return dataclasses.replace(self, **changes)
+  replace = dataclasses.replace
 
   @property
   def forward_compatible(self):
