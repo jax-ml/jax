@@ -364,8 +364,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> res1 = exp.call(arg)
 >>> # Check out the first 2 shards of the result
 >>> [f"device={s.device} index={s.index}" for s in res1.addressable_shards[:2]]
-['device=TFRT_CPU_0 index=(slice(0, 8, None),)',
- 'device=TFRT_CPU_1 index=(slice(8, 16, None),)']
+['device=cpu:0 index=(slice(0, 8, None),)', 'device=cpu:1 index=(slice(8, 16, None),)']
 
 >>> # We can call `exp` with some other 4 devices and another
 >>> # mesh with a different shape, as long as the number of devices is
@@ -378,8 +377,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> # sharded similarly; this means that the input was resharded according to the
 >>> # exp.in_shardings.
 >>> [f"device={s.device} index={s.index}" for s in res2.addressable_shards[:2]]
-['device=TFRT_CPU_2 index=(slice(0, 8, None),)',
- 'device=TFRT_CPU_3 index=(slice(8, 16, None),)']
+['device=cpu:2 index=(slice(0, 8, None),)', 'device=cpu:3 index=(slice(8, 16, None),)']
 
 ```
 
