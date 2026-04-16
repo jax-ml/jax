@@ -852,12 +852,12 @@ class PallasCallMultimemTest(TestCase):
   def setUp(self):
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
+    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
     ):
       self.skipTest("Not all local devices support multicast")
-    super().setUp()
 
   def test_multimem_store_regs(self):
     # TODO(bchetioui): support for multimem store.
@@ -1125,12 +1125,12 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       self.skipTest("Multimem not supported in multi-thread mode yet.")
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
+    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
     ):
       self.skipTest("Not all local devices support multicast")
-    super().setUp()
 
   def _test_reduce_scatter(
       self,
