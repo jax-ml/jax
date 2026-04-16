@@ -350,6 +350,10 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
 }
 
 llvm::LogicalResult AsyncStoreOp::verify() {
+  if (getGmemPeerId() && getIsGlobalBroadcast()) {
+    return emitOpError() << "Both `gmem_peer_id` or `is_global_broadcast` "
+                            "cannot be specified.";
+  }
   return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
                                  getSliceLengths(), getIndices());

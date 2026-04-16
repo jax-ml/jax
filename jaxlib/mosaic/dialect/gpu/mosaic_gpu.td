@@ -455,6 +455,12 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     The `reduction_op` attribute can be provided to perform a reduction when
     storing to GMEM. For example, using `add` will add the SMEM values to
     existing values in GMEM.
+
+    The `gmem_peer_id` and `is_global_broadcast` parameters define the
+    destination of the store in a multi-GPU setting. `gmem_peer_id` specifies a
+    particular device id to store to, while `is_global_broadcast` indicates
+    that the value should be broadcast to all peers. These two parameters are
+    mutually exclusive (i.e. both cannot be set).
   }];
 
   let arguments = (ins
@@ -462,11 +468,13 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     AnyMemRef:$destination,
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     PtxPredicate:$predicate,
+    Optional<I32>:$gmem_peer_id,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group,
-    OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op
+    OptionalAttr<MosaicGPU_TMAReduction>:$reduction_op,
+    DefaultValuedAttr<BoolAttr, "false">:$is_global_broadcast
   );
 
   let hasVerifier = 1;
