@@ -96,7 +96,7 @@ def fix_wheel(path):
 
     LOG.info("running %r" % cmd)
 
-    rc = subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True)
 
 
 def main():

@@ -15,7 +15,8 @@
 """Test utilities for the custom pipeline scheduling API."""
 
 import dataclasses
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from jax._src import debugging
 from jax._src.pallas.pipelining import schedulers

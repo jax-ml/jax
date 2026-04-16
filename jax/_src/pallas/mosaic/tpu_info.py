@@ -16,7 +16,8 @@
 
 import dataclasses
 import enum
-from typing import Callable, cast
+from typing import cast
+from collections.abc import Callable
 
 from jax import numpy as jnp
 from jax._src import core as jax_core

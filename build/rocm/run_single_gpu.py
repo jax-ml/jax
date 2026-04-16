@@ -36,7 +36,7 @@ def combine_json_reports():
     all_json_files = [f for f in os.listdir(base_dir) if f.endswith("_log.json")]
     combined_data = []
     for json_file in all_json_files:
-        with open(os.path.join(base_dir, json_file), "r") as infile:
+        with open(os.path.join(base_dir, json_file)) as infile:
             data = json.load(infile)
             combined_data.append(data)
     combined_json_file = f"{base_dir}/final_compiled_report.json"
@@ -50,7 +50,7 @@ def combine_csv_reports():
     with open(combined_csv_file, mode="w", newline="") as outfile:
         csv_writer = csv.writer(outfile)
         for i, csv_file in enumerate(all_csv_files):
-            with open(os.path.join(base_dir, csv_file), mode="r") as infile:
+            with open(os.path.join(base_dir, csv_file)) as infile:
                 csv_reader = csv.reader(infile)
                 if i == 0:
                     # write headers only once
@@ -94,7 +94,7 @@ def run_shell_command(cmd, shell=False, env_vars={}):
 def parse_test_log(log_file):
     """Parses the test module log file to extract test modules and functions."""
     test_files = set()
-    with open(log_file, "r") as f:
+    with open(log_file) as f:
         for line in f:
             report = json.loads(line)
             if "nodeid" in report:

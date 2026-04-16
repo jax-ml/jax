@@ -189,7 +189,7 @@ class StatefulPRNG:
       _counter=ref.new_ref(jnp.zeros(num, dtype=int))
     )
 
-  def spawn(self, n_children: int) -> list['StatefulPRNG']:
+  def spawn(self, n_children: int) -> list[StatefulPRNG]:
     """Create a list of independent child generators.
 
     Args:

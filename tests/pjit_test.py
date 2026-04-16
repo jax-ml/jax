@@ -3721,7 +3721,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + jax.jit(lambda y: y + const)(x)
 
     jaxpr = f.trace(const).jaxpr
-    pjit_e, = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == "jit"]
+    pjit_e, = (e for e in jaxpr.jaxpr.eqns if e.primitive.name == "jit")
     inner_pjit_jaxpr = pjit_e.params["jaxpr"]
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.consts)
@@ -10041,11 +10041,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_c64_to_f32_view_rountrip(self, mesh):
-    x = jnp.zeros((128, 64), dtype=jnp.complex64, out_sharding=P(('x')))
+    x = jnp.zeros((128, 64), dtype=jnp.complex64, out_sharding=P('x'))
     y = jax.jit(lambda _x: _x.view(jnp.float32))(x)
     self.assertEqual(y.sharding, NamedSharding(mesh, P('x', None)))
 
-    x = jnp.zeros((128, 64), dtype=jnp.float32, out_sharding=P(('x')))
+    x = jnp.zeros((128, 64), dtype=jnp.float32, out_sharding=P('x'))
     y = jax.jit(lambda _x: _x.view(jnp.complex64))(x)
     self.assertEqual(y.sharding, NamedSharding(mesh, P('x', None)))
 

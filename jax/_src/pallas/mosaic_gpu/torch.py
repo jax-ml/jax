@@ -20,7 +20,8 @@ import ctypes
 from collections import defaultdict
 import functools
 import itertools
-from typing import cast, Any, Callable, Mapping, TypeGuard
+from typing import cast, Any, TypeGuard
+from collections.abc import Callable, Mapping
 import weakref
 
 import jax

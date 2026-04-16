@@ -129,7 +129,7 @@ class MemRefTransform:
   def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
-  def batch(self, leading_rank: int) -> 'MemRefTransform':
+  def batch(self, leading_rank: int) -> MemRefTransform:
     """Returns a transform that accepts a ref with the extra `leading_rank` dims.
 
     The returned transform should leave the leading dimensions unchanged and

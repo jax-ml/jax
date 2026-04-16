@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable
+from collections.abc import Callable
 
 from jax._src import core
 from jax._src import api_util

@@ -22,7 +22,8 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, Generator, NoReturn, Optional, Protocol, Type, TypeVar, cast
+from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
+from collections.abc import Generator
 
 from jax._src import logging_config
 from jax._src.lib import _jax
@@ -562,7 +563,7 @@ def optional_enum_state(
 
 def enum_class_state(
     name: str,
-    enum_class: Type[_ET],
+    enum_class: type[_ET],
     default: _ET,
     help: str,
     *,

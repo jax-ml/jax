@@ -41,7 +41,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       self,
   ):
     v0 = V(0)
-    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
     system = cs.ConstraintSystem(
         constraints=[Eq(v0, layout0), Eq(v0, layout1)],
     )
@@ -51,7 +51,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       self,
   ):
     v0 = V(0)
-    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
     system = cs.ConstraintSystem(
         assignments={v0: layout0},
         constraints=[cs.Relayout(v0, layout1, 32)],
@@ -164,16 +164,16 @@ class ConstraintSystemTest(parameterized.TestCase):
 
   def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
     v0 = V(0)
-    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
     system0 = cs.ConstraintSystem(assignments={v0: layout0})
     system1 = cs.ConstraintSystem(assignments={v0: layout1})
     self.assertIsInstance(system0 & system1, cs.Unsatisfiable)
 
   def test_intersection_of_compatible_systems_is_union_of_fields(self):
     v0, v1, v2 = V(0), V(1), V(2)
-    layout0, layout1, layout2 = [
+    layout0, layout1, layout2 = (
         RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)
-    ]
+    )
     system0 = cs.ConstraintSystem(constraints=[Eq(v0, layout0)])
     system1 = cs.ConstraintSystem(
         assignments={v2: layout2},

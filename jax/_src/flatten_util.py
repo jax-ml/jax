@@ -14,7 +14,8 @@
 
 from collections.abc import Iterable
 import numpy as np
-from typing import Any, Callable, TypeAlias
+from typing import Any, TypeAlias
+from collections.abc import Callable
 
 from jax._src.lax import lax
 from jax._src import dtypes

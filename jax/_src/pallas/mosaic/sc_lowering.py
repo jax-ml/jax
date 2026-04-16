@@ -17,7 +17,8 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import itertools
-from typing import Any, Callable, cast, NoReturn, Mapping
+from typing import Any, cast, NoReturn
+from collections.abc import Callable, Mapping
 
 from jax._src import api_util
 from jax._src import core as jax_core

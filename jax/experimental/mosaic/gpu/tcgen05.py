@@ -19,7 +19,8 @@ import dataclasses
 import functools
 import itertools
 import math
-from typing import Any, Callable, Iterator, cast
+from typing import Any, cast
+from collections.abc import Callable, Iterator
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith

@@ -404,7 +404,7 @@ class _AxisNames:
         self.grid, self.cluster, [self.wg] if self.wg is not None else []
     )
 
-  def reverse(self) -> "_AxisNames":
+  def reverse(self) -> _AxisNames:
     return _AxisNames(self.grid[::-1], self.cluster[::-1], self.wg)
 
 

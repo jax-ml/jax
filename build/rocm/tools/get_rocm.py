@@ -57,7 +57,7 @@ def os_release_meta():
         pass
 
 
-class System(object):
+class System:
 
     def __init__(self, pkgbin, rocm_package_list):
         self.pkgbin = pkgbin

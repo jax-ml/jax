@@ -25,7 +25,8 @@ import abc
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Callable, Literal, Union
+from typing import cast, overload, Any, Literal, Union
+from collections.abc import Callable
 import warnings
 
 import ml_dtypes

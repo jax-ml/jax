@@ -20,7 +20,8 @@ import dataclasses
 import gc
 import logging
 import threading
-from typing import Any, Callable, Literal
+from typing import Any, Literal
+from collections.abc import Callable
 
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 import jax._src.pallas.mosaic.interpret.params as params

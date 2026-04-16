@@ -15,7 +15,8 @@
 """NumPy function implementations as hijax primitives."""
 import functools
 import operator
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 
