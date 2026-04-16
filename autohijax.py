@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from functools import partial
 from dataclasses import dataclass
 import numpy as np
@@ -8,11 +9,22 @@ import jax
 from jax._src.tree_util import FlatTree
 from jax._src import core as jax_core
 from jax._src import pjit as pjit
+from jax._src import dtypes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import safe_zip, safe_map
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
+
+# TODO
+#   [x] multiple outputs / pytrees
+#   [ ] vjp
+#   [ ] zero or many lo types from lo_ty()
+#   [ ] cond
+#   [ ] system for importing existing primitives
+#   [ ] custom_vjp
+#   [ ] scan
+
 
 # === lojax interface ===
 
@@ -38,51 +50,173 @@ def emit_jit_call(jaxpr, args):
 
 @dataclass
 class TraceTimeContext:
+  # TODO: maybe keep a stack, not for "parent" but to make it easier to restore
   cur_trace : Trace
+
+  @contextmanager
+  def set_current_trace(self, trace):
+    prev = self.cur_trace
+    try:
+      self.cur_trace = trace
+      yield
+    finally:
+      self.cur_trace = prev
 
 class Trace:
   bind_method_name : str
+  # Should return the Tracer subclass corresponding to this trace
+  def lift(self, val: Tracer) -> Tracer:
+    assert False, "subclass should implement"
 
-def bind(op, *args: FlatTree) -> FlatTree:
-  assert all(isinstance(arg, FlatTree) for arg in args)
-  trace = ctx.cur_trace
-  ans = getattr(op, trace.bind_method_name)(trace, *args)
-  assert isinstance(ans, FlatTree)
-  return ans
+# Different traces subclass this with their own payloads
+class Tracer:
+  ty : Ty
+
+  # non-tree args and single result
+  def simple_bind(self, *args):
+    assert  False, "subclass should implement"
+
+  # args and result are all FlatTrees
+  def bind(self, *args):
+    assert  False, "subclass should implement"
 
 @dataclass(frozen=True)
 class Ty:
   pass
 
-@dataclass(frozen=True)
-class Val:
-  val : Any  # tuple tree of lojax "vals" (tracers or concrete vals)
-  ty : Ty
+# There are several sorts of values we need to lift
+#  * python scalar literals and numpy arrays
+#  * tracers from one trace into another, but the eval trace
 
 literal_handlers = {}
 def lift(val:Any) -> Val:
-  if isinstance(val, Val):
-    return val
+  trace_lift = ctx.cur_trace.lift
+  if isinstance(val, Tracer):
+    return trace_lift(val)
   elif type(val) in literal_handlers:
-    return literal_handlers[type(val)](val)
+    return trace_lift(literal_handlers[type(val)](val))
   else:
     raise Exception(f"Don't recognize type {type(val)}")
 
+# General ops whose methods expose full control at the cost of more boilerplate
 class Op:
   def lower(self, trace, *args):
     assert False, "subclass should implement this"    
 
+# Simple ops that take (non-tree) *args and return a single result
+class SimpleOp:
+  def simple_lower(self, trace, *args):
+    assert False, "subclass should implement this"    
+
 class BaseTraceCtx: pass
 
-class BaseTrace:
-  lojaxpr_trace : core.Trace
+class BaseTrace(Trace):
   ctx : list[BaseTraceCtx]
   def __init__(self, lojaxpr_trace):
     self.ctx = []
     self.lojaxpr_trace = lojaxpr_trace
-    self.bind_method_name = "lower"
 
-ctx = TraceTimeContext(BaseTrace(jax_core.trace_ctx.trace))
+  def bind(self, op, *args):
+    assert isinstance(op, Op)
+    assert all(isinstance(arg, FlatTree) for arg in args)
+    return op.lower(self, *args)
+
+  def simple_bind(self, op, *args):
+    assert isinstance(op, SimpleOp)
+    arg_vals = tuple(arg.val for arg in args)
+    arg_tys  = tuple(arg.ty  for arg in args)
+    ans_ty  = op.simple_type_rule(*arg_tys)
+    ans_val = op.simple_lower(*arg_vals)
+    return Val(ans_val, ans_ty)
+
+  def lift(self, val):
+    assert isinstance(val, Val)
+    return val
+
+base_trace = BaseTrace(jax_core.trace_ctx.trace)
+ctx = TraceTimeContext(base_trace)
+
+# Tracer for the BaseTrace
+class Val(Tracer):
+  trace = base_trace
+  val : Any  # tuple tree of lojax "vals" (tracers or concrete vals)
+  ty : Ty
+  def __init__(self, val, ty):
+    self.val = val
+    self.ty = ty
+  def __repr__(self):
+    return format(f"{self.val}:{self.ty}")
+
+# === VJP ===
+
+class VJPTrace(Trace):
+  tape: list[Callable]
+  def __init__(self, parent):
+    self.tape = []
+    self.parent = parent
+
+  def new_arg(self, val):
+    return VJPTracer(self, val, Accumulator(val.ty.tangent_ty()))
+
+  def lift(self, val):
+    if val.trace is self:
+      return val
+    else:
+      breakpoint()
+
+  def simple_bind(self, op, *args):
+    primals = tuple(arg.primal for arg in args)
+    left_accums = tuple(arg.accum for arg in args)
+    with ctx.set_current_trace(self.parent):
+      ans = lift(ctx.cur_trace.simple_bind(op, *primals))
+      pullbacks = op.simple_vjp(ans, *primals)
+    right_accum = Accumulator(ans.ty.tangent_ty())
+    def bwd():
+      ct = right_accum.finalize()
+      for pullback, left_accum in zip(pullbacks, left_accums):
+        left_accum.accum(pullback(ct))
+    self.tape.append(bwd)
+    return VJPTracer(self, ans, right_accum)
+
+class VJPTracer(Tracer):
+  def __init__(self, trace, primal, accum : Accumulator | None):
+    self.trace = trace
+    self.primal = primal
+    self.accum = accum
+
+class Accumulator:
+  def __init__(self, ty):
+    self.ty = ty
+    self.val = None
+
+  def accum(self, val):
+    if self.val is None:
+      self.val = val
+    else: 
+      self.val = add(self.val, val)  # TODO: dispatch to ty
+
+  def finalize(self):
+    val = self.val 
+    del self.val
+    return val
+
+def vjp(f, args, ct_right):
+  # TODO: zeros on fwd and bwd
+  # TODO: think about how to handle refs
+  args_ft = FlatTree.flatten(args).map(lift)
+  parent_trace = ctx.cur_trace
+  trace = VJPTrace(parent_trace)
+  tracers = args_ft.map(trace.new_arg)
+  ctx.cur_trace = trace
+  ans_pytree = f(*tracers.unflatten())
+  ans_ft = FlatTree.flatten(ans_pytree).map(lift)
+  ctx.cur_trace = parent_trace
+  tape = trace.tape
+  ct_right_ft= FlatTree.flatten(ct_right)  
+  ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
+  while tape: tape.pop()()  # backward pass
+  ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
+  return ct_left.unflatten()
 
 # === built-in HOPs ===
 
@@ -112,31 +246,17 @@ class LeaveJit(Op):
 # TODO: cache and curry
 def jit_call(f, *args):
   args = FlatTree.flatten(args).map(lift)
-  local_args = bind(EnterJit(), args)
+  local_args = ctx.cur_trace.bind(EnterJit(), args)
   ans = f(*local_args.unflatten())
   ans =  FlatTree.flatten(ans).map(lift)
-  return bind(LeaveJit(), ans).unflatten()
+  return ctx.cur_trace.bind(LeaveJit(), ans).unflatten()
 jit = partial(partial, jit_call)
-
-# === helper for library-level ops ===
-
-class SimpleOp(Op):
-  def lower(self, _, *args):
-    args = tuple(arg.from_leaf() for arg in args)
-    arg_vals = tuple(arg.val for arg in args)
-    arg_tys  = tuple(arg.ty  for arg in args)
-    ans_ty  = self.simple_type_rule(*arg_tys)
-    ans_val = self.simple_lower(*arg_vals)
-    return FlatTree.leaf(Val(ans_val, ans_ty))
-
-def simple_bind(op, *args):
-  args = tuple(FlatTree.leaf(lift(arg)) for arg in args)
-  return bind(op, *args).from_leaf()
 
 # === library level ===
 
-
-literal_handlers[int] = lambda x: Val(x, ArrayTy((), np.int32))
+# TODO: dtype canonicalization etc
+# TODO: allow more context for handlers to handle binops
+literal_handlers[int]   = lambda x: Val(x, ArrayTy((), np.int32))
 literal_handlers[float] = lambda x: Val(x, ArrayTy((), np.float32))
 
 @dataclass(frozen=True)
@@ -147,6 +267,13 @@ class ArrayTy(Ty):
   def lo_ty(self):
     return jax_core.ShapedArray(self.shape, self.dtype)
 
+  def tangent_ty(self):
+    # TODO: integer types
+    return self
+
+  def __repr__(self):
+    return f"{self.dtype}{list(self.shape)}"
+
 class Add(SimpleOp):
   def simple_type_rule(self, x_ty, y_ty):
     assert x_ty == y_ty
@@ -155,7 +282,10 @@ class Add(SimpleOp):
   def simple_lower(self, x, y):
     return x + y
 
-add = partial(simple_bind, Add())
+def add(x, y):
+  x_ = lift(x)
+  y_ = lift(y)
+  return ctx.cur_trace.simple_bind(Add(), x_, y_)
 
 @dataclass(frozen=True)
 class Mul(SimpleOp):
@@ -163,10 +293,16 @@ class Mul(SimpleOp):
     assert x_ty == y_ty
     return x_ty
 
+  def simple_vjp(self, _ans, x, y):
+    return (lambda g: mul(g, y), lambda g: mul(x, g))
+
   def simple_lower(self, x, y): 
     return x * y
 
-mul = partial(simple_bind, Mul())
+def mul(x, y):
+  x_ = lift(x)
+  y_ = lift(y)
+  return ctx.cur_trace.simple_bind(Mul(), x_, y_)
 
 # === user level ===
 
@@ -181,10 +317,11 @@ def bar(x, y):
 print(foo(1, 2))
 print(bar(1, 2))
 
-# TODO
-#   * multiple outputs
-#   * cond
-#   * vjp
-#   * custom_vjp
-#   * scan
+print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+
+
+
+
+
+
 
