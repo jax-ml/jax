@@ -110,7 +110,8 @@ class LoweringContext:
     ) and not inference_utils.has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
-    new_results = lowering_rule(self, op)
+    with op.operation.location:
+      new_results = lowering_rule(self, op)
     if not isinstance(new_results, Recursed):
       for old, new in zip(op.results, new_results):
         old.replace_all_uses_with(new)

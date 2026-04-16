@@ -3140,7 +3140,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   @jtu.skip_under_pytest("Test fails under pytest in CI")
   def test_line_info(self, mode):
-    self.skip_if_wg_semantics()
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
       @functools.partial(
         self.pallas_call if mode == "pallas_call" else self.kernel,
