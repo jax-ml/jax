@@ -21,7 +21,6 @@ import scipy.linalg as osp_linalg
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import gpu_solver
-from jax._src.lib import jaxlib_extension_version
 from jax._src.tpu.linalg import svd
 
 from absl.testing import absltest
@@ -321,11 +320,9 @@ class SvdTest(jtu.JaxTestCase):
     rocm_targets = {
         name for name, _, _ in gpu_solver.registrations().get("ROCM", ())
     }
-    if (jaxlib_extension_version < 426
-        or "hipsolver_gesdd_ffi" not in rocm_targets):
+    if "hipsolver_gesdd_ffi" not in rocm_targets:
       self.skipTest(
-          "hipsolver_gesdd_ffi requires jaxlib_extension_version >= 426 and "
-          "a plugin that registers hipsolver_gesdd_ffi")
+          "hipsolver_gesdd_ffi requires a plugin that registers hipsolver_gesdd_ffi")
     m, n = shape
     dtype = np.float32
     rng = jtu.rand_default(self.rng())

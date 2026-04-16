@@ -58,9 +58,7 @@ from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
 from jax._src.lib import _jax
-from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
-from jax._src.lib import jaxlib_extension_version
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
 from jax._src import xla_metadata_lib
@@ -1474,8 +1472,6 @@ remove_explicit_mesh_axis_names = RemoveExplicitMeshAxisNamesContextManager
 def get_axis_env():
   return trace_ctx.axis_env
 
-if jaxlib_extension_version < 439:
-  jax_jit.set_thread_local_state_initialization_callback(lambda: None)  # pyrefly: ignore[missing-attribute]
 
 def trace_state_clean() -> bool:
   return trace_ctx.is_top_level()

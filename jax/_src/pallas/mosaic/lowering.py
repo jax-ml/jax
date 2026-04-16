@@ -50,7 +50,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -3663,17 +3662,6 @@ def _tile_lowering_rule(ctx: LoweringRuleContext, x, *, reps):
 def _roll_lowering_rule(
     ctx: LoweringRuleContext, x, shift, *, axis, stride, stride_axis
 ):
-  if jaxlib_extension_version < 425:
-    # When removing this, also remove "type: ignore" below
-    (out_aval,) = ctx.avals_out
-    return tpu.dynamic_rotate(
-        ctx.aval_to_ir_type(out_aval),
-        x,
-        shift,
-        axis,  # pyrefly: ignore[bad-argument-count]
-        stride=stride,
-        stride_dimension=stride_axis,
-    )
   return tpu.dynamic_rotate(
       x,
       shift,

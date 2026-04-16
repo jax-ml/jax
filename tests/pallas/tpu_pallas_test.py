@@ -3981,8 +3981,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_minor_dim_to_R2(self, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 31):
-      self.skipTest('Test requires a newer libTPU.')
     if (
         n == 1
         and dtype in (jnp.bfloat16, jnp.int8)

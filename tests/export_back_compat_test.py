@@ -29,7 +29,6 @@ import jax
 from jax import lax
 from jax._src.export import _export
 from jax._src.lib import gpu_solver
-from jax._src.lib import jaxlib_extension_version
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
@@ -691,11 +690,9 @@ class CompatTest(bctu.CompatTestBase):
       rocm_targets = {
           name for name, _, _ in gpu_solver.registrations().get("ROCM", ())
       }
-      if (jaxlib_extension_version < 426
-          or "hipsolver_gesdd_ffi" not in rocm_targets):
+      if "hipsolver_gesdd_ffi" not in rocm_targets:
         self.skipTest(
-            "hipsolver_gesdd_ffi requires jaxlib_extension_version >= 426 "
-            "and a plugin that registers hipsolver_gesdd_ffi")
+            "hipsolver_gesdd_ffi requires a plugin that registers hipsolver_gesdd_ffi")
 
     algorithm = dict(
         qr=lax.linalg.SvdAlgorithm.QR,

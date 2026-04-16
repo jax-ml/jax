@@ -65,8 +65,6 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import ifrt_version
 
 config.parse_flags_with_absl()
 
@@ -10696,13 +10694,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_identity_jit_out_unreduced(self, mesh):
-    if jaxlib_extension_version < 428:
-      self.skipTest('Requires jaxlib_extension_version >= 428')
-    if ifrt_version < 53:
-      self.skipTest('Requires ifrt_version >= 53')
-    if not jtu.is_cloud_tpu_at_least(2026, 4, 3):
-      self.skipTest('Requires a newer libtpu')
-
     def check_rep(out):
       self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
       for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):

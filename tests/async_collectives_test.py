@@ -17,7 +17,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 
@@ -30,9 +29,6 @@ jtu.request_cpu_devices(8)
 # all_gather).
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
-  def setUp(self):
-    if jaxlib_extension_version < 436:
-      self.skipTest('Requires jaxlib_extension_version >= 436')
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_gather(self, mesh):

@@ -451,8 +451,6 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_swap_index(self, major_dim):
-    if major_dim == 3 and not jtu.is_cloud_tpu_at_least(2026, 4, 10):
-      self.skipTest("Test is broken on old libtpu")
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(major_dim, self.num_lanes), dtype=jnp.int32
@@ -568,8 +566,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
-      self.skipTest("Needs a newer libtpu")
 
     x = jnp.arange(1024)
     indices = jax.random.permutation(jax.random.key(42), x)

@@ -46,8 +46,6 @@ from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
-from jax._src.lib import jaxlib_extension_version
-from jax._src.lib import ifrt_version
 
 from jax.experimental.custom_partitioning import custom_partitioning
 
@@ -5175,12 +5173,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((1, 2, 1), ('x', 'y', 'z'))
   def test_unreduced_bwd_manual_reshard_op_shardy(self, mesh):
-    if jaxlib_extension_version < 421:
-      self.skipTest('Requires jaxlib_extension_version >= 421')
-    if ifrt_version < 51:
-      self.skipTest('Requires ifrt_version >= 51')
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 18):
-      self.skipTest('Requires a newer libtpu')
 
     w = jax.device_put(np.ones((4, 32, 16)),
                        P(None, None, 'z', reduced={'x', 'y'}))

@@ -40,7 +40,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -230,19 +229,12 @@ class Exported:
 
   def mlir_module(self, serialized: bool = True) -> Any:
     """A string or Module representation of the ``mlir_module_serialized``."""
-    if jaxlib_extension_version >= 437:
-      if serialized:
-        with mlir.make_ir_context():
-          module = _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
-          return mlir.module_to_string(module)
-      else:
-        return _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+    if serialized:
+      with mlir.make_ir_context():
+        module = _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+        return mlir.module_to_string(module)
     else:
-      module = _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
-      if serialized:
-        return module
-      else:
-        return ir.Module.parse(module)
+      return _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we

@@ -24,7 +24,6 @@ import textwrap
 from typing import Any, TypeVar
 
 from jax._src import traceback_util
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
@@ -241,9 +240,7 @@ def is_tree_node(typ: type) -> bool:
     True if the type is a registered PyTree node type (built-in or custom)
     or a namedtuple type.
   """
-  if jaxlib_extension_version >= 431:
-    return default_registry.is_node(typ)
-  return typ in _registry or issubclass(typ, tuple)
+  return default_registry.is_node(typ)
 
 
 _Children = TypeVar("_Children", bound=Iterable[Any])

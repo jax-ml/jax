@@ -1960,8 +1960,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape and not jtu.is_cloud_tpu_at_least(2026, 3, 29):
-        self.skipTest("Requires a newer libTPU")
       if in_shape in [(1, 2, 1, 4, 1), (2, 4, 1)] and jtu.get_tpu_version() < 5:
         self.skipTest("Requires sublane gather support")
 
@@ -2066,21 +2064,13 @@ class OpsTest(PallasBaseTest):
 
     in_shape, out_shape, dims = shape_spec
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape and not jtu.is_cloud_tpu_at_least(2026, 3, 29):
-        self.skipTest("Requires a newer libTPU")
       if len(out_shape) == 1 and dtype not in {jnp.int32, jnp.bool_}:
         if dtype == jnp.int8:
           if not jtu.is_device_tpu_at_least(5):
             self.skipTest("Requires TPUv5+")
-          if not jtu.is_cloud_tpu_at_least(2026, 4, 8):
-            self.skipTest("Requires a newer libTPU")
         # 16-bit case
         if jtu.get_tpu_version() < 4:
           self.skipTest("Requires TPUv4+")
-        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
-            2026, 4, 6
-        ):
-          self.skipTest("Requires a newer libTPU")
 
     if not in_shape:
       in_specs = [pl.BlockSpec(memory_space=smem_on_tpu())]

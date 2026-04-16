@@ -30,7 +30,6 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -2366,8 +2365,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
                       k_rhs=[1, 2],
                       perturb_singular=[False, True])
   def test_tridiagonal_solve(self, shape, dtype, k_rhs, perturb_singular):
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # TODO: Add these tests back once rocSparse issues are fixed.
@@ -2394,8 +2392,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(perturb_singular=[False, True])
   def test_tridiagonal_solve_zero_matrix(self, perturb_singular):
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
     dtype = np.float32
@@ -2416,8 +2413,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def test_tridiagonal_solve_requiring_pivoting(self, perturb_singular):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
@@ -2435,8 +2431,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def test_tridiagonal_solve_requiring_pivoting_last_rows(self, perturb_singular):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
@@ -2452,8 +2447,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(perturb_singular=[False, True])
   def test_tridiagonal_solve_2x2_singular(self, perturb_singular):
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
     dl = np.array([0.0, 1.0], dtype=np.float32)
@@ -2471,8 +2465,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(perturb_singular=[False, True])
   def test_tridiagonal_solve_endpoints(self, perturb_singular):
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
@@ -2494,8 +2487,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types,
                       perturb_singular=[False, True])
   def test_tridiagonal_solve_grad(self, shape, dtype, perturb_singular):
-    if perturb_singular and jaxlib_version < (0, 10):
-      self.skipTest("perturb_singular=True requires jaxlib >= 0.10")
+
     if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # TODO: Add these tests back once rocSparse issues are fixed.

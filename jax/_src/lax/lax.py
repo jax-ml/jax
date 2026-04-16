@@ -62,7 +62,6 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive)
 from jax._src.core import typeof, getu, getr
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -8723,11 +8722,8 @@ batching.primitive_batchers[dce_sink_p] = lambda x, bd, **_: (x, bd)
 def _dce_sink_lowering(ctx, x, *, prevent_mlir_dce):
   if not prevent_mlir_dce:
     return []
-  if jaxlib_extension_version >= 438:
-    rule = ffi.ffi_lowering("dce_sink", has_side_effect=True)
-    return rule(ctx, x)
-  else:
-    raise RuntimeError("prevent_mlir_dce=True requires jaxlib_extension_version >= 438")
+  rule = ffi.ffi_lowering("dce_sink", has_side_effect=True)
+  return rule(ctx, x)
 
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
