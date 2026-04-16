@@ -1664,7 +1664,7 @@ def _slice_smem(result: ir.MemRefType, offset: int, smem_size: int):
   return builtin.unrealized_conversion_cast([result], [view])
 
 
-@_register_lowering(mgpu.WithTransformsOp)
+@_register_lowering(mgpu.WithTransformsOp, support_warp_semantics=True)
 def _mgpu_with_transforms_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.WithTransformsOp
 ) -> Sequence[ir.Value]:
