@@ -1120,12 +1120,12 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    if isinstance(interpret, InterpretParams):
-      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
+    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
+      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,
                      interpret_params=interpret,
                      **params)
-    elif isinstance(interpret, InterpretGPUParams):
-      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
+    elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
+      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,
                      interpret_params=interpret,
                      **params)
     else:
@@ -1632,14 +1632,14 @@ except ImportError:
 
 try:
   from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
-  from jax._src.pallas.mosaic.interpret.params import InterpretParams
 except ImportError:
-  mosaic_tpu_interpret = None
-  InterpretParams = types.new_class("_NoInstances", (enum.Enum,))
+  mosaic_tpu_interpret = types.SimpleNamespace(
+      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
+  )
 
 try:
   from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
-  from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 except ImportError:
-  mosaic_gpu_interpret = None
-  InterpretGPUParams = types.new_class("_NoInstances", (enum.Enum,))
+  mosaic_gpu_interpret = types.SimpleNamespace(
+      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
+  )

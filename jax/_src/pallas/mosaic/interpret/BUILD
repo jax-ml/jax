@@ -24,17 +24,6 @@ package(
     ],
 )
 
-pytype_strict_library(
-    name = "params",
-    srcs = ["params.py"],
-    type_checking = "pyrefly",
-    deps = [
-        ":utils",
-        "//jax",
-        "//jax/_src:callback",
-    ] + py_deps("numpy"),
-)
-
 py_library(
     name = "interpret_pallas_call",
     srcs = [
@@ -42,7 +31,6 @@ py_library(
         "interpret_pallas_call.py",
     ],
     deps = [
-        ":params",
         ":race_detection_state",
         ":shared_memory",
         ":thread_map",
@@ -79,7 +67,6 @@ pytype_strict_library(
     srcs = ["shared_memory.py"],
     type_checking = "pyrefly",
     deps = [
-        ":params",
         ":race_detection_state",
         ":utils",
         ":vector_clock",

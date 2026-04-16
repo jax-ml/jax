@@ -22,7 +22,6 @@ from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
-from jax._src.pallas.mosaic_gpu.interpret import params as params
 
 
 class Barrier(memory.Allocation):
@@ -277,7 +276,7 @@ class Barrier(memory.Allocation):
 class GPUSharedMemory(memory.SharedMemory):
 
   num_tma_threads_per_device: int
-  logging_mode: params.LoggingMode | None = None
+  logging_mode: interpret_utils.LoggingMode | None = None
 
   next_tma_thread_id_per_device: dict[int, int]
 
@@ -317,7 +316,7 @@ class GPUSharedMemory(memory.SharedMemory):
     self.num_pallas_threads_per_block = num_threads_per_block
     self.num_blocks_per_cluster = num_blocks_per_cluster
     self.num_tma_threads_per_device = num_tma_threads_per_device
-    self.logging_mode = cast(params.LoggingMode | None, logging_mode)
+    self.logging_mode = cast(interpret_utils.LoggingMode | None, logging_mode)
     self.next_tma_thread_id_per_device = {
         device_id: 0 for device_id in range(self.num_devices)
     }
@@ -374,7 +373,7 @@ class GPUSharedMemory(memory.SharedMemory):
             num_arrivals=num_arrivals,
             enable_logging=(
                 self.logging_mode is not None
-                and params.LoggingMode.BARRIER in self.logging_mode
+                and interpret_utils.LoggingMode.BARRIER in self.logging_mode
             ),
         )
         self.mem[key] = barrier

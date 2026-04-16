@@ -27,7 +27,6 @@ from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
-from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -166,7 +165,7 @@ class JaxprInterpreter:
   mesh: plgpu.Mesh | None
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
-  interpret_params: InterpretGPUParams
+  interpret_params: interpret_utils.InterpretParams
 
   @functools.cached_property
   def num_threads_per_block(self) -> int:
@@ -285,8 +284,7 @@ class JaxprInterpreter:
                   self.device_info.device_id,
                   self.thread_id,
                   allocation_request,
-                  interpret_utils.get_uninitialized_array(
-                      shape, dtype, self.interpret_params.uninitialized_memory),
+                  self.interpret_params.get_uninitialized_array(shape, dtype),
                   source_info=eqn.source_info,
               )
             case _:
