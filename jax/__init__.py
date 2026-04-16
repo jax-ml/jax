@@ -175,6 +175,7 @@ from jax import export as export
 from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
+from jax import lib as lib  # TODO(phawkins): Deprecate and remove jax.lib.
 from jax import monitoring as monitoring
 from jax import nn as nn
 from jax import numpy as numpy
@@ -230,8 +231,6 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-
-import jax.lib  # TODO(phawkins): remove this export.  # noqa: F401
 
 # trailer
 del _deprecated_device_put_sharded

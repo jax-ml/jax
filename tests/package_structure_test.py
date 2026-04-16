@@ -20,6 +20,7 @@ import types
 
 from absl.testing import absltest, parameterized
 
+import jax
 from jax._src import test_util as jtu
 
 
@@ -96,6 +97,9 @@ class PackageStructureTest(jtu.JaxTestCase):
         continue
       self.assertEqual(obj.__module__, module_name,
                        f"{obj} has {obj.__module__=}, expected {module_name}")
+
+  def test_jax_not_inadvertently_reexported_by_top_level(self):
+    self.assertFalse(hasattr(jax, "jax"))
 
 
 if __name__ == '__main__':
