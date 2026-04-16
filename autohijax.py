@@ -13,7 +13,7 @@ from jax._src import core as jax_core
 from jax._src import pjit as pjit
 from jax._src import dtypes
 from jax._src.interpreters import partial_eval as pe
-from jax._src.util import safe_zip, safe_map
+from jax._src.util import safe_zip, safe_map, split_list
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
@@ -21,12 +21,14 @@ map, unsafe_map = safe_map, map
 # TODO
 #   [x] multiple outputs / pytrees
 #   [x] vjp (basic)
+#   [x] scan
+#   [ ] grad-of-jit
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
 #   [ ] cond
 #   [ ] system for importing existing primitives
 #   [ ] custom_vjp
-#   [ ] scan
+#   [ ] caching/ool functions
 
 
 # TODO eventually
@@ -112,12 +114,12 @@ def lift_ft(val:Any) -> FlatTree:
 # General ops whose methods expose full control at the cost of more boilerplate
 class Op:
   def lower(self, trace, *args):
-    assert False, "subclass should implement this"    
+    assert False, f"subclass {type(self)} should implement this"    
 
 # Simple ops that take (non-tree) *args and return a single result
 class SimpleOp:
   def simple_lower(self, trace, *args):
-    assert False, "subclass should implement this"    
+    assert False, f"subclass {type(self)} should implement this"    
 
 class BaseTraceCtx: pass
 
@@ -351,7 +353,59 @@ def call_lojax(f, *args):
   result = ctx.cur_trace.bind(CallLojax(f), args_ft)
   return result.unflatten()
 
+# === final-style open-face ===
+
+@dataclass
+class EnterScanCtx(BaseTraceCtx):
+  lo_carry : FlatTree
+  lo_xs : FlatTree
+  length : int
+
+class EnterScan(Op):
+  def __init__(self, length):
+    self.length = length
+
+  def lower(self, trace, carry, xs):
+    carry_vals, carry_tys = carry.map(lambda x: (x.val, x.ty)).unzip2()
+    xs_vals, xs_tys = xs.map(lambda x: (x.val, x.ty)).unzip2()
+    x_tys = xs_tys.map(lambda t: ArrayTy(t.shape[1:], t.dtype))  # TODO: generalize
+    trace.ctx.append(EnterScanCtx(carry_vals, xs_vals, self.length))
+    local_tys = FlatTree.pack((carry_tys, x_tys))
+    arg_lo_tys = local_tys.map(lambda t: t.lo_ty())
+    local_args_lo = start_djt(arg_lo_tys)
+    return local_args_lo.map2(Val, local_tys)
+
+class LeaveScan(Op):
+  def __init__(self):
+    pass
+
+  def lower(self, trace, c, y):
+    ec = trace.ctx.pop()
+    assert isinstance(ec, EnterScanCtx)
+    jaxpr = end_djt(FlatTree.pack((c, y)).map(lambda x: x.val))
+    # TODO: use scan_p.bind instead of round-tripping
+    def scan_body(c_, x_):
+      results = jax_core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *c_, *x_)
+      return split_list(results, [len(c_)])
+
+    c, ys = jax.lax.scan(scan_body, list(ec.lo_carry), list(ec.lo_xs), length=ec.length)
+    return lift_ft((c, ys))
+
+def scan(body, c, xs, length):
+  # TODO: rev, axis name
+  c, x = ctx.cur_trace.bind(EnterScan(length), lift_ft(c), lift_ft(xs)).unflatten()
+  c, y = body(c, x)
+  c, ys = ctx.cur_trace.bind(LeaveScan(), lift_ft(c), lift_ft(y)).unpack()
+  return c.unflatten(), ys.unflatten()
+
 # === user level ===
+
+def scan_body(c, x):
+  return add(c, 1), add(x, 1)
+
+print(scan(scan_body, 0, jnp.arange(4), length=4))
+
+
 
 @jit
 def foo(x, y):
@@ -373,6 +427,15 @@ def baz(x):
 
 print(baz(1.0))
 print(vjp(baz, (1.0,), 1.0))
+
+@jit
+def closed_over(x, y):
+  @jit
+  def f(x):
+    return add(x, y)
+  return f(x)
+
+print(closed_over(1, 2))
 
 
 
