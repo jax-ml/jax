@@ -95,6 +95,7 @@ class Ty:
 #  * tracers from one trace into another, but the eval trace
 
 literal_handlers = {}
+# lifting should only need to be done with user-supplied values
 def lift(val:Any) -> Val:
   trace_lift = ctx.cur_trace.lift
   if isinstance(val, Tracer):
@@ -103,6 +104,10 @@ def lift(val:Any) -> Val:
     return trace_lift(literal_handlers[type(val)](val))
   else:
     raise Exception(f"Don't recognize type {type(val)}")
+
+# We flatten user-supplied data. So lifting is usually necessary.
+def lift_ft(val:Any) -> FlatTree:
+  return FlatTree.flatten(val).map(lift)
 
 # General ops whose methods expose full control at the cost of more boilerplate
 class Op:
@@ -168,6 +173,7 @@ class VJPTrace(Trace):
     if val.trace is self:
       return val
     else:
+      # TODO: lift in parent trace then in self
       breakpoint()
 
   def bind(self, op, *args):
@@ -177,7 +183,7 @@ class VJPTrace(Trace):
     primals = tuple(arg.primal for arg in args)
     left_accums = tuple(arg.accum for arg in args)
     with ctx.set_current_trace(self.parent):
-      ans = lift(ctx.cur_trace.simple_bind(op, *primals))
+      ans = ctx.cur_trace.simple_bind(op, *primals)
       pullbacks = op.simple_vjp(ans, *primals)
     right_accum = Accumulator(ans.ty.tangent_ty())
     def bwd():
@@ -212,14 +218,13 @@ class Accumulator:
 def vjp(f, args, ct_right):
   # TODO: zeros on fwd and bwd
   # TODO: think about how to handle refs
-  args_ft = FlatTree.flatten(args).map(lift)
+  args_ft = lift_ft(args)
   parent_trace = ctx.cur_trace
   trace = VJPTrace(parent_trace)
   tracers = args_ft.map(trace.new_arg)
   with ctx.set_current_trace(trace):
-    ans_pytree = f(*tracers.unflatten())
-    ans_ft = FlatTree.flatten(ans_pytree).map(lift)
-  ct_right_ft= FlatTree.flatten(ct_right)  
+    ans_ft = lift_ft(f(*tracers.unflatten()))
+  ct_right_ft = lift_ft(ct_right)
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
   while trace.tape: trace.tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
@@ -252,10 +257,9 @@ class LeaveJit(Op):
 
 # TODO: cache and curry
 def jit_call(f, *args):
-  args = FlatTree.flatten(args).map(lift)
+  args = lift_ft(args)
   local_args = ctx.cur_trace.bind(EnterJit(), args)
-  ans = f(*local_args.unflatten())
-  ans =  FlatTree.flatten(ans).map(lift)
+  ans = lift_ft(f(*local_args.unflatten()))
   return ctx.cur_trace.bind(LeaveJit(), ans).unflatten()
 jit = partial(partial, jit_call)
 
@@ -316,35 +320,34 @@ def mul(x, y):
 
 # === calling lojax ===
 
+def to_lojax(x:FlatTree):
+  return x.map(lambda x: x.val).unflatten()
+
 class CallLojax(Op):
   def __init__(self, f):
     self.f = f
 
   def lower(self, trace, args_ft):
-    lo_args = args_ft.map(lambda x: x.val).unflatten()
-    ans = self.f(*lo_args)
-    return FlatTree.flatten(ans).map(lift)
+    return lift_ft(self.f(*to_lojax(args_ft)))
 
   def vjp(self, trace, args_ft):
     # TODO: Higher-order AD! Don't assume parent trace is BaseTrace (.val might not exist)
-    primals = args_ft.map(lambda x: x.primal.val).unflatten()
+    primals = to_lojax(args_ft.map(lambda x: x.primal))
     with ctx.set_current_trace(trace.parent):
       ans, f_vjp = jax.vjp(self.f, *primals)
-      ans_ft = FlatTree.flatten(ans).map(lift)
+      ans_ft = lift_ft(ans)
     left_accums = args_ft.map(lambda x: x.accum)
     right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
     def bwd():
-      right_ct_ft = right_accum.map(lambda x: x.finalize())
-      right_ct = right_ct_ft.map(lambda x: lift(x).val).unflatten()
-      left_cts = f_vjp(right_ct)
-      left_cts_ft = FlatTree.flatten(left_cts).map(lift)
+      right_ct = to_lojax(right_accum.map(lambda x: x.finalize()))
+      left_cts_ft = lift_ft(f_vjp(right_ct))
       return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts_ft)
 
     trace.tape.append(bwd)
     return ans_ft.map2(lambda p, acc: VJPTracer(trace, p, acc), right_accum)
 
 def call_lojax(f, *args):
-  args_ft = FlatTree.flatten(args).map(lift)
+  args_ft = lift_ft(args)
   result = ctx.cur_trace.bind(CallLojax(f), args_ft)
   return result.unflatten()
 
@@ -361,7 +364,7 @@ def bar(x, y):
 print(foo(1, 2))
 print(bar(1, 2))
 
-# print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
 
 # @jit
 def baz(x):
