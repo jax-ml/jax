@@ -14,7 +14,6 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
-from collections.abc import Callable
 import inspect
 
 from absl.testing import parameterized
@@ -71,20 +70,6 @@ def walk_operations(op: ir.OpView, callback):
   callback(op)
 
 
-def find_if(
-    module: ir.Module, predicate: Callable[[ir.OpView], bool]
-) -> list[ir.OpView]:
-  result = []
-
-  def callback(op: ir.OpView):
-    if predicate(op):
-      result.append(op)
-
-  for op in module.body.operations:
-    walk_operations(op, callback)
-  return result
-
-
 def is_mosaic_gpu_op(op: ir.OpView) -> bool:
   return op.name.startswith("mosaic_gpu.")
 
@@ -120,6 +105,17 @@ class MosaicGpuTest(parameterized.TestCase):
     self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
         ir.IntegerAttr.get(i32, 0)
     )
+
+  def find_ops(self, op_type) -> list[ir.Operation]:
+    result = []
+
+    def callback(op: ir.OpView):
+      if isinstance(op, op_type):
+        result.append(op)
+
+    for op in self.module.body.operations:
+      walk_operations(op, callback)
+    return result
 
 
 class DialectTest(MosaicGpuTest):
@@ -1803,10 +1799,7 @@ ir.MLIRError,
     )
     pm.run(self.module.operation)
 
-    [slice_smem_op] = find_if(
-        self.module,
-        lambda op: op.name == mgpu.dialect.SliceSMEMOp.OPERATION_NAME,
-    )
+    [slice_smem_op] = self.find_ops(mgpu.dialect.SliceSMEMOp)
     self.assertEqual(slice_smem_op.result.type, new_ty)
     self.assertEqual(slice_smem_op.alias_id.value, alias_id)
 
@@ -1822,10 +1815,7 @@ ir.MLIRError,
         "builtin.module(canonicalize)", self.module.context
     )
     pm.run(self.module.operation)
-    [rc_op] = find_if(
-        self.module,
-        lambda op: isinstance(op, mgpu.dialect.ReinterpretCastOp),
-    )
+    [rc_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
     [use] = rc_op.result.uses
     self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
 
@@ -1852,10 +1842,7 @@ ir.MLIRError,
     )
     pm.run(self.module.operation)
 
-    [reinterpret_cast_op] = find_if(
-        self.module,
-        lambda op: op.name == mgpu.dialect.ReinterpretCastOp.OPERATION_NAME,
-    )
+    [reinterpret_cast_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
     self.assertEqual(reinterpret_cast_op.result.type, ty2)
 
 
@@ -1910,10 +1897,7 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.lower_mgpu_dialect(self.module, None)
     self.assertTrue(self.module.operation.verify())
 
-    all_mbarrier_init_ops = find_if(
-        self.module,
-        lambda op: op.name == nvvm.MBarrierInitOp.OPERATION_NAME,
-    )
+    all_mbarrier_init_ops = self.find_ops(nvvm.MBarrierInitOp)
 
     # One nvvm.mbarrier_init_shared is issued per barrier.
     self.assertLen(all_mbarrier_init_ops, num_barriers)
@@ -1952,12 +1936,12 @@ class DialectLoweringTest(MosaicGpuTest):
 
     mgpu.lower_mgpu_dialect(self.module, None)
 
-    all_ops_with_layouts = find_if(
-        self.module,
-        lambda op: (
-            "out_layouts" in op.attributes or "in_layouts" in op.attributes
-        ),
-    )
+    all_ops_with_layouts = []
+    def append(op):
+      if "out_layouts" in op.attributes or "in_layouts" in op.attributes:
+        all_ops_with_layouts.append(op)
+    walk_operations(self.module.operation, append)
+
     self.assertEmpty(all_ops_with_layouts)
 
   def test_lowering_splat_constant(self):
@@ -1977,10 +1961,7 @@ class DialectLoweringTest(MosaicGpuTest):
 
     mgpu.lower_mgpu_dialect(self.module, None)
 
-    cst_ops = find_if(
-        self.module,
-        lambda op: isinstance(op, arith.ConstantOp),
-    )
+    cst_ops = self.find_ops(arith.ConstantOp)
     self.assertLen(cst_ops, 1)
     self.assertEqual(cst_ops[0].result.type, elt_ty)
 
@@ -1995,14 +1976,8 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.infer_layout(self.module)
     mgpu.lower_mgpu_dialect(self.module, None)
 
-    all_loads = find_if(
-        self.module,
-        lambda op: isinstance(op, vector.LoadOp),
-    )
-    all_stores = find_if(
-        self.module,
-        lambda op: isinstance(op, vector.StoreOp),
-    )
+    all_loads = self.find_ops(vector.LoadOp)
+    all_stores = self.find_ops(vector.StoreOp)
 
     # The shape is (8, 128). Assuming a single warpgroup (128 threads), we
     # expect each thread to load 8 elements---with two vectorized loads of size
@@ -2058,7 +2033,7 @@ class DialectLoweringTest(MosaicGpuTest):
 
     mgpu.lower_mgpu_dialect(self.module, None)
     self.module.operation.verify()
-    [for_op] = find_if(self.module, lambda op: isinstance(op, scf.ForOp))
+    [for_op] = self.find_ops(scf.ForOp)
     result_types = [r.type for r in for_op.results]
     reg_vec_ty = ir.VectorType.get((2,), i32)
     self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
@@ -2073,11 +2048,7 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.lower_mgpu_dialect(self.module, None)
     # Avoid making a change detector, only validate that lowering runs as
     # expected.
-    self.assertEmpty(
-        find_if(
-            self.module, lambda op: isinstance(op, mgpu.dialect.SliceSMEMOp)
-        )
-    )
+    self.assertEmpty(self.find_ops(mgpu.dialect.SliceSMEMOp))
 
   @parameterized.parameters(
       (arith.ExtFOp, jnp.bfloat16, jnp.float32),
@@ -2110,7 +2081,7 @@ class DialectLoweringTest(MosaicGpuTest):
     mgpu.infer_layout(self.module)
     mgpu.lower_mgpu_dialect(self.module, None)
 
-    conversion_ops = find_if(self.module, lambda o: isinstance(o, op))
+    conversion_ops = self.find_ops(op)
     # This is a splat, so we expect a single conversion op involving a scalar
     # after lowering.
     self.assertLen(conversion_ops, 1)
