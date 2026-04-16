@@ -42,6 +42,7 @@ from jax._src.interpreters import pxla
 from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
@@ -895,7 +896,6 @@ def _export_lowered(
       _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
-  mlir_str = mlir.module_to_bytecode(module)
   # `target_version` is used to manage situations when a StableHLO producer
   # and a StableHLO consumer were built using different versions of StableHLO.
   #
@@ -916,8 +916,14 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # StableHLO features from failing on older hardware.
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = _jax.mlir.serialize_portable_artifact(
-      mlir_str, target_version, xb.get_backend().serialize_with_sdy)
+
+  if jaxlib_extension_version >= 440:
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        module, target_version, xb.get_backend().serialize_with_sdy)
+  else:
+    mlir_str = mlir.module_to_bytecode(module)
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
 
 
