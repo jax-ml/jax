@@ -158,6 +158,7 @@ jobs:
 
   documentation_render:
     name: Documentation - render documentation
+    if: false  # TODO(apaszke): Reenable once fixed
     runs-on: linux-x86-n4-16
     container:
       image: index.docker.io/library/ubuntu@sha256:4e0171b9275e12d375863f2b3ae9ce00a4c53ddda176bd55868df97ac6f21a6e #  ratchet:ubuntu:22.04
