@@ -81,7 +81,6 @@ ignore-missing-imports = [
     "xprof.*",
     "zstandard.*",
 ]
-permissive-ignores = true
 untyped-def-behavior = "check-and-infer-return-any"
 
 [tool.ruff]
