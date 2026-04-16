@@ -84,19 +84,31 @@ runs:
           if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
 
-            # Resolve the S3 URI for ROCm plugin/PJRT wheels.
+            # Resolve ROCm plugin/PJRT wheels path via CloudFront.
+            ROCM_WHEELS_BASE_URL="https://d22q5eopkfeftw.cloudfront.net"
             if [[ "${INPUTS_S3_DOWNLOAD_URI}" == "latest" ]]; then
-              S3_URI=$(aws s3 cp "s3://jax-ci-amd/rocm-wheels/LATEST" -)
-              echo "Resolved LATEST pointer to: ${S3_URI}"
+              RESOLVED_S3_URI=$(curl -fsSL "${ROCM_WHEELS_BASE_URL}/rocm-wheels/LATEST" | tr -d '[:space:]')
+              WHEELS_PATH="${RESOLVED_S3_URI#s3://jax-ci-amd/}"
+              echo "Resolved LATEST pointer to: ${WHEELS_PATH}"
             else
-              S3_URI="${INPUTS_S3_DOWNLOAD_URI}"
+              WHEELS_PATH="${INPUTS_S3_DOWNLOAD_URI#s3://jax-ci-amd/}"
             fi
 
-            echo "Downloading ROCm wheels from ${S3_URI}..."
-            aws s3 cp --recursive "${S3_URI}/" $(pwd)/dist/ \
-              --exclude "*" \
-              --include "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-*-py3-none-manylinux*.whl" \
-              --include "jax_rocm${JAXCI_ROCM_VERSION}_plugin-*-${PYTHON_MAJOR_MINOR}*manylinux*.whl"
+            WHEELS_URL="${ROCM_WHEELS_BASE_URL}/${WHEELS_PATH%/}"
+            echo "Downloading ROCm wheels from ${WHEELS_URL}..."
+
+            LISTING=$(curl -fsSL "${WHEELS_URL}/")
+            FILES=$(echo "$LISTING" | grep -oE 'href="[^"]+\.whl"' | cut -d'"' -f2)
+            PJRT_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-" | head -n1)
+            PLUGIN_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_plugin-" | grep "${PYTHON_MAJOR_MINOR}" | head -n1)
+
+            if [[ -z "${PJRT_FILE}" || -z "${PLUGIN_FILE}" ]]; then
+              echo "Could not find ROCm PJRT or plugin wheels in ${WHEELS_URL}"
+              exit 1
+            fi
+
+            PYTHON_BIN="python${INPUTS_PYTHON}"
+            "${PYTHON_BIN}" -m pip download --dest "$(pwd)/dist" "${WHEELS_URL}/${PJRT_FILE}" "${WHEELS_URL}/${PLUGIN_FILE}"
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
             $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/
