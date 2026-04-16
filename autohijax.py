@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import numpy as np
 
 import jax
+import jax.numpy as jnp
+from jax._src.array import ArrayImpl
 from jax._src.tree_util import FlatTree
 from jax._src import core as jax_core
 from jax._src import pjit as pjit
@@ -18,13 +20,17 @@ map, unsafe_map = safe_map, map
 
 # TODO
 #   [x] multiple outputs / pytrees
-#   [ ] vjp
+#   [x] vjp (basic)
+#   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
 #   [ ] cond
 #   [ ] system for importing existing primitives
 #   [ ] custom_vjp
 #   [ ] scan
 
+
+# TODO eventually
+#  [ ] eager DCE under AD (weakref tape etc)
 
 # === lojax interface ===
 
@@ -139,7 +145,7 @@ ctx = TraceTimeContext(base_trace)
 # Tracer for the BaseTrace
 class Val(Tracer):
   trace = base_trace
-  val : Any  # tuple tree of lojax "vals" (tracers or concrete vals)
+  val : Any  # tuple tree of lojax "vals" (DJP tracers or concrete vals)
   ty : Ty
   def __init__(self, val, ty):
     self.val = val
@@ -163,6 +169,9 @@ class VJPTrace(Trace):
       return val
     else:
       breakpoint()
+
+  def bind(self, op, *args):
+    return op.vjp(self, *args)
 
   def simple_bind(self, op, *args):
     primals = tuple(arg.primal for arg in args)
@@ -207,14 +216,12 @@ def vjp(f, args, ct_right):
   parent_trace = ctx.cur_trace
   trace = VJPTrace(parent_trace)
   tracers = args_ft.map(trace.new_arg)
-  ctx.cur_trace = trace
-  ans_pytree = f(*tracers.unflatten())
-  ans_ft = FlatTree.flatten(ans_pytree).map(lift)
-  ctx.cur_trace = parent_trace
-  tape = trace.tape
+  with ctx.set_current_trace(trace):
+    ans_pytree = f(*tracers.unflatten())
+    ans_ft = FlatTree.flatten(ans_pytree).map(lift)
   ct_right_ft= FlatTree.flatten(ct_right)  
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
-  while tape: tape.pop()()  # backward pass
+  while trace.tape: trace.tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
   return ct_left.unflatten()
 
@@ -258,6 +265,9 @@ jit = partial(partial, jit_call)
 # TODO: allow more context for handlers to handle binops
 literal_handlers[int]   = lambda x: Val(x, ArrayTy((), np.int32))
 literal_handlers[float] = lambda x: Val(x, ArrayTy((), np.float32))
+literal_handlers[ArrayImpl] = lambda x: Val(x, ArrayTy(x.shape, x.dtype))
+literal_handlers[jax_core.Tracer] = lambda x: Val(x, ArrayTy(x.shape, x.dtype))
+literal_handlers[pe.DynamicJaxprTracer] = lambda x: Val(x, ArrayTy(x.shape, x.dtype))
 
 @dataclass(frozen=True)
 class ArrayTy(Ty):
@@ -304,6 +314,40 @@ def mul(x, y):
   y_ = lift(y)
   return ctx.cur_trace.simple_bind(Mul(), x_, y_)
 
+# === calling lojax ===
+
+class CallLojax(Op):
+  def __init__(self, f):
+    self.f = f
+
+  def lower(self, trace, args_ft):
+    lo_args = args_ft.map(lambda x: x.val).unflatten()
+    ans = self.f(*lo_args)
+    return FlatTree.flatten(ans).map(lift)
+
+  def vjp(self, trace, args_ft):
+    # TODO: Higher-order AD! Don't assume parent trace is BaseTrace (.val might not exist)
+    primals = args_ft.map(lambda x: x.primal.val).unflatten()
+    with ctx.set_current_trace(trace.parent):
+      ans, f_vjp = jax.vjp(self.f, *primals)
+      ans_ft = FlatTree.flatten(ans).map(lift)
+    left_accums = args_ft.map(lambda x: x.accum)
+    right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
+    def bwd():
+      right_ct_ft = right_accum.map(lambda x: x.finalize())
+      right_ct = right_ct_ft.map(lambda x: lift(x).val).unflatten()
+      left_cts = f_vjp(right_ct)
+      left_cts_ft = FlatTree.flatten(left_cts).map(lift)
+      return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts_ft)
+
+    trace.tape.append(bwd)
+    return ans_ft.map2(lambda p, acc: VJPTracer(trace, p, acc), right_accum)
+
+def call_lojax(f, *args):
+  args_ft = FlatTree.flatten(args).map(lift)
+  result = ctx.cur_trace.bind(CallLojax(f), args_ft)
+  return result.unflatten()
+
 # === user level ===
 
 @jit
@@ -317,10 +361,15 @@ def bar(x, y):
 print(foo(1, 2))
 print(bar(1, 2))
 
-print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+# print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+
+# @jit
+def baz(x):
+  return mul(call_lojax(jnp.sin, x),  x)
 
 
-
+print(baz(1.0))
+print(vjp(baz, (1.0,), 1.0))
 
 
 
