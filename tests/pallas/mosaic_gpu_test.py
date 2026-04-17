@@ -217,8 +217,6 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   def default_transforms(
       self, *, swizzle: int = 128, dtype: jnp.dtype
   ) -> Sequence[plgpu.Transform]:
-    if self.is_wg_semantics():
-      return ()
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
     return (
         plgpu.TilingTransform((8, swizzle_elems)),
@@ -600,11 +598,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.SwizzleTransform(128),
     )
 
-    if self.is_wg_semantics():
-      pallas_call_transforms = ()
-    else:
-      pallas_call_transforms = transforms
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
@@ -613,7 +606,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
             plgpu.SMEM(
                 x.shape,
                 dtype,
-                transforms=pallas_call_transforms,
+                transforms=transforms,
             ),
             plgpu.Barrier(),
         ],
@@ -2371,10 +2364,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_smem_aliasing_works_basic(self):
     in_shape = (2, 256)
-    if self.is_wg_semantics():
-      transforms = ()
-    else:
-      transforms = (plgpu.TilingTransform((64,)),)
+    transforms = (plgpu.TilingTransform((64,)),)
 
     @functools.partial(
         self.pallas_call,
@@ -2414,13 +2404,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
       # Ensure that the transforms provided in the scratch shapes have been
       # passed correctly.
-      if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
-        [extract_alias_transform] = smem_ref128.transforms
-        self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-      else:
-        extract_alias_transform, tile_transform = smem_ref128.transforms
-        self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-        self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
+      extract_alias_transform, tile_transform = smem_ref128.transforms
+      self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
+      self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
 
       smem_ref256[...] = x_ref[...] + 1
       plgpu.commit_smem()
@@ -5147,9 +5133,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       transforms = (plgpu.TilingTransform((8, 8)),)
     else:
       transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
-
-    if self.is_wg_semantics():
-      transforms = ()
 
     def kernel(x_gmem, y_gmem, smem, tma_barrier, mma_barrier, tmem):
       plgpu.copy_gmem_to_smem(x_gmem, smem, tma_barrier)

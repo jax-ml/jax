@@ -1103,7 +1103,7 @@ def lower_jaxpr_to_module(
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
+    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
@@ -1640,6 +1640,35 @@ def _bubble_up_transform(
   )
 
 
+def _reinterpret_cast(ref: ir.Value, new_ref_aval: state_types.AbstractRef) -> ir.Value:
+  ref_ty = ir.MemRefType(ref.type)
+  strides, offset = ref_ty.get_strides_and_offset()
+  # A sanity check. It doesn't do much to check that an offset is dynamic, but
+  # if we ever get here through an unexpected path that slices with a non-zero
+  # static offset, we'll at least catch it.
+  assert offset == 0  or offset == ir.ShapedType.get_dynamic_stride_or_offset()
+  expected_strides = mgpu_utils.get_contiguous_strides(ref_ty.shape)
+  if expected_strides != strides:
+    raise NotImplementedError(
+        f"Expected contiguous strides {expected_strides} when applying "
+        f"reinterpret_cast to {ref_ty} but got {strides}"
+    )
+  if offset == 0:
+    layout = None
+  else:
+    layout = ir.StridedLayoutAttr.get(
+        offset, mgpu_utils.get_contiguous_strides(new_ref_aval.shape)
+    )
+  new_ty = ir.MemRefType.get(
+      new_ref_aval.shape, mgpu_utils.dtype_to_ir_type(new_ref_aval.dtype),
+      memory_space=ref_ty.memory_space,
+      layout=layout
+  )
+  if new_ty == ref_ty:
+    return ref
+  return mgpu.dialect.reinterpret_cast(new_ty, ref)
+
+
 def _handle_transforms(
     ctx: LoweringRuleContext,
     ref_aval: state_types.AbstractRef,
@@ -1663,6 +1692,29 @@ def _handle_transforms(
       transforms,
       ctx.module_ctx.lowering_semantics,
   )
+
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    spec_transforms = []
+    num_block_spec_transforms = 0
+    for t in transforms:
+      if isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)):
+        spec_transforms = [t.undo(ref_aval)] + spec_transforms
+        ref_aval = cast(state_types.AbstractRef, t.transform_type(ref_aval))
+        num_block_spec_transforms += 1
+      else:
+        break
+    assert isinstance(ref, ir.Value)
+    if spec_transforms:
+      transforms_attr = ir.ArrayAttr.get([
+          gpu_core.to_transform_attr(t) for t in spec_transforms
+      ])
+      ref = mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+      transforms = transforms[num_block_spec_transforms:]
+      transform_avals = transform_avals[num_block_spec_transforms:]
+      if any(isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)) for t in transforms):
+        raise ValueError("Unexpected untiling or unswizzle transform found in "
+                         f"remaining transforms: {transforms}.")
+
   transformed_ref: Any = ref
   new_transforms = []
   new_transforms_avals = []
@@ -4403,10 +4455,26 @@ def _jaxpr_call_lowering_rule(
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
       assert isinstance(ref_aval, state_types.AbstractRef)
-      ref, _, _ = _handle_transforms(
+      ref, ref_aval, _ = _handle_transforms(
           ctx, ref_aval, ref, transform_avals, transforms,
           handle_reshapes=False, handle_transposes=False
       )
+      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+        # In warpgroup semantics, we must reapply the transforms that were on
+        # the `BlockSpec` here, as the below expects the transformed value to be
+        # fed in.
+        spec_transforms = tuple(
+            t for t in transforms
+            if isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef))
+        )
+        if spec_transforms != transforms[:len(spec_transforms)]:
+          raise NotImplementedError(
+              "Encountered non-leading UntilingTransform or UnswizzleRef "
+              f"transforms: {transforms}"
+          )
+        for t in pallas_core.undo_transforms(ref_aval, spec_transforms):
+          ref_aval = cast(state_types.AbstractRef, t.transform_type(ref_aval))
+        ref = _reinterpret_cast(ref, ref_aval)
     args.append(ref)
   program_ids = program_ids_treedef.unflatten(flat_program_ids)
   for axis, pid in enumerate(program_ids):
