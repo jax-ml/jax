@@ -67,6 +67,24 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
     return x
 
 
+def _check_sparsecore_availability(kernel_type: tpu_core.CoreType) -> None:
+  if kernel_type in (
+      tpu_core.CoreType.SC_SCALAR_SUBCORE,
+      tpu_core.CoreType.SC_VECTOR_SUBCORE,
+  ):
+    if not tpu_info.is_tpu_device():
+      raise ValueError(
+          "SparseCore kernels are only supported on TPU, but the current"
+          f" device is {tpu_info.get_device_kind()}."
+      )
+    info = tpu_info.get_tpu_info()
+    if not info.sparse_core:
+      raise ValueError(
+          "SparseCore is not available on the current device"
+          f" ({info.chip_version}), but the kernel type is set to SparseCore."
+      )
+
+
 def _get_memory_space_from_aval(
     out_aval: jax_core.AbstractValue, kernel_type: tpu_core.CoreType
 ) -> tpu_custom_call.MemorySpace | None:
@@ -392,6 +410,8 @@ def pallas_call_tpu_lowering_rule(
       raise ValueError(f"Unsupported kernel type: {kernel_type}")
   mpmd_meshes = {kernel_type: mesh}
 
+  _check_sparsecore_availability(kernel_type)
+
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -504,6 +524,9 @@ def mpmd_map_tpu_lowering_rule(
     for mesh, jaxpr, grid_mapping in zip(
         meshes, jaxprs, grid_mappings, strict=True
     ):
+
+      _check_sparsecore_availability(mesh.core_type)
+
       if not hasattr(mesh, "core_type") or not hasattr(
           mesh, "dimension_semantics"
       ):

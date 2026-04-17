@@ -18,6 +18,7 @@ import functools
 import itertools
 import math
 import re
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -26,9 +27,11 @@ import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -2891,6 +2894,90 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
 
 class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
   USE_TC_TILING = True
+
+
+class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+
+  def test_sparsecore_availability_check(self):
+
+    def pallas_kernel(x_ref, o_ref):  # pylint: disable=unused-argument
+      pass
+
+    @jax.jit
+    def kernel(x):
+      return pl.pallas_call(
+          pallas_kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
+          ),
+      )(x)
+
+    x = jnp.ones((8,), dtype=jnp.bfloat16)
+
+    if tpu_info.is_tpu_device():
+      if tpu_info.get_tpu_info().sparse_core is None:
+        with self.assertRaisesRegex(
+            ValueError, "SparseCore is not available on the current device"
+        ):
+          kernel.lower(x).compile()
+      else:
+        # Should work on devices with SparseCore
+        hlo = kernel.lower(x).as_text("hlo")
+        self.assertIn("custom-call", hlo)
+    else:
+      with self.assertRaisesRegex(
+          ValueError,
+          "Only interpret mode is supported on CPU",
+      ):
+        kernel.lower(x).compile()
+
+  def test_mpmd_map_sparsecore_availability_check(self):
+    mesh = mock.MagicMock(spec=mesh_lib.AbstractMesh)
+    mesh.devices = tuple(jax.devices()[:1])
+    mesh.axis_names = ("x",)
+    mesh.axis_sizes = {"x": 1}
+    mesh.shape = {"x": 1}
+    mesh.core_type = pltpu.CoreType.SC_VECTOR_SUBCORE
+    mesh.dimension_semantics = [pltpu.GridDimensionSemantics.PARALLEL]
+    mesh.default_memory_space = pltpu.VMEM
+
+    def kernel_fn(x_ref, o_ref):  # pylint: disable=unused-argument
+      pass
+
+    @jax.jit
+    def run_mpmd(x):
+      return mpmd.mpmd_map(
+          [(mesh, kernel_fn)],
+          out_shapes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          compiler_params=pltpu.CompilerParams(
+              kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
+          ),
+      )(x)
+
+    x = jnp.ones((8,), dtype=jnp.bfloat16)
+
+    if tpu_info.is_tpu_device():
+      if tpu_info.get_tpu_info().sparse_core is None:
+        with self.assertRaisesRegex(
+            ValueError, "SparseCore is not available on the current device"
+        ):
+          run_mpmd.lower(x).compile()
+      else:
+        # Should work on devices with SparseCore
+        hlo = run_mpmd.lower(x).as_text("hlo")
+        self.assertIn("custom-call", hlo)
+    else:
+      with self.assertRaisesRegex(
+          ValueError,
+          "Only interpret mode is supported on CPU",
+      ):
+        run_mpmd.lower(x).compile()
 
 
 if __name__ == "__main__":

@@ -1412,25 +1412,32 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
-    args = if_oss(
-        [],
-        google_value = [
-            "--xla_tpu_enable_mlir_verifier=ALL",
-        ],
-    ),
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+            ],
+        ),
+    },
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
+        "tpu_v4",
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
+        "cpu",
     ],
     shard_count = 10,
     deps = [
         "//jax/_src:hypothesis_test_util",
+        "//jax/_src:mesh",
+        "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:tpu_info",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",
