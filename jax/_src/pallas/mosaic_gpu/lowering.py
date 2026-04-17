@@ -4311,6 +4311,7 @@ def _semaphore_signal_lowering_rule(
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.semaphore_wait_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(primitives.semaphore_wait_p, *gpu_core.WGxWARP_SEMANTICS)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   sem_aval, transform_avals, *_ = tree_util.tree_unflatten(

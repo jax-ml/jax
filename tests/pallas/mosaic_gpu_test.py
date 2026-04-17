@@ -7489,8 +7489,6 @@ class SemaphoreTest(PallasTest):
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
   def test_global_semaphore_with_multiple_warps(self):
-    self.skip_if_wg_semantics()
-
     def body(out_ref):
       wg_idx = lax.axis_index("wg")
       sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
