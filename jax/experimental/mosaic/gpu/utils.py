@@ -406,8 +406,8 @@ block_idx = functools.partial(_3d_to_1d_idx, gpu.block_id, gpu.grid_dim)
 def _warp_bcast(val, lane_idx=0):
   i32 = ir.IntegerType.get_signless(32)
   mask = c(0xFFFFFFFF, i32)
-  return nvvm.shfl_sync(
-      mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
+  return nvvm.shfl_sync(  # pyrefly: ignore[missing-argument]
+      mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx  # pyrefly: ignore[bad-argument-type]
   )
 
 
@@ -1646,12 +1646,12 @@ def warp_tree_reduce(value, op, group_size):
     )
   iters = int(iters)
   for i in range(iters):
-    other_result = nvvm.shfl_sync(
+    other_result = nvvm.shfl_sync(  # pyrefly: ignore[missing-argument]
         c(0xFFFFFFFF, i32),
         result,
         c(1 << i, i32),
         c(0x1F, i32),
-        nvvm.ShflKind.bfly,
+        nvvm.ShflKind.bfly,  # pyrefly: ignore[bad-argument-type]
     )
     result = op(result, other_result)
 
@@ -1820,12 +1820,12 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
         )
       return bitcast(y, result_type)
     x = bitcast(x, i32)
-  y = nvvm.shfl_sync(
+  y = nvvm.shfl_sync(  # pyrefly: ignore[missing-argument]
       c(0xFFFFFFFF, i32),
       x,
       distance,
       c(0x1F, i32),
-      nvvm.ShflKind.bfly,
+      nvvm.ShflKind.bfly,  # pyrefly: ignore[bad-argument-type]
   )
   if (x_bitwidth := bitwidth(result_type)) < 32:
     bits_ty = ir.IntegerType.get_signless(x_bitwidth)
@@ -2135,8 +2135,8 @@ def nanosleep(nanos: ir.Value):
 def nvvm_mbarrier_arrive_expect_tx(
     barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None
 ):
-  return nvvm.mbarrier_arrive_expect_tx(
-      barrier, expect_tx, predicate=predicate
+  return nvvm.mbarrier_arrive_expect_tx(  # pyrefly: ignore[missing-argument]
+      barrier, expect_tx, predicate=predicate  # pyrefly: ignore[bad-argument-type]
   )
 
 
