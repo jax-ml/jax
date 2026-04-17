@@ -1145,6 +1145,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   def tearDown(self):
     super().tearDown()

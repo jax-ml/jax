@@ -904,6 +904,8 @@ class CompatTest(bctu.CompatTestBase):
       data = self.load_testdata(rocm_threefry2x32.data_2026_02_05)
       self.run_one_test(func, data)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_tpu_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
@@ -1138,6 +1140,8 @@ class CompatTest(bctu.CompatTestBase):
 
 class ShardyCompatTest(bctu.CompatTestBase):
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_shardy_sharding_ops_with_different_meshes(self):
     # Tests whether we can save and load a module with meshes that have the
     # same axis sizes (and same order) but different axis names.

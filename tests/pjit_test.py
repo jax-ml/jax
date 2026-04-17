@@ -96,9 +96,13 @@ def check_1d_2d_mesh(f, set_mesh):
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
 
-# TODO(skye): make the buffer donation utils part of JaxTestCase
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitTest(jtu.BufferDonationTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @jtu.with_mesh([('x', 1)])
   def testDeviceBufferAval(self):
@@ -1303,6 +1307,29 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(z)
     self.assertArraysEqual(a, x * 2)
 
+  def test_concurrent_pjit(self):
+    global_mesh = jtu.create_mesh((1,), ('x',))
+    sharding = NamedSharding(global_mesh, P('x',))
+    n = 10
+    with jax.set_mesh(global_mesh):
+      fs = [pjit(lambda x, i: x + i, static_argnums=1) for _ in range(n)]
+      def _invoke_with_mesh_twice(arg_tuple):
+        f, x, i = arg_tuple
+        with jax.set_mesh(global_mesh):
+          f(x, i)
+          return f(x, i)
+
+      xs = [
+          array.make_array_from_callback(
+              (i,), sharding, lambda idx: np.arange(i, dtype=np.float32))
+          for i in range(n)
+      ]
+      with concurrent.futures.ThreadPoolExecutor() as executor:
+        ys = executor.map(_invoke_with_mesh_twice,
+                          [(fs[i], x, i) for i, x in enumerate(xs)])
+      for i, x, y in zip(range(n), xs, ys):
+        self.assertAllClose(x + i, y)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class AutoShardingPjitTest(jtu.JaxTestCase):
@@ -1480,6 +1507,11 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPjitTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @parameterized.named_parameters(
     ('fully_sharded_output', P('x', 'y'), (2, 4)),
@@ -2301,30 +2333,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"output sharding with device ids \[0\].*sharding_constraint inside "
         r"jit with device ids.*"):
       sharded_zeros((4096, 3072), P('x', 'y'))
-
-  def test_concurrent_pjit(self):
-    global_mesh = jtu.create_mesh((1,), ('x',))
-    sharding = NamedSharding(global_mesh, P('x',))
-    n = 10
-    with global_mesh:
-      fs = [pjit(lambda x, i: x + i, static_argnums=1) for _ in range(n)]
-
-      def _invoke_with_mesh_twice(arg_tuple):
-        f, x, i = arg_tuple
-        with global_mesh:
-          f(x, i)
-          return f(x, i)
-
-      xs = [
-          array.make_array_from_callback(
-              (i,), sharding, lambda idx: np.arange(i, dtype=np.float32))
-          for i in range(n)
-      ]
-      with concurrent.futures.ThreadPoolExecutor() as executor:
-        ys = executor.map(_invoke_with_mesh_twice,
-                          [(fs[i], x, i) for i, x in enumerate(xs)])
-      for i, x, y in zip(range(n), xs, ys):
-        self.assertAllClose(x + i, y)
 
   def test_wsc_eager_copy(self):
     sharding = make_single_device_sharding(jax.devices()[0])
@@ -10798,6 +10806,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @check_1d_2d_mesh(set_mesh=True)
   def testNonDivisibleArgs(self, mesh, resources):

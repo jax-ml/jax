@@ -271,6 +271,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.skipTest("Requires at least Ampere arch")
     if jtu.is_cuda_version_at_least(13, 0):
       self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @jtu.sample_product(
       batch_size=[4],
@@ -753,6 +755,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_sdpa_residual(self):
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
