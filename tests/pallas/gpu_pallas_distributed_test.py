@@ -193,8 +193,6 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   def default_transforms(
       self, *, swizzle: int = 128, dtype: jnp.dtype
   ) -> Sequence[plgpu.Transform]:
-    if self.is_wg_semantics():
-      return ()
     swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
     return (
         plgpu.TilingTransform((8, swizzle_elems)),
