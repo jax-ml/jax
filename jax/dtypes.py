@@ -27,4 +27,5 @@ from jax._src.dtypes import (
     prng_key as prng_key,
     result_type as result_type,
     scalar_type_of as scalar_type_of,
+    TypePromotionError as TypePromotionError,
 )

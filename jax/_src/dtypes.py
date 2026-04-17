@@ -765,8 +765,12 @@ _standard_x64_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=True)
 _standard_x32_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=False)
 _strict_lattice_ubs = _make_lattice_upper_bounds(strict=True, x64=True)
 
+
+@export
 class TypePromotionError(ValueError):
+  """Raised when JAX type promotion fails."""
   pass
+
 
 # We don't use util.memoize because there is no implicit X64 dependence.
 @functools.lru_cache(512)
