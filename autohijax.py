@@ -44,15 +44,15 @@ def start_djt(tys) -> pe.DynamicJaxprTracer:
   lojax_traces.append(trace)
   return tys.map(lambda t: trace.new_arg(t, None))
 
-def end_djt(result) -> jax_core.Jaxpr:
+def end_djt(result) -> tuple[jax_core.ClosedJaxpr, list]:
   trace = lojax_traces.pop()
   jax_core.trace_ctx.set_trace(lojax_traces[-1])
   jaxpr, consts = trace.frame.to_jaxpr(trace, list(result), None, None)
-  return jax_core.ClosedJaxpr(jaxpr, consts)
+  return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr)), consts
 
-def emit_jit_call(jaxpr, args):
+def emit_jit_call(jaxpr, consts, args):
   # TODO: figure out how to generate jit params so we can do this without roundtripping
-  return jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*args)
+  return jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*consts, *args)
 
 # === core ===
 
@@ -253,8 +253,8 @@ class LeaveJit(Op):
   def lower(self, trace, result):
     enter_ctx = trace.ctx.pop()
     assert isinstance(enter_ctx, EnterJitCtx)
-    jaxpr = end_djt(result.map(lambda x: x.val))
-    lo_ans = emit_jit_call(jaxpr, enter_ctx.lo_args)
+    jaxpr, consts = end_djt(result.map(lambda x: x.val))
+    lo_ans = emit_jit_call(jaxpr, consts, enter_ctx.lo_args)
     return result.map2(lambda x, lo: Val(lo, x.ty), lo_ans)
 
 # TODO: cache and curry
@@ -382,13 +382,11 @@ class LeaveScan(Op):
   def lower(self, trace, c, y):
     ec = trace.ctx.pop()
     assert isinstance(ec, EnterScanCtx)
-    jaxpr = end_djt(FlatTree.pack((c, y)).map(lambda x: x.val))
-    # TODO: use scan_p.bind instead of round-tripping
-    def scan_body(c_, x_):
-      results = jax_core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *c_, *x_)
-      return split_list(results, [len(c_)])
-
-    c, ys = jax.lax.scan(scan_body, list(ec.lo_carry), list(ec.lo_xs), length=ec.length)
+    jaxpr, consts = end_djt(FlatTree.pack((c, y)).map(lambda x: x.val))
+    c_ys = jax.lax.scan_p.bind(*consts, *ec.lo_carry, *ec.lo_xs, jaxpr=jaxpr,
+                               length=ec.length, reverse=False, unroll=1,
+                               num_consts=len(consts), num_carry=len(ec.lo_carry))
+    c, ys = split_list(c_ys, [len(ec.lo_carry)])
     return lift_ft((c, ys))
 
 def scan(body, c, xs, length):
