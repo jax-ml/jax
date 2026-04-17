@@ -429,7 +429,6 @@ def lower_jaxpr_into_module(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         mpmd_meshes=mpmd_meshes,
     )
-    mlir_func.attributes["sc.is_transform_indices"] = ir.UnitAttr.get()
     assert mlir_func.verify(), mlir_func
     module.body.append(mlir_func)
     assert func_name not in sym_tab
