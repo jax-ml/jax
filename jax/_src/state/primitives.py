@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import json
 import types
 from typing import Any, Union
 
@@ -46,7 +47,6 @@ from jax._src.state.types import (
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
-from jax._src.lib.mlir import ir
 
 
 # Stand-in for hi-jax inputs to Ref.
@@ -1149,16 +1149,16 @@ def _pin_abstract_eval(aval, *, to):
 def _lower_pin(ctx, x_op, *, to):
   color = {'vmem': 1, 'hbm': 0, None: None}[to]
   if color is not None:
-    backend_config = {
-        "custom_call_config": ir.DictAttr.get({
-            "output_memory_space_colors": ir.ArrayAttr.get([
-                ir.DictAttr.get({
-                    "shape_index": ir.ArrayAttr.get([]),
-                    "color": mlir.i32_attr(color)
-                })
-            ])
-        })
-    }
+    backend_config = json.dumps({
+        "custom_call_config": {
+            "output_memory_space_colors": [
+                {
+                    "shape_index": [],
+                    "color": str(color)
+                }
+            ]
+        }
+    })
     config: dict[str, Any] = dict(backend_config=backend_config)
   else:
     config = {}
