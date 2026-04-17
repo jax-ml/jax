@@ -175,7 +175,7 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
                       message='`with mesh:` context manager')
   def test_sync_global_devices_mesh_context_manager(self):
     global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       multihost_utils.sync_global_devices('test sync global devices')
 
   def test_assert_equal_global(self):
