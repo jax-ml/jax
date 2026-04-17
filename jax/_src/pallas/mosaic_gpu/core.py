@@ -148,7 +148,7 @@ class MemorySpace(enum.Enum):
   def __call__(
       self,
       shape: Sequence[int],
-      dtype: jnp.dtype,
+      dtype: jax.typing.DTypeLike,
       *,
       transforms: Sequence[state_types.Transform] = (),
       packed: bool | None = None,
@@ -421,7 +421,7 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
 
 def infer_tmem_layout(
     shape: tuple[int, ...],
-    dtype: jnp.dtype,
+    dtype: jax.typing.DTypeLike,
     *,
     packed: bool,
     collective: bool) -> tcgen05.TMEMLayout:
@@ -989,7 +989,7 @@ class UnswizzleRef(state_types.Transform):
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return SwizzleTransform(self.swizzle)
 
-  def swizzle_elems(self, dtype: jnp.dtype | ir.Type) -> int:
+  def swizzle_elems(self, dtype: jax.typing.DTypeLike | ir.Type) -> int:
     if not isinstance(dtype, ir.Type):
       dtype = mgpu_utils.dtype_to_ir_type(dtype)
     return (self.swizzle * 8) // mgpu.bitwidth(dtype)
