@@ -13,7 +13,7 @@ from jax._src import core as jax_core
 from jax._src import pjit as pjit
 from jax._src import dtypes
 from jax._src.interpreters import partial_eval as pe
-from jax._src.util import safe_zip, safe_map, split_list
+from jax._src.util import safe_zip, safe_map, split_list, unzip2
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
@@ -162,11 +162,19 @@ class Val(Tracer):
 
 # === VJP ===
 
+@dataclass
+class VjpTraceCtx:
+  tape: list[Callable[[], None]]
+
 class VJPTrace(Trace):
-  tape: list[Callable]
+  ctx : list[VjpTraceCtx]
   def __init__(self, parent):
-    self.tape = []
+    self.ctx = []
     self.parent = parent
+
+  @property
+  def tape(self):
+    return self.ctx[-1].tape
 
   def new_arg(self, val):
     return VJPTracer(self, val, Accumulator(val.ty.tangent_ty()))
@@ -186,13 +194,13 @@ class VJPTrace(Trace):
     left_accums = tuple(arg.accum for arg in args)
     with ctx.set_current_trace(self.parent):
       ans = ctx.cur_trace.simple_bind(op, *primals)
-      pullbacks = op.simple_vjp(ans, *primals)
+      res, pullbacks = unzip2(op.simple_vjp(ans, *primals))
     right_accum = Accumulator(ans.ty.tangent_ty())
-    def bwd():
+    def bwd(res):
       ct = right_accum.finalize()
-      for pullback, left_accum in zip(pullbacks, left_accums):
-        left_accum.accum(pullback(ct))
-    self.tape.append(bwd)
+      for r, pullback, left_accum in zip(res, pullbacks, left_accums):
+        left_accum.accum(pullback(r, ct))
+    self.tape.append(Pullback(res, bwd))
     return VJPTracer(self, ans, right_accum)
 
 class VJPTracer(Tracer):
@@ -221,14 +229,14 @@ def vjp(f, args, ct_right):
   # TODO: zeros on fwd and bwd
   # TODO: think about how to handle refs
   args_ft = lift_ft(args)
-  parent_trace = ctx.cur_trace
-  trace = VJPTrace(parent_trace)
+  trace = VJPTrace(ctx.cur_trace)
+  trace.ctx.append(VjpTraceCtx(tape := []))
   tracers = args_ft.map(trace.new_arg)
   with ctx.set_current_trace(trace):
     ans_ft = lift_ft(f(*tracers.unflatten()))
   ct_right_ft = lift_ft(ct_right)
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
-  while trace.tape: trace.tape.pop()()  # backward pass
+  while tape: tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
   return ct_left.unflatten()
 
@@ -238,16 +246,38 @@ def vjp(f, args, ct_right):
 class EnterJitCtx(BaseTraceCtx):
   lo_args : tuple
 
+@dataclass
+class EnterJitVjpCtx(VjpTraceCtx):
+  left_accum: FlatTree
+  local_left_accum: FlatTree
+
+@dataclass
+class Pullback:
+  res: Any
+  pull: Callable
+  def __call__(self, *args):
+    return self.pull(self.res, *args)
+  def __iter__(self):
+    return iter((self.res, self.pull))
+
 class EnterJit(Op):
-  def lower(self, trace, args):
+  def lower(self, trace: BaseTrace, args):
     # TODO: two levels of multiplicity: args can be a tree. And also
     # each arg can be a tree of lojax values.
-    arg_vals = args.map(lambda x: x.val)
-    arg_tys  = args.map(lambda x: x.ty)
+    arg_vals, arg_tys = args.map(lambda x: (x.val, x.ty)).unzip2()
     trace.ctx.append(EnterJitCtx(arg_vals))
     arg_lo_tys = arg_tys.map(lambda t: t.lo_ty())
     local_args_lo = start_djt(arg_lo_tys)
     return local_args_lo.map2(Val, arg_tys)
+
+  def vjp(self, trace: VJPTrace, args):
+    primals, arg_accums = args.map(lambda x: (x.primal, x.accum)).unzip2()
+    with ctx.set_current_trace(trace.parent):
+      local_primals = ctx.cur_trace.bind(EnterJit(), primals)
+    local_args = local_primals.map(trace.new_arg)
+    local_left_accum = local_args.map(lambda x: x.accum)
+    trace.ctx.append(EnterJitVjpCtx([], arg_accums, local_left_accum))
+    return local_args
 
 class LeaveJit(Op):
   def lower(self, trace, result):
@@ -256,6 +286,27 @@ class LeaveJit(Op):
     jaxpr, consts = end_djt(result.map(lambda x: x.val))
     lo_ans = emit_jit_call(jaxpr, consts, enter_ctx.lo_args)
     return result.map2(lambda x, lo: Val(lo, x.ty), lo_ans)
+
+  def vjp(self, trace: VJPTrace, tracers_out):
+    enter_ctx = trace.ctx.pop()
+    primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
+    res, bwds = unzip2(enter_ctx.tape)
+    outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
+    with ctx.set_current_trace(trace.parent):
+      outs = ctx.cur_trace.bind(LeaveJit(), outs.map(lift))
+    primals_out, res = outs.unpack()
+    right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
+    def bwd(res):
+      right_ct = right_accum.map(lambda x: x.finalize())
+      res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
+      local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
+      tape = map(Pullback, res.map(lambda x: x.val).unflatten(), bwds)
+      while tape: tape.pop()()
+      left_ct = enter_ctx.local_left_accum.map(lambda a: a.finalize())
+      left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
+      enter_ctx.left_accum.map2(lambda a, ct: a.accum(ct), left_ct)
+    trace.tape.append(Pullback(res, bwd))
+    return primals_out.map2(partial(VJPTracer, trace), right_accum)
 
 # TODO: cache and curry
 def jit_call(f, *args):
@@ -295,6 +346,9 @@ class Add(SimpleOp):
     assert x_ty == y_ty
     return x_ty
 
+  def simple_vjp(self, _ans, x, y):
+    return Pullback((), lambda _, g: g), Pullback((), lambda _, g: g)
+
   def simple_lower(self, x, y):
     return x + y
 
@@ -310,7 +364,7 @@ class Mul(SimpleOp):
     return x_ty
 
   def simple_vjp(self, _ans, x, y):
-    return (lambda g: mul(g, y), lambda g: mul(x, g))
+    return Pullback(y, mul), Pullback(x, mul)
 
   def simple_lower(self, x, y): 
     return x * y
@@ -340,13 +394,13 @@ class CallLojax(Op):
       ans_ft = lift_ft(ans)
     left_accums = args_ft.map(lambda x: x.accum)
     right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    def bwd():
+    def bwd(f_vjp):
       right_ct = to_lojax(right_accum.map(lambda x: x.finalize()))
       left_cts_ft = lift_ft(f_vjp(right_ct))
       return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts_ft)
 
-    trace.tape.append(bwd)
-    return ans_ft.map2(lambda p, acc: VJPTracer(trace, p, acc), right_accum)
+    trace.tape.append(Pullback(f_vjp, bwd))
+    return ans_ft.map2(partial(VJPTracer, trace), right_accum)
 
 def call_lojax(f, *args):
   args_ft = lift_ft(args)
@@ -407,7 +461,11 @@ print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 @jit
 def foo(x, y):
-  return mul(add(x, y), 2)
+  # return mul(add(x, y), 2)
+  return mul(x, y)
+  # return add(x, y)
+
+print(vjp(foo, (1., 2.), 1.0))
 
 @jit
 def bar(x, y):
@@ -418,7 +476,7 @@ print(bar(1, 2))
 
 print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
 
-# @jit
+@jit
 def baz(x):
   return mul(call_lojax(jnp.sin, x),  x)
 
@@ -434,7 +492,6 @@ def closed_over(x, y):
   return f(x)
 
 print(closed_over(1, 2))
-
 
 
 
