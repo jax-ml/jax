@@ -19,6 +19,7 @@ import contextlib
 import dataclasses
 import enum
 import functools
+import inspect
 import math
 from typing import Any, Literal, overload
 
@@ -44,6 +45,15 @@ WARPS_IN_WARPGROUP: int = WARPGROUP_SIZE // WARP_SIZE
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
 MBARRIER_BYTES = 8
+
+
+# TODO(bchetioui): Remove once jaxlib 0.11.0 is the minimum version.
+def nvvm_shfl_sync(ty, *args):
+  first_param, *_ = inspect.signature(nvvm.shfl_sync).parameters.keys()
+  if first_param != "thread_mask":
+    return nvvm.shfl_sync(ty, *args)
+  else:
+    return nvvm.shfl_sync(*args, results=[ty])  # pyrefly: ignore=[unexpected-keyword]
 
 
 def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
@@ -406,8 +416,8 @@ block_idx = functools.partial(_3d_to_1d_idx, gpu.block_id, gpu.grid_dim)
 def _warp_bcast(val, lane_idx=0):
   i32 = ir.IntegerType.get_signless(32)
   mask = c(0xFFFFFFFF, i32)
-  return nvvm.shfl_sync(
-      mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
+  return nvvm_shfl_sync(
+      val.type, mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
   )
 
 
@@ -1646,12 +1656,13 @@ def warp_tree_reduce(value, op, group_size):
     )
   iters = int(iters)
   for i in range(iters):
-    other_result = nvvm.shfl_sync(
+    other_result = nvvm_shfl_sync(
+        result.type,
         c(0xFFFFFFFF, i32),
         result,
         c(1 << i, i32),
         c(0x1F, i32),
-        nvvm.ShflKind.bfly,
+        nvvm.ShflKind.bfly
     )
     result = op(result, other_result)
 
@@ -1820,12 +1831,13 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
         )
       return bitcast(y, result_type)
     x = bitcast(x, i32)
-  y = nvvm.shfl_sync(
+  y = nvvm_shfl_sync(
+      i32,
       c(0xFFFFFFFF, i32),
       x,
       distance,
       c(0x1F, i32),
-      nvvm.ShflKind.bfly,
+      nvvm.ShflKind.bfly
   )
   if (x_bitwidth := bitwidth(result_type)) < 32:
     bits_ty = ir.IntegerType.get_signless(x_bitwidth)
@@ -2135,8 +2147,14 @@ def nanosleep(nanos: ir.Value):
 def nvvm_mbarrier_arrive_expect_tx(
     barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None
 ):
+  # TODO(bchetioui): Remove once jaxlib 0.11.0 is the minimum version.
+  first_param, *_ = inspect.signature(nvvm.mbarrier_arrive_expect_tx).parameters.keys()
+  if first_param != "addr":
+    args = (None, barrier, expect_tx)
+  else:
+    args = (barrier, expect_tx)
   return nvvm.mbarrier_arrive_expect_tx(
-      barrier, expect_tx, predicate=predicate
+      *args, predicate=predicate  # pyrefly: ignore[bad-argument-type]
   )
 
 
