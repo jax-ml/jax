@@ -402,6 +402,45 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    shape=[(4, 4), (5, 5)],
+    dtype=complex_types,
+    left_right=[(False, True), (True, False), (True, True)],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradComplexInputs(self, shape, dtype, left_right):
+    # Small matrices only; the eigenvector derivative blows up like
+    # 1/min|w_i - w_j| so close eigenvalues make the FD check noisy.
+    left, right = left_right
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    tol = 1e-3 if dtype == np.complex128 else 5e-1
+    f = partial(lax.linalg.eig, compute_left_eigenvectors=left,
+                compute_right_eigenvectors=right, enable_eigvec_derivs=True)
+    jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (5, 5)],
+    dtype=float_types,
+    left_right=[(False, True), (True, False), (True, True)],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradRealInputs(self, shape, dtype, left_right):
+    # dgeev does not pin the sign of complex-pair eigenvectors so the primal
+    # output is itself discontinuous; compose with elementwise v -> v*v which
+    # is sign-invariant but still phase-sensitive (so still exercises the
+    # gauge-fixing part of the JVP).
+    left, right = left_right
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    tol = 1e-3 if dtype == np.float64 else 5e-1
+    def f(a):
+      out = lax.linalg.eig(a, compute_left_eigenvectors=left,
+                           compute_right_eigenvectors=right,
+                           enable_eigvec_derivs=True)
+      return (out[0],) + tuple(v * v for v in out[1:])
+    jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )

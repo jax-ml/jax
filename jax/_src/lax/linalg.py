@@ -139,6 +139,7 @@ def eig(
     *,
     compute_left_eigenvectors: bool = True,
     compute_right_eigenvectors: bool = True,
+    enable_eigvec_derivs: bool = False,
     implementation: EigImplementation | None = None,
     use_magma: bool | None = None,
 ) -> list[Array]:
@@ -169,15 +170,19 @@ def eig(
   be used if the library can be found, and the input matrix is sufficiently
   large (>= 2048x2048).
 
-  Currently autodiff is not supporteed for non-symmetric eigenvectors, and
-  is only supported to first-order for non-symmetric eigenvalues. See
-  https://github.com/jax-ml/jax/issues/2748.
-
   Args:
     x: A batch of square matrices with shape ``[..., n, n]``.
     compute_left_eigenvectors: If true, the left eigenvectors will be computed.
     compute_right_eigenvectors: If true, the right eigenvectors will be
       computed.
+    enable_eigvec_derivs: If true, enable autodiff of the returned
+      eigenvectors. The eigenvector derivative is taken under the LAPACK
+      ``geev`` normalisation (each eigenvector has unit 2-norm and its
+      largest-magnitude component is real). It is only valid when (i) all
+      eigenvalues are distinct and (ii) no eigenvector has two components
+      tied for largest magnitude. Defaults to ``False`` because these
+      conditions cannot be checked statically; see
+      https://github.com/jax-ml/jax/issues/2748 for discussion.
     use_magma: Deprecated, please use ``implementation`` instead. Locally
       override the ``jax_use_magma`` flag. If ``True``, the eigendecomposition
       is computed using MAGMA. If ``False``, the computation is done using
@@ -217,6 +222,7 @@ def eig(
     )
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors,
+                    enable_eigvec_derivs=enable_eigvec_derivs,
                     implementation=implementation)
 
 
@@ -1009,7 +1015,9 @@ def _eig_compute_attr(compute):
   )
 
 def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors, implementation):
+                      compute_right_eigenvectors, enable_eigvec_derivs,
+                      implementation):
+  del enable_eigvec_derivs
   if implementation and implementation != EigImplementation.LAPACK:
     raise ValueError("Only the lapack implementation is supported on CPU.")
   operand_aval, = ctx.avals_in
@@ -1076,7 +1084,8 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
 
 def _eig_gpu_lowering(ctx, operand, *,
                       compute_left_eigenvectors, compute_right_eigenvectors,
-                      implementation, target_name_prefix):
+                      enable_eigvec_derivs, implementation, target_name_prefix):
+  del enable_eigvec_derivs
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
   n, m = operand_aval.shape[-2:]
@@ -1188,19 +1197,64 @@ def _eig_gpu_lowering(ctx, operand, *,
     output.append(vr)
   return output
 
+def _eig_vec_jvp(dot, w, v, da):
+  # Nondegenerate perturbation theory, see e.g. Sec 3.1 of
+  # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+  # The eigenvalue equation A v_j = w_j v_j fixes v_j only up to a (complex)
+  # scalar. LAPACK's geev fixes that scalar by normalising each v_j to have unit
+  # 2-norm and real largest-magnitude component, and we differentiate through
+  # that choice. See https://github.com/jax-ml/jax/issues/2748 for discussion.
+  n = w.shape[-1]
+  eye_n = lax._eye(w.dtype, (n, n))
+  with config.numpy_rank_promotion('allow'):
+    Fmat = lax.reciprocal(eye_n + w[..., None, :] - w[..., None]) - eye_n
+  P = dot(_solve(v, da), v)
+  dw = _extract_diagonal(P)
+  U = dot(v, Fmat * P)
+  # The eigenvalue equation gives dv_j = u_j + c_j v_j with c_j free; the two
+  # real LAPACK normalisation constraints fix c_j to
+  #   c_j = -Re(v_j* . u_j) - i Im(u_{k_j j}) / v_{k_j j},  k_j = argmax_i |v_ij|.
+  k = lax.argmax(lax.abs(v), axis=v.ndim - 2, index_dtype=np.int32)
+  mask = (lax.broadcasted_iota(np.int32, v.shape, v.ndim - 2)
+          == lax.expand_dims(k, (v.ndim - 2,))).astype(v.dtype)
+  c = lax.complex(-(v.conj() * U).sum(-2).real,
+                  -(mask * U).sum(-2).imag / (mask * v).sum(-2).real)
+  return dw, U + v * lax.expand_dims(c, (v.ndim - 2,))
+
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
-                 compute_right_eigenvectors, implementation):
-  if compute_left_eigenvectors or compute_right_eigenvectors:
-    raise NotImplementedError(
-        'The derivatives of non-symmetric eigenvectors are not supported. '
-        'Only first-order derivatives of eigenvalues are supported. See '
-        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
-  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
-  # https://arxiv.org/abs/1701.00392
+                 compute_right_eigenvectors, enable_eigvec_derivs,
+                 implementation):
   a, = primals
   da, = tangents
-  l, v = eig(a, compute_left_eigenvectors=False, implementation=implementation)
-  return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
+  if compute_left_eigenvectors or compute_right_eigenvectors:
+    if not enable_eigvec_derivs:
+      raise NotImplementedError(
+          'Derivatives of non-symmetric eigenvectors are only valid under '
+          'assumptions on the input that JAX cannot check (see the '
+          'enable_eigvec_derivs argument to jax.lax.linalg.eig). Pass '
+          'enable_eigvec_derivs=True to jax.lax.linalg.eig to opt in. See '
+          'https://github.com/jax-ml/jax/issues/2748 for discussion.')
+  outs = eig(a, compute_left_eigenvectors=compute_left_eigenvectors,
+             compute_right_eigenvectors=True,
+             enable_eigvec_derivs=enable_eigvec_derivs,
+             implementation=implementation)
+  w, vr = outs[0], outs[-1]
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+  da = da.astype(vr.dtype)
+  if not (compute_left_eigenvectors or compute_right_eigenvectors):
+    return [w], [(_solve(vr, da) * _T(vr)).sum(-1)]
+  dw, dvr = _eig_vec_jvp(dot, w, vr, da)
+  primal_out, tangent_out = [w], [dw]
+  if compute_left_eigenvectors:
+    vl = outs[1]
+    _, dvl = _eig_vec_jvp(dot, w.conj(), vl, _H(da))
+    primal_out.append(vl)
+    tangent_out.append(dvl)
+  if compute_right_eigenvectors:
+    primal_out.append(vr)
+    tangent_out.append(dvr)
+  return primal_out, tangent_out
 
 eig_p = linalg_primitive(
     _eig_dtype_rule, (_float | _complex,), (2,), _eig_shape_rule, "eig",
