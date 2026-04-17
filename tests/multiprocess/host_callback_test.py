@@ -112,6 +112,8 @@ class IoCallbackMultiProcessTest(jtu.JaxTestCase,
           expected_sum_global)])
 
   @jtu.ignore_warning(category=DeprecationWarning)
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_io_callback_pjit(self):
     devices = np.array(sorted_devices()).reshape(
         (NR_PROCESSES, NR_LOCAL_DEVICES))
