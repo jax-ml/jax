@@ -570,8 +570,14 @@ class Literal:
 # The types of constants that can be used with core.Literal. Other constants
 # end up as `constvars`.
 literalable_types: set[type] = set()
+literalable_scalar_types: set[type] = set()
 
 def is_literalable(x: Any, for_ad: bool = False) -> bool:
+  x_type = type(x)
+  # Faster path for scalar types, which avoids an np.ndarray conversion.
+  if x_type in literalable_scalar_types:
+    return True
+
   # See https://docs.jax.dev/en/latest/internals/constants.html
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
@@ -581,9 +587,9 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
       return do_lit_array
   else:
     do_lit_array = False
-  for t in type(x).__mro__:
+  for t in x_type.__mro__:
     if t in literalable_types:
-      return (not np.shape(x) or do_lit_array)
+      return (not np.ndim(x) or do_lit_array)
   return False
 
 @partial(weakref_lru_cache, trace_context_in_key=False)

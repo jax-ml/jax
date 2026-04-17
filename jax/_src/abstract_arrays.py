@@ -48,6 +48,8 @@ if dtypes.int1 is not None:
   numpy_scalar_types.add(dtypes.int1)
   numpy_scalar_types.add(dtypes.uint1)
 
+core.literalable_scalar_types.update(numpy_scalar_types)
+
 array_types: set[type] = {literals.TypedNdArray, np.ndarray} | numpy_scalar_types
 
 
@@ -78,9 +80,6 @@ for t in numpy_scalar_types:
   core.pytype_aval_mappings[t] = _make_shaped_array_for_numpy_scalar
 
 core.literalable_types.update(array_types)
-
-
-core.literalable_types.add(literals.TypedNdArray)
 
 _int32_min = np.iinfo(np.int32).min
 _int32_max = np.iinfo(np.int32).max
@@ -116,11 +115,13 @@ core.pytype_aval_mappings[float] = _float_aval
 _complex_aval = lambda v: _complex128_aval if config.enable_x64.value else _complex64_aval
 core.pytype_aval_mappings[complex] = _complex_aval
 
+core.literalable_scalar_types.update(dtypes.python_scalar_types)
 core.literalable_types.update(dtypes.python_scalar_types)
 
 
 for t in literals.typed_scalar_types:
   core.pytype_aval_mappings[t] = lambda x: x.aval
+core.literalable_scalar_types.update(literals.typed_scalar_types)
 core.literalable_types.update(literals.typed_scalar_types)
 
 _ndarray_dtype_cache = {}
