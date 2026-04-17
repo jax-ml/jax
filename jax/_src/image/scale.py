@@ -71,6 +71,7 @@ def _fill_opencv_cubic_kernel(x):
 def _fill_triangle_kernel(x):
   return jnp.maximum(0, 1 - jnp.abs(x))
 
+_area_kernel = object()
 
 def compute_weight_mat(input_size: core.DimSize,
                        output_size: core.DimSize,
@@ -112,9 +113,28 @@ def compute_weight_mat(input_size: core.DimSize,
     k = 0
 
   expanded_indices = jnp.arange(-k, input_size + k, dtype=dtype)
-  x = jnp.abs(sample_f[np.newaxis, :] - expanded_indices[:, np.newaxis])
-  x = x / kernel_scale
-  weights = kernel(x)
+  if kernel is _area_kernel:
+    # Compute the left and right boundaries of each output pixel projected
+    # back into the input coordinate system.
+    L_i = jnp.arange(output_size, dtype=dtype) * inv_scale - translation * inv_scale
+    R_i = L_i + inv_scale
+
+    # Compute the left and right boundaries of each input pixel.
+    L_j = jnp.arange(input_size, dtype=dtype)
+    R_j = L_j + 1.0
+
+    # The weight is the length of the overlap between the projected output
+    # pixel interval [L_i, R_i] and the input pixel interval [L_j, R_j].
+    # The overlap of [A, B] and [C, D] is max(0, min(B, D) - max(A, C)).
+    weights = jnp.maximum(
+        0.0,
+        jnp.minimum(R_i[np.newaxis, :], R_j[:, np.newaxis])
+        - jnp.maximum(L_i[np.newaxis, :], L_j[:, np.newaxis]),
+    )
+  else:
+    x = jnp.abs(sample_f[np.newaxis, :] - expanded_indices[:, np.newaxis])
+    x = x / kernel_scale
+    weights = kernel(x)
 
   if edge_padding:
     # Some of the weights are for indices outside the input image. We use a
@@ -212,6 +232,11 @@ class ResizeMethod(enum.Enum):
   CUBIC:
     `Cubic interpolation`_, using the Keys cubic kernel.
 
+  AREA:
+    Area resampling. Computes the average of all pixels that fall within the
+    output pixel's area. When downscaling, this acts as an anti-aliasing filter.
+    When upscaling, it acts as a box filter, matching TensorFlow's behavior.
+
   .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation
   .. _Cubic interpolation: https://en.wikipedia.org/wiki/Bicubic_interpolation
   .. _Lanczos resampling: https://en.wikipedia.org/wiki/Lanczos_resampling
@@ -223,6 +248,7 @@ class ResizeMethod(enum.Enum):
   LANCZOS5 = 3
   CUBIC = 4
   CUBIC_PYTORCH = 5
+  AREA = 6
 
   # Caution: The current resize implementation assumes that the resize kernels
   # are interpolating, i.e. for the identity warp the output equals the input.
@@ -243,6 +269,8 @@ class ResizeMethod(enum.Enum):
       return ResizeMethod.CUBIC
     elif s in ['cubic-pytorch', 'bicubic-pytorch']:
       return ResizeMethod.CUBIC_PYTORCH
+    elif s == 'area':
+      return ResizeMethod.AREA
     else:
       raise ValueError(f'Unknown resize method "{s}"')
 
@@ -252,6 +280,7 @@ _kernels = {
     ResizeMethod.LANCZOS5: (5, lambda x: _fill_lanczos_kernel(5., x)),
     ResizeMethod.CUBIC: (2, _fill_keys_cubic_kernel),
     ResizeMethod.CUBIC_PYTORCH: (2, _fill_opencv_cubic_kernel),
+    ResizeMethod.AREA: (1, _area_kernel),
 }
 
 
@@ -310,6 +339,11 @@ def scale_and_translate(image, shape: core.Shape,
   ``ResizeMethod.LANCZOS5``, ``"lanczos5"``
     `Lanczos resampling`_, using a kernel of radius 5.
 
+  ``ResizeMethod.AREA``, ``"area"``
+    Area resampling. Computes the average of all pixels that fall within the
+    output pixel's area. When downscaling, this acts as an anti-aliasing filter.
+    When upscaling, it acts as a box filter, matching TensorFlow's behavior.
+
   .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation
   .. _Cubic interpolation: https://en.wikipedia.org/wiki/Bicubic_interpolation
   .. _Lanczos resampling: https://en.wikipedia.org/wiki/Lanczos_resampling
@@ -325,7 +359,8 @@ def scale_and_translate(image, shape: core.Shape,
     translation: A [K] array with the same number of dimensions as image,
       containing the translation to apply in each dimension.
     method: the resizing method to use; either a ``ResizeMethod`` instance or a
-      string. Available methods are: LINEAR, LANCZOS3, LANCZOS5, CUBIC, CUBIC_PYTORCH.
+      string. Available methods are: ``LINEAR``, ``LANCZOS3``, ``LANCZOS5``,
+      ``CUBIC``, ``CUBIC_PYTORCH``, ``AREA``.
     antialias: Should an antialiasing filter be used when downsampling? Defaults
       to ``True``. Has no effect when upsampling.
 
@@ -434,6 +469,11 @@ def resize(image, shape: core.Shape, method: str | ResizeMethod,
 
   ``ResizeMethod.LANCZOS5``, ``"lanczos5"``
     `Lanczos resampling`_, using a kernel of radius 5.
+
+  ``ResizeMethod.AREA``, ``"area"``
+    Area resampling. Computes the average of all pixels that fall within the
+    output pixel's area. When downscaling, this acts as an anti-aliasing filter.
+    When upscaling, it acts as a box filter, matching TensorFlow's behavior.
 
   .. _Nearest neighbor interpolation: https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation
   .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation

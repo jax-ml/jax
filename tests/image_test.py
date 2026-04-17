@@ -53,7 +53,7 @@ class ImageTest(jtu.JaxTestCase):
     dtype=float_dtypes,
     target_shape=_TF_SHAPES,
     image_shape=_TF_SHAPES,
-    method=["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic"],
+    method=["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic", "area"],
     antialias=[False, True],
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")

@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added `ResizeMethod.AREA` to {func}`jax.image.resize`, which matches
+    TensorFlow's AREA resizing ({jax-issue}`#20098`).
+
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use
     `with jax.set_mesh(mesh):` instead.
