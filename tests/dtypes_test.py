@@ -230,7 +230,7 @@ class DtypesTest(jtu.JaxTestCase):
            "path when jax_numpy_dtype_promotion=strict")
 
     assertTypePromotionError = functools.partial(
-      self.assertRaisesRegex, dtypes.TypePromotionError, msg,
+      self.assertRaisesRegex, jax.dtypes.TypePromotionError, msg,
       dtypes.promote_types)
 
     # Check that strong types have diagonal promotion table:
@@ -275,7 +275,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testPromoteDtypesStandard(self):
     assertTypePromotionError = functools.partial(
         self.assertRaisesRegex,
-        dtypes.TypePromotionError,
+        jax.dtypes.TypePromotionError,
         'Input dtypes .* have no available implicit dtype promotion path.',
         dtypes.promote_types,
     )
@@ -1132,7 +1132,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         continue
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(dtypes.TypePromotionError,
+      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
                                   ".*8-bit floats do not support implicit promotion"):
         x + y
 
@@ -1144,7 +1144,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         continue
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(dtypes.TypePromotionError,
+      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
                                   ".*4-bit floats do not support implicit promotion"):
         x + y
 
@@ -1159,7 +1159,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='int32')
       with self.assertRaisesRegex(
-          dtypes.TypePromotionError,
+          jax.dtypes.TypePromotionError,
           '.*[124]-bit integers do not support implicit promotion',
       ):
         x + y
@@ -1237,11 +1237,11 @@ class TestPromotionTables(jtu.JaxTestCase):
 
       try:
         result_dtype = dtypes.result_type(input_dtype, dtypes.canonicalize_dtype(output_dtype))
-      except dtypes.TypePromotionError:
+      except jax.dtypes.TypePromotionError:
         result_dtype = None
 
       if result_dtype is None and input_dtype != output_dtype:
-        with self.assertRaises(dtypes.TypePromotionError):
+        with self.assertRaises(jax.dtypes.TypePromotionError):
           dtypes.safe_to_cast(input_dtype, output_dtype)
       else:
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,

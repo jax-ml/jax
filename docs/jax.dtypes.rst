@@ -14,3 +14,4 @@
     prng_key
     result_type
     scalar_type_of
+    TypePromotionError
