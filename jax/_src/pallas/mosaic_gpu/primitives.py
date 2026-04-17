@@ -4694,6 +4694,9 @@ def _semaphore_signal_multicast_abstract_eval(
 @lowering.register_lowering_rule(
     semaphore_signal_multicast_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    semaphore_signal_multicast_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _semaphore_signal_multicast_lowering(
     ctx: lowering.LoweringRuleContext, *args, args_tree, collective_axes
 ):
@@ -4717,8 +4720,8 @@ def _semaphore_signal_multicast_lowering(
     )
   i32 = ir.IntegerType.get_signless(32)
   val = lowering._ir_constant(value, i32)
-  with lowering._wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
-    multi_ref = ctx.launch_ctx.to_remote_multicast(sem)
+  multi_ref = ctx.launch_ctx.to_remote_multicast(sem).ref
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, [multi_ref, val]) as [multi_ref, val]:
     if ctx.module_ctx.auto_barriers:
       if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
         mgpu_utils.warp_barrier()
@@ -4730,6 +4733,6 @@ def _semaphore_signal_multicast_lowering(
       predicate = ctx.module_ctx.single_lane_predicate
 
     mgpu_utils.SemaphoreRef.signal_multimem(
-        mgpu_utils.memref_ptr(multi_ref.ref), val, predicate=predicate
+        mgpu_utils.memref_ptr(multi_ref), val, predicate=predicate
     )
   return ()
