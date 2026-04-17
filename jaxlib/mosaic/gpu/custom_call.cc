@@ -1177,8 +1177,7 @@ absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
 
   return GetGpuCliqueKey(
       collective_params, {group},
-      xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-      xla::AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
+      xla::CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID);
 }
 
 // Returns device groups for a collective operation. Device groups used by
