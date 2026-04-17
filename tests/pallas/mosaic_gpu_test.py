@@ -1180,8 +1180,12 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         [ref[:, blk+32:blk+64] for blk in range(0, 512, 128)], axis=1)
     np.testing.assert_array_equal(kernel(x), ref)
 
-  @parameterized.product(indexer=[0, 1, 2, 3])
-  def test_copy_gmem_to_smem_with_indexed_barrier(self, indexer):
+  @parameterized.parameters(
+      *(dict(indexer=i, num_barriers=4) for i in [0, 1, 2, 3]),
+      dict(indexer=(0, 0), num_barriers=(2, 2)),
+      dict(indexer=(1, 1), num_barriers=(2, 2)),
+  )
+  def test_copy_gmem_to_smem_with_indexed_barrier(self, indexer, num_barriers):
 
     @functools.partial(
         self.pallas_call,
@@ -1189,7 +1193,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
             plgpu.SMEM((128,), jnp.float32),
-            plgpu.Barrier(num_barriers=4),
+            plgpu.Barrier(num_barriers=num_barriers),
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
@@ -5541,9 +5545,20 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
     np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
 
-  @parameterized.parameters((0,), (1,))
+  @parameterized.parameters(
+      dict(barrier_index=(0,), num_barriers=2),
+      dict(barrier_index=(1,), num_barriers=2),
+      dict(barrier_index=(0, 0), num_barriers=(1, 2)),
+      dict(barrier_index=(0, 1), num_barriers=(1, 2)),
+      dict(barrier_index=(1, 0), num_barriers=(2, 1)),
+  )
   def test_mma_barrier_indexing(
-      self, barrier_index, shape=(128, 128), swizzle=128, dtype=jnp.float16
+      self,
+      barrier_index,
+      num_barriers,
+      shape=(128, 128),
+      swizzle=128,
+      dtype=jnp.float16,
   ):
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
@@ -5560,7 +5575,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     scratch_shapes = [
         plgpu.TMEM(shape, jnp.float32, packed=False),
-        plgpu.Barrier(num_barriers=2, orders_tensor_core=True),
+        plgpu.Barrier(num_barriers=num_barriers, orders_tensor_core=True),
     ]
     f = self.pallas_call(
         kernel,

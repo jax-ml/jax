@@ -1148,54 +1148,60 @@ class Barrier:
     num_arrivals: The number of arrivals that will be recorded by this barrier.
     num_barriers: The number of barriers that will be created. Individual
       barriers can be accessed by indexing into the barrier Ref.
-    orders_tensor_core: If False, a successfull wait from one thread does not
+    orders_tensor_core: If False, a successful wait from one thread does not
       guarantee that the TensorCore-related operations in other threads have
       completed. Similarly, when False any TensorCore operation in the waiting
       thread is allowed to begin before the wait succeeds.
   """
   num_arrivals: int = 1
-  num_barriers: int = 1
+  num_barriers: int | Sequence[int] = ()
   orders_tensor_core: bool = False
+
+  def __post_init__(self):
+    if (n := self.num_arrivals) < 1:
+      raise ValueError(f"Num arrivals must be at least 1, but got {n}")
+
+    if isinstance(self.num_barriers, int):
+      object.__setattr__(self, "num_barriers", (self.num_barriers,))
+    else:
+      object.__setattr__(self, "num_barriers", tuple(self.num_barriers))
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     raise ValueError("Barriers are not arrays")
 
   def get_ref_aval(self) -> state.AbstractRef:
-    aval = jax_core.ShapedArray(
-        [self.num_barriers],
-        BarrierType(
-            self.num_arrivals, orders_tensor_core=self.orders_tensor_core
-        ),
-    )
-    return state.AbstractRef(aval, SMEM)
-
-  def __post_init__(self):
-    if self.num_arrivals < 1:
-      raise ValueError(
-          f"Num arrivals must be at least 1, but got {self.num_arrivals}"
-      )
+    ty = BarrierType(self.num_arrivals, self.orders_tensor_core)
+    return state.AbstractRef(jax_core.ShapedArray(self.num_barriers, ty), SMEM)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
-  num_barriers: int = 1
+  num_barriers: int | Sequence[int] = ()
   num_arrivals: int = 1
   orders_tensor_core: bool = False
   leader_tracked: bool = False
+
+  def __post_init__(self):
+    if (n := self.num_arrivals) < 1:
+      raise ValueError(f"Num arrivals must be at least 1, but got {n}")
+
+    if isinstance(self.num_barriers, int):
+      object.__setattr__(self, "num_barriers", (self.num_barriers,))
+    else:
+      object.__setattr__(self, "num_barriers", tuple(self.num_barriers))
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     raise ValueError("Cluster barriers are not arrays")
 
   def get_ref_aval(self) -> state.AbstractRef:
-    aval = jax_core.ShapedArray(
-        [self.num_barriers],
-        ClusterBarrierType(
-            self.collective_axes, self.num_arrivals,
-            self.orders_tensor_core, self.leader_tracked,
-        ),
+    ty = ClusterBarrierType(
+        collective_axes=self.collective_axes,
+        num_arrivals=self.num_arrivals,
+        orders_tensor_core=self.orders_tensor_core,
+        leader_tracked=self.leader_tracked,
     )
-    return state.AbstractRef(aval, SMEM)
+    return state.AbstractRef(jax_core.ShapedArray(self.num_barriers, ty), SMEM)
 
 
 @dataclasses.dataclass(frozen=True)
