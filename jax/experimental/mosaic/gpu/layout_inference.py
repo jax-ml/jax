@@ -242,8 +242,16 @@ def _register_layouts_for_optimized_transfer_to_smem(
   else:
     # For now, just assume that if it's not Hopper, it's Blackwell.
     candidate_layouts = [
+        # Try the layouts with larger base tiles first.
         fa.TCGEN05_LAYOUT,
         fa.TCGEN05_TRANSPOSED_LAYOUT,
+        # Keep using WGMMA and WGMMA_TRANSPOSED layouts here, simply because
+        # they may apply to smaller shapes where TCGEN05 layouts do not apply.
+        # This can be useful for kernels not involving MMAs that still need
+        # optimized transfers to TiledLayouts, and actually shows up in some
+        # tests.
+        fa.WGMMA_LAYOUT,
+        fa.WGMMA_TRANSPOSED_LAYOUT,
     ]
 
   yield from candidate_layouts

@@ -3087,14 +3087,14 @@ class LayoutInferenceTest(parameterized.TestCase):
     in_transforms = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transforms, [transforms] * 2)
 
-  @parameterized.parameters(
-      ((9, 0),),  # Hopper
-      ((10, 0),),  # Blackwell
+  @parameterized.product(
+      arch=((9, 0), (10, 0),),
+      shape=((128, 128), (64, 64),),
   )
-  def test_conjure_mma_layout_for_tiled_ref_transfer(self, arch):
-    layout = fa.WGMMA_LAYOUT if arch == (9, 0) else fa.TCGEN05_LAYOUT
+  def test_conjure_mma_layout_for_tiled_ref_transfer(self, arch, shape):
+    layout = fa.WGMMA_LAYOUT if arch == (9, 0) or shape[0] < 128 else fa.TCGEN05_LAYOUT
     with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
+      ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       [ref] = undefs(ref_ty)
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 32)),
