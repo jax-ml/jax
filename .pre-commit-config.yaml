@@ -49,9 +49,6 @@ repos:
         - opt-einsum~=3.4.0
         - tensorstore
         - scipy-stubs
-        - --pre
-        - --extra-index-url
-        - https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
         - jaxlib
 
 - repo: https://github.com/mwouts/jupytext

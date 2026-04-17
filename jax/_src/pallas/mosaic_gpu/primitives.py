@@ -20,7 +20,6 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
-import inspect
 import itertools
 import math
 from typing import Any, Literal, assert_never
@@ -287,16 +286,7 @@ def _copy_smem_to_gmem_lowering(
   else:
     reduction_op_attr = None
 
-  # TODO(olechwierowicz): Remove this once min jaxlib version is 0.10.0
-  if hasattr(mgpu.dialect.AsyncStoreOp, "gmem_peer_id") and hasattr(
-      mgpu.dialect.AsyncStoreOp, "is_global_broadcast"
-  ):
-    kwargs = {
-        "gmem_peer_id": peer_id,
-        "is_global_broadcast": is_global_broadcast,
-    }
-  else:
-    kwargs = {}
+  raise ValueError(f"{jax.version._version=}")
   mgpu.dialect.async_store(
       src,
       dst,
@@ -305,7 +295,8 @@ def _copy_smem_to_gmem_lowering(
       predicate=predicate,
       commit_group=commit_group,
       reduction_op=reduction_op_attr,
-      **kwargs  # pyrefly: ignore[bad-argument-type]
+      gmem_peer_id=peer_id,
+      is_global_broadcast=is_global_broadcast
   )
   return ()
 
@@ -3543,11 +3534,6 @@ def _async_copy_scales_to_tmem_lowering_rule(*args, **kwargs):
     async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _async_copy_scales_to_tmem_lowering_rule_wg(*args, **kwargs):
-  # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-  if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
-    raise NotImplementedError(
-        "async_copy_scales_to_tmem_p WG lowering is not implemented."
-    )
   return _async_copy_to_tmem_lowering_rule(
       mgpu.dialect.async_store_scales_smem_to_tmem,
       *args,
@@ -3961,9 +3947,6 @@ def try_cluster_cancel_lowering(
     )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      raise NotImplementedError("TryClusterCancelOp is not available.")
 
     # TODO(b/415721295): Check whether this is slower than doing
     # arrive_expect_tx(select(is_first_wg, 16, 0)) and if so then implement
@@ -4079,9 +4062,6 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
     raise TypeError(f"Response to decode must be 128 bits, but is {bits} bits.")
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
-      raise NotImplementedError("QueryClusterCancelOp is not available.")
     x, y, z, success = mgpu.dialect.query_cluster_cancel(result_ref)
   else:
     x, y, z, success = mgpu.query_cluster_cancel(result_ref)
@@ -4440,11 +4420,6 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
 def _multimem_store_lowering_rule(
     ctx: lowering.LoweringRuleContext, value, local_ref, *transforms_leaves, transforms_tree, collective_axes,
 ):
-  # TODO(olechwierowicz): Remove once min version of jaxlib is 0.10.0.
-  multimem_available = "multimem" in inspect.signature(mgpu.dialect.vector_store).parameters
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup and not multimem_available:
-    raise NotImplementedError("_multimem_store_lowering_rule WG lowering not implemented")
-
   if (mesh_info := ctx.module_ctx.mesh_info) is None:
     raise ValueError(
         "JAX device mesh is required by multimem_store, but not defined."
@@ -4550,9 +4525,6 @@ def _multimem_load_reduce_lowering_rule(
 def _multimem_load_reduce_lowering_rule_wg(
     ctx: lowering.LoweringRuleContext, ref, *transforms_leaves, tree, collective_axes, reduction_op,
 ):
-  # TODO(olechwierowicz): Remove this check once min jaxlib version is 0.10.0
-  if not hasattr(mgpu.dialect, "multimem_load_reduce"):
-    raise NotImplementedError("multimem_load_reduce_p is unsupported for WG semantics.")
   assert hasattr(mgpu.dialect, "MultimemLoadReductionType")
   if (mesh_info := ctx.module_ctx.mesh_info) is None:
     raise ValueError(

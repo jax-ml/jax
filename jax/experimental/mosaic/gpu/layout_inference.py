@@ -767,19 +767,17 @@ def _vector_load_constraint_system(
   return system, value_sites_for_variable
 
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "MultimemLoadReduceOp"):
-  @_add_constraint_system_derivation_rule(mgpu.MultimemLoadReduceOp)
-  def _multimem_load_reduce_constraint_system(
-      _: DerivationContext,
-      op: mgpu.MultimemLoadReduceOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    dest = ValueSite(op, VariableType.RESULT, 0)
-    dest_var = cs.Variable(dest)
-    system = cs.ConstraintSystem(
-        constraints=[cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
-    )
-    return system, {dest_var: [dest]}
+@_add_constraint_system_derivation_rule(mgpu.MultimemLoadReduceOp)
+def _multimem_load_reduce_constraint_system(
+    _: DerivationContext,
+    op: mgpu.MultimemLoadReduceOp,
+) -> ConstraintSystemDerivationRuleResult:
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  dest_var = cs.Variable(dest)
+  system = cs.ConstraintSystem(
+      constraints=[cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
+  )
+  return system, {dest_var: [dest]}
 
 
 @_add_constraint_system_derivation_rule(mgpu.VectorStoreOp)
@@ -1657,32 +1655,30 @@ def _async_store_sparse_metadata_smem_to_tmem_constraint_system(
       {source_variable: [source], destination_variable: [destination]},
   )
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
-  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreScalesSmemToTmemOp)
-  def _async_store_scales_smem_to_tmem_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.AsyncStoreScalesSmemToTmemOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    source = ValueSite(op, VariableType.OPERAND, 0)
-    source_variable = ctx.producer_ref(source)
-    destination = ValueSite(op, VariableType.OPERAND, 1)
-    destination_variable = ctx.producer_ref(destination)
+@_add_constraint_system_derivation_rule(mgpu.AsyncStoreScalesSmemToTmemOp)
+def _async_store_scales_smem_to_tmem_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreScalesSmemToTmemOp,
+) -> ConstraintSystemDerivationRuleResult:
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  source_variable = ctx.producer_ref(source)
+  destination = ValueSite(op, VariableType.OPERAND, 1)
+  destination_variable = ctx.producer_ref(destination)
 
-    assignments: dict[cs.Variable, cs.Constant] = {
-        source_variable: cs.SMEMTiling(None)
-    }
-    k_tiles = destination.shape[1] // 4
-    if source.shape == (1, k_tiles, 64, 16):
-      assignments[destination_variable] = cs.TMEMLayout(
-          tcgen05.b_scales_m64_collective_layout()
-      )
-    else:
-      assignments[destination_variable] = cs.TMEMLayout(tcgen05.scales_layout())
-    return (
-        cs.ConstraintSystem(assignments),
-        {source_variable: [source], destination_variable: [destination]},
+  assignments: dict[cs.Variable, cs.Constant] = {
+      source_variable: cs.SMEMTiling(None)
+  }
+  k_tiles = destination.shape[1] // 4
+  if source.shape == (1, k_tiles, 64, 16):
+    assignments[destination_variable] = cs.TMEMLayout(
+        tcgen05.b_scales_m64_collective_layout()
     )
+  else:
+    assignments[destination_variable] = cs.TMEMLayout(tcgen05.scales_layout())
+  return (
+      cs.ConstraintSystem(assignments),
+      {source_variable: [source], destination_variable: [destination]},
+  )
 
 
 @_add_constraint_system_derivation_rule(mgpu.SliceTmemOp)
@@ -1884,18 +1880,16 @@ def _memref_load_store_op_constraint_system(
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
-# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-if hasattr(mgpu, "TryClusterCancelOp") and hasattr(mgpu, "QueryClusterCancelOp"):
-  @_add_constraint_system_derivation_rule(mgpu.TryClusterCancelOp)
-  @_add_constraint_system_derivation_rule(mgpu.QueryClusterCancelOp)
-  def _cluster_launch_control_ops_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.TryClusterCancelOp | mgpu.QueryClusterCancelOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    ref = ValueSite(op, VariableType.OPERAND, 0)
-    var = ctx.producer_ref(ref)
-    assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
-    return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
+@_add_constraint_system_derivation_rule(mgpu.TryClusterCancelOp)
+@_add_constraint_system_derivation_rule(mgpu.QueryClusterCancelOp)
+def _cluster_launch_control_ops_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.TryClusterCancelOp | mgpu.QueryClusterCancelOp,
+) -> ConstraintSystemDerivationRuleResult:
+  ref = ValueSite(op, VariableType.OPERAND, 0)
+  var = ctx.producer_ref(ref)
+  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+  return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
 def _extract_smem_tiling_from_custom_transform_attrs(
@@ -2003,21 +1997,19 @@ def _async_prefetch_constraint_system(
   return cs.ConstraintSystem(assignments), value_sites
 
 
-# TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "WarpMapOp"):
-  @_add_constraint_system_derivation_rule(mgpu.WarpMapOp)
-  def _warp_map_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.WarpMapOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    value_sites_for_variable: ValueSitesForVariable = dict()
-    for i, o in enumerate(op.operands):
-      if _is_tmem_ref(o) or _is_smem_ref(o):
-        operand = ValueSite(op, VariableType.OPERAND, i)
-        arg = ValueSite(op, VariableType.ARGUMENT, i, region_index=0)
-        var = ctx.producer_ref(operand)
-        value_sites_for_variable.setdefault(var, []).extend([operand, arg])
-    return cs.ConstraintSystem(), value_sites_for_variable
+@_add_constraint_system_derivation_rule(mgpu.WarpMapOp)
+def _warp_map_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.WarpMapOp,
+) -> ConstraintSystemDerivationRuleResult:
+  value_sites_for_variable: ValueSitesForVariable = dict()
+  for i, o in enumerate(op.operands):
+    if _is_tmem_ref(o) or _is_smem_ref(o):
+      operand = ValueSite(op, VariableType.OPERAND, i)
+      arg = ValueSite(op, VariableType.ARGUMENT, i, region_index=0)
+      var = ctx.producer_ref(operand)
+      value_sites_for_variable.setdefault(var, []).extend([operand, arg])
+  return cs.ConstraintSystem(), value_sites_for_variable
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:

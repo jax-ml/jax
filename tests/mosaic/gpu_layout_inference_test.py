@@ -1821,10 +1821,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_async_store_scales_smem_to_tmem_infers_expected_src_dest_layouts(
       self, src_shape, dest_shape, dest_layout
   ):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
-      self.skipTest("async_store_scales_smem_to_tmem not available.")
-
     dtype = ir.Float8E8M0FNUType.get()
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
     src_type = ir.MemRefType.get(src_shape, dtype, memory_space=smem)
@@ -1843,10 +1839,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEmpty(in_transform)  # No transforms are expected for this op.
 
   def test_async_store_scales_smem_to_tmem_rejects_incompatible_layouts(self):
-    # TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu.dialect, "async_store_scales_smem_to_tmem"):
-      self.skipTest("async_store_scales_smem_to_tmem not available.")
-
     element_type = ir.Float8E4M3FNType.get()
     src_shape = (2, 32, 32, 16)
     dest_shape = (256, 128)
@@ -1909,9 +1901,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   def test_infer_transforms_for_try_cluster_cancel_op(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skipTest("TryClusterCancelOp is not available.")
 
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
@@ -1926,10 +1915,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEmpty(in_transform)
 
   def test_infer_transforms_for_query_cluster_cancel_op(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
-      self.skipTest("QueryClusterCancelOp is not available.")
-
     with ir.InsertionPoint(self.module.body):
       result, = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()))
       op_results = mgpu.dialect.query_cluster_cancel(result)

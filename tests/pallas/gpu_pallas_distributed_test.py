@@ -144,15 +144,6 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
-    # "mgpu.dialect has a backward incompatible change."
-    if not hasattr(mgpu.dialect, "WarpMapOp"):
-      self.skip_if_wg_semantics()
-
-    # TODO(olechwierowicz): Remove this check once min jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "MultimemLoadReduceOp"):
-      self.skip_if_wg_semantics()
-
     self.monkey_patched_api_was_used = False
     super().setUp()
 

@@ -174,10 +174,6 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
-    # "mgpu.dialect has a backward incompatible change."
-    if not hasattr(mgpu.dialect, "WarpMapOp"):
-      self.skip_if_wg_semantics()
 
     super().setUp()
     self.enter_context(mgpu.core.artificial_shared_memory_limit(artificial_shared_memory_limit))
