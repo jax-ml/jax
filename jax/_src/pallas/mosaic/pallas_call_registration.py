@@ -488,7 +488,7 @@ def mpmd_map_tpu_lowering_rule(
         "mpmd_map does not support dimension_semantics= in compiler_params="
     )
 
-  mpmd_meshes_map = {mesh.kernel_type: mesh for mesh in meshes}
+  mpmd_meshes_map = {mesh.core_type: mesh for mesh in meshes}
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -504,16 +504,15 @@ def mpmd_map_tpu_lowering_rule(
     for mesh, jaxpr, grid_mapping in zip(
         meshes, jaxprs, grid_mappings, strict=True
     ):
-      if (
-          not hasattr(mesh, "kernel_type") or
-          not hasattr(mesh, "dimension_semantics")
+      if not hasattr(mesh, "core_type") or not hasattr(
+          mesh, "dimension_semantics"
       ):
         raise ValueError(
-            "mpmd_map requires the mesh to define its ``kernel_type`` and"
+            "mpmd_map requires the mesh to define its ``core_type`` and"
             " ``dimension_semantics``"
         )
 
-      match kernel_type := mesh.kernel_type:
+      match kernel_type := mesh.core_type:
         case tpu_core.CoreType.TC:
           if mpmd_meshes_map is not None and mpmd_meshes_map.keys() != {
               tpu_core.CoreType.TC
@@ -557,7 +556,7 @@ def mpmd_map_tpu_lowering_rule(
   if name is None:
     name = "_".join(jaxpr.debug_info.func_name for jaxpr in jaxprs)
 
-  match [*{mesh.kernel_type for mesh in meshes}]:
+  match [*{mesh.core_type for mesh in meshes}]:
     case [kernel_type]:
       mosaic_params = dataclasses.replace(
           mosaic_params, kernel_type=kernel_type

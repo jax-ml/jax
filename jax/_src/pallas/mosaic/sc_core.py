@@ -174,7 +174,7 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
       )
 
   @property
-  def kernel_type(self) -> tpu_core.CoreType:
+  def core_type(self) -> tpu_core.CoreType:
     return tpu_core.CoreType.SC_SCALAR_SUBCORE
 
   @property
@@ -285,7 +285,7 @@ class VectorSubcoreMesh(pallas_core.Mesh):
       )
 
   @property
-  def kernel_type(self) -> tpu_core.CoreType:
+  def core_type(self) -> tpu_core.CoreType:
     return tpu_core.CoreType.SC_VECTOR_SUBCORE
 
   @property

@@ -348,7 +348,7 @@ class TensorCoreMesh(pallas_core.Mesh):
     )
 
   @property
-  def kernel_type(self) -> CoreType:
+  def core_type(self) -> CoreType:
     return CoreType.TC
 
   @property

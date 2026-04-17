@@ -1573,8 +1573,7 @@ class Mesh(Protocol):
     ...
 
   @property
-  def kernel_type(self) -> CoreType:
-    # TODO(rdyro): Rename kernel_type property to core_type.
+  def core_type(self) -> CoreType:
     # the CoreType of the Mesh (e.g.,TensorCore, SpearCore-SCS, SpearCore-TEC)
     ...
 

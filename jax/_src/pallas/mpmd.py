@@ -167,8 +167,8 @@ def _mpmd_map_fallback_lowering(
     compiler_params = compiler_params.replace(
         dimension_semantics=mesh.dimension_semantics
     )
-  if hasattr(mesh, "kernel_type"):
-    compiler_params = compiler_params.replace(kernel_type=mesh.kernel_type)
+  if hasattr(mesh, "core_type"):
+    compiler_params = compiler_params.replace(kernel_type=mesh.core_type)
 
   return pallas_call._pallas_call_lowering(
       ctx,
