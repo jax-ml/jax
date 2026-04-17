@@ -1049,6 +1049,78 @@ def barrier_arrive(barrier: state.AbstractRef) -> None:
   )
 
 
+barrier_test_p = jax_core.Primitive("barrier_test")
+barrier_test_p.multiple_results = False
+
+
+@barrier_test_p.def_effectful_abstract_eval
+def _barrier_test_abstract_eval(barrier, *args, **params):
+  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  del args, params  # Unused.
+  return jax_core.ShapedArray((), bool), {gpu_core._memory_effect}
+
+
+def _barrier_test_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_treedef"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_test"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_test_p] = _barrier_test_pp_eqn
+
+
+@lowering.register_lowering_rule(barrier_test_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(barrier_test_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(
+    barrier_test_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(barrier_test_p, *gpu_core.WGxWARP_SEMANTICS)
+def _barrier_test_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  barrier_aval = ctx.avals_in[0]
+  assert isinstance(barrier_aval, state_types.AbstractRef)
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  orders_tensor_core = getattr(
+      barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+  )
+  base_index = _extract_barrier_slice_base(transforms)
+  if base_index is not None:
+    barrier = barrier[base_index]
+  wait_complete = barrier.test(orders_tensor_core=orders_tensor_core)
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    return wait_complete
+  return mgpu.FragmentedArray.splat(wait_complete, shape=(), is_signed=False)
+
+
+def barrier_test(barrier: state.AbstractRef) -> jax.Array:
+  """Tests the given barrier.
+
+  This is a non-blocking equivalent of `barrier_wait`, which returns a boolean
+  indicating whether or not the current barrier phase is complete.
+  """
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_test"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  return barrier_test_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef,
+  )
+
+
 barrier_wait_p = jax_core.Primitive("barrier_wait")
 barrier_wait_p.multiple_results = True
 

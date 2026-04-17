@@ -35,6 +35,7 @@ Remember to align the itemized text with the first line of an item within a list
   * Added the `leader_tracked` argument to `ClusterBarrier`, which allows
     tracking barrier completions solely from the leader block along a specific
     axis in a cluster.
+  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`.
 
 ## Released with JAX 0.9.2
 

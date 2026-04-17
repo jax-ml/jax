@@ -2002,7 +2002,7 @@ def _memref_load_op_lowering_rule(
   return [new_load_op.result]
 
 
-@_register_lowering(memref.StoreOp)
+@_register_lowering(memref.StoreOp, support_warp_semantics=True)
 def _memref_store_op_lowering_rule(
     ctx: LoweringContext, op: memref.StoreOp
 ) -> Sequence[ir.Value]:
