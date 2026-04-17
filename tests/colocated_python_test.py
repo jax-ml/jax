@@ -52,6 +52,13 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.skipTest(
         "ColocatedPythonTest depends on cloudpickle library"
       )
+    num_cpu_devices = len(jax.devices("cpu"))
+    if num_cpu_devices < 8:
+      self.skipTest(
+          "Skipping this test because not enough CPU devices are available:"
+          f" {num_cpu_devices}. This can happen if JAX has been initialized"
+          " before this test module is imported."
+      )
 
   def test_colocated_cpu_devices(self):
     mesh = jax.sharding.Mesh(
