@@ -2673,13 +2673,26 @@ class LayoutInferenceTest(parameterized.TestCase):
       (
           "tiled_layout_non_divisible_by_offset",
           mtu.RegisterLayout.WGMMA,
-          [3, 64],
+          [slice(3, 128), slice(64, 128)],
       ),
-      ("strided_layout", mtu.RegisterLayout.WG_STRIDED, [0, 64]),
-      ("splat_layout", mtu.RegisterLayout.WG_SPLAT, [0, 64]),
+      (
+          "tiled_layout_non_divisible_by_result_shape",
+          mtu.RegisterLayout.WGMMA,
+          [slice(0, 128), slice(64, 77)],
+      ),
+      (
+          "strided_layout",
+          mtu.RegisterLayout.WG_STRIDED,
+          [slice(0, 128), slice(64, 128)],
+      ),
+      (
+          "splat_layout",
+          mtu.RegisterLayout.WG_SPLAT,
+          [slice(0, 128), slice(64, 128)],
+      ),
   )
   def test_infer_layout_for_vector_extract_strided_slice_fails(
-      self, layout, offsets
+      self, layout, indices
   ):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
@@ -2687,8 +2700,10 @@ class LayoutInferenceTest(parameterized.TestCase):
       [src] = undefs(src_ty)
       layout_attr = layout.to_layout_attr(src_ty.shape, src_ty.element_type)
       src = mgpu.dialect.layout_cast(src, layout_attr)
-      dest_ty = ir.VectorType.get([64, 64], i16)
-      vector.extract_strided_slice(dest_ty, src, offsets, [64, 64], [1, 1])
+      dest_shape = [i.stop - i.start for i in indices]
+      offsets = [i.start for i in indices]
+      dest_ty = ir.VectorType.get(dest_shape, i16)
+      vector.extract_strided_slice(dest_ty, src, offsets, dest_shape, [1, 1])
     with self.assertRaisesRegex(
         ValueError, "Failed to infer a possible set of layouts."
     ):
