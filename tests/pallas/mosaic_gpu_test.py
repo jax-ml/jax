@@ -403,7 +403,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
   def test_reshape_tiled_into_tiled(self):
-    self.skip_if_wg_semantics()  # Need support for user-specified transforms.
     shape1, shape2 = (6 * 64, 8), (2, 3, 64, 8)
 
     transforms = (plgpu.TilingTransform((8, 8)), plgpu.SwizzleTransform(32))
@@ -1272,8 +1271,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(f(x), x * 2)
 
   def test_scoped_copy_with_user_transforms(self):
-    self.skip_if_wg_semantics()
-
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
         tmp_ref = plgpu.unswizzle_ref(tmp_ref, 128)
@@ -1294,6 +1291,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(f(x), x * 2)
 
   def test_copy_with_transforms_and_indexing(self):
+    # TransposeTransform is not supported in WG semantics.
     self.skip_if_wg_semantics()
 
     def kernel(x_ref, o_ref, barrier_ref):
@@ -1335,7 +1333,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
     if transforms:
-      # We cannot yet specify transforms on block specs for WG semantics.
+      # 1. Failed to infer a possible set of layouts.
+      # 2. TransposeTransform is not supported in WG semantics.
       self.skip_if_wg_semantics()
     dtype = jnp.int32
     out_shape = (64, 128)
@@ -1410,7 +1409,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     shape = (2, 2, 64)
     transforms = (tiling,) if tiling is not None else ()
     if transforms:
-      self.skip_if_wg_semantics()  # Can't specify user transforms under WG semantics.
+      # NotImplementedError: Only 2D tilings are supported, got 1
+      self.skip_if_wg_semantics()
 
     @functools.partial(
         self.kernel,
@@ -1630,6 +1630,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertIn("x: WGMMA_ROW\n", output())
 
   def test_scratch_ref_with_transforms_regression(self):
+    # TODO(bchetioui): revisit the transpose transform story.
     self.skip_if_wg_semantics()
     # Tests that scratch shapes with transforms (e.g. Tiling + Transpose)
     # can be allocated and used without triggering rank mismatch errors.
@@ -1689,8 +1690,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           (),
   )
   def test_get_swap_with_transforms(self, *transforms):
-    self.skip_if_wg_semantics()
-
     shape = (128, 128)
 
     @functools.partial(
@@ -2166,9 +2165,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
   def test_tile_slicing(self):
-    # Not testing with warpgroup semantics, because we want to enforce a layout.
-    self.skip_if_wg_semantics()
-
     shape = (256, 128)
     block_spec = plgpu.BlockSpec(
         transforms=self.default_transforms(dtype=jnp.uint16)
@@ -2581,7 +2577,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       kernel(jnp.arange(128).astype(jnp.float32))
 
   def test_loading_from_ref_union_works(self):
-    self.skip_if_wg_semantics()  # Transform inference not implemented.
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
@@ -2752,8 +2747,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         It's not strictly necessary to use every collective CTA, but we use them
         to test that the cluster axes are used correctly.
     """
-
-    self.skip_if_wg_semantics()  # User transforms are not supported.
 
     dtype = jnp.float16
     cluster = [1, 1, 1]
@@ -5913,9 +5906,6 @@ class PipelineTest(PallasTest):
       repeats=(1, 10),
   )
   def test_emit(self, transforms, repeats):
-    if transforms:
-      self.skip_if_wg_semantics()
-
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):
