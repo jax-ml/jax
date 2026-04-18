@@ -311,7 +311,34 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     kernel's spatial dimensions. This differs from TensorFlow's "Conv2DTranspose"
     and similar frameworks, which flip spatial axes and swap input/output channels.
 
-    To match TensorFlow/Keras behavior, set "transpose_kernel=True" .
+    To match TensorFlow/Keras behavior, set ``transpose_kernel=True``.
+
+    Example showing the convention difference::
+
+      import jax.numpy as jnp
+      from jax import lax
+
+      # Input (batch=1, channels=1, height=2, width=2)
+      lhs = jnp.ones((1, 1, 2, 2))
+      # Kernel (output_channels=1, input_channels=1, kh=2, kw=2)
+      rhs = jnp.ones((1, 1, 2, 2))
+
+      # JAX default: no kernel reversal
+      out_default = lax.conv_transpose(lhs, rhs, strides=(1, 1),
+                                        padding='VALID', dimension_numbers=('NCHW', 'OIHW', 'NCHW'))
+      # With kernel reversal (matches TensorFlow/Keras Conv2DTranspose)
+      out_tf = lax.conv_transpose(lhs, rhs, strides=(1, 1),
+                                   padding='VALID', dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+                                   transpose_kernel=True)
+
+    The ``out_default`` and ``out_tf`` will differ because the kernel is flipped
+    when ``transpose_kernel=True``. The default JAX convention computes the
+    mathematical transpose of the convolution operation, while ``transpose_kernel=True``
+    mimics the behavior of ``tf.keras.layers.Conv2DTranspose``, which flips the spatial
+    axes of the kernel before computing the transposed convolution.
+
+    Use ``transpose_kernel=True`` when porting models from TensorFlow/Keras that use
+    Conv2DTranspose layers, or when working with pretrained TensorFlow checkpoints.
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -333,8 +360,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     transpose_kernel: if True flips spatial axes and swaps the input/output
       channel axes of the kernel. This makes the output of this function identical
       to the gradient-derived functions like keras.layers.Conv2DTranspose
-      applied to the same kernel. For typical use in neural nets this is completely
-      pointless and just makes input/output channel specification confusing.
+      applied to the same kernel. See the example above for a comparison of the
+      two conventions.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
