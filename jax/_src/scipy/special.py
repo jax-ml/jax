@@ -574,7 +574,7 @@ def erfcx(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.erf`
   """
   x, = promote_args_inexact("erfcx", x)
-  return lax.exp(lax.square(x)) * lax.erfc(x)
+  return lax.erfcx(x)
 
 
 def erfinv(x: ArrayLike) -> Array:
