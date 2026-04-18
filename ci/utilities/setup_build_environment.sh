@@ -30,7 +30,8 @@ fi
 
 function clone_main_xla() {
   echo "Cloning XLA at HEAD to $(pwd)/xla"
-  git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+  # TODO(yuriit): Switch back to HEAD.
+  git clone --depth=1 --branch test_915034191 https://github.com/openxla/xla.git $(pwd)/xla
   cd $(pwd)/xla
   echo "XLA commit: $(git log -1 --format=%H)"
   cd ..

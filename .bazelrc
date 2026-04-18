@@ -314,6 +314,14 @@ common:ci_linux_x86_64 --config=avx_linux --config=avx_posix
 common:ci_linux_x86_64 --config=mkl_open_source_only
 common:ci_linux_x86_64 --config=clang --verbose_failures=true
 common:ci_linux_x86_64 --color=yes
+common:ci_linux_x86_64 --repo_env=LLVM_VERSION=22
+common:ci_linux_x86_64 --repo_env=SYSROOT_DIST=linux_glibc_2_31
+common:ci_linux_x86_64 --@rules_ml_toolchain//common:stdlib=libc++
+common:ci_linux_x86_64 --@rules_ml_toolchain//common:static_libcxx=true
+common:ci_linux_x86_64 --cxxopt=-std=c++20
+common:ci_linux_x86_64 --host_cxxopt=-std=c++20
+common:ci_linux_x86_64 --copt="-UFMT_ENFORCE_COMPILE_STRING"
+common:ci_linux_x86_64 --copt=-Dconsteval=constexpr
 
 # Deprecated CI config with non-hermetic toolchains.
 # TODO(b/356695103): We do not have a CPU only toolchain so we use the CUDA
@@ -325,8 +333,9 @@ common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 common:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
-common:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
+common:ci_linux_x86_64_cuda_common --config=build_cuda_with_clang
 common:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
+common:ci_linux_x86_64_cuda_common --cxxopt=-Wno-error=cuda-host-device-deduction-guidelines
 
 # The toolchain in `--config=cuda` needs to be read before the toolchain in
 # `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
