@@ -319,9 +319,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       from jax import lax
 
       # Input (batch=1, channels=1, height=2, width=2)
-      lhs = jnp.ones((1, 1, 2, 2))
+      lhs = jnp.array([[[[1.0, 2.0], [3.0, 4.0]]]])
       # Kernel (output_channels=1, input_channels=1, kh=2, kw=2)
-      rhs = jnp.ones((1, 1, 2, 2))
+      rhs = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]])
 
       # JAX default: no kernel reversal
       out_default = lax.conv_transpose(lhs, rhs, strides=(1, 1),
