@@ -14,6 +14,7 @@ from jax._src import pjit as pjit
 from jax._src import dtypes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import safe_zip, safe_map, split_list, unzip2
+from jax._src import source_info_util
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
@@ -47,6 +48,8 @@ def start_djt(tys) -> pe.DynamicJaxprTracer:
 def end_djt(result) -> tuple[jax_core.ClosedJaxpr, list]:
   trace = lojax_traces.pop()
   jax_core.trace_ctx.set_trace(lojax_traces[-1])
+  djt_lift = partial(trace.to_jaxpr_tracer, source_info=source_info_util.current())
+  result = result.map(pe._canonicalize_dtype).map(djt_lift)
   jaxpr, consts = trace.frame.to_jaxpr(trace, list(result), None, None)
   return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr)), consts
 
@@ -183,8 +186,9 @@ class VJPTrace(Trace):
     if val.trace is self:
       return val
     else:
-      # TODO: lift in parent trace then in self
-      breakpoint()
+      with ctx.set_current_trace(self.parent):
+        val = lift(val)
+      return VJPTracer(self, val, Accumulator(val.ty.tangent_ty()))
 
   def bind(self, op, *args):
     return op.vjp(self, *args)
@@ -360,7 +364,7 @@ def add(x, y):
 @dataclass(frozen=True)
 class Mul(SimpleOp):
   def simple_type_rule(self, x_ty, y_ty):
-    assert x_ty == y_ty
+    assert x_ty == y_ty, breakpoint()
     return x_ty
 
   def simple_vjp(self, _ans, x, y):
@@ -461,11 +465,13 @@ print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 @jit
 def foo(x, y):
-  # return mul(add(x, y), 2)
-  return mul(x, y)
-  # return add(x, y)
+  return mul(add(x, y), 2.)
 
 print(vjp(foo, (1., 2.), 1.0))
+
+@jit
+def foo(x, y):
+  return mul(add(x, y), 2)
 
 @jit
 def bar(x, y):
