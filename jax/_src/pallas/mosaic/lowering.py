@@ -306,7 +306,9 @@ def _memory_space_to_mosaic_attribute(
 def _dtype_to_ir_type(dtype: DTypeLike,
                       is_kernel_boundary: bool = False) -> ir.Type:
   if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
-    if jnp.issubdtype(dtype, tpu_core.dma_semaphore):
+    if jnp.issubdtype(dtype, tpu_core.custom_semaphore):
+      return ir.Type.parse("!tpu.custom_semaphore")
+    elif jnp.issubdtype(dtype, tpu_core.dma_semaphore):
       return ir.Type.parse("!tpu.dma_semaphore")
     elif jnp.issubdtype(dtype, pallas_core.semaphore):
       return ir.Type.parse("!tpu.semaphore")
@@ -362,6 +364,8 @@ def aval_to_ir_type(
       sem_type = ir.Type.parse("!tpu.semaphore")
     elif aval.sem_type is tpu_core.SemaphoreType.BARRIER:
       sem_type = ir.Type.parse("!tpu.semaphore")
+    elif aval.sem_type is tpu_core.SemaphoreType.CUSTOM:
+      sem_type = ir.Type.parse("!tpu.custom_semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
     memspace = _memory_space_to_mosaic_attribute(SEMAPHORE, kernel_type)

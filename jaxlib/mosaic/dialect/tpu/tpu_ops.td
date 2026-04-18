@@ -70,7 +70,8 @@ def TPU_RevisitModeEnum : EnumAttr<TPU_Dialect, TPU_RevisitMode, "revisit_mode">
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
-def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
+def TPU_CustomSemaphoreType : TPU_Type<"CustomSemaphore", "custom_semaphore", [MemRefElementTypeInterface]>;
+def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType, TPU_CustomSemaphoreType]>;
 
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
@@ -1459,7 +1460,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
 // destination memref.
 def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    MemRefOf<[TPU_SomeSemaphoreType]>:$semaphore,
     AnyMemRef:$src,
     AnyMemRef:$dst,
     Optional<I32>:$device_id, // For remote DMAs

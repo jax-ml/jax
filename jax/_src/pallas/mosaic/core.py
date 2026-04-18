@@ -268,10 +268,20 @@ class DMASemaphore(pallas_core.AbstractSemaphoreTy):
   name = "dma_sem"
 
 
+class custom_semaphore(pallas_core.semaphore):
+  pass
+
+
+class CustomSemaphore(pallas_core.AbstractSemaphoreTy):
+  type = custom_semaphore
+  name = "custom_sem"
+
+
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
   DMA = "dma"
   BARRIER = "barrier"
+  CUSTOM = "custom"
 
   @property
   def dtype(self) -> Any:
@@ -279,6 +289,8 @@ class SemaphoreType(enum.Enum):
       return DMASemaphore()
     elif self == SemaphoreType.BARRIER:
       return pallas_core.BarrierSemaphore()
+    elif self == SemaphoreType.CUSTOM:
+      return CustomSemaphore()
     else:
       return pallas_core.Semaphore()
 
