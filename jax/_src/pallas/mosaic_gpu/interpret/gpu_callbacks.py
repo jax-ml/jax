@@ -27,6 +27,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import callback
 from jax._src import source_info_util
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
@@ -49,8 +50,8 @@ GPU_MEMORY_SPACE_BY_IDX = types.MappingProxyType(
 )
 
 
-def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace | None) -> int:
-  if space is None:
+def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace) -> int:
+  if space is pallas_core.MemorySpace.DEFAULT:
     return IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.MemorySpace.SMEM]
   return IDX_BY_GPU_MEMORY_SPACE[space]
 

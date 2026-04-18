@@ -70,6 +70,7 @@ pytype_strict_library(
         "//jax/_src:callback",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
+        "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic/interpret:params",
         "//jax/_src/pallas/mosaic/interpret:race_detection_state",
         "//jax/_src/pallas/mosaic/interpret:utils",

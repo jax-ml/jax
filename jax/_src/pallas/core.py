@@ -248,6 +248,7 @@ class MemorySpace(enum.Enum):
   type during lowering.
   """
   ANY = "any"  # Unrestricted memory space (usually HBM)
+  DEFAULT = "default"  # Default memory space (decided by backend)
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
   KEY = "key"  # Memory space for PRNG keys.
@@ -259,7 +260,6 @@ class MemorySpace(enum.Enum):
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(shape, dtype))
-
 
   def __str__(self) -> str:
     return self.value
@@ -549,7 +549,10 @@ class BlockSpec:
       block_array_aval = array_aval.inner_aval.update(shape=ref_block_shape)
     else:
       block_array_aval = array_aval.update(shape=ref_block_shape)
-    block_aval = state.AbstractRef(block_array_aval, self.memory_space)
+    memory_space = self.memory_space
+    if memory_space is None:
+      memory_space = MemorySpace.DEFAULT
+    block_aval = state.AbstractRef(block_array_aval, memory_space)
 
     if (
         not jax_core.is_constant_shape(block_aval.shape)
@@ -1181,7 +1184,6 @@ def get_grid_mapping(
     out_tree: tree_util.PyTreeDef,
     out_origins: Sequence[OriginStr],
     debug: bool = False,
-    default_memory_space: Any = None,
 ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
   if dynamic_shapes_export_enabled():
     dim_check: Any = jax_core.is_dim
@@ -1236,9 +1238,9 @@ def get_grid_mapping(
 
   def _with_default_memory_space(bs: BlockSpec):
     if bs is no_block_spec:
-      return BlockSpec(memory_space=default_memory_space)
+      return BlockSpec(memory_space=MemorySpace.DEFAULT)
     elif bs.memory_space is None:
-      return bs.replace(memory_space=default_memory_space)
+      return bs.replace(memory_space=MemorySpace.DEFAULT)
     else:
       return bs
 
@@ -1251,7 +1253,7 @@ def get_grid_mapping(
     flat_in_specs = [_with_default_memory_space(bs) for bs in flat_in_specs]
   else:
     flat_in_specs = (
-        [BlockSpec(memory_space=default_memory_space)] * len(in_avals))
+        [BlockSpec(memory_space=MemorySpace.DEFAULT)] * len(in_avals))
 
   in_block_mappings = map(
       partial(
@@ -1276,7 +1278,7 @@ def get_grid_mapping(
     flat_out_specs = [_with_default_memory_space(bs) for bs in flat_out_specs]
   else:
     flat_out_specs = (
-        [BlockSpec(memory_space=default_memory_space)] * len(out_avals))
+        [BlockSpec(memory_space=MemorySpace.DEFAULT)] * len(out_avals))
 
   out_block_mappings = map(
       partial(

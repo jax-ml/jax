@@ -1332,7 +1332,7 @@ class ApiErrorTest(ptu.PallasTest):
     with self.assertRaisesRegex(
         ValueError,
         r"Attempting to pass a Ref"
-        r" Ref{float32\[8,32\]}"
+        r" Ref<default>{float32\[8,32\]}"
         r" to a primitive: dot_general -- did you forget to unpack \(\[...\]\)"
         r" the ref?",
     ):

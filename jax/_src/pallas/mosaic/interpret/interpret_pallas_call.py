@@ -435,7 +435,7 @@ TPU_MEMORY_SPACE_NAMES[len(TPU_MEMORY_SPACE_IDXS)] = (
 TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = len(TPU_MEMORY_SPACE_IDXS)
 
 # Default to VMEM when no memory space is specified.
-TPU_MEMORY_SPACE_IDXS[None] = TPU_MEMORY_SPACE_IDXS[
+TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.DEFAULT] = TPU_MEMORY_SPACE_IDXS[
     mosaic_core.MemorySpace.VMEM
 ]
 

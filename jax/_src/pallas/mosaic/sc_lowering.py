@@ -105,7 +105,7 @@ def _block_spec_from_block_mapping(
     return eval_index_map(*new_indices)
 
   memory_space = bm.transformed_block_aval.memory_space
-  if memory_space is None:
+  if memory_space is None or memory_space is pallas_core.MemorySpace.DEFAULT:
     memory_space = default_memory_space
 
   if isinstance(bm, sc_core.BlockMapping):
@@ -815,36 +815,28 @@ def _debug_print_lowering_rule(
   return []
 
 
-def _memref_memory_space(ref: ir.Value) -> MemorySpace | CoreMemorySpace:
-  ir_memory_space = str(ir.MemRefType(ref.type).memory_space)
-  assert ir_memory_space.startswith("#tpu.memory_space<")
-  assert ir_memory_space.endswith(">")
-  ir_memory_space = ir_memory_space[len("#tpu.memory_space<") : -len(">")]
-  ir_memory_space, _, ir_core_type = ir_memory_space.partition(",")
-  ir_core_type = ir_core_type.strip()
-  if not ir_core_type:
-    return MemorySpace(ir_memory_space)
-  else:
-    return CoreMemorySpace(
-        MemorySpace(ir_memory_space), tpu_core.CoreType(ir_core_type)
-    )
-
-
 def _prepare_dma_refs(
     src_ref,
     src_transforms,
     dst_ref,
     dst_transforms,
     src_aval,
+    src_transforms_aval,
     dst_aval,
+    dst_transforms_aval,
+    core_type: tpu_core.CoreType,
     is_add: bool = False,
 ):
   """Prepares the DMA source and destination references."""
-  src_memory_space = _memref_memory_space(src_ref)
-  dst_memory_space = _memref_memory_space(dst_ref)
+  src_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+      src_aval.memory_space, core_type
+  )
+  dst_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+      dst_aval.memory_space, core_type
+  )
   match src_memory_space, dst_memory_space:
     case MemorySpace.HBM | MemorySpace.VMEM_SHARED, MemorySpace.VMEM:
-      if _has_indirect_offsets(dst_transforms):
+      if _has_indirect_offsets(dst_transforms, dst_transforms_aval, core_type):
         raise ValueError(
             "Only the source ref can be indexed when doing a gather via"
             " `pltpu.async_copy`"
@@ -854,14 +846,14 @@ def _prepare_dma_refs(
       )
       dst_ref_shape = ir.MemRefType(dst_ref.type).shape
       indirect_offsets, src_transforms = _extract_indirect_offsets(
-          src_transforms, tuple(dst_ref_shape)
+          src_transforms, tuple(dst_ref_shape), src_transforms_aval, core_type
       )
       src_ref, _ = _transform_ref(
           src_ref, src_aval, src_aval.shape, src_transforms
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
-      if _has_indirect_offsets(src_transforms):
+      if _has_indirect_offsets(src_transforms, src_transforms_aval, core_type):
         raise ValueError(
             "Only the destination ref can be indexed when doing a scatter via"
             " `pltpu.async_copy`"
@@ -871,7 +863,7 @@ def _prepare_dma_refs(
       )
       src_ref_shape = ir.MemRefType(src_ref.type).shape
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
-          dst_transforms, tuple(src_ref_shape)
+          dst_transforms, tuple(src_ref_shape), dst_transforms_aval, core_type
       )
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval, dst_aval.shape, dst_transforms
@@ -880,8 +872,8 @@ def _prepare_dma_refs(
     case _:  # Indirect DMA is not supported.
       if (
           # fmt: off
-          _has_indirect_offsets(src_transforms) or
-          _has_indirect_offsets(dst_transforms)
+          _has_indirect_offsets(src_transforms, src_transforms_aval, core_type) or
+          _has_indirect_offsets(dst_transforms, dst_transforms_aval, core_type)
           # fmt: on
       ):
         raise NotImplementedError(
@@ -936,12 +928,29 @@ def _dma_start_lowering_rule(
       src_sem_transforms,
       device_id,
   ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, src_sem_aval, _, device_id_aval = (
-      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
-  )
+  (
+      src_aval,
+      src_transforms_aval,
+      dst_aval,
+      dst_transforms_aval,
+      sem_aval,
+      _,
+      src_sem_aval,
+      _,
+      device_id_aval,
+  ) = tpu_primitives._dma_unflatten(tree, ctx.avals_in)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
-      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval, add
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      src_aval,
+      src_transforms_aval,
+      dst_aval,
+      dst_transforms_aval,
+      ctx.lowering_context.kernel_type,
+      add,
   )
   if add and indirect_offsets is None:
     # TODO: Support regular DMA with add=True.
@@ -1003,12 +1012,28 @@ def _dma_wait_lowering_rule(
       _,
       device_id,
   ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, _, _, device_id_aval = (
-      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
-  )
+  (
+      src_aval,
+      src_transforms_aval,
+      dst_aval,
+      dst_transforms_aval,
+      sem_aval,
+      _,
+      _,
+      _,
+      device_id_aval,
+  ) = tpu_primitives._dma_unflatten(tree, ctx.avals_in)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
-      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      src_aval,
+      src_transforms_aval,
+      dst_aval,
+      dst_transforms_aval,
+      ctx.lowering_context.kernel_type,
   )
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
 
@@ -1031,46 +1056,50 @@ def _dma_wait_lowering_rule(
 
 
 def _extract_indirect_offsets_from_indexer(
-    indexer: indexing.NDIndexer, expected_shape: tuple[int, ...] | None = None
+    indexer: indexing.NDIndexer,
+    indexer_aval: indexing.NDIndexer,
+    core_type: tpu_core.CoreType,
+    expected_shape: tuple[int, ...] | None = None,
 ) -> ir.Value | None:
-  match indexer.indices:
-    case [ir.Value() as offsets, *_] if (
+  match indexer_aval.indices:
+    case [jax_core.AbstractValue() as offsets_aval, *_] if (
         # fmt: off
-        isinstance(offsets.type, ir.MemRefType) or
-        isinstance(offsets.type, ir.VectorType)
+        isinstance(offsets_aval, state.AbstractRef) or
+        (isinstance(offsets_aval, jax_core.ShapedArray) and offsets_aval.shape)
     ):  # fmt: on
-      shape = (*offsets.type.shape, *indexer.shape[offsets.type.rank :])
+      shape = (*offsets_aval.shape, *indexer.shape[len(offsets_aval.shape) :])
       if expected_shape is not None and shape != expected_shape:
         raise NotImplementedError(
             "The indexer shape in scatter/gather via `pltpu.async_copy` does"
             f" not match the expected shape. Want: {expected_shape}, got:"
             f" {shape}."
         )
-    case [state.TransformedRef() as offsets_ref, *_]:
-      offsets_type = ir.MemRefType(offsets_ref.ref.type)
-      if offsets_type.element_type != ir.IntegerType.get_signless(32):
+      offsets = indexer.indices[0]
+      assert isinstance(offsets, ir.Value)
+    case [state.TransformedRef() as offsets_aval, *_]:
+      if offsets_aval.dtype != jnp.dtype("int32"):
         raise NotImplementedError(
             "Only int32 indices are supported by scatter/gather via"
             " `pltpu.async_copy` with a dynamically-shaped indexer"
         )
-      offsets_ref_aval = state.AbstractRef(
-          inner_aval=jax_core.ShapedArray(
-              dtype=jnp.dtype("int32"),
-              shape=tuple(offsets_type.shape),
-          ),
-          memory_space=None,
-      )
+      offsets_ref = indexer.indices[0]
+      assert isinstance(offsets_ref, state.TransformedRef)
       offsets, _ = _transform_ref(
           offsets_ref.ref,
-          offsets_ref_aval,
-          offsets_type.shape,  # The shape before the indexing.
+          offsets_aval.ref,
+          offsets_aval.ref.shape,  # The shape before the indexing.
           offsets_ref.transforms,
       )
+      assert isinstance(offsets, ir.Value)
     case _:
       return None
 
-  if isinstance(offsets.type, ir.MemRefType):
-    offsets_memory_space = _memref_memory_space(offsets)
+  if isinstance(offsets_aval, (state.AbstractRef, state.TransformedRef)):
+    offsets_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+        offsets_aval.memory_space, core_type=core_type
+    )
+    if isinstance(offsets_memory_space, CoreMemorySpace):
+      offsets_memory_space = offsets_memory_space.memory_space
     if offsets_memory_space is not MemorySpace.VMEM:
       raise NotImplementedError(
           "Indices for scatter/gather via `pltpu.async_copy` must be in VMEM,"
@@ -1088,12 +1117,18 @@ def _extract_indirect_offsets_from_indexer(
 
 
 def _extract_indirect_offsets(
-    transforms: Sequence[state.Transform], expected_shape: tuple[int, ...]
+    transforms: Sequence[state.Transform],
+    expected_shape: tuple[int, ...],
+    transforms_aval: Sequence[state.Transform],
+    core_type: tpu_core.CoreType,
 ) -> tuple[ir.Value | None, Sequence[state.Transform]]:
-  for i, indexer in enumerate(transforms):
+  for i, (indexer, indexer_aval) in enumerate(zip(transforms, transforms_aval)):
     if not isinstance(indexer, indexing.NDIndexer):
       continue
-    offsets = _extract_indirect_offsets_from_indexer(indexer, expected_shape)
+    assert isinstance(indexer_aval, indexing.NDIndexer)
+    offsets = _extract_indirect_offsets_from_indexer(
+        indexer, indexer_aval, core_type, expected_shape
+    )
     if offsets is None:
       continue
     if i != len(transforms) - 1:
@@ -1106,10 +1141,14 @@ def _extract_indirect_offsets(
   return None, transforms
 
 
-def _has_indirect_offsets(transforms: Sequence[ir.Value]) -> bool:
+def _has_indirect_offsets(
+    transforms: Sequence[state.Transform],
+    transforms_aval: Sequence[state.Transform],
+    core_type: tpu_core.CoreType,
+) -> bool:
   return any(
-      _extract_indirect_offsets_from_indexer(indexer) is not None
-      for indexer in transforms
+      _extract_indirect_offsets_from_indexer(indexer, indexer_aval, core_type) is not None  # pyrefly: ignore[bad-argument-type]
+      for indexer, indexer_aval in zip(transforms, transforms_aval)
       if isinstance(indexer, indexing.NDIndexer)
   )
 

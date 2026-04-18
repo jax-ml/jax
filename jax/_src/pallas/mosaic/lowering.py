@@ -657,7 +657,12 @@ def _check_block_mappings(
     rank = len(physical_block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
-    memory_space = tpu_core.memory_space_to_tpu_memory_space(bm.block_aval.memory_space, kernel_type)
+    block_memory_space = bm.block_aval.memory_space
+    if block_memory_space is None:
+      block_memory_space = pallas_core.MemorySpace.DEFAULT
+    memory_space = tpu_core.memory_space_to_tpu_memory_space(
+        block_memory_space, kernel_type
+    )
     if memory_space == tpu_core.MemorySpace.SMEM and bm.has_trivial_window():
       continue
     if memory_space == tpu_core.MemorySpace.SEMAPHORE:
@@ -855,8 +860,11 @@ def lower_jaxpr_into_module(
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
       # ANY and SEMAPHORE operands don't support windowing and require empty window_params.
+      block_memory_space = bm.block_aval.memory_space
+      if block_memory_space is None:
+        block_memory_space = pallas_core.MemorySpace.DEFAULT
       tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
-          bm.block_aval.memory_space, kernel_type
+          block_memory_space, kernel_type
       )
       if (
           tpu_memory_space is ANY
