@@ -1299,22 +1299,20 @@ def _extract_strided_slice_constraint_system(
   del ctx
   if any(ir.IntegerAttr(s).value != 1 for s in op.strides):
     raise NotImplementedError("`strides` must contain only 1s.")
-  operand = ValueSite(op, VariableType.OPERAND, 0)
-  result = ValueSite(op, VariableType.RESULT, 0)
-  variable = cs.Variable(operand)
-  offsets: tuple[int, ...] = tuple(ir.IntegerAttr(o).value for o in op.offsets)
+  operand = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
+  result = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
+  offsets = tuple(ir.IntegerAttr(o).value for o in op.offsets)
   constraints = [
-      cs.Divides(variable, offsets),
+      cs.Divides(operand, offsets),
+      cs.Equals(operand, result),
       # TODO(allanrenucci): Remove once vectors with splat and strided layouts
       # can be sliced.
-      cs.NotOfType(variable, fa.WGSplatFragLayout),
-      cs.NotOfType(variable, fa.WGStridedFragLayout),
+      cs.NotOfType(result, fa.WGSplatFragLayout),
+      cs.NotOfType(result, fa.WGStridedFragLayout),
   ]
   return (
       cs.ConstraintSystem(constraints=constraints),
-      # We use a single variable because lowering does not support two different
-      # layouts for `source` and `result`.
-      {variable: [operand, result]},
+      {operand: [operand.key], result: [result.key]},
   )
 
 
@@ -1323,31 +1321,30 @@ def _vector_extract_constraint_system(
     ctx: DerivationContext, op: vector.ExtractOp
 ) -> tuple[cs.ConstraintSystem, ValueSitesForVariable]:
   del ctx
+  operand = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
   if not isinstance(op.result.type, ir.VectorType):  # scalar result
-    operand = ValueSite(op, VariableType.OPERAND, 0)
-    variable = cs.Variable(operand)
     layout = fa.WGSplatFragLayout(tuple(op.source.type.shape))
     # We only support indexing for splat layout.
     assignments: dict[cs.Variable, cs.Constant] = {
-        variable: cs.RegisterLayout(layout)
+        operand: cs.RegisterLayout(layout)
     }
-    return cs.ConstraintSystem(assignments), {variable: [operand]}
+    return cs.ConstraintSystem(assignments), {operand: [operand.key]}
 
   if op.dynamic_position:
     raise NotImplementedError("Only slicing with static indices allowed.")
-  operand = ValueSite(op, VariableType.OPERAND, 0)
-  result = ValueSite(op, VariableType.RESULT, 0)
-  variable = cs.Variable(operand)
+  result = cs.Variable(ValueSite(op, VariableType.RESULT, 0))
   constraints = [
-      cs.Divides(variable, tuple(op.result.type.shape)),
+      cs.Equals(operand, result),
+      cs.Divides(operand, tuple(op.source.type.shape)),
+      cs.Divides(result, tuple(op.result.type.shape)),
       # TODO(allanrenucci): Remove once vectors with splat and strided layouts
       # can be sliced.
-      cs.NotOfType(variable, fa.WGSplatFragLayout),
-      cs.NotOfType(variable, fa.WGStridedFragLayout),
+      cs.NotOfType(result, fa.WGSplatFragLayout),
+      cs.NotOfType(result, fa.WGStridedFragLayout),
   ]
   return (
       cs.ConstraintSystem(constraints=constraints),
-      {variable: [operand, result]},
+      {operand: [operand.key], result: [result.key]},
   )
 
 
@@ -1756,8 +1753,9 @@ def _memref_subview_constraint_system(
     op: memref.SubViewOp,
 ) -> ConstraintSystemDerivationRuleResult:
   source = ValueSite(op, VariableType.OPERAND, 0)
-  dest = ValueSite(op, VariableType.RESULT, 0)
-  source_dest_var = ctx.producer_ref(source)
+  source_var = ctx.producer_ref(source)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  result_var = cs.Variable(result)
 
   if any(s != 1 for s in op.static_strides):
     raise NotImplementedError(
@@ -1790,9 +1788,12 @@ def _memref_subview_constraint_system(
         divisibility_constraint = dynamic_gcd(divisibility_constraint, offset)
       tiling_multiple.append(divisibility_constraint)
 
-  constraints = [cs.Divides(source_dest_var, tuple(tiling_multiple))]
+  constraints = [
+      cs.Divides(source_var, tuple(tiling_multiple)),
+      cs.Equals(source_var, result_var),
+  ]
   system = cs.ConstraintSystem(constraints=constraints)
-  return system, {source_dest_var: [source, dest]}
+  return system, {source_var: [source], result_var: [result]}
 
 
 @_add_constraint_system_derivation_rule(memref.CastOp)
@@ -1843,8 +1844,9 @@ def _memref_expand_shape_op_equation_system(
     )
 
   source = ValueSite(op, VariableType.OPERAND, 0)
+  source_var = ctx.producer_ref(source)
   dest = ValueSite(op, VariableType.RESULT, 0)
-  var = ctx.producer_ref(source)
+  dest_var = cs.Variable(dest)
 
   reverse_tiling_multiple = []
   for dim, idx in zip(
@@ -1857,8 +1859,14 @@ def _memref_expand_shape_op_equation_system(
       break
     reverse_tiling_multiple.append(dim)
 
-  constraints = [cs.Divides(var, tuple(reversed(reverse_tiling_multiple)))]
-  return cs.ConstraintSystem(constraints=constraints), {var: [source, dest]}
+  constraints = [
+      cs.Divides(source_var, tuple(reversed(reverse_tiling_multiple))),
+      cs.Equals(source_var, dest_var),
+  ]
+  return cs.ConstraintSystem(constraints=constraints), {
+      source_var: [source],
+      dest_var: [dest],
+  }
 
 
 # `memref.load` and `memref.store` are used to load barrier phases which are
@@ -2452,6 +2460,19 @@ def infer_layout(
     rule_result = rule(ctx, op)
     nonlocal global_constraint_system
     constraint_system, mapping = rule_result
+    for var, sites in mapping.items():
+      assert isinstance(var.key, ValueSite)
+      for site in sites:
+        if site.memory_space != var.key.memory_space:
+          raise ValueError(
+              f"Memory space mismatch between variable and {site}:"
+              f" {var.key.memory_space} != {site.memory_space}."
+          )
+        if site.shape != var.key.shape:
+          raise ValueError(
+              f"Shape mismatch between variable and {site}:"
+              f" {var.key.shape} != {site.shape}."
+          )
     global_constraint_system &= constraint_system
     ctx.update(mapping)
 
