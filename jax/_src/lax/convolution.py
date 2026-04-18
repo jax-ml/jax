@@ -333,9 +333,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
 
     The ``out_default`` and ``out_tf`` will differ because the kernel is flipped
     when ``transpose_kernel=True``. The default JAX convention computes the
-    mathematical transpose of the convolution operation, while ``transpose_kernel=True``
-    mimics the behavior of ``tf.keras.layers.Conv2DTranspose``, which flips the spatial
-    axes of the kernel before computing the transposed convolution.
+    mathematical transpose of the convolution operation, while transpose_kernel=True
+    mimics the behavior of tf.keras.layers.Conv2DTranspose, which flips the spatial axes
+    and swaps the input/output channel axes of the kernel before computing the transposed convolution.
 
     Use ``transpose_kernel=True`` when porting models from TensorFlow/Keras that use
     Conv2DTranspose layers, or when working with pretrained TensorFlow checkpoints.
