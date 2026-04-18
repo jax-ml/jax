@@ -2024,7 +2024,8 @@ def physical_aval(aval):
     from jax._src.sharding_impls import physical_sharding  # pyrefly: ignore[missing-import]
     return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
                        sharding=physical_sharding(aval, aval.sharding),
-                       manual_axis_type=aval.mat)
+                       manual_axis_type=aval.mat,
+                       memory_space=aval.memory_space)
   return aval
 
 def physical_shape(logical_shape, dtype):
