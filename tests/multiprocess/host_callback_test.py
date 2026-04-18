@@ -144,7 +144,7 @@ class IoCallbackMultiProcessTest(jtu.JaxTestCase,
                          in_shardings=P("p", "l"),
                          out_shardings=P("p", "l"))
 
-    with mesh:
+    with jax.set_mesh(mesh):
       gx = multihost_utils.host_local_array_to_global_array(
           x_local, mesh, P("p", "l"))
       global_res = pjit_fun(gx)

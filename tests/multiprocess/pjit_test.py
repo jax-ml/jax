@@ -52,7 +52,7 @@ def sorted_devices():
 def use_default_mesh():
   devices = sorted_devices()
   mesh_devices = np.array(devices).reshape((X_SIZE, Y_SIZE, CHIPS_SIZE))
-  with jax.sharding.Mesh(mesh_devices, ("x", "y", "chips")):
+  with jax.set_mesh(jax.sharding.Mesh(mesh_devices, ("x", "y", "chips"))):
     yield
 
 
@@ -105,7 +105,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     x = jnp.arange(elems_per_host) + jax.process_index() * elems_per_host
     iar = jax.sharding.PartitionSpec("x")
     oar = jax.sharding.PartitionSpec("x")
-    with mesh:
+    with jax.set_mesh(mesh):
       f = pjit.pjit(lambda x, y: (x, y), in_shardings=iar, out_shardings=oar)
       gx = multihost_utils.host_local_array_to_global_array(
           (x, x), mesh, iar
@@ -175,7 +175,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         7: ((slice(6, 8), slice(0, 1)), 0),
     }
 
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(lambda x: x, out_shardings=out_sharding)
       out = f(a1)
 
@@ -188,7 +188,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         self.assertEqual(s.data.shape, (2, 1))
         np.testing.assert_array_equal(s.data._value, input_data[expected_index])
 
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(lambda x: x)
       out = f(a1)
 
@@ -205,7 +205,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         global_mesh, jax.sharding.PartitionSpec(None)
     )
 
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(
           lambda x: x, in_shardings=none_sharding, out_shardings=out_sharding
       )
@@ -217,7 +217,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         global_input_shape, none_sharding, lambda idx: input_data[idx]
     )
 
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(
           lambda x, y: (x, y),
           in_shardings=(none_sharding, none_sharding),
@@ -303,7 +303,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
       )
 
   def test_pjit_array_eval_shape(self):
-    with jtu.create_mesh((8,), "x"):
+    with jax.set_mesh(jtu.create_mesh((8,), "x")):
 
       @functools.partial(
           pjit.pjit,
@@ -332,7 +332,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
       self.assertEqual(x.shape, (16,))
       return x
 
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(
           check_shape,
           in_shardings=jax.sharding.PartitionSpec("x"),
@@ -367,7 +367,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     global_mesh = jtu.create_mesh((4, 2), ("x", "y"))
 
     def _lower_compile(inp):
-      with global_mesh:
+      with jax.set_mesh(global_mesh):
         f = pjit.pjit(
             lambda x: x.sum(),
             in_shardings=jax.sharding.PartitionSpec("x"),
@@ -392,7 +392,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     num_devices = jax.device_count()
     x = jnp.arange(num_devices)
     global_mesh = jtu.create_mesh((num_devices,), "x")
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(
           lambda x: x,
           in_shardings=jax.sharding.PartitionSpec("x"),
@@ -421,7 +421,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
   def test_numpy_input_error_with_non_trivial_sharding(self):
     global_mesh = jtu.create_mesh((8,), "x")
     inp = np.arange(8)
-    with global_mesh:
+    with jax.set_mesh(global_mesh):
       f = pjit.pjit(
           lambda x: x,
           in_shardings=jax.sharding.PartitionSpec(None),
