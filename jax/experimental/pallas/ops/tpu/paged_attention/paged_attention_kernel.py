@@ -596,9 +596,9 @@ def paged_attention(
     in_specs = [
         q_block_spec,
         pl.BlockSpec(memory_space=pl.ANY),
-        None,
+        None,  # type: ignore[list-item]
         pl.BlockSpec(memory_space=pl.ANY),
-        None,
+        None,  # type: ignore[list-item]
     ]
     scratch_shapes = (
         pltpu.VMEM(

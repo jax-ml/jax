@@ -789,13 +789,13 @@ def amax(a: ArrayLike, axis: Axis = None, out: None = None,
              initial=initial, where=where)
 
 def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
-  if not isinstance(axis, Sequence):
-    axes = (axis,)
+  if not isinstance(axis, (tuple, list)):
+    axis_seq: Sequence[int] = (axis,)  # type: ignore[assignment]
   else:
-    axes = axis
+    axis_seq = axis
   size = 1
   a_shape = np.shape(a)
-  for a in axes:
+  for a in axis_seq:
     size *= maybe_named_axis(a, lambda i: a_shape[i], lax_parallel.axis_size)
   return size
 

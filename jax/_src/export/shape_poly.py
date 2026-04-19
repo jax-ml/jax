@@ -28,7 +28,7 @@ import io
 import copy
 import operator as op
 import tokenize
-from typing import Any, SupportsIndex, TypeAlias, TypeGuard, Union, overload
+from typing import Any, TypeAlias, Union, overload
 import warnings
 
 import numpy as np
@@ -583,13 +583,13 @@ class _DimExpr:
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedTerms, i1: int, f1: int,
-      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...
+      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...  # type: ignore[bad-return-type]
 
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedFactors, i1: int, f1: int,
-      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...
+      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...  # type: ignore[bad-return-type]
 
   @staticmethod
   def _linear_combination_sorted_pairs(
@@ -763,7 +763,7 @@ class _DimExpr:
     if modulo is not None:
       raise NotImplementedError("__pow__ modulo not implemented")
     if is_symbolic_dim(power):
-      return power.__rpow__(self)
+      return power.__rpow__(self)  # pyrefly: ignore[bad-argument-type]
     if power != int(power):
       raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
     if power >= 0:
@@ -875,7 +875,7 @@ class _DimExpr:
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
-      while is_symbolic_dim(dividend) and not dividend._is_constant:
+      while is_symbolic_dim(dividend) and not dividend._is_constant:  # type: ignore[attribute-error]
         mon, count = dividend._leading_term
         if isinstance(divisor, _DimExpr):
           dterm, dcount = divisor._leading_term
@@ -890,7 +890,7 @@ class _DimExpr:
         quotient += q
         dividend -= q * divisor
 
-      dividend = int(dividend)
+      dividend = int(dividend)  # type: ignore[assignment]
       if isinstance(divisor, _DimExpr):
         if dividend != 0:
           raise InconclusiveDimensionOperation("")
@@ -1051,9 +1051,9 @@ class SymbolicScope:
       if cmp_pos < 0:
         raise ValueError("Constraint parsing error: must contain one of '==' or '>=' or '<='")
     e1_str = c_str[:cmp_pos]
-    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
+    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()  # type: ignore[name-error]
     e2_str = c_str[cmp_pos + 2:]
-    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
+    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()  # type: ignore[name-error]
     if cmp == Comparator.GEQ and not is_geq:
       e1, e2 = e2, e1
 
@@ -1078,7 +1078,7 @@ class SymbolicScope:
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
 
-      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)
+      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error]
       if before in self._normalization_rules:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
@@ -1200,7 +1200,7 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
 core.pytype_aval_mappings[_DimExpr] = _DimExpr._get_aval
 dtypes.register_weak_scalar_type(_DimExpr)
 
-def _convertible_to_int(p: Any) -> TypeGuard[SupportsIndex]:
+def _convertible_to_int(p: Any) -> bool:
   try:
     op.index(p)
     return True
@@ -1220,7 +1220,7 @@ def _ensure_poly(p: DimSize,
 def _convertible_to_poly(p: Any) -> bool:
   return isinstance(p, _DimExpr) or _convertible_to_int(p)
 
-def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
+def is_symbolic_dim(p: DimSize) -> bool:
   """Checks if a dimension is symbolic.
   """
   return isinstance(p, _DimExpr)
@@ -1546,7 +1546,7 @@ class _Parser:
   def next_tok(self) -> tokenize.TokenInfo:
     while True:
       try:
-        t = next(self.tokstream)
+        t = next(self.tokstream)  # type: ignore[attribute-error]
       except StopIteration:
         raise self.parse_err(None, "unexpected end of string")
       if t.exact_type not in [tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT]:
@@ -1600,16 +1600,14 @@ class _Parser:
             f"{len(self.dimensions)} already and 'like' shape has "
             f"only {len(self.like_shape)} dimensions")
       if tok.exact_type == tokenize.ELLIPSIS:
-        assert self.like_shape is not None
-        to_add = self.like_shape[len(self.dimensions):]
+        to_add = self.like_shape[len(self.dimensions):]  # type: ignore[index]
         for ad in to_add:
           self.add_dim(ad, tok)
         tok = self.next_tok()
         break
 
       if tok.exact_type == tokenize.NAME and tok.string == "_":
-        assert self.like_shape is not None
-        e = self.like_shape[len(self.dimensions)]
+        e = self.like_shape[len(self.dimensions)]  # type: ignore[index]
         tok = self.next_tok()
       else:
         e, tok = self.expr(tok)
@@ -1658,7 +1656,7 @@ class _Parser:
 
       acc = acc * f if acc is not None else f
       if tok.exact_type in self.FOLLOW_TERM:
-        return acc, tok
+        return acc, tok  # type: ignore[bad-return-type]
       tok = self.consume_token(tok, tokenize.STAR)
 
   def factor(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
@@ -2103,7 +2101,7 @@ def _solve_dim_equations(
                 solution_err_msg_trailer_errors]))
 
       if not isinstance(var_value, _DimExpr):
-        assert var_value.dtype == core.dim_value_dtype()  # pyrefly: ignore[missing-attribute]
+        assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error]
       shape_env[var] = var_value  # pyrefly: ignore[unsupported-operation]
       solution_error_message_pieces.extend([
         f"'{var}' = ", var_value,

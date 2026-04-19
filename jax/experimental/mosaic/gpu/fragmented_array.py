@@ -4064,7 +4064,7 @@ def plan_tiled_transfer(
         transform = lambda idx: (idx + offset * lane_group) % tiles_shape
         if not has_bank_conflicts(transform):
           # We've found a strategy that avoids bank conflicts!
-          return StaggeredTransferPlan(
+          return StaggeredTransferPlan(  # type: ignore[call-arg]
               stagger, dim, tiles_shape[dim], group_stride
           )
   raise TransferPlanDerivationError(
@@ -4328,7 +4328,7 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
           f" {gmem_ty.shape} by (8, {swizzle_elems})), but got {smem_ty.shape}"
       )
     layout = tiled_copy_smem_gmem_layout(
-        *smem_ty.shape[-4:-2], swizzle, bitwidth  # pyrefly: ignore[bad-argument-count]
+        *smem_ty.shape[-4:-2], swizzle, bitwidth  # type: ignore[call-arg]
     )
     if utils.is_smem_ref(src_ty):
       regs = FragmentedArray.load_tiled(src, swizzle, is_signed=is_signed, layout=layout)

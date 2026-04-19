@@ -308,7 +308,7 @@ def _copy_smem_to_gmem_lowering(
       indices,
       slice_lengths,
       predicate=predicate,
-      commit_group=commit_group,
+      commit_group=commit_group,  # type: ignore[call-arg]
       reduction_op=reduction_op_attr,
       **kwargs  # pyrefly: ignore[bad-argument-type]
   )

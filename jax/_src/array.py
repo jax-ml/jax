@@ -959,7 +959,7 @@ def _array_from_process_local_data(
   # making local_to_global_shape available in the api.
   local_shape = local_data.shape
   if global_shape is None:
-    global_shape = local_to_global_shape(sharding, local_shape)  # pyrefly: ignore[bad-assignment]
+    global_shape = local_to_global_shape(sharding, local_shape)  # type: ignore[assignment]
     assert global_shape is not None
     if None in global_shape:
       raise ValueError(

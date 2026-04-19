@@ -214,8 +214,7 @@ class State:
           'Preemption sync manager should only be initialized once.')
     self.preemption_sync_manager = (
         _jax.create_preemption_sync_manager())
-    assert self.client is not None
-    self.preemption_sync_manager.initialize(self.client)
+    self.preemption_sync_manager.initialize(self.client)  # type: ignore[bad-argument-type]
 
 global_state = State()
 

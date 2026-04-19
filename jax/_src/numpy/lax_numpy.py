@@ -1051,7 +1051,7 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
     bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension: list[ArrayLike] = D * [bins]  # type: ignore[assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
@@ -1977,7 +1977,7 @@ def reshape(
   try:
     if out_sharding is None:
       # forward to method for ndarrays
-      return a.reshape(shape, order=order)  # pyrefly: ignore[missing-attribute]
+      return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
     pass
   return asarray(a).reshape(shape, order=order, out_sharding=out_sharding)

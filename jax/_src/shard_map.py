@@ -1122,7 +1122,7 @@ def _pspec_mhlo_attrs(spec, aval: core.AbstractValue) -> str:
 def get_mesh_from_args(args_flat, mesh):
   for a in args_flat:
     if (hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding)
-        and not a.sharding.mesh.is_scalar):  # pyrefly: ignore[missing-attribute]
+        and not a.sharding.mesh.is_scalar):  # type: ignore[missing-attribute]
 
       if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
         aval = core.shaped_abstractify(a)
@@ -1873,7 +1873,7 @@ def _add_reshapes(which: Sequence[bool],
                   jaxpr_known: core.Jaxpr,
                   jaxpr_staged: core.Jaxpr) -> tuple[core.Jaxpr, core.Jaxpr]:
   # add singleton axes to residuals which are from jaxpr_known and are scalars
-  which_ = [w and not v.aval.shape  # pyrefly: ignore[missing-attribute]
+  which_ = [w and not v.aval.shape  # type: ignore[missing-attribute]
             for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
   if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars

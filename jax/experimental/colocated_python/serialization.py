@@ -24,7 +24,7 @@ import threading
 from typing import Any
 
 try:
-  import cloudpickle  # pyrefly: ignore[missing-import]
+  import cloudpickle  # type: ignore[import-not-found]
 except ImportError:
   cloudpickle = None
 
