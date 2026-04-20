@@ -113,6 +113,9 @@ zip, unsafe_zip = safe_zip, zip
 # Extended types that should not be converted to physical types in lowering.
 PHYSICAL_EXTENDED_DTYPES = {pallas_core.semaphore_dtype}
 
+_dma_unflatten = tpu_primitives._dma_unflatten
+_get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
+
 
 # TODO(slebedev): Make this a TypeIs function, once we migrate to Pyrefly.
 def should_physicalize_dtype(dtype: DTypeLike) -> bool:
@@ -1655,7 +1658,14 @@ def _reshape_memref(
   )
 
 
-def _transform_ref(ref, ref_ty, ref_block_shape, transforms):
+def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
+  # Unwrap the refs if they are TransformedRefs.
+  if transforms == () and isinstance(ref, state.TransformedRef):
+    ref, transforms = _get_ref_and_transforms(ref)
+  if isinstance(ref_ty, state.TransformedRef):
+    ref_ty, _ = _get_ref_and_transforms(ref_ty)
+  if isinstance(ref_block_shape, state.TransformedRef):
+    ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
   for transform in transforms:
     match transform:
       case NDIndexer():
@@ -4105,35 +4115,18 @@ def _dma_start_lowering_rule(
 ):
   if add:
     raise NotImplementedError("DMA with add=True is not supported.")
-  (
-      src_ref,
-      src_transforms,
-      dst_ref,
-      dst_transforms,
-      sem,
-      sem_transforms,
-      src_sem,
-      src_sem_transforms,
-      device_id,
-  ) = tree_util.tree_unflatten(tree, args)
-  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, device_id_aval) = (
-      tree_util.tree_unflatten(tree, ctx.avals_in)
+  src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(tree, args)
+  src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval, device_id_aval = (
+      _dma_unflatten(tree, ctx.avals_in)
   )
-  if src_ref_aval.dtype == jnp.bool_:
+  if _get_ref_and_transforms(src_ref_aval)[0].dtype == jnp.bool_:
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
-  block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
-  src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
-  src_ref, _ = _transform_ref(
-      src_ref, src_ref_aval, src_ref_block_shape, src_transforms
-  )
+  block_shapes = _dma_unflatten(tree, ctx.block_shapes)
+  src_ref, _ = _transform_ref(src_ref, src_ref_aval, block_shapes[0])
   if src_sem is not None:
-    src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
-    )
-  dst_ref, _ = _transform_ref(
-      dst_ref, dst_ref_aval, dst_ref_block_shape, dst_transforms
-  )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+    src_sem, _ = _transform_ref(src_sem, src_sem_aval, block_shapes[3])
+  dst_ref, _ = _transform_ref(dst_ref, dst_ref_aval, block_shapes[1])
+  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
   kernel_type = ctx.lowering_context.kernel_type
   if isinstance(sem_aval.memory_space, tpu_core.CoreMemorySpace):
     dest_kernel_type = sem_aval.memory_space.core_type
@@ -4164,25 +4157,15 @@ def _dma_start_lowering_rule(
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType):
-  (
-      src,
-      src_transforms,
-      dst,
-      transforms,
-      sem,
-      sem_transforms,
-      _,
-      _,
-      device_id,
-  ) = tree_util.tree_unflatten(tree, args)
-  (src_aval, _, dst_aval, _, sem_aval, _, _, _, device_id_aval) = tree_util.tree_unflatten(
+  src, dst, sem, _, device_id = _dma_unflatten(tree, args)
+  src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
   )
-  block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
-  ref_block_shape = block_shapes[2]
-  src, _ = _transform_ref(src, src_aval, src_aval.shape, src_transforms)
-  dst, _ = _transform_ref(dst, dst_aval, ref_block_shape, transforms)
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  block_shapes = _dma_unflatten(tree, ctx.block_shapes)
+  block_shapes = [_get_ref_and_transforms(r)[0] for r in block_shapes]
+  src, _ = _transform_ref(src, src_aval, block_shapes[0])
+  dst, _ = _transform_ref(dst, dst_aval, block_shapes[1])
+  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
 
   core_id = None
   if device_id is not None:

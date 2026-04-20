@@ -68,6 +68,8 @@ LoweringRuleContext = tc_lowering.LoweringRuleContext
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
 _make_index = tc_lowering._make_index
 _transform_ref = tc_lowering._transform_ref
+_dma_unflatten = tpu_primitives._dma_unflatten
+_get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
 
 
 def dynamic_shape_replacement_fn(x):
@@ -816,17 +818,17 @@ def _debug_print_lowering_rule(
 
 def _prepare_dma_refs(
     src_ref,
-    src_transforms,
     dst_ref,
-    dst_transforms,
     src_aval,
-    src_transforms_aval,
     dst_aval,
-    dst_transforms_aval,
     core_type: tpu_core.CoreType,
     is_add: bool = False,
 ):
   """Prepares the DMA source and destination references."""
+  src_ref, src_transforms = _get_ref_and_transforms(src_ref)
+  dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
+  src_aval, src_transforms_aval = _get_ref_and_transforms(src_aval)
+  dst_aval, dst_transforms_aval = _get_ref_and_transforms(dst_aval)
   src_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       src_aval.memory_space, core_type
   )
@@ -916,38 +918,20 @@ def _dma_start_lowering_rule(
     priority: int,
     add: bool,
 ):
-  (
-      src_ref,
-      src_transforms,
-      dst_ref,
-      dst_transforms,
-      sem,
-      sem_transforms,
-      src_sem,
-      src_sem_transforms,
-      device_id,
-  ) = tpu_primitives._dma_unflatten(tree, args)
-  (
-      src_aval,
-      src_transforms_aval,
-      dst_aval,
-      dst_transforms_aval,
-      sem_aval,
-      _,
-      src_sem_aval,
-      _,
-      device_id_aval,
-  ) = tpu_primitives._dma_unflatten(tree, ctx.avals_in)
+  src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(
+      tree, args
+  )
+  src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
+      tree, ctx.avals_in
+  )
+  sem_aval, _ = _get_ref_and_transforms(sem_aval)
+  src_sem_aval, _ = _get_ref_and_transforms(src_sem_aval)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref,
-      src_transforms,
       dst_ref,
-      dst_transforms,
       src_aval,
-      src_transforms_aval,
       dst_aval,
-      dst_transforms_aval,
       ctx.lowering_context.kernel_type,
       add,
   )
@@ -959,11 +943,10 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  print(f'sem: {sem}, sem_aval: {sem_aval}, sem_aval.shape: {sem_aval.shape}')
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
   if src_sem is not None:
-    src_sem, _ = _transform_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_transforms
-    )
+    src_sem, _ = _transform_ref(src_sem, src_sem_aval, src_sem_aval.shape)
 
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
@@ -1000,41 +983,22 @@ def _dma_wait_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
 ):
-  (
-      src_ref,
-      src_transforms,
-      dst_ref,
-      dst_transforms,
-      sem,
-      sem_transforms,
-      _,
-      _,
-      device_id,
-  ) = tpu_primitives._dma_unflatten(tree, args)
-  (
-      src_aval,
-      src_transforms_aval,
-      dst_aval,
-      dst_transforms_aval,
-      sem_aval,
-      _,
-      _,
-      _,
-      device_id_aval,
-  ) = tpu_primitives._dma_unflatten(tree, ctx.avals_in)
+  src_ref, dst_ref, sem, _, device_id = _dma_unflatten(
+      tree, args
+  )
+  src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
+      tree, ctx.avals_in
+  )
+  sem_aval, _ = _get_ref_and_transforms(sem_aval)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref,
-      src_transforms,
       dst_ref,
-      dst_transforms,
       src_aval,
-      src_transforms_aval,
       dst_aval,
-      dst_transforms_aval,
       ctx.lowering_context.kernel_type,
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, sem_transforms)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:

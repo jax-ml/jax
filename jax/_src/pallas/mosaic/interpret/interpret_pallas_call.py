@@ -1408,22 +1408,23 @@ def _interpret_jaxpr(
         )
 
       elif prim is mosaic_primitives.dma_start_p:
-        (
-            src,
-            src_transforms,
-            dst,
-            dst_transforms,
-            dst_sem,
-            dst_sem_transforms,
-            src_sem,
-            src_sem_transforms,
-            target_device_id,
-        ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
+        src, dst, dst_sem, src_sem, target_device_id = jax.tree.unflatten(
+            eqn.params['tree'], deferred_invals()
+        )
+        src, src_transforms = mosaic_primitives._get_ref_and_transforms(src)
+        dst, dst_transforms = mosaic_primitives._get_ref_and_transforms(dst)
+        dst_sem, dst_sem_transforms = mosaic_primitives._get_ref_and_transforms(
+            dst_sem
+        )
+        src_sem, src_sem_transforms = mosaic_primitives._get_ref_and_transforms(
+            src_sem
+        )
         target_device_id = interpret_utils._device_id_to_logical(
             target_device_id, eqn.params['device_id_type'], ctx.axis_sizes,
             ctx.axis_indices)
-        (orig_src_ref, _, orig_dst_ref, *_
-        ) = jax.tree.unflatten(eqn.params['tree'], eqn.invars)
+        orig_src_ref, orig_dst_ref, *_ = jax.tree.unflatten(
+            eqn.params['tree'], eqn.invars
+        )
         src_memory_space = _forward_any_to_hbm(
             getattr(orig_src_ref.aval, 'memory_space', None)
         )
@@ -1471,17 +1472,13 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is mosaic_primitives.dma_wait_p:
-        (
-            src,
-            src_transforms,
-            dst,
-            dst_transforms,
-            dst_sem,
-            dst_sem_transforms,
-            src_sem,
-            src_sem_transforms,
-            target_device_id,
-        ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
+        src, _, dst_sem, _, _ = jax.tree.unflatten(
+            eqn.params['tree'], deferred_invals()
+        )
+        _, src_transforms = mosaic_primitives._get_ref_and_transforms(src)
+        dst_sem, dst_sem_transforms = mosaic_primitives._get_ref_and_transforms(
+            dst_sem
+        )
         src_ref_aval = state.transform_type(src_transforms, eqn.invars[0].aval)
         assert isinstance(src_ref_aval, state.AbstractRef)
         read_shape = src_ref_aval.shape

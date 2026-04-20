@@ -493,7 +493,10 @@ def _pp_transforms(
   )
 
 
-def pp_ref_transforms(context: core.JaxprPpContext, ref, transforms):
+def pp_ref_transforms(context: core.JaxprPpContext, ref, transforms=()):
+  if isinstance(ref, TransformedRef):
+    transforms = ref.transforms
+    ref = ref.ref
   return pp_ref_var(
       pp.concat([
           pp.text(core.pp_var(ref, context)),
