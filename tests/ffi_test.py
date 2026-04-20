@@ -164,7 +164,7 @@ class FfiTest(jtu.JaxTestCase):
     # compiled HLO.
     if jtu.test_device_matches(["cpu"]):
       target_name = "lapack_sgetrf_ffi"
-    elif jtu.test_device_matches(["rocm"]):
+    elif jtu.is_device_rocm():
       target_name = "hipsolver_getrf_ffi"
     elif jtu.test_device_matches(["cuda", "gpu"]):
       target_name = "cusolver_getrf_ffi"
