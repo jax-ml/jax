@@ -1928,6 +1928,8 @@ def categorical(
   shape: Shape | None = None,
   replace: bool = True,
   mode: str | None = None,
+  *,
+  out_sharding=None,
 ) -> Array:
   """Sample random values from categorical distributions.
 
@@ -1972,33 +1974,45 @@ def categorical(
     _check_shape("categorical", shape, batch_shape)
   shape_prefix = shape[:len(shape)-len(batch_shape)]
 
+  out_sharding = canonicalize_sharding(out_sharding, "categorical")
+
   if replace:
     if axis >= 0:
       axis -= len(logits_arr.shape)
 
-    logits_shape = list(shape[len(shape) - len(batch_shape):])
-    logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
-    return jnp.argmax(
-        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
-        lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
-        axis=axis)
+    logits_shape = tuple(shape[len(shape) - len(batch_shape):])
+    logits_shape = logits_shape[:axis % len(logits_arr.shape)] + (logits_arr.shape[axis],) + logits_shape[axis % len(logits_arr.shape):]
+    return maybe_auto_axes(_categorical_replace, out_sharding,
+                           shape_prefix=shape_prefix, logits_shape=logits_shape,
+                           axis=axis, mode=mode)(key, logits_arr)
   else:
-    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
     k = math.prod(shape_prefix)
     if k > logits_arr.shape[axis]:
       raise ValueError(
         f"Number of samples without replacement ({k}) cannot exceed number of "
         f"categories ({logits_arr.shape[axis]})."
       )
+    return maybe_auto_axes(_categorical_no_replace, out_sharding,
+                           batch_shape=batch_shape, k=k, axis=axis,
+                           shape=shape, shape_prefix=shape_prefix, mode=mode)(key, logits_arr)
 
-    _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
-    assert indices.shape == batch_shape + (k,)
-    assert shape == shape_prefix + batch_shape
+@jit(static_argnums=(2, 3, 4, 5))
+def _categorical_replace(key, logits_arr, shape_prefix, logits_shape, axis, mode):
+  return jnp.argmax(
+      gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
+      lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
+      axis=axis)
 
-    dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
-    indices = lax.reshape(indices, shape, dimensions)
-    assert indices.shape == shape
-    return indices
+@jit(static_argnums=(2, 3, 4, 5, 6, 7))
+def _categorical_no_replace(key, logits_arr, batch_shape, k, axis, shape, shape_prefix, mode):
+  logits_arr = logits_arr + gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
+  _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
+  assert indices.shape == batch_shape + (k,)
+  assert shape == shape_prefix + batch_shape
+  dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
+  indices = lax.reshape(indices, shape, dimensions)
+  assert indices.shape == shape
+  return indices
 
 
 def laplace(key: ArrayLike,

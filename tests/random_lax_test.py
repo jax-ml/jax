@@ -231,6 +231,8 @@ _OUT_SHARDING_CASES = [
     ('gamma',                 lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('loggamma',              lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('poisson',               lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
+    ('categorical_no_replace',lambda key, n, s: random.categorical(key, np.ones((n, 5)), replace=False, out_sharding=s)),
+    ('categorical_replace',   lambda key, n, s: random.categorical(key, np.ones((n, 5)), out_sharding=s)),
 ]
 
 
