@@ -5759,9 +5759,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   def setUp(self):
     if mgpu_dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu_dialect, "WarpMapOp"):
-      self.skipTest("mgpu.dialect has a backward incompatible change.")
     super().setUp()
 
   @parameterized.product(
@@ -6802,9 +6799,6 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
   def setUp(self):
     if mgpu_dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0.
-    if not hasattr(mgpu_dialect, "WarpMapOp"):
-      self.skipTest("mgpu.dialect has a backward incompatible change.")
     super().setUp()
 
   @parameterized.product(
