@@ -23,48 +23,40 @@ from . import fragmented_array as fa
 from . import launch_context
 
 
-# TODO(b/415721295): Refine return type once minimum jaxlib version is 0.10.0
 def _to_splat_fragmented_layout_attr(
     layout: fa.WGSplatFragLayout,
-) -> ir.Attribute:
+) -> mgpu.WGSplatFragLayoutAttr:
   """Constructs a #mosaic_gpu.WGSplatFragLayout attribute from a WGSplatFragLayout."""
   shape = ir.DenseI64ArrayAttr.get(layout.shape)
   return mgpu.WGSplatFragLayoutAttr.get(shape)
 
 
 def _from_splat_fragmented_layout_attr(
-    attr: ir.Attribute,
+    attr: mgpu.WGSplatFragLayoutAttr,
 ) -> fa.WGSplatFragLayout:
-  # TODO(b/415721295): Refine arg type once minimum jaxlib version is 0.10.0
-  assert isinstance(attr, mgpu.WGSplatFragLayoutAttr)
   return fa.WGSplatFragLayout(shape=tuple(attr.shape))
 
 
-# TODO(b/415721295): Refine return type once minimum jaxlib version is 0.10.0
 def _to_strided_fragmented_layout_attr(
     layout: fa.WGStridedFragLayout,
-) -> ir.Attribute:
+) -> mgpu.WGStridedFragLayoutAttr:
   """Constructs a #mosaic_gpu.WGStridedFragLayout attribute from a WGStridedFragLayout."""
   shape = ir.DenseI64ArrayAttr.get(layout.shape)
   return mgpu.WGStridedFragLayoutAttr.get(shape, layout.vec_size)
 
 
 def _from_strided_fragmented_layout_attr(
-    attr: ir.Attribute,
+    attr: mgpu.WGStridedFragLayoutAttr,
 ) -> fa.WGStridedFragLayout:
   """Constructs a WGStridedFragLayout from a #mosaic_gpu.WGStridedFragLayout attribute."""
-  # TODO(b/415721295): Refine arg type once minimum jaxlib version is 0.10.0
-  assert isinstance(attr, mgpu.WGStridedFragLayoutAttr)
   return fa.WGStridedFragLayout(
-      shape=tuple(attr.shape),
-      vec_size=attr.vector_size,
+      shape=tuple(attr.shape), vec_size=attr.vector_size
   )
 
 
-# TODO(b/415721295): Refine return type once minimum jaxlib version is 0.10.0
 def _to_tiled_layout_attr(
     layout: fa.TiledLayout,
-) -> ir.Attribute:
+) -> mgpu.TiledLayoutAttr:
   """Constructs a #mosaic_gpu.TiledLayout attribute from a TiledLayout."""
   i64 = ir.IntegerType.get_signless(64)
 
@@ -92,11 +84,9 @@ def _to_tiled_layout_attr(
 
 
 def _from_tiled_layout_attr(
-    attr: ir.Attribute,
+    attr: mgpu.TiledLayoutAttr,
 ) -> fa.TiledLayout:
   """Constructs a TiledLayout from a #mosaic_gpu.TiledLayout attribute."""
-  # TODO(allanrenucci): Refine arg type once minimum jaxlib version is 0.10.0
-  assert isinstance(attr, mgpu.TiledLayoutAttr)
 
   def _from_int_or_replicated_attr(d_attr: ir.Attribute) -> int | fa.Replicated:
     if isinstance(d_attr, mgpu.ReplicatedAttr):

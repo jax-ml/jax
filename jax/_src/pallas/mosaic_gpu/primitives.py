@@ -4610,7 +4610,6 @@ def _multimem_load_reduce_lowering_rule(
 def _multimem_load_reduce_lowering_rule_wg(
     ctx: lowering.LoweringRuleContext, ref, *transforms_leaves, tree, collective_axes, reduction_op,
 ):
-  assert hasattr(mgpu.dialect, "MultimemLoadReductionType")
   if (mesh_info := ctx.module_ctx.mesh_info) is None:
     raise ValueError(
         "JAX device mesh is required by multimem_load_reduce, but not defined."

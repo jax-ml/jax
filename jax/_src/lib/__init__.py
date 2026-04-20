@@ -143,13 +143,6 @@ import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
-if hasattr(mosaic_gpu_dialect, 'init_cc_mlir'):
-  # TODO(slebedev): Remove this once the minimum JAX version is 0.10.0.
-  try:
-    from jaxlib.mlir import ir  # pyrefly: ignore[missing-module-attribute]
-  except ImportError:
-    from mlir import ir  # pyrefly: ignore[missing-import]
-  mosaic_gpu_dialect.init_cc_mlir(ir)
 
 import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 
