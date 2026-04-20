@@ -92,7 +92,6 @@ def pdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike) -> Array:
     x: arraylike, value at which to evaluate the PDF
     mean: arraylike, centroid of distribution
     cov: arraylike, covariance matrix of distribution
-    allow_singular: not supported
 
   Returns:
     array of pdf values.

@@ -181,9 +181,9 @@ def logsf(x, a, b, loc=0, scale=1):
 
 @api.jit
 def sf(x, a, b, loc=0, scale=1):
-  """Truncated normal distribution log survival function.
+  """Truncated normal distribution survival function.
 
-  JAX implementation of :obj:`scipy.stats.truncnorm` ``logsf``
+  JAX implementation of :obj:`scipy.stats.truncnorm` ``sf``
 
   The survival function is defined as
 

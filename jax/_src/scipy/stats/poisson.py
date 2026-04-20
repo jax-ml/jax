@@ -47,6 +47,7 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.pmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
@@ -80,6 +81,7 @@ def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.logpmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   return jnp.exp(logpmf(k, mu, loc))
 
@@ -93,9 +95,9 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
 
   .. math::
 
-     f_{cdf}(k, p) = \sum_{i=0}^k f_{pmf}(k, p)
+     f_{cdf}(k, \mu) = \sum_{i=0}^k f_{pmf}(k, \mu)
 
-  where :math:`f_{pmf}(k, p)` is the probability mass function
+  where :math:`f_{pmf}(k, \mu)` is the probability mass function
   :func:`jax.scipy.stats.poisson.pmf`.
 
   Args:
@@ -109,6 +111,7 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.pmf`
     - :func:`jax.scipy.stats.poisson.logpmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
@@ -163,6 +166,7 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
     Array([1.3048419, 2.561407 , 3.7206903], dtype=float32)
 
   See Also:
+    - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.pmf`
     - :func:`jax.scipy.stats.poisson.logpmf`
     - :obj:`scipy.stats.poisson`
