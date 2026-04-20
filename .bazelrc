@@ -178,7 +178,7 @@ common:clang --copt=-Wno-error=c23-extensions
 common:cuda_v12 --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
 common:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 common:cuda_v12 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
-common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
+common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.28.9"
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
 common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
@@ -186,7 +186,7 @@ common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70
 common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
 common:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
 common:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
-common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
+common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.28.9"
 common:cuda_v13 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_75,sm_80,sm_90,sm_100,compute_120"
 
 common:cuda_common --repo_env TF_NEED_CUDA=1
@@ -254,6 +254,16 @@ common:asan --@rules_ml_toolchain//common:asan_options=detect_leaks=0
 common:asan_shared --config=asan
 common:asan_shared --copt=-shared-libasan
 common:asan_shared --linkopt=-shared-libasan
+
+# TSan common config
+common:tsan --features=tsan
+common:tsan --strip=never
+common:tsan --copt=-g
+
+# TSan with shared library config
+common:tsan_shared --config=tsan
+common:tsan_shared --copt=-shared-libsan
+common:tsan_shared --linkopt=-shared-libsan
 
 # #############################################################################
 # Cache options below.
@@ -398,7 +408,6 @@ common:use_tar_archive_files --repo_env=USE_MIRRORED_TAR_ARCHIVE_FILES=1
 common:rbe --config=resultstore
 common:rbe --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common:rbe --define=EXECUTOR=remote
-common:rbe --flaky_test_attempts=3
 common:rbe --jobs=200
 common:rbe --remote_executor=grpcs://remotebuildexecution.googleapis.com
 common:rbe --remote_timeout=3600

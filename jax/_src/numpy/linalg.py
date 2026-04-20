@@ -466,8 +466,67 @@ def matrix_rank(
   return reductions.sum(S > rtol, axis=-1)
 
 
+def _slogdet_1x1(a: Array) -> tuple[Array, Array]:
+  """Analytic slogdet for 1x1 matrices. No LU/solve"""
+  det = a[..., 0, 0]
+  abs_det = ufuncs.abs(det)
+  return ufuncs.sign(det), ufuncs.real(ufuncs.log(abs_det))
+
+
+def _slogdet_2x2(a: Array) -> tuple[Array, Array]:
+  """Analytic slogdet for 2x2 matrices. No LU/solve."""
+  a00, a01 = a[..., 0, 0], a[..., 0, 1]
+  a10, a11 = a[..., 1, 0], a[..., 1, 1]
+  det = (a00 * a11) - (a01 * a10)
+  abs_det = ufuncs.abs(det)
+  return ufuncs.sign(det), ufuncs.real(ufuncs.log(abs_det))
+
+
+@custom_jvp
+def _slogdet_small(a: Array) -> tuple[Array, Array]:
+  """slogdet for n in {1, 2} using analytic formulas only (no solve)."""
+  n = a.shape[-1]
+  if n == 1:
+    return _slogdet_1x1(a)
+  elif n == 2:
+    return _slogdet_2x2(a)
+  else:
+    raise ValueError(f"_slogdet_small only supports n in {{1, 2}}, got n={n}")
+
+
+def _slogdet_small_jvp(primals, tangents):
+  x, = primals
+  g, = tangents
+  n = x.shape[-1]
+  sign, ans = _slogdet_small(x)
+  if n == 1:
+    ans_dot = g[..., 0, 0] / x[..., 0, 0]
+  else:  # n == 2
+    x00, x01 = x[..., 0, 0], x[..., 0, 1]
+    x10, x11 = x[..., 1, 0], x[..., 1, 1]
+    det = (x00 * x11) - (x01 * x10)
+    ans_dot = (
+        (g[..., 0, 0] * x11 - g[..., 0, 1] * x10
+         - g[..., 1, 0] * x01 + g[..., 1, 1] * x00) / det
+    )
+  if jnp.issubdtype(jnp._dtype(x), np.complexfloating):
+    sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
+    ans_dot = ufuncs.real(ans_dot)
+  else:
+    sign_dot = array_creation.zeros_like(sign)
+  return (sign, ans), (sign_dot, ans_dot)
+
+
+_slogdet_small.defjvp(_slogdet_small_jvp)
+
+
 @custom_jvp
 def _slogdet_lu(a: Array) -> tuple[Array, Array]:
+  """Sign and log(abs(det)) via LU. Custom JVP is required: (1) sign(det) is
+  discontinuous at det=0 so standard autodiff is undefined; we use sign_dot=0
+  for real and a consistent rule for complex. (2) d/dA log|det(A)| = trace(A⁻¹ Ȧ),
+  which we implement explicitly; autodiff through det→abs→log would not yield
+  this formula and is undefined at singular A."""
   dtype = lax.dtype(a)
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
@@ -549,6 +608,9 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     raise ValueError(f"Argument to slogdet() must have shape [..., n, n], got {a_shape}")
   if method is None or method == "lu":
+    n = a_shape[-1]
+    if n == 1 or n == 2:
+      return SlogdetResult(*_slogdet_small(a))
     return SlogdetResult(*_slogdet_lu(a))
   elif method == "qr":
     return SlogdetResult(*_slogdet_qr(a))
@@ -557,6 +619,8 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
                      "are 'lu' (`None`), and 'qr'.")
 
 def _slogdet_jvp(primals, tangents):
+  """JVP for (sign, logabsdet). Uses d/dA log|det(A)| = trace(A⁻¹ Ȧ); sign_dot
+  is zero for real (sign is not differentiable at 0) and set per complex case."""
   x, = primals
   g, = tangents
   sign, ans = slogdet(x)
@@ -752,8 +816,12 @@ def eig(a: ArrayLike) -> EigResult:
     - At present, non-symmetric eigendecomposition is only implemented on the CPU and
       GPU backends. For more details about the GPU implementation, see the
       documentation for :func:`jax.lax.linalg.eig`.
+    - Currently autodiff is not supported for computation of non-symmetric eigenvectors;
+      see https://github.com/jax-ml/jax/issues/2748.
 
   See also:
+    - :func:`jax.lax.linalg.eig`: similar function with different eigenvector options
+      and device-specific implementations.
     - :func:`jax.numpy.linalg.eigh`: eigenvectors and eigenvalues of a Hermitian matrix.
     - :func:`jax.numpy.linalg.eigvals`: compute eigenvalues only.
 
@@ -910,8 +978,6 @@ def eigvalsh(a: ArrayLike, UPLO: str | None = 'L', *,
   w, _ = eigh(a, UPLO, symmetrize_input=symmetrize_input)
   return w
 
-
-# TODO(micky774): deprecated 2024-5-14, remove wrapper after deprecation expires.
 @export
 def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
          hermitian: bool = False, *, rcond: ArrayLike | None = None) -> Array:
@@ -1169,52 +1235,50 @@ def norm(x: ArrayLike, ord: int | str | None = None,
   else:
     axis = (canonicalize_axis(axis, ndim),)
 
-  num_axes = len(axis)
-  if num_axes == 1:
-    return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
-
-  elif num_axes == 2:
-    row_axis, col_axis = axis  # type: ignore[bad-unpacking]
-    if ord is None or ord in ('f', 'fro'):
-      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+  match axis:
+    case [_]:
+      return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
+    case [row_axis, col_axis]:
+      if ord is None or ord in ('f', 'fro'):
+        return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                         keepdims=keepdims))
-    elif ord == 1:
-      if not keepdims and col_axis > row_axis:
-        col_axis -= 1
-      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                             axis=col_axis, keepdims=keepdims, initial=0)
-    elif ord == -1:
-      if not keepdims and col_axis > row_axis:
-        col_axis -= 1
-      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
-                             axis=col_axis, keepdims=keepdims)
-    elif ord == np.inf:
-      if not keepdims and row_axis > col_axis:
-        row_axis -= 1
-      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims, initial=0)
-    elif ord == -np.inf:
-      if not keepdims and row_axis > col_axis:
-        row_axis -= 1
-      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims)
-    elif ord in ('nuc', 2, -2):
-      x = jnp.moveaxis(x, axis, (-2, -1))
-      s = svd(x, compute_uv=False)
-      if ord == 2:
-        y = reductions.amax(s, axis=-1, initial=0)
-      elif ord == -2:
-        y = reductions.amin(s, axis=-1)
+      elif ord == 1:
+        if not keepdims and col_axis > row_axis:
+          col_axis -= 1
+        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims, initial=0)
+      elif ord == -1:
+        if not keepdims and col_axis > row_axis:
+          col_axis -= 1
+        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                              axis=col_axis, keepdims=keepdims)
+      elif ord == np.inf:
+        if not keepdims and row_axis > col_axis:
+          row_axis -= 1
+        return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims, initial=0)
+      elif ord == -np.inf:
+        if not keepdims and row_axis > col_axis:
+          row_axis -= 1
+        return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
+                      axis=row_axis, keepdims=keepdims)
+      elif ord in ('nuc', 2, -2):
+        x = jnp.moveaxis(x, axis, (-2, -1))
+        s = svd(x, compute_uv=False)
+        if ord == 2:
+          y = reductions.amax(s, axis=-1, initial=0)
+        elif ord == -2:
+          y = reductions.amin(s, axis=-1)
+        else:
+          y = reductions.sum(s, axis=-1)
+        if keepdims:
+          y = jnp.expand_dims(y, axis)
+        return y
       else:
-        y = reductions.sum(s, axis=-1)
-      if keepdims:
-        y = jnp.expand_dims(y, axis)
-      return y
-    else:
-      raise ValueError(f"Invalid order '{ord}' for matrix norm.")
-  else:
-    raise ValueError(f"Improper number of axes for norm: {axis=}. Pass one axis to"
-                     " compute a vector-norm, or two axes to compute a matrix-norm.")
+        raise ValueError(f"Invalid order '{ord}' for matrix norm.")
+    case _:
+      raise ValueError(f"Improper number of axes for norm: {axis=}. Pass one axis to"
+                       " compute a vector-norm, or two axes to compute a matrix-norm.")
 
 @overload
 def qr(a: ArrayLike,
@@ -1393,7 +1457,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Array | float | None, *,
   if a.size == 0:
     s = array_creation.empty(0, dtype=a.dtype)
     rank = jnp.array(0, dtype=int)
-    x = array_creation.empty((n, *b.shape[1:]), dtype=a.dtype)
+    x = array_creation.zeros((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
       rcond = float(jnp.finfo(dtype).eps) * max(n, m)
@@ -2130,7 +2194,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
+  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # pyrefly: ignore[no-matching-overload]
                        optimize='auto', precision=precision)
 
 

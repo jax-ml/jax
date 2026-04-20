@@ -16,13 +16,13 @@
 
 import unittest
 
-from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import api
 from jax._src import array
-from jax._src import sharding_impls
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -43,20 +43,17 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     devices = jax.local_devices()
     x = [np.arange(i, i + elems_per_host) + jax.process_index() * elems_per_host
          for i in range(len(devices))]
-    y = jax.device_put_sharded(x, devices)
+    y = api.device_put_sharded(x, devices)
     f = jax.pmap(lambda x: lax.psum(x, "i"), axis_name="i")
     out = f(y)
 
     expected_out = np.array([
-        np.arange(i, i + elems_per_host) + p * elems_per_host  # pylint: disable=g-complex-comprehension
+        np.arange(i, i + elems_per_host) + p * elems_per_host
         for p in range(jax.process_count()) for i in range(len(devices))
     ])
 
     self.assertIsInstance(out, array.ArrayImpl)
-    if jax.config.jax_pmap_shmap_merge:
-      self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
-    else:
-      self.assertIsInstance(out.sharding, sharding_impls.PmapSharding)
+    self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
     np.testing.assert_array_equal(
         out, np.array([expected_out.sum(axis=0)] * len(devices)))
 
@@ -67,26 +64,6 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
         devices=jax.local_devices(),
     )(np.arange(jax.local_device_count()))
     np.testing.assert_array_equal(z, np.arange(jax.local_device_count()))
-
-  @parameterized.named_parameters(
-      ("sharded_dim_0", 0),
-      ("sharded_dim_1", 1),
-  )
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_default_pmap_sharding(self, sharded_dim):
-    if jax.config.jax_pmap_shmap_merge:
-      self.skipTest("Does not apply for pmap shard_map merge")
-
-    n = jax.local_device_count()
-    shape = (n, 1) if sharded_dim == 0 else (1, n)
-
-    ps = sharding_impls.PmapSharding.default(shape, sharded_dim)
-    inp = jnp.arange(np.prod(shape)).reshape(shape)
-    compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
-    pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
-
-    self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
-    self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_global_axis_size_initial_style(self):
@@ -158,8 +135,6 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
   @jtu.ignore_warning(category=UserWarning,
                       message=".*Using jit-of-pmap can lead to inefficient data movement")
   def test_replicated_output_sharding_multi_process(self):
-    if not jax.config.jax_pmap_shmap_merge:
-      self.skipTest("Only applies to pmap shmap merge")
 
     f = jax.pmap(lambda x: x, axis_name="i", out_axes=None)
     x = jnp.arange(jax.local_device_count())
@@ -168,6 +143,16 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
     self.assertEqual(out.sharding.spec, jax.sharding.PartitionSpec())
     self.assertEqual(out.sharding.mesh.size, jax.local_device_count())
+
+  @unittest.skipIf(jaxlib_extension_version < 430, "Requires jaxlib_extension_version >= 430")
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def testShardedArrayIndexing(self):
+    """Test that indexing a sharded array directly triggers copy error."""
+    n = jax.local_device_count()
+    x = jnp.arange(n)
+    f = jax.pmap(lambda x: x)
+    out = f(x)
+    out[0]  # doesn't crash
 
 
 if __name__ == "__main__":

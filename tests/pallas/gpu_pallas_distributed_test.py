@@ -14,23 +14,29 @@
 
 """Tests for distributed pallas GPU operations."""
 
+from collections.abc import Sequence
+import dataclasses
 import functools
+import math
 import os
 import tempfile
+import types
+from typing import ClassVar, TYPE_CHECKING
+from unittest import mock
 
-import absl.flags
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import dtypes
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
-from jax.experimental import pallas as pl
+from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
 import jax.numpy as jnp
@@ -40,7 +46,32 @@ import numpy as np
 P = jax.sharding.PartitionSpec
 partial = functools.partial
 
-IS_OSS = absl.flags.DEFINE_bool("is_oss", False, "Is test running in OSS.")
+
+# We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
+# monkey patch the functions in `pl` and `plgpu`.
+def do_not_call_me_directly(*args, **kwargs):
+  raise RuntimeError(
+      "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
+  )
+
+if TYPE_CHECKING:
+  pl = _pl
+  plgpu = _plgpu
+else:
+  # Clone the modules locally because the functions are called from other
+  # other test files in OSS and the tests are not isolated.
+  pl = types.ModuleType("_pl_local")
+  pl.__dict__.update(_pl.__dict__)
+
+  plgpu = types.ModuleType("_plgpu_local")
+  plgpu.__dict__.update(_plgpu.__dict__)
+
+  _pallas_call = _pl.pallas_call
+  _kernel = _plgpu.kernel
+  del _pl, _plgpu
+
+  plgpu.kernel = do_not_call_me_directly
+  pl.pallas_call = do_not_call_me_directly
 
 
 def is_nvshmem_used():
@@ -49,13 +80,60 @@ def is_nvshmem_used():
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
-class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None else parameterized.TestCase):
+def get_reduction_impl(reduction):
+  match reduction:
+    case "add":
+      return jnp.add
+    case "min":
+      return jnp.minimum
+    case "max":
+      return jnp.maximum
+    case "and":
+      return jnp.bitwise_and
+    case "or":
+      return jnp.bitwise_or
+    case "xor":
+      return jnp.bitwise_xor
+    case _:
+      raise ValueError(reduction)
+
+
+_TestCaseBase = (jt_multiprocess.MultiProcessTest
+                 if is_nvshmem_used() is None
+                 else parameterized.TestCase)
+
+
+class MonkeyPatchTest:
+  def test_calling_pallas_call_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      pl.pallas_call()
+
+  def test_calling_kernel_directly_raises(self):
+    with self.assertRaises(RuntimeError):
+      plgpu.kernel()
+
+
+class PallasTestMetaclass(type(_TestCaseBase)):
+
+  def __new__(mcs, *args, lowering_semantics=plgpu.LoweringSemantics.Lane):
+    cls = super().__new__(mcs, *args)
+    cls.LOWERING_SEMANTICS = lowering_semantics
+    return cls
+
+
+class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
+  LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
+  # We track whether we called monkey patched APIs for every test.
+  # In tearDown, we verify that the test actually called the monkey-patched APIs.
+  # This is not a perfect way of ensuring we do not call plgpu.kernel and
+  # plgpu.pallas_call, but is a helpful safeguard.
+  monkey_patched_api_was_used: bool
 
   def setUp(self):
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic not supported on ROCm currently.")
+    if jtu.is_device_rocm():
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
 
-    if (not jtu.test_device_matches(["cuda"]) or
+    if (not jtu.is_device_cuda() or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
     if not mgpu.supports_cross_device_collectives():
@@ -66,16 +144,57 @@ class TestCase(jt_multiprocess.MultiProcessTest if is_nvshmem_used() is None els
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
+    self.monkey_patched_api_was_used = False
     super().setUp()
+
+  def tearDown(self):
+    self.assertTrue(self.monkey_patched_api_was_used)
+
+  def is_wg_semantics(self):
+    return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
+
+  def skip_if_wg_semantics(self):
+    if self.is_wg_semantics():
+      self.skipTest("Not supported under WG semantics")
+
+  def pallas_call(self, *args, **kwargs):
+    compiler_params = dataclasses.replace(
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+    result = _pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    self.monkey_patched_api_was_used = True
+    return result
+
+  def kernel(self, *args, **kwargs):
+    compiler_params = dataclasses.replace(
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+    result = _kernel(*args, compiler_params=compiler_params, **kwargs)
+    self.monkey_patched_api_was_used = True
+    return result
+
+  def skipTest(self, msg):
+    # Setting `monkey_patched_api_was_used` to true for skipped tests to prevent
+    # the assertion failure on teardown.
+    self.monkey_patched_api_was_used = True
+    super().skipTest(msg)
+
+  def default_transforms(
+      self, *, swizzle: int = 128, dtype: jnp.dtype
+  ) -> Sequence[plgpu.Transform]:
+    swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
+    return (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
 
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    if jax.local_device_count() > 1 and IS_OSS.value:
-      # TODO(b/490026390): Remove this once the bug is fixed.
-      self.skipTest("Test hangs in OSS in a single-process mode.")
     super().setUp()
 
   def test_remote_dma_basic(self):
@@ -93,7 +212,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -148,7 +267,7 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       result = x
       for _ in range(25):
-        result = pl.pallas_call(
+        result = self.pallas_call(
             kernel,
             in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
             out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -158,7 +277,7 @@ class PallasCallRemoteDMATest(TestCase):
             ],
         )(result)
 
-        result = pl.pallas_call(
+        result = self.pallas_call(
             different_kernel,
             in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
             out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -202,7 +321,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -250,7 +369,7 @@ class PallasCallRemoteDMATest(TestCase):
       with tempfile.TemporaryDirectory() as tmpdir:
         x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
         def body(x):
-          return pl.pallas_call(
+          return self.pallas_call(
               kernel,
               in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
               out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -260,7 +379,7 @@ class PallasCallRemoteDMATest(TestCase):
                   plgpu.SemaphoreType.REGULAR,
               ],
               compiler_params=plgpu.CompilerParams(
-                  profile_space=1, profile_dir=tmpdir
+                  profile_space=2, profile_dir=tmpdir
               ),
           )(x)
 
@@ -295,7 +414,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 128.0, dtype=jnp.float32).reshape((2, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -334,7 +453,7 @@ class PallasCallRemoteDMATest(TestCase):
     x = jnp.zeros((2, 128), dtype=jnp.int32)
     x = x.at[0, 0].set(1)
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -374,7 +493,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
     def body(x):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -405,7 +524,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -434,7 +553,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem, 2)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -465,7 +584,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(sem2)
       y_ref[...] = jnp.ones_like(y_ref)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -485,33 +604,100 @@ class PallasCallRemoteDMATest(TestCase):
   def test_semaphore_signal_collective_axes(self):
     # TODO(b/476264413): Support multimem in multi-thread mode.
     if jax.local_device_count() > 1:
+      self.monkey_patched_api_was_used = True
       return  # Multimem not supported in multi-thread mode yet.
 
     if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
 
-    def kernel(y_ref, sem):
-      plgpu.semaphore_signal_multicast(sem, collective_axes='x')
+    def kernel(y_ref, sem_out_ref, sem):
+      plgpu.semaphore_signal_multicast(sem.at[0], collective_axes='x')
       # Wait for the multicast signal (each device gets signaled by all devices)
-      pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
+      pl.semaphore_wait(sem.at[0], 2)  # Wait for signals from both devices
       y_ref[...] = jnp.ones_like(y_ref)
+      sem_out_ref[0] = pl.semaphore_read(sem.at[0])
+      sem_out_ref[1] = pl.semaphore_read(sem.at[1])
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)] * 2,
+        out_shape=(
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((2,), jnp.int32),
+        ),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
         compiler_params=plgpu.CompilerParams(),
     )
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
-    y = jax.jit(
+    y, sem_out = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
+
+    try:
+      np.testing.assert_allclose(sem_out, jnp.zeros_like(sem_out))
+    except Exception:
+      # On some CUDA versions there is a compiler bug where the predicate
+      # on the multimem reduction is not respected.
+      if cuda_versions.cuda_runtime_get_version() not in [12080, 12090, 13000]:
+        raise
+
+  def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem_out_ref, sem):
+      dev_idx = jax.lax.axis_index("x")
+
+      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+      def _per_warp():
+        warp_idx = jax.lax.axis_index("warp")
+
+        @pl.when(warp_idx == dev_idx)
+        def _():
+          # One warp on each device signals. In total, both semaphores get signaled once.
+          plgpu.semaphore_signal_multicast(sem.at[warp_idx], collective_axes="x")
+
+          y_ref[0, 0] = 1.0
+
+      pl.semaphore_wait(sem.at[0], 1)
+      pl.semaphore_wait(sem.at[1], 1)
+
+      sem_out_ref[0] = pl.semaphore_read(sem.at[0])
+      sem_out_ref[1] = pl.semaphore_read(sem.at[1])
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)] * 2,
+        out_shape=(
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((2,), jnp.int32),
+        ),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
+        compiler_params=plgpu.CompilerParams(),
+    )
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    _, sem_out = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=(P(None), P(None)), check_vma=False,
+        )
+    )()
+
+    try:
+      np.testing.assert_allclose(sem_out, jnp.zeros_like(sem_out))
+    except Exception:
+      # On some CUDA versions there is a compiler bug where the predicate
+      # on the multimem reduction is not respected.
+      if cuda_versions.cuda_runtime_get_version() not in [12080, 12090, 13000]:
+        raise
 
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
@@ -519,7 +705,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -565,8 +751,8 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=ids(zero, other_dev_id))
       pl.semaphore_wait(sem)
 
-    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
-    kernel_call = pl.pallas_call(
+    transforms = self.default_transforms(dtype=jnp.int32)
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
@@ -582,47 +768,86 @@ class PallasCallRemoteDMATest(TestCase):
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("y"), check_vma=False,
         )
     )()
-    if jax.local_device_count() == 1:
-      y = multihost_utils.process_allgather(y, tiled=True)
+    y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  def test_contiguous_copy_tma(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (1024,)
+    tile = 512
+
+    def kernel(y_ref, smem_ref, sem):
+      dev_id = lax.axis_index("y")
+      other_dev_id = 1 - dev_id
+
+      # Device ID must be an int32.
+      zero = jnp.int32(0)
+
+      @pl.when(dev_id == zero)
+      def _store():
+        # Unrolling to test that offsets are applied correctly.
+        for i in range(2):
+          base_data = plgpu.layout_cast(
+              jnp.arange(tile, dtype=jnp.int32),
+              plgpu.Layout.WG_STRIDED((tile,), vec_size=1),
+          )
+          smem_ref[...] = base_data + (i * tile)
+          plgpu.commit_smem()
+
+          y_slice = pl.ds(i * tile, tile)
+          plgpu.copy_smem_to_gmem(
+              smem_ref,
+              plgpu.remote_ref(y_ref, (zero, dev_id)).at[y_slice]
+          )
+          plgpu.copy_smem_to_gmem(
+              smem_ref,
+              plgpu.remote_ref(y_ref, (zero, other_dev_id)).at[y_slice]
+          )
+          plgpu.wait_smem_to_gmem(0)
+
+      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM((tile,), jnp.int32),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jtu.create_mesh((1, 2), ("x", "y"))
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call,
+            mesh=mesh,
+            in_specs=(),
+            out_specs=P("y"),
+            check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
 
 class PallasCallMultimemTest(TestCase):
-
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    # TODO(belitskiy): Remove the hasattr guard once JAX 0.9.2 is released.
-    if not hasattr(cuda_versions, "cuda_supports_multicast"):
-      self.skipTest("Multicast not yet supported")
+    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
     ):
       self.skipTest("Not all local devices support multicast")
-    super().setUp()
-
-  def _get_reduction_impl(self, reduction):
-    match reduction:
-      case "add":
-        return jnp.add
-      case "min":
-        return jnp.minimum
-      case "max":
-        return jnp.maximum
-      case "and":
-        return jnp.bitwise_and
-      case "or":
-        return jnp.bitwise_or
-      case "xor":
-        return jnp.bitwise_xor
-      case _:
-        raise ValueError(reduction)
 
   def test_multimem_store_regs(self):
+    # TODO(bchetioui): support for multimem store.
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -635,14 +860,14 @@ class PallasCallMultimemTest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    kernel_call = pl.pallas_call(
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
-    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     y = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
@@ -651,6 +876,34 @@ class PallasCallMultimemTest(TestCase):
     y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  def test_multimem_store_scalar(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        plgpu.multimem_store(jnp.int32(1), y_ref.at[0], 'x')
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        compiler_params=plgpu.CompilerParams(),
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P('x'), check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.array((1,), jnp.int32)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0), strict=True)
 
   def test_multimem_store_tma(self):
     if jax.process_index() > 2:
@@ -667,8 +920,8 @@ class PallasCallMultimemTest(TestCase):
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
-    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
-    kernel_call = pl.pallas_call(
+    transforms = self.default_transforms(dtype=jnp.int32)
+    kernel_call = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
@@ -678,7 +931,7 @@ class PallasCallMultimemTest(TestCase):
         ],
         compiler_params=plgpu.CompilerParams(),
     )
-    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     y = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
@@ -688,6 +941,60 @@ class PallasCallMultimemTest(TestCase):
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
+  def test_multimem_store_contiguous_tma(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    shape = (1024,)
+    tile = 512
+
+    def kernel(y_ref, smem_ref, sem):
+      @pl.when(lax.axis_index("x") == 0)
+      def _store():
+        for i in range(2):
+          base_data = plgpu.layout_cast(
+              jnp.arange(tile, dtype=jnp.int32),
+              plgpu.Layout.WG_STRIDED((tile,), vec_size=1),
+          )
+          smem_ref[...] = base_data + (i * tile)
+          plgpu.commit_smem()
+
+          y_slice = pl.ds(i * tile, tile)
+          plgpu.copy_smem_to_gmem(
+              smem_ref, plgpu.multicast_ref(y_ref, "x").at[y_slice]
+          )
+          plgpu.wait_smem_to_gmem(0)
+
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM(
+                (tile,),
+                jnp.int32,
+            ),
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call,
+            mesh=mesh,
+            in_specs=(),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = jnp.arange(math.prod(shape)).reshape(shape)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
   @parameterized.parameters(
       (jnp.int32, 1, "add"),
       (jnp.int32, 1, "min"),
@@ -695,6 +1002,12 @@ class PallasCallMultimemTest(TestCase):
       (jnp.int32, 1, "and"),
       (jnp.int32, 1, "or"),
       (jnp.int32, 1, "xor"),
+      (jnp.int32, 2, "add"),
+      (jnp.int32, 4, "min"),
+      (jnp.int32, 2, "max"),
+      (jnp.int32, 4, "and"),
+      (jnp.int32, 2, "or"),
+      (jnp.int32, 4, "xor"),
       (jnp.float32, 1, "add"),
       (jnp.float32, 2, "add", True),
       (jnp.float32, 4, "add"),
@@ -766,7 +1079,7 @@ class PallasCallMultimemTest(TestCase):
     y_shape = jax.ShapeDtypeStruct((64, 32), dtype)
     y = jax.jit(
         jax.shard_map(
-            pl.pallas_call(
+            self.pallas_call(
                 kernel,
                 in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
                 out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
@@ -781,11 +1094,30 @@ class PallasCallMultimemTest(TestCase):
         )
     )(x_local)
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
     np.testing.assert_array_equal(
         y.astype(jnp.float32),
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
+
+
+@jtu.thread_unsafe_test_class()
+class PallasCallMultimemThreadUnsafeTest(TestCase):
+  """
+  This class is thread-unsafe because the tests monkey patch loaded modules.
+  """
+
+  def setUp(self):
+    if jax.local_device_count() > 1:
+      self.skipTest("Multimem not supported in multi-thread mode yet.")
+    if jax.device_count() < 2:
+      self.skipTest("Needs at least two devices")
+    super().setUp()
+    if any(
+      not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
+      for d in jax.local_devices()
+    ):
+      self.skipTest("Not all local devices support multicast")
 
   def _test_reduce_scatter(
       self,
@@ -819,14 +1151,19 @@ class PallasCallMultimemTest(TestCase):
       )
 
     spec = P(*([None] * scatter_dimension), "x")
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu.plgpu,
+        "kernel",
+        self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
 
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
 
     split_idx = x.shape[scatter_dimension] // 2
     slices_first = [slice(None)] * len(shape)
@@ -917,13 +1254,18 @@ class PallasCallMultimemTest(TestCase):
       )
 
     spec = P("x")
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu.plgpu,
+        "kernel",
+        new=self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
     y = multihost_utils.process_allgather(y, tiled=True)
-    np_reduction = self._get_reduction_impl(reduction)
+    np_reduction = get_reduction_impl(reduction)
     expected = np_reduction(x[0], x[1])
     tol = 1e-5 if reduction == "add" else 0
     for ys in y:
@@ -962,11 +1304,16 @@ class PallasCallMultimemTest(TestCase):
     spec = P(*([None] * gather_dimension), "x")
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
-        )
-    )(x)
+    with mock.patch.object(
+        jax.experimental.pallas.ops.gpu.all_gather_mgpu.plgpu,
+        "kernel",
+        self.kernel,
+    ):
+      y = jax.jit(
+          jax.shard_map(
+              body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+          )
+      )(x)
     y = multihost_utils.process_allgather(y, tiled=True)
     repeats = [1] * len(x.shape)
     repeats[gather_dimension] = 2
@@ -1014,6 +1361,27 @@ class PallasCallMultimemTest(TestCase):
     self._test_all_gather(
         shape, jnp.float16, gather_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
     )
+
+
+class PallasCallRemoteDMAWGTest(
+    PallasCallRemoteDMATest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
+
+
+class PallasCallMultimemThreadUnsafeWGTest(
+    PallasCallMultimemThreadUnsafeTest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
+
+
+class PallasCallMultimemWGTest(
+    PallasCallMultimemTest,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
+):
+  ...
 
 
 if __name__ == '__main__':

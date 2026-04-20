@@ -129,6 +129,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -146,6 +147,7 @@ jax_py_test(
     name = "einshape_parse_test",
     srcs = ["einshape_parse_test.py"],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src:test_util",
         "//jax/experimental:pallas",
     ] + py_deps([
@@ -168,6 +170,7 @@ jax_multiplatform_test(
     },
     tags = ["requires-net:external"],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -209,6 +212,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -237,6 +241,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
@@ -366,6 +371,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
@@ -390,6 +396,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
         "absl/testing",
@@ -402,6 +409,14 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+            ],
+        ),
+    },
     enable_backends = [
         "tpu",
         "cpu",
@@ -485,10 +500,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "gpu_pallas_distributed_test",
     srcs = ["gpu_pallas_distributed_test.py"],
-    args = if_oss(
-        ["--is_oss=True"],
-        [],
-    ),
     enable_backends = [],
     enable_configs = [
         "gpu_h100x2_full",  # We need a 2 physical GPUs since otherwise the test will be skipped
@@ -517,6 +528,7 @@ jax_multiplatform_test(
     enable_backends = ["tpu"],
     shard_count = 8,
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",  # build_cleaner: keep
@@ -566,7 +578,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
         "tpu_v5p",
     ],
-    minimal_shard_count = 5,
+    minimal_shard_count = 2,
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -574,6 +586,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/experimental:hijax",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
@@ -776,6 +789,7 @@ jax_multiplatform_test(
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas_tpu_ops",
     ] + py_deps([
@@ -1398,18 +1412,32 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+            ],
+        ),
+    },
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
+        "tpu_v4",
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
+        "cpu",
     ],
     shard_count = 10,
     deps = [
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src:mesh",
+        "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:tpu_info",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",
@@ -1423,6 +1451,14 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_debug_check_test",
     srcs = ["tpu_sparsecore_pallas_debug_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+            ],
+        ),
+    },
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v6e capacity.
         "tpu_v6e": {"ondemand": True},
@@ -1434,7 +1470,7 @@ jax_multiplatform_test(
         "tpu_7x",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
@@ -1449,6 +1485,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_distributed_test",
     srcs = ["tpu_sparsecore_pallas_distributed_test.py"],
+    args = if_oss(
+        [],
+        google_value = [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+        ],
+    ),
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p_x4": {"ondemand": True},
@@ -1484,6 +1526,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "gpu_pallas_interpret_test",
+    size = "large",
     srcs = ["gpu_pallas_interpret_test.py"],
     enable_backends = ["cpu"],
     shard_count = 12,
@@ -1500,6 +1543,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_trace_value_test",
     srcs = ["tpu_trace_value_test.py"],
+    args = if_oss(
+        [],
+        google_value = [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+        ],
+    ),
     enable_backends = ["tpu"],
     enable_configs = ["tpu_7x"],
     deps = [

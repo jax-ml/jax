@@ -25,14 +25,15 @@ import abc
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Callable, Literal, Union
+from typing import cast, overload, Any, Literal, Union
+from collections.abc import Callable
 import warnings
 
 import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src import literals
+
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -250,7 +251,7 @@ def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
   if obj is None:
     obj = default_float_dtype()
   elif issubdtype(obj, extended):
-    return obj  # type: ignore[return-value]
+    return obj  # pyrefly: ignore[bad-return]
   elif isinstance(obj, type) and (f := _DEFAULT_TYPEMAP.get(obj)) is not None:
     obj = f()
   return np.dtype(obj, align=align, copy=copy)
@@ -366,7 +367,7 @@ def canonicalize_dtype(
 @export
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # pytype: disable=bad-return-type
+  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)
 
 class InvalidInputException(Exception):
   pass
@@ -384,7 +385,7 @@ def canonicalize_value(x):
     handler = canonicalize_value_handlers.get(typ)
     if handler:
       return handler(x)
-  if hasattr(x, '__jax_array__'):
+  if getattr(x, '__jax_array__', None) is not None:
     raise ValueError(
         'Triggering __jax_array__() during abstractification is no longer'
         ' supported. To avoid this error, either explicitly convert your object'
@@ -597,7 +598,7 @@ _complex_types: list[JAXType] = [
 # does not participate in promotions at the moment. Similarly, `_dtype_kinds` is
 # only meant for the `jnp.isdtype` and we want to be conservative and not allow
 # StringDType to be used in there.
-string_dtype = np.dtypes.StringDType()  # pytype: disable=module-attr
+string_dtype = np.dtypes.StringDType()
 
 _jax_dtype_set = {
     float0,
@@ -764,8 +765,12 @@ _standard_x64_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=True)
 _standard_x32_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=False)
 _strict_lattice_ubs = _make_lattice_upper_bounds(strict=True, x64=True)
 
+
+@export
 class TypePromotionError(ValueError):
+  """Raised when JAX type promotion fails."""
   pass
+
 
 # We don't use util.memoize because there is no implicit X64 dependence.
 @functools.lru_cache(512)
@@ -910,18 +915,12 @@ def register_weak_scalar_type(typ: type):
   """Register a scalar type as a weak type."""
   _registered_weak_types.add(typ)
 
-_registered_weak_types: set[JAXType] = {
-    literals.TypedInt,
-    literals.TypedFloat,
-    literals.TypedComplex,
-}
+_registered_weak_types: set[JAXType] = set()
 
 
 def is_weakly_typed(x: Any) -> bool:
   if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
-  if isinstance(x, literals.TypedNdArray):
-    return x.weak_type
   try:
     return x.aval.weak_type
   except AttributeError:
@@ -965,13 +964,13 @@ def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str) -> DType:
     return canonical_dtype
 
 
-_types_whose_dtype_should_not_be_canonicalized = (
+_types_whose_dtype_should_not_be_canonicalized: tuple[type, ...] = (
     Array,
-    literals.TypedNdArray,
-    literals.TypedInt,
-    literals.TypedFloat,
-    literals.TypedComplex,
 )
+
+def register_type_whose_dtype_should_not_be_canonicalized(typ: type):
+  global _types_whose_dtype_should_not_be_canonicalized
+  _types_whose_dtype_should_not_be_canonicalized += (typ,)
 
 def dtype(x: Any) -> DType:
   """Return the dtype object for a value or type.
@@ -1006,17 +1005,19 @@ def dtype(x: Any) -> DType:
   elif isinstance(x, _types_whose_dtype_should_not_be_canonicalized):
     return x.dtype
 
-  if isinstance(x, str):
-    x = np.dtype(x)
-
-  if isinstance(x, np.dtype):
-    if x not in _jax_dtype_set and not issubdtype(x, extended):
+  if isinstance(x, (str, np.dtype)):
+    dt = np.dtype(x)
+    if dt not in _jax_dtype_set and not issubdtype(dt, extended):
       raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                       "type. Only arrays of numeric types are supported by JAX.")
-    return _maybe_canonicalize_explicit_dtype(x, "dtype")
+    return _maybe_canonicalize_explicit_dtype(dt, "dtype")
 
-  if issubdtype(getattr(x, 'dtype', None), extended):
-    dt = x.dtype
+  # If x has a dtype attribute, and it's a valid dtype, use it. This avoids
+  # calling np.result_type on objects that might have a .dtype but are not
+  # standard NumPy array-like, which can lead to warnings in NumPy 2.4+.
+  dt_attr = getattr(x, 'dtype', None)
+  if issubdtype(dt_attr, extended) or isinstance(dt_attr, np.dtype):
+    dt = dt_attr
   else:
     try:
       dt = np.result_type(x)
@@ -1026,7 +1027,7 @@ def dtype(x: Any) -> DType:
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
   # TODO(jakevdp): fix return type annotation and remove this ignore.
-  return canonicalize_dtype(dt, allow_extended_dtype=True)  # type: ignore[return-value]
+  return canonicalize_dtype(dt, allow_extended_dtype=True)  # pyrefly: ignore[bad-return]
 
 def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
@@ -1081,7 +1082,6 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   dtype, weak_type = lattice_result_type(*(default_float_dtype() if arg is None else arg for arg in args))
   if weak_type:
     dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
-  # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
@@ -1145,28 +1145,29 @@ def safe_to_cast(input_dtype_or_value: Any,
   # this effectively treats the output dtype as always strongly-typed.
   return result_type(input_dtype_or_value, output_dtype) == output_dtype
 
+class primal_tangent_dtype_scalar(extended): ...
+
+@dataclasses.dataclass(frozen=True)
+class PrimalTangentDType(ExtendedDType):
+  primal_dtype: Any
+  tangent_dtype: Any
+  name: str
+  type = primal_tangent_dtype_scalar
+  def __repr__(self): return self.name
+  @property
+  def _rules(self):  # pyrefly: ignore[bad-override]
+    return types.SimpleNamespace(
+      physical_element_aval=
+      lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),
+      tangent_dtype=lambda dtype: self.tangent_dtype,
+      allow_conversion=True)
+
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
   primal_dtype, tangent_dtype = map(dtype, (primal_dtype, tangent_dtype))
   name_ = name or (f'PrimalTangentDType{{{short_dtype_name(primal_dtype)}'
                    f'/{short_dtype_name(tangent_dtype)}}}')
-  rules = types.SimpleNamespace(
-      physical_element_aval=
-      lambda dtype: types.SimpleNamespace(shape=(), dtype=primal_dtype),
-      tangent_dtype=lambda dtype: tangent_dtype,
-      allow_conversion=True)
-
-  class primal_tangent_dtype_scalar(extended): ...
-
-  @dataclasses.dataclass(frozen=True)
-  class PrimalTangentDType(ExtendedDType):
-    name = name_
-    _rules = rules
-    type = primal_tangent_dtype_scalar
-    def __repr__(self):
-      return name_
-
-  return PrimalTangentDType()
+  return PrimalTangentDType(primal_dtype, tangent_dtype, name_)
 
 @functools.cache
 def short_dtype_name(dtype) -> str:

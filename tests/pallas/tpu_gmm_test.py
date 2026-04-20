@@ -101,7 +101,7 @@ def random_dense(
 ) -> jnp.ndarray:
   if limit is None:
     limit = 1 / np.prod(shape)
-  x = jax.random.uniform(key, shape, dtype, minval=-limit, maxval=limit)  # pylint: disable=invalid-unary-operand-type
+  x = jax.random.uniform(key, shape, dtype, minval=-limit, maxval=limit)
   return x.astype(jnp.bfloat16).astype(dtype)
 
 def dot(
@@ -274,8 +274,6 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       n: int,
       data: hps.SearchStrategy[hps.DataObject],
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-      self.skipTest("Known regression in libtpu 0.0.36")
     seed = data.draw(seed_strategy())
     num_groups, group_stride = data.draw(group_strategy())
     lhs_dtype, rhs_dtype, out_dtype = (
@@ -303,7 +301,7 @@ class GroupedMatmulTest(jtu.JaxTestCase):
               rhs,
               group_sizes,
               out_dtype,
-              group_offset=jnp.array(group_offset, dtype=jnp.int32),  # pylint: disable=cell-var-from-loop
+              group_offset=jnp.array(group_offset, dtype=jnp.int32),
               existing_out=out,
           ),
           lhs,

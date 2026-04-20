@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.9.2"
+_version = "0.10.1"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
@@ -122,8 +122,8 @@ def _write_version(fname: str) -> None:
 
 
 def _get_cmdclass(pkg_source_path):
-  from setuptools.command.build_py import build_py as build_py_orig  # pytype: disable=import-error
-  from setuptools.command.sdist import sdist as sdist_orig  # pytype: disable=import-error
+  from setuptools.command.build_py import build_py as build_py_orig  # pyrefly: ignore[missing-source-for-stubs]
+  from setuptools.command.sdist import sdist as sdist_orig  # pyrefly: ignore[missing-source-for-stubs]
 
   class _build_py(build_py_orig):
     def run(self):
@@ -156,7 +156,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = '0.9.1'
+_minimum_jaxlib_version = '0.10.0'
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

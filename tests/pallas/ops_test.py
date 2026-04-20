@@ -19,6 +19,7 @@ import math
 import re
 import subprocess
 import sys
+import unittest
 from typing import Any
 
 from absl.testing import absltest
@@ -31,6 +32,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
@@ -58,7 +60,7 @@ import hypothesis.strategies as hps
 # ruff: noqa: F811
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=50)
+htu.setup_hypothesis(max_examples=50)
 
 use_mosaic_gpu = pallas_call._PALLAS_USE_MOSAIC_GPU.value
 
@@ -307,6 +309,10 @@ class PallasBaseTest(ptu.PallasTest):
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):
+    # Node-level skip: only triggers if a test actually tries to use pallas_call
+    # while Mosaic backend is selected on ROCm.
+    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
     if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
       assert plgpu_mgpu is not None
       compiler_params = plgpu_mgpu.CompilerParams(
@@ -318,10 +324,12 @@ class PallasBaseTest(ptu.PallasTest):
 
   def skip_if_mosaic_gpu(self):
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+      if jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(PallasBaseTest):
 
   @parameterized.named_parameters(
@@ -918,6 +926,8 @@ class OpsTest(PallasBaseTest):
       out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
     def run(interpret=False):
+      if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+        raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
@@ -951,14 +961,13 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if dtype == jnp.float16:
         self.skipTest("f16 load not supported on TPU")
-      if dtype in (jnp.int16, jnp.uint16) and jtu.get_tpu_version() < 6:
-        self.skipTest("requires TPU v6+")
-      if (
-          dtype == jnp.bfloat16
-          and jtu.get_tpu_version() == 5
-          and not jtu.is_cloud_tpu_at_least(2026, 3, 1)
-      ):
-        self.skipTest("requires a newer libTPU")
+      if dtype in (jnp.int16, jnp.uint16):
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("requires TPU v4+")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
+          self.skipTest("requires newer libTPU")
 
     @functools.partial(
         self.pallas_call,
@@ -1109,7 +1118,7 @@ class OpsTest(PallasBaseTest):
 
   ELEMENTWISE_OPS = [
       (
-          [jnp.abs, jnp.negative],
+          [jnp.abs, jnp.negative, jnp.sign],
           [
               "int16",
               "int32",
@@ -1165,12 +1174,6 @@ class OpsTest(PallasBaseTest):
         self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
       if fn == jnp.log1p and dtype == "bfloat16":
         self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
-      if (
-          fn in (jnp.sin, jnp.cos, jnp.tan)
-          and dtype == "bfloat16"
-          and not jtu.is_cloud_tpu_at_least(2026, 3, 1)
-      ):
-        self.skipTest("requires a newer libTPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
@@ -1842,9 +1845,11 @@ class OpsTest(PallasBaseTest):
       if dtype == "float16":
         self.skipTest("float16 not supported on TPU")
       if dtype == "int16":
-        if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-          self.skipTest("int16 requires a newer libTPU")
-        if jtu.get_tpu_version() < 6:
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("requires TPUv4+")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
           self.skipTest("requires TPUv6+")
 
     @functools.partial(
@@ -1955,22 +1960,28 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape:
-        self.skipTest(
-            "The Pallas TPU lowering currently supports only blocks of rank"
-            " >= 1"
-        )
-      if in_shape == (1, 2, 1, 4, 1) and jtu.get_tpu_version() < 5:
+      if in_shape in [(1, 2, 1, 4, 1), (2, 4, 1)] and jtu.get_tpu_version() < 5:
         self.skipTest("Requires sublane gather support")
+
+    if not in_shape:
+      in_specs = [pl.BlockSpec(memory_space=smem_on_tpu())]
+    else:
+      in_specs = [pl.BlockSpec()]
 
     @functools.partial(
         self.pallas_call,
+        in_specs=in_specs,
         out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
     )
     def f(x_ref, o_ref):
       o_ref[...] = x_ref[...].reshape(out_shape)
 
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    if not in_shape:
+      x = jnp.array(42, dtype=jnp.float32)
+    else:
+      x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(
+          in_shape
+      )
     expected = x.reshape(out_shape)
     np.testing.assert_allclose(f(x), expected)
 
@@ -2014,12 +2025,16 @@ class OpsTest(PallasBaseTest):
   def test_where_broadcasting(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      self.skipTest("Unsupported reshape vector<4xi1> -> vector<4x1x1xi1>")
 
     @functools.partial(
         self.pallas_call,
+        in_specs=[
+            pl.BlockSpec(),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ],
         out_shape=jax.ShapeDtypeStruct((4, 2, 2), floatx),
     )
     def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
@@ -2049,31 +2064,36 @@ class OpsTest(PallasBaseTest):
 
     in_shape, out_shape, dims = shape_spec
     if jtu.test_device_matches(["tpu"]):
-      if not in_shape:
-        self.skipTest(
-            "The Pallas TPU lowering currently supports only blocks of rank"
-            " >= 1"
-        )
-      if (
-          len(in_shape) == 1
-          and len(out_shape) == 1
-          and dtype not in {jnp.int32, jnp.bool_}
-      ):
-        self.skipTest("Unsupported tiling")
+      if len(out_shape) == 1 and dtype not in {jnp.int32, jnp.bool_}:
+        if dtype == jnp.int8:
+          if not jtu.is_device_tpu_at_least(5):
+            self.skipTest("Requires TPUv5+")
+        # 16-bit case
+        if jtu.get_tpu_version() < 4:
+          self.skipTest("Requires TPUv4+")
+
+    if not in_shape:
+      in_specs = [pl.BlockSpec(memory_space=smem_on_tpu())]
+    else:
+      in_specs = [pl.BlockSpec()]
 
     @functools.partial(
         self.pallas_call,
+        in_specs=in_specs,
         out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
     )
     def f(x_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jax.lax.broadcast_in_dim(x, out_shape, dims)
 
-    x = (
-        jnp.arange(math.prod(in_shape), dtype=jnp.int32)
-        .reshape(in_shape)
-        .astype(dtype)
-    )
+    if not in_shape:
+      x = jnp.array(42, dtype=dtype)
+    else:
+      x = (
+          jnp.arange(math.prod(in_shape), dtype=jnp.int32)
+          .reshape(in_shape)
+          .astype(dtype)
+      )
     expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
     np.testing.assert_array_equal(f(x), expected)
 
@@ -2318,7 +2338,7 @@ class OpsTest(PallasBaseTest):
   def test_masked_oob_swap_slice(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
+    # Unsupported dynamic slice load.
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on TPU")
 
@@ -2326,8 +2346,16 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((n,), floatx),
-                  jax.ShapeDtypeStruct((m,), floatx)),
+        in_specs=[
+            pl.BlockSpec(),
+            pl.BlockSpec(),
+            pl.BlockSpec(),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ],
+        out_shape=(
+            jax.ShapeDtypeStruct((n,), floatx),
+            jax.ShapeDtypeStruct((m,), floatx),
+        ),
         input_output_aliases={0: 0, 1: 1},
     )
     def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
@@ -2354,17 +2382,20 @@ class OpsTest(PallasBaseTest):
   def test_reduce_only_dim(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+      self.skipTest("Requires a newer libtpu")
 
     m = 32
     x = random.normal(random.key(0), (m,), dtype=jnp.float32)
     out_shape = jax.ShapeDtypeStruct((), x.dtype)
 
-    @functools.partial(self.pallas_call, out_shape=out_shape)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+    )
     def reduce(x_ref, y_ref):
-      y_ref[...] = jnp.sum(x_ref[jnp.arange(m)], axis=-1)
+      y_ref[...] = jnp.sum(x_ref[...], axis=-1)
 
     y = reduce(x)
     y_ref = jnp.sum(x, axis=-1)
@@ -2406,10 +2437,12 @@ class OpsTest(PallasBaseTest):
       if op in (jnp.argmin, jnp.argmax) and dtype != "float32":
         self.skipTest("argmin/argmax on TPU only supports float32")
       if dtype == "bfloat16":
-        if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-          self.skipTest("bfloat16 requires a newer libTPU")
-        if jtu.get_tpu_version() < 6:
+        if jtu.get_tpu_version() < 4:
           self.skipTest("require 16-bit iota")
+        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
+            2026, 4, 6
+        ):
+          self.skipTest("require newer libtpu")
       if jtu.get_tpu_version() < 5 and axis == 1:
         self.skipTest("sublane gather not supported on old TPUs")
 
@@ -2543,16 +2576,19 @@ class OpsTest(PallasBaseTest):
   def test_bitcast_convert_type_scalar(self):
     self.skip_if_mosaic_gpu()
 
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented on TPU")
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
+      self.skipTest("Requires a newer libtpu")
 
     x = jnp.int32(42)
     out_dtype = jnp.float32
     out_shape = jax.ShapeDtypeStruct(x.shape, out_dtype)
-    grid = ()
 
-    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        in_specs=[pl.BlockSpec(memory_space=smem_on_tpu())],
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+    )
     def convert(x_ref, y_ref):
       y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_dtype)
 
@@ -2748,6 +2784,8 @@ class OpsTest(PallasBaseTest):
       )
       output_ref[...] = output
 
+    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     deq_call = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
@@ -2763,9 +2801,10 @@ class OpsTest(PallasBaseTest):
 
   def test_delay(self):
     if jtu.test_device_matches(["gpu"]):
-      # ROCm always uses Triton (Mosaic GPU doesn't support ROCm).
-      if jtu.is_device_rocm() or not use_mosaic_gpu:
+      if not use_mosaic_gpu:
         self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
+      elif jtu.test_device_matches(["rocm"]):
+        self.skipTest("Mosaic GPU is not supported on ROCm.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")
     # This is mostly to test that the kernel compiles. It's difficult to

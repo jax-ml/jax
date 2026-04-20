@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Any
+from typing import Any, cast
 
 from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+from jax._src.pallas.mosaic_gpu.interpret import params as params
 
 
 class Barrier(memory.Allocation):
@@ -55,12 +56,15 @@ class Barrier(memory.Allocation):
   def __init__(
       self,
       shared_memory: GPUSharedMemory,
+      *,
+      num_participating_threads: int,
       ref_count: int,
       num_arrivals: int,
       enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
     self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
+    self.num_participating_threads: int = num_participating_threads
     self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
     self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
     self.enable_logging: bool = enable_logging
@@ -76,7 +80,7 @@ class Barrier(memory.Allocation):
     self.phase: int = 0  # Protected by `self.cv`'s lock.
     self.next_awaited_phase_by_thread: list[int] = [  # Protected by `self.cv`'s lock.
         1
-    ] * shared_memory.num_threads_per_device
+    ] * self.num_participating_threads
     # Initialize `self.phase_change_observed` to `True` so that the first
     # arrival (more precisely, the first time we have arrived
     # `self.num_arrivals` times) at the `Barrier` does not raise an error due to
@@ -106,8 +110,15 @@ class Barrier(memory.Allocation):
     )
 
   def _log(self, message: str):
-    if self.enable_logging:
-      logging.info(message)
+    # Log every line separately to make sure `absl.logging` adds the correct
+    # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
+    # `message`. This should not lead to mangled output within the logging for
+    # `self` since the lock on `self.cv` is expected to be held whenever this
+    # method is called. However, nothing keeps logged output from being
+    # interleaved with logging from other barriers or from the global
+    # `SharedMemory` object.
+    for msg in message.split("\n"):
+      logging.info(msg)
 
   @property
   def detect_races(self) -> bool:
@@ -135,7 +146,11 @@ class Barrier(memory.Allocation):
               f" barrier (but observed {x} {'phases' if x > 1 else 'phase'})."
           )
 
-  def arrive(self, device_id: int, local_thread_id: int, clock):
+  def arrive(
+      self,
+      clock: vc.VectorClock | None = None,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -148,12 +163,17 @@ class Barrier(memory.Allocation):
         self.arrivals_count = 0
         self.phase_change_observed = False
 
-        self._log(
-            f"Device {device_id}, thread {local_thread_id}: Barrier {id(self)}"
-            f" has completed arrival. Phase is now {self.phase}."
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Barrier {id(self)} has completed arrival. Phase is now"
+                  f" {self.phase}.",
+                  line_prefix="`arrive`",
+              )
+          )
 
       if self.detect_races:
+        assert clock is not None
         if self.clock is None:
           self.clock = vc.copy_vector_clock(clock)
         else:
@@ -161,7 +181,20 @@ class Barrier(memory.Allocation):
 
       self.cv.notify_all()
 
-  def wait(self, device_id: int, local_thread_id: int):
+  def wait(
+      self,
+      device_id: int,
+      local_thread_id: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
+    # TODO(nrink): `local_thread_id` is the flat ID of the thread in the
+    # cluster. We need to map it to an index that is within
+    # [0, self.num_participating_threads`). Doing this with `%` here works for
+    # barriers that synchronize the threads within a block, but it may not work
+    # for cluster barriers (if the barrier is not shared by *all* threads in the
+    # cluster). Investigate and correct this when implementing cluster barriers.
+    participating_thread_id = local_thread_id % self.num_participating_threads
+
     with self.cv:
       # We are waiting for the barrier to reach exactly the phase that this
       # thread is waiting for. This could lead to deadlock (see the comment in
@@ -175,36 +208,49 @@ class Barrier(memory.Allocation):
       # integer, we had used a boolean (which would be closer to real GPU
       # hardware), we would be forced to use `!=` here (since `>` would not be
       # an option).
-      while self.next_awaited_phase_by_thread[local_thread_id] != self.phase:
+      while (
+          self.next_awaited_phase_by_thread[participating_thread_id]
+          != self.phase
+      ):
         # If `self.phase` is already past the phase that this thread is waiting
         # for, this thread will wait forever. This is because `self.phase` never
         # decreases and the only way for
         # `self.next_awaited_phase_by_thread[local_thread_id]` to increase is by
         # exiting this `while` loop.
-        if self.next_awaited_phase_by_thread[local_thread_id] < self.phase:
+        if (
+            self.next_awaited_phase_by_thread[participating_thread_id]
+            < self.phase
+        ):
           raise ValueError(
               f"Thread {local_thread_id} is awaiting phase"
-              f" {self.next_awaited_phase_by_thread[local_thread_id]}, but"
-              f" barrier is already at phase {self.phase}. (This means that"
+              f" {self.next_awaited_phase_by_thread[participating_thread_id]},"
+              f" but barrier is already at phase {self.phase}. (This means that"
               f" Thread {local_thread_id} has not participated in all"
               " completions of the barrier.)"
           )
 
-        self._log(
-            f"Device {device_id}, thread {local_thread_id}: Waiting for barrier"
-            f" {id(self)} to reach phase"
-            f" {self.next_awaited_phase_by_thread[local_thread_id]}. (Current"
-            f" phase: {self.phase})"
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Waiting for barrier {id(self)} to reach phase"
+                  f" {self.next_awaited_phase_by_thread[participating_thread_id]}."
+                  f" (Current phase: {self.phase})",
+                  line_prefix="`wait`",
+              )
+          )
         self.cv.wait()
 
       self.phase_change_observed = True
-      self.next_awaited_phase_by_thread[local_thread_id] += 1
+      self.next_awaited_phase_by_thread[participating_thread_id] += 1
 
-      self._log(
-          f"Device {device_id}, thread {local_thread_id}: Finished waiting for"
-          f" phase {self.phase} of barrier {id(self)}."
-      )
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                f"Device {device_id}, thread {local_thread_id}: Finished"
+                f" waiting for phase {self.phase} of barrier {id(self)}.",
+                line_prefix="`wait`",
+            )
+        )
 
       # Read `self.clock` while still holding the lock on `self.cv`. (If race
       # detection is enabled, the clock is needed below to update a vector clock
@@ -227,46 +273,120 @@ class Barrier(memory.Allocation):
         )
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(init=False)
 class GPUSharedMemory(memory.SharedMemory):
 
+  num_tma_threads_per_device: int
+  logging_mode: params.LoggingMode | None = None
+
+  next_tma_thread_id_per_device: dict[int, int]
+
+  def __init__(self, **kwargs):
+    num_threads_per_block = kwargs.pop("num_threads_per_block")
+    num_blocks_per_cluster = kwargs.pop("num_blocks_per_cluster")
+    num_concurrent_threads = (
+        num_threads_per_block * num_blocks_per_cluster
+    )
+
+    num_tma_threads_per_device = kwargs.pop("num_tma_threads_per_device")
+    logging_mode = kwargs.pop("logging_mode", None)
+
+    # On each (simulated) GPU device, we currently only ever run a single block
+    # of threads concurrently. Hence, we reserve one vector clock per Pallas
+    # thread (in a block) plus one vector clock per TMA thread (per device).
+    vector_clock_size = kwargs["num_devices"] * (
+        num_concurrent_threads + num_tma_threads_per_device
+    )
+    clocks = [
+        vc.make_vector_clock(vector_clock_size)
+        for _ in range(num_concurrent_threads)
+    ]
+
+    kwargs.update(num_cores_per_device=num_concurrent_threads)
+    kwargs.update(vector_clock_size=vector_clock_size)
+    kwargs.update(clocks=clocks)
+
+    super().__init__(**kwargs)
+
+    if self.dma_execution_mode != "eager":
+      raise NotImplementedError(
+          "Currently only eager DMA execution mode is supported when"
+          " interpreting GPU kernels."
+      )
+
+    self.num_pallas_threads_per_block = num_threads_per_block
+    self.num_blocks_per_cluster = num_blocks_per_cluster
+    self.num_tma_threads_per_device = num_tma_threads_per_device
+    self.logging_mode = cast(params.LoggingMode | None, logging_mode)
+    self.next_tma_thread_id_per_device = {
+        device_id: 0 for device_id in range(self.num_devices)
+    }
+
   @property
-  def num_threads_per_device(self) -> int:
+  def num_concurrent_pallas_threads(self) -> int:
     return self.num_cores_per_device
 
   @property
-  def num_global_threads(self) -> int:
-    return self.num_cores
+  def num_total_threads_per_device(self) -> int:
+    return self.num_concurrent_pallas_threads + self.num_tma_threads_per_device
 
   def get_global_thread_id(self, device_id: int, local_thread_id: int) -> int:
     """Computes the global thread ID from the given device and local thread ID."""
-    return self.get_global_core_id(device_id, local_thread_id)
+    # We reserve one thread ID per device for the TMA thread.
+    return (
+        device_id * self.num_total_threads_per_device
+        + local_thread_id
+    )
+
+  def get_next_tma_thread_id(self, device_id: int) -> int:
+    with self.lock:
+      # TODO(nrink): Consider adding an option for selecting TMA thread IDs
+      # randomly (similar to how 'virtual' device IDs are selected randomly for
+      # DMAs in TPU kernel interpret mode).
+      next_tma_thread_id = self.next_tma_thread_id_per_device[device_id]
+      self.next_tma_thread_id_per_device[device_id] = (
+          next_tma_thread_id + 1
+      ) % self.num_tma_threads_per_device
+      return self.num_concurrent_pallas_threads + next_tma_thread_id
+
+  def update_clock(self, vector_clock_idx, clock: vc.VectorClock):
+    with self.lock:
+      vc.update_vector_clock(self.clocks[vector_clock_idx], clock)
+
+  def get_clock(self, vector_clock_idx) -> vc.VectorClock | None:
+    with self.lock:
+      return vc.copy_vector_clock(self.clocks[vector_clock_idx])
 
   def allocate_barrier(
       self,
-      device_id: int,
-      thread_id: int,
       key: Any,
       ref_count: int,
       num_arrivals: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
       if key not in self.mem:
         barrier = Barrier(
             self,
+            num_participating_threads=self.num_pallas_threads_per_block,
             ref_count=ref_count,
             num_arrivals=num_arrivals,
             enable_logging=(
                 self.logging_mode is not None
-                and interpret_utils.LoggingMode.BARRIER in self.logging_mode
+                and params.LoggingMode.BARRIER in self.logging_mode
             ),
         )
         self.mem[key] = barrier
-        self._log(
-            f"Device {device_id}, thread {thread_id}: Allocated barrier"
-            f" {id(barrier)} ({barrier}) with key {key}."
-        )
+
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  "Allocated barrier"
+                  f" {id(barrier)} ({barrier}) with key {key}.",
+                  line_prefix="`allocate_barrier`",
+              )
+          )
 
   def get_barrier_and_increment_clock(
         self, key: Any, device_id: int, thread_id: int
@@ -290,7 +410,11 @@ class GPUSharedMemory(memory.SharedMemory):
 
     return barrier, clock
 
-  def deallocate_barrier(self, device_id: int, thread_id: int, key: Any):
+  def deallocate_barrier(
+      self,
+      key: Any,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
     with self.lock:
       barrier = self.mem[key]
       if not isinstance(barrier, Barrier):
@@ -299,17 +423,25 @@ class GPUSharedMemory(memory.SharedMemory):
             " a `Barrier`."
         )
 
-      self._log(
-          f"Device {device_id}, thread {thread_id}: Decreasing ref count of"
-          f" barrier {id(barrier)} with key {key}."
-      )
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                "Decreasing ref count of"
+                f" barrier {id(barrier)} with key {key}.",
+                line_prefix="`deallocate_barrier`",
+            )
+        )
+
       barrier.deallocate()
 
       if barrier.has_zero_ref_count():
-        self._log(
-            f"Device {device_id}, thread {thread_id}: Deallocating barrier"
-            f" {id(barrier)} with key {key}."
-        )
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  f"Deallocating barrier {id(barrier)} with key {key}.",
+                  line_prefix="`deallocate_barrier`",
+              )
+          )
         self.mem.pop(key)
 
   def assert_no_barriers_allocated(self):

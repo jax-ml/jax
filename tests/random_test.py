@@ -31,8 +31,10 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import random
+from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -657,6 +659,9 @@ class KeyArrayTest(jtu.JaxTestCase):
     if jtu.numpy_version() < (2, 4, 0):
       with self.assertRaisesRegex(TypeError, "Cannot interpret"):
         jnp.issubdtype(key, dtypes.prng_key)
+    elif deprecations.is_accelerated("jax-array-numpy-dtype"):
+      with self.assertRaisesRegex(TypeError, "Implicit conversion of an array to a dtype"):
+        jnp.issubdtype(key, dtypes.prng_key)
     else:
       with jtu.ignore_warning(category=DeprecationWarning,
                               message="Implicit conversion of an array to a dtype"):
@@ -998,18 +1003,16 @@ class KeyArrayTest(jtu.JaxTestCase):
     keys_on_device = jax.device_put(keys, device)
     self.assertKeysEqual(keys, keys_on_device)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_sharded(self):
     devices = jax.devices()
     keys = self.make_keys(len(devices))
-    keys_on_device = jax.device_put_sharded(list(keys), devices)
+    keys_on_device = api.device_put_sharded(list(keys), devices)
     self.assertKeysEqual(keys, keys_on_device)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def test_device_put_replicated(self):
     devices = jax.devices()
     key = self.make_keys()
-    keys_on_device = jax.device_put_replicated(key, devices)
+    keys_on_device = api.device_put_replicated(key, devices)
     self.assertKeysEqual(jnp.broadcast_to(key, keys_on_device.shape), keys_on_device)
 
   def test_make_array_from_callback(self):
@@ -1498,7 +1501,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     key_func = arr_func = lambda x: func(x, *args)
     self.check_shape(key_func, keys)
-    self.check_against_reference(key_func, arr_func, keys)
+    if func != jnp.empty_like:
+      self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_like_with_key_fillvalue(self):
     keys = random.split(random.key(789543))
@@ -1518,7 +1522,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     key_func = arr_func = lambda x: func(x.shape, dtype=x.dtype, **kwds)
     self.check_shape(key_func, keys)
-    self.check_against_reference(key_func, arr_func, keys)
+    if func != jnp.empty:
+      self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_with_key_fillvalue(self):
     keys = random.split(random.key(789543))

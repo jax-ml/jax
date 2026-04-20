@@ -14,6 +14,7 @@
 
 import numpy as np
 
+from jax._src import api
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_args_inexact
@@ -41,33 +42,26 @@ def _log_gauss_mass(a, b):
   case_right = a > 0
   case_central = ~(case_left | case_right)
 
-  def mass_case_left(a, b):
-    return _log_diff(log_ndtr(b), log_ndtr(a))
+  # By conditionally swapping arguments if we're in the right tail,
+  # we only need to compile the mass_case_left graph once instead of twice.
+  a_tail = jnp.where(case_right, -b, a)
+  b_tail = jnp.where(case_right, -a, b)
 
-  def mass_case_right(a, b):
-    return mass_case_left(-b, -a)
+  mass_tail = _log_diff(log_ndtr(b_tail), log_ndtr(a_tail))
 
-  def mass_case_central(a, b):
-    # Note: Docstring carried over from scipy
-    # Previously, this was implemented as:
-    # left_mass = mass_case_left(a, 0)
-    # right_mass = mass_case_right(0, b)
-    # return _log_sum(left_mass, right_mass)
-    # Catastrophic cancellation occurs as np.exp(log_mass) approaches 1.
-    # Correct for this with an alternative formulation.
-    # We're not concerned with underflow here: if only one term
-    # underflows, it was insignificant; if both terms underflow,
-    # the result can't accurately be represented in logspace anyway
-    # because sc.log1p(x) ~ x for small x.
-    return jnp.log1p(-ndtr(a) - ndtr(-b))
+  # Catastrophic cancellation occurs as np.exp(log_mass) approaches 1.
+  # Correct for this with an alternative formulation.
+  # We're not concerned with underflow here: if only one term
+  # underflows, it was insignificant; if both terms underflow,
+  # the result can't accurately be represented in logspace anyway
+  # because sc.log1p(x) ~ x for small x.
+  mass_central = jnp.log1p(-ndtr(a) - ndtr(-b))
 
-  out = jnp.select(
-    [case_left, case_right, case_central],
-    [mass_case_left(a, b), mass_case_right(a, b), mass_case_central(a, b)]
-  )
+  out = jnp.where(case_central, mass_central, mass_tail)
   return out
 
 
+@api.jit
 def logpdf(x, a, b, loc=0, scale=1):
   r"""Truncated normal log probability distribution function.
 
@@ -149,7 +143,7 @@ def pdf(x, a, b, loc=0, scale=1):
   """
   return lax.exp(logpdf(x, a, b, loc, scale))
 
-
+@api.jit
 def logsf(x, a, b, loc=0, scale=1):
   """Truncated normal distribution log survival function.
 
@@ -185,10 +179,11 @@ def logsf(x, a, b, loc=0, scale=1):
   return logcdf(-x, -b, -a, -loc, scale)
 
 
+@api.jit
 def sf(x, a, b, loc=0, scale=1):
-  """Truncated normal distribution log survival function.
+  """Truncated normal distribution survival function.
 
-  JAX implementation of :obj:`scipy.stats.truncnorm` ``logsf``
+  JAX implementation of :obj:`scipy.stats.truncnorm` ``sf``
 
   The survival function is defined as
 
@@ -219,6 +214,7 @@ def sf(x, a, b, loc=0, scale=1):
   return lax.exp(logsf(x, a, b, loc, scale))
 
 
+@api.jit
 def logcdf(x, a, b, loc=0, scale=1):
   r"""Truncated normal log cumulative distribution function.
 
@@ -253,8 +249,9 @@ def logcdf(x, a, b, loc=0, scale=1):
   x, a, b, loc, scale = promote_args_inexact("truncnorm.logcdf", x, a, b, loc, scale)
   x, a, b = jnp.broadcast_arrays(x, a, b)
   x = lax.div(lax.sub(x, loc), scale)
-  logcdf = _log_gauss_mass(a, x) - _log_gauss_mass(a, b)
-  logsf = _log_gauss_mass(x, b) - _log_gauss_mass(a, b)
+  lgm_ab = _log_gauss_mass(a, b)
+  logcdf = _log_gauss_mass(a, x) - lgm_ab
+  logsf = _log_gauss_mass(x, b) - lgm_ab
 
   logcdf = jnp.select(
     # third condition: avoid catastrophic cancellation (from scipy)
@@ -264,7 +261,7 @@ def logcdf(x, a, b, loc=0, scale=1):
   logcdf = jnp.where(a >= b, np.nan, logcdf)
   return logcdf
 
-
+@api.jit
 def cdf(x, a, b, loc=0, scale=1):
   r"""Truncated normal cumulative distribution function.
 

@@ -81,13 +81,11 @@ def _mpmd_map_abstract_eval(
       in_avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
       for out_idx, a in enumerate(out_avals)
   ]
-  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  out_avals = [
-      aval.unwrap()
-      if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
-      else aval
-      for aval in out_avals
-  ]
+  # Make sure we don't return ShapedArray with pallas memory space to the
+  # outside world.
+  out_avals = tuple(a.update(memory_space=jax_core.MemorySpace.Device)
+                    if isinstance(a, jax_core.ShapedArray) else a
+                    for a in out_avals)
   return out_avals, effs
 
 
@@ -169,8 +167,8 @@ def _mpmd_map_fallback_lowering(
     compiler_params = compiler_params.replace(
         dimension_semantics=mesh.dimension_semantics
     )
-  if hasattr(mesh, "kernel_type"):
-    compiler_params = compiler_params.replace(kernel_type=mesh.kernel_type)
+  if hasattr(mesh, "core_type"):
+    compiler_params = compiler_params.replace(kernel_type=mesh.core_type)
 
   return pallas_call._pallas_call_lowering(
       ctx,
@@ -210,9 +208,9 @@ def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
 def mpmd_map(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[_P, _T]]],
     /,
-    out_shapes: tree_util.PyTree,
+    out_types: tree_util.PyTree,
     *,
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    scratch_types: pallas_core.ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool | Any = False,
     debug: bool = False,
@@ -222,9 +220,9 @@ def mpmd_map(
 ) -> Callable[_P, _T]:
   return _mpmd_map(
       meshes_and_fns,
-      out_shapes,
+      out_types,
       input_output_aliases={},
-      scratch_shapes=scratch_shapes,
+      scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=interpret,
       debug=debug,
@@ -237,10 +235,10 @@ def mpmd_map(
 def _mpmd_map(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[_P, _T]]],
     /,
-    out_shapes: tree_util.PyTree,
+    out_types: tree_util.PyTree,
     *,
     input_output_aliases: Mapping[int, int] = {},
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    scratch_types: pallas_core.ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool | Any = False,
     debug: bool = False,
@@ -252,12 +250,12 @@ def _mpmd_map(
   if not meshes_and_fns:
     raise ValueError("At least one mesh/function pair is required")
 
-  flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(
-      out_shapes
+  flat_out_types_with_paths, out_tree = tree_util.tree_flatten_with_path(
+      out_types
   )
-  out_paths, flat_out_shapes = util.unzip2(flat_out_shapes_with_paths)
+  out_paths, flat_out_types = util.unzip2(flat_out_types_with_paths)
   flat_out_avals = tuple(
-      map(pallas_core._convert_out_shape_to_aval, flat_out_shapes)
+      map(pallas_core._convert_out_shape_to_aval, flat_out_types)
   )
   out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
 
@@ -274,13 +272,52 @@ def _mpmd_map(
     jaxprs = []
     grid_mappings = []
 
+    flat_scratch_types, scratch_tree = tree_util.tree_flatten(scratch_types)
+    if len(meshes_and_fns) > 1:
+      # TODO(rdyro): For MPMD with more than one mesh, come up with a better
+      # solution for how to enforce core_type presence in scratch_shape.
+      # TODO(rdyro): Check if we need to have a similar check for in-kernel
+      # allocations (e.g., run_scoped, empty_ref) or can we assume the
+      # core_type is inherited from the caller (we then need the core_type in
+      # the caller context during tracing).
+      # TODO(rdyro): Also check inputs and outputs for core type.
+      for scratch_type in flat_scratch_types:
+        from jax._src.pallas.mosaic import core as tpu_core
+
+        if not isinstance(
+            scratch_type.memory_space, tpu_core.CoreMemorySpace
+        ) and scratch_type.memory_space not in (
+            tpu_core.MemorySpace.HBM,
+            tpu_core.MemorySpace.VMEM_SHARED,
+        ):
+          raise NotImplementedError(
+              "MPMD map with more than one mesh requires scratch_type to have"
+              f" a `core_type` specified, but {scratch_type=} is missing it."
+          )
+
+    # Check that meshes are compatible with each other (e.g, have a consistent
+    # core axis name in the sparsecore).
+    for i, (mesh, _) in enumerate(meshes_and_fns):
+      for other_mesh, _ in list(meshes_and_fns)[i+1:]:
+        mesh.check_is_compatible_with(other_mesh)
+
+    super_mesh_shape = {}
+    for mesh, _ in meshes_and_fns:
+      for k, v in mesh.shape.items():
+        # An extra check since `check_is_compatible_with` should catch it.
+        assert k not in super_mesh_shape or super_mesh_shape[k] == v, (
+            f"Conflicting size for axis {k}"
+        )
+        super_mesh_shape[k] = v
+
     for mesh, fn in meshes_and_fns:
       grid_spec = pallas_core.GridSpec(
           grid=tuple(mesh.shape.items()),  # pyrefly: ignore[bad-argument-type]
           in_specs=in_tree.unflatten(
               pallas_core.BlockSpec(
                   memory_space=aval.memory_space
-                  if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+                  if isinstance(aval, jax_core.ShapedArray)
+                  and not isinstance(aval.memory_space, jax_core.MemorySpace)
                   else mesh.default_memory_space,
               )
               for aval in flat_avals
@@ -288,12 +325,13 @@ def _mpmd_map(
           out_specs=out_tree.unflatten(
               pallas_core.BlockSpec(
                   memory_space=aval.memory_space
-                  if isinstance(aval, pallas_core.ShapedArrayWithMemorySpace)
+                  if isinstance(aval, jax_core.ShapedArray)
+                  and not isinstance(aval.memory_space, jax_core.MemorySpace)
                   else mesh.default_memory_space,
               )
               for aval in flat_out_avals
           ),
-          scratch_shapes=scratch_shapes,
+          scratch_shapes=flat_scratch_types,
       )
       kernel_args, grid_mapping = pallas_core.get_grid_mapping(
           grid_spec,
@@ -304,19 +342,27 @@ def _mpmd_map(
           out_tree,
           out_origins,
       )
-      flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(kernel_args)
+      kernel_args, scratch_args = util.split_list(
+          kernel_args, [len(kernel_args) - scratch_tree.num_leaves])
+      scratch_args = scratch_tree.unflatten(scratch_args)
+      if isinstance(scratch_args, dict):
+        kernel_args_kwargs = (kernel_args, scratch_args)
+      else:
+        kernel_args_kwargs = (kernel_args + list(scratch_args), {})
+      flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(
+          kernel_args_kwargs)
       debug_info = api_util.debug_info(
           "mpmd_map",
           fn,
-          kernel_in_tree.unflatten(flat_kernel_avals),
-          {},
+          *kernel_args_kwargs,
       )
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
-      flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_in_tree
       )
-      with jax_core.extend_axis_env_nd(mesh.shape.items()):
+      with (jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+            config._check_vma(False)):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
             flat_fun, flat_kernel_avals
         )

@@ -26,6 +26,9 @@ try:
 except (ModuleNotFoundError, ImportError):
   HAS_CLOUDPICKLE = False
 
+jtu.request_cpu_devices(8)
+
+
 class ColocatedPythonTestMultiHost(jt_multiprocess.MultiProcessTest):
 
   def setUp(self):
@@ -34,7 +37,6 @@ class ColocatedPythonTestMultiHost(jt_multiprocess.MultiProcessTest):
       self.skipTest(
         "ColocatedPythonTestMultiHost depends on cloudpickle library"
       )
-    jtu.request_cpu_devices(jax.local_device_count())
 
   def test_colocated_cpu_devices(self):
     if jax.device_count() % 2 == 0:

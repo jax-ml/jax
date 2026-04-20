@@ -16,7 +16,7 @@
 
 import os
 
-from absl.testing import absltest, parameterized  # pylint: disable=g-multiple-import
+from absl.testing import absltest, parameterized
 import jax
 from jax import random
 from jax._src import config
@@ -26,7 +26,6 @@ from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 from jax.experimental.pallas.ops.gpu import transposed_ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
-
 
 config.parse_flags_with_absl()
 
@@ -63,6 +62,8 @@ class RaggedDotTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if ragged_dot_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
@@ -168,6 +169,42 @@ class RaggedDotTestCase(jtu.JaxTestCase):
         )
     )
     np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+
+  def test_ragged_dot_shard_map_check_vma(self):
+    """Test that ragged_dot can lower inside shard_map with check_vma=True."""
+    dtype = jnp.float16
+    block_m, block_n, block_k = 64, 64, 64
+    max_concurrent_steps = 2
+    grid_block_n = 2
+    num_groups = 3
+    m, k, n = 1024, 512, 512
+
+    P = jax.sharding.PartitionSpec
+    abstract_mesh = jax.sharding.AbstractMesh((2,), ("x",))
+
+    @jax.shard_map(
+        mesh=abstract_mesh,
+        in_specs=(P(), P(), P()),
+        out_specs=P(),
+        check_vma=True,
+    )
+    def sharded_ragged_dot(group_sizes_shard, lhs_shard, rhs_shard):
+      return ragged_dot_mgpu.ragged_dot(
+          lhs_shard,
+          rhs_shard,
+          group_sizes=group_sizes_shard,
+          block_m=block_m,
+          block_n=block_n,
+          block_k=block_k,
+          max_concurrent_steps=max_concurrent_steps,
+          grid_block_n=grid_block_n,
+      )
+
+    jax.jit(sharded_ragged_dot).trace(
+        jnp.zeros((num_groups,), dtype=jnp.int32),
+        jnp.zeros((m, k), dtype=dtype),
+        jnp.zeros((num_groups, k, n), dtype=dtype),
+    ).lower(lowering_platforms=("gpu",))  # doesn't crash
 
 
 @jtu.with_config(jax_traceback_filtering="off")

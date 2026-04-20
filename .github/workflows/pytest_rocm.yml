@@ -7,7 +7,7 @@
 # It consists of the following job:
 # run-tests:
 #    - Runs in ROCm team's container (ghcr.io/rocm/jax-base-ubu24-rocm*:latest)
-#    - Downloads the JAX and jaxlib wheels from GCS, and ROCm plugins from latest release.
+#    - Downloads the JAX and jaxlib wheels from GCS, and ROCm plugins from S3.
 #    - Executes the `run_pytest_rocm.sh` script, which performs the following actions:
 #      - Installs the downloaded wheel artifacts.
 #      - Runs the ROCm tests with Pytest.
@@ -59,6 +59,10 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         type: string
         default: 'gs://jax-nightly-artifacts/latest'
+      s3_download_uri:
+        description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
+        type: string
+        default: 'latest'
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -93,7 +97,13 @@ on:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://jax-nightly-artifacts/latest'
         type: string
-permissions: {}
+      s3_download_uri:
+        description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
+        default: 'latest'
+        type: string
+permissions:
+  id-token: write
+  contents: read
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
@@ -134,12 +144,12 @@ jobs:
           jaxlib-version: ${{ inputs.jaxlib-version }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          s3_download_uri: ${{ inputs.s3_download_uri }}
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m pip install uv~=0.5.30
+          $JAXCI_PYTHON -m pip install uv~=0.11.2
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          $JAXCI_PYTHON -m pip install pytest-json-report
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -148,3 +158,33 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}
+      - name: Archive test logs
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          tar -czf logs.tar.gz logs
+      - name: Configure AWS Credentials
+        if: ${{ !cancelled() }}
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      - name: Upload test-artifacts to AMD S3
+        if: ${{ !cancelled() }}
+        env:
+          S3_BUCKET_NAME: jax-ci-amd
+          INPUT_PYTHON: ${{ inputs.python }}
+          INPUT_ROCM_VERSION: ${{ inputs.rocm-version }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+          INPUT_ROCM_TAG: ${{ inputs.rocm-tag }}
+          IS_NIGHTLY: ${{ contains(github.workflow, 'Nightly/Release') && 'nightly' || 'continuous' }}
+        run: |
+          ./ci/upload_rocm_logs.sh

@@ -60,7 +60,6 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax/_src:custom_derivatives",
-        "//jax/experimental:custom_dce",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -72,10 +71,8 @@ jax_multiplatform_test(
     srcs = ["debug_info_test.py"],
     enable_configs = ["tpu_v3_x4"],
     deps = [
-        "//jax/_src:custom_transpose",
         "//jax/_src:shard_map",
         "//jax/experimental:checkify",
-        "//jax/experimental:custom_dce",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_gpu",
         "//jax/experimental:pallas_gpu_ops",
@@ -569,6 +566,7 @@ jax_multiplatform_test(
     deps = py_deps([
         "pil",
         "tensorflow_core",
+        "torch",
         "numpy",
         "absl/testing",
     ]),
@@ -610,6 +608,7 @@ jax_py_test(
 
 jax_multiplatform_test(
     name = "jet_test",
+    size = "large",
     srcs = ["jet_test.py"],
     shard_count = {
         "gpu": 2,
@@ -676,6 +675,18 @@ jax_multiplatform_test(
         "noasan",  # Test times out on all backends
         "test_cpu_thunks",
     ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "lax_numpy_hijax_test",
+    srcs = ["lax_numpy_hijax_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -846,13 +857,14 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "lax_scipy_spectral_dac_test",
+    size = "large",
     srcs = ["lax_scipy_spectral_dac_test.py"],
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
         "gpu": ["noasan"],  # Times out.
     },
     shard_count = {
-        "cpu": 2,
+        "cpu": 3,
         "gpu": 3,
         "tpu": 3,
     },
@@ -994,6 +1006,20 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "eigh_test",
+    srcs = ["eigh_test.py"],
+    shard_count = 10,
+    tags = [
+        "noasan",  # Times out under asan.
+    ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+        "scipy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "linalg_sharding_test",
     srcs = ["linalg_sharding_test.py"],
     enable_backends = [
@@ -1111,43 +1137,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "pmap_without_shmap_test",
-    srcs = ["pmap_test.py"],
-    args = ["--pmap_shmap_merge=false"],
-    backend_tags = {
-        "tpu": [
-            "noasan",  # Times out under asan.
-            "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
-        ],
-        "gpu": [
-            "noasan",  # Times out under asan.
-        ],
-    },
-    disable_configs = [
-        "tpu_v6e",  # Forge OOM.
-    ],
-    enable_configs = [
-        "gpu_v100",
-        "tpu_v3_x4",
-    ],
-    minimal_shard_count = {
-        "tpu": 8,
-    },
-    shard_count = {
-        "cpu": 20,
-        "gpu": 10,
-        "tpu": 20,
-    },
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax/_src:internal_test_util",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
     backend_tags = {
@@ -1175,25 +1164,6 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:internal_test_util",
     ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "pmap_shmap_merge_test",
-    srcs = ["pmap_shmap_merge_test.py"],
-    enable_configs = [
-        "gpu_v100",
-        "tpu_v3_x4",
-    ],
-    shard_count = {
-        "cpu": 20,
-        "gpu": 10,
-        "tpu": 20,
-    },
-    tags = ["multiaccelerator"],
-    deps = py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -1513,6 +1483,8 @@ jax_multiplatform_test(
         "cpu": ["--jax_num_generated_cases=20"],
         "cpu_x32": ["--jax_num_generated_cases=30"],
         "gpu_a100": ["--jax_num_generated_cases=40"],
+        "gpu_h100": ["--jax_num_generated_cases=40"],
+        "gpu_h100_tfrt": ["--jax_num_generated_cases=40"],
         "gpu_p100": ["--jax_num_generated_cases=40"],
         "gpu_v100": ["--jax_num_generated_cases=40"],
         "tpu_v3": ["--jax_num_generated_cases=40"],
@@ -1664,6 +1636,7 @@ jax_py_test(
 pytype_test(
     name = "typing_test",
     srcs = ["typing_test.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:test_util",
@@ -1753,6 +1726,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ode_test",
     srcs = ["ode_test.py"],
+    shard_count = 2,
     deps = ["//jax/experimental:ode"] + py_deps([
         "absl/testing",
         "numpy",
@@ -1897,7 +1871,9 @@ jax_multiplatform_test(
         "gpu_h100",
         "cpu",
     ],
-    deps = py_deps([
+    deps = [
+        "//jax/_src:hypothesis_test_util",
+    ] + py_deps([
         "absl/testing",
         "numpy",
         "hypothesis",
@@ -1938,6 +1914,16 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
+    name = "async_collectives_test",
+    srcs = ["async_collectives_test.py"],
+    tags = ["multiaccelerator"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -2077,6 +2063,7 @@ jax_multiplatform_test(
         "cpu",
         "cpu_x32",
     ],
+    minimal_shard_count = {"tpu": 2},
     shard_count = 15,
     tags = [
         "noasan",  # Times out
@@ -2293,19 +2280,20 @@ jax_py_test(
 exports_files(
     [
         "api_test.py",
-        "custom_api_test.py",
         "array_test.py",
         "cache_key_test.py",
         "colocated_python_test.py",
         "compilation_cache_test.py",
+        "custom_api_test.py",
+        "layout_test.py",
         "memories_test.py",
-        "pmap_test.py",
         "pjit_test.py",
+        "pmap_test.py",
+        "profiler_test.py",
         "python_callback_test.py",
         "shard_map_test.py",
-        "transfer_guard_test.py",
-        "layout_test.py",
         "string_array_test.py",
+        "transfer_guard_test.py",
     ],
     visibility = jax_test_file_visibility,
 )
@@ -2325,4 +2313,18 @@ filegroup(
     visibility = [
         "//jax:internal",
     ],
+)
+
+jax_py_test(
+    name = "hypothesis_test_util_test",
+    srcs = ["hypothesis_test_util_test.py"],
+    shard_count = 2,  # Do not remove. This test is testing sharding!
+    deps = [
+        "//jax",
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+    ]),
 )

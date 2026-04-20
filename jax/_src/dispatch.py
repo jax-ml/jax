@@ -30,7 +30,6 @@ from jax._src import basearray
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-
 from jax._src import literals
 from jax._src import pjit
 from jax._src import traceback_util
@@ -51,10 +50,10 @@ from jax._src.monitoring import record_scalar, record_event_duration_secs, recor
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding,
-    is_single_device_sharding)
+    NamedSharding, make_single_device_sharding, GSPMDSharding)
 from jax._src.stages import SourceInfo
 import numpy as np
+from jax._src.lib import jaxlib_extension_version
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -255,7 +254,7 @@ def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
 @util.weakref_lru_cache
 def get_intermediate_shardings(
     jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
-  from jax._src import shard_map  # pytype: disable=import-error
+  from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
 
   out = []
   for eqn in jaxpr.eqns:
@@ -315,8 +314,16 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise InternalFloatingPointError(name, "inf")
 
-def _identity_fn(x):
-  return x
+def _device_put_reshard(x): return x
+
+
+@util.cache(max_size=2048, trace_context_in_key=False)
+def _cached_logical_device_ids(
+    inp_device_list: xc.DeviceList,
+    target_device_list: xc.DeviceList
+) -> tuple[int, ...]:
+  device_to_index = {d: i for i, d in enumerate(target_device_list)}
+  return tuple(device_to_index[d] for d in inp_device_list)
 
 
 def _different_device_order_reshard(
@@ -326,25 +333,29 @@ def _different_device_order_reshard(
   inp_sharding = x.sharding
   assert isinstance(inp_sharding, NamedSharding)
 
+  inp_device_list = inp_sharding._internal_device_list
+  target_device_list = target_sharding._internal_device_list
+
   donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
-  if inp_sharding._device_assignment == target_sharding._device_assignment:
-    return api.jit(_identity_fn, out_shardings=target_sharding,
+  if inp_device_list == target_device_list:
+    return api.jit(_device_put_reshard, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
 
   if inp_sharding.is_fully_replicated:
-    permute_order = None
+    logical_device_ids = None
   else:
-    permute_order = np.vectorize(target_sharding._device_assignment.index,
-                                  otypes=[int])(inp_sharding._device_assignment)
+    logical_device_ids = _cached_logical_device_ids(
+        inp_device_list, target_device_list,
+    )
+
   new_mesh = Mesh(
       target_sharding.mesh.devices.reshape(inp_sharding.mesh.axis_sizes),
       inp_sharding.mesh.axis_names)
   new_s = NamedSharding(
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
-      _logical_device_ids=(None if permute_order is None else
-                            tuple(permute_order.tolist())))
+      _logical_device_ids=logical_device_ids)
   new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)
-  return api.jit(_identity_fn, out_shardings=target_sharding,
+  return api.jit(_device_put_reshard, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
 
 
@@ -427,7 +438,7 @@ def _device_put_sharding_impl(
     device: Device | Sharding | None,
     copy: ArrayCopySemantics,
 ):
-  from jax.experimental import multihost_utils  # pytype: disable=import-error
+  from jax.experimental import multihost_utils  # pyrefly: ignore[missing-import]
 
   # Use a dynamic type, because the static type depends on the value of
   # ``x_is_jax_array``.
@@ -446,6 +457,13 @@ def _device_put_sharding_impl(
         and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
+    if isinstance(s, NamedSharding) and s.spec.unreduced:
+      # TODO(mattjj,yashkatariya): handle donation
+      if jaxlib_extension_version >= 428:
+        return api.jit(_device_put_reshard, out_shardings=s)(x)
+      else:
+        return pjit.reshard(x, s)
+
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
         s.device_set == x_sharding.device_set):
@@ -454,7 +472,7 @@ def _device_put_sharding_impl(
 
     if (s_is_fully_addressable and x_is_jax_array and
         x_is_fully_addressable and s.num_devices > 1 and
-        s._internal_device_list != x_sharding._internal_device_list and  # pytype: disable=attribute-error
+        s._internal_device_list != x_sharding._internal_device_list and
         s.device_set == x_sharding.device_set):
       assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
@@ -492,7 +510,7 @@ def _device_put_sharding_impl(
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):  # pytype: disable=attribute-error
+        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -508,7 +526,7 @@ def _device_put_sharding_impl(
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if x_is_jax_array:
-    if not x_is_fully_addressable and not is_single_device_sharding(x_sharding):
+    if not x_is_fully_addressable and not x_sharding.num_devices == 1:
       raise ValueError(
           "When the second argument to `device_put` is a Device, the first "
           "argument must be a fully addressable array or a non-addressable "
@@ -519,9 +537,9 @@ def _device_put_sharding_impl(
         return x
       else:
         return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
-    elif is_single_device_sharding(x_sharding):
+    elif x_sharding.num_devices == 1:
       device = x_sharding._device_assignment[0] if device is None else device
-      sharding = SingleDeviceSharding(device)
+      sharding = make_single_device_sharding(device)
       if not x._committed and not sharding.has_addressable_devices:
         # For uncommitted arrays in McJAX, each process has a local copy of the
         # array. If the destination sharding is not addressable, no data
@@ -535,8 +553,8 @@ def _device_put_sharding_impl(
                                      True)
       return pxla.batched_device_put(aval, sharding, shards, devices)
 
-  sh = SingleDeviceSharding(pxla.get_default_device()
-                            if device is None else device)
+  sh = make_single_device_sharding(pxla.get_default_device()
+                                   if device is None else device)
   return _DeferredShardArg(x, sh, aval, device is not None, copy)
 
 
@@ -574,7 +592,7 @@ def _device_put_impl(
     if x_dll is None and dll is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     return api.jit(
-        _identity_fn,
+        _device_put_reshard,
         out_shardings=l,
         donate_argnums=(0 if copy == ArrayCopySemantics.DONATE_INPUT else None),
     )(x)
@@ -589,11 +607,7 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[ArrayCopySemantics],
     dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
-
-  # Used to batch transfers when _device_put_impl returns a _DeferredShardArg.
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
-  # Used to batch transfers when _device_put_impl returns a
-  # _DeferredCrossHostTransferArg.
   dca_indices, dca_xs, dca_shardings, dca_device_lists, dca_copy_semantics = \
     [], [], [], [], []
 
@@ -609,15 +623,11 @@ def _batched_device_put_impl(
       dca_indices.append(i)
       dca_xs.append(y.x)
       dca_shardings.append(y.dst_sharding)
-      dca_device_lists.append(y.dst_sharding._internal_device_list) # pytype: disable=attribute-error
+      dca_device_lists.append(y.dst_sharding._internal_device_list)
       dca_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
-  # Batch shard_arg / batched_copy_array_to_devices_with_sharding calls. Helps
-  # improve efficiency for backends that support efficient batch transfer.
   if dsa_xs:
-    # device_put handles `Format` via a different path, so just pass `None` as
-    # the layout here.
     shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
                                         dsa_copy_semantics, dsa_xs)
     for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
@@ -678,12 +688,13 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
-  results, dp_cts = [None] * len(cts), []
+  results: list[Any | None] = [None] * len(cts)
+  dp_cts = []
   for i, (ct, arg, device, src, cp) in enumerate(zip(
       cts, args, devices, srcs, copy_semantics)):
     if ad.is_undefined_primal(arg):
       if type(ct) is ad.Zero:
-        results[i] = ad.Zero(arg.aval.to_ct_aval())  # type: ignore
+        results[i] = ad.Zero(arg.aval.to_ct_aval())
       else:
         dp_cts.append((i, ct, arg, device, src, cp))
 

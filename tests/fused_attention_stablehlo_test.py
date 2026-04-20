@@ -271,6 +271,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.skipTest("Requires at least Ampere arch")
     if jtu.is_cuda_version_at_least(13, 0):
       self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @jtu.sample_product(
       batch_size=[4],
@@ -753,6 +755,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_sdpa_residual(self):
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
@@ -908,6 +912,58 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       out = jitted_sdpa_inference(query, key, value)
       out_ref = jitted_sdpa_inference_ref(query, key, value)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_grad_sharded_regression_25986(self):
+    """Regression test for https://github.com/jax-ml/jax/issues/25986.
+
+    Taking the gradient of jnp.sum(dot_product_attention(...)) with
+    batch-sharded inputs causes grad_output to be inferred as replicated
+    (from the sum's backward broadcast), while the query is batch-sharded.
+    Without the fix in the bwd partition function, this triggers an SPMD
+    partitioning error because the cuDNN backward custom-call is lowered
+    with the batch dimension taken from the partitioned query.
+    """
+    if len(jax.local_devices()) < 2:
+      self.skipTest("Requires at least 2 devices.")
+
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    query = jax.random.normal(k1, (2, 128, 2, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(k2, (2, 128, 2, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(k3, (2, 128, 2, 64), dtype=jnp.bfloat16)
+
+    devices = np.array(jax.local_devices()[:2])
+    with Mesh(devices, ("dp",)) as mesh:
+      qkv_spec = PartitionSpec("dp", None, None, None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+
+      # This pattern -- jax.grad of jnp.sum(dot_product_attention(...)) --
+      # causes the SPMD partitioner to infer grad_output as replicated.
+      @jax.jit
+      def compute_grad(q, k, v):
+        def loss_fn(q, k, v):
+          out = dot_product_attention(
+              q, k, v, scale=0.5, mask_type=MaskType.NO_MASK, dropout_rate=0)
+          return jnp.sum(out)
+        return jax.grad(loss_fn, argnums=(0, 1, 2))(q, k, v)
+
+      # Should not raise an SPMD partitioning error.
+      dq, dk, dv = compute_grad(query, key, value)
+      # Sanity-check that the output is batch-sharded.
+      self.assertTrue(dq.sharding.is_equivalent_to(qkv_sharding, ndim=4))
+
+    # Compute reference gradients without sharding using the pure-JAX
+    # reference implementation.
+    grad = jnp.ones_like(query)
+    _, (dq_ref, dk_ref, dv_ref) = sdpa_train_ref(
+        query, key, value, grad, scale=0.5,
+        mask_type=MaskType.NO_MASK, dropout_rate=0)
+    self.assertArraysAllClose(dq_ref, dq, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(dk_ref, dk, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(dv_ref, dv, rtol=2e-1, atol=2e-1)
 
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")

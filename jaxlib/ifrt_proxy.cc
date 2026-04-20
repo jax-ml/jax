@@ -150,7 +150,14 @@ NB_MODULE(_ifrt_proxy, m) {
               nb::arg().none());
 
   m.def("get_client", xla::ValueOrThrowWrapper(GetClient),
-        nb::arg("proxy_server_address"), nb::arg("options"));
+        nb::arg("proxy_server_address"), nb::arg("options"),
+        nb::sig(
+          // clang-format: off
+          "def get_client("
+          "proxy_server_address: str, options: ClientConnectionOptions"
+          ") -> Client"
+          // clang-format: on
+          ));
 }
 
 }  // namespace proxy

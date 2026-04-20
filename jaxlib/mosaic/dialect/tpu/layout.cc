@@ -48,141 +48,6 @@ limitations under the License.
 namespace mlir::tpu {
 namespace {
 
-// Represents a subset of a (packed) 1D vector register.
-//
-// All indices below are scaled up by the packing. That is, the maximal stop
-// offset for a register containing 16-bit values is twice as large as for
-// a register containing 32-bit values.
-//
-// Standard 1D packing is used. The values start laid out in the low half of the
-// first sublane, then wrap around to the higher half of the first sublane, etc.
-//
-// Attributes:
-//   layout: The layout used to generate the bounds.
-//   start_offset: Index of the element from which the mask begins (inclusive).
-//   stop_offset: Index of the element at which the mask ends (exclusive).
-class SingleRowVRegBounds : public VRegDataBounds {
- public:
-  SingleRowVRegBounds(const VectorLayout& layout, const int64_t start_offset,
-                      const int64_t stop_offset,
-                      const std::array<int64_t, 2> target_shape)
-      : layout_(layout),
-        start_offset_(start_offset),
-        stop_offset_(stop_offset) {
-    CHECK(0 <= start_offset_ && start_offset_ < stop_offset_ &&
-          stop_offset_ <= getEntriesPerVreg(target_shape));
-  }
-
-  // Total number of entries contained in a vreg.
-  int64_t getEntriesPerVreg(const std::array<int64_t, 2> target_shape) const {
-    return target_shape[0] * target_shape[1] * layout_.packing();
-  }
-
-  // See base class.
-  bool maskVariesAlong(
-      const Direction direction,
-      const std::array<int64_t, 2> target_shape) const override {
-    if (start_offset_ == 0 && stop_offset_ == getEntriesPerVreg(target_shape)) {
-      return false;
-    }
-    const int64_t entries_per_vreg = getEntriesPerVreg(target_shape);
-    switch (direction) {
-      case Direction::kSublanes:
-        return start_offset_ >= target_shape[1] ||
-               stop_offset_ < entries_per_vreg - target_shape[1];
-      case Direction::kLanes:
-        return true;
-      // This is very different from the definition in the 2d tiling case
-      // `TiledRectangularVregBounds` where we only need to check whether the
-      // offsets are divisible by packing. Here in the 1d tiling case, the data
-      // is still vertically packed, so as long as the start and stop offsets
-      // are not aligned to sublanes, subelement masking is required. For
-      // example, consider a 16-bit vector with `start_offset_ = 0` and
-      // `stop_offset_ = 128`, the mask should be true for the lower 16 bits and
-      // false for the upper 16 bits across all lanes.
-      case Direction::kSubelements:
-        return layout_.bitwidth() != 32 &&
-               (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
-                stop_offset_ % (target_shape[1] * layout_.packing()) != 0);
-    }
-  }
-
-  // See base class.
-  FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder& builder, const Location loc, const int generation,
-      const std::array<int64_t, 2> target_shape) const override {
-    // Only packed types may require subelement masking.
-    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-      if (layout_.bitwidth() != 16) {
-        return emitError(loc,
-                         "Only 16-bit subelement masking is currently "
-                         "implemented in SingleRowVRegBounds::getVectorMask.");
-      }
-
-      const auto i16_vreg =
-          VectorType::get({target_shape[0], target_shape[1], layout_.packing()},
-                          builder.getI16Type());
-      const auto getI16VregConstant = [&](const int32_t v) {
-        return arith::ConstantOp::create(
-            builder, loc, i16_vreg,
-            DenseElementsAttr::get(i16_vreg, builder.getI16IntegerAttr(v)));
-      };
-      const Value start = getI16VregConstant(start_offset_);
-      const Value end = getI16VregConstant(stop_offset_);
-      const Value iota = tpu::IotaOp::create(builder, loc, i16_vreg,
-                                             ArrayRef<int32_t>{0, 2, 1});
-      return cast<TypedValue<VectorType>>(
-          arith::AndIOp::create(
-              builder, loc,
-              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
-                                    iota, start),
-              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                                    iota, end))
-              .getResult());
-    }
-
-    // Handle 32-bit as well as packed types with sublane-aligned offsets.
-    const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
-    const auto getI32VregConstant = [&](const int32_t v) {
-      return arith::ConstantOp::create(builder, loc, i32_vreg,
-                                       DenseElementsAttr::get(i32_vreg, v));
-    };
-    const Value start = getI32VregConstant(start_offset_ / layout_.packing());
-    const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
-    const Value iota =
-        tpu::IotaOp::create(builder, loc, i32_vreg, ArrayRef<int32_t>{0, 1});
-    return cast<TypedValue<VectorType>>(
-        arith::AndIOp::create(
-            builder, loc,
-            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge, iota,
-                                  start),
-            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt, iota,
-                                  end))
-            .getResult());
-  }
-
-  // See base class.
-  DenseBoolArrayAttr getSublaneMask(
-      MLIRContext* mlir_ctx,
-      const std::array<int64_t, 2> target_shape) const override {
-    const int64_t start_sublane =
-        start_offset_ / layout_.packing() / target_shape[1];
-    const int64_t end_sublane = llvm::divideCeil(
-        llvm::divideCeil(stop_offset_, layout_.packing()), target_shape[1]);
-
-    SmallVector<bool> sublane_mask(target_shape[0], false);
-    for (int64_t i = start_sublane; i < end_sublane; ++i) {
-      sublane_mask[i] = true;
-    }
-    return DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
-  }
-
- private:
-  VectorLayout layout_;
-  int64_t start_offset_;
-  int64_t stop_offset_;
-};
-
 mlir::ParseResult parseOffset(StringRef* data, std::optional<int64_t>* result) {
   int64_t int_result;
   if (data->consume_front("*")) {
@@ -370,6 +235,148 @@ DenseBoolArrayAttr TiledRectangularVregBounds::getSublaneMask(
   return DenseBoolArrayAttr::get(mlir_ctx, mask);
 }
 
+// Total number of entries contained in a vreg.
+int64_t SingleRowVRegBounds::getEntriesPerVreg(
+    const std::array<int64_t, 2> target_shape) const {
+  return target_shape[0] * target_shape[1] * layout_.packing();
+}
+
+// See base class.
+bool SingleRowVRegBounds::maskVariesAlong(
+    const Direction direction, const std::array<int64_t, 2> target_shape) const
+/*override*/ {
+  if (start_offset_ == 0 && stop_offset_ == getEntriesPerVreg(target_shape)) {
+    return false;
+  }
+  const int64_t entries_per_vreg = getEntriesPerVreg(target_shape);
+  switch (direction) {
+    case Direction::kSublanes:
+      return start_offset_ >= target_shape[1] ||
+             stop_offset_ < entries_per_vreg - target_shape[1];
+    case Direction::kLanes:
+      return true;
+    // This is very different from the definition in the 2d tiling case
+    // `TiledRectangularVregBounds` where we only need to check whether the
+    // offsets are divisible by packing. Here in the 1d tiling case, the data
+    // is still vertically packed, so as long as the start and stop offsets
+    // are not aligned to sublanes, subelement masking is required. For
+    // example, consider a 16-bit vector with `start_offset_ = 0` and
+    // `stop_offset_ = 128`, the mask should be true for the lower 16 bits and
+    // false for the upper 16 bits across all lanes.
+    case Direction::kSubelements:
+      return layout_.bitwidth() != 32 &&
+             (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
+              stop_offset_ % (target_shape[1] * layout_.packing()) != 0);
+  }
+}
+
+// See base class.
+FailureOr<TypedValue<VectorType>> SingleRowVRegBounds::getVectorMask(
+    OpBuilder& builder, const Location loc, const int generation,
+    const std::array<int64_t, 2> target_shape) const /*override*/ {
+  // Only packed types may require subelement masking.
+  if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+    if (layout_.bitwidth() != 16 && layout_.bitwidth() != 8) {
+      return emitError(loc,
+                       "Only 16-bit and 8-bit subelement masking is currently "
+                       "implemented in SingleRowVRegBounds::getVectorMask.");
+    }
+
+    const auto i16_vreg = VectorType::get({target_shape[0], target_shape[1], 2},
+                                          builder.getI16Type());
+    const auto getI16VregConstant = [&](const int32_t v) {
+      return arith::ConstantOp::create(
+          builder, loc, i16_vreg,
+          DenseElementsAttr::get(i16_vreg, builder.getI16IntegerAttr(v)));
+    };
+    const Value start = getI16VregConstant(start_offset_);
+    const Value end = getI16VregConstant(stop_offset_);
+    const Value i16_iota =
+        tpu::IotaOp::create(builder, loc, i16_vreg, ArrayRef<int32_t>{0, 2, 1});
+
+    auto generate_mask = [&](Value iota) {
+      return cast<TypedValue<VectorType>>(
+          arith::AndIOp::create(
+              builder, loc,
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
+                                    iota, start),
+              arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
+                                    iota, end))
+              .getResult());
+    };
+
+    // Handle 16-bit.
+    if (layout_.bitwidth() == 16) {
+      if (generation < 4) {
+        return emitError(
+            loc, "16-bit subelement masking is only supported for TPU v4+.");
+      }
+      return generate_mask(i16_iota);
+    }
+
+    // Handle 8-bit by packing two 16-bit masks together.
+    if (generation < 5) {
+      return emitError(
+          loc, "8-bit subelement masking is only supported for TPU v5+.");
+    }
+    int32_t elements_per_vreg_16_bit = target_shape[0] * target_shape[1] * 2;
+    CHECK(llvm::isPowerOf2_64(elements_per_vreg_16_bit));
+    // `i16_iota` generates data from 0 to `elements_per_vreg_16_bit - 1`, so
+    // `i16_iota_shifted` should generate data from `elements_per_vreg_16_bit`
+    // to `2 * elements_per_vreg_16_bit - 1`. Here, we use a trick to avoid
+    // using i16 addition which only works for TPU v6+, a simple OR operation
+    // will suffice.
+    Value i16_iota_shifted = arith::OrIOp::create(
+        builder, loc, i16_iota, getI16VregConstant(elements_per_vreg_16_bit));
+    Value mask1 = generate_mask(i16_iota);
+    Value mask2 = generate_mask(i16_iota_shifted);
+
+    auto mask_vreg_ty =
+        VectorType::get({target_shape[0], target_shape[1], layout_.packing()},
+                        builder.getI1Type());
+    SmallVector<Value> masks_to_pack = {mask1, mask2};
+    Value final_mask =
+        PackMaskOp::create(builder, loc, mask_vreg_ty, masks_to_pack);
+
+    return cast<TypedValue<VectorType>>(final_mask);
+  }
+
+  // Handle 32-bit as well as packed types with sublane-aligned offsets.
+  const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
+  const auto getI32VregConstant = [&](const int32_t v) {
+    return arith::ConstantOp::create(builder, loc, i32_vreg,
+                                     DenseElementsAttr::get(i32_vreg, v));
+  };
+  const Value start = getI32VregConstant(start_offset_ / layout_.packing());
+  const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
+  const Value iota =
+      tpu::IotaOp::create(builder, loc, i32_vreg, ArrayRef<int32_t>{0, 1});
+  return cast<TypedValue<VectorType>>(
+      arith::AndIOp::create(
+          builder, loc,
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge, iota,
+                                start),
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt, iota,
+                                end))
+          .getResult());
+}
+
+// See base class.
+DenseBoolArrayAttr SingleRowVRegBounds::getSublaneMask(
+    MLIRContext* mlir_ctx, const std::array<int64_t, 2> target_shape) const
+/*override*/ {
+  const int64_t start_sublane =
+      start_offset_ / layout_.packing() / target_shape[1];
+  const int64_t end_sublane = llvm::divideCeil(
+      llvm::divideCeil(stop_offset_, layout_.packing()), target_shape[1]);
+
+  SmallVector<bool> sublane_mask(target_shape[0], false);
+  for (int64_t i = start_sublane; i < end_sublane; ++i) {
+    sublane_mask[i] = true;
+  }
+  return DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
+}
+
 std::tuple<std::optional<int64_t>, std::optional<int64_t>, int64_t, int64_t,
            int8_t, VectorLayout::ImplicitDim>
 VectorLayout::as_tuple() const {
@@ -547,7 +554,7 @@ std::ostream& operator<<(std::ostream& os, VectorLayout::ImplicitDim dim) {
 }
 
 llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
-                             VectorLayout::ImplicitDim dim) {
+                              VectorLayout::ImplicitDim dim) {
   return printImplicitDim(os, dim);
 }
 

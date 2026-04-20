@@ -16,7 +16,7 @@ import functools as ft
 import itertools as it
 import time
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 
 import jax
 import jax.numpy as jnp

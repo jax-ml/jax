@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple, Callable
+from typing import NamedTuple
+from collections.abc import Callable
 from functools import partial
 
 from jax._src import api

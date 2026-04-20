@@ -178,10 +178,10 @@ per_example_grads = jax.jit(jax.vmap(jax.grad(loss), in_axes=(None, 0, 0)))
 
 To scale your computations across thousands of devices, you can use any
 composition of these:
-* [**Compiler-based automatic parallelization**](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+* [**Compiler-based automatic parallelization**](https://docs.jax.dev/en/latest/parallel.html)
 where you program as if using a single global machine, and the compiler chooses
 how to shard data and partition computation (with some user-provided constraints);
-* [**Explicit sharding and automatic partitioning**](https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
+* [**Explicit sharding and automatic partitioning**](https://docs.jax.dev/en/latest/parallel.html)
 where you still have a global view but data shardings are
 explicit in JAX types, inspectable using `jax.typeof`;
 * [**Manual per-device programming**](https://docs.jax.dev/en/latest/notebooks/shard_map.html)
@@ -212,7 +212,7 @@ gradfun = jax.jit(jax.grad(loss))
 param_grads = gradfun(params, (inputs, targets))
 ```
 
-See the [tutorial](https://docs.jax.dev/en/latest/sharded-computation.html) and
+See the [tutorial](https://docs.jax.dev/en/latest/parallel.html) and
 [advanced guides](https://docs.jax.dev/en/latest/advanced_guide.html) for more.
 
 ## Gotchas and sharp bits
@@ -255,7 +255,7 @@ To cite this repository:
 
 ```
 @software{jax2018github,
-  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
+  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Yash Katariya and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
   title = {{JAX}: composable transformations of {P}ython+{N}um{P}y programs},
   url = {http://github.com/jax-ml/jax},
   version = {0.3.13},

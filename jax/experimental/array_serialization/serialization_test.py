@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# pylint: disable=g-importing-member
 import asyncio
 from dataclasses import dataclass
 from functools import partial
@@ -52,10 +50,9 @@ import jax.numpy as jnp
 
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
-from jax.sharding import SingleDeviceSharding
+from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 import tensorstore as ts
-# pylint: enable=g-importing-member
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -314,7 +311,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     executor = ThreadPoolExecutor(max_workers=1)
     future = executor.submit(mngr.deserialize_with_paths, [a.sharding],
-                             [path], concurrent_gb=1e-9)  # 1 byte
+                             [path], concurrent_gb=1E-9)  # 1 byte  # pyrefly: ignore[bad-argument-type]
     try:
       future.result(timeout=TIMEOUT_SEC)
     except TimeoutError:
@@ -665,7 +662,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     for out_spec, name in zip(out_specs, ['format', 'ShapeDtypeStruct']):
       with self.subTest(f'deserialization_with_{name}'):
-        out, = serialization.run_deserialization([out_spec], tspecs)
+        out, = serialization.run_deserialization([out_spec], tspecs)  # pyrefly: ignore[bad-argument-type]
         self.assertEqual(out.format, out_format)
         self.assertIsInstance(out, array.ArrayImpl)
         self.assertArraysEqual(out, out_ref)
@@ -709,7 +706,7 @@ class TransferShardTest(jtu.JaxTestCase):
   @jtu.skip_on_devices('cpu')
   def test_transfer_shard_to_host(self):
     np_inp = np.arange(16).reshape((4, 4))
-    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind='device')
+    sharding = make_single_device_sharding(jax.devices()[0], memory_kind='device')
     arr = jax.device_put(np_inp, sharding)
     shard = arr.addressable_shards[0]
 
@@ -793,7 +790,7 @@ _X64_DTYPES_LIST = [
     jnp.complex128,
 ]
 
-if jax.config.x64_enabled:
+if jax.config.x64_enabled:  # pyrefly: ignore[missing-attribute]
   _DTYPES_LIST.extend(_X64_DTYPES_LIST)
 
 
@@ -815,9 +812,9 @@ class CustomNode:
                    meta_fields=['c'])
 @dataclass
 class CustomDataclass:
-  a: int
+  a: jax.Array
   c: str
-  d: int
+  d: jax.Array
 
 
 @jax.tree_util.register_static
@@ -834,7 +831,7 @@ class UserPytreeAPITest(UserAPITestCase):
   def setUp(self):
     super().setUp()
     global _DEFAULT_SHARDING
-    _DEFAULT_SHARDING = SingleDeviceSharding(jax.devices()[0])
+    _DEFAULT_SHARDING = make_single_device_sharding(jax.devices()[0])
     self.tempdirs = []
 
   def tearDown(self):
@@ -842,13 +839,14 @@ class UserPytreeAPITest(UserAPITestCase):
       tempdir.cleanup()
     super().tearDown()
 
-  def create_tempdir(self):
+  def create_tempdir(self, name=None, cleanup=None):
+    del name, cleanup  # unused
     tempdir = tempfile.TemporaryDirectory()
     self.tempdirs.append(tempdir)
     return pathlib.Path(tempdir.name).resolve()
 
   @parameterized.product(tree=[{'a': 1}, [1, 2, 3], (1, 2, 3), 1, 2, 3])
-  def test_save_then_load(self, tree):  # pylint: disable=redefined-outer-name
+  def test_save_then_load(self, tree):
     path = self.create_tempdir()
     tree = jax.tree.map(jnp.array, tree)
     tree_save(tree, path)
@@ -920,11 +918,7 @@ class UserPytreeAPITest(UserAPITestCase):
   def test_flax_frozen_dict(self):
     path = self.create_tempdir()
     try:
-      # pylint: disable=g-import-not-at-top
-      # pylint: disable=g-importing-member
       from flax.core.frozen_dict import FrozenDict
-      # pylint: enable=g-importing-member
-      # pylint: enable=g-import-not-at-top
     except ImportError:
       logging.warning('Skipping Flax FrozenDict tests as flax is not installed')
       return
@@ -968,7 +962,7 @@ class UserPytreeAPITest(UserAPITestCase):
     class D:
       a: Any
       b: Any
-      op: str
+      op: jax.Array
 
     def serialize_D(data):
       return json.dumps(jax.tree.map(lambda x: np.array(x).tolist(), data)
@@ -977,8 +971,8 @@ class UserPytreeAPITest(UserAPITestCase):
     def deserialize_D(data):
       return jnp.array(json.loads(data))
 
-    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
-            7 * jnp.ones(()), P()]
+    data: list[Any] = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+                       7 * jnp.ones(()), P()]
 
     serialize_fn = lambda p: json.dumps(int(p.a)).encode('utf-8')
     deserialize_fn = lambda data: P(json.loads(data))
@@ -1015,8 +1009,8 @@ class UserPytreeAPITest(UserAPITestCase):
 
   def test_masked_reading(self):
     path = self.create_tempdir()
-    data = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
-            7 * jnp.ones(())]
+    data: list[Any] = [jnp.ones(1), {'world': [jnp.zeros(3), (jnp.ones(1), jnp.ones(2))]},
+                       7 * jnp.ones(())]
     tree_save(data, path)
     for mask in [False, True]:
       ret = tree_load(path, mask=mask)
@@ -1124,12 +1118,12 @@ class UserPytreeAPITest(UserAPITestCase):
     with self.assertRaisesRegex(NotImplementedError,
                                 'Deserialization with `Format` instead of'
                                 ' `Sharding` is not currently supported.'):
-      pytree_serialization.load(path, shardings=data.format)
+      pytree_serialization.load(path, shardings=data.format)  # pyrefly: ignore[missing-attribute]
 
   def test_formats_support(self):
     path = self.create_tempdir()
     data = jnp.arange(16 * 16, dtype=jnp.float32).reshape((16, 16))
-    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(
+    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(  # pyrefly: ignore[missing-attribute]
         (16, 16)).format
     sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
     data: jax.Array = jax.device_put(data, sharding)

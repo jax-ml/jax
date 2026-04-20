@@ -137,7 +137,7 @@ class DimExprTest(jtu.JaxTestCase):
     for dim_values in itertools.product(*([(1, 2, 5, 10)] * len(dim_vars_tuple))):
       env = dict(zip(dim_vars_tuple, dim_values))
       def eval(d: shape_poly.DimSize):
-        return d._evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
+        return d._evaluate(env) if core.is_symbolic_dim(d) else d
 
       compute_concrete = fun(*map(eval, operands_sym))
       expected_concrete = eval(e)
@@ -1363,7 +1363,7 @@ class PolyHarness(Harness):
           f"Running custom_assert with tol={tol} due "
           f"to {custom_assert_lims[0]}"))
       custom_assert_lims[0].custom_assert(tst, res_jax_native,
-                                          res_jax_exported, args=args,  # type: ignore
+                                          res_jax_exported, args=args,
                                           tol=tol, err_msg=None)
     return res_jax_exported
 
@@ -2019,7 +2019,7 @@ class ShapePolyTest(jtu.JaxTestCase):
           np.array(2., dtype=np.float32), np.arange(1., 7., dtype=np.float32)
       ]
       for other_jnp_array in (
-          [True, False] if np.shape(other) == (7,) else [False])  # type: ignore
+          [True, False] if np.shape(other) == (7,) else [False])
       for swap in [False, True]  # The poly is the left op by default
   ])
   def test_poly_binary_op(self, *, op=op.add,
@@ -2858,7 +2858,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 polymorphic_shapes=["b, b, ..."],
                 override_jax_config_flags={"jax_export_ignore_forward_compatibility": True}),
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",
           lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
@@ -2920,7 +2920,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "lu", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
           lax.linalg.lu,
           arg_descriptors=[RandArg(shape, dtype)],
@@ -2937,7 +2937,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "eigh", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{lower=}",
           lambda x, lower: lax.linalg.eigh(x, lower=lower),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(lower)],
@@ -2951,7 +2951,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "eigh_shape_error", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
           lambda x: lax.linalg.eigh(x, symmetrize_input=False),
           arg_descriptors=[RandArg(shape, dtype)],
@@ -2965,7 +2965,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
-      PolyHarness(  # pylint: disable=g-complex-comprehension
+      PolyHarness(
           "svd", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}_{compute_uv=}",
           lambda x, full_matrices, compute_uv: lax.linalg.svd(x, full_matrices=full_matrices, compute_uv=compute_uv),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
@@ -2996,35 +2996,35 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     arg_descriptors=[RandArg((3, key_size), np.uint32),
                                      RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=["b, ...", "b, w, ..."], tol=1E-5,
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_categorical", f"axis=0_{flags_name}",
                     lambda key, a: jax.random.categorical(
                       jax.random.wrap_key_data(key), a, axis=0),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1"],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_categorical", f"axis=1_{flags_name}",
                     lambda key, a: jax.random.categorical(
                         jax.random.wrap_key_data(key), a, axis=1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1, b2"],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_categorical", f"axis=1_then_reshape_{flags_name}",
                     lambda key, a: jax.random.categorical(
                         jax.random.wrap_key_data(key), a, axis=1).reshape(-1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1, b2"],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_categorical", f"0_dim_{flags_name}",  # One axis has 0 size
                     lambda key, a: jax.random.categorical(
                         jax.random.wrap_key_data(key), a, axis=1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 0), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         [
             PolyHarness("random_choice", f"{flags_name}_arr_poly={arr_poly}_shape_poly={shape_poly}_replace={replace}_use_p={use_p}",
                     lambda key, a, res_shape, use_p: jax.random.choice(
@@ -3050,7 +3050,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     override_jax_config_flags=override_jax_config_flags,
                     expect_error=(
                         (NotImplementedError, "permutation")
-                        if arr_poly and not use_p else None))  # type: ignore
+                        if arr_poly and not use_p else None))
             # np.insert used in random.choice tries to coerce shape_poly to
             # integer arrays, but only when the arr_poly is False.
             for arr_poly in [True, False]
@@ -3065,27 +3065,27 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 4), _f32)],
                     polymorphic_shapes=[None, "b0, ..."],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         # Works when the known dimensions are known to be even or odd.
         PolyHarness("random_uniform", f"even_1_{flags_name}",
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
                                                       a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=[None, "b0, 4, 5"],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_uniform", f"even_2_{flags_name}",
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
                                                       a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4), _f32)],
                     polymorphic_shapes=[None, "b0, 2*b1"],
-                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags),
         PolyHarness("random_uniform", f"error_unknown_evenness_{flags_name}",
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
                                                       a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5), _f32)],
                     polymorphic_shapes=[None, "b0, b1"],
-                    override_jax_config_flags=override_jax_config_flags)  # type: ignore
+                    override_jax_config_flags=override_jax_config_flags)
       ]
         for key_size, flags_name, override_jax_config_flags in [
           (2, "threefry_non_partitionable",
@@ -3187,7 +3187,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     #               polymorphic_shapes=[None, "b0, ..."]),
     [
         PolyHarness("reduce", reduce_op.__name__,
-                    lambda x: reduce_op(x, axis=-1, keepdims=True),  # type: ignore
+                    lambda x: reduce_op(x, axis=-1, keepdims=True),
                     arg_descriptors=[RandArg((3, 5), _f32)],
                     polymorphic_shapes=["b, ..."])
         for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]
@@ -3278,7 +3278,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "",
                 lambda *args: jax.grad(
                     lambda *args:
-                        jnp.sum(lax.scatter(  # type: ignore
+                        jnp.sum(lax.scatter(
                           *args,
                           indices_are_sorted=False,
                           unique_indices=False,
@@ -3293,7 +3293,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "poly_indices",
                 lambda *args: jax.grad(
                   lambda *args:
-                  jnp.sum(lax.scatter(  # type: ignore
+                  jnp.sum(lax.scatter(
                     *args,
                     indices_are_sorted=False,
                     unique_indices=False))

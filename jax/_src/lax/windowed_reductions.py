@@ -376,7 +376,10 @@ def _reduce_window_abstract_eval_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
   vma = core.standard_vma_rule('reduce_window', *operand_avals)
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding, vma=vma)
+  if any(core.getu(a) or core.getr(a) for a in operand_avals):
+    raise NotImplementedError
+  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
+                           manual_axis_type=op.mat.update(varying=vma))
                for op in operand_avals)
 
 
@@ -442,7 +445,7 @@ def reduce_window_jvp(
 
   init_value_tangent = map(ad_util.instantiate, init_value_tangent)
   c_reduction_jaxpr = ClosedJaxpr(reduction_jaxpr, consts)
-  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
 
   def wrapper(left, right):
     pl, tl = util.split_list(left, [n])
@@ -730,14 +733,15 @@ def _select_and_scatter_lower(
   scalar_aval = operand_aval.update(
       shape=(), sharding=operand_aval.sharding.update(spec=()))
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  result_type = mlir.aval_to_ir_type(aval_out)
   op = hlo.SelectAndScatterOp(
-      mlir.aval_to_ir_type(aval_out),
+      result_type,
       operand,
       source,
       init_value,
       window_dimensions=mlir.dense_int_array(window_dimensions),
       window_strides=mlir.dense_int_array(window_strides),
-      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),  # pyrefly: ignore[no-matching-overload]
                                           shape=(len(padding), 2)))
   select = op.select.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(select):
@@ -1001,7 +1005,7 @@ def _select_and_gather_add_lowering(
     assert select_prim is lax.ge_p or select_prim is lax.le_p
     cmp_op = "GE" if select_prim is lax.ge_p else "LE"
     out = hlo.SelectOp(mlir.compare_hlo(fst(x), fst(y), cmp_op), x, y)
-    return out
+    return out.results
 
   res, = mlir.reduce_window(ctx,
       reducer_name="reduce_window_select_and_gather_add",

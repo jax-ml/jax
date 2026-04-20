@@ -23,12 +23,12 @@ from jax.tools import jax_to_ir
 try:
   import tensorflow as tf
 except ImportError:
-  tf = None  # type: ignore
+  tf = None
 
 try:
   from tensorflow.compiler.tf2xla.python import xla as tfxla
 except ImportError:
-  tfxla = None  # type: ignore
+  tfxla = None
 
 
 def axpy(a, x, y):

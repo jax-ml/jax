@@ -15,7 +15,7 @@
 import threading
 from typing import Protocol
 
-from jaxlib.triton import dialect  # noqa: F401  # pytype: disable=import-error
+from jaxlib.triton import dialect  # noqa: F401
 
 
 class CompilationResult(Protocol):

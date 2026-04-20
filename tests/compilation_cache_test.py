@@ -606,7 +606,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
         .runtime_executable()
     )
     serialized_executable = backend.serialize_executable(executable)
-    deserialized_executable = backend.deserialize_executable(  # type: ignore
+    deserialized_executable = backend.deserialize_executable(
         serialized_executable,
         xc.DeviceList(tuple(jax.local_devices(backend=backend))), None)
     self.assertEqual(
@@ -620,7 +620,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
       with config.persistent_cache_enable_xla_caches("all"):
@@ -644,7 +643,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
 
@@ -763,7 +761,6 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
         num_replicas=1, num_partitions=1
       )
       self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
       self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
       self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
 

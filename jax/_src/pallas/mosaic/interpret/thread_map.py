@@ -31,6 +31,8 @@ def _run_jaxpr(jaxpr, consts, *args):
 
 
 def _thread_map_callback(jaxpr, num_threads, consts, invals):
+  # TODO(jburnim): Convert all JAX values in `consts` and `invals` to NumPy
+  # values before passing them to a different thread.
   num_threads = int(num_threads)
   threads = []
   with futures.ThreadPoolExecutor(max_workers=num_threads) as executor:

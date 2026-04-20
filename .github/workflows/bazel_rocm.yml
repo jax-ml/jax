@@ -87,7 +87,6 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
-permissions: {}
 jobs:
   run-tests:
     defaults:
@@ -96,7 +95,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa"
+      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest
       volumes:
         - /data:/data
       options: >-
@@ -106,14 +105,11 @@ jobs:
         --group-add video
         --shm-size 64G
         --env-file /etc/podinfo/gha-gpu-isolation-settings
+
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
-      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
-      JAXCI_ROCM_VERSION: ${{ inputs.rocm-version }}
-      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
-      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
-      JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
@@ -124,21 +120,60 @@ jobs:
       - name: ROCm Info
         run: |
           rocminfo
+      - name: Configure AWS Credentials
+        if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+      # Get the JAX/Jaxlib/Plugin/PJRT wheels from their respective
+      # sources when not building.
+      - name: Download JAX/Jaxlib/Plugin/PJRT wheels
+        if: inputs.build_jaxlib == 'false'
+        uses: ./.github/actions/download-jax-rocm-wheels
+        with:
+          python: ${{ inputs.python }}
+          rocm-version: ${{ inputs.rocm-version }}
+          download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
+          skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+          jaxlib-version: ${{ inputs.jaxlib-version }}
+          gcs_download_uri: ${{ inputs.gcs_download_uri }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set ROCm requirements lock file
-        if: inputs.build_jaxlib == 'false'
+      - name: Resolve RBE container image digest
+        id: rbe-image
         run: |
-          PY_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION//./_}"
-          echo "JAXCI_ROCM_LOCK_FLAG=--repo_env=HERMETIC_REQUIREMENTS_LOCK=build/requirements_lock_${PY_VERSION}_rocm.txt" >> $GITHUB_ENV
+          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
+          REPO="rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
+          TOKEN=$(curl -sf "https://ghcr.io/token?service=ghcr.io&scope=repository:${REPO}:pull" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "::add-mask::${TOKEN}"
+          DIGEST=$(curl -sfI "https://ghcr.io/v2/${REPO}/manifests/latest" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" | \
+            grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
+          echo "RBE image: ${IMAGE}@${DIGEST}"
+          echo "rbe_image=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa" \
-            ${JAXCI_ROCM_LOCK_FLAG:-}
+            --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
+            --//jax:build_jax="${{ inputs.build_jax }}" \
+            --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
+            --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}" \
+            "${JAXCI_ROCM_LOCK_FLAG:-}"
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}

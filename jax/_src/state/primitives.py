@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import json
 import types
 from typing import Any, Union
 
@@ -572,7 +573,7 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
   if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
-  elif ref_tangent.aval.kind == "anselm_ref":
+  elif ref_tangent.aval.kind == "no_grad_no_remat":
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   else:
     if isinstance(ref_tangent, ad_util.Zero):
@@ -589,7 +590,7 @@ def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   ref_tangent, x_tangent, *_ = tangents
   x_tangent = ad_util.instantiate(x_tangent)
-  if ref_tangent.aval.kind != "anselm_ref":
+  if ref_tangent.aval.kind != "no_grad_no_remat":
     addupdate_p.bind(ref_primal, x_primal, *idx, **params)
     addupdate_p.bind(ref_tangent, x_tangent, *idx, **params)
   return [], []
@@ -597,9 +598,10 @@ ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
 
 ##  get/swap/addupdate transpose rules
 
-def _get_transpose_fancy(g, ref_, *idx, **params):
-  if idx and type(g) is not ad_util.Zero:
-    addupdate_p.bind(ref_.inst().ref, g, *idx, **params)
+def _get_transpose_fancy(g, ref_, *idx, tree):
+  transforms = tree_util.tree_unflatten(tree, idx)
+  if transforms and type(g) is not ad_util.Zero:
+    addupdate_p.bind(ref_.inst().ref, g, *idx, tree=tree)
   else:
     ref_.accum(g)
 ad.fancy_transposes[get_p] = _get_transpose_fancy
@@ -654,7 +656,7 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
-                # (except for anselm_ref)
+                # (except for no_grad_no_remat)
   ref_unk, *_ = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
@@ -662,7 +664,7 @@ def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
-  elif eqn.invars[0].aval.kind == "anselm_ref":
+  elif eqn.invars[0].aval.kind == "no_grad_no_remat":
     return eqn, None, [False], [False], res
   else:
     return eqn, eqn, [False], [True], res  # full remat
@@ -966,7 +968,7 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
                     "function?")
   if not indexers:
     if val_dim != ref_dim:
-      val = batching.matchaxis2(axis_data, val_dim, ref_dim, val)
+      val = batching.matchaxis(axis_data, val_dim, ref_dim, val)
     return addupdate_p.bind(ref, val, *flat_idxs, tree=tree), []
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -1041,7 +1043,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
   See Also:
     :func:`jax.numpy.broadcast_to`
   """
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   a = jnp.asarray(a)
   if a.shape == shape:
     return a
@@ -1049,7 +1051,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
 
 @broadcast_to_p.def_impl
 def _broadcast_to_impl(a, *, shape):
-  import jax.numpy as jnp  # pytype: disable=import-error
+  import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   return jnp.broadcast_to(a, shape)
 
 @broadcast_to_p.def_abstract_eval
@@ -1076,12 +1078,12 @@ def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind):
   nz, = nzs
   x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
   def mut_lin(_, x_dot):
-    if kind == 'anselm_ref':
+    if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
       return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
-  return x_ref, kind != 'anselm_ref', None, mut_lin
+  return x_ref, kind != 'no_grad_no_remat', None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
@@ -1129,26 +1131,43 @@ def _lower_create_linear(ctx):
   return mlir.custom_call(
       "CreateBuffer",
       operands=[],
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
   ).results
 mlir.register_lowering(create_linear_p, _lower_create_linear)
 
 
-def pin(x):
-  return pin_p.bind(x)
+def pin(x, *, to=None):
+  return pin_p.bind(x, to=to)
 pin_p = core.Primitive('pin')
 
 @pin_p.def_abstract_eval
-def _pin_abstract_eval(aval):
+def _pin_abstract_eval(aval, *, to):
+  if to not in (None, 'hbm', 'vmem'): raise ValueError
   if not isinstance(aval, core.ShapedArray): raise NotImplementedError(aval)
-  return AbstractLinVal(aval)
+  return AbstractLinVal(aval, to)
 
-def _lower_pin(ctx, x_op):
+def _lower_pin(ctx, x_op, *, to):
+  color = {'vmem': 1, 'hbm': 0, None: None}[to]
+  if color is not None:
+    backend_config = json.dumps({
+        "custom_call_config": {
+            "output_memory_space_colors": [
+                {
+                    "shape_index": [],
+                    "color": str(color)
+                }
+            ]
+        }
+    })
+    config: dict[str, Any] = dict(backend_config=backend_config)
+  else:
+    config = {}
   out_aval, = ctx.avals_out
   return mlir.custom_call(
       "Pin",
       operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
+      **config,
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
 
@@ -1167,12 +1186,14 @@ def _lower_unpin(ctx, x_op):
   return mlir.custom_call(
       "Unpin",
       operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types([mlir.aval_to_ir_type(out_aval)]),
+      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
   ).results
 mlir.register_lowering(unpin_p, _lower_unpin)
 
 
 def _linval_to_mlir_type(a):
+  color = {'vmem': 1, 'hbm': 0, None: None}[a.memory_space]
+  space = mlir.i32_attr(color) if color is not None else None
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
-                                memory_space=a.memory_space)
+                                memory_space=space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type

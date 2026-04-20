@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2026 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,8 @@
 """Python bindings for the XLA FFI."""
 
 import enum
-
 import numpy
-import typing_extensions
+from typing_extensions import CapsuleType
 
 class Buffer:
   @property
@@ -39,7 +38,7 @@ class Buffer:
       max_version: object | None = ...,
       dl_device: object | None = ...,
       copy: object | None = ...,
-  ) -> typing_extensions.CapsuleType: ...
+  ) -> CapsuleType: ...
   def __dlpack_device__(self) -> tuple: ...
 
 class ExecutionStage(enum.Enum):

@@ -994,7 +994,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testTruncnormPdf(self, shapes, dtypes):
@@ -1014,7 +1013,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogCdf(self, shapes, dtypes):
@@ -1032,7 +1030,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testTruncnormCdf(self, shapes, dtypes):
@@ -1050,8 +1047,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float32: 1e-5},
-                            atol={np.float32: 1e-5})
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogSf(self, shapes, dtypes):
@@ -1069,7 +1064,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testTruncnormSf(self, shapes, dtypes):
@@ -1087,7 +1081,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
   def testParetoLogPdf(self, shapes, dtypes):
@@ -1358,7 +1351,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scipy_fun = osp_stats.betabinom.logpmf
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
-      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   def testBetaBinomLogPmfZerokZeron(self):
     self.assertEqual(lsp_stats.betabinom.logpmf(0, 0, 10, 5, 0),
@@ -1378,12 +1370,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [k, n, p, loc]
 
-    tol = {np.float32: 1e-6, np.float64: 1e-8}
-
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
-      self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   def testBinomPmfOutOfRange(self):
     # Regression test for https://github.com/jax-ml/jax/issues/19150
@@ -1420,7 +1409,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=5e-4)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   @jtu.sample_product(
     [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
@@ -1917,16 +1905,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     ndim = shape[0] if len(shape) > 1 else 1
 
     func = partial(resample, shape=())
-    with jax.debug_key_reuse(False):
-      self._CompileAndCheck(
-        func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())
     assert result.shape == (ndim,)
 
     func = partial(resample, shape=(4,))
-    with jax.debug_key_reuse(False):
-      self._CompileAndCheck(
-        func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())
     assert result.shape == (ndim, 4)
 
@@ -2030,11 +2012,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       for axis in [None, *range(len(shape))
     ]],
     dtype=jtu.dtypes.integer + jtu.dtypes.floating,
-    method=['average', 'min', 'max', 'dense', 'ordinal']
+    method=['average', 'min', 'max', 'dense', 'ordinal'],
+    sampler=[jtu.rand_default, jtu.rand_some_nan],
   )
-  def testRankData(self, shape, dtype, axis, method):
+  def testRankData(self, shape, dtype, axis, method, sampler):
 
-    rng = jtu.rand_default(self.rng())
+    rng = sampler(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
     scipy_fun = partial(osp_stats.rankdata, method=method, axis=axis)
@@ -2083,7 +2066,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
 
   @genNamedParametersNArgs(2)
   def testPoissonEntropyWithLoc(self, shapes, dtypes):
@@ -2096,7 +2078,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            else {np.float32: 2e-4, np.float64: 5e-6})
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,  tol=tol)
-      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
 
   @jtu.sample_product(
     dtype=jtu.dtypes.floating,
@@ -2131,7 +2112,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-4)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

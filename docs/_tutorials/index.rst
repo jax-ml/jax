@@ -25,7 +25,7 @@ Mostly finalized at :ref:`jax-101`!
    ../debugging
    ../random-numbers
    ../pytrees
-   ../sharded-computation
+   ../parallel
    ../stateful-computations
    simple-neural-network
 

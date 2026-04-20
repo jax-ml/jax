@@ -37,8 +37,7 @@ from jax._src.layout import Layout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
-                             Shape)
+from jax._src.typing import Array, ArrayLike, DuckTypedArray, Shape
 
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | Layout | None
@@ -177,7 +176,7 @@ def include_dir() -> str:
 
 
 def _aval_shape(aval: core.AbstractValue) -> Shape:
-  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+  return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pyrefly: ignore[missing-attribute]
 
 
 def _convert_layout_for_lowering(
@@ -201,7 +200,7 @@ def build_ffi_lowering_function(
     backend_config: Mapping[str, ir.Attribute] | str | None = None,
     skip_ffi_layout_processing: bool = False,
     **lowering_args: Any,
-) -> Callable[..., ir.Operation]:
+) -> Callable[..., ir.OpView]:
   """Build a lowering op for an foreign function interface (FFI) target.
 
   By default, this lowering rule can use the input and output abstract values to
@@ -230,8 +229,8 @@ def build_ffi_lowering_function(
   """
 
   def _lowering_op(
-    ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
-  ) -> ir.Operation:
+      ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> ir.OpView:
     kwargs = dict(lowering_args)
     kwargs.setdefault("api_version", 4)
     if kwargs["api_version"] >= 4:
@@ -247,7 +246,7 @@ def build_ffi_lowering_function(
             f"of at least 4; got api_version={kwargs['api_version']}.")
       kwargs["backend_config"] = backend_config
     if "result_types" not in kwargs:
-      kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
+      kwargs["result_types"] = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out))
     if not skip_ffi_layout_processing:
       if operand_layouts is None:
         kwargs["operand_layouts"] = map(
@@ -387,7 +386,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array]:
   ...
 
@@ -404,7 +402,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Sequence[Array]]:
   ...
 
@@ -420,7 +417,6 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = None,
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
@@ -481,11 +477,7 @@ def ffi_call(
     to execute the FFI handler. Any keyword arguments are passed as named
     attributes to the FFI handler using XLA's FFI interface.
   """
-  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
-  if not isinstance(vectorized, DeprecatedArg):
-    raise ValueError(
-        "The 'vectorized' argument of jax.ffi.ffi_call was removed in JAX "
-        "v0.6.0. Use 'vmap_method' instead.")
+
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
@@ -495,13 +487,13 @@ def ffi_call(
 
   output_layouts_: Sequence[FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
-    output_layouts_ = output_layouts  # type: ignore
+    output_layouts_ = output_layouts  # pyrefly: ignore[bad-assignment]
     multiple_results = True
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
     result_avals = _result_avals([result_shape_dtypes])
-    output_layouts_ = (output_layouts,)  # type: ignore
+    output_layouts_ = (output_layouts,)  # pyrefly: ignore[bad-assignment]
 
   if custom_call_api_version >= 4 and legacy_backend_config is not None:
     raise ValueError(
@@ -531,7 +523,7 @@ def ffi_call(
       static_output_layouts = _convert_layouts_for_ffi_call(result_avals,
                                                             output_layouts_)
 
-    static_input_output_aliases: tuple[tuple[int, int], ...] = ()
+    static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
         i_idx, o_idx = int(i_idx), int(o_idx)
@@ -558,7 +550,7 @@ def ffi_call(
               f"referring to an input with layout {static_input_layouts[i_idx]} "
               "and an output with a different layout "
               f"{static_output_layouts[o_idx]}.")
-        static_input_output_aliases += ((i_idx, o_idx),)
+        static_input_output_aliases.append((i_idx, o_idx))
     args = core.standard_insert_pvary(*args)
     results = ffi_call_p.bind(
         *args,
@@ -568,7 +560,7 @@ def ffi_call(
         has_side_effect=has_side_effect,
         input_layouts=static_input_layouts,
         output_layouts=static_output_layouts,
-        input_output_aliases=static_input_output_aliases,
+        input_output_aliases=tuple(static_input_output_aliases),
         custom_call_api_version=custom_call_api_version,
         legacy_backend_config=legacy_backend_config,
         attributes=_wrap_kwargs_hashable(kwargs),
@@ -639,7 +631,7 @@ def ffi_call_abstract_eval(
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else
                r.update(sharding=(core.get_cur_mesh_sharding()
-                                  if r.sharding.mesh.empty else r.sharding))  # type: ignore
+                                  if r.sharding.mesh.empty else r.sharding))  # pyrefly: ignore[missing-attribute]
                for r in result_avals), effects
 
 
@@ -669,14 +661,14 @@ def ffi_call_lowering(
     legacy_backend_config: str | None,
     attributes: Sequence[tuple[str, Any]],
     **_,
-) -> Sequence[ir.Value]:
+) -> Sequence[ir.Value | Sequence[ir.Value]]:
   rule = ffi_lowering(target_name, has_side_effect=has_side_effect,
                       operand_layouts=input_layouts,
                       result_layouts=output_layouts,
                       operand_output_aliases=dict(input_output_aliases),
                       api_version=custom_call_api_version,
                       backend_config=legacy_backend_config)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))  # pyrefly: ignore[bad-return]
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
 
 
 def ffi_batching_rule(
@@ -688,8 +680,8 @@ def ffi_batching_rule(
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,
 ):
-  from jax._src.lax import control_flow  # pytype: disable=import-error
-  from jax._src.lax import lax  # pytype: disable=import-error
+  from jax._src.lax import control_flow  # pyrefly: ignore[missing-import]
+  from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
                 if d is not batching.not_mapped}

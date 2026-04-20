@@ -105,7 +105,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     is_lead_block = cluster_idx == 0
 
     @plgpu.dynamic_scheduling_loop(grid_names=("mn_linear",), thread_axis="wg")
-    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+    def mn_loop(loop_info: plgpu.NDLoopInfo):
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index
       m_index, n_index = plgpu.planar_snake(
@@ -139,14 +139,18 @@ def matmul_kernel(a, b, config: TuningConfig):
                   a_gmem.at[slice_m, slice_k],
                   a_smem.at[slot],
                   ab_tma_barrier.at[slot],
-                  partitioned_axis=0 if collective else None,
+                  leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
+                  if collective
+                  else None,
                   collective_axes="x" if collective else None,
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[slice_k, slice_n],
                   b_smem.at[slot],
                   ab_tma_barrier.at[slot],
-                  partitioned_axis=1 if collective else None,
+                  leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
+                  if collective
+                  else None,
                   collective_axes="x" if collective else None,
               )
             lax.fori_loop(0, k_iters, _loop_body, None)
@@ -205,7 +209,7 @@ def matmul_kernel(a, b, config: TuningConfig):
         orders_tensor_core=True,
     )
   else:
-    store_done_barrier = plgpu.Barrier(  # type: ignore
+    store_done_barrier = plgpu.Barrier(
         num_arrivals=1, num_barriers=2, orders_tensor_core=True
     )
   f = plgpu.kernel(
@@ -303,7 +307,7 @@ def main(_) -> None:
           # Accumulator layout mismatch triggers for tile_n=256 on some configs.
           continue
         raise
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:
@@ -326,7 +330,7 @@ def main(_) -> None:
     )(a, b)
     assert runtimes_ms is not None
     runtime_ms = statistics.median(runtimes_ms)
-    runtime_us = runtime_ms * 1e3   # type: ignore
+    runtime_us = runtime_ms * 1e3
     optimal_time = matmul_flops / peak_flops * 1e6  # us
     achieved_tc_util = optimal_time / runtime_us * 100
     print(f"\tReference: {achieved_tc_util:4.1f}%")

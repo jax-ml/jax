@@ -70,15 +70,15 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
 
       barrier_sem = pltpu.get_barrier_semaphore()
-      pltpu.semaphore_signal(
+      pl.semaphore_signal(
           barrier_sem,
           device_id=(left_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH)
-      pltpu.semaphore_signal(
+          device_id_type=pl.DeviceIdType.MESH)
+      pl.semaphore_signal(
           barrier_sem,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH)
-      pltpu.semaphore_wait(barrier_sem, 2)
+          device_id_type=pl.DeviceIdType.MESH)
+      pl.semaphore_wait(barrier_sem, 2)
 
       remote_copy_op = pltpu.make_async_remote_copy(
           src_ref=input_ref,
@@ -86,7 +86,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=send_sem,
           recv_sem=recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
       )
       remote_copy_op.start()
       remote_copy_op.wait()
@@ -167,19 +167,19 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         # Barrier with both neighbors at the start, since we will be
         # communicating with both.
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_wait(barrier_sem, 2)
 
         local_copy_op = pltpu.make_async_copy(
           src_ref=input_ref,
@@ -199,7 +199,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=send_sem,
         recv_sem=recv_sems.at[outer_step],
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
       remote_copy_op.start()
       remote_copy_op.wait()
@@ -294,19 +294,19 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         # Barrier with both neighbors at the start, since we will be
         # communicating with both.
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_wait(barrier_sem, 2)
 
         # Initialize o_ref, acc_scratch, and hbm_scratch.
         o_ref[...] = jnp.zeros_like(o_ref)
@@ -317,7 +317,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=remote_send_sem,
           recv_sem=remote_recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
         initial_copy.start()
         initial_copy.wait()
@@ -325,11 +325,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       # Signal to our left neighbor that we are ready to receive.
       # Without this signal, our left neighbor can be >=1 iteration ahead,
       # meaning it could write into our working slot.
-      pltpu.semaphore_signal(
+      pl.semaphore_signal(
         capacity_sem,
         inc=1,
         device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       # Copy the partial result our left neighbor sent to us into VMEM for
@@ -342,7 +342,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       local_copy.start()
 
       # Block until our right neighbor is ready to receive.
-      pltpu.semaphore_wait(capacity_sem, 1)
+      pl.semaphore_wait(capacity_sem, 1)
       # Pass the value to our right neighbor.
       remote_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[working_slot],
@@ -350,7 +350,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
       remote_copy.start()
       # Finish local copy and accumulate while remote_copy is happening.
@@ -451,11 +451,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         neighbor = mod(my_id - 1, jnp.int32(num_devices))
       else:
         neighbor = mod(my_id + 1, jnp.int32(num_devices))
-      pltpu.semaphore_signal(
+      pl.semaphore_signal(
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -494,19 +494,19 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         # Barrier with both neighbors at the start, since we will be
         # communicating with both.
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_wait(barrier_sem, 2)
 
       initial_left_copy = pltpu.make_async_remote_copy(
         src_ref=x_ref.at[my_id, left_copy_slice],
@@ -514,7 +514,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       initial_right_copy = pltpu.make_async_remote_copy(
@@ -523,7 +523,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       left_copy = pltpu.make_async_remote_copy(
@@ -532,7 +532,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
       right_copy = pltpu.make_async_remote_copy(
         # Note: Right copy is flipped with regards to slots since we are copying
@@ -542,7 +542,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       # --- Prologue ---
@@ -572,14 +572,14 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         def _():
           # We block here until our right neighbor tells use we can send to
           # the right.
-          pltpu.semaphore_wait(right_capacity_sem, 1)
+          pl.semaphore_wait(right_capacity_sem, 1)
           right_copy.start()
 
         @pl.when(phase == RIGHT)
         def _():
           # We block here until our left neighbor tells use we can send to
           # the left.
-          pltpu.semaphore_wait(left_capacity_sem, 1)
+          pl.semaphore_wait(left_capacity_sem, 1)
           left_copy.start()
 
       local_copy = pltpu.make_async_copy(
@@ -634,12 +634,12 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         @pl.when(phase == LEFT)
         def _():
           o_ref[left_copy_slice, ...] = accum_scratch[...]
-          pltpu.semaphore_wait(right_capacity_sem, 1)
+          pl.semaphore_wait(right_capacity_sem, 1)
 
         @pl.when(phase == RIGHT)
         def _():
           o_ref[right_copy_slice, ...] = accum_scratch[...]
-          pltpu.semaphore_wait(left_capacity_sem, 1)
+          pl.semaphore_wait(left_capacity_sem, 1)
 
     out_shape = (
       jax.ShapeDtypeStruct((block_size[0], block_size[1]), jnp.float32),  # output
@@ -760,11 +760,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         neighbor = mod(my_id - 1, num_devices)
       else:
         neighbor = mod(my_id + 1, num_devices)
-      pltpu.semaphore_signal(
+      pl.semaphore_signal(
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -804,7 +804,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       initial_right_copy = pltpu.make_async_remote_copy(
@@ -813,7 +813,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       left_copy = pltpu.make_async_remote_copy(
@@ -822,7 +822,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
       right_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
@@ -830,7 +830,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
       )
 
       # --- Prologue ---
@@ -839,19 +839,19 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         # Barrier with both neighbors at the start, since we will be
         # communicating with both.
         barrier_sem = pltpu.get_barrier_semaphore()
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-        pltpu.semaphore_wait(barrier_sem, 2)
+        pl.semaphore_wait(barrier_sem, 2)
 
         initial_left_copy.start()
         initial_left_copy.wait()
@@ -868,26 +868,27 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         def _():
           # We block here until our right neighbor tells use we can send to
           # the right.
-          pltpu.semaphore_wait(right_capacity_sem, 1)
+          pl.semaphore_wait(right_capacity_sem, 1)
           right_copy.start()
 
         @pl.when(phase == RIGHT)
         def _():
           # We block here until our left neighbor tells use we can send to
           # the left.
-          pltpu.semaphore_wait(left_capacity_sem, 1)
+          pl.semaphore_wait(left_capacity_sem, 1)
           left_copy.start()
 
       # --- Body ---
       def inner_kernel(input_ref, accum_ref):
-        # We do not explicitly use += because we set should_accumulate_out=True.
-        accum_ref[...] = input_ref[...]
+        # TODO(levskaya): if we want this test to actually work again we need to
+        # do manual accumulation correctly, zero'ing out accum_ref on init.
+        # tha old automatic emit_pipeline accumulation behavior is gone.
+        accum_ref[...] += input_ref[...]
 
       accum_pipeline = pltpu.emit_pipeline(
         inner_kernel,
         in_specs=[inner_block_spec],
         out_specs=inner_block_spec,
-        should_accumulate_out=True,
         grid=inner_grid,
       )
 
@@ -938,11 +939,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         # Clean up semaphores so that they exit with a value of 0.
         @pl.when(phase == LEFT)
         def _():
-          pltpu.semaphore_wait(right_capacity_sem, 1)
+          pl.semaphore_wait(right_capacity_sem, 1)
 
         @pl.when(phase == RIGHT)
         def _():
-          pltpu.semaphore_wait(left_capacity_sem, 1)
+          pl.semaphore_wait(left_capacity_sem, 1)
 
     out_shape = (
       jax.ShapeDtypeStruct(
@@ -1035,7 +1036,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               send_sem=send_sem,
               recv_sem=recv_sem,
               device_id=(dst_id,),
-              device_id_type=pltpu.DeviceIdType.MESH,
+              device_id_type=pl.DeviceIdType.MESH,
           )
           dma.start()
           dma.wait_send()
@@ -1050,7 +1051,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             send_sem=send_sem,
             recv_sem=recv_sem,
             device_id=(my_id,),
-            device_id_type=pltpu.DeviceIdType.MESH,
+            device_id_type=pl.DeviceIdType.MESH,
         )
         fake_dma.wait_recv()
 

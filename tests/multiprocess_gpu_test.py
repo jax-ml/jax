@@ -64,7 +64,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       env["NUM_TASKS"] = str(num_tasks)
       env["TASK"] = str(task)
       if jtu.is_device_rocm():
-        env["HIP_VISIBLE_DEVICES"] = ",".join(
+        env["ROCR_VISIBLE_DEVICES"] = ",".join(
             str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
       else:
         env["CUDA_VISIBLE_DEVICES"] = ",".join(

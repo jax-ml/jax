@@ -23,6 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
 from jax.experimental.xla_metadata import set_xla_metadata
+from jax.experimental.scheduling_groups import xla_metadata_call
 import jax.numpy as jnp
 import numpy as np
 
@@ -211,6 +212,14 @@ class XlaMetadataTest(jtu.JaxTestCase):
         self.assertIn('mhlo.frontend_attributes = {a = "b"}', line)
       if "stablehlo.add" in line:
         self.assertIn('mhlo.frontend_attributes = {a = "b"}', line)
+
+  def test_close_over_inside_jit(self):
+    @jax.jit
+    def f(x):
+      y = x + 2
+      return xla_metadata_call(lambda a: a * y, inlineable='false')(x)
+
+    f(jnp.arange(8))  # doesn't crash
 
   def test_while(self):
     @jax.jit
@@ -467,6 +476,28 @@ class XlaMetadataTest(jtu.JaxTestCase):
     inputs = (jnp.array(0.0), jnp.arange(1, 4, dtype=jnp.float32))
     text = jax.jit(scan_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
+
+  def test_grad_xla_metadata_call_basic(self):
+    @xla_metadata_call(inlineable="false")
+    @jax.jit
+    def f(x):
+      for _ in range(2):
+        x = jax.nn.celu(x)
+      return x
+
+    jax.jit(jax.grad(f))(3.)  # doesn't crash
+
+  def test_grad_xla_metadata_call_advanced(self):
+    @xla_metadata_call(inlineable="false")
+    @jax.jit
+    def body(x):
+      return jax.nn.gelu(x)
+
+    @jax.jit
+    def f(x):
+      return body(x).sum()
+
+    jax.jit(jax.grad(f))(jnp.array([2.3, 4.5]))  # doesn't crash
 
 
 if __name__ == "__main__":

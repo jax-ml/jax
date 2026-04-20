@@ -31,6 +31,7 @@ from jax import lax
 from jax import scipy as jsp
 from jax._src.scipy import special as lsp_special_internal
 from jax._src import test_util as jtu
+from jax._src.lib import gpu_solver
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
 
@@ -111,8 +112,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
-    if jnp.issubdtype(dtype, jnp.complexfloating) and scipy_version < (1, 13, 0):
-      self.skipTest("logsumexp of complex input uses scipy 1.13.0 semantics.")
     if use_b and scipy_version >= (1, 15) and scipy_version < (1, 15, 3):
       self.skipTest(
           "TODO(https://github.com/scipy/scipy/issues/22903): logsumexp with a"
@@ -397,136 +396,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                             rtol=1e-5, atol=1e-5, check_dtypes=False)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1E-6, atol=1E-6)
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmAccuracy(self):
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    m = jnp.arange(-3, 3)[:, None]
-    n = jnp.arange(3, 6)
-    n_max = 5
-    theta = 0.0
-    phi = jnp.pi
-
-    expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
-
-    actual = osp_special.sph_harm(m, n, theta, phi)
-
-    self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmOrderZeroDegreeZero(self):
-    """Tests the spherical harmonics of order zero and degree zero."""
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    theta = jnp.array([0.3])
-    phi = jnp.array([2.3])
-    n_max = 0
-
-    expected = jnp.array([1.0 / jnp.sqrt(4.0 * np.pi)])
-    actual = jnp.real(
-        lsp_special.sph_harm(jnp.array([0]), jnp.array([0]), theta, phi, n_max))
-
-    self.assertAllClose(actual, expected, rtol=1.1e-7, atol=3e-8)
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmOrderZeroDegreeOne(self):
-    """Tests the spherical harmonics of order one and degree zero."""
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    theta = jnp.array([2.0])
-    phi = jnp.array([3.1])
-    n_max = 1
-
-    expected = jnp.sqrt(3.0 / (4.0 * np.pi)) * jnp.cos(phi)
-    actual = jnp.real(
-        lsp_special.sph_harm(jnp.array([0]), jnp.array([1]), theta, phi, n_max))
-
-    self.assertAllClose(actual, expected, rtol=2e-7, atol=6e-8)
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmOrderOneDegreeOne(self):
-    """Tests the spherical harmonics of order one and degree one."""
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    theta = jnp.array([2.0])
-    phi = jnp.array([2.5])
-    n_max = 1
-
-    expected = (-1.0 / 2.0 * jnp.sqrt(3.0 / (2.0 * np.pi)) *
-                jnp.sin(phi) * jnp.exp(1j * theta))
-    actual = lsp_special.sph_harm(
-        jnp.array([1]), jnp.array([1]), theta, phi, n_max)
-
-    self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
-
-  @jtu.sample_product(
-    [dict(l_max=l_max, num_z=num_z)
-      for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
-    ],
-    dtype=jtu.dtypes.all_integer,
-  )
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
-    """Tests against JIT compatibility and Numpy."""
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    if jtu.is_device_tpu_at_least(6):
-      self.skipTest("TODO(b/364258243): fails on TPU v6+")
-    n_max = l_max
-    shape = (num_z,)
-    rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)
-
-    lsp_special_fn = partial(lsp_special.sph_harm, n_max=n_max)
-
-    def args_maker():
-      m = rng(shape, dtype)
-      n = abs(m)
-      theta = np.linspace(-4.0, 5.0, num_z)
-      phi = np.linspace(-2.0, 1.0, num_z)
-      return m, n, theta, phi
-
-    with self.subTest('Test JIT compatibility'):
-      self._CompileAndCheck(lsp_special_fn, args_maker)
-
-    with self.subTest('Test against numpy.'):
-      self._CheckAgainstNumpy(osp_special.sph_harm, lsp_special_fn, args_maker)
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*scipy.special.sph_harm.*")
-  @unittest.skipIf(scipy_version >= (1, 17, 0), "scipy.special.sph_harm has been removed.")
-  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testSphHarmCornerCaseWithWrongNmax(self):
-    """Tests the corner case where `n_max` is not the maximum value of `n`."""
-    if not hasattr(lsp_special, 'sph_harm'):
-      self.skipTest("jax.scipy.special.sph_harm has been removed.")
-    m = jnp.array([2])
-    n = jnp.array([10])
-    n_clipped = jnp.array([6])
-    n_max = 6
-    theta = jnp.array([0.9])
-    phi = jnp.array([0.2])
-
-    expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
-
-    actual = lsp_special.sph_harm(m, n_clipped, theta, phi, n_max)
-
-    self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
-
   @jtu.sample_product(
     [dict(l_max=l_max, num_z=num_z)
       for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
@@ -576,6 +445,22 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")
 
+    # polar(method="svd") calls lax.linalg.svd (default algorithm). Any ROCm SVD
+    # FFI (gesvd / gesvdj / gesdd) is sufficient; it does not depend on gesdd.
+    if method == "svd" and jtu.is_device_rocm():
+      rocm_targets = frozenset(
+          name for name, _, _ in gpu_solver.registrations().get("ROCM", []))
+      rocm_svd_ffis = frozenset({
+          "hipsolver_gesvd_ffi",
+          "hipsolver_gesvdj_ffi",
+          "hipsolver_gesdd_ffi",
+      })
+      if not rocm_targets & rocm_svd_ffis:
+        self.skipTest(
+            "polar(method='svd') on ROCm requires a HIPSolver SVD FFI "
+            "(gesvd / gesvdj / gesdd); none registered in this plugin build."
+        )
+
     m, n = shape
     if (method == "qdwh" and ((side == "left" and m >= n) or
                               (side == "right" and m < n))):
@@ -616,8 +501,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     elif side == "left":
       recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
     with self.subTest('Test reconstruction.'):
-      self.assertAllClose(
-        matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+      recon_atol = tol * jnp.linalg.norm(matrix)
+      if method == "svd" and not jtu.test_device_matches(["cpu"]):
+        # SVD-backed polar reconstruction can accumulate error on GPU (e.g. ROCm).
+        recon_atol = max(recon_atol, 6e-5)
+      self.assertAllClose(matrix, recon, atol=recon_atol)
 
   @jtu.sample_product(
     n_obs=[1, 3, 5],

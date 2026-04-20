@@ -177,7 +177,7 @@ class KeyReuseSignature:
         if context:
           msg += " {context}"
         raise key_reuse_error_with_source_traceback(
-            msg, key._source_info and key._source_info.traceback)
+            msg, None if key._source_info is None else key._source_info.traceback)
 
   def update_consumption(self, args_in, args_out):
     for sink in self.sinks:
@@ -295,9 +295,13 @@ key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): broadcast should probably consume the input to avoid implicit duplication
 key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.copy_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[core.stage_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.convert_element_type_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.reshape_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[pjit.layout_constraint_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[pjit.sharding_constraint_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[pjit.reshard_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature(Source(0))
 # TODO(jakevdp): should unwrap sink its input key?
 key_reuse_signatures[prng.random_unwrap_p] = KeyReuseSignature()
@@ -386,7 +390,7 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
           raise KeyReuseError(f"In {eqn.primitive}, source {src.idx} out of range [0, {len(eqn.outvars)}]")
         source(eqn.outvars[src.idx])
 
-  all_inputs = [*jaxpr.invars, *jaxpr.constvars]
+  all_inputs: list[core.Atom] = [*jaxpr.invars, *jaxpr.constvars]
   return KeyReuseSignature(
     *(Sink(i, consumed[v]) for i, v in enumerate(all_inputs)
       if is_key(v) and np.any(consumed.get(v, False))),
@@ -425,8 +429,10 @@ def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
 @dynamic_key_reuse_signature
 def _slice_signature(eqn):
   in_aval = eqn.invars[0].aval
+  assert hasattr(in_aval, "dtype")
   if not jax.dtypes.issubdtype(in_aval.dtype, jax.dtypes.prng_key):
     return KeyReuseSignature(Forward(0, 0))
+  assert hasattr(in_aval, "shape")
   if any(core.is_symbolic_dim(s) for s in in_aval.shape):
     return KeyReuseSignature(Forward(0, 0))
   start_indices = eqn.params['start_indices']

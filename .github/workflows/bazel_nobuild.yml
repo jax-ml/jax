@@ -1,0 +1,81 @@
+name: Bazel nobuild
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  bazel-dependency-violations:
+    runs-on: linux-x86-n4-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure JAX build
+        run: python build/build.py build --wheels=jaxlib,jax-cuda-plugin,jax-cuda-pjrt --configure_only
+
+      - name: Analyze JAX build
+        timeout-minutes: 60
+        run: |
+          EXCLUDED_TARGETS=(
+            # Targets that depend on internal testing tools /testing/base/public
+            -//jaxlib/mosaic/dialect/gpu:mosaic_gpu_test
+            -//jaxlib/mosaic/gpu:custom_call_test
+            -//jaxlib/mosaic/gpu:dump_test
+            -//jaxlib/mosaic/gpu:gpu_module_to_assembly_test
+            -//jaxlib/mosaic/gpu:tiled_layout_test
+            -//jaxlib/mosaic/gpu:transforms_test
+            -//jaxlib/mosaic/gpu:utils_test
+            -//jaxlib/mosaic:array_util_test
+            -//jaxlib/mosaic:tpu_ops_verification_test
+            -//jaxlib/mosaic:vreg_util_test
+            # Targets dependent on missing TEST dependencies
+            -//jax/experimental/jax2tf/tests:all
+            -//jax/experimental/jax2tf/tests/flax_models:all
+            -//jax/experimental/jax2tf/tests/back_compat_testdata:all
+            -//benchmarks/mosaic:all
+          )
+
+          # Include specific root targets, but skip jax_wheel_with_internal_test_util as it fails to build
+          TARGETS=(
+            ":jax_sources"
+            ":build_wheel"
+            ":jax_wheel"
+            ":jax_wheel_editable"
+            ":jax_source_package"
+            ":wheel_additives"
+            ":jax_py_import"
+            ":jax_wheel_size_test"
+          )
+
+          bazel build \
+            --nobuild \
+            --color=yes \
+            --keep_going \
+            --config=cuda_libraries_from_stubs \
+            -- \
+            //jaxlib/... \
+            //jax/... \
+            //benchmarks/... \
+            //build/... \
+            //third_party/... \
+            "${TARGETS[@]}" \
+            "${EXCLUDED_TARGETS[@]}"
+

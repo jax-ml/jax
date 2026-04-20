@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2026 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ from typing import Annotated, Any, Self, TypeAlias, overload
 
 import numpy
 from numpy.typing import NDArray
-import typing_extensions
+from typing_extensions import CapsuleType
 
 from . import (
     config as config,
@@ -31,10 +31,8 @@ from . import (
     ifrt_programs as ifrt_programs,
     jax_jit as jax_jit,
     mlir as mlir,
-    pmap_lib as pmap_lib,
     pytree as pytree,
 )
-from .pmap_lib import PmapFunction as PmapFunction
 from .pytree import (PyTreeDef as PyTreeDef, PyTreeRegistry as _PyTreeRegistry)
 
 class JaxRuntimeError(RuntimeError):
@@ -43,6 +41,15 @@ class JaxRuntimeError(RuntimeError):
   While the JAX runtime may raise other exceptions as well, most exceptions
   thrown by the runtime are instances of this class.
   """
+
+  def __init__(self, msg: str | None = ..., code: int | None = ...) -> None: ...
+  @property
+  def error_code_string(self) -> str: ...
+  @property
+  def error_code(self) -> int: ...
+  @property
+  def error_message(self) -> str: ...
+  def __str__(self) -> str: ...
 
 class PrimitiveType(enum.IntEnum):
   PRIMITIVE_TYPE_INVALID = 0
@@ -854,17 +861,18 @@ class Client:
   def process_index(self) -> int: ...
   def host_id(self) -> int: ...
   def task_id(self) -> int: ...
-  def buffer_from_pyval(
-      self,
-      argument: object,
-      device: Device | None = ...,
-      force_copy: bool = ...,
-      host_buffer_semantics: HostBufferSemantics = HostBufferSemantics.ZERO_COPY,
-  ) -> object: ...
+  @overload
   def compile(
       self,
       computation: object,
       executable_devices: DeviceList,
+      compile_options: CompileOptions = ...,
+  ) -> Executable: ...
+  @overload
+  def compile(
+      self,
+      computation: object,
+      topology: DeviceTopology,
       compile_options: CompileOptions = ...,
   ) -> Executable: ...
   @overload
@@ -873,7 +881,7 @@ class Client:
       computation: object,
       executable_devices: DeviceList,
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[CapsuleType] = ...,
   ) -> LoadedExecutable: ...
   @overload
   def compile_and_load(
@@ -910,7 +918,7 @@ class Client:
       serialized: bytes,
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[CapsuleType] = ...,
   ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
@@ -983,8 +991,8 @@ def pjrt_plugin_loaded(arg: str, /) -> bool: ...
 def load_pjrt_plugin(
     platform_name: str,
     library_path: str | None = ...,
-    c_api: typing_extensions.CapsuleType | None = ...,
-) -> typing_extensions.CapsuleType: ...
+    c_api: CapsuleType | None = ...,
+) -> CapsuleType: ...
 def pjrt_plugin_initialized(arg: str, /) -> bool: ...
 def initialize_pjrt_plugin(arg: str, /) -> None: ...
 def get_c_api_client(
@@ -1002,7 +1010,7 @@ def get_default_c_api_topology(
     /,
 ) -> DeviceTopology: ...
 def get_c_api_topology(
-    arg0: typing_extensions.CapsuleType,
+    arg0: CapsuleType,
     arg1: str,
     arg2: Mapping[str, str | bool | int | Sequence[int] | float],
     /,
@@ -1094,17 +1102,6 @@ class SingleDeviceSharding(Sharding):
   def _device(self) -> object: ...
   @property
   def _memory_kind(self) -> object: ...
-  @property
-  def _internal_device_list(self) -> DeviceList: ...
-
-class PmapSharding(Sharding):
-  def __init__(
-      self, devices: object, sharding_spec: pmap_lib.ShardingSpec
-  ) -> None: ...
-  @property
-  def devices(self) -> numpy.ndarray: ...
-  @property
-  def sharding_spec(self) -> pmap_lib.ShardingSpec: ...
   @property
   def _internal_device_list(self) -> DeviceList: ...
 
@@ -1257,9 +1254,9 @@ class Executable:
 
 def buffer_to_dlpack_managed_tensor(
     buffer: object, stream: int | None = ...
-) -> typing_extensions.CapsuleType: ...
+) -> CapsuleType: ...
 def dlpack_managed_tensor_to_buffer(
-    dlpack: typing_extensions.CapsuleType,
+    dlpack: CapsuleType,
     device: Device,
     stream: int | None,
     copy: bool | None = ...,
@@ -1409,7 +1406,7 @@ def register_custom_call_partitioner(
     partition: object,
     infer_sharding_from_operands: object,
     can_side_effecting_have_replicated_sharding: bool = ...,
-    c_api: typing_extensions.CapsuleType | None = ...,
+    c_api: CapsuleType | None = ...,
 ) -> None:
   """Registers a partitioner for a custom-call operation.
 
@@ -1430,7 +1427,7 @@ def register_custom_call_partitioner(
 
 def encode_inspect_sharding_callback(arg: object, /) -> bytes: ...
 def register_custom_call_as_batch_partitionable(
-    target_name: str, c_api: typing_extensions.CapsuleType | None = ...
+    target_name: str, c_api: CapsuleType | None = ...
 ) -> None:
   """Registers a custom call as batch partitionable.
 
@@ -1561,7 +1558,7 @@ class CompileOnlyPyClient(Client):
       computation: object,
       executable_devices: DeviceList,
       compile_options: CompileOptions = ...,
-      host_callbacks: Sequence[typing_extensions.CapsuleType] = ...,
+      host_callbacks: Sequence[CapsuleType] = ...,
   ) -> Executable: ...
 
 class DeviceTopology:
@@ -1570,7 +1567,7 @@ class DeviceTopology:
   def platform(self) -> str: ...
   @property
   def platform_version(self) -> str: ...
-  def serialize(self) -> bytes: ...
+  def fingerprint(self) -> int: ...
   def __getattr__(self, arg: str, /) -> object: ...
 
 class TransferServerInterfaceFactory:

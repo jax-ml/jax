@@ -31,6 +31,7 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(kGpuTransposePlanCacheInstantiate);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonGpuCallback);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallback);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallbackCmdBuffer);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(dce_sink_gpu_ffi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

@@ -246,10 +246,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
         f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
         " should be `None`.")
   return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type, vma=operand.vma,
-                         sharding=operand_s),
-          operand.update(shape=dims, dtype=np.dtype(np.int32), vma=operand.vma,
-                         sharding=operand_s))
+                         weak_type=operand.weak_type,
+                         manual_axis_type=operand.mat, sharding=operand_s),
+          operand.update(shape=dims, dtype=np.dtype(np.int32),
+                         manual_axis_type=operand.mat, sharding=operand_s))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
@@ -297,11 +297,9 @@ def _approx_top_k_lowering(ctx, operand, *, k,
   iota = mlir.iota(ctx, core.ShapedArray(ctx.avals_in[0].shape, np.int32),
                    dimension=reduction_dimension)
 
-  init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))
+  init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))  # pyrefly: ignore[no-matching-overload]
   init_val_array = _get_init_val_literal(ctx.avals_in[0].dtype, is_max_k)
-  init_vals = mlir.flatten_ir_values(
-      [mlir.ir_constant(init_val_array.reshape(()))
-  ])
+  init_vals = [mlir.ir_constant(init_val_array.reshape(()))]
 
   backend_config = {
     "reduction_dim" : mlir.i64_attr(reduction_dimension),
@@ -324,9 +322,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     backend_config["top_k"] = mlir.i64_attr(k)
     out = mlir.custom_call(
         "ApproxTopK",
-        result_types=mlir.flatten_ir_types(
-            mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
-        ),
+        result_types=mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
         operands=[operand, iota, *init_vals, init_arg],
         called_computations=[comparator.name.value],
         backend_config=backend_config,
@@ -335,9 +331,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out = mlir.custom_call(
         "stablehlo.dynamic_approx_top_k",
-        result_types=mlir.flatten_ir_types(
-            mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
-        ),
+        result_types=mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
         operands=[operand, iota, *init_vals, init_arg, k_value],
         called_computations=[comparator.name.value],
         backend_config=backend_config,

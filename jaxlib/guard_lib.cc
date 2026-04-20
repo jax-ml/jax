@@ -263,8 +263,7 @@ void BuildGuardSubmodule(nb::module_& m) {
       "thread_local_state", [&]() { return &thread_local_state; },
       nb::rv_policy::reference);
   glib.def("update_thread_guard_global_state",
-           xla::ThrowIfErrorWrapper(UpdateThreadGuardGlobalState),
-           nb::arg());
+           xla::ThrowIfErrorWrapper(UpdateThreadGuardGlobalState), nb::arg());
 }
 
 }  // namespace jax

@@ -688,7 +688,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       lax.broadcast_shapes(err_shape1)
     # ... while non-integers should error earlier, in the canonicalize_shape machinery.
     with self.assertRaisesRegex(TypeError, "Shapes must be 1D sequences.*"):
-      lax.broadcast_shapes(err_shape2)  # pytype: disable=wrong-arg-types
+      lax.broadcast_shapes(err_shape2)
 
   @jtu.sample_product(
     [dict(shape=shape, bdims=bdims)

@@ -31,7 +31,6 @@ limitations under the License.
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
-#include "jaxlib/sharded_device_array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
@@ -60,6 +59,9 @@ class Sharding {
 // Gets `PyDeviceList` from a JAX Sharding.
 absl::StatusOr<nb_class_ptr<PyDeviceList>> GetPyDeviceList(
     nanobind::handle sharding);
+
+nanobind::object MakeSingleDeviceSharding(
+    nanobind::object device, nanobind::object memory_kind = nanobind::none());
 
 // Checks if the memory kind is valid, and canonicalizes the
 // memory kind to default memory on backends that support memories.
@@ -132,32 +134,6 @@ class SingleDeviceSharding : public Sharding {
   nanobind::object memory_kind_;
   nb_class_ptr<PyDeviceList> internal_device_list_;
 
-  static PyObject* type_;
-};
-
-// The C++ implementation of jax.PmapSharding in python. It contains a few key
-// data members and methods that are performance-critical.
-class PmapSharding : public Sharding {
- public:
-  PmapSharding(xla::nb_numpy_ndarray devices, ShardingSpec sharding_spec);
-
-  ~PmapSharding() override = default;
-
-  xla::nb_numpy_ndarray devices() const { return devices_; }
-
-  const ShardingSpec& sharding_spec() const { return sharding_spec_; }
-
-  static nanobind::handle type() { return type_; }
-  static void InitializeType();
-
-  nb_class_ptr<PyDeviceList> internal_device_list() const {
-    return internal_device_list_;
-  }
-
- private:
-  xla::nb_numpy_ndarray devices_;
-  ShardingSpec sharding_spec_;
-  nb_class_ptr<PyDeviceList> internal_device_list_;
   static PyObject* type_;
 };
 

@@ -29,6 +29,7 @@ from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 import numpy as np
@@ -109,7 +110,7 @@ class BitcastTransform(Transform):
       case AbstractRef():
         return x.update(inner_aval=self.transform_type(x.inner_aval))
       case core.ShapedArray():
-        from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
+        from jax._src.state.utils import eval_bitcast_shape  # pyrefly: ignore[missing-import]
 
         new_shape = eval_bitcast_shape(x, self.dtype)
         if not all(p is None for p in x.sharding.spec):
@@ -227,7 +228,7 @@ class RefIndexer:
   def __getitem__(self, slc) -> TransformedRef:
     if not isinstance(slc, tuple):
       slc = (slc,)
-    from jax._src.state import indexing  # pytype: disable=import-error
+    from jax._src.state import indexing  # pyrefly: ignore[missing-import]
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
     if isinstance(self.ref_or_view, TransformedRef):
       view = self.ref_or_view
@@ -298,26 +299,26 @@ class TransformedRef:
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
   def set(self, value, idx=()):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, idx, value)
 
   def swap(self, value, idx=()):
-    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_swap  # pyrefly: ignore[missing-import]
     return ref_swap(self, idx, value)
 
   def get(self, idx=()):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
 
   def __getattr__(self, name):
     return getattr(self.ref, name)
 
   def __getitem__(self, slc):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, slc)
 
   def __setitem__(self, slc, value):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, slc, value)
 
 class TransformedRefAvalError(Exception):
@@ -327,6 +328,15 @@ def disallow_transformed_ref_avals(_):
   raise TransformedRefAvalError("TransformedRefs cannot be abstractified.")
 
 core.pytype_aval_mappings[TransformedRef] = disallow_transformed_ref_avals
+
+# We register the TransformedRefs with the tracing registry here, but not other
+# registries. This allows us to treat TransformedRefs as pytree nodes
+# internally, but as leaves in user code.
+unflatten_func = lambda meta, data: TransformedRef(*data)
+flatten_func = lambda x: ((x.ref, x.transforms), None)
+tracing_registry.register_dataclass_node(TransformedRef,
+                                         ["ref", "transforms"], [])
+_registry[TransformedRef] = _RegistryEntry(flatten_func, unflatten_func)
 
 
 def transform_type(
@@ -366,13 +376,13 @@ class AbstractRef(core.AbstractValue):
   def lower_val(self, ref):
     if not self.is_high:
       return [ref]
-    return self.inner_aval.lower_val(ref._refs)  # type: ignore
+    return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
 
   def raise_val(self, *vals):
     if not self.is_high:
       ref, = vals
       return ref
-    return core.Ref(self, self.inner_aval.raise_val(*vals))  # type: ignore
+    return core.Ref(self, self.inner_aval.raise_val(*vals))  # pyrefly: ignore[missing-attribute]
 
   @property
   def weak_type(self) -> bool:
@@ -383,8 +393,8 @@ class AbstractRef(core.AbstractValue):
   def update_weak_type(self, weak_type):
     return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update_vma(self, vma):
-    return self.update(inner_aval=self.inner_aval.update_vma(vma))
+  def update_manual_axis_type(self, mat):
+    return self.update(inner_aval=self.inner_aval.update_manual_axis_type(mat))
 
   def update(self, inner_aval=None, memory_space=None, kind=None):  # pyrefly: ignore[bad-override]
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
@@ -404,7 +414,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def shape(self):
     try:
-      return self.inner_aval.shape  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.shape  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `shape`."
@@ -413,7 +423,7 @@ class AbstractRef(core.AbstractValue):
   @property
   def dtype(self):
     try:
-      return self.inner_aval.dtype  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `dtype`."
@@ -422,20 +432,24 @@ class AbstractRef(core.AbstractValue):
   @property
   def sharding(self):
     try:
-      return self.inner_aval.sharding  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.sharding  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
           f"{self!r} has no `sharding`."
       ) from None
 
   @property
-  def vma(self):
+  def manual_axis_type(self):
     try:
-      return self.inner_aval.vma  # pytype: disable=attribute-error  # pyrefly: ignore[missing-attribute]
+      return self.inner_aval.manual_axis_type  # pyrefly: ignore[missing-attribute]
     except AttributeError:
       raise AttributeError(
-          f"{self!r} has no `vma`."
+          f"{self!r} has no `manual_axis_type`."
       ) from None
+
+  @property
+  def mat(self):
+    return self.manual_axis_type
 
   @core.aval_property
   def at(self):
@@ -460,37 +474,37 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   @staticmethod
   def get(tracer, idx=()):
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(tracer, idx)
 
   @core.aval_method
   @staticmethod
   def swap(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_swap  # pyrefly: ignore[missing-import]
     return ref_swap(tracer, idx, value)
 
   @core.aval_method
   @staticmethod
   def set(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(tracer, idx, value)
 
   @core.aval_method
   @staticmethod
   def addupdate(tracer, value, idx=()):
-    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
     ref_addupdate(tracer, idx, value)
 
   def _getitem(self, tracer, idx) -> Array:
-    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(tracer, idx)
 
   def _setitem(self, tracer, idx, value) -> None:
-    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(tracer, idx, value)
 
   def _addupdate(self, tracer, idx, value):
-    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
     ref_addupdate(tracer, idx, value)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
@@ -583,7 +597,7 @@ def zeros_like_abstract_ref(aval: AbstractRef) -> core.Ref:
 # TODO(dougalm): this is nonsense but it's here because in places like
 # custom_vjp we assume that all arguments have tangent spaces. We could have
 # a distinct NotATangentType value instead.
-ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # type: ignore
+ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ignore[unsupported-operation]
 
 # === pinned, chained LinearVals ===
 
@@ -592,6 +606,6 @@ class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None
 
-  shape = property(lambda self: self.inner_aval.shape)  # pytype: disable=attribute-error
-  dtype = property(lambda self: self.inner_aval.dtype)  # pytype: disable=attribute-error
-  ndim = property(lambda self: self.inner_aval.ndim)  # pytype: disable=attribute-error
+  shape = property(lambda self: self.inner_aval.shape)
+  dtype = property(lambda self: self.inner_aval.dtype)
+  ndim = property(lambda self: self.inner_aval.ndim)

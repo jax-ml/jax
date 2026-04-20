@@ -21,7 +21,7 @@ import enum
 from functools import partial, reduce
 import math
 import types
-from typing import Any
+from typing import Any, cast
 
 from jax._src import ad_util
 from jax._src import api
@@ -99,7 +99,7 @@ def _pallas_call_abstract_eval(
   del params  # Unused.
 
   effs: Set[jax_core.Effect] = {*pallas_core.get_interpret_effects(interpret)}
-  if getattr(compiler_params, "has_side_effects", False):
+  if not effs and getattr(compiler_params, "has_side_effects", False):
     # TODO(slebedev): Fix internal breakages and add
     # ``jax_core.GenericEffect(pallas_call_p)`` here.
     effs = jax_core.no_effects
@@ -117,15 +117,14 @@ def _pallas_call_abstract_eval(
                      f"{missing}")
   outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
   out_avals = tuple(
-      avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a  # pyrefly: ignore[bad-index]
+      avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
       for out_idx, a in enumerate(out_avals)
   )
-  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  out_avals = tuple(
-      a.unwrap()
-      if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else a
-      for a in out_avals
-  )
+  # Make sure we don't return ShapedArray with pallas memory space to the
+  # outside world.
+  out_avals = tuple(a.update(memory_space=jax_core.MemorySpace.Device)
+                    if isinstance(a, jax_core.ShapedArray) else a
+                    for a in out_avals)
 
   # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
   # if not (all(a.sharding.mesh.are_all_axes_manual for a in avals) and
@@ -184,7 +183,7 @@ def _pallas_call_to_lojax(
     raise NotImplementedError("pallas_call does not support QDD for outputs")
   closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
   with grid_mapping.trace_env():
-    closed_lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+    closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
   assert not closed_lo_jaxpr.consts
   lo_jaxpr = closed_lo_jaxpr.jaxpr
   for block_mapping in grid_mapping.block_mappings:
@@ -834,7 +833,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
   )
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    num_iterations = reduce(jnp.multiply, grid)  # pyrefly: ignore[bad-argument-type]
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -1003,7 +1002,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
 
   # Prepare pallas_call inputs. We need to create new block specs
   # for the new error inputs and outputs.
-  error_block_specs = [pallas_core.BlockSpec(None, None)] * len(shaped_err_avals)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  error_block_specs = [pallas_core.BlockSpec(None, None)] * len(shaped_err_avals)
   error_paths, _ = unzip2(tree_util.tree_flatten_with_path(error_block_specs)[0])
   error_origins = tuple(f"errors[{tree_util.keystr(p)}" for p in error_paths)
   error_block_mappings = map(
@@ -1024,8 +1023,8 @@ def pallas_call_checkify_rule(error: checkify.Error,
   grid_mapping_with_error = grid_mapping.replace(
       block_mappings=(*error_block_mappings, *input_block_mappings,
                       *error_block_mappings, *output_block_mappings),
-      num_inputs=grid_mapping.num_inputs + len(error_block_mappings),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-      num_outputs=grid_mapping.num_outputs + len(error_block_mappings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      num_inputs=grid_mapping.num_inputs + len(error_block_mappings),
+      num_outputs=grid_mapping.num_outputs + len(error_block_mappings)
   )
   # Bump all input_output_aliases by num_err_vals to make room for error
   # TODO(justinfu): Don't bump scalars here.
@@ -1060,7 +1059,7 @@ def _trace_kernel_to_jaxpr(
     kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
-  wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+  wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(fun, debug_info=debug_info), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
@@ -1121,12 +1120,12 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
-      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,
+    if isinstance(interpret, InterpretParams):
+      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
                      interpret_params=interpret,
                      **params)
-    elif isinstance(interpret, mosaic_gpu_interpret.InterpretParams):
-      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,
+    elif isinstance(interpret, InterpretGPUParams):
+      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
                      interpret_params=interpret,
                      **params)
     else:
@@ -1145,6 +1144,12 @@ def _pallas_call_lowering(
       *in_nodes: ir.Value | Sequence[ir.Value],
       **params,
   ):
+    compiler_params = params.get("compiler_params")
+    if compiler_params is not None:
+      rule = pallas_core.get_lowering_rule(type(compiler_params), "tpu")
+      if rule is not None:
+        return rule(ctx, *in_nodes, **params)
+
     if mosaic_tpu_backend is None:
       raise _unsupported_lowering_error("tpu")
     return mosaic_tpu_backend.pallas_call_tpu_lowering_rule(
@@ -1159,6 +1164,11 @@ def _pallas_call_lowering(
       **params,
   ):
     """Shared GPU lowering implementation for CUDA and ROCm."""
+    if compiler_params is not None:
+      rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
+      if rule is not None:
+        return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
+
     backend: Any = None
     if mosaic_gpu_backend is not None:
       from jax._src.pallas.mosaic_gpu import core as mgpu_core
@@ -1251,7 +1261,7 @@ def _pallas_call_state_discharge_rule(
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
-          array_aval=ref_aval.inner_aval,  # type: ignore[arg-type]
+          array_aval=cast(jax_core.ShapedArray, ref_aval.inner_aval),
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
@@ -1418,8 +1428,9 @@ def pallas_call(
     A function that can be called on a number of positional array arguments to
     invoke the Pallas kernel.
   """
+  flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(scratch_shapes)
   if grid_spec is None:
-    grid_spec = pallas_core.GridSpec(grid, in_specs, out_specs, scratch_shapes)
+    grid_spec = pallas_core.GridSpec(grid, in_specs, out_specs, flat_scratch_shapes)
   else:
     if grid:
       raise ValueError(
@@ -1442,6 +1453,7 @@ def pallas_call(
       kernel,
       out_shape,
       grid_spec=grid_spec,
+      scratch_tree=scratch_tree,
       input_output_aliases=input_output_aliases,
       debug=debug,
       interpret=interpret,
@@ -1458,6 +1470,7 @@ def _pallas_call(
     out_shape: Any,
     *,
     grid_spec: pallas_core.GridSpec,
+    scratch_tree: tree_util.PyTreeDef,
     mesh: pallas_core.Mesh | None = None,
     input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
@@ -1509,14 +1522,24 @@ def _pallas_call(
         out_origins,
         debug,
     )
-    flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(kernel_args)
+    kernel_args, scratch_args = split_list(
+        kernel_args, [len(kernel_args) - scratch_tree.num_leaves])
+    scratch_args = scratch_tree.unflatten(scratch_args)
+    if isinstance(scratch_args, dict):
+      kernel_args_kwargs = (kernel_args, scratch_args)
+    else:
+      kernel_args_kwargs = (kernel_args + list(scratch_args), {})
+    flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(
+        kernel_args_kwargs)
     flat_kernel_avals = tuple(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
     )
     if config._check_vma.value:
-      flat_kernel_avals = tuple(a.update_vma(frozenset())
-                                for a in flat_kernel_avals)
+      flat_kernel_avals = tuple(
+        a.update_manual_axis_type(jax_core.empty_mat)
+        for a in flat_kernel_avals
+      )
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(
@@ -1524,7 +1547,7 @@ def _pallas_call(
         for x in flat_kernel_args
     )
     kernel_dbg = api_util.debug_info("pallas_call kernel", kernel,
-                                      kernel_args, {})
+                                      *kernel_args_kwargs)
     if name is not None:
       kernel_dbg = kernel_dbg.replace_func_name(mlir.sanitize_name(name))
     jaxpr, consts = _trace_kernel_to_jaxpr(
@@ -1601,14 +1624,14 @@ except ImportError:
 
 try:
   from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
+  from jax._src.pallas.mosaic.interpret.params import InterpretParams
 except ImportError:
-  mosaic_tpu_interpret = types.SimpleNamespace(
-      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
-  )
+  mosaic_tpu_interpret = None
+  InterpretParams = types.new_class("_NoInstances", (enum.Enum,))
 
 try:
   from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
+  from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 except ImportError:
-  mosaic_gpu_interpret = types.SimpleNamespace(
-      InterpretParams=types.new_class("_NoInstances", (enum.Enum,)),
-  )
+  mosaic_gpu_interpret = None
+  InterpretGPUParams = types.new_class("_NoInstances", (enum.Enum,))

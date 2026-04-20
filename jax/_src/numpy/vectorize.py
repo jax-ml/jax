@@ -121,7 +121,7 @@ def _parse_input_dimensions(
     raise TypeError(
         'wrong number of positional arguments: expected %r, got %r %s'
         % (len(input_core_dims), len(args), error_context))
-  shapes = []
+  shapes: list[tuple[int, ...]] = []
   dim_sizes: dict[str, int] = {}
   for arg, core_dims in zip(args, input_core_dims):
     _update_dim_sizes(dim_sizes, arg.shape, core_dims, error_context,

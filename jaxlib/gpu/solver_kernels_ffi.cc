@@ -17,8 +17,13 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
 #include <memory>
 #include <string_view>
+#include <tuple>
 
 #if JAX_GPU_HAVE_64_BIT
 #include <cstddef>
@@ -34,6 +39,7 @@ limitations under the License.
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/blas_handle_pool.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/householder_kernels.h"
 #include "jaxlib/gpu/make_batch_pointers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_interface.h"
@@ -336,6 +342,25 @@ ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
   auto a_data = static_cast<T*>(a.untyped_data());
   auto tau_data = static_cast<T*>(tau.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
+
+  if (batch > 1 && m <= 128 && n <= 128) {
+    int64_t a_stride = static_cast<int64_t>(m) * n;
+    if (a_data == out_data) {
+      FFI_ASSIGN_OR_RETURN(
+          auto out_tmp,
+          AllocateWorkspace<T>(scratch, batch * m * n, "orgqr_tmp"));
+      JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrgqrSmallBatchedKernel<T>(
+          stream, batch, m, n, k, m, a_stride, a_data, tau_data, out_tmp));
+      JAX_FFI_RETURN_IF_GPU_ERROR(
+          gpuMemcpyAsync(out_data, out_tmp, batch * m * n * sizeof(T),
+                         gpuMemcpyDeviceToDevice, stream));
+    } else {
+      JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrgqrSmallBatchedKernel<T>(
+          stream, batch, m, n, k, m, a_stride, a_data, tau_data, out_data));
+    }
+    return ffi::Error::Success();
+  }
+
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -386,6 +411,114 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
                                   .Ctx<ffi::ScratchAllocator>()
                                   .Arg<ffi::AnyBuffer>()  // a
                                   .Arg<ffi::AnyBuffer>()  // tau
+                                  .Ret<ffi::AnyBuffer>()  // out
+);
+
+// Householder multiply: ormqr/unmqr
+
+// Real ormqr (Sormqr/Dormqr) accepts CUBLAS_OP_T for transpose;
+// complex unmqr (Cunmqr/Zunmqr) requires CUBLAS_OP_C (conjugate transpose).
+template <typename T>
+gpublasOperation_t TransposeOp() {
+  if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
+    return GPUBLAS_OP_T;
+  } else {
+    return GPUBLAS_OP_C;
+  }
+}
+
+template <typename T>
+ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols, int64_t k,
+                     int64_t a_rows, int64_t a_cols, bool left, bool transpose,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     ffi::AnyBuffer a, ffi::AnyBuffer tau, ffi::AnyBuffer c,
+                     ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(c_rows));
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(c_cols));
+  FFI_ASSIGN_OR_RETURN(auto k_v, MaybeCastNoOverflow<int>(k));
+  FFI_ASSIGN_OR_RETURN(auto lda, MaybeCastNoOverflow<int>(a_rows));
+
+  auto a_data = static_cast<T*>(a.untyped_data());
+  auto tau_data = static_cast<T*>(tau.untyped_data());
+  auto c_data = static_cast<const T*>(c.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+
+  if (c_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, c_data, c.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  if (batch > 1 && m <= 128 && n <= 128) {
+    int64_t a_stride = static_cast<int64_t>(lda) * a_cols;
+    JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrmqrSmallBatchedKernel<T>(
+        stream, batch, m, n, k_v, lda, a_stride, a_data, tau_data, out_data,
+        left, transpose));
+    return ffi::Error::Success();
+  }
+
+  gpublasSideMode_t side = left ? GPUBLAS_SIDE_LEFT : GPUBLAS_SIDE_RIGHT;
+  gpublasOperation_t trans = transpose ? TransposeOp<T>() : GPUBLAS_OP_N;
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  FFI_ASSIGN_OR_RETURN(int lwork, solver::OrmqrBufferSize<T>(handle.get(), side,
+                                                             trans, m, n, k_v));
+
+  FFI_ASSIGN_OR_RETURN(auto workspace,
+                       AllocateWorkspace<T>(scratch, lwork, "ormqr"));
+  FFI_ASSIGN_OR_RETURN(auto info, AllocateWorkspace<int>(scratch, 1, "ormqr"));
+
+  int64_t out_step = static_cast<int64_t>(m) * n;
+  int64_t a_step = static_cast<int64_t>(a_rows) * a_cols;
+
+  for (auto i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(
+        solver::Ormqr<T>(handle.get(), side, trans, m, n, k_v, a_data, lda,
+                         tau_data, out_data, m, workspace, lwork, info));
+    out_data += out_step;
+    a_data += a_step;
+    tau_data += k_v;
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error OrmqrDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         ffi::AnyBuffer a, ffi::AnyBuffer tau, ffi::AnyBuffer c,
+                         bool left, bool transpose,
+                         ffi::Result<ffi::AnyBuffer> out) {
+  auto dataType = a.element_type();
+  if (dataType != tau.element_type() || dataType != c.element_type() ||
+      dataType != out->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to ormqr must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, a_rows, a_cols]),
+                       SplitBatch2D(a.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [tau_batch, k]), SplitBatch1D(tau.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [c_batch, c_rows, c_cols]),
+                       SplitBatch2D(c.dimensions()));
+  if (tau_batch != batch || c_batch != batch) {
+    return ffi::Error::InvalidArgument(
+        "The batch dimensions of the inputs to ormqr must match");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, c_rows, c_cols}, "out", "ormqr"));
+
+  SOLVER_DISPATCH_IMPL(OrmqrImpl, batch, c_rows, c_cols, k, a_rows, a_cols,
+                       left, transpose, stream, scratch, a, tau, c, out);
+
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in ormqr", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(OrmqrFfi, OrmqrDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // a
+                                  .Arg<ffi::AnyBuffer>()  // tau
+                                  .Arg<ffi::AnyBuffer>()  // c
+                                  .Attr<bool>("left")
+                                  .Attr<bool>("transpose")
                                   .Ret<ffi::AnyBuffer>()  // out
 );
 
@@ -540,7 +673,7 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
   if (is_batched_syev_supported && n > 0) {
     int64_t matrix_size = n * n * ffi::ByteWidth(dataType);
     batch_step =
-        std::max(int64_t(1), std::numeric_limits<int>::max() / matrix_size);
+        std::max(int64_t{1}, std::numeric_limits<int>::max() / matrix_size);
     if (batch_step >= 32 * 1024) {
       batch_step = 32 * 1024;
     }
@@ -1145,6 +1278,167 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
+#ifdef JAX_GPU_HIP
+// Workspace size from LAPACK formula instead of querying rocsolver. A
+// two-phase rocsolver workspace query can fail with rocblas_status 8/9 in some
+// environments; the formula avoids that and never blocks. rocsolver gesdd
+// needs more than LAPACK minimum (syevd+geqrf+orgqr buffers). Use 8x: 2x was
+// too small (slow path for 1536/2048); 16x caused ~1GB for N=2048 and
+// allocation cost. 8x gives ~512MB for 2048. LAPACK for JOBZ='S':
+// 4*mn^2+7*mn elements.
+namespace {
+template <typename T>
+size_t GesddWorkspaceSizeFromFormula(signed char job, int m, int n) {
+  int mn = std::min(m, n);
+  int mx = std::max(m, n);
+  int64_t min_elements;
+  switch (job) {
+    case 'N':
+      min_elements = 3 * mn + std::max(mx, 7 * mn);
+      break;
+    case 'O':
+      min_elements = 3 * mn + std::max(mx, 5 * mn * mn + 4 * mn);
+      break;
+    case 'S':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+      break;
+    case 'A':
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 6 * mn + mx;
+      break;
+    default:
+      min_elements = 4 * static_cast<int64_t>(mn) * mn + 7 * mn;
+  }
+  min_elements = std::max(int64_t{1}, min_elements);
+  int64_t elements = min_elements * 8;
+  elements += 4096;
+  return static_cast<size_t>(elements) * sizeof(T);
+}
+}  // namespace
+
+// Singular Value Decomposition (divide-and-conquer): gesdd (ROCm rocsolver).
+template <typename T>
+ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
+                     bool full_matrices, bool compute_uv, ffi::AnyBuffer a,
+                     ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> s,
+                     ffi::Result<ffi::AnyBuffer> u,
+                     ffi::Result<ffi::AnyBuffer> vt,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  // For square matrices, 'A' and 'S' produce the same output shapes.
+  // Prefer 'S' to avoid slower rocsolver code paths observed for some sizes
+  // (notably n=1536) with job='A'.
+  signed char job = compute_uv ? ((full_matrices && m != n) ? 'A' : 'S') : 'N';
+
+  // Formula-based workspace (no query) to avoid rocblas_status 8/9 in some
+  // envs.
+  size_t workspace_size = GesddWorkspaceSizeFromFormula<T>(job, m, n);
+  auto maybe_workspace = scratch.Allocate(workspace_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for gesdd");
+  }
+  void* workspace_ptr = maybe_workspace.value();
+  FFI_RETURN_IF_ERROR_STATUS(
+      solver::SetWorkspace(handle.get(), workspace_ptr, workspace_size));
+
+  auto a_data = static_cast<T*>(a.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  auto s_data =
+      static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
+  auto u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
+  auto vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
+  auto info_data = info->typed_data();
+
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int out_step = m * n;
+  int k = std::min(m, n);
+  int ldu = m;
+  int ldv = full_matrices ? n : k;
+  int u_step = compute_uv ? m * (full_matrices ? m : k) : 0;
+  int vt_step = compute_uv ? ldv * n : 0;
+  int s_step = k;
+
+  for (auto i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(solver::Gesdd<T>(handle.get(), job, job, m, n,
+                                                out_data, m, s_data, u_data,
+                                                ldu, vt_data, ldv, info_data));
+    out_data += out_step;
+    s_data += s_step;
+    if (u_data) u_data += u_step;
+    if (vt_data) vt_data += vt_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error GesddDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         bool full_matrices, bool compute_uv, bool transposed,
+                         ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::AnyBuffer> s,
+                         ffi::Result<ffi::AnyBuffer> u,
+                         ffi::Result<ffi::AnyBuffer> vt,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      s->element_type() != ffi::ToReal(dataType) ||
+      u->element_type() != dataType || vt->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gesdd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  int64_t m = transposed ? cols : rows;
+  int64_t n = transposed ? rows : cols;
+  int64_t k = std::min(m, n);
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "gesdd"));
+  FFI_RETURN_IF_ERROR(CheckShape(s->dimensions(), {batch, k}, "s", "gesdd"));
+  if (compute_uv) {
+    if (full_matrices) {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, m}, "u", "gesdd"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(vt->dimensions(), {batch, n, n}, "vt", "gesdd"));
+    } else {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, k}, "u", "gesdd"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(vt->dimensions(), {batch, k, n}, "vt", "gesdd"));
+    }
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "gesdd"));
+
+  SOLVER_DISPATCH_IMPL(GesddImpl, batch, m, n, stream, scratch, full_matrices,
+                       compute_uv, a, out, s, u, vt, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in gesdd", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GesddFfi, GesddDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("full_matrices")
+                                  .Attr<bool>("compute_uv")
+                                  .Attr<bool>("transposed")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // s
+                                  .Ret<ffi::AnyBuffer>()         // u
+                                  .Ret<ffi::AnyBuffer>()         // vt
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+#endif  // JAX_GPU_HIP
 
 // Singular Value Decomposition: gesvdp (Polar decomposition)
 

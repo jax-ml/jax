@@ -39,7 +39,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
-from jax._src.typing import Array, DeprecatedArg
+from jax._src.typing import Array
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -165,13 +165,16 @@ def _callback_op_sharding(
     if config.use_shardy_partitioner.value:
       op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
     else:
-      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding = xc.OpSharding()
       op_sharding.type = xc.OpSharding.Type.MANUAL
     return op_sharding
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     if sharding is not None:
-      if not isinstance(sharding, SingleDeviceSharding):
+      if (isinstance(sharding, sharding_impls.NamedSharding) and
+          sharding.mesh.is_scalar):  # pyrefly: ignore[missing-attribute]
+        pass
+      elif not isinstance(sharding, SingleDeviceSharding):
         raise NotImplementedError(
             "pure_callback only supports SingleDeviceSharding, but got"
             f" {type(sharding)}"
@@ -205,7 +208,7 @@ def _callback_op_sharding(
               dim_shardings=[],
               logical_device_ids=(device_index,))])
     else:
-      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding = xc.OpSharding()
       op_sharding.type = xc.OpSharding.Type.MAXIMAL
       op_sharding.tile_assignment_dimensions = [1]
       op_sharding.tile_assignment_devices = [device_index]
@@ -260,7 +263,6 @@ def pure_callback(
     result_shape_dtypes: Any,
     *args: Any,
     sharding: SingleDeviceSharding | None = None,
-    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
     vmap_method: str | None = None,
     **kwargs: Any,
 ):
@@ -299,8 +301,7 @@ def pure_callback(
   * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
     inputs are tiled to the expected batched shape.
 
-  If necessary, the legacy behavior provided by the removed ``vectorized=True``
-  argument can be recovered using ``vmap_method="legacy_vectorized"``.
+
 
   The current default behavior is to use ``vmap_method="sequential"`` when
   not specified, but this behavior is deprecated, and in the future, the
@@ -369,11 +370,7 @@ def pure_callback(
 
   .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
   """
-  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
-  if not isinstance(vectorized, DeprecatedArg):
-    raise ValueError(
-        "The 'vectorized' argument of jax.pure_callback was removed in JAX "
-        "v0.6.0. Use 'vmap_method' instead.")
+
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
@@ -475,7 +472,7 @@ ad.primitive_transposes[io_callback_p] = io_callback_transpose_rule
 def io_callback_batching_rule(
     args, dims, callback, result_avals, sharding, ordered
 ):
-  from jax._src.lax.control_flow.loops import map as lax_map  # pytype: disable=import-error
+  from jax._src.lax.control_flow.loops import map as lax_map  # pyrefly: ignore[missing-import]
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
   is_batched = [d is not batching.not_mapped for d in dims]
@@ -597,7 +594,7 @@ _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME = "pjrt_rendezvous"
 
 def send_to_host(
     channel: int,
-    token: hlo.TokenType,
+    token: ir.Value[hlo.TokenType],
     operand: Any,
     name: str | None = None,
     *,
@@ -633,14 +630,15 @@ def send_to_host(
 
 def receive_from_host(
     channel: int,
-    token: hlo.TokenType,
+    token: ir.Value[hlo.TokenType],
     out_aval: core.ShapedArray,
     name: str | None = None,
     *,
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.RECV_FROM_HOST_TYPE)
-  recv_op = hlo.RecvOp([mlir.aval_to_ir_type(out_aval),
+  out_type = mlir.aval_to_ir_type(out_aval)
+  recv_op = hlo.RecvOp([out_type,
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
@@ -714,7 +712,7 @@ def _emit_tpu_python_callback(
     # TODO(sharadmv,chky): Enable this fix in the runtime as opposed to in
     # MLIR builder.
     callback_without_args = _wrapped_callback
-    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+    def _wrapped_callback(*args):
       del args
       return callback_without_args()
     send_channel = ctx.module_context.new_channel()
@@ -737,7 +735,7 @@ def _emit_tpu_python_callback(
     # token from the recv is used as an indication that the callback is
     # complete. Without this, we would only wait for the send to finish.
     callback_without_results = _wrapped_callback
-    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+    def _wrapped_callback(*args):
       callback_without_results(*args)
       return 0.0,
     dummy_recv_aval = core.ShapedArray((), np.float32)
@@ -866,7 +864,7 @@ def emit_python_callback(
   call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
     callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+    def _wrapped_callback(token, *args):
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (

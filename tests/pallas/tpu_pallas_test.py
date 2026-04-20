@@ -143,6 +143,45 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(z, x + y)
 
 
+class TPUPipelineModeRevisitTest(ptu.PallasTPUTest):
+
+  def test_block_reduction_with_non_immediate_revisit(self):
+    # Accumulator mode enables accumulating into an output even if we don't
+    # revisit immediately.
+    def body(x_ref, o_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        o_ref[...] = jnp.full_like(o_ref, 0, dtype=o_ref.dtype)
+
+      o_ref[:] = o_ref[:] + x_ref[:]
+
+    block_shape = (8, 128)
+    x_shape = (3 * block_shape[0], 3 * block_shape[1])
+    o_shape = (1 * block_shape[0], 3 * block_shape[1])
+
+    x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
+    in_specs = [pl.BlockSpec(block_shape, lambda i, j: (i, j))]
+    out_specs = pl.BlockSpec(
+        block_shape,
+        lambda i, j: (0, j),
+        pipeline_mode=pl.Buffered(1, revisit=pl.RevisitMode.ANY),
+    )
+
+    @jax.jit
+    def reduction(x):
+      return self.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(o_shape, jnp.float32),
+          in_specs=in_specs,
+          out_specs=out_specs,
+          grid=(3, 3),
+      )(x)
+
+    z = reduction(x)
+    expected = x.reshape(3, block_shape[0], -1).sum(axis=0)
+    np.testing.assert_allclose(z, expected)
+
+
 class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
   def test_trivial_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
@@ -1083,7 +1122,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         self.assertTupleEqual(dma_sems.shape, (4,))
         self.assertTupleEqual(sems.shape, (3,))
         self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+        self.assertTrue(jnp.issubdtype(sems.dtype, pl.semaphore))
       pl.run_scoped(
           body, pltpu.SemaphoreType.DMA((4,)), pltpu.SemaphoreType.REGULAR((3,))
       )
@@ -1098,7 +1137,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       self.assertTupleEqual(dma_sems.shape, (4,))
       self.assertTupleEqual(sems.shape, (3,))
       self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-      self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+      self.assertTrue(jnp.issubdtype(sems.dtype, pl.semaphore))
 
     jax.block_until_ready(
         self.pallas_call(
@@ -1117,21 +1156,21 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_can_wait_on_semaphore(self):
     def kernel(y_ref):
       def body(sem):
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR)
       def body2(sem):
-        pltpu.semaphore_signal(sem, 2)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem, 2)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body2, pltpu.SemaphoreType.REGULAR)
       def body3(sem):
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_signal(sem)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_signal(sem)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
       pl.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
@@ -1143,19 +1182,19 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_can_wait_on_semaphore_array(self):
     def kernel(y_ref):
       def body(sems):
-        pltpu.semaphore_signal(sems.at[0])
-        pltpu.semaphore_wait(sems.at[0])
+        pl.semaphore_signal(sems.at[0])
+        pl.semaphore_wait(sems.at[0])
 
-        pltpu.semaphore_signal(sems.at[1], 2)
-        pltpu.semaphore_wait(sems.at[1])
-        pltpu.semaphore_wait(sems.at[1])
+        pl.semaphore_signal(sems.at[1], 2)
+        pl.semaphore_wait(sems.at[1])
+        pl.semaphore_wait(sems.at[1])
 
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_signal(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
-        pltpu.semaphore_wait(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_signal(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
+        pl.semaphore_wait(sems.at[2])
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
@@ -1168,19 +1207,19 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(y_ref):
       i = pl.program_id(0)
       def body(sems):
-        pltpu.semaphore_signal(sems.at[i, 0])
-        pltpu.semaphore_wait(sems.at[i, 0])
+        pl.semaphore_signal(sems.at[i, 0])
+        pl.semaphore_wait(sems.at[i, 0])
 
-        pltpu.semaphore_signal(sems.at[i, 1], 2)
-        pltpu.semaphore_wait(sems.at[i, 1])
-        pltpu.semaphore_wait(sems.at[i, 1])
+        pl.semaphore_signal(sems.at[i, 1], 2)
+        pl.semaphore_wait(sems.at[i, 1])
+        pl.semaphore_wait(sems.at[i, 1])
 
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_signal(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
-        pltpu.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_signal(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
+        pl.semaphore_wait(sems.at[i, 2])
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
     jax.block_until_ready(
@@ -1201,9 +1240,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         for r in range(m):
           for c in range(n):
             v = r * n + c
-            pltpu.semaphore_signal(sems.at[r, c],v)
-            y_ref[r, c] = pltpu.semaphore_read(sems.at[r, c])
-            pltpu.semaphore_wait(sems.at[r, c], v)
+            pl.semaphore_signal(sems.at[r, c],v)
+            y_ref[r, c] = pl.semaphore_read(sems.at[r, c])
+            pl.semaphore_wait(sems.at[r, c], v)
 
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
 
@@ -1222,7 +1261,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_hbm_ref, sem_val_ref, dma_sem):
       sem_val_ref[0, 0] = 123
       pltpu.async_copy(x_hbm_ref, y_hbm_ref, dma_sem).wait()
-      sem_val_ref[0, 0] = pltpu.semaphore_read(dma_sem)
+      sem_val_ref[0, 0] = pl.semaphore_read(dma_sem)
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     y, sem_val = jax.block_until_ready(
@@ -1541,16 +1580,14 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_dma_with_regular_semaphore(self):
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest('Regular semaphores in DMAs require TPU v6+')
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 2):
-      self.skipTest("Test requires a newer libtpu")
 
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, y_ref, sem):
         pltpu.async_copy(x_hbm_ref, x_ref, sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
         y_ref[...] = x_ref[...]
         pltpu.async_copy(y_ref, y_hbm_ref, sem)
-        pltpu.semaphore_wait(sem)
+        pl.semaphore_wait(sem)
 
       pl.run_scoped(
           body,
@@ -1794,8 +1831,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   def test_hoisted_semaphore(self):
     def kernel(x_bbm_ref, y_ref, sem, dma_sem):
-      pltpu.semaphore_signal(sem)
-      pltpu.semaphore_wait(sem)
+      pl.semaphore_signal(sem)
+      pl.semaphore_wait(sem)
       pltpu.async_copy(x_bbm_ref, y_ref, dma_sem).wait()
 
     x = jnp.arange(8 * 128.).reshape((8, 128))
@@ -1896,6 +1933,28 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     [message] = log.output
     self.assertIn('AsyncCopyDescriptor was not used', message)
 
+  def test_2d_vmem_column_write(self):
+    nrows = 8
+    ncols = 4
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((nrows, ncols), jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        grid=(1,),
+    )
+    def kernel(in_ref, out_ref):
+      scratch = jax.empty_ref(jax.ShapeDtypeStruct((nrows, ncols), jnp.int32), memory_space=pltpu.VMEM)
+      for i in range(ncols):
+        scratch[:nrows, i] = in_ref[...] + i
+      out_ref[...] = scratch[...]
+
+    x = jnp.arange(nrows, dtype=jnp.int32)
+    y = kernel(x)
+    expected = jnp.arange(nrows)[:, None] + jnp.arange(ncols)[None, :]
+    np.testing.assert_array_equal(y, expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
@@ -1917,10 +1976,10 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
       )
       input_to_output_copy.start()
       sem_out_ref[0, :] = jnp.ones_like(
-          sem_out_ref[0, :]) * pltpu.semaphore_read(copy_sem.at[0])
+          sem_out_ref[0, :]) * pl.semaphore_read(copy_sem.at[0])
       input_to_output_copy.wait()
       sem_out_ref[1, :] = jnp.ones_like(
-          sem_out_ref[0, :]) * pltpu.semaphore_read(copy_sem.at[0])
+          sem_out_ref[0, :]) * pl.semaphore_read(copy_sem.at[0])
 
     out_shape = (jax.ShapeDtypeStruct((16, 128), jnp.int32),
                  jax.ShapeDtypeStruct((2, 1), jnp.int32))
@@ -1960,22 +2019,22 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
                     sem_ref,
                 ):
       o_ref[...] = jnp.zeros_like(o_ref)
-      pltpu.semaphore_signal(sem_ref.at[0], 1)
-      pltpu.semaphore_signal(sem_ref.at[1], 2)
-      pltpu.semaphore_signal(sem_ref.at[2], 3)
-      pltpu.semaphore_signal(sem_ref.at[3], 4)
-      o_ref[0, 0] = pltpu.semaphore_read(sem_ref.at[0])
-      o_ref[1, 0] = pltpu.semaphore_read(sem_ref.at[1])
-      o_ref[2, 0] = pltpu.semaphore_read(sem_ref.at[2])
-      o_ref[3, 0] = pltpu.semaphore_read(sem_ref.at[3])
-      pltpu.semaphore_wait(sem_ref.at[0], 4)
-      pltpu.semaphore_wait(sem_ref.at[1], 3)
-      pltpu.semaphore_wait(sem_ref.at[2], 2)
-      pltpu.semaphore_wait(sem_ref.at[3], 1)
-      o_ref[4, 0] = pltpu.semaphore_read(sem_ref.at[0])
-      o_ref[5, 0] = pltpu.semaphore_read(sem_ref.at[1])
-      o_ref[6, 0] = pltpu.semaphore_read(sem_ref.at[2])
-      o_ref[7, 0] = pltpu.semaphore_read(sem_ref.at[3])
+      pl.semaphore_signal(sem_ref.at[0], 1)
+      pl.semaphore_signal(sem_ref.at[1], 2)
+      pl.semaphore_signal(sem_ref.at[2], 3)
+      pl.semaphore_signal(sem_ref.at[3], 4)
+      o_ref[0, 0] = pl.semaphore_read(sem_ref.at[0])
+      o_ref[1, 0] = pl.semaphore_read(sem_ref.at[1])
+      o_ref[2, 0] = pl.semaphore_read(sem_ref.at[2])
+      o_ref[3, 0] = pl.semaphore_read(sem_ref.at[3])
+      pl.semaphore_wait(sem_ref.at[0], 4)
+      pl.semaphore_wait(sem_ref.at[1], 3)
+      pl.semaphore_wait(sem_ref.at[2], 2)
+      pl.semaphore_wait(sem_ref.at[3], 1)
+      o_ref[4, 0] = pl.semaphore_read(sem_ref.at[0])
+      o_ref[5, 0] = pl.semaphore_read(sem_ref.at[1])
+      o_ref[6, 0] = pl.semaphore_read(sem_ref.at[2])
+      o_ref[7, 0] = pl.semaphore_read(sem_ref.at[3])
 
     out_shape = jax.ShapeDtypeStruct((8, 1), jnp.int32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
@@ -2805,8 +2864,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       ((8, 5, 8, 10),),
   ])
   def test_bool_transpose_last_two_dims(self, input_shape):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
 
     rank = len(input_shape)
     transpose_axes = tuple(range(rank - 2)) + (rank - 1, rank - 2)
@@ -2831,7 +2888,7 @@ class PallasCallTest(ptu.PallasTPUTest):
     def kernel(x_ref, y_ref):
       x = x_ref[...]
       # Check that vma is removed before entering the kernel.
-      assert x.vma == frozenset()
+      assert x.mat.varying == frozenset()
       y_ref[...] = x_ref[...]
 
     num_devices = jax.local_device_count()
@@ -2979,8 +3036,6 @@ class PallasScalarIOpsTest(ptu.PallasTPUTest):
 class PallasCallUnsignedIntegerTest(ptu.PallasTPUTest):
 
   def test_pow_unsigned_exponent(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest("Needs a newer libTPU")
 
     def kernel(x_ref, exp_ref, y_ref):
       y_ref[...] = lax.pow_p.bind(x_ref[...], exp_ref[...])
@@ -3911,6 +3966,41 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         result, np.transpose(x.reshape(mid_shape), axes=(1, 0, 2))
     )
 
+  # (m*n) -> (m, n)
+  @parameterized.parameters(
+      (m, n, dtype)
+      for (m, n), dtype in itertools.product(
+          [
+              (5, 512),
+              (9, 256),
+              (11, 128),
+              (1, 64),
+              (200, 1),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_unfold_minor_dim_to_R2(self, m, n, dtype):
+    if (
+        n == 1
+        and dtype in (jnp.bfloat16, jnp.int8)
+        and not jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest(
+          'Insert singleton minor-most dimension for packed types is only'
+          ' supported on TPU v6+.'
+      )
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(y_ref.shape)
+
+    x = np.arange(m * n, dtype=dtype)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([m, n]))
+
   # (q, m*n) -> (q, m, n)
   @parameterized.parameters(
       (q, m, n, dtype)
@@ -3936,8 +4026,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_minor_dim_to_R3(self, q, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
     if n % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
 
@@ -3978,8 +4066,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_minor_dim_to_R4(self, q, m, n, k, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 10):
-      self.skipTest('Test requires a newer libTPU.')
     if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
 
@@ -3992,6 +4078,187 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((q, m, n, k), dtype),
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q, m, n, k]))
+
+  # (q, m * n * k) -> (q, m, n, k)
+  @parameterized.parameters(
+      (q, m, n, k, dtype)
+      for (q, m, n, k), dtype in itertools.product(
+          [
+              # k % 128 == 0
+              (3, 8, 17, 512),
+              (1, 8, 9, 256),
+              (1, 8, 3, 256),
+              (10, 1, 4, 256),
+              (1, 2, 2, 256),
+              (1, 9, 3, 256),
+              # k % 128 != 0
+              (3, 8, 17, 500),
+              (1, 8, 9, 200),
+              (1, 8, 3, 200),
+              (10, 1, 4, 200),
+              (1, 2, 2, 200),
+              (1, 9, 3, 200),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_unfold_last_dim_to_three_minor_dims(self, q, m, n, k, dtype):
+    if (
+        (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4))
+        or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+        or (k % 128 != 0 and not jtu.is_device_tpu_at_least(5))
+    ):
+      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 19) and k % 128 != 0:
+      self.skipTest('Requires a newer libTPU.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(y_ref.shape)
+
+    x = np.arange(q * m * n * k, dtype=dtype).reshape(q, m * n * k)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((q, m, n, k), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([q, m, n, k]))
+
+  # (p, q * m * n * k) -> (p, q, m, n, k)
+  @parameterized.parameters(
+      (p, q, m, n, k, dtype)
+      for (p, q, m, n, k), dtype in itertools.product(
+          [
+              # k % 128 == 0
+              (5, 3, 8, 7, 512),
+              (6, 1, 8, 9, 256),
+              (16, 1, 8, 3, 256),
+              (3, 2, 1, 4, 256),
+              (1, 7, 2, 2, 256),
+              # k % 128 != 0
+              (5, 3, 8, 7, 500),
+              (6, 1, 8, 9, 200),
+              (16, 1, 8, 3, 200),
+              (3, 2, 1, 4, 200),
+              (1, 7, 2, 2, 200),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_unfold_last_dim_to_four_minor_dims(
+      self, p, q, m, n, k, dtype
+  ):
+    if (
+        (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4))
+        or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+        or (k % 128 != 0 and not jtu.is_device_tpu_at_least(5))
+    ):
+      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 19) and k % 128 != 0:
+      self.skipTest('Requires a newer libTPU.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(y_ref.shape)
+
+    x = np.arange(p * q * m * n * k, dtype=dtype).reshape(p, q * m * n * k)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((p, q, m, n, k), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([p, q, m, n, k]))
+
+  @parameterized.product(
+      input_output_major_dims=[
+          ((1, 8), (8,)),
+          ((8,), (1, 8)),
+          ((4, 4), (2, 2, 4)),
+          ((2, 2, 4), (4, 4)),
+          ((2, 3), (6,)),
+      ],
+      output_minor_dims=[
+          (8, 128),
+          (4, 256),
+          (8, 120),
+          (5, 32),
+          (5, 7),
+          (2, 8, 128),
+          (3, 4, 256),
+          (1, 8, 120),
+          (9, 5, 32),
+          (6, 5, 7),
+      ],
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_reshape_last_dim_to_two_minor_dims_change_major_dim(
+      self, input_output_major_dims, output_minor_dims, dtype
+  ):
+    if (
+        not jtu.is_cloud_tpu_at_least(2026, 4, 19)
+        and output_minor_dims[-1] % 128 != 0
+        and len(output_minor_dims) > 2
+    ):
+      self.skipTest('Test requires a newer libTPU.')
+    if (
+        output_minor_dims[-1] % 128 != 0 or len(output_minor_dims) > 2
+    ) and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Operation not supported on this TPU version.')
+    input_major_dims, output_major_dims = input_output_major_dims
+    input_minor_dims = (math.prod(output_minor_dims),)
+    input_shape = input_major_dims + input_minor_dims
+    output_shape = output_major_dims + output_minor_dims
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(output_shape)
+
+    x = np.arange(math.prod(input_shape), dtype=dtype).reshape(input_shape)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape(output_shape))
+
+  # (m, n) -> (m * n)
+  @parameterized.parameters(
+      (m, n, dtype)
+      for (m, n), dtype in itertools.product(
+          [
+              (5, 512),
+              (9, 256),
+              (11, 128),
+              (1, 64),
+              (200, 1),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_two_minor_dims_to_R1(self, m, n, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 31):
+      self.skipTest('Test requires a newer libTPU.')
+    if dtype == jnp.int8 and n % 512 != 0:
+      if not jtu.is_device_tpu_at_least(5):
+        self.skipTest('8-bit mask requires TPU v5+')
+      if not jtu.is_cloud_tpu_at_least(2026, 4, 8):
+        self.skipTest('Requires a newer libTPU.')
+    if (
+        dtype == jnp.bfloat16
+        and n % 256 != 0
+    ):
+      if not jtu.is_device_tpu_at_least(4):
+        self.skipTest('16-bit mask requires TPU v4+')
+      if not jtu.is_device_tpu_at_least(6) and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest('Requires a newer libTPU.')
+    if n == 1 and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Sublane gather requires TPU v5+.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(x_ref.shape[0] * x_ref.shape[1])
+
+    x = np.arange(m * n, dtype=dtype).reshape(m, n)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m * n,), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([m * n]))
 
   # (q, m, n) -> (q, m * n) where n % 128 == 0
   @parameterized.parameters(
@@ -4117,25 +4384,126 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q, m, n * k]))
 
-  # (p, q, m, n, k) -> (p, q * m * n * k) where k % 128 == 0
+  @parameterized.product(
+      input_output_major_dims=[
+          ((1, 8), (8,)),
+          ((8,), (1, 8)),
+          ((4, 4), (2, 2, 4)),
+          ((2, 2, 4), (4, 4)),
+          ((2, 3), (6,)),
+      ],
+      input_minor_dims=[
+          (8, 128),
+          (4, 256),
+          (8, 120),
+          (5, 32),
+          (5, 7),
+          (2, 8, 128),
+          (3, 4, 256),
+          (1, 8, 120),
+          (9, 5, 32),
+          (6, 5, 7),
+      ],
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_reshape_two_minor_dims_to_last_dim_change_major_dim(
+      self, input_output_major_dims, input_minor_dims, dtype
+  ):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17) and len(input_minor_dims) > 2:
+      self.skipTest('Test requires a newer libTPU.')
+    input_major_dims, output_major_dims = input_output_major_dims
+    output_minor_dims = (math.prod(input_minor_dims),)
+    input_shape = input_major_dims + input_minor_dims
+    output_shape = output_major_dims + output_minor_dims
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(output_shape)
+
+    x = np.arange(math.prod(input_shape), dtype=dtype).reshape(input_shape)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape(output_shape))
+
+  # (q, m, n, k) -> (q, m * n * k)
   @parameterized.parameters(
-      (p, q, m, n, k, dtype)
-      for (p, q, m, n, k), dtype in itertools.product(
+      (q, m, n, k, dtype)
+      for (q, m, n, k), dtype in itertools.product(
           [
-              (5, 3, 8, 17, 512),
-              (6, 1, 8, 9, 256),
-              (16, 1, 8, 3, 256),
-              (3, 2, 1, 4, 256),
-              (1, 7, 2, 2, 256),
+              # k % 128 == 0
+              (3, 8, 17, 512),
+              (1, 8, 9, 256),
+              (1, 8, 3, 256),
+              (10, 1, 4, 256),
+              (1, 2, 2, 256),
+              (1, 9, 3, 256),
+              # k % 128 != 0
+              (3, 8, 17, 500),
+              (1, 8, 9, 200),
+              (1, 8, 3, 200),
+              (10, 1, 4, 200),
+              (1, 2, 2, 200),
+              (1, 9, 3, 200),
           ],
           [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
       )
   )
-  def test_reshape_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
+  def test_reshape_fold_three_minor_dims_to_R2(self, q, m, n, k, dtype):
+    unsupported_dtype = (
+        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
+    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+
+    if k % 128 != 0 and unsupported_dtype:
       self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      if unsupported_dtype or k % 128 != 0:
+        self.skipTest('Requires a newer libTPU.')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(
+          x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2] * x_ref.shape[3]
+      )
+
+    x = np.arange(q * m * n * k, dtype=dtype).reshape(q, m, n, k)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((q, m * n * k), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([q, m * n * k]))
+
+  # (p, q, m, n, k) -> (p, q * m * n * k)
+  @parameterized.parameters(
+      (p, q, m, n, k, dtype)
+      for (p, q, m, n, k), dtype in itertools.product(
+          [
+              # k % 128 == 0
+              (5, 3, 8, 7, 512),
+              (6, 1, 8, 9, 256),
+              (16, 1, 8, 3, 256),
+              (3, 2, 1, 4, 256),
+              (1, 7, 2, 2, 256),
+              # k % 128 != 0
+              (5, 3, 8, 7, 500),
+              (6, 1, 8, 9, 200),
+              (16, 1, 8, 3, 200),
+              (3, 2, 1, 4, 200),
+              (1, 7, 2, 2, 200),
+          ],
+          [jnp.float32, jnp.uint32, jnp.bfloat16, jnp.int8],
+      )
+  )
+  def test_reshape_fold_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
+    unsupported_dtype = (
+        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
+    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
+
+    if k % 128 != 0 and unsupported_dtype:
+      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      if unsupported_dtype or k % 128 != 0:
+        self.skipTest('Requires a newer libTPU.')
+
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0],
@@ -4417,6 +4785,38 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     compiled_kernel = jax.jit(wrapper_dynamic).lower(n).compile()
     np.testing.assert_array_equal(compiled_kernel(n), n)
 
+  @parameterized.parameters(
+      (r // m, m)
+      for m in (1, 2, 4, 8, 16)
+      for r in (1, 2, 4, 8, 16, 32, 64)
+      if r % m == 0
+  )
+  def test_manual_dma_reshape_tc(self, n, m):
+    if self.INTERPRET:
+      self.skipTest("Interpret not supported for manual DMA test")
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 10):
+      self.skipTest("Needs a newer libtpu")
+
+    def kernel(x_hbm, y_hbm):
+      @functools.partial(
+          pl.run_scoped,
+          sem=pltpu.SemaphoreType.DMA,
+          vmem_buf=pltpu.VMEM((n, m, 256), jnp.float32),
+      )
+      def body(sem, vmem_buf):
+        vmem_reshaped = vmem_buf.reshape(n * m, 256)
+        pltpu.async_copy(x_hbm, vmem_reshaped, sem).wait()
+        pltpu.async_copy(vmem_reshaped, y_hbm, sem).wait()
+
+    x = np.random.uniform(size=(n * m, 256)).astype(np.float32)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((n * m, 256), jnp.float32),
+    )(x)
+    np.testing.assert_array_equal(out, x)
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
@@ -4478,21 +4878,26 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       self.skipTest('TPU v7 required for this test.')
 
   @parameterized.named_parameters(
-      ('f32', jnp.float32),
-      ('bf16', jnp.bfloat16),
-      ('f8_e4m3fn', jnp.float8_e4m3fn),
-      ('f8_e5m2', jnp.float8_e5m2),
+      ('f32', jnp.float32, False),
+      ('bf16', jnp.bfloat16, False),
+      ('f8_e4m3fn', jnp.float8_e4m3fn, False),
+      ('f8_e5m2', jnp.float8_e5m2, False),
+      ('bf16_transpose', jnp.bfloat16, True),
+      ('f32_transpose', jnp.float32, True),
   )
-  def test_basic(self, dtype):
+  def test_basic(self, dtype, transpose):
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)
     x = generator.normal(size=(m, k)).astype(dtype)
-    y = generator.normal(size=(k, n)).astype(dtype)
+    if transpose:
+      y = generator.normal(size=(n, k)).astype(dtype)
+    else:
+      y = generator.normal(size=(k, n)).astype(dtype)
 
     def matmul_kernel(x_ref, y_ref, o_ref):
       pltpu.matmul_push_rhs(
-          y_ref[...], mxu_index=0, staging_register=0
+          y_ref[...], mxu_index=0, staging_register=0, transpose=transpose
       )
       pltpu.matmul_acc_lhs(
           acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
@@ -4505,8 +4910,11 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     )
 
     def matmul_ref_kernel(x_ref, y_ref, o_ref):
+      rhs = y_ref[...]
+      if transpose:
+        rhs = rhs.T
       o_ref[...] = jnp.matmul(
-          x_ref[...], y_ref[...], preferred_element_type=jnp.float32
+          x_ref[...], rhs, preferred_element_type=jnp.float32
       )
     matmul_ref = pl.pallas_call(
         matmul_ref_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),

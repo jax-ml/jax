@@ -26,7 +26,8 @@ To add a new test:
     the testdata. Use only `None` for the testdata parameter to signal that
     you want to use a current serialization and not a saved one.
   * Run the test. This will save the serialized data in
-    TEST_UNDECLARED_OUTPUTS_DIR (or "/tmp/back_compat_testdata" if not set).
+    TEST_UNDECLARED_OUTPUTS_DIR (or a "back_compat_testdata" subdirectory of
+    the system temp directory, if not set).
   * Copy the test data defined in the output file, to the file
     jax._src.internal_test_util.export_back_compat_test_data.export_{name}.py.
   * Add a new import statement to this file to import that module
@@ -37,10 +38,11 @@ forward compatibility you'd have to check out an older version of the code
 and cherry pick a new version of the directory
 `jax._src.internal_test_util.export_back_compat_test_data`.
 """
-
+import functools
 import logging
 import os
 import re
+import tempfile
 from typing import Any
 
 from absl.testing import absltest
@@ -64,6 +66,7 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util.export_back_compat_test_data import export_with_specified_sharding
 from jax._src.internal_test_util.export_back_compat_test_data import export_with_unspecified_sharding
 from jax._src.internal_test_util.export_back_compat_test_data import export_with_memory_space
+from jax._src.internal_test_util.export_back_compat_test_data import export_with_multiple_meshes
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -81,9 +84,9 @@ class CompatTest(jtu.JaxTestCase):
                            **kwargs) -> bytearray:
     """Export and serialize a function.
 
-    The test data for the current _SERIALIZATION_VERSION is saved in
-    TEST_UNDECLARED_OUTPUTS_DIR (or "/tmp/back_compat_testdata" if not set)
-    and should be copied as explained in the module docstring.
+    The test data is saved in TEST_UNDECLARED_OUTPUTS_DIR (or
+    the system temp directory, if not set) and should be copied as explained
+    in the module docstring.
     """
     exp = _export.export(fun, platforms=platforms)(*args, **kwargs)
     serialized = exp.serialize(vjp_order=vjp_order)
@@ -98,7 +101,8 @@ class CompatTest(jtu.JaxTestCase):
     # Replace the word that should not appear.
     updated_testdata = re.sub(r"google.", "googlex", updated_testdata)
     output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
-                           "/tmp/back_compat_testdata")
+                           os.path.join(tempfile.gettempdir(),
+                                        "back_compat_testdata"))
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
     output_file_basename = f"export_{self._testMethodName.replace('test_', '')}.py"
@@ -208,6 +212,51 @@ class CompatTest(jtu.JaxTestCase):
       self.assertEqual(b.aval.memory_space, core.MemorySpace.Host)
       self.assertEqual(b.sharding.memory_kind, a.sharding.memory_kind)
 
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testdata=testdata,
+      testcase_name=("current" if testdata is None
+                     else f"v{testdata['serialization_version']}"))
+      for testdata in [None, *export_with_multiple_meshes.serializations]
+    ]
+  )
+  def test_with_multiple_meshes(self, testdata: dict[str, Any] | None):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest("Need at least 2 devices")
+    devices = jax.devices()[0:nr_devices]
+
+    mesh_inputs = jax.sharding.Mesh(np.array(devices).reshape(1, 2), axis_names=("x1", "x2"))
+    mesh_weights = jax.sharding.Mesh(np.array(devices).reshape(2, 1), axis_names=("y2", "y1"))
+
+    inp = np.arange(32., dtype=np.float32).reshape((4, 8))
+    TUPLE_SIZE = 4
+    inputs = (inp,) * TUPLE_SIZE
+    w = np.arange(16., dtype=np.float32).reshape((8, 2))
+    weights = (w,) * TUPLE_SIZE
+    in_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x2")),) * TUPLE_SIZE,
+      (jax.sharding.NamedSharding(mesh_weights, P("y2", None),),) * TUPLE_SIZE)
+    out_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x1")),) * TUPLE_SIZE)
+
+    @functools.partial(
+        jax.jit,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings)
+    def f(inputs, weights):
+      return tuple(i @ w for i, w in zip(inputs, weights))
+
+    if testdata is None:
+      serialized = self.export_and_serialize(
+          f, inputs, weights,
+          platforms=("cpu", "tpu", "cuda", "rocm"))
+    else:
+      serialized = testdata["exported_serialized"]
+
+    (placed_inputs, placed_weights) = jax.device_put((inputs, weights), in_shardings)
+    out = _export.deserialize(serialized).call(placed_inputs, placed_weights)
+    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

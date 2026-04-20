@@ -89,11 +89,11 @@ jobs:
           # Set the "jax" wheel extra to configure whether to download the Nvidia Pip packages from
           # PyPI.
           if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]] && [[ "${INPUTS_CUDA_VERSION}" == 12* ]]; then
-            echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> $GITHUB_ENV
+            echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> "$GITHUB_ENV"
           elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${INPUTS_CUDA_VERSION}" == 12* ]]; then
-            echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+            echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> "$GITHUB_ENV"
           elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${INPUTS_CUDA_VERSION}" == 13* ]]; then
-            echo "JAXCI_JAX_PYPI_EXTRAS=cuda13">> $GITHUB_ENV
+            echo "JAXCI_JAX_PYPI_EXTRAS=cuda13">> "$GITHUB_ENV"
           else
             echo "Invalid CUDA version: ${INPUTS_CUDA_VERSION}"
             exit 1
@@ -102,7 +102,7 @@ jobs:
           INPUTS_CUDA_VERSION: ${{ inputs.cuda-version }}
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+          "$JAXCI_PYTHON" -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -111,3 +111,11 @@ jobs:
       - name: Run Pytest CUDA tests
         timeout-minutes: 120
         run: ./ci/run_pytest_cuda.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}

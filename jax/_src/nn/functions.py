@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from functools import partial
 import operator
 import numpy as np
-from typing import Any, Literal, overload
+from typing import Any, Literal, overload, SupportsIndex
 import warnings
 
 from jax._src import api
@@ -606,9 +606,6 @@ def softmax(x: ArrayLike,
     :func:`log_softmax`
   """
   if config.softmax_custom_jvp.value:
-    # mypy is confused by the `functools.partial` application in the definition
-    # of `_softmax` and incorrectly concludes that `_softmax` returns
-    # `ReturnValue` -- the unsubstituted type parameter of `custom_jvp`.
     return _softmax(x, axis, where)
   else:
     return _softmax_deprecated(x, axis, where)
@@ -708,7 +705,7 @@ def _one_hot(x: Array, num_classes: int, *,
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # type: ignore[arg-type]
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     axis_size = lax.axis_size(axis)
     if num_classes != axis_size:
@@ -716,12 +713,13 @@ def _one_hot(x: Array, num_classes: int, *,
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
     return jnp.asarray(x == axis_idx, dtype=dtype)
-  axis = operator.index(axis)  # type: ignore[arg-type]
+  assert isinstance(axis, SupportsIndex)
+  axis = operator.index(axis)
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
   # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
-  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))  # pytype: disable=attribute-error
+  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))
   rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
                              out_sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)
@@ -729,7 +727,7 @@ def _one_hot(x: Array, num_classes: int, *,
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
             dtype: Any | None = None, axis: int | AxisName = -1) -> Array:
-  """One-hot encodes the given indices.
+  r"""One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
@@ -739,7 +737,7 @@ def one_hot(x: Any, num_classes: int, *,
            [0., 1., 0.],
            [0., 0., 1.]], dtype=float32)
 
-  Indices outside the range [0, num_classes) will be encoded as zeros::
+  Indices outside the range :math:`[0, \text{num\_classes})` will be encoded as zeros::
 
     >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
     Array([[0., 0., 0.],
@@ -933,7 +931,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
         precision=precision,
         preferred_element_type=logits_dtype,
     )
-  except:  # pylint: disable=bare-except
+  except:
     logits = jnp_einsum.einsum(
         "BTNH,BSNH->BNTS",
         query,

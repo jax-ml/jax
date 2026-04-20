@@ -30,6 +30,7 @@ pytype_strict_library(
         "dialect.py",
         ":_triton_gen",
     ],
+    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir:core",
@@ -57,7 +58,7 @@ genrule(
     for src in $(SRCS); do
       base=$$(basename $$src)
       out=$(RULEDIR)/$${base//_raw/}
-      echo '# pytype: skip-file' > $${out} && \
+      echo '# pyrefly: ignore-errors' > $${out} && \
           cat $${src} |
           sed -e 's/^from \\.\\./from jaxlib\\.mlir\\./g' |
           sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' >> $${out}

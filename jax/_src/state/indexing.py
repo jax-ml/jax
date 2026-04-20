@@ -25,7 +25,7 @@ from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.indexing import Slice, dslice, ds  # noqa: F401
-from jax._src.state import types as state_types  # pytype: disable=import-error
+from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
 from jax._src.typing import Array
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
@@ -51,7 +51,8 @@ def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
       else:
         return f":{size_str}"
     else:
-      end = start + size
+      _val = lambda x: x.val if isinstance(x, core.Literal) else x
+      end = _val(start) + _val(size)
       end_str = "" if end == dim else str(end)
       return f"{start_str}:{end_str}"
 
@@ -66,7 +67,7 @@ def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
   is_int_indexing = [not isinstance(i, Slice) for i in indexer.indices]
   slice_indexers, int_indexers = partition_list(
       is_int_indexing, indexer.indices)
-  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # type: ignore
+  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # pyrefly: ignore[bad-argument-type]
 
 def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
@@ -194,10 +195,11 @@ class NDIndexer(state_types.Transform):
     # We treat refs differently from scalars and arrays, because refs can have
     # a dynamic shape, making it impossible to statically determine the
     # broadcasted shape in the presence of other non-slice indexers.
-    from jax._src.state import types as state_types  # pytype: disable=import-error
+    from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
     if ref_indexers := [
         i
         for i in other_indexers
+        if not isinstance(i, Slice)
         if isinstance(i, state_types.TransformedRef)
         or isinstance(core.typeof(i), state_types.AbstractRef)
     ]:
@@ -209,7 +211,7 @@ class NDIndexer(state_types.Transform):
             "Ref cannot be mixed with other non-slice indexers"
         )
       [ref_indexer] = ref_indexers
-      indexer_shape = ref_indexer.shape  # type: ignore
+      indexer_shape = ref_indexer.shape
       try:
         core.canonicalize_shape(indexer_shape)
       except TypeError:
@@ -230,7 +232,7 @@ class NDIndexer(state_types.Transform):
       #
       # The local import avoids a circular dependency between primitives
       # and this module.
-      from jax._src.state import primitives as sp  # pytype: disable=import-error
+      from jax._src.state import primitives as sp  # pyrefly: ignore[missing-module-attribute]
       other_indexers = [
           sp.broadcast_to(i, indexer_shape) for i in other_indexers  # pyrefly: ignore[bad-argument-type]
       ]
@@ -277,10 +279,7 @@ class NDIndexer(state_types.Transform):
         self._validate_sharding(x.sharding)
         if self.is_dynamic_size:
           return DShapedArray(self.get_indexer_shape(), x.dtype,
-                              weak_type=x.weak_type,
-                              sharding=x.sharding,
-                              vma=x.vma,
-                              memory_space=x.memory_space)
+                              weak_type=x.weak_type)
         return x.update(shape=self.get_indexer_shape())
       case _:
         if type(x) in indexer_transform_type_registry:
@@ -331,39 +330,28 @@ class NDIndexer(state_types.Transform):
       if isinstance(idx, Slice):
         indices.append(_pp_slice(context, dim, idx))
       else:
-        indices.append(core.pp_var(idx, context, print_literal_dtype=False))  # type: ignore
+        indices.append(core.pp_var(idx, context, print_literal_dtype=False))  # pyrefly: ignore[bad-argument-type]
     return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])
 
 
 class DShapedArray:
-  def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               vma: frozenset[core.AxisName] = frozenset(),
-               memory_space: core.MemorySpace = core.MemorySpace.Device):
+  def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = core._dtype_object(dtype)
     self.weak_type = weak_type
-    self.sharding = sharding
-    self.vma = core.get_vma(vma, self.sharding)
-    self.memory_space = core.get_memory_space(memory_space)
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
   def lo_ty(self): return [self]
 
-  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
+  def update(self, shape=None, dtype=None, weak_type=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if 'sharding' not in kwargs:
-      kwargs['sharding'] = self.sharding
-    if 'vma' not in kwargs:
-      kwargs['vma'] = self.vma
-    if 'memory_space' not in kwargs:
-      kwargs['memory_space'] = self.memory_space
-    return DShapedArray(shape, dtype, weak_type, **kwargs)
+    return DShapedArray(shape, dtype, weak_type)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -378,17 +366,10 @@ class DShapedArray:
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type
-            and self.sharding == other.sharding
-            and self.vma == other.vma
-            and self.memory_space == other.memory_space)
+            and self.weak_type == other.weak_type)
 
   def __hash__(self):
-    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
-    # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.vma, self.memory_space))
+    return hash((self.shape, self.dtype, self.weak_type))
 
   def __ne__(self, other):
     return not self == other
@@ -401,19 +382,15 @@ class DShapedArray:
     wt_str = "~" if self.weak_type else ""
     return f'{wt_str}{self.str_short()}'
 
-  def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    return core.str_short_aval(
-        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,  # pyrefly: ignore[missing-attribute]
-        self.vma, self.memory_space, short_dtypes, mesh_axis_types)
+  def str_short(self):
+    return (f"DShapedArray(shape={self.shape}, dtype={self.dtype},"
+            f" weak_type={self.weak_type})")
 
-  def _len(self, ignored_tracer):
+  def _len(self, _):
     try:
       return self.shape[0]
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
-
-  def update_vma(self, vma):
-    return self.update(vma=vma)
 
   def update_weak_type(self, weak_type):
     return self.update(weak_type=weak_type)

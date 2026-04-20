@@ -148,7 +148,7 @@ class MemorySpace(enum.Enum):
   def __call__(
       self,
       shape: Sequence[int],
-      dtype: jnp.dtype,
+      dtype: jax.typing.DTypeLike,
       *,
       transforms: Sequence[state_types.Transform] = (),
       packed: bool | None = None,
@@ -220,6 +220,8 @@ LANExWARP_SEMANTICS = (
     mgpu.LoweringSemantics.Lane, PrimitiveSemantics.Warp)
 WGxWG_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
+WGxWARP_SEMANTICS = (
+    mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warp)
 
 
 # TODO(justinfu): Reconcile with pl.kernel.
@@ -357,17 +359,19 @@ class GPUMemoryRef(pallas_core.MemoryRef):
 
   def get_ref_aval(self) -> _Ref:
     aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
-    aval = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
       aval = AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
+      physical_ref_aval = aval
     else:
+      physical_aval = state_types.transform_type(self.transforms, aval)
       aval = state.AbstractRef(aval, memory_space=self.memory_space)
+      physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
     transforms: list[state_types.Transform] = pallas_core.undo_transforms(
         aval, self.transforms
     )
-    ref = state_types.TransformedRef(aval, tuple(transforms))
+    ref = state_types.TransformedRef(physical_ref_aval, tuple(transforms))
     if not ref.transforms:
       return ref.ref
     return ref
@@ -417,7 +421,7 @@ def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
 
 def infer_tmem_layout(
     shape: tuple[int, ...],
-    dtype: jnp.dtype,
+    dtype: jax.typing.DTypeLike,
     *,
     packed: bool,
     collective: bool) -> tcgen05.TMEMLayout:
@@ -426,7 +430,7 @@ def infer_tmem_layout(
     packing = 32 // dtypes.itemsize_bits(dtype)
   else:
     packing = 1
-  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)  # type: ignore
+  return tcgen05._infer_tmem_layout(shape, collective=collective, packing=packing)
 
 
 def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
@@ -985,7 +989,7 @@ class UnswizzleRef(state_types.Transform):
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return SwizzleTransform(self.swizzle)
 
-  def swizzle_elems(self, dtype: jnp.dtype | ir.Type) -> int:
+  def swizzle_elems(self, dtype: jax.typing.DTypeLike | ir.Type) -> int:
     if not isinstance(dtype, ir.Type):
       dtype = mgpu_utils.dtype_to_ir_type(dtype)
     return (self.swizzle * 8) // mgpu.bitwidth(dtype)
@@ -1130,6 +1134,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_arrivals: int
   orders_tensor_core: bool
+  leader_tracked: bool = False
 
   def __str__(self):
     return self.name
@@ -1177,6 +1182,7 @@ class ClusterBarrier:
   num_barriers: int = 1
   num_arrivals: int = 1
   orders_tensor_core: bool = False
+  leader_tracked: bool = False
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     raise ValueError("Cluster barriers are not arrays")
@@ -1185,7 +1191,8 @@ class ClusterBarrier:
     aval = jax_core.ShapedArray(
         [self.num_barriers],
         ClusterBarrierType(
-            self.collective_axes, self.num_arrivals, self.orders_tensor_core
+            self.collective_axes, self.num_arrivals,
+            self.orders_tensor_core, self.leader_tracked,
         ),
     )
     return state.AbstractRef(aval, SMEM)
@@ -1233,7 +1240,7 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
     )
 
   def _getitem(self, tracer, idx):
-    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load  # pytype: disable=import-error
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_load  # pyrefly: ignore[missing-import]
     arr = wgmma_accumulator_load(tracer, wait_n=0)
     if not is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
@@ -1241,7 +1248,7 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
     return arr
 
   def _setitem(self, tracer, idx, value):
-    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_store  # pytype: disable=import-error
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_store  # pyrefly: ignore[missing-import]
     if not is_trivial_index(idx, tracer.shape):
       raise NotImplementedError(
           "Non-trivial indexing on WGMMAAbstractAccumulatorRef is not supported"
@@ -1331,6 +1338,9 @@ class Mesh:
   def discharges_effect(self, effect: jax_core.Effect) -> bool:
     return effect is _wgmma_pipeline_effect or effect is _memory_effect
 
+  def check_is_compatible_with(self, other_mesh):
+    raise NotImplementedError()
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class WarpMesh:
   """Represents a mesh over individual warps within a warpgroup.
@@ -1341,7 +1351,7 @@ class WarpMesh:
   """
 
   _NUM_WARPS_PER_WARPGROUP: ClassVar[int] = 4
-  axis_name: str
+  axis_name: jax_core.AxisName
 
   @property
   def shape(self):
@@ -1438,7 +1448,7 @@ def layout_cast(x: Any, new_layout: SomeLayout):
 
 class SomeLayout:
 
-  def reduce(self, axes: int | Sequence[int]) -> "SomeLayout":
+  def reduce(self, axes: int | Sequence[int]) -> SomeLayout:
     if isinstance(axes, int):
       axes = (axes,)
     return ReducedLayout(self, axes)
@@ -1460,7 +1470,7 @@ class ParameterizedLayout(SomeLayout):
   def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
     if args or kwargs:
       raise ValueError(f"Can't instantiate {self} with arguments.")
-    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)  # pyrefly: ignore[bad-return]
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1505,12 +1515,12 @@ class Layout(SomeLayout, enum.Enum):
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
-  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:  # pyrefly: ignore[bad-override, bad-return]
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
     def check_no_args():
       if args or kwargs:
         raise ValueError(f"Can't instantiate {self} with arguments.")
 
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+    match self:
       case Layout.WGMMA_TRANSPOSED:
         check_no_args()
         return mgpu.WGMMA_TRANSPOSED_LAYOUT
@@ -1530,9 +1540,9 @@ class Layout(SomeLayout, enum.Enum):
         check_no_args()
         return mgpu.fragmented_array.WGMMA_LAYOUT_ACC_32BIT
       case Layout.WG_SPLAT:
-        return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return mgpu.WGSplatFragLayout(*args, **kwargs)
       case Layout.WG_STRIDED:
-        return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return mgpu.WGStridedFragLayout(*args, **kwargs)
       case Layout.TILED:
         return mgpu.TiledLayout(*args, **kwargs)
       case Layout.TCGEN05:
@@ -1546,9 +1556,9 @@ class Layout(SomeLayout, enum.Enum):
           return mgpu.tmem_native_layout(*args, **kwargs)
         return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
-        return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return tcgen05.fa_m64_collective_layout(*args, **kwargs)
       case Layout.TCGEN05_M64_COLLECTIVE_NATIVE:
-        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()  # pytype: disable=missing-parameter
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs).as_tiled_layout()
       case Layout.SMEM_GMEM_COPY:
         normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
         shape, dtype, swizzle = normalize_args(*args, **kwargs)
@@ -1568,18 +1578,22 @@ class TMEMLayout(enum.Enum):
   SCALES_LAYOUT = enum.auto()
   SPARSE_METADATA_LAYOUT = enum.auto()
   M64_COLLECTIVE_LAYOUT = enum.auto()
+  SCALES_M64_COLLECTIVE_LAYOUT = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
   def to_mgpu(self, *args, **kwargs) -> tcgen05.TMEMLayout:
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+    match self:
       case TMEMLayout.SCALES_LAYOUT:
         return tcgen05.scales_layout(*args, **kwargs)
       case TMEMLayout.SPARSE_METADATA_LAYOUT:
         return tcgen05.sparse_meta_layout(*args, **kwargs)
       case TMEMLayout.M64_COLLECTIVE_LAYOUT:
-        return tcgen05.tmem_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+        return tcgen05.tmem_m64_collective_layout(*args, **kwargs)
+      case TMEMLayout.SCALES_M64_COLLECTIVE_LAYOUT:
+        return tcgen05.b_scales_m64_collective_layout(*args, **kwargs)
+    raise ValueError(f"Invalid TMEMLayout: {self}")
 
 
 def TryClusterCancelResult(

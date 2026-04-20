@@ -31,6 +31,7 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src.random import _safe_int_to_float
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -67,13 +68,6 @@ class RandomTestBase(jtu.JaxTestCase):
     # kstest does not understand bfloat16 input, so cast to float32.
     if samples.dtype == jnp.bfloat16:
       samples = samples.astype('float32')
-    # kstest fails for infinities starting in scipy 1.12
-    # (https://github.com/scipy/scipy/issues/20386)
-    scipy_version = jtu.parse_version(scipy.__version__)
-    if scipy_version < (1, 14) and np.issubdtype(samples.dtype, np.floating):
-      samples = np.array(samples, copy=True)
-      samples[np.isposinf(samples)] = 0.01 * np.finfo(samples.dtype).max
-      samples[np.isneginf(samples)] = 0.01 * np.finfo(samples.dtype).min
     self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
   def _CheckChiSquared(self, samples, pmf, *, pval=None):
@@ -396,7 +390,7 @@ class DistributionsTest(RandomTestBase):
       ]
     ],
     sample_shape=[(10000,), (5000, 2)],
-    mode=[None, 'low', 'high'],
+    mode=[None, 'low', 'high', 'highest'],
     dtype=jtu.dtypes.floating,
   )
   def testCategorical(self, p, axis, dtype, sample_shape, mode):
@@ -726,6 +720,17 @@ class DistributionsTest(RandomTestBase):
         compute_counts, jax.random.split(key, num_groups)).sum(axis=0)]
     cdf_probs = [x / (num_samples * num_groups) for x in pts]
     np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
+
+  def testSafeIntToFloat(self):
+    dtype = np.float32
+    finfo = dtypes.finfo(dtype)
+    mask = (1 << (finfo.nmant + 1)) - 1
+    for shift in range(64 - (finfo.nmant + 1)):
+      i = mask << shift
+      f = _safe_int_to_float(
+          np.array([i // (1 << 32), i & ((1 << 32) - 1)], dtype=np.uint32),
+          dtype=dtype)
+      self.assertEqual(i, int(float(np.ldexp(f, 64))))
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):

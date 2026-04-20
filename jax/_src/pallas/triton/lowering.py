@@ -32,8 +32,8 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
-from jax._src import literals
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import state
@@ -55,9 +55,6 @@ from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
 
-# TODO(sharadmv): Enable type checking.
-# pytype: skip-file
-
 _T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
@@ -77,6 +74,7 @@ class ModuleContext:
   program_ids: Sequence[ir.Value]
   traceback_caches: mlir.TracebackCaches = dataclasses.field(repr=False)
   platform: str
+  compute_capability: int | None
 
 
 @dataclasses.dataclass
@@ -304,7 +302,8 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Squeezed, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    platform: str
+    platform: str,
+    compute_capability: int | None,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -353,7 +352,11 @@ def lower_jaxpr_to_triton_module(
       ]
       ctx = ModuleContext(
           mlir.sanitize_name(debug_info.func_name),
-          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
+          grid_mapping,
+          local_program_ids,
+          mlir.TracebackCaches(),
+          platform,
+          compute_capability,
       )
       block_infos = [
           BlockInfo(
@@ -437,7 +440,7 @@ def lower_jaxpr_to_triton_ir(
     else:
       write_env(eqn.outvars[0], outvals)
 
-  return map(read_env, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(read_env, jaxpr.outvars)
 
 
 def lower_fun(
@@ -500,7 +503,6 @@ def _atomic_rmw(
   return tt_dialect.atomic_rmw(
       result_type, op, ptr, val, mask=mask, sem=semantic, scope=sync_scope
   )
-
 
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
@@ -1085,6 +1087,20 @@ def _is_triton_pointer_type(t):
     return tt_dialect.PointerType.isinstance(t)
   return isinstance(t, tt_dialect.PointerType)
 
+def _fp_bits_type(t: ir.Type) -> ir.Type:
+  if isinstance(t, ir.RankedTensorType):
+    t_type = ir.RankedTensorType(t)
+    return ir.RankedTensorType.get(
+      t_type.shape, _fp_bits_type(t_type.element_type), t_type.encoding
+    )
+  elif _is_triton_pointer_type(t):
+    ptr_type = tt_dialect.PointerType(t)
+    return tt_dialect.PointerType.get(
+      _fp_bits_type(ptr_type.pointee_type), ptr_type.address_space
+    )
+  else:
+    assert isinstance(t, ir.FloatType)
+    return ir.IntegerType.get_signless(t.width)
 
 def _minus(x: ir.Value) -> ir.Value:
   if _is_triton_pointer_type(x.type):
@@ -1124,7 +1140,9 @@ def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
   raise NotImplementedError(f"unsupported dtype: {y.type}")
 
 
-def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
+def _mul(x: ir.Value, y: ir.Value, *, out_dtype=None) -> ir.Value:
+  if out_dtype is not None:
+    raise NotImplementedError("out_dtype is not supported..")
   assert x.type == y.type, (str(x.type), str(y.type))
   x_element_type = _element_type(x.type)
   if isinstance(x_element_type, ir.IntegerType):
@@ -1248,9 +1266,9 @@ _JAX_TO_TRITON_BINARY = {
 
 for prim, fn in _JAX_TO_TRITON_BINARY.items():
 
-  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn, **kwargs):
     x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-    return fn(x, y)
+    return fn(x, y, **kwargs)
 
   triton_lowering_rules[prim] = signless_rule
 
@@ -1334,7 +1352,7 @@ def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   _set_attr(
       x,
       "tt.divisibility",
-      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
+      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),  # pyrefly: ignore[no-matching-overload]
   )
   return x
 
@@ -1601,17 +1619,37 @@ def _cast(
     src: ir.Value,
     src_type: jax.typing.DTypeLike,
     dst_type: jax.typing.DTypeLike,
+    *,
+    compute_capability: int | None = None,
 ) -> ir.Value:
   return _ir_cast(
       src,
       _dtype_to_ir_type(dst_type),
       signed=jnp.issubdtype(src_type, jnp.signedinteger),
       dst_signed=jnp.issubdtype(dst_type, jnp.signedinteger),
+      compute_capability=compute_capability,
   )
 
 
-def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
-             signed: bool, dst_signed: bool = False) -> ir.Value:
+def _is_float8_e4m3fn_cast_supported(compute_capability: int | None) -> bool:
+  return compute_capability is None or compute_capability >= 89
+
+
+_UNSUPPORTED_CAST_DTYPES = (
+    (ir.Float8E4M3FNType, "float8_e4m3fn", _is_float8_e4m3fn_cast_supported),
+    # TODO(slebedev): Check the CUDA version and raise conditionally.
+    (ir.Float8E4M3FNUZType, "float8_e4m3fnuz", lambda _: False),
+)
+
+
+def _ir_cast(
+    src: ir.Value,
+    dst_type: ir.Type,
+    *,
+    signed: bool,
+    dst_signed: bool = False,
+    compute_capability: int | None = None,
+) -> ir.Value:
   if isinstance(src.type, ir.RankedTensorType) and not isinstance(
       dst_type, ir.RankedTensorType
   ):
@@ -1626,11 +1664,14 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
 
   src_element_type = _element_type(src.type)
   dst_element_type = _element_type(dst_type)
-  if isinstance(src_element_type, ir.Float8E4M3FNUZType) or isinstance(
-      dst_element_type, ir.Float8E4M3FNUZType
-  ):
-    # TODO(slebedev): Check the CUDA version and raise conditionally.
-    raise NotImplementedError("cannot cast from or to float8_e4m3fnuz")
+
+  for dtype, dtype_name, is_supported in _UNSUPPORTED_CAST_DTYPES:
+    if isinstance(src_element_type, dtype):
+      if not is_supported(compute_capability):
+        raise NotImplementedError(f"cannot cast from `{dtype_name}`")
+    if isinstance(dst_element_type, dtype):
+      if not is_supported(compute_capability):
+        raise NotImplementedError(f"cannot cast to `{dtype_name}`")
 
   if isinstance(src_element_type, (ir.F16Type, ir.BF16Type)) and not isinstance(
       dst_element_type, ir.F32Type
@@ -1688,7 +1729,8 @@ def _convert_element_type_lowering_rule(
   x = _ensure_ir_value(x, x_aval)
   if new_dtype == x_aval.dtype:
     return x
-  return _cast(x, x_aval.dtype, new_dtype)
+  cc = ctx.context.compute_capability
+  return _cast(x, x_aval.dtype, new_dtype, compute_capability=cc)
 
 
 @register_lowering(lax.select_n_p)
@@ -2126,7 +2168,7 @@ def _store(
     *,
     cache_modifier: str | None = None,
     eviction_policy: str | None = None,
-) -> ir.Value:
+) -> None:
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
@@ -2168,7 +2210,7 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  return tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
 
 
 @register_lowering(primitives.swap_p)
@@ -2305,26 +2347,46 @@ def _dot_general_lowering(
       input_precision = None
 
     acc_dtype = out_aval.dtype
-    if acc_dtype != jnp.int32 and acc_dtype != jnp.float16:
+    if acc_dtype not in (jnp.int32, jnp.float16, jnp.float64):
       acc_dtype = jnp.float32
   else:
     raise NotImplementedError(f"Unsupported dot precision: {precision}.")
 
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
-  if len(a_type.shape) != len(b_type.shape) != 2:
+  if len(a_type.shape) != 2 or len(b_type.shape) != 2:
     raise ValueError("a and b must be 2D, but got:"
                      f" {a_type.shape} and {b_type.shape}")
-  if min(*b_type.shape) < 16:
-    raise ValueError("all dimensions of b must be >= 16 ")
+
+  m, k = a_type.shape
+  _, n = b_type.shape
+  if a_type.element_type == ir.F64Type.get():
+    # Triton's MMAv2 fp64 path uses the m8n8k4 PTX instruction but aggregates
+    # it with NumRegisters={m:2, n:1, k:4}, producing an effective m16n8k16
+    # per-warp tile.  Blocks smaller than these minimums cause repM/repN/repK
+    # to round to zero, corrupting the ValueTable and segfaulting the compiler.
+    #   M >= 16  (2 × instrM=8)
+    #   N >=  8  (1 × instrN=8)
+    #   K >= 16  (4 × instrK=4)
+    errors = []
+    if m < 16:
+      errors.append(f"M={m} < 16")
+    if n < 8:
+      errors.append(f"N={n} < 8")
+    if k < 16:
+      errors.append(f"K={k} < 16")
+    if errors:
+      raise ValueError(
+          f"float64 dot requires M>=16, N>=8, K>=16 per warp tile "
+          f"(Triton MMAv2 m8n8k4 layout); got {', '.join(errors)}"
+      )
+
   if a_type.element_type != b_type.element_type:
     raise ValueError(
         "a and b must have the same element type, but got:"
         f" {a_type.element_type} and {b_type.element_type}"
     )
 
-  m, _ = a_type.shape
-  _, n = b_type.shape
   assert acc_dtype is not None
   acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
 
@@ -2561,19 +2623,16 @@ def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     jaxpr,
-    linear,
     length,
     reverse,
     unroll,
     num_consts,
     num_carry,
-    _split_transpose,
 ):
-  del _split_transpose
   # Only implements fori_loop-like scans
   if reverse: raise NotImplementedError
   if unroll != 1: raise NotImplementedError
-  del linear, unroll, reverse
+  del unroll, reverse
 
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
@@ -2583,7 +2642,7 @@ def _scan_lowering_rule(
       pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
   )
   args = map(_ensure_ir_value, args, ctx.avals_in)
-  consts, args = util.split_list(args, [num_consts])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  consts, args = util.split_list(args, [num_consts])
   if has_loop_index:
     lower_bound, *args = args
     upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
@@ -2704,7 +2763,7 @@ def _while_lowering_rule(
     return result
   # Fall back to default while lowering
   cond_consts, body_consts, carry = util.split_list(
-      args, [cond_nconsts, body_nconsts]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      args, [cond_nconsts, body_nconsts]
   )
   cond_const_block_infos, body_const_block_infos, carry_block_infos = (
       util.split_list(ctx.block_infos, [cond_nconsts, body_nconsts])

@@ -34,6 +34,7 @@ from typing import Any
 
 from jax._src import config
 from jax._src.lib import _pretty_printer as _pretty_printer
+from jax._src.util import use_cpp_class, use_cpp_method  # pyrefly: ignore[missing-import]
 
 
 _PPRINT_USE_COLOR = config.bool_state(
@@ -45,7 +46,7 @@ _PPRINT_USE_COLOR = config.bool_state(
 def _can_use_color() -> bool:
   try:
     # Check if we're in IPython or Colab
-    ipython = get_ipython()  # type: ignore[name-defined]
+    ipython = get_ipython()  # pyrefly: ignore[unknown-name]
     shell = ipython.__class__.__name__
     if shell == "ZMQInteractiveShell":
       # Jupyter Notebook
@@ -62,37 +63,121 @@ CAN_USE_COLOR = _can_use_color()
 
 Color = _pretty_printer.Color
 Intensity = _pretty_printer.Intensity
-Doc = _pretty_printer.Doc
 
-def _format(
-  self, width: int = 80, *, use_color: bool | None = None,
-  annotation_prefix: str = " # ",
-  source_map: list[list[tuple[int, int, Any]]] | None = None
-) -> str:
+
+@use_cpp_class(_pretty_printer.Doc)
+class Doc:
+
+  @use_cpp_method()
+  def __add__(self, other: Doc) -> Doc:
+    raise NotImplementedError
+
+  @use_cpp_method()
+  def __repr__(self) -> str:
+    raise NotImplementedError
+
+  def __str__(self) -> str:
+    return self.format()
+
+  @use_cpp_method()
+  def _format(
+      self,
+      width: int,
+      *,
+      use_color: bool,
+      annotation_prefix: str,
+      source_map: list[list[tuple[int, int, Any]]] | None,
+  ) -> str:
+    raise NotImplementedError
+
+  def format(
+      self,
+      width: int = 80,
+      *,
+      use_color: bool | None = None,
+      annotation_prefix: str = " # ",
+      source_map: list[list[tuple[int, int, Any]]] | None = None,
+  ) -> str:
+    """Formats a pretty-printer document as a string.
+
+    Args:
+
+    source_map: for each line in the output, contains a list of
+      (start column, end column, source) tuples. Each tuple associates a
+      region of output text with a source.
+    """
+    if use_color is None:
+      use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
+    return self._format(
+        width,
+        use_color=use_color,
+        annotation_prefix=annotation_prefix,
+        source_map=source_map,
+    )
+
+
+def nil() -> Doc:
+  """An empty document."""
+  return _pretty_printer.nil()  # pyrefly: ignore[bad-return]
+
+
+def text(text: str, annotation: str | None = None) -> Doc:
+  """Literal text."""
+  return _pretty_printer.text(text, annotation)  # pyrefly: ignore[bad-return]
+
+
+def concat(children: Sequence[Doc]) -> Doc:
+  """Concatenation of documents."""
+  return _pretty_printer.concat(children)  # pyrefly: ignore[bad-argument-type, bad-return]
+
+
+def brk(text: str = " ") -> Doc:
+  """A break.
+
+  Prints either as a newline or as `text`, depending on the enclosing group.
   """
-  Formats a pretty-printer document as a string.
+  return _pretty_printer.brk(text)  # pyrefly: ignore[bad-return]
 
-  Args:
-  source_map: for each line in the output, contains a list of
-    (start column, end column, source) tuples. Each tuple associates a
-    region of output text with a source.
+
+def group(doc: Doc) -> Doc:
+  """Layout alternative groups.
+
+  Prints the group with its breaks as their text (typically spaces) if the
+  entire group would fit on the line when printed that way. Otherwise, breaks
+  inside the group as printed as newlines.
   """
-  if use_color is None:
-    use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
-  return self._format(
-      width, use_color=use_color, annotation_prefix=annotation_prefix,
-      source_map=source_map)
-Doc.format = _format
-Doc.__str__ = lambda self: self.format()  # type: ignore[method-assign]
+  return _pretty_printer.group(doc)  # pyrefly: ignore[bad-argument-type, bad-return]
 
-nil = _pretty_printer.nil
-text = _pretty_printer.text
-concat = _pretty_printer.concat
-brk = _pretty_printer.brk
-group = _pretty_printer.group
-nest = _pretty_printer.nest
-color = _pretty_printer.color
-source_map = _pretty_printer.source_map
+
+def nest(n: int, doc: Doc) -> Doc:
+  """Increases the indentation level by `n`."""
+  return _pretty_printer.nest(n, doc)  # pyrefly: ignore[bad-argument-type, bad-return]
+
+
+def color(
+    child: Doc,
+    foreground: Color | None = None,
+    background: Color | None = None,
+    intensity: Intensity | None = None,
+) -> Doc:
+  """ANSI colors.
+
+  Overrides the foreground/background/intensity of the text for the child doc.
+  Requires use_colors=True to be set when printing; otherwise does nothing.
+  """
+  return _pretty_printer.color(child, foreground, background, intensity)  # pyrefly: ignore[bad-argument-type, bad-return]
+
+
+def source_map(doc: Doc, source: Any) -> Doc:
+  """Source mapping.
+
+  A source map associates a region of the pretty-printer's text output with a
+  source location that produced it. For the purposes of the pretty printer a
+  ``source`` may be any object: we require only that we can compare sources for
+  equality. A text region to source object mapping can be populated as a side
+  output of the ``format`` method.
+  """
+  return _pretty_printer.source_map(doc, source)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 
 type_annotation = partial(color, intensity=Intensity.NORMAL,

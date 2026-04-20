@@ -31,8 +31,8 @@ MLIR_CAPI_EXPORTED MlirType mlirTritonPointerTypeGet(MlirType pointeeType,
 MLIR_CAPI_EXPORTED bool mlirTritonIsAPointer(MlirType type);
 MLIR_CAPI_EXPORTED MlirType
 mlirTritonPointerTypeGetPointeeType(MlirType pointerType);
-MLIR_CAPI_EXPORTED int
-mlirTritonPointerTypeGetAddressSpace(MlirType pointerType);
+MLIR_CAPI_EXPORTED int mlirTritonPointerTypeGetAddressSpace(
+    MlirType pointerType);
 
 MLIR_CAPI_EXPORTED MlirAttribute
 mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding, int axis);

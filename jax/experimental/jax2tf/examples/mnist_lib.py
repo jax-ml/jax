@@ -39,7 +39,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import optax
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
 
 _MOCK_DATA = flags.DEFINE_boolean("mock_data", False,
                                   "Use fake data, for testing.")
@@ -310,11 +310,11 @@ def plot_images(ds,
   fig = plt.figure(figsize=(8., 4.), num=title)
   # Get the first batch
   (images, labels), = list(tfds.as_numpy(ds.take(1)))
-  if inference_fn:
-    inferred_labels = inference_fn(images)
+  inferred_labels = inference_fn(images) if inference_fn else None
   for i, image in enumerate(images[:count]):
     digit = fig.add_subplot(nr_rows, nr_cols, i + 1)
     if inference_fn:
+      assert inferred_labels is not None
       digit_title = f"infer: {np.argmax(inferred_labels[i])}\n"
     else:
       digit_title = ""

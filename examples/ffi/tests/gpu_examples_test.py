@@ -28,7 +28,7 @@ class GpuExamplesTest(jtu.JaxTestCase):
       self.skipTest("Unsupported platform")
 
     # Import here to avoid trying to load the library when it's not built.
-    from jax_ffi_example import gpu_examples  # pylint: disable=g-import-not-at-top
+    from jax_ffi_example import gpu_examples
 
     self.read_state = gpu_examples.read_state
 

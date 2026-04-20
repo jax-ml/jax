@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from operator import itemgetter
-from typing import Any, List
+from typing import Any
 
 from docutils import nodes
 from sphinx.util import logging
@@ -22,7 +22,6 @@ from sphinx.util.docutils import SphinxDirective
 logger = logging.getLogger(__name__)
 
 _deprecations = (
-  'jax_default_dtype_bits', # an experiment that we never documented, but we can't remove it because Keras depends on its existing broken behavior
   'jax_serialization_version'
 )
 
@@ -62,7 +61,7 @@ class ConfigOptionDirective(SphinxDirective):
   optional_arguments = 0
   has_content = False
 
-  def run(self) -> List[nodes.Node]:
+  def run(self) -> list[nodes.Node]:
     from jax._src.config import config as jax_config
 
     config_options = sorted(jax_config.meta.items(), key=itemgetter(0))

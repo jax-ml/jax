@@ -23,13 +23,15 @@ from hypothesis import strategies as st
 import jax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
+import numpy as np
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 
 
 @jax.jit(static_argnames=["equation", "sizes"])
@@ -226,13 +228,14 @@ class EinshapeTest(jtu.JaxTestCase):
     atomic_shape = case["atomic_shape"]
     perm = case["perm"]
 
-    x = jnp.arange(math.prod(lhs_shape)).reshape(lhs_shape).astype(dtype)
+    x_np = np.arange(math.prod(lhs_shape)).reshape(lhs_shape).astype(dtype)
+    x = jnp.asarray(x_np)
     out = self.impl(equation, x, **kwargs)
 
     self.assertEqual(out.shape, rhs_shape)
 
-    x_atomic = x.reshape(atomic_shape)
-    x_transposed = jax.lax.transpose(x_atomic, perm)
+    x_atomic = x_np.reshape(atomic_shape)
+    x_transposed = np.transpose(x_atomic, perm)
     expected = x_transposed.reshape(rhs_shape)
 
     self.assertArraysEqual(out, expected)
@@ -249,8 +252,6 @@ class EinshapeTPUKernelTest(EinshapeTest):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Skipping test because TPU is not supported.")
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-      self.skipTest("Requires a newer libTPU")
     if (self._testMethodName == "test_hypothesis_einshape"
         and jtu.is_device_tpu(7)):
       self.skipTest("test_hypothesis_einshape is failing on TPU 7x")

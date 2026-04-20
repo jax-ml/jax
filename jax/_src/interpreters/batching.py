@@ -33,8 +33,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten, PyTreeDef)
 from jax._src.typing import Array
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                           canonicalize_axis, moveaxis, as_hashable_function,
-                           memoize, weakref_lru_cache, tuple_insert)
+                           canonicalize_axis, moveaxis, memoize,
+                           weakref_lru_cache, tuple_insert)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -52,12 +52,12 @@ FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
 MakeIotaHandler = Callable[[AxisSize], Array]
 
 def to_elt(trace: BatchTrace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
-  from jax._src import hijax  # pytype: disable=import-error
+  from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
   handler = to_elt_handlers.get(type(x))
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
   elif isinstance(spec, int) or spec is None:
-    spec = spec and canonicalize_axis(spec, len(np.shape(x)))
+    spec = None if spec is None else canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   elif isinstance(typeof(x), hijax.HiType):
@@ -79,8 +79,8 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
   val, bdim = trace.to_batch_info(x)
   bdim_inferred = bdim if spec is infer else spec
   try:
-    return matchaxis2(trace.axis_data, bdim, spec, val,
-                      sum_match=sum_match), bdim_inferred
+    return matchaxis(trace.axis_data, bdim, spec, val,
+                     sum_match=sum_match), bdim_inferred
   except SpecMatchError:
     raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
@@ -88,7 +88,7 @@ from_elt_handlers: dict[type, FromEltHandler] = {}
 def make_iota(axis_size: AxisSize) -> Array:
   # Callers of this utility, via batch() or vtile(), must be in a context
   # where lax is importable.
-  from jax import lax  # pytype: disable=import-error
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
   handler = make_iota_handlers.get(type(axis_size))
   if handler:
     return handler(axis_size)
@@ -130,43 +130,44 @@ NotMapped = type(None)
 not_mapped = None
 
 
-class BatchTracer(Tracer):
+class BatchTracer(Tracer['BatchTrace']):
   __slots__ = ['val', 'batch_dim', 'source_info']
 
-  _trace: BatchTrace  # pyrefly: ignore[bad-override]
+  _trace: BatchTrace
 
   def __init__(self, trace: BatchTrace, val, batch_dim: NotMapped | int,
                source_info: source_info_util.SourceInfo | None = None):
+    from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
+
+    aval = core.typeof(val)
     if config.enable_checks.value:
       # assert type(batch_dim) in (NotMapped, int)
       if type(batch_dim) is int:
-        aval = core.typeof(val)
         assert 0 <= batch_dim < len(aval.shape)
-    self._trace = trace
+
+    if trace.axis_data.spmd_name is not None:
+      if config._check_vma.value:
+        mat = aval.mat.update(
+            varying=aval.mat.varying - frozenset(
+              trace.axis_data.spmd_name))
+        aval = aval.update(manual_axis_type=mat)
+    if batch_dim is not_mapped:
+      aval = aval
+    elif type(batch_dim) is int:
+      aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
+    elif isinstance(aval, hijax.HiType):
+      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
+      aval = aval.dec_rank(trace.axis_data.size, batch_dim)
+    else:
+      raise Exception("batch dim should be int or `not_mapped`")
+
+    super().__init__(trace, aval)
     self.val = val
     self.batch_dim = batch_dim
     self.source_info = source_info
 
   def _short_repr(self):
-    return f"VmapTracer(aval={self.aval}, batched={typeof(self.val)})"
-
-  @property
-  def aval(self):
-    from jax._src import hijax  # pytype: disable=import-error
-    aval = core.typeof(self.val)
-    if self._trace.axis_data.spmd_name is not None:
-      if config._check_vma.value:
-        aval = aval.update(
-            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
-    if self.batch_dim is not_mapped:
-      return aval
-    elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
-    elif isinstance(aval, hijax.HiType):
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
-      return aval.dec_rank(self._trace.axis_data.size, self.batch_dim)
-    else:
-      raise Exception("batch dim should be int or `not_mapped`")
+    return f"VmapTracer(aval={self.aval}, batched={core.typeof(self.val)})"
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -249,6 +250,11 @@ class BatchTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       return core.cur_qdd(val)
 
+  def stage_value(self, val):
+    if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
+      return val
+    return self.parent_trace.stage_value(val)
+
   def process_primitive(self, p, tracers, params, /):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
@@ -267,7 +273,9 @@ class BatchTrace(Trace):
           return (BatchTracer(self, val_out, dim_out, src)
                   if dim_out is not not_mapped else val_out)
     elif args_not_mapped:  # Not all primitives have batching rules defined
-      return p.bind_with_trace(self.parent_trace, vals_in, params)
+      avals = tuple(core.typeof(x) for x in vals_in)
+      return p.bind_with_trace(self.parent_trace, tuple(vals_in), avals,
+                               dict(params))
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
@@ -278,54 +286,17 @@ class BatchTrace(Trace):
     f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
 
     with core.set_current_trace(self.parent_trace):
-      vals_out = call_primitive.bind(f_, *vals, **params)
+      vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
-
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params, /):
-    vals, dims = unzip2(map(self.to_batch_info, tracers))
-    # The logic for the dimension math below is as follows:
-    # ╔═════════════╦════════════════════════════════════════╦═══════════╗
-    # ║ d / in_axis ║ None                                   ║ int       ║
-    # ╠═════════════╬════════════════════════════════════════╩═══════════╣
-    # ║ None        ║ No extra axis, so in_axis unaffected               ║
-    # ╠═════════════╬════════════════════════════════════════╦═══════════╣
-    # ║ int         ║ Not mapped, so batching dim unaffected ║ See below ║
-    # ╚═════════════╩════════════════════════════════════════╩═══════════╝
-    # When both d and in_axis are defined then:
-    # - If `d <= in_axis`, we have to move the `in_axis` one dimension further;
-    # - If `d >  in_axis`, we have to decrement `d` (as `in_axis` will get removed).
-    def both_mapped(in_out_axis, d):
-      return in_out_axis is not None and d is not not_mapped
-    new_in_axes = tuple(
-      in_axis + 1 if both_mapped(in_axis, d) and d <= in_axis else in_axis
-      for d, in_axis in zip(dims, params['in_axes']))
-    new_dims = tuple(
-      d - 1 if both_mapped(in_axis, d) and in_axis < d else d
-      for d, in_axis in zip(dims, params['in_axes']))
-    f, dims_out = batch_subtrace(f, self.tag, self.axis_data, new_dims)
-    out_axes_thunk = params['out_axes_thunk']
-    # NOTE: This assumes that the choice of the dimensions over which outputs
-    #       are batched is entirely dependent on the function and not e.g. on the
-    #       data or its shapes.
-    @as_hashable_function(closure=out_axes_thunk)
-    def new_out_axes_thunk():
-      return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
-                    for out_axis, d in zip(out_axes_thunk(), dims_out()))
-    new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
-    with core.set_current_trace(self.parent_trace):
-      vals_out = map_primitive.bind(f, *vals, **new_params)
-    dims_out_ = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
-                  for d, out_axis in zip(dims_out(), out_axes_thunk())]
-    src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out_)]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, self.axis_data, in_dims)
-    out_vals = prim.bind_with_trace(self.parent_trace, (fun, jvp, *in_vals),
-                                    dict(symbolic_zeros=symbolic_zeros))
+    avals = tuple(core.typeof(x) for x in in_vals)
+    out_vals = prim.bind_with_trace(self.parent_trace, tuple(in_vals), avals,
+                                    dict(subfuns=(fun, jvp), symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
@@ -345,9 +316,10 @@ class BatchTrace(Trace):
       return [*full_dims, *pruned_dims]
 
     bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
+    avals = tuple(core.typeof(x) for x in in_vals)
     out_vals = prim.bind_with_trace(self.parent_trace,
-                                    (fun, fwd, bwd) + tuple(in_vals),
-                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
+                                    tuple(in_vals), avals,
+                                    dict(subfuns=(fun, fwd, bwd), out_trees=out_trees, symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree, input_fwds = out_trees()
@@ -380,7 +352,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
     idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
-      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
     # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
     # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
@@ -390,11 +362,24 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
       outs = f(*in_tracers)
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals, out_dim_srcs = unzip2(
-          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-              range(len(outs)), outs, out_dim_dests))
+          map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),
+              range(len(outs)), outs, out_dim_dests))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   return out_vals, out_dim_srcs, trace
 
 ### API for batching functions with jaxpr type inputs and outputs
+
+# Returns `out_dims` as a second tuple component.
+# The result of `f` should be a `FlatTree`.
+def batch_subtrace_2(f, tag, axis_data, in_dims, in_vals):
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    with core.set_current_trace(trace):
+      in_dims = in_dims() if callable(in_dims) else in_dims
+      in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      outs = f(*in_tracers)
+    out_vals, out_dims = outs.map(trace.to_batch_info).unzip2()
+  return out_vals, list(out_dims)
 
 @lu.transformation_with_aux2
 def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
@@ -403,7 +388,7 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
     with core.set_current_trace(trace):
       in_dims = in_dims() if callable(in_dims) else in_dims
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       outs = f(*in_tracers)
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   store.store(out_dims)
@@ -415,14 +400,14 @@ def batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped ]]:
+  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
-    in_axes: tuple[int | NotMapped ],
+    in_axes: tuple[int | NotMapped, ...],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
                    debug_info=closed_jaxpr.jaxpr.debug_info)
@@ -437,7 +422,9 @@ def _batch_jaxpr2(
           axis_data.size, b, aval, axis_data.explicit_mesh_axis)
       if axis_data.spmd_name is not None:
         if config._check_vma.value:
-          aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
+          mat = aval.mat.update(  # pyrefly: ignore[missing-attribute]
+              varying=aval.mat.varying  | frozenset(axis_data.spmd_name))  # pyrefly: ignore[missing-attribute]
+          aval = aval.update(manual_axis_type=mat)
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
@@ -503,9 +490,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
-  out_vals = map(partial(matchaxis, axis_data.name, axis_data.size,
-                         axis_data.explicit_mesh_axis),
-                 out_axes, out_axes_dest, out_vals)
+  out_vals = map(partial(matchaxis, axis_data), out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
   store.store(out_batched)
   return out_vals
@@ -514,7 +499,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
 def _batch_jaxpr_outer(f, axis_data, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
   tag = TraceTag()
   return f(tag, in_dims, *in_vals)
 
@@ -535,12 +520,10 @@ zero_if_mapped = ZeroIfMapped()
 
 @lu.transformation_with_aux2
 def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
-  size = axis_data.size
-  mesh_axis = axis_data.explicit_mesh_axis
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [val if dim is None else
-                  SymbolicZero(core.mapped_aval(size, dim, val.aval))
+                  SymbolicZero(core.mapped_aval(axis_data.size, dim, val.aval))
                   if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
                   for val, dim in zip(in_vals, in_dims * 2)]
     with core.set_current_trace(trace):
@@ -549,59 +532,55 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
   out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
   out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)
-  out_primals  = map(partial(matchaxis, trace.axis_data.name, size, mesh_axis),
-                     out_primal_bds, out_dims,  out_primals)
-  out_tangents = map(partial(_matchaxis_symzeros, trace.axis_data.name, size, mesh_axis),
+  out_primals  = map(partial(matchaxis, axis_data), out_primal_bds, out_dims,
+                     out_primals)
+  out_tangents = map(partial(_matchaxis_symzeros, axis_data),
                      out_tangent_bds, out_dims, out_tangents)
   store.store(out_dims)
-  return out_primals + out_tangents  # pyrefly: ignore[unsupported-operation]  # pyrefly#2385
+  return out_primals + out_tangents
 
 def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          axis_data: AxisData,
                          in_dims: Callable[[], Sequence[int | None]],
                          out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
-  axis_size = axis_data.size
-  axis_name = axis_data.name
-  mesh_axis = axis_data.explicit_mesh_axis
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
-    args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
+    args = [SymbolicZero(core.mapped_aval(axis_data.size, dim, x.aval))
             if type(x) is SymbolicZero else x
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
     bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, mesh_axis,
-                               out_dims_thunk, out_dim_dests)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, out_dim_dests)
     return bwd_.call_wrapped(*args)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
 @lu.transformation2
-def _match_axes_and_sum(f, axis_size, axis_name, mesh_axis, out_dims_thunk,
-                        out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
-  return map(partial(_matchaxis_symzeros, axis_name, axis_size, mesh_axis,
-                     sum_match=True),
+  return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
              out_dims_thunk(), out_dim_dests, out_vals)
 
-def _matchaxis_symzeros(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
+def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
   # TODO(mattjj): dedup with matchaxis
   if isinstance(x, (Zero, SymbolicZero)):
     if src == dst:
       return x
     elif type(src) == type(dst) == int:
-      aval = core.mapped_aval(sz, src, x.aval)
-      return type(x)(core.unmapped_aval(sz, dst, aval, mesh_axis))
+      aval = core.mapped_aval(axis_data.size, src, x.aval)
+      return type(x)(core.unmapped_aval(axis_data.size, dst, aval,
+                                        axis_data.explicit_mesh_axis))
     elif src is not_mapped and dst is not not_mapped:
-      return type(x)(core.unmapped_aval(sz, dst, x.aval, mesh_axis))
+      return type(x)(core.unmapped_aval(axis_data.size, dst, x.aval,
+                                        axis_data.explicit_mesh_axis))
     elif dst is not_mapped and sum_match:
-      return type(x)(core.mapped_aval(sz, src, x.aval))
+      return type(x)(core.mapped_aval(axis_data.size, src, x.aval))
     else:
-      raise ValueError((axis_name, x, src, dst))
+      raise ValueError((axis_data.name, x, src, dst))
   else:
-    return matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=sum_match)
+    return matchaxis(axis_data, src, dst, x, sum_match=sum_match)
 
 
 ### utilities for defining primitives' batching rules
@@ -654,6 +633,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
   if all(core.definitely_equal_shape(shape, x.shape) and d == dim
          for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
+    args = spmd_names_insert_pvary(*args)
     out = prim.bind(*args, **params)
     return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
   else:
@@ -670,11 +650,9 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
 def _handle_scalar_broadcasting(nd, x, d):
   # Callers of this utility, via broadcast_batcher() or defbroadcasting(),
   # must be in a context where lax is importable.
-  from jax import lax  # pytype: disable=import-error
-  if d is not_mapped or nd == np.ndim(x):
-    return x
-  else:
-    return lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
+  return (x if d is not_mapped or nd == np.ndim(x) else
+          lax.expand_dims(x, tuple(range(np.ndim(x), nd))))
 
 def defreducer(prim):
   fancy_primitive_batchers[prim] = partial(reducer_batcher, prim)
@@ -714,7 +692,7 @@ def expand_dims_batcher(prim, args, dims, **params):
 
 def broadcast(x, sz, axis, mesh_axis):
   # Callers of this utility must be in a context where lax is importable.
-  from jax import lax  # pytype: disable=import-error
+  from jax import lax  # pyrefly: ignore[missing-module-attribute]
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
@@ -726,22 +704,19 @@ def broadcast(x, sz, axis, mesh_axis):
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
-    x = lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
-    if config._check_vma.value:
-      # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
-      spmd_names = core.get_axis_env().spmd_axis_names
-      if len(spmd_names) > 1:
-        raise NotImplementedError
-      if spmd_names:
-        x = core.pvary(x, tuple(spmd_names))
+    x, = spmd_names_insert_pvary(lax.broadcast_in_dim(
+        x, shape, broadcast_dims, out_sharding=sharding))
     return x
 
-def matchaxis2(axis_data, src, dst, x, sum_match=False):
-  return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
-                   src, dst, x, sum_match)
+def spmd_names_insert_pvary(*args):
+  if (config._check_vma.value and
+      (spmd_names := core.get_axis_env().spmd_axis_names)):
+    return [core.pvary(a, tuple(spmd_names - aval.mat.varying))
+            if isinstance(aval := typeof(a), core.ShapedArray) else a
+            for a in args]
+  return args
 
-# TODO(yashkatariya): remove this, inline into matchaxis2
-def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
+def matchaxis(axis_data, src, dst, x, sum_match=False):
   try:
     _ = core.typeof(x)
   except TypeError as e:
@@ -752,15 +727,18 @@ def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
   elif src is not_mapped and type(dst) is int:
-    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1), mesh_axis)
+    return broadcast(x, axis_data.size, canonicalize_axis(dst, np.ndim(x) + 1),
+                     axis_data.explicit_mesh_axis)
   elif src is not_mapped and dst is sum_axis:
     return x
   elif dst is not_mapped and sum_match or dst is sum_axis:
     return x.sum(src)
   else:
-    if (not isinstance(axis_name, core._TempAxisName) and
-        axis_name is not core.no_axis_name):
-      raise ValueError(f'vmap has mapped output ({axis_name=}) but out_axes is {dst}')
+    if (not isinstance(axis_data.name, core._TempAxisName) and
+        axis_data.name is not core.no_axis_name):
+      raise ValueError(
+          f'vmap has mapped output (axis_name={axis_data.name}) but out_axes is'
+          f' {dst}')
     else:
       raise SpecMatchError(None, None, None)
 

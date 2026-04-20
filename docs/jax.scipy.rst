@@ -64,6 +64,7 @@ jax.scipy.linalg
    expm_frechet
    funm
    hessenberg
+   hankel
    hilbert
    inv
    lu
@@ -72,6 +73,7 @@ jax.scipy.linalg
    pascal
    polar
    qr
+   qr_multiply
    rsf2csf
    schur
    solve
@@ -182,6 +184,7 @@ jax.scipy.special
    log_ndtr
    log_softmax
    logit
+   loggamma
    logsumexp
    lpmn
    lpmn_values
@@ -194,7 +197,7 @@ jax.scipy.special
    sici
    softmax
    spence
-   sph_harm
+   sph_harm_y
    xlog1py
    xlogy
    zeta

@@ -15,12 +15,14 @@
 
 from collections.abc import Callable
 import functools
-from typing import Any, Hashable
+from typing import Any, TypeVar, cast, overload
+from collections.abc import Hashable
 
 from jax._src import api
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import numpy as jnp
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -29,7 +31,6 @@ from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas import utils as pl_utils
-from jax._src import numpy as jnp
 
 
 empty = api.named_call(lax.empty)
@@ -67,7 +68,7 @@ def empty_ref_like(x: object) -> jax_typing.Array:
 
 def when(
     condition: bool | jax_typing.ArrayLike, /
-) -> Callable[[Callable[[], None]], Callable[[], None]]:
+) -> Callable[[Callable[[], None]], None]:
   """Calls the decorated function when the condition is met.
 
   Args:
@@ -87,13 +88,41 @@ def when(
   return _wrapped
 
 
+_T = TypeVar("_T")
+
+
+@overload
 def loop(
     lower: jax_typing.ArrayLike,
     upper: jax_typing.ArrayLike,
     *,
+    init_carry: None = ...,
+    step: jax_typing.ArrayLike = ...,
+    unroll: int | bool | None = ...,
+) -> Callable[[Callable[[jax_typing.Array], None]], None]:
+  ...
+
+
+@overload
+def loop(
+    lower: jax_typing.ArrayLike,
+    upper: jax_typing.ArrayLike,
+    *,
+    init_carry: _T = ...,
+    step: jax_typing.ArrayLike = ...,
+    unroll: int | bool | None = ...,
+) -> Callable[[Callable[[jax_typing.Array, _T], _T]], _T]:
+  ...
+
+
+def loop(
+    lower: jax_typing.ArrayLike,
+    upper: jax_typing.ArrayLike,
+    *,
+    init_carry: _T | None = None,
     step: jax_typing.ArrayLike = 1,
     unroll: int | bool | None = None,
-) -> Callable[[Callable[[jax_typing.Array], None]], None]:
+) -> Callable[[Callable[..., _T | None]], _T | None]:
   """Returns a decorator that calls the decorated function in a loop."""
   zero: jax_typing.ArrayLike
   if not all(map(jax_core.is_concrete, (lower, upper, step))):
@@ -103,14 +132,22 @@ def loop(
     step = lax.convert_element_type(step, idx_type)
     zero = jnp.array(0, dtype=idx_type)
   else:
+    # Preserve concrete bounds to allow loop unrolling.
+    lower = cast(int, lower)
+    upper = cast(int, upper)
+    step = cast(int, step)
     zero = 0
 
   def decorator(body):
-    lax.fori_loop(
+    if init_carry is None:
+      body_fn = lambda idx, _: body(lower + idx * step)
+    else:
+      body_fn = lambda idx, carry: body(lower + idx * step, carry)
+    return lax.fori_loop(
         zero,
         pl_utils.cdiv(upper - lower, step),
-        lambda idx, _: body(lower + idx * step),
-        init_val=None,
+        body_fn,
+        init_val=init_carry,
         unroll=unroll,
     )
 
@@ -142,6 +179,14 @@ def debug_check(condition, message):
   """
   return checkify.debug_check(condition, message)
 
+def _get_empty_ref(out):
+  aval = pl_core._convert_out_shape_to_aval(out)
+  mem_space = (None if isinstance(aval.memory_space, jax_core.MemorySpace)  # type: ignore
+               else aval.memory_space)  # type: ignore
+  val = lax.empty(aval.shape, aval.dtype, out_sharding=aval.sharding,  # type: ignore
+                  _manual_axis_type=aval.manual_axis_type)  # type: ignore
+  return jax_core.new_ref(val, memory_space=mem_space)
+
 
 def _make_kernel(body,
                  out_shape: object,
@@ -156,20 +201,7 @@ def _make_kernel(body,
   @api.jit
   def wrapper(*operands):
     arg_refs = tree_util.tree_map(jax_core.new_ref, operands)
-    out_refs = tree_util.tree_map(
-        lambda out: jax_core.new_ref(
-            lax.empty(out.shape, out.dtype),
-            memory_space=(
-                ms
-                if hasattr(out, "memory_space")
-                and not isinstance(
-                    ms := out.memory_space, jax_core.MemorySpace
-                )
-                else None
-            ),
-        ),
-        out_shape,
-    )
+    out_refs = tree_util.tree_map(_get_empty_ref, out_shape)
 
     @pl_core.core_map(
         mesh,
@@ -185,7 +217,7 @@ def _make_kernel(body,
   return wrapper
 
 
-def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),  # pylint: disable=g-bare-generic
+def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
            out_shape: object | None = None,
            *,
            mesh: pl_core.Mesh,

@@ -41,7 +41,7 @@ limitations under the License.
 
 `shard_map` is a single-program multiple-data (SPMD) multi-device parallelism API to map a function over shards of data. Mapped function applications, or _instances_, communicate with each other via explicit collective communication operations.
 
-`shard_map` is complementary to, and composable with, the automatic compiler-based parallelization built into `jit`. With `jit` you write code as if for a single device, and [the compiler can automatically partition computation over multiple devices](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html), generating per-device code and communication collectives behind the scenes. With `shard_map` you take control, writing your own partitioned code and explicit collectives. Or you can do a bit of both: take manual control across groups of devices while leaving within-group device partitioning up to the compiler. The two approaches can be mixed, matched, and composed as needed.
+`shard_map` is complementary to, and composable with, the automatic compiler-based parallelization built into `jit`. With `jit` you write code as if for a single device, and [the compiler can automatically partition computation over multiple devices](https://docs.jax.dev/en/latest/parallel.html), generating per-device code and communication collectives behind the scenes. With `shard_map` you take control, writing your own partitioned code and explicit collectives. Or you can do a bit of both: take manual control across groups of devices while leaving within-group device partitioning up to the compiler. The two approaches can be mixed, matched, and composed as needed.
 
 If you're familiar with `pmap`, think of `shard_map` as an evolution. It's more expressive, performant, and composable with other JAX APIs. It even works eagerly, for easier debugging! (For more, see [a detailed comparison to `pmap`.](https://docs.jax.dev/en/latest/jep/14273-shard-map.html#why-don-t-pmap-or-xmap-already-solve-this))
 
@@ -399,14 +399,14 @@ x = jax.device_put(jnp.arange(6.), P('i'))
 f(x)
 ```
 
-In general, each intermediate value in a `shard_map` can be either unvarying or
+In general, each intermediate value in a `shard_map` can be either invarying or
 possibly-varying over each manual mesh axis. That information can be tracked in
 the JAX type system, enabled by the `check_vma=True` argument to `shard_map`:
 
 ```{code-cell}
 @jax.shard_map(in_specs=P('i'), out_specs=P())
 def f(x):
-  print(jax.typeof(x))  # f32[3]{i}
+  print(jax.typeof(x))  # f32[3]{V:i}
   y = jax.lax.psum(x, 'i')
   print(jax.typeof(y))  # f32[3]
   return y
@@ -415,11 +415,11 @@ x = jax.device_put(jnp.arange(6.), P('i'))
 f(x)
 ```
 
-Here, the type `f32[3]{i}` means that the value of `x` is varying over mesh
-axis `'i'`. The type of `y` printing as `f32[3]` indicates it is unvarying over
+Here, the type `f32[3]{V:i}` means that the value of `x` is varying over mesh
+axis `'i'`. The type of `y` printing as `f32[3]` indicates it is invarying over
 all mesh axes; that is, empty sets are not printed. We call this part of the
-type the _varying manual axes_ (VMA), and it can be accessed via
-`jax.typeof(x).vma`.
+type the _manual axis type_, and it can be accessed via
+`jax.typeof(x).manual_axis_type.varying`.
 
 In general, the VMA type of a value can include any subset of the manual mesh
 axes over which the `shard_map` is acting:
@@ -430,10 +430,10 @@ jax.set_mesh(mesh)
 
 @jax.shard_map(in_specs=P('i', 'j'), out_specs=P('i'))
 def f(x):
-  print(jax.typeof(x))  # f32[2,2]{i,j}
+  print(jax.typeof(x))  # f32[2,2]{V:(i,j)}
   y = jax.lax.psum(x, 'j')
-  assert jax.typeof(y).vma == {'i'}
-  print(jax.typeof(y))  # f32[2,2]{i}
+  assert jax.typeof(y).manual_axis_type.varying == {'i'}
+  print(jax.typeof(y))  # f32[2,2]{V:i}
   return y
 
 x = jax.device_put(jnp.arange(8 * 4.).reshape(8, 4), P('i', 'j'))
@@ -468,7 +468,7 @@ With `check_vma=True` (the default) it raises an exception, while with
 `check_vma=False` there is no exception and instead we get silent undefined
 behavior.
 
-Sometimes we want to treat a value that is unvarying over a mesh axis as
+Sometimes we want to treat a value that is invarying over a mesh axis as
 varying over that mesh axis. That's what `jax.lax.pcast` does:
 
 ```{code-cell}
@@ -486,9 +486,9 @@ Think of `jax.lax.pcast(..., to='varying')` as applying a
 type cast: it's a no-op at runtime,
 though under reverse-mode autodiff it transposes to a `jax.lax.psum` (see
 [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)). That
-makes sense because they do opposite things to the VMA: where `y: f32[3]{i} =
+makes sense because they do opposite things to the VMA: where `y: f32[3]{V:i} =
 jax.lax.pcast(x: f32[3], 'i', to='varying')`,
-we correspondingly have `x_grad: f32[3] = jax.lax.psum(y_grad: f32[3]{i}, 'i')`.
+we correspondingly have `x_grad: f32[3] = jax.lax.psum(y_grad: f32[3]{V:i}, 'i')`.
 
 JAX implicitly inserts `jax.lax.pcast(..., to='varying')` calls in many cases,
 especially for binary operations:
@@ -503,7 +503,7 @@ y = jnp.arange(3.)
 print(jax.make_jaxpr(f)(x, y))
 ```
 
-In a jaxpr, the multiplication operation requires the VMA types of its
+In a jaxpr, the multiplication operation requires the varying bits of its
 arguments to match, but for convenience the `jax.numpy` and `jax.lax` APIs
 automatically apply `jax.lax.pcast(..., to='varying')` to make argument VMA
 types agree. In a jaxpr, these `jax.lax.pcast` calls show up as `pvary` since
@@ -1319,7 +1319,7 @@ params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 
 Compare these examples with the purely [automatic partitioning examples in the
 "Distributed arrays and automatic partitioning"
-doc](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html).
+doc](https://docs.jax.dev/en/latest/parallel.html).
 While in those automatic partitioning examples we don't need to edit the model
 functions to use different parallelization strategies, with `shard_map` we
 often do.

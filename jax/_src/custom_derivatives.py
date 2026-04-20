@@ -22,7 +22,6 @@ from typing import Any, Generic, TypeVar
 from jax._src import config
 from jax._src import core
 from jax._src import custom_api_util
-from jax._src.custom_transpose import custom_transpose
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
@@ -39,7 +38,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import pxla
 from jax._src.interpreters.batching import not_mapped
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
@@ -258,7 +256,7 @@ class custom_jvp(Generic[ReturnValue]):
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_jvp.__call__")
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
     primal_name = debug.func_name
@@ -300,7 +298,7 @@ class custom_jvp(Generic[ReturnValue]):
     flat_fun, out_type1 = _flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_type2 = _flatten_jvp(jvp, primal_name, debug_jvp.func_name,
                                        in_tree, out_type1)
-    out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat,
+    out_flat = custom_jvp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_jvp),
                                       symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
@@ -387,9 +385,10 @@ class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
-    fun, jvp, tracers = args[0], args[1], args[2:]
-    return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
+  def bind_with_trace(self, trace, args, avals, params, /):
+    params = dict(params)
+    fun, jvp = params.pop('subfuns')
+    return trace.process_custom_jvp_call(self, fun, jvp, args, **params)
 
   def impl(self, fun, _, *args):
     raise NotImplementedError
@@ -397,12 +396,13 @@ class CustomJVPCallPrimitive(core.Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    num_consts: int = new_params.pop('num_consts')  # pyrefly: ignore[bad-assignment]  # pyrefly#2449
+    num_consts: int = new_params.pop('num_consts')
     jvp_jaxpr_fun = new_params.pop('jvp_jaxpr_fun')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    jvp = lift_jvp(num_consts, jvp_jaxpr_fun)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
-    return [fun, jvp], new_params
+    jvp = lift_jvp(num_consts, jvp_jaxpr_fun)
+    new_params['subfuns'] = (fun, jvp)
+    return new_params
 
 def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
   def jvp(*xs):
@@ -554,7 +554,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
     if config.custom_vjp3.value:
-      from jax._src.hijax import custom_vjp3  # pytype: disable=import-error
+      from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
       return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
     else:
       return super().__new__(cls)
@@ -686,7 +686,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)
     if not self.fwd or not self.bwd:
@@ -713,42 +713,36 @@ class custom_vjp(Generic[ReturnValue]):
           symbolic_zeros=self.symbolic_zeros)
     else:
       fwd = self.fwd
-    if config.enable_custom_vjp_by_custom_transpose.value:
-      if self.nondiff_argnums:
-        raise NotImplementedError(
-            'nondiff_argnums not implemented for new custom_vjp')
-      return custom_vjp_by_custom_transpose(self.fun, self.fwd, self.bwd)(*args)
+    if self.nondiff_argnums:
+      for i in self.nondiff_argnums: _check_for_tracers(args[i])
+      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      f_, dyn_args = argnums_partial(
+          lu.wrap_init(self.fun, debug_info=debug_fun), dyn_argnums,
+          args, require_static_args_hashable=False)
+      static_args = [args[i] for i in self.nondiff_argnums]
+      fwd_, _ = argnums_partial(lu.wrap_init(fwd, debug_info=debug_fwd),
+                                dyn_argnums, args,
+                                require_static_args_hashable=False)
+      bwd = prepend_static_args(lu.wrap_init(self.bwd, debug_info=debug_bwd),
+                                static_args)
     else:
-      if self.nondiff_argnums:
-        for i in self.nondiff_argnums: _check_for_tracers(args[i])
-        dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
-        f_, dyn_args = argnums_partial(
-            lu.wrap_init(self.fun, debug_info=debug_fun), dyn_argnums,
-            args, require_static_args_hashable=False)
-        static_args = [args[i] for i in self.nondiff_argnums]
-        fwd_, _ = argnums_partial(lu.wrap_init(fwd, debug_info=debug_fwd),
-                                  dyn_argnums, args,
-                                  require_static_args_hashable=False)
-        bwd = prepend_static_args(lu.wrap_init(self.bwd, debug_info=debug_bwd),
-                                  static_args)
-      else:
-        f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug_fun), args
-        fwd_ = lu.wrap_init(fwd, debug_info=debug_fwd)
-        bwd = lu.wrap_init(self.bwd, debug_info=debug_bwd)
-      args_flat, in_tree = tree_flatten(dyn_args)
-      in_avals = [core.typeof(x) for x in args_flat]
-      if config.mutable_array_checks.value:
-        f_ = _check_primal_refs(f_, self.nondiff_argnums, f_.debug_info)
-      flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-      flat_fwd, out_trees = _flatten_fwd(
-          fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
-          debug_fwd, in_tree, out_type)
-      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
-      out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
-                                        *args_flat, out_trees=out_trees,
-                                        symbolic_zeros=self.symbolic_zeros)
-      _, (out_tree, _, _) = lu.merge_linear_aux(out_type, out_trees)
-      return tree_unflatten(out_tree, out_flat)
+      f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug_fun), args
+      fwd_ = lu.wrap_init(fwd, debug_info=debug_fwd)
+      bwd = lu.wrap_init(self.bwd, debug_info=debug_bwd)
+    args_flat, in_tree = tree_flatten(dyn_args)
+    in_avals = [core.typeof(x) for x in args_flat]
+    if config.mutable_array_checks.value:
+      f_ = _check_primal_refs(f_, self.nondiff_argnums, f_.debug_info)
+    flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
+    flat_fwd, out_trees = _flatten_fwd(
+        fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
+        debug_fwd, in_tree, out_type)
+    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
+    out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
+                                      out_trees=out_trees,
+                                      symbolic_zeros=self.symbolic_zeros)
+    _, (out_tree, _, _) = lu.merge_linear_aux(out_type, out_trees)
+    return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation2
 def _check_primal_refs(
@@ -945,10 +939,10 @@ def _flatten_bwd(f: Callable,
            "number of arguments to the primal function, but got bwd output "
            "structure {} for primal input structure {}.")
     raise TypeError(msg.format(in_tree2, in_tree)) from None
-  results = []
+  results: list[Any] = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
-    if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
-      results.append(Zero(a.to_tangent_aval()))
+    if ct is zero or getattr(a.to_ct_aval(), 'dtype') == dtypes.float0:
+      results.append(Zero(a.to_ct_aval()))
     elif type(ct) is SymbolicZero:
       if not core.typecompat(a.to_ct_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
@@ -993,9 +987,10 @@ class CustomVJPCallPrimitive(core.Primitive):
   multiple_results = True
   skip_canonicalization = True
 
-  def bind_with_trace(self, trace, args, params, /):
-    fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
-    return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
+  def bind_with_trace(self, trace, args, avals, params, /):
+    params = dict(params)
+    fun, fwd, bwd = params.pop('subfuns')
+    return trace.process_custom_vjp_call(self, fun, fwd, bwd, args, **params)
 
   def impl(self, fun, fwd, bwd, *args):
     raise NotImplementedError
@@ -1003,14 +998,15 @@ class CustomVJPCallPrimitive(core.Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    num_consts: int = new_params.pop('num_consts')  # pyrefly: ignore[bad-assignment]  # pyrefly#2449
+    num_consts: int = new_params.pop('num_consts')
     fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2449
+    fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
-    return [fun, fwd, bwd], new_params
+    new_params['subfuns'] = (fun, fwd, bwd)
+    return new_params
 
 def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
   def fwd(*args):
@@ -1077,7 +1073,7 @@ def _custom_vjp_call_dce(
       if used:
         all_cts.append(next(cts_))
       else:
-        ct_aval = aval.to_tangent_aval()
+        ct_aval = aval.to_ct_aval()
         if symbolic_zeros:
           all_cts.append(SymbolicZero(ct_aval))
         else:
@@ -1195,7 +1191,7 @@ def custom_gradient(fun):
     debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
                                                       debug_info=debug_fwd), out_tree)
-    ans_avals = [core.typeof(x).to_tangent_aval() for x in ans_flat]
+    ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
@@ -1415,11 +1411,11 @@ def linear_call(fun: Callable,
   ...   def t(_, t): return 7.
   ...   return linear_call(f, t, (), x)
   >>> custom_id(1.)
-  1.0
+  TypedFloat(1.0, dtype=float32)
   >>> transpose(custom_id, 1.)(1.)
   TypedFloat(7.0, dtype=float32)
   >>> transpose(transpose(custom_id, 1.), 1.)(1.)
-  1.0
+  TypedFloat(1.0, dtype=float32)
   >>> transpose(transpose(transpose(custom_id, 1.), 1.), 1.)(1.)
   TypedFloat(7.0, dtype=float32)
 
@@ -1541,7 +1537,6 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
-pxla.register_initial_style_primitive(linear_call_p)
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
@@ -1600,20 +1595,6 @@ disallow_jvp = partial(
     unreachable,
     exc_type=TypeError,
     message="can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
-
-
-def custom_vjp_by_custom_transpose(fun, fwd, bwd):
-  fun = custom_jvp(fun)
-
-  @fun.defjvp
-  def jvp(primals, tangents):
-    outs, residuals = fwd(*primals)
-    tan_out_types = tree_map(lambda o: core.typeof(o).to_tangent_aval(), outs)
-    tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
-    tan_fn.def_transpose(bwd)
-    return outs, tan_fn(tan_out_types, residuals, tangents)
-
-  return fun
 
 
 # TODO(mattjj): remove these stubs, which exist to avoid breaking internal users
@@ -1768,12 +1749,12 @@ def _remat_opt_jvp(
   tangents = map(ad.instantiate_zeros, tangents)
   consts_nz = [not isinstance(t, Zero) for t in consts_dot]
   consts_dot = [c for nz, c in zip(consts_nz, consts_dot) if nz]
-  in_nz = consts_nz + [True] * len(tangents)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  in_nz = consts_nz + [True] * len(tangents)
   fwd_jaxpr_jvp_, out_nz = ad.jvp_jaxpr(fwd_jaxpr, in_nz, True)
   num_out = len(out_nz) - num_res
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
-      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
 
   # @pe._memoize
@@ -1849,7 +1830,6 @@ remat_opt_p = core.Primitive("remat_opt")
 remat_opt_p.multiple_results = True
 remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
-pxla.register_initial_style_primitive(remat_opt_p)
 mlir.register_lowering(remat_opt_p, mlir.lower_fun(
     _remat_opt_impl, multiple_results=True))
 

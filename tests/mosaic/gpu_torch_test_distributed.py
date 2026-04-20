@@ -25,7 +25,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 import jax.numpy as jnp
 import numpy as np
 import jax.experimental.mosaic.gpu as mgpu
@@ -36,14 +36,14 @@ try:
 except ImportError:
   torch = None
 
-
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 
 
 class TorchTest(parameterized.TestCase):
 
   def setUpClass():
+    if jtu.test_device_matches(["rocm"]):
+      raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
     torch.cuda.set_device("cuda:0")
     torch.set_default_device("cuda")
     if torch is None:

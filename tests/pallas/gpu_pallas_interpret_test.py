@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import functools
+import math
 from typing import Any
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
-
 
 jax.config.parse_flags_with_absl()
 
@@ -58,7 +59,7 @@ class InterpretTest(jtu.JaxTestCase):
       return pl.pallas_call(
           _kernel,
           out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-          interpret=mosaic_interpret.InterpretParams(detect_races=True),
+          interpret=InterpretParams(detect_races=True),
       )()
 
     np.testing.assert_equal(kernel(), np.array([42], dtype=jnp.int32))
@@ -72,7 +73,7 @@ class InterpretTest(jtu.JaxTestCase):
 
       @pl.core_map(
           mesh,
-          interpret=mosaic_interpret.InterpretParams(detect_races=True),
+          interpret=InterpretParams(detect_races=True),
       )
       def _():
         thread_idx = jax.lax.axis_index('x')
@@ -89,7 +90,7 @@ class InterpretTest(jtu.JaxTestCase):
 
       @pl.core_map(
           mesh,
-          interpret=mosaic_interpret.InterpretParams(detect_races=True),
+          interpret=InterpretParams(detect_races=True),
       )
       def _():
         thread_idx = jax.lax.axis_index('x')
@@ -105,7 +106,7 @@ class InterpretTest(jtu.JaxTestCase):
         out_shape=jax.ShapeDtypeStruct((num_threads,), jnp.int32),
         num_threads=num_threads,
         thread_name='x',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
     def _kernel(o_ref):
       thread_idx = jax.lax.axis_index('x')
@@ -126,7 +127,7 @@ class InterpretTest(jtu.JaxTestCase):
       return pl.pallas_call(
           matmul_kernel,
           out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype),
-          interpret=mosaic_interpret.InterpretParams(
+          interpret=InterpretParams(
               skip_floating_point_ops=True
           ),
       )(x, y)
@@ -176,7 +177,7 @@ class InterpretTest(jtu.JaxTestCase):
           ),
           num_threads=num_threads,
           thread_name='t',
-          interpret=mosaic_interpret.InterpretParams(
+          interpret=InterpretParams(
               detect_races=True, num_cores_or_threads=num_threads
           ),
       )
@@ -215,12 +216,11 @@ class InterpretTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       def inner(o_ref):
+
         @pl.core_map(
             mesh,
-            interpret=mosaic_interpret.InterpretParams(
-                detect_races=True,
-            ),
-        )  # type: ignore[wrong-arg-types]
+            interpret=InterpretParams(detect_races=True),
+        )
         def _():
           def body(ref):
             @pl.when(jax.lax.axis_index('n') == 0)
@@ -268,7 +268,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=2,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
     def _kernel(x_ref, out_ref, smem_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -301,7 +301,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=num_threads,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, smem_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -333,7 +333,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=num_threads,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, smem_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -380,7 +380,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=2,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(
+        interpret=InterpretParams(
             detect_races=True, skip_floating_point_ops=skip_floating_point_ops
         ),
     )
@@ -443,7 +443,7 @@ class InterpretTest(jtu.JaxTestCase):
         scratch_shapes=(plgpu.Barrier(),),
         num_threads=1,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -460,7 +460,7 @@ class InterpretTest(jtu.JaxTestCase):
         scratch_shapes=(plgpu.Barrier(num_barriers=2),),
         num_threads=1,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       plgpu.barrier_arrive(barrier_ref)
@@ -483,7 +483,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=3,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -515,7 +515,7 @@ class InterpretTest(jtu.JaxTestCase):
         plgpu.kernel,
         out_shape=jax.ShapeDtypeStruct((), jnp.int32),
         scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       plgpu.barrier_arrive(barrier_ref)
@@ -535,7 +535,7 @@ class InterpretTest(jtu.JaxTestCase):
         plgpu.kernel,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
         scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
         num_threads=2,
         thread_name='t',
     )
@@ -570,7 +570,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=num_threads,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -594,7 +594,7 @@ class InterpretTest(jtu.JaxTestCase):
         scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
         num_threads=2,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -626,7 +626,7 @@ class InterpretTest(jtu.JaxTestCase):
         ),
         num_threads=3,
         thread_name='t',
-        interpret=mosaic_interpret.InterpretParams(),
+        interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
       thread_id = jax.lax.axis_index('t')
@@ -693,7 +693,7 @@ class InterpretTest(jtu.JaxTestCase):
         grid_names=('w', 'x', 'y'),
         num_threads=num_threads,
         thread_name='z',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
 
     y = kernel(a)
@@ -745,7 +745,7 @@ class InterpretTest(jtu.JaxTestCase):
         grid_names=_maybe_reverse(('x', 'y'), swap_grid_axes),
         num_threads=z_iters,
         thread_name='z',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
 
     expected = a + b
@@ -822,7 +822,7 @@ class InterpretTest(jtu.JaxTestCase):
         grid_names=_maybe_reverse(('m', 'n'), swap_grid_axes),
         num_threads=k_iters,
         thread_name='k',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
 
     expected = a @ b
@@ -875,11 +875,258 @@ class InterpretTest(jtu.JaxTestCase):
         grid_names=('m', 'n'),
         num_threads=k_iters,
         thread_name='k',
-        interpret=mosaic_interpret.InterpretParams(detect_races=True),
+        interpret=InterpretParams(detect_races=True),
     )
 
     kernel(a, b)
     self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_single_thread(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(in_gmem, smem, barrier)
+      if not with_race:
+        plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM(x.shape, x.dtype)
+        ),
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_two_threads(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        plgpu.copy_gmem_to_smem(in_gmem, smem, barrier)
+
+      @pl.when(tid == 1)
+      def _():
+        if not with_race:
+          plgpu.barrier_wait(barrier)
+        out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(),
+            smem=plgpu.SMEM(x.shape, x.dtype),
+        ),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_parallel_two_threads(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+
+    def _kernel(in_gmem, out_gmem, per_thread_barrier, smem0, smem1):
+      tid = jax.lax.axis_index('t')
+
+      def _per_thread_kernel(smem):
+        plgpu.copy_gmem_to_smem(in_gmem, smem, per_thread_barrier.at[tid])
+        if not with_race:
+          plgpu.barrier_wait(per_thread_barrier.at[tid])
+        out_gmem[tid, ...] = smem[tid, ...]
+
+      # TODO(nrink): Investigate why this does not work with a single SMEM
+      # buffer and `smem.at[0]` and `smem.at[1]`.
+      pl.when(tid == 0)(functools.partial(_per_thread_kernel, smem=smem0))
+      pl.when(tid == 1)(functools.partial(_per_thread_kernel, smem=smem1))
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            per_thread_barrier=plgpu.Barrier(num_barriers=2),
+            smem0=plgpu.SMEM(x.shape, x.dtype),
+            smem1=plgpu.SMEM(x.shape, x.dtype),
+        ),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    y = kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x)
+
+  @jtu.parameterized.product(num_tma_threads_per_device=[1, 2, 3, 4])
+  def test_copy_gmem_to_smem_multiple_tma_threads(
+      self, num_tma_threads_per_device
+  ):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+    y = 2 * x
+
+    def _kernel(gmem0, gmem1, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(gmem0, smem, barrier.at[0])
+      plgpu.copy_gmem_to_smem(gmem1, smem, barrier.at[1])
+      plgpu.barrier_wait(barrier.at[0])
+      plgpu.barrier_wait(barrier.at[1])
+      out_gmem[...] = gmem0[...] + gmem1[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=InterpretParams(
+            detect_races=True,
+            num_tma_threads_per_device=num_tma_threads_per_device,
+        ),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(num_barriers=2),
+            smem=plgpu.SMEM(x.shape, x.dtype),
+        ),
+    )
+
+    z = kernel(x, y)
+    if num_tma_threads_per_device == 1:
+      # With only one (simulated) TMA thread, the two GMEM-to-SMEM copies are
+      # effectively forced to be executed sequentially. More precisely, the
+      # resulting vector clocks are necessarily (fully linearly) ordered (since
+      # there is only one slot for the single TMA thread in the vector clock).
+      # Hence, we do not detect a race.
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(z, x + y)
+    else:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_copy_gmem_to_smem_multiple_arrivals_at_barrier(self, with_race):
+    x = jnp.arange(16, dtype=jnp.int32).reshape((2, 8))
+    y = 2 * x
+
+    def _kernel(gmem0, gmem1, out_gmem, barrier, smem0, smem1):
+      plgpu.copy_gmem_to_smem(gmem0, smem0, barrier)
+      plgpu.copy_gmem_to_smem(gmem1, smem1, barrier)
+      if not with_race:
+        plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem0[...] + smem1[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=InterpretParams(detect_races=True),
+        scratch_shapes=dict(
+            barrier=plgpu.Barrier(num_arrivals=2),
+            smem0=plgpu.SMEM(x.shape, x.dtype),
+            smem1=plgpu.SMEM(x.shape, x.dtype),
+        ),
+    )
+
+    z = kernel(x, y)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(z, x + y)
+
+  @jtu.parameterized.product(
+      grid_dict=[
+          None,
+          dict(g0=1),
+          dict(g0=2, g1=3),
+      ],
+      cluster_dict=[
+          None,
+          dict(c0=2),
+          dict(c0=2, c1=3),
+          dict(c0=2, c1=3, c2=2),
+      ],
+      thread_dict=[
+          None,
+          dict(t=1),
+          dict(t=3),
+      ],
+  )
+  def test_cluster(self, grid_dict, cluster_dict, thread_dict):
+    if cluster_dict is None and thread_dict is None and grid_dict is None:
+
+      def kernel(o_ref):
+        o_ref[...] = 42
+
+      y = plgpu.kernel(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          interpret=InterpretParams(detect_races=True),
+      )()
+
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      self.assertEqual(y, 42)
+      return
+
+    mesh_kwargs = {}
+    axes_dims = ()
+    axes_names = ()
+    if grid_dict is not None:
+      mesh_kwargs['grid'] = tuple(grid_dict.values())
+      mesh_kwargs['grid_names'] = tuple(grid_dict.keys())
+      axes_dims += tuple(grid_dict.values())
+      axes_names += tuple(grid_dict.keys())
+    if cluster_dict is not None:
+      mesh_kwargs['cluster'] = tuple(cluster_dict.values())
+      mesh_kwargs['cluster_names'] = tuple(cluster_dict.keys())
+      axes_dims += tuple(cluster_dict.values())
+      axes_names += tuple(cluster_dict.keys())
+    if thread_dict is not None:
+      (thread_name, num_threads), = thread_dict.items()
+      mesh_kwargs['num_threads'] = num_threads
+      mesh_kwargs['thread_name'] = thread_name
+      axes_dims += (num_threads,)
+      axes_names += (thread_name,)
+    mesh = plgpu.Mesh(**mesh_kwargs)
+    out_shape = axes_dims
+
+    @pl.run_state
+    def kernel(o_ref):
+      @pl.core_map(
+          mesh,
+          interpret=InterpretParams(detect_races=True),
+      )
+      def _():
+        flat_thread_id = jnp.int32(0)
+        for i, name in enumerate(axes_names):
+          stride = math.prod(axes_dims[i + 1 :])
+          flat_thread_id += jax.lax.axis_index(name) * stride
+        thread_idx = tuple(jax.lax.axis_index(name) for name in axes_names)
+
+        o_ref[thread_idx] = flat_thread_id
+
+    expected = np.arange(
+        math.prod(out_shape), dtype=jnp.int32
+    ).reshape(out_shape)
+    y = kernel(jnp.zeros(out_shape, jnp.int32))
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_array_equal(y, expected)
 
 
 if __name__ == '__main__':

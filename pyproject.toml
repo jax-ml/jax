@@ -41,29 +41,18 @@ doctest_optionflags = [
 addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
 
 [tool.pyrefly]
-# TODO(slebedev): Use 3.11 here.
-python-version = "3.12"
+python-version = "3.11"
 project-includes = [
     "jax/**/*.py*",
-    # "tests/**/*.py",
 ]
 project-excludes = [
+    "jax/_src/internal_test_util/export_back_compat_test_data/*.py",
     "jax/example_libraries/**/*.py",
-    # TODO(slebedev): Opt in jax/experimental and remove these excludes.
-    "jax/experimental/*.py",
-    "jax/experimental/array_serialization/**/*.py",
-    "jax/experimental/colocated_python/**/*.py",
-    "jax/experimental/compilation_cache/**/*.py",
-    "jax/experimental/jax2tf/**/*.py",
-    "jax/experimental/key_reuse/**/*.py",
-    "jax/experimental/mosaic/**/*.py",
-    "jax/experimental/roofline/**/*.py",
-    "jax/experimental/slab/**/*.py",
-    "jax/experimental/souce_mapper/**/*.py",
-    "jax/experimental/sparse/**/*.py",
+    "jax/experimental/jax2tf/tests/**/*.py",
 ]
 ignore-missing-imports = [
     "absl.*",
+    "filelock.*",
     "flatbuffers.*",
     "flax.*",
     "google.colab.*",
@@ -88,13 +77,10 @@ ignore-missing-imports = [
     "tensorflow.*",
     "tensorflowjs.*",
     "tensorflow_serving.*",
-    "tensorstore.*",
     "web_pdb.*",
     "xprof.*",
     "zstandard.*",
 ]
-permissive-ignores = true
-# TODO(slebedev): Change this to "check-and-infer-return-type".
 untyped-def-behavior = "check-and-infer-return-any"
 
 [tool.ruff]

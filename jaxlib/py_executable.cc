@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
@@ -387,6 +388,13 @@ PyLoadedExecutable::PyLoadedExecutable(
 }
 
 PyLoadedExecutable::~PyLoadedExecutable() {
+  xla::ifrt::LoadedExecutable::DeleteOptions options;
+  options.deletion_stream_id = GetExecutionStreamId();
+  if (options.deletion_stream_id == 0) {
+    options.deletion_stream_id = tsl::Env::Default()->GetCurrentThreadId();
+  }
+  ifrt_loaded_executable_->SetDeleteOptions(options);
+
   CHECK(PyGILState_Check());
   nb::ft_lock_guard lock(client_->executables_mutex_);
   if (client_->executables_ == this) {

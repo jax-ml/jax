@@ -168,7 +168,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         return [x]
       dbg = api_util.debug_info("test", f_, (2.,), {})
       return core.call(
-          lu.wrap_init(f_, debug_info=dbg), x)[0]
+          x, subfuns=(lu.wrap_init(f_, debug_info=dbg),))[0]
     jaxpr = jax.make_jaxpr(f)(2.)
     self.assertIn(foo_effect, jaxpr.jaxpr.effects)
     self.assertIn(bar_effect, jaxpr.jaxpr.effects)
@@ -228,20 +228,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         bwd=lambda _, g: g)
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
       jax.make_jaxpr(f)(2.)
-
-  def test_pmap_inherits_effects(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Test does not raise under `pmap_shmap_merge=True`.")
-
-    @jax.pmap
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=bar_effect)
-      return x
-    with self.assertRaisesRegex(
-        ValueError,
-        r"Ordered effects not supported for map primitives: \[.*\]"):
-      jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_jit_inherits_effects(self):
     def f(x):
@@ -529,16 +515,16 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect=foo_effect)
       return x + 1
-    if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.skipTest("This test won't raise with 1 device.")
-      if jtu.device_under_test() == "gpu":
-        self.skipTest("Test does not raise under GPU.")
-      if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
-        self.skipTest("Test does not raise under TPU v4+.")
-      regex = r"The following ordered effects are not supported for more than 1 device: \[foo\]"
-    else:
-      regex = r"Ordered effects not supported for map primitives: \[foo\]"
+    if jax.device_count() == 1:
+      self.skipTest("This test won't raise with 1 device.")
+    if jtu.device_under_test() == "gpu":
+      self.skipTest("Test does not raise under GPU.")
+    if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
+      self.skipTest("Test does not raise under TPU v4+.")
+    regex = (
+        r"The following ordered effects are not supported for more than 1"
+        r" device: \[foo\]"
+    )
     with self.assertRaisesRegex(ValueError, regex):
       f(jnp.arange(jax.device_count()))
 
@@ -671,16 +657,16 @@ class ParallelEffectsTest(jtu.JaxTestCase):
       # foo is lowerable and ordered
       effect_p.bind(effect=foo_effect)
       return x
-    if config.pmap_shmap_merge.value:
-      if jax.device_count() == 1:
-        self.skipTest("This test won't raise with 1 device.")
-      if jtu.device_under_test() == "gpu":
-        self.skipTest("Test does not raise under GPU.")
-      if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
-        self.skipTest("Test does not raise under TPU v4+.")
-      regex = r"The following ordered effects are not supported for more than 1 device: \[foo\]"
-    else:
-      regex = "Ordered effects not supported in `pmap`."
+    if jax.device_count() == 1:
+      self.skipTest("This test won't raise with 1 device.")
+    if jtu.device_under_test() == "gpu":
+      self.skipTest("Test does not raise under GPU.")
+    if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
+      self.skipTest("Test does not raise under TPU v4+.")
+    regex = (
+        r"The following ordered effects are not supported for more than 1"
+        r" device: \[foo\]"
+    )
     with self.assertRaisesRegex(
         ValueError, regex):
       jax.pmap(f)(jnp.arange(jax.local_device_count()))

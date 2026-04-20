@@ -105,7 +105,7 @@ class StatefulPRNG:
       raise ValueError("cannot operate on split stateful generator")
 
     key = random.fold_in(self._base_key, ref_primitives.ref_get(self._counter))
-    ref_primitives.ref_addupdate(self._counter, ..., 1)  # pytype: disable=wrong-arg-types  # pytype bug?
+    ref_primitives.ref_addupdate(self._counter, ..., 1)
     shape_tuple = _canonicalize_size(shape)
     return random.split(key, shape_tuple) if shape_tuple else key
 
@@ -189,7 +189,7 @@ class StatefulPRNG:
       _counter=ref.new_ref(jnp.zeros(num, dtype=int))
     )
 
-  def spawn(self, n_children: int) -> list['StatefulPRNG']:
+  def spawn(self, n_children: int) -> list[StatefulPRNG]:
     """Create a list of independent child generators.
 
     Args:

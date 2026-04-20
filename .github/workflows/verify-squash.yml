@@ -1,0 +1,62 @@
+name: Verify Squashed Commits
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  verify-squash:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check commit count
+        id: check-commits
+        shell: bash
+        env:
+          MAX_COMMITS: 1
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SKIP_LABEL: 'skip-squash-check'
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          # Check if the skip label is present
+          if echo "$PR_LABELS" | grep -q "\"name\": \"$SKIP_LABEL\""; then
+            echo "Skip label '$SKIP_LABEL' found. Bypassing squash check."
+            exit 0
+          fi
+
+          # Get base and head refs from GitHub context
+          if [ -z "$PR_BASE_SHA" ]; then
+            echo "::error::This action must be run on a pull request event"
+            exit 1
+          fi
+
+          BASE_SHA="$PR_BASE_SHA"
+          HEAD_SHA="$PR_HEAD_SHA"
+
+          # Fetch the base branch to ensure we have the commits
+          git fetch origin "$PR_BASE_REF"
+
+          # Count commits in the PR using git
+          COMMIT_COUNT=$(git rev-list --count "$BASE_SHA..$HEAD_SHA")
+
+          echo "Found $COMMIT_COUNT commit(s) in PR"
+
+          # Check if squashed
+          if [ "$COMMIT_COUNT" -le "$MAX_COMMITS" ]; then
+            echo "PR is squashed ($COMMIT_COUNT commit(s), max allowed: $MAX_COMMITS)"
+          else
+            echo "::error::PR is not squashed ($COMMIT_COUNT commit(s), max allowed: $MAX_COMMITS)"
+            echo "::error::Please squash your commits before merging"
+            echo "::error::For more information, see: https://docs.jax.dev/en/latest/contributing.html#single-change-commits-and-pull-requests"
+            exit 1
+          fi

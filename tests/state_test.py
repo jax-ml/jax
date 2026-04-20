@@ -23,6 +23,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 import jax
+from jax.sharding import AxisType, PartitionSpec as P
 from jax import api_util
 from jax import random
 from jax import lax
@@ -32,6 +33,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.state import types as state_types
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
@@ -49,13 +51,19 @@ from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
                                   AccumEffect, AbstractRef)
 
 config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 
 def wrap_init(f: Callable, nr_args: int):
   # wrapper for lu.wrap_init with debugging info
   return lu.wrap_init(
       f,
       debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
+
+_cond = lambda fn: lambda *args: jax.lax.cond(jnp.array(True), fn, fn, *args)
+
+def _shard_map(fn, out_specs):
+  mesh = jax.make_mesh((jax.device_count(),), ("x",), axis_types=(AxisType.Explicit,))
+  return jax.shard_map(fn, out_specs=out_specs, mesh=mesh)
 
 
 class StatePrimitivesTest(jtu.JaxTestCase):
@@ -980,7 +988,7 @@ def _pack_idx(non_slice_idx: Sequence[int | np.ndarray],
   assert next(idx_, None) is None
   return idx
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class StateHypothesisTest(jtu.JaxTestCase):
 
   @hp.given(get_vmap_params())
@@ -1403,9 +1411,8 @@ class StateControlFlowTest(jtu.JaxTestCase):
     def f(x):
       y_ref = jax.new_ref(jnp.zeros_like(x))
       g_ = partial(g, y_ref)
-      return prim.bind(
-          lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {})), x
-      )[0]
+      sub = lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {}))
+      return prim.bind(x, subfuns=(sub,))[0]
     out = f(4.)
     np.testing.assert_array_equal(out, jnp.exp(4.))
 
@@ -1443,9 +1450,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
     expected = jnp.zeros(7).at[1:6].add(17.0)
     self.assertAllClose(f(), expected)
 
-  @parameterized.named_parameters(
-    ("vmap", "vmap"), ("jit", "jit"), ("remat", "remat"), ("scan", "scan"),
-    ("while_loop", "while_loop"), ("cond", "cond"), ("shard_map", "shard_map"))
+  @parameterized.named_parameters(("vmap", "vmap"))
   def test_no_transformed_ref_in(self, transform):
     def scan_fn(fn):
       return lambda *args: jax.lax.scan(
@@ -1477,6 +1482,116 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return x_ref[...]
     with self.assertRaisesRegex(TypeError, "TransformedRefs are not allowed"):
       f()
+
+  @parameterized.named_parameters(("jit", "jit"), ("remat", "remat"),
+                                  ("shard_map", "shard_map"))
+  def test_transformed_ref_in_jit_remat_shard_map(self, transform):
+    transform = {"jit": jax.jit, "remat": jax.remat,
+                 "shard_map": partial(_shard_map, out_specs=None)}[transform]
+    @jax.jit
+    def f():
+      x_ref = jax.new_ref(jnp.zeros(7))
+      x_ref_view = x_ref.at[1:6]
+      @transform
+      def inner(x_ref_view):
+        x_ref_view[...] += 17 * jnp.ones((5,))
+      inner(x_ref_view)
+      return x_ref[...]
+    expected = jnp.zeros(7).at[1:6].add(17.0)
+    self.assertAllClose(f(), expected)
+
+  def test_transformed_ref_in_cond(self):
+    @jax.jit
+    def f(pred):
+      x_ref = jax.new_ref(jnp.zeros(7))
+      x_ref_view = x_ref.at[1:6]
+      def true_fn(x_ref_view):
+        x_ref_view[...] += 17 * jnp.ones((5,))
+      def false_fn(x_ref_view):
+        x_ref_view[...] += 5 * jnp.ones((5,))
+      jax.lax.cond(pred, true_fn, false_fn, x_ref_view)
+      return x_ref[...]
+    expected_true = jnp.zeros(7).at[1:6].add(17.0)
+    expected_false = jnp.zeros(7).at[1:6].add(5.0)
+    self.assertAllClose(f(True), expected_true)
+    self.assertAllClose(f(False), expected_false)
+
+  @parameterized.named_parameters(
+      ("remat", jax.remat), ("cond", _cond), ("jit", jax.jit),
+      ("shard_map", partial(_shard_map, out_specs=P())))
+  def test_read_transformed_ref(self, transform):
+    @jax.jit
+    def f():
+      x_ref = jax.new_ref(jnp.arange(10, dtype=jnp.float32))
+      x_view = x_ref.at[2:7]
+      result = transform(lambda v: v[...])(x_view)
+      return result
+    expected = jnp.arange(10, dtype=jnp.float32)[2:7]
+    self.assertAllClose(f(), expected)
+
+  @parameterized.named_parameters(("false", False), ("true", True))
+  def test_cond_write_transformed_or_pure_ref(self, pure_ref):
+    x_ref = jax.new_ref(jnp.zeros(10, dtype=jnp.float32))
+    @jax.jit
+    def f(x_ref):
+      x_view = x_ref.at[2:7]
+      def body(v):
+        if pure_ref:
+          v[2:7] = jnp.ones_like(v[2:7])
+        else:
+          v[...] = jnp.ones_like(v)
+      if pure_ref:
+        _cond(body)(x_ref)
+      else:
+        _cond(body)(x_view)
+      return x_ref[...]
+    expected = jnp.zeros(10, dtype=x_ref.dtype).at[2:7].set(1.0)
+    self.assertAllClose(f(x_ref), expected)
+
+  def test_transformed_ref_in_jit_simple(self):
+    @jax.jit
+    def f():
+      x_ref = jax.new_ref(jnp.zeros(3))  # x_ref: Ref{f32[3]}
+      x_ref_view = x_ref.at[1]
+      inner({"x_ref_view": x_ref_view, "dummy": 1})
+
+    @jax.jit
+    def inner(x_ref_view_dict):
+      x_ref_view = x_ref_view_dict["x_ref_view"]
+      x_ref_view[...] = jnp.ones_like(x_ref_view)
+
+    print(f.trace().jaxpr)
+
+  @parameterized.named_parameters(
+      ("remat", jax.remat), ("cond", _cond), ("jit", jax.jit),
+      ("shard_map", partial(_shard_map, out_specs=None)))
+  def test_write_transformed_ref(self, transform):
+    @jax.jit
+    def f():
+      x_ref = jax.new_ref(jnp.zeros(10, dtype=jnp.float32))
+      x_view = x_ref.at[2:7]
+      def body(v):
+        v[...] = jnp.ones_like(v)
+      transform(body)(x_view)
+      return x_ref[...]
+    expected = jnp.zeros(10, dtype=jnp.float32).at[2:7].set(1.0)
+    self.assertAllClose(f(), expected)
+
+  @parameterized.named_parameters(
+      ("remat", jax.remat), ("cond", _cond), ("jit", jax.jit),
+      ("shard_map", partial(_shard_map, out_specs=None)))
+  def test_addupdate_transformed_ref(self, transform):
+    @jax.jit
+    def f():
+      x_ref = jax.new_ref(jnp.ones(10, dtype=jnp.float32))
+      x_view = x_ref.at[2:7]
+      def body(v):
+        v[...] += 1.0
+      transform(body)(x_view)
+      return x_ref[...]
+    expected = jnp.ones(10, dtype=jnp.float32).at[2:7].add(1.0)
+    self.assertAllClose(f(), expected)
+
 
 class GeneralRefTest(jtu.JaxTestCase):
 
@@ -1744,7 +1859,7 @@ def add_spec(draw, depth):
                   min_dim=max(f1.min_dim, f2.min_dim),
                   max_dim=min(f1.max_dim, f2.max_dim))
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class RunStateHypothesisTest(jtu.JaxTestCase):
 
   @jax.legacy_prng_key('allow')

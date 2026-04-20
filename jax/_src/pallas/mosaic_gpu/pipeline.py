@@ -52,16 +52,16 @@ AbstractRefPytree: TypeAlias = Sequence[
     Union[state.AbstractRef, "AbstractRefPytree"]
 ]
 
-def _get_block_size(
-    bd: pl.Blocked | pl.Element | pl.Squeezed | pl.BoundedSlice | int | None,
-) -> int:
+
+def _get_block_size(bd: pl.BlockDim | int | None) -> int:
   match bd:
     case int():
       return bd
-    case pl.Blocked(block_size):
-      return block_size
+    case pl.Blocked() | pl.Element():
+      return bd.block_size
     case _:
       raise NotImplementedError(f"Unsupported block size type: {type(bd)}")
+
 
 def _get_block_shape(spec: pallas_core.BlockSpec):
   if spec.block_shape is None:
@@ -110,6 +110,10 @@ class BufferedRef:
           return pl.Slice(block_index * bd, bd)
         case pl.Blocked(block_size):
           return pl.Slice(block_index * block_size, block_size)
+        case pl.Element(block_size, padding):
+          if padding != (0, 0):
+            raise NotImplementedError("Element dim with padding not supported.")
+          return pl.Slice(block_index, block_size)
         case None | pl.Squeezed():
           return block_index
         case _:
@@ -126,8 +130,8 @@ class BufferedRef:
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
-        self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
-        self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
+        self.gmem_ref.at[gmem_slices],
+        self.smem_ref.at[slot],
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
     )
@@ -138,9 +142,9 @@ class BufferedRef:
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
-        self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
+        self.smem_ref.at[slot],
         # pyrefly: ignore[bad-index]
-        self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
+        self.gmem_ref.at[gmem_slices],
         predicate=predicate,
         commit_group=False,
     )
@@ -187,7 +191,7 @@ def _inc_grid_by_1(
 
 
 def _in_smem(spec: pallas_core.BlockSpec) -> bool:
-  return spec.memory_space in (None, gpu_core.SMEM)
+  return spec.memory_space in (pallas_core.MemorySpace.DEFAULT, gpu_core.SMEM, None)
 
 def _downcast_spec(
     spec: gpu_core.BlockSpec | pallas_core.BlockSpec,
@@ -405,13 +409,10 @@ def emit_pipeline(
       ):
         fetch_step = step + (max_concurrent_steps - delay_release)
         fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
-
-        # pylint: disable=cell-var-from-loop
         def do_fetch():
           for bref in in_brefs:
             if getattr(bref.spec, "delay_release", 0) == delay_release:
               bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
-        # pylint: enable=cell-var-from-loop
 
         jax.lax.cond(
             lax.bitwise_and(step >= delay_release, fetch_step < num_steps),
@@ -1019,7 +1020,7 @@ def emit_pipeline_warp_specialized(
         for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
           if manual_consumed_barriers:
             assert consumed_barrier is not None
-            gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
+            gpu_primitives.barrier_wait(consumed_barrier.at[slot])
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
           bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
@@ -1047,8 +1048,8 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
-  # Mypy doesn't notice the .get_allocations assignment above.
-  return pipeline  # type: ignore
+  # Type checkers do not understand the get_allocations assignment above.
+  return pipeline  # pyrefly: ignore[bad-return]
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.

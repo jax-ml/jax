@@ -18,7 +18,7 @@ import builtins
 from collections.abc import Callable, Sequence
 import math
 import operator
-from typing import overload, Any, Literal, Protocol, Union
+from typing import overload, Any, Literal, Union
 
 import numpy as np
 
@@ -36,6 +36,7 @@ from jax._src.lax import parallel as lax_parallel
 from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
+from jax._src.numpy import indexing
 
 
 export = set_module('jax.numpy')
@@ -46,8 +47,9 @@ _all = builtins.all
 Axis = Union[int, Sequence[int], None]
 
 def _isscalar(element: Any) -> bool:
-  if hasattr(element, '__jax_array__'):
-    element = element.__jax_array__()
+  m = getattr(element, '__jax_array__', None)
+  if m is not None:
+    element = m()
   return dtypes.is_python_scalar(element) or np.isscalar(element)
 
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:
@@ -164,10 +166,12 @@ def _canonicalize_axis_allow_named(x, rank):
 def _reduction_dims(a: ArrayLike, axis: Axis):
   if axis is None:
     return (tuple(range(np.ndim(a))),) * 2
-  elif not isinstance(axis, (np.ndarray, tuple, list)):
-    axis = (axis,)  # type: ignore[assignment]
+  if not isinstance(axis, (np.ndarray, tuple, list)):
+    axes = (axis,)
+  else:
+    axes = axis
   canon_axis = tuple(_canonicalize_axis_allow_named(x, np.ndim(a))
-                     for x in axis)  # type: ignore[union-attr]
+                     for x in axes)
   if len(canon_axis) != len(set(canon_axis)):
     raise ValueError(f"duplicate value in 'axis': {axis}")
   canon_pos_axis = tuple(x for x in canon_axis if isinstance(x, int))
@@ -303,7 +307,6 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return _reduce_sum(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
                      keepdims=keepdims, initial=initial, where=where,
                      promote_integers=promote_integers)
-
 
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
@@ -743,7 +746,7 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   where = check_where("logsumexp", where)
   a_arr, = promote_dtypes_inexact(a)
   pos_dims, dims = _reduction_dims(a_arr, axis)
-  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
@@ -774,7 +777,7 @@ def amin(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
   """Alias of :func:`jax.numpy.min`."""
-  return min(a, axis=axis, out=out, keepdims=keepdims,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  return min(a, axis=axis, out=out, keepdims=keepdims,
              initial=initial, where=where)
 
 @export
@@ -782,17 +785,17 @@ def amax(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
   """Alias of :func:`jax.numpy.max`."""
-  return max(a, axis=axis, out=out, keepdims=keepdims,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  return max(a, axis=axis, out=out, keepdims=keepdims,
              initial=initial, where=where)
 
 def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
-  if not isinstance(axis, (tuple, list)):
-    axis_seq: Sequence[int] = (axis,)  # type: ignore[assignment]
+  if not isinstance(axis, Sequence):
+    axes = (axis,)
   else:
-    axis_seq = axis
+    axes = axis
   size = 1
   a_shape = np.shape(a)
-  for a in axis_seq:
+  for a in axes:
     size *= maybe_named_axis(a, lambda i: a_shape[i], lax_parallel.axis_size)
   return size
 
@@ -878,7 +881,7 @@ def _count(
       count = core.dimension_as_value(_axis_size(a, axis))
     count = lax.convert_element_type(count, dtype)
   else:
-    count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+    count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
   return count
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'upcast_f16_for_computation'),
@@ -911,19 +914,25 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   )
 
   return lax.div(
-      sum(a, axis, dtype=computation_dtype, keepdims=keepdims, where=where),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+      sum(a, axis, dtype=computation_dtype, keepdims=keepdims, where=where),
       normalizer,
   ).astype(result_dtype)
 
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
-            returned: Literal[False] = False, keepdims: bool = False) -> Array: ...
+            returned: Literal[False] = False, keepdims: bool = False) -> Array:
+  ...
+
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None, *,
-            returned: Literal[True], keepdims: bool = False) -> Array: ...
+            returned: Literal[True], keepdims: bool = False) -> Array:
+  ...
+
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
-            returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]: ...
+            returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
+  ...
+
 @export
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
@@ -1008,8 +1017,8 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
       new_shape = tuple(dim if i in axis_tuple else 1 for i, dim in enumerate(a.shape))
       weights = lax.reshape(weights, new_shape, dimensions=tuple(np.argsort(axis_tuple)))
 
-    weights_sum = sum(weights, axis=axis, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
-    avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+    weights_sum = sum(weights, axis=axis, keepdims=keepdims)
+    avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum
 
   if returned:
     if avg.shape != weights_sum.shape:
@@ -1142,7 +1151,7 @@ def _var(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None,
   )
 
   normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
-  result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
   result = lax.div(result, normalizer).astype(dtype)
   with config.debug_nans(False):
     result = _where(normalizer > 0, result, np.nan)
@@ -1364,7 +1373,7 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
            [3]], dtype=int32)
   """
   a = ensure_arraylike("count_nonzero", a)
-  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,
              dtype=dtypes.default_int_dtype(), keepdims=keepdims)
 
 
@@ -1380,7 +1389,7 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
   out = jnp_reduction(_where(lax._isnan(a), _reduction_init_val(a, init_val), a),
                       axis=axis, keepdims=keepdims, where=where, **kwargs)
   if nan_if_all_nan:
-    return _where(all(lax._isnan(a), axis=axis, keepdims=keepdims),  # pyrefly: ignore[unexpected-keyword]  # pyrefly#2385
+    return _where(all(lax._isnan(a), axis=axis, keepdims=keepdims),
                   lax._const(a, np.nan), out)
   else:
     return out
@@ -1810,7 +1819,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   else:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
   nan_mask = lax.bitwise_not(lax._isnan(a))
-  normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
   return td
 
@@ -1921,11 +1930,11 @@ def _nanvar(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out:
   else:
     centered = lax.square(centered)
 
-  normalizer = sum(lax.bitwise_not(lax._isnan(a)),  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  normalizer = sum(lax.bitwise_not(lax._isnan(a)),
                    axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
   normalizer_mask = lax.le(normalizer, lax._zero(normalizer))
-  result = sum(centered, axis, keepdims=keepdims, where=where)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  result = sum(centered, axis, keepdims=keepdims, where=where)
   result = _where(normalizer_mask, np.nan, result)
   divisor = _where(normalizer_mask, 1, normalizer)
   result = lax.div(result, lax.convert_element_type(divisor, result.dtype))
@@ -2016,11 +2025,6 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
                          keepdims=keepdims, where=where, mean=mean))
 
 
-class CumulativeReduction(Protocol):
-  def __call__(self, a: ArrayLike, axis: Axis = None,
-               dtype: DTypeLike | None = None, out: None = None) -> Array: ...
-
-
 def _cumulative_reduction(
     name: str, reduction: Callable[..., Array],
     a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None = None,
@@ -2032,6 +2036,10 @@ def _cumulative_reduction(
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported")
 
   if axis is None or _isscalar(a):
+    if not builtins.all(s is None for s in core.typeof(a).sharding.spec):
+      raise core.ShardingTypeError(
+          "The input should be fully replicated when axis is not specified to"
+          f" {name}. Got input type={core.typeof(a)}")
     a = lax.reshape(a, (np.size(a),))
   if axis is None:
     axis = 0
@@ -2375,7 +2383,7 @@ def cumulative_prod(
 @api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False) -> Array:
+             keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
   """Compute the quantile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.quantile`.
@@ -2392,6 +2400,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. optional array of weights associated with the values in ``a``.
+      Each value in ``a`` contributes to the quantile according to its
+      associated weight. The weights array must be broadcastable to the same
+      shape as ``a``. Only works with ``method="inverted_cdf"``.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2412,19 +2424,28 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
 
     >>> jnp.quantile(x, q, method='nearest')
     Array([2., 4., 7.], dtype=float32)
+
+    Computing weighted quantiles:
+
+    >>> x = jnp.array([1, 2, 3, 4, 5])
+    >>> weights = jnp.array([1, 1, 2, 1, 1])
+    >>> jnp.quantile(x, 0.5, weights=weights, method='inverted_cdf')
+    Array(3., dtype=float32)
   """
   a, q = ensure_arraylike("quantile", a, q)
+  if weights is not None:
+    weights = ensure_arraylike("quantile", weights)
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False)
+  return _quantile(a, q, axis, method, keepdims, False, weights)
 
 
 @export
 @api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False) -> Array:
+                keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2441,6 +2462,11 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. Optional array of weights for each element in `a`.
+      Values with higher weights contribute more to the quantile calculation.
+      The weights array must be broadcastable to the shape of `a` along the specified axis.
+      NaN values in `a` are ignored when computing the quantiles.
+      Weighted quantiles are currently only supported when `method="inverted_cdf"`.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2462,19 +2488,43 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     Array([nan, nan, nan], dtype=float32)
     >>> jnp.nanquantile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
+
+    Computing weighted quantiles while ignoring NaNs:
+
+    >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
+    >>> weights = jnp.array([1, 1, 1, 2, 1])
+    >>> jnp.nanquantile(x, 0.5, weights=weights, method='inverted_cdf')
+    Array(4.0, dtype=float32)
   """
   a, q = ensure_arraylike("nanquantile", a, q)
+  if weights is not None:
+    weights = ensure_arraylike("nanquantile", weights)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True)
+  return _quantile(a, q, axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
-              method: str, keepdims: bool, squash_nans: bool) -> Array:
-  if method not in ["linear", "lower", "higher", "midpoint", "nearest"]:
-    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
-  a, = promote_dtypes_inexact(a)
+              method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
+  if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
+    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' or 'inverted_cdf'")
+  if weights is not None:
+    if dtypes.issubdtype(weights.dtype, np.complexfloating):
+      raise ValueError("Weights cannot be complex types.")
+    if method != "inverted_cdf":
+      raise NotImplementedError(f"{method} doesn't support weights. Only method 'inverted_cdf' supports weights.")
+    a, weights = promote_dtypes_inexact(a, weights)
+    if weights.shape != a.shape:
+      if axis is None:
+        raise ValueError("Weights shape must match 'a' shape when axis is None.")
+      ax_tuple = canonicalize_axis_tuple(axis, a.ndim)
+      if weights.shape != tuple(a.shape[ax] for ax in ax_tuple):
+        raise ValueError(f"Weights shape {weights.shape} must match reduction axes "
+                          f"{tuple(a.shape[ax] for ax in ax_tuple)}")
+      weights = lax.broadcast_in_dim(weights, a.shape, broadcast_dimensions=ax_tuple)
+  else:
+    a, = promote_dtypes_inexact(a)
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
@@ -2482,6 +2532,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if keepdims:
       keepdim = [1] * a.ndim
     a = a.ravel()
+    if weights is not None:
+      weights = weights.ravel()
     axis = 0
   elif isinstance(axis, tuple):
     keepdim = list(a.shape)
@@ -2500,6 +2552,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     do_not_touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx not in axis)
     touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx in axis)
     a = lax.reshape(a, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
+    if weights is not None:
+      weights = lax.reshape(weights, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
     axis = canonicalize_axis(-1, a.ndim)
   else:
     axis = canonicalize_axis(axis, a.ndim)
@@ -2510,11 +2564,14 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     raise ValueError(f"q must be have rank <= 1, got shape {q.shape}")
 
   a_shape = a.shape
-
+  q_orig = q
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
-    a = lax.sort(a, dimension=axis)
-    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+    if weights is not None:
+      a, weights = lax.sort_key_val(a, weights, dimension=axis)
+    else:
+      a = lax.sort(a, dimension=axis)
+    counts = sum(lax.bitwise_not(lax._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
     shape_after_reduction = counts.shape
     q = lax.expand_dims(
       q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
@@ -2541,8 +2598,11 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high_value = a[tuple(index)]
   else:
     with config.debug_nans(False):
-      a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)  # pyrefly: ignore[unexpected-keyword]  # pyrefly#2385
-    a = lax.sort(a, dimension=axis)
+      a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
+    if weights is not None:
+      a, weights = lax.sort_key_val(a, weights, dimension=axis)
+    else:
+      a = lax.sort(a, dimension=axis)
     n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
     q = lax.mul(q, n - 1)
     low = lax.floor(q)
@@ -2585,6 +2645,57 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = lax.select(pred, low_value, high_value)
   elif method == "midpoint":
     result = lax.mul(lax.add(low_value, high_value), lax._const(low_value, 0.5))
+  elif method == "inverted_cdf":
+    if weights is None:
+      weights = lax.full_like(a, 1.0)
+    zeros = lax.full_like(weights, 0)
+    bad_weights = lax.bitwise_or(lax.lt(weights, zeros), lax._isnan(weights))
+    nan_data = lax._isnan(a)
+    clean_weights = lax.select(lax.bitwise_or(bad_weights, nan_data), zeros, weights)
+    cum_weights = cumsum(clean_weights, axis=axis)
+    total_weight = lax_slicing.index_in_dim(cum_weights, -1, axis=axis, keepdims=keepdims)
+    tw_f = lax.expand_dims(total_weight, tuple(range(q_ndim)))
+    q_f = lax.reshape(q_orig, q_orig.shape + (1,) * total_weight.ndim)
+    target_w = lax.mul(q_f, tw_f)
+    target_w_aligned = target_w if keepdims else lax.expand_dims(target_w, (axis + q_ndim,))
+    cw_f = lax.expand_dims(cum_weights, tuple(range(q_ndim)))
+    is_less = lax.lt(cw_f, target_w_aligned)
+    idx = sum(lax.convert_element_type(is_less, dtypes.default_int_dtype()), axis=axis + q_ndim, keepdims=keepdims)
+    if squash_nans:
+      valid_counts = sum(lax.bitwise_not(nan_data), axis=axis, dtype=q.dtype, keepdims=keepdims)
+    else:
+      valid_counts = lax.full_like(total_weight, a_shape[axis], dtype=q.dtype)
+    limit = lax.sub(valid_counts, lax._const(valid_counts, 1))
+    max_idx = lax.convert_element_type(limit, dtypes.default_int_dtype())
+    max_idx_f = lax.expand_dims(max_idx, tuple(range(q_ndim)))
+    max_idx_f = lax.convert_element_type(max_idx_f, idx.dtype)
+    idx = lax.max(lax._const(idx, 0), lax.min(idx, max_idx_f))
+    if keepdims:
+      idx_take = lax.squeeze(idx, (q_ndim + axis,))
+    else:
+      idx_take = idx
+    if q_ndim == 0:
+      idx_transposed = lax.expand_dims(idx_take, (axis,))
+      result = indexing.take_along_axis(a, idx_transposed, axis=axis)
+      result = lax.squeeze(result, (axis,))
+    else:
+      perm = [*range(q_ndim, q_ndim + axis),
+              *range(q_ndim),
+              *range(q_ndim + axis, idx_take.ndim)]
+      idx_transposed = lax.transpose(idx_take, perm)
+      result = indexing.take_along_axis(a, idx_transposed, axis=axis)
+      inv_perm = [perm.index(i) for i in range(len(perm))]
+      result = lax.transpose(result, inv_perm)
+    if keepdims:
+      result = lax.expand_dims(result, (q_ndim + axis,))
+    all_nan_data = lax.eq(valid_counts, lax.full_like(valid_counts, 0))
+    any_bad_weight = any(bad_weights, axis=axis, keepdims=keepdims)
+    if squash_nans:
+      force_nan = lax.bitwise_or(any_bad_weight, all_nan_data)
+    else:
+      force_nan = lax.bitwise_or(any_bad_weight, any(nan_data, axis=axis, keepdims=keepdims))
+    force_nan_f = lax.expand_dims(force_nan, tuple(range(q_ndim)))
+    result = _where(force_nan_f, lax.full_like(result, np.nan), result)
   else:
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
@@ -2599,7 +2710,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False) -> Array:
+               keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2616,6 +2727,10 @@ def percentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
+    weights: keyword-only. optional array of weights for each element in `a`.
+      Values with higher weights contribute more to the percentile calculation.
+      The weights array must be broadcastable to the shape of `a` along the specified axis.
+      Currently, weighted percentiles are only supported when `method="inverted_cdf"`.
 
   Returns:
     An array containing the specified percentiles along the specified axes.
@@ -2636,11 +2751,20 @@ def percentile(a: ArrayLike, q: ArrayLike,
 
     >>> jnp.percentile(x, q, method='nearest')
     Array([1., 3., 4.], dtype=float32)
+
+    Computing weighted percentiles:
+
+    >>> x = jnp.array([1, 2, 3, 4, 5])
+    >>> weights = jnp.array([1, 1, 2, 1, 1])
+    >>> jnp.percentile(x, 50, weights=weights, method='inverted_cdf')
+    Array(3., dtype=float32)
   """
   a, q = ensure_arraylike("percentile", a, q)
+  if weights is not None:
+    weights = ensure_arraylike("percentile", weights)
   q, = promote_dtypes_inexact(q)
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
-                  method=method, keepdims=keepdims)
+                  method=method, weights=weights, keepdims=keepdims)
 
 
 @export
@@ -2648,7 +2772,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False) -> Array:
+                  keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
@@ -2665,7 +2789,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-
+    weights: keyword-only. optional array of weights for each element in `a`.
+      Values with higher weights contribute more to the percentile calculation.
+      The weights array must be broadcastable to the shape of `a` along the specified axis.
+      NaN values in `a` are ignored. Weighted percentiles are currently only supported when `method="inverted_cdf"`.
   Returns:
     An array containing the specified percentiles along the specified axes.
 
@@ -2687,12 +2814,21 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     Array([nan, nan, nan], dtype=float32)
     >>> jnp.nanpercentile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
+
+    Computing weighted percentiles while ignoring NaNs:
+
+    >>> x = jnp.array([1, 2, jnp.nan, 4, 5])
+    >>> weights = jnp.array([1, 1, 1, 2, 1])
+    >>> jnp.nanpercentile(x, 50, weights=weights, method='inverted_cdf')
+    Array(4.0, dtype=float32)
   """
   a, q = ensure_arraylike("nanpercentile", a, q)
+  if weights is not None:
+    weights = ensure_arraylike("nanpercentile", weights)
   q, = promote_dtypes_inexact(q)
   q = q / 100
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                     method=method, keepdims=keepdims)
+                     method=method, weights=weights, keepdims=keepdims)
 
 
 @export

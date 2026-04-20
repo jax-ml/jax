@@ -38,7 +38,7 @@ AUTOSUMMARY_TAG = '.. autosummary::'
 AUTOCLASS_TAG = '.. autoclass::'
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def jax_docs_dir() -> str:
   """Return the string or path object pointing to the JAX docs."""
   try:
@@ -51,25 +51,23 @@ def jax_docs_dir() -> str:
 
 
 UNDOCUMENTED_APIS = {
-  'jax': ['empty_ref', 'NamedSharding', 'P', 'Ref', 'Shard', 'reshard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'free_ref', 'freeze', 'fwd_and_bwd', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'thread_guard', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version', 'allow_f16_reductions'],
+  'jax': ['empty_ref', 'memory', 'NamedSharding', 'P', 'Ref', 'Shard', 'reshard', 'ad_checkpoint', 'api_util', 'checkpoint_policies', 'core', 'custom_derivatives', 'custom_transpose', 'debug_key_reuse', 'device_put_replicated', 'device_put_sharded', 'effects_barrier', 'example_libraries', 'explain_cache_misses', 'experimental', 'extend', 'float0', 'free_ref', 'freeze', 'fwd_and_bwd', 'host_count', 'host_id', 'host_ids', 'interpreters', 'jax', 'jax2tf_associative_scan_reductions', 'legacy_prng_key', 'lib', 'make_user_context', 'new_ref', 'no_execution', 'numpy_dtype_promotion', 'remat', 'remove_size_one_mesh_axis_from_type', 'softmax_custom_jvp', 'threefry_partitionable', 'thread_guard', 'tools', 'transfer_guard_device_to_device', 'transfer_guard_device_to_host', 'transfer_guard_host_to_device', 'version', 'allow_f16_reductions'],
   'jax.ref': ['empty_ref', 'free_ref'],
   'jax.ad_checkpoint': ['checkpoint', 'checkpoint_policies', 'print_saved_residuals', 'remat', 'Offloadable', 'Recompute', 'Saveable'],
   'jax.custom_batching': ['custom_vmap', 'sequential_vmap'],
   'jax.custom_derivatives': ['CustomVJPPrimal', 'SymbolicZero', 'closure_convert', 'custom_gradient', 'custom_jvp', 'custom_jvp_call_p', 'custom_vjp', 'custom_vjp_call_p', 'custom_vjp_primal_tree_values', 'linear_call', 'remat_opt_p', 'zero_from_primal'],
-  'jax.custom_transpose': ['custom_transpose'],
   'jax.debug': ['DebugEffect', 'OrderedDebugEffect', 'log'],
   'jax.distributed': ['is_initialized'],
   'jax.dtypes': ['extended', 'finfo', 'iinfo'],
   'jax.ffi': ['build_ffi_lowering_function', 'include_dir', 'register_ffi_target_as_batch_partitionable', 'register_ffi_type_id'],
-  'jax.lax': ['pcast', 'unreduced_psum', 'dce_sink', 'conv_transpose_shape_tuple', 'reduce_window_shape_tuple', 'conv_general_permutations', 'conv_general_shape_tuple', 'pbroadcast', 'padtype_to_pads', 'conv_shape_tuple', 'unreduced_psum_scatter', 'create_token', 'dtype', 'shape_as_value', 'all_gather_reduced', 'pvary', 'all_gather_start', 'all_gather_done', *(name for name in dir(jax.lax) if name.endswith('_p'))],
+  'jax.lax': ['pcast', 'unreduced_psum', 'dce_sink', 'conv_transpose_shape_tuple', 'reduce_window_shape_tuple', 'conv_general_permutations', 'conv_general_shape_tuple', 'pbroadcast', 'padtype_to_pads', 'conv_shape_tuple', 'unreduced_psum_scatter', 'create_token', 'dtype', 'shape_as_value', 'all_gather_reduced', 'pvary', *(name for name in dir(jax.lax) if name.endswith('_p'))],
   'jax.lax.linalg': [api for api in dir(jax.lax.linalg) if api.endswith('_p')],
-  'jax.memory': ['Space'],
   'jax.monitoring': ['clear_event_listeners', 'record_event', 'record_event_duration_secs', 'record_event_time_span', 'record_scalar', 'register_event_duration_secs_listener', 'register_event_listener', 'register_event_time_span_listener', 'register_scalar_listener', 'unregister_event_duration_listener', 'unregister_event_listener', 'unregister_event_time_span_listener', 'unregister_scalar_listener'],
   'jax.numpy': ['bfloat16', 'bool', 'e', 'euler_gamma', 'float4_e2m1fn', 'float8_e3m4', 'float8_e4m3', 'float8_e4m3b11fnuz', 'float8_e4m3fn', 'float8_e4m3fnuz', 'float8_e5m2', 'float8_e5m2fnuz', 'float8_e8m0fnu', 'inf', 'int1', 'int2', 'int4', 'nan', 'newaxis', 'pi', 'uint1', 'uint2', 'uint4'],
   'jax.profiler': ['ProfileData', 'ProfileEvent', 'ProfileOptions', 'ProfilePlane', 'stop_server'],
   'jax.random': ['key_impl', 'random_gamma_p'],
-  'jax.scipy.special': ['bessel_jn', 'sph_harm_y'],
-  'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh'],
+  'jax.scipy.special': ['bessel_jn'],
+  'jax.sharding': ['AbstractDevice', 'AbstractMesh', 'AxisType', 'auto_axes', 'explicit_axes', 'get_abstract_mesh', 'reshard', 'set_mesh', 'use_abstract_mesh', 'get_mesh', 'ManualAxisType', 'make_single_device_sharding'],
   'jax.stages': ['ArgInfo', 'CompilerOptions'],
   'jax.tree_util': ['DictKey', 'FlattenedIndexKey', 'GetAttrKey', 'PyTreeDef', 'SequenceKey', 'default_registry'],
 }
@@ -77,6 +75,7 @@ UNDOCUMENTED_APIS = {
 # A list of modules to skip entirely, either because they cannot be imported
 # or because they are not expected to be documented.
 MODULES_TO_SKIP = [
+  "jax.ad",
   "jax.api_util",  # internal tools, not documented.
   "jax.cloud_tpu_init",  # deprecated in JAX v0.8.1
   "jax.collect_profile",  # fails when xprof is not available.
@@ -108,7 +107,7 @@ def extract_apis_from_rst_file(path: str) -> dict[str, list[str]]:
   currentmodule: str = '<none>'
   in_autosummary_block = False
   apis = collections.defaultdict(list)
-  with open(path, 'r') as f:
+  with open(path) as f:
     for line in f:
       stripped_line = line.strip()
       if not stripped_line:
@@ -137,7 +136,7 @@ def extract_apis_from_rst_file(path: str) -> dict[str, list[str]]:
   return dict(apis)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_all_documented_jax_apis() -> Mapping[str, list[str]]:
   """Get the list of APIs documented in all files in a directory (recursive)."""
   path = jax_docs_dir()
@@ -155,7 +154,7 @@ def get_all_documented_jax_apis() -> Mapping[str, list[str]]:
   return {key: sorted(vals) for key, vals in apis.items()}
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def list_public_jax_modules() -> Sequence[str]:
   """Return a list of the public modules defined in jax."""
   # We could use pkgutil.walk_packages, but we want to avoid traversing modules
@@ -178,7 +177,7 @@ def list_public_jax_modules() -> Sequence[str]:
   return [jax.__name__, *walk_public_modules(jax.__path__, jax.__name__)]
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def list_public_apis(module_name: str) -> Sequence[str]:
   """Return a list of public APIs within a specified module.
 
@@ -191,7 +190,7 @@ def list_public_apis(module_name: str) -> Sequence[str]:
           ]
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_all_public_jax_apis() -> Mapping[str, list[str]]:
   """Return a dictionary mapping jax submodules to their list of public APIs."""
   apis = {}

@@ -149,7 +149,7 @@ exclude_patterns = [
     'autodidax.md',
     'autodidax2_part1.md',
     'array_refs.md',
-    'sharded-computation.md',
+    'parallel.md',
     'ffi.ipynb',
 ]
 
@@ -232,8 +232,6 @@ nb_execution_excludepatterns = [
     'notebooks/Neural_Network_and_Data_Loading.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
-    # TODO(jakevdp): enable execution on the following if possible:
-    'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
@@ -385,9 +383,9 @@ rediraffe_redirects = {
   "jax-101/04-advanced-autodiff.md": "automatic-differentiation.md",
   "jax-101/05-random-numbers.md": "random-numbers.md",
   "jax-101/05.1-pytrees.md": "pytrees.md",
-  "jax-101/06-parallelism.md": "sharded-computation.md",
+  "jax-101/06-parallelism.md": "parallel.md",
   "jax-101/07-state.md": "stateful-computations.md",
-  "jax-101/08-pjit.rst": "sharded-computation.md",
+  "jax-101/08-pjit.rst": "parallel.md",
   "jax-101/index.rst": "jax-101.rst",
   "tutorials.rst": "jax-101.rst",
   "notebooks/external_callbacks.md": "external-callbacks.md",
@@ -399,18 +397,17 @@ rediraffe_redirects = {
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",
+  "notebooks/Distributed_arrays_and_automatic_parallelization.md": "parallel.md",
+  "notebooks/explicit-sharding.md": "parallel.md",
+  "sharded-computation.md": "parallel.md",
 }
 
-# Monkey-patch jupyter_client to avoid cross-process ZMQ port collisions during
-# Sphinx build. See: https://github.com/jupyter/jupyter_client/issues/487
-import jupyter_client.manager
-from filelock import FileLock
-_original_start_kernel = jupyter_client.manager.KernelManager.start_kernel
-def _start_kernel_with_lock(self, **kwargs):
-    # Prevent Sphinx multiprocessing workers from executing port discovery
-    # simultaneously
-    lock_dir = os.path.join(os.path.dirname(__file__), "build")
-    os.makedirs(lock_dir, exist_ok=True)
-    with FileLock(os.path.join(lock_dir, "jupyter_client_port_lock.lock")):
-        return _original_start_kernel(self, **kwargs)
-jupyter_client.manager.KernelManager.start_kernel = _start_kernel_with_lock
+from jupyter_client.provisioning import KernelProvisionerFactory
+from importlib.metadata import EntryPoint
+
+KernelProvisionerFactory.provisioners["portpicker-provisioner"] = EntryPoint(
+    name="portpicker-provisioner",
+    value="jax_portpicker:PortpickerProvisioner",
+    group="jupyter_client.kernel_provisioners"
+)
+KernelProvisionerFactory.default_provisioner_name = "portpicker-provisioner"

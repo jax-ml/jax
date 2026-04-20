@@ -18,13 +18,17 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import gc
+import logging
 import threading
-from typing import Any, Callable, Literal
+from typing import Any, Literal
+from collections.abc import Callable
 
-from absl import logging
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+import jax._src.pallas.mosaic.interpret.params as params
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class Semaphore:
@@ -71,7 +75,7 @@ class Semaphore:
     return self.shared_memory.dma_execution_mode
 
   def _log(self, message: str):
-    """Logs a message to `absl.logging`. To be called while holding the lock on `self.cv`."""
+    """Logs a message. To be called while holding the lock on `self.cv`."""
     # Log every line separately to make sure `absl.logging` adds the correct
     # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
     # `message`. This should not lead to mangled output within the logging for
@@ -80,7 +84,7 @@ class Semaphore:
     # interleaved with logging from other semaphores or from the global
     # `SharedMemory` object.
     for msg in message.split("\n"):
-      logging.info(msg)
+      logger.info(msg)
 
   def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
     return self.shared_memory.get_global_core_id(device_id, local_core_id)
@@ -292,7 +296,7 @@ class SharedMemory:
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
-  logging_mode: interpret_utils.LoggingMode | None = None
+  logging_mode: params.LoggingMode | None = None
 
   # (memory_space, buffer_id, device_id, local_core_id) -> Allocation
   mem: dict[tuple[str, int, int, int], Allocation] = dataclasses.field(
@@ -352,17 +356,17 @@ class SharedMemory:
   def enable_logging(self) -> bool:
     return (
         self.logging_mode is not None
-        and interpret_utils.LoggingMode.SHARED_MEMORY in self.logging_mode
+        and params.LoggingMode.SHARED_MEMORY in self.logging_mode
     )
 
   def _log(self, message: str):
-    """Logs a message to `absl.logging`. To be called while holding `self.lock`."""
+    """Logs a message. To be called while holding `self.lock`."""
     # Log every line separately to make sure `absl.logging` adds the correct
     # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
     # `message`. This should not lead to mangled output as `self.lock` is
     # expected to be held whenever this method is called.
     for msg in message.split("\n"):
-      logging.info(msg)
+      logger.info(msg)
 
   def append_semaphore_task(
       self,
@@ -539,7 +543,7 @@ class SharedMemory:
               semaphore_id=i,
               enable_logging=(
                   self.logging_mode is not None
-                  and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
+                  and params.LoggingMode.SEMAPHORE in self.logging_mode
               ),
           )
 
@@ -568,7 +572,7 @@ class SharedMemory:
             shared_memory=self,
             enable_logging=(
                 self.logging_mode is not None
-                and interpret_utils.LoggingMode.SEMAPHORE in self.logging_mode
+                and params.LoggingMode.SEMAPHORE in self.logging_mode
             ),
         )
 
@@ -577,6 +581,7 @@ class SharedMemory:
       key: Any,
       rnge: tuple[slice | int, ...],
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Reads contents of a memory buffer.
@@ -585,18 +590,20 @@ class SharedMemory:
       key: The key of the buffer to read.
       rnge: The range to read within the buffer.
       global_core_id: The global core ID of the core reading the buffer.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       logging_info: Information about the source of the read.
 
     Returns:
       - The contents of the read range of the buffer, or None if reading out of
         bounds.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 
@@ -632,6 +639,7 @@ class SharedMemory:
       rnge: tuple[slice | int, ...],
       value: np.ndarray,
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[bool, ShapeAndDtype, vc.VectorClock | None]:
     """Stores contents into a memory buffer.
@@ -641,17 +649,19 @@ class SharedMemory:
       rnge: The range within the buffer contents that `value` is written to.
       value: The array to store into the buffer.
       global_core_id: The global core ID of the core writing into the buffer.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       logging_info: Information about the source of the store.
 
     Returns:
       - True of the store was in bounds, False otherwise.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 
@@ -692,6 +702,7 @@ class SharedMemory:
       value: np.ndarray,
       mask: np.ndarray | None,
       global_core_id: int,
+      increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
     """Swaps contents of a memory buffer.
@@ -701,6 +712,8 @@ class SharedMemory:
       rnge: The range within the buffer contents that `value` is swapped into.
       value: The array to be written into the buffer.
       mask: The mask to apply to the swap operation.
+      increment_clock: Whether to increment the vector clock for the core with
+        the given global core ID.
       global_core_id: The global core ID of the core writing into the buffer.
       logging_info: Information about the source of the swap.
 
@@ -708,12 +721,12 @@ class SharedMemory:
       - The contents of the range of the buffer (prior to the swap), or None if
         accessing buffer contents bounds.
       - The shape and dtype of the full content array of the buffer.
-      - The incremented vector clock for the core with the given global core ID,
-        or None if race detection is not enabled.
+      - The incremented vector clock for the core with the given global core ID.
+        None if race detection is not enabled or if `increment_clock` is False.
     """
     clock = None
     with self.lock:
-      if self.detect_races:
+      if self.detect_races and increment_clock:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 

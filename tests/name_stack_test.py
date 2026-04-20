@@ -18,7 +18,6 @@ import jax
 from jax import api_util
 from jax import lax
 import jax.numpy as jnp
-from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
@@ -88,9 +87,9 @@ class NameStackTest(jtu.JaxTestCase):
       @jax.named_scope('bar')
       def _f(x):
         return [x + 1]
-      return core.call(lu.wrap_init(
-          _f,
-          debug_info=api_util.debug_info("test", _f, (0,), {})), x)[0]
+      sub = lu.wrap_init(
+        _f, debug_info=api_util.debug_info("test", _f, (0,), {}))
+      return core.call(x, subfuns=(sub,))[0]
 
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
@@ -126,10 +125,7 @@ class NameStackTest(jtu.JaxTestCase):
         return x + 1
     jaxpr = jax.make_jaxpr(f)(jnp.ones(1)).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    if config.pmap_shmap_merge.value:
-      self.assertEqual(str(jaxpr.eqns[0].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
-    else:
-      self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+    self.assertEqual(str(jaxpr.eqns[0].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
 
 
 class NameStackTransformationTest(jtu.JaxTestCase):

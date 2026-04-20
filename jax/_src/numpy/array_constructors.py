@@ -51,7 +51,7 @@ rocm_plugin_extension = None
 try:
   from importlib.metadata import distributions
   for dist in distributions():
-    name = dist.metadata.get('Name', '')
+    name = dist.metadata.get('Name', '')  # pyrefly: ignore[missing-attribute]
     if name.startswith('jax-rocm') and name.endswith('-plugin'):
       module_name = name.replace('-', '_')
       try:
@@ -175,10 +175,20 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     >>> jnp.array(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
   """
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
+
+  # Fast path: if we're not actually doing any conversion, in many cases we
+  # can call lax.stage to lift the value into the trace.
+  if dtype is None and device is None and out_sharding is None and ndmin == 0:
+    if isinstance(object, core.Tracer) and not core.is_concrete(object):
+      return lax._array_copy(object) if copy else object
+    if isinstance(object, (int, float, complex, np.number)):
+      return lax.stage(object)
+    if isinstance(object, np.ndarray) and not isinstance(object, np.ma.MaskedArray):
+      return lax.stage(object)
 
   # check if the given dtype is compatible with JAX
   if dtype is not None:
@@ -203,7 +213,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if dtype is not None:
       # If there is an explicit dtype, we've already canonicalized things and
       # device_put should not canonicalize again.
-      object = literals.TypedNdArray(object, weak_type=False)
+      object = literals.TypedNdArray(object)
     # Keep the output uncommitted.
     return api.device_put(object)
 
@@ -234,8 +244,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # corresponding data structures and it may not be available as
     # object.dtype. So, we'll resolve the protocols here before
     # evaluating object.dtype.
-    if hasattr(object, '__jax_array__'):
-      object = object.__jax_array__()
+    m = getattr(object, '__jax_array__', None)
+    if m is not None:
+      object = m()
     elif hasattr(object, '__cuda_array_interface__'):
       cai = object.__cuda_array_interface__
       backend = xla_bridge.get_backend()

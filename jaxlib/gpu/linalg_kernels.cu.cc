@@ -19,6 +19,11 @@ limitations under the License.
 #include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
+#include "jaxlib/tridiagonal_solve_perturbed.h"
+
+#if defined(JAX_GPU_CUDA)
+#include <cuda/std/complex>
+#endif
 
 namespace cg = cooperative_groups;
 
@@ -156,6 +161,82 @@ void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
   LuPivotsToPermutationKernel<<<grid_dim, block_dim,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
       pivots, permutation, batch_size, pivot_size, permutation_size);
+}
+
+namespace {
+
+template <typename T>
+__global__ void TridiagonalSolvePerturbedKernel(
+    std::int64_t batch_size, int n, int k_rhs, const T* subdiag, const T* diag,
+    const T* superdiag, const T* rhs, T* x, void* workspace) {
+  T* workspace_t = static_cast<T*>(workspace);
+  for (std::int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+       idx < batch_size; idx += blockDim.x * gridDim.x) {
+    T* u_workspace = workspace_t + idx * (n * 3 + k_rhs);
+    T* rhs_row_workspace = u_workspace + n * 3;
+    SolveWithGaussianEliminationWithPivotingAndPerturbSingular<T>(
+        n, k_rhs, subdiag + idx * n, diag + idx * n, superdiag + idx * n,
+        rhs + idx * n * k_rhs, x + idx * n * k_rhs, u_workspace,
+        rhs_row_workspace);
+  }
+}
+
+template <typename T>
+void LaunchTridiagonalSolvePerturbedKernelBody(
+    gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
+    const void* subdiag, const void* diag, const void* superdiag,
+    const void* rhs, void* x, void* workspace) {
+  const int block_dim = 128;
+  const std::int64_t grid_dim =
+      std::min<std::int64_t>(1024, (batch_size + block_dim - 1) / block_dim);
+
+  TridiagonalSolvePerturbedKernel<T>
+      <<<grid_dim, block_dim,
+         /*dynamic_shared_mem_bytes=*/0, stream>>>(
+          batch_size, n, k_rhs, reinterpret_cast<const T*>(subdiag),
+          reinterpret_cast<const T*>(diag),
+          reinterpret_cast<const T*>(superdiag),
+          reinterpret_cast<const T*>(rhs), reinterpret_cast<T*>(x), workspace);
+}
+
+}  // namespace
+
+void LaunchTridiagonalSolvePerturbedKernel(
+    gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
+    xla::ffi::DataType dtype, const void* subdiag, const void* diag,
+    const void* superdiag, const void* rhs, void* x, void* workspace) {
+  switch (dtype) {
+    case xla::ffi::DataType::F32:
+      LaunchTridiagonalSolvePerturbedKernelBody<float>(
+          stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
+          workspace);
+      break;
+    case xla::ffi::DataType::F64:
+      LaunchTridiagonalSolvePerturbedKernelBody<double>(
+          stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
+          workspace);
+      break;
+    case xla::ffi::DataType::C64:
+#if defined(JAX_GPU_CUDA)
+      LaunchTridiagonalSolvePerturbedKernelBody<::cuda::std::complex<float>>(
+#else
+      LaunchTridiagonalSolvePerturbedKernelBody<std::complex<float>>(
+#endif
+          stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
+          workspace);
+      break;
+    case xla::ffi::DataType::C128:
+#if defined(JAX_GPU_CUDA)
+      LaunchTridiagonalSolvePerturbedKernelBody<::cuda::std::complex<double>>(
+#else
+      LaunchTridiagonalSolvePerturbedKernelBody<std::complex<double>>(
+#endif
+          stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
+          workspace);
+      break;
+    default:
+      break;
+  }
 }
 
 }  // namespace JAX_GPU_NAMESPACE

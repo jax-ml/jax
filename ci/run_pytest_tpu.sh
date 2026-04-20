@@ -53,6 +53,7 @@ export JAX_SKIP_SLOW_TESTS=true
 # End of common test environment variable setup
 
 echo "Running TPU tests..."
+mkdir -p test-artifacts
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
@@ -70,6 +71,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    --junitxml=test-artifacts/junit-single.xml \
     --deselect=tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
     --deselect=tests/pallas/tpu_sparsecore_pallas_test.py::DebugPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
@@ -79,13 +81,16 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   first_cmd_retval=$?
 
   # Run multi-accelerator across all chips
-  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    --junitxml=test-artifacts/junit-multi.xml \
+    -m "multiaccelerator" tests
 
   # Store the return value of the second command.
   second_cmd_retval=$?
 else
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    --junitxml=test-artifacts/junit-single.xml \
     --maxfail=20 -m "not multiaccelerator" \
     tests/pallas/ops_test.py \
     tests/pallas/export_back_compat_pallas_test.py \
@@ -100,7 +105,9 @@ else
   first_cmd_retval=$?
 
   # Run multi-accelerator across all chips
-  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" \
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    --junitxml=test-artifacts/junit-multi.xml \
+    -m "multiaccelerator" \
     tests/pjit_test.py \
     tests/pallas/tpu_pallas_distributed_test.py
 
@@ -110,6 +117,7 @@ fi
 
 # Run Pallas printing tests, which need to run with I/O capturing disabled.
 TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest \
+  --junitxml=test-artifacts/junit-print.xml \
   -s tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
   -s tests/pallas/tpu_sparsecore_pallas_test.py::DebugPrintTest
 

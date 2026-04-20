@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from functools import partial, update_wrapper
 import inspect
 import itertools as it
-from typing import Any, Hashable, Callable
+from typing import Any
+from collections.abc import Hashable, Callable
 
 from jax._src import api
 from jax._src import config
@@ -26,6 +27,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames
+from jax._src import traceback_util
 from jax._src.core import typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -39,8 +41,8 @@ from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static, tree_structure, tree_map_with_path,
-    keystr)
+    broadcast_prefix, register_static, tree_map_with_path, keystr,
+    tracing_registry, FlatTree)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -48,6 +50,8 @@ PyTreeOfAvals = Any
 PyTreeDef = Any
 LoVal = Any
 HiVal = Any
+
+traceback_util.register_exclusion(__file__)
 
 
 # Hijax extension API
@@ -66,7 +70,7 @@ class HiPrimitive(core.Primitive):
   def is_high(self, *avals, **params) -> bool:
     return True
 
-  def is_effectful(self, params) -> bool:  # type: ignore
+  def is_effectful(self, params) -> bool:  # pyrefly: ignore[bad-override]
     return False  # default immutable
 
   # type checking and forward type propagation
@@ -99,7 +103,7 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
   # define lowering from hijax value to lojax values and back (like pytrees)
-  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj); not lovals
+  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj): not lovals
     assert False, "must override"
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
     assert False, "must override"
@@ -139,6 +143,7 @@ class HiType(core.AbstractValue):
 class MutableHiType(core.AbstractValue):
   is_high = True
   has_qdd = True  # mutable and potentially type-changing
+  is_writer = False
   type_state = core.aval_method(core.cur_qdd)
 
   # type equality
@@ -146,20 +151,28 @@ class MutableHiType(core.AbstractValue):
   def __eq__(self, other): assert False, "must override"
 
   # define lowering from (mutable) hijax type to (immutable) lojax types
-  def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pytype: disable=signature-mismatch  # pyrefly: ignore[bad-override]
+  def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pyrefly: ignore[bad-override]
     assert False, "must override"
   def lo_ty(self):
     assert False, "mutable hitypes should use lo_ty_qdd instead"
 
   # define lowering from hijax value to lojax values and back, depending on qdd
-  def new_from_loval(self, state: QDD, *vals: LoVal) -> HiVal:
+  def new_from_loval(self, state: QDD, /, *vals: LoVal) -> HiVal:
     assert False, "must override"
-  def read_loval(self, state: QDD, val: HiVal) -> list[LoVal]:
+  def read_loval(self, state: QDD, val: HiVal, /) -> list[LoVal]:
     assert False, "must override"
+  # default implementations of newer apis
+  def read_loval_in(self, state, val, /):
+    return self.read_loval(state, val)
+  def read_loval_out(self, qdd, hi, /):
+    return FlatTree.flatten(self.read_loval(qdd, hi))
 
   # define how to mutate/set the mutable hijax value given immutable lojax vals
-  def update_from_loval(self, state: QDD, val: HiVal, *lo_vals: LoVal) -> None:
+  def update_from_loval(self, state: QDD, val: HiVal, /, *lo_vals: LoVal) -> None:
     assert False, "must override"
+  # default implementation of newer api
+  def update_from_loval2(self, state, val, lo_vals_ft, /) -> None:
+    self.update_from_loval(state, val, *lo_vals_ft.unflatten())
 
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
@@ -221,29 +234,29 @@ class BoxTy(MutableHiType):
   def __hash__(self): return hash(BoxTy)
   def __eq__(self, other): return isinstance(other, BoxTy)
 
-  def str_short(self, short_dtypes=False, **_) -> str:  # type: ignore
+  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
     return 'BoxTy'
 
   # mutable interface
   def lo_ty_qdd(self, box_state):
     return [lo_ty for t in box_state.leaf_avals for lo_ty in t.lo_ty()]
 
-  def new_from_loval(self, box_state: BoxTypeState, *lo_vals) -> Box:  # type: ignore
+  def new_from_loval(self, box_state: BoxTypeState, *lo_vals) -> Box:  # pyrefly: ignore[bad-override]
     lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # type: ignore
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
                for hi_ty in box_state.leaf_avals]
     assert next(lo_vals_, None) is None
     return Box._new(tree_unflatten(box_state.treedef, hi_vals))  # will be mutated
 
-  def read_loval(self, box_state: BoxTypeState, box) -> list:  # type: ignore
+  def read_loval(self, box_state: BoxTypeState, box) -> list:  # pyrefly: ignore[bad-override]
     leaf_vals, treedef = tree_flatten(box_get(box))
     assert treedef == box_state.treedef
     return [lo_val for hi_ty, hi_val in zip(box_state.leaf_avals, leaf_vals)
-            for lo_val in hi_ty.lower_val(hi_val)]  # type: ignore
+            for lo_val in hi_ty.lower_val(hi_val)]  # pyrefly: ignore[missing-attribute]
 
-  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals) -> None:  # type: ignore
+  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals) -> None:  # pyrefly: ignore[bad-override]
     lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # type: ignore
+    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
                for hi_ty in box_state.leaf_avals]
     assert next(lo_vals_, None) is None
     box_set(box, tree_unflatten(box_state.treedef, hi_vals))
@@ -259,7 +272,7 @@ class _BoxMeta(type):
             isinstance(core.typeof(instance), BoxTy))
 
 class Box(metaclass=_BoxMeta):  # noqa: F811
-  _val = None  # always clobbered by __new__, but pytype likes this
+  _val: Any
 
   # We want `Box(x)` to bind a primitive, so we override __new__ and provide a
   # raw `_new` method below.
@@ -373,6 +386,7 @@ class VJPHiPrimitive:
   in_avals: tuple[PyTreeOfAvals, ...]
   out_aval: PyTreeOfAvals
   params: dict[str, Hashable]
+  effects: frozenset[effects.Effect] = frozenset()
 
   def __init__(self):
     if not hasattr(self, 'in_avals'):
@@ -385,8 +399,8 @@ class VJPHiPrimitive:
         type(self).vjp_bwd_retval is not VJPHiPrimitive.vjp_bwd_retval):
       raise AttributeError(f"subclass {type(self)} should not override both "
                            "`vjp_bwd` and `vjp_bwd_retval`")
-    self.in_avals_flat, self.in_tree = tree_flatten(self.in_avals)
-    self.out_avals_flat, self.out_tree = tree_flatten(self.out_aval)
+    self.in_avals_flat, self.in_tree = tracing_registry.flatten(self.in_avals)
+    self.out_avals_flat, self.out_tree = tracing_registry.flatten(self.out_aval)
     self.__dict__.update(self.params)
     self.check(*self.in_avals)
 
@@ -399,7 +413,7 @@ class VJPHiPrimitive:
     raise NotImplementedError(f"for grad support, subclass {type(self)} must "
                               "implement `vjp_fwd`")
 
-  def vjp_bwd(self, res, outgrad, *arg_accums):
+  def vjp_bwd(self, res, outgrad, /, *arg_accums):
     args_grad = self.vjp_bwd_retval(res, outgrad)
     maybe_accum = lambda acc, v: isinstance(acc, ad.GradAccum) and acc.accum(v)
     tree_map(maybe_accum, arg_accums, args_grad)
@@ -466,10 +480,11 @@ class VJPHiPrimitive:
     return f"{self.__class__.__name__}[{self.params}]"
 
   def __hash__(self):
-    return hash((self.__class__.__name__, tuple(self.params.items())))
+    return hash((self.__class__.__name__, tuple(self.params.items()), self.effects))
 
   def __eq__(self, other):
-    return type(self) is type(other) and self.params == other.params
+    return (type(self) is type(other) and self.params == other.params
+            and self.effects == other.effects)
 
 class VmapOf(VJPHiPrimitive):
   prim: core.Primitive
@@ -492,25 +507,25 @@ class VmapOf(VJPHiPrimitive):
                 spmd_axis_name=self.axis_data.spmd_name or self.axis_data.explicit_mesh_axis)
 
   def expand(self, *args):
-    return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # type: ignore
+    return api.vmap(self.prim.expand, in_axes=self.in_dims, out_axes=self.out_dim,  # pyrefly: ignore[missing-attribute]
                     **self._vmap_params)(*args)
 
   def jvp(self, primals, tangents):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
-    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # type: ignore
+    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # pyrefly: ignore[missing-attribute]
                     out_axes=(self.out_dim, self.out_dim),
                     **self._vmap_params)(primals, tangents)
 
   def vjp_fwd(self, in_nzs, *args):
     store = lambda: None
     def fwd(*args):
-      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # type: ignore
+      primal_out, res, *maybe_out_nzs = self.prim.vjp_fwd(in_nzs, *args)  # pyrefly: ignore[missing-attribute]
       store.out_nzs = maybe_out_nzs  # pyrefly: ignore[missing-attribute]
       return primal_out, res
     (primal_out, res), (_, res_axes) = api.vmap(
         fwd, in_axes=self.in_dims, out_axes=(self.out_dim, batching.infer),
         **self._vmap_params)(*args)
-    return primal_out, (res, Static(res_axes)), *store.out_nzs  # type: ignore
+    return primal_out, (res, Static(res_axes)), *store.out_nzs  # pyrefly: ignore[missing-attribute]
 
   def vjp_bwd_retval(self, res_, g):
     # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
@@ -518,14 +533,14 @@ class VmapOf(VJPHiPrimitive):
     in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,
                        is_leaf=lambda x: x is None)
     g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)
-    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # type: ignore
+    out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # pyrefly: ignore[missing-attribute]
                    out_axes=in_dims, **self._vmap_params, sum_match=True)(res, g)
     return tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
 
   def batch_dim_rule(self, axis_data, in_dims):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
     in_dims_ = tree_map(fix, in_dims, self.in_dims, is_leaf=lambda x: x is None)
-    out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # type: ignore
+    out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # pyrefly: ignore[missing-attribute]
     return tree_map(lambda d, d_: d + (d_ < d), out_dim, self.out_dim)
 
 def map_zero(axis_data, d, ct):
@@ -543,16 +558,17 @@ def unmap_zero(axis_data, d, ct):
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
 call_hi_primitive_p.multiple_results = True
 call_hi_primitive_p.is_high = lambda *args, _prim: True
-@call_hi_primitive_p.def_abstract_eval
+call_hi_primitive_p.is_effectful = lambda params: bool(params['_prim'].effects)
+@call_hi_primitive_p.def_effectful_abstract_eval
 def _call_hi_primitive_abstract_eval(*_args, _prim):
-  return _prim.out_avals_flat
+  return _prim.out_avals_flat, _prim.effects
 
 def _call_hi_primitive_typecheck(_ctx_factory, *in_atoms_flat, _prim):
   in_avals = [x.aval for x in in_atoms_flat]
   if not all(map(core.typematch, in_avals, _prim.in_avals_flat)):
     raise TypeError(f"input type mismatch for {_prim}")
   _prim.check()
-  return _prim.out_avals_flat, set()
+  return _prim.out_avals_flat, _prim.effects
 core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
 
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
@@ -696,11 +712,11 @@ class CustomVJPTraced(VJPHiPrimitive):
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     if self.symbolic_zeros:
       args_ = tree_map(CustomVJPPrimal, args_, in_nzs)
-    out, res = self.fwd(*args_)  # type: ignore
+    out, res = self.fwd(*args_)
     if config.mutable_array_checks.value:
       _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
                                self.out_tree.num_leaves)
-    if ((tree := tree_structure(out)) != self.out_tree):
+    if ((tree := tracing_registry.flatten(out)[1]) != self.out_tree):
       raise TypeError(_vjp_primal_fwd_tree_mismatch_err(self, tree))
     tree_map_with_path(_vjp_fwd_aval_mismatch_err, self.out_aval, out)
     if self.symbolic_zeros:
@@ -892,3 +908,119 @@ class HiPspec:
   def to_lo(self) -> HiPspec: assert False, "must override"
   def to_tangent_spec(self) -> HiPspec: assert False, "must override"
   def to_ct_spec(self) -> HiPspec: assert False, "must override"
+
+# Logs
+
+log_effect = box_effect
+
+def log_extend(log, dct):
+  leaves, treedef = tree_flatten(dct)
+  log_extend_p.bind(log, *leaves, treedef=treedef)
+
+def log_append(log, key, val):
+  log_extend(log, {key: [val]})
+
+def log_read(log):
+  return log_read_p.bind(log)
+
+class _LogMeta(type):
+  def __instancecheck__(self, instance):
+    return (super().__instancecheck__(instance) or
+            isinstance(instance, core.Tracer) and
+            isinstance(core.typeof(instance), LogTy))
+
+class Log(metaclass=_LogMeta):  # noqa: F811
+  _dct: dict  # dict[str, list[PyTree[Array]]]
+
+  def __new__(cls):
+    return new_log_p.bind()
+
+  @classmethod
+  def _new(cls):
+    new = super().__new__(cls)
+    new._dct = {}
+    return new
+
+  def cur_qdd(self):
+    return ()
+
+  append = log_append
+  extend = log_extend
+  read = log_read
+
+class LogTy(MutableHiType):
+  has_qdd = True
+  is_writer = True
+
+  append = core.aval_method(log_append)
+  extend = core.aval_method(log_extend)
+  read = core.aval_method(log_read)
+
+  def __hash__(self): return hash(LogTy)
+  def __eq__(self, other): return isinstance(other, LogTy)
+  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
+    return 'Log'
+
+  def to_tangent_aval(self):
+    return LogTy()
+
+  def read_loval_in(self, qdd, log):
+    () = qdd
+    return []
+
+  def read_loval_out(self, qdd, log):
+    () = qdd
+    return FlatTree.flatten(log._dct)
+
+  def new_from_loval(self, qdd):  # pyrefly: ignore[bad-override]
+    () = qdd
+    return Log._new()
+
+  def update_from_loval2(self, qdd, log: Log, lo_ft) -> None:
+    () = qdd
+    updates = lo_ft.unflatten()
+    for k, v in updates.items():
+      log._dct.setdefault(k, []).extend(v)
+
+register_hitype(Log, lambda _: LogTy())
+
+class LogExtend(HiPrimitive):
+  multiple_results = True  # no results
+  is_effectful = lambda *_, **__: True
+
+  def abstract_eval(self, log_ty, *val_tys, treedef):
+    return [], {log_effect}
+
+  def to_lojax(_, log, *vals, treedef):
+    updates = tree_unflatten(treedef, vals)
+    for k, v in updates.items():
+      log._dct.setdefault(k, []).extend(v)
+    return []
+log_extend_p = LogExtend('log_extend')
+
+class NewLog(HiPrimitive):
+  def is_high(self) -> bool: return True
+
+  def abstract_eval(self):
+    ty = LogTy()
+    return core.AvalQDD(ty, ()), {log_effect}  # pyrefly: ignore[bad-argument-type]
+
+  def to_lojax(_):
+    return Log._new()
+new_log_p = NewLog('new_log')
+
+def new_log():
+  return new_log_p.bind()
+
+
+class ReadLog(HiPrimitive):
+  multiple_results = True
+
+  def is_high(self, _) -> bool: return True
+
+  def abstract_eval(self, log_qdd):
+    raise Exception
+
+  def to_lojax(_, log):
+    return list(FlatTree.flatten(log._dct))
+log_read_p = ReadLog('log_read')

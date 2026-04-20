@@ -118,7 +118,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
     else:
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input_arr[indices], cval)
-    outputs.append(_nonempty_prod(weights) * contribution)  # type: ignore
+    outputs.append(_nonempty_prod(weights) * contribution)  # pyrefly: ignore[bad-argument-type]
   result = _nonempty_sum(outputs)
   if dtypes.issubdtype(input_arr.dtype, np.integer):
     result = _round_half_away_from_zero(result)

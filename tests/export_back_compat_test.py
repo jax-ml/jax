@@ -28,6 +28,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src.export import _export
+from jax._src.lib import gpu_solver
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
@@ -38,6 +39,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import rocm_choles
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
+from jax._src.internal_test_util.export_back_compat_test_data import gpu_eigh_solver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
@@ -165,6 +167,7 @@ class CompatTest(bctu.CompatTestBase):
         annotate_data_placement.data_2025_04_07_tpu,
         annotate_data_placement.data_2025_04_07_cuda,
         annotate_data_placement.data_2026_02_04_rocm,
+        annotate_data_placement.data_2026_03_24_tpu,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -186,6 +189,7 @@ class CompatTest(bctu.CompatTestBase):
       # The following require ROCm to test
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
       "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+      "hipsolver_gesdd_ffi",  # covered by rocm_svd_hipsolver_gesvd (gesdd f32)
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -362,7 +366,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_eigh_solver_syev(self, dtype_name="f32"):
-    if not jtu.test_device_matches(["cuda"]):
+    if not jtu.test_device_matches(["cuda", "rocm"]):
       self.skipTest("Unsupported platform")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
@@ -372,7 +376,15 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-2, f64=1e-10, c64=1e-2, c128=1e-10)[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
-    data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
+
+    # Select appropriate test data based on platform
+    if jtu.test_device_matches(["rocm"]):
+      data = self.load_testdata(gpu_eigh_solver_syev.data_2026_02_16[dtype_name])
+    elif jtu.test_device_matches(["cuda"]):
+      data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
+    else:
+      self.skipTest("Unsupported platform")
+
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
@@ -657,14 +669,36 @@ class CompatTest(bctu.CompatTestBase):
                                             *data.inputs))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
-           dtype_name=dtype_name, algorithm_name=algorithm_name)
-      for dtype_name in ("f32", "f64", "c64", "c128")
-      for algorithm_name in ("qr", "jacobi"))
+      [
+          dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
+               dtype_name=dtype_name, algorithm_name=algorithm_name)
+          for dtype_name in ("f32", "f64", "c64", "c128")
+          for algorithm_name in ("qr", "jacobi")
+      ] + [
+          dict(testcase_name=f"_dtype={dtype_name}_algorithm=gesdd",
+               dtype_name=dtype_name, algorithm_name="gesdd")
+          for dtype_name in ("f32", "f64", "c64", "c128")
+      ])
   @jax.default_matmul_precision("float32")
   def test_gpu_svd_solver_gesvd(self, dtype_name, algorithm_name):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
+    # The gesdd algorithm uses hipsolver_gesdd_ffi (jaxlib_extension_version 426+).
+    # run_one_test calls run_current() which executes the kernel directly, so
+    # skip when the installed jaxlib predates the gesdd FFI handler.
+    if algorithm_name == "gesdd" and jtu.test_device_matches(["rocm"]):
+      rocm_targets = {
+          name for name, _, _ in gpu_solver.registrations().get("ROCM", ())
+      }
+      if "hipsolver_gesdd_ffi" not in rocm_targets:
+        self.skipTest(
+            "hipsolver_gesdd_ffi requires a plugin that registers hipsolver_gesdd_ffi")
+
+    algorithm = dict(
+        qr=lax.linalg.SvdAlgorithm.QR,
+        jacobi=lax.linalg.SvdAlgorithm.JACOBI,
+        gesdd=lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER,
+    )[algorithm_name]
 
     def func(operand):
       return lax.linalg.svd(operand, full_matrices=True, compute_uv=True,
@@ -672,12 +706,11 @@ class CompatTest(bctu.CompatTestBase):
 
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
-    algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
-                     jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
 
     # The `platform_data_map` dictionary allows additional testdata modules
     # to be easily added to the unit test. If no acceptable testdata is found
-    # for the current platform, the test will be skipped.
+    # for the current platform, the test will be skipped. "gesdd" exists only
+    # for ROCm (CUDA uses gesvd/gesvdj).
     platform_data = None
     platform_data_map = {
         "cuda": cuda_svd_cusolver_gesvd.data_2024_10_08,
@@ -686,6 +719,12 @@ class CompatTest(bctu.CompatTestBase):
 
     for platform, data_module in platform_data_map.items():
       if jtu.test_device_matches([platform]):
+        if algorithm_name not in data_module:
+          continue  # e.g. CUDA has no "gesdd" data
+        if dtype_name not in data_module[algorithm_name]:
+          self.skipTest(
+              f"Test data for {algorithm_name} {dtype_name} not yet generated "
+              "(run on ROCm and paste into rocm_svd_hipsolver_gesvd.py)")
         platform_data = data_module[algorithm_name][dtype_name]
         break
 
@@ -865,6 +904,8 @@ class CompatTest(bctu.CompatTestBase):
       data = self.load_testdata(rocm_threefry2x32.data_2026_02_05)
       self.run_one_test(func, data)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_tpu_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
@@ -901,7 +942,6 @@ class CompatTest(bctu.CompatTestBase):
         else:
           self.run_one_test(func, self.load_testdata(data["gspmd"]))
 
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_platform={platform}", platform=platform)
       for platform in ("tpu", "gpu"))
@@ -916,15 +956,16 @@ class CompatTest(bctu.CompatTestBase):
 
     @partial(jax.jit,
              in_shardings=(dev_sharding, host_sharding),
-             out_shardings=host_sharding)
+             out_shardings=dev_sharding)
     def func(x, y):
-      return x + y
+      return x + jax.device_put(y, dev_sharding)
 
     # Check the actual GPU backend type to load appropriate test data
     if platform == "tpu":
       data = [(annotate_data_placement.data_2025_04_07_tpu,
                ["annotate_device_placement"]),
-              (annotate_data_placement.data_2025_06_30_tpu, None)]
+              (annotate_data_placement.data_2025_06_30_tpu, None),
+              (annotate_data_placement.data_2026_03_24_tpu, None)]
     elif jtu.test_device_matches(["rocm"]):
       # ROCm test data - currently only have one version (Feb 2026)
       data = [(annotate_data_placement.data_2026_02_04_rocm,
@@ -934,6 +975,10 @@ class CompatTest(bctu.CompatTestBase):
                ["annotate_device_placement"]),
               (annotate_data_placement.data_2025_06_30_cuda, None)]
 
+    def prepare_inputs(inputs):
+      return (jax.device_put(inputs[0], dev_sharding),
+              jax.device_put(inputs[1], host_sharding))
+
     # Due to changes in how Shardy is serialized, from using custom calls to
     # natively serializing Shardy with StableHLO, we may need to override
     # the expected custom call targets for old test data that was serialized
@@ -942,9 +987,11 @@ class CompatTest(bctu.CompatTestBase):
       if jax.config.jax_use_shardy_partitioner:
         self.run_one_test(
             func, self.load_testdata(data["shardy"]),
-            expect_current_custom_calls=custom_call_targets_override)
+            expect_current_custom_calls=custom_call_targets_override,
+            prepare_inputs=prepare_inputs)
       else:
-        self.run_one_test(func, self.load_testdata(data["gspmd"]))
+        self.run_one_test(func, self.load_testdata(data["gspmd"]),
+                          prepare_inputs=prepare_inputs)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
@@ -1093,6 +1140,8 @@ class CompatTest(bctu.CompatTestBase):
 
 class ShardyCompatTest(bctu.CompatTestBase):
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_shardy_sharding_ops_with_different_meshes(self):
     # Tests whether we can save and load a module with meshes that have the
     # same axis sizes (and same order) but different axis names.

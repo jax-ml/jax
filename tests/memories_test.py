@@ -32,7 +32,8 @@ import jax.numpy as jnp
 from jax.ad_checkpoint import checkpoint_name, Offloadable, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding, PartitionSpec as P)
+    NamedSharding, GSPMDSharding, PartitionSpec as P)
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
 from jax._src.compute_on import compute_on2
@@ -73,7 +74,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       ns = NamedSharding(mesh, P("x"))
       self.assertEqual(ns.memory_kind, self._default_memory_kind)
     elif name == "single_device_sharding":
-      ss = SingleDeviceSharding(jax.devices()[0])
+      ss = make_single_device_sharding(jax.devices()[0])
       self.assertEqual(ss.memory_kind, self._default_memory_kind)
     else:
       assert name == "gspmd_sharding"
@@ -98,7 +99,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
           "Could not find memory addressable by device.*Device.*"
           " can address the following memory kinds.*",
       ):
-        SingleDeviceSharding(jax.devices()[0], memory_kind="host")
+        make_single_device_sharding(jax.devices()[0], memory_kind="host")
     else:
       assert name == "gspmd_sharding"
       with self.assertRaisesRegex(
@@ -119,7 +120,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       mesh = jtu.create_mesh((1,), ("x",))
       NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
     elif name == "single_device_sharding":
-      SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host")
+      make_single_device_sharding(jax.devices()[0], memory_kind="unpinned_host")
     else:
       assert name == "gspmd_sharding"
       GSPMDSharding.get_replicated(jax.devices(), memory_kind="unpinned_host")
@@ -136,8 +137,9 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       s2 = NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "single_device_sharding":
-      s1 = SingleDeviceSharding(jax.devices()[0])
-      s2 = SingleDeviceSharding(jax.devices()[0], memory_kind=self._default_memory_kind)
+      s1 = make_single_device_sharding(jax.devices()[0])
+      s2 = make_single_device_sharding(jax.devices()[0],
+          memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "gspmd_sharding":
       s1 = GSPMDSharding.get_replicated(jax.devices())
@@ -229,16 +231,16 @@ class DevicePutTest(jtu.JaxTestCase):
 
     out_host0 = jax.device_put(
         jnp.arange(8),
-        SingleDeviceSharding(jax.devices()[0], memory_kind=host_memory_kind))
+        make_single_device_sharding(
+            jax.devices()[0], memory_kind=host_memory_kind))
 
     dev2 = jax.devices()[2]
     out_hbm1 = jax.device_put(
-        out_host0, SingleDeviceSharding(dev2, memory_kind="device"))
-    self.assertEqual(out_hbm1.sharding.memory_kind, "device")
-    self.assertEqual(out_hbm1.sharding._device, dev2)
-    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding._device, dev2)
-    self.assertEqual(
-        out_hbm1.addressable_shards[0].data.sharding.memory_kind, "device")
+        out_host0, make_single_device_sharding(dev2, memory_kind="device"))
+    self.assertEqual(out_hbm1.sharding,
+        make_single_device_sharding(dev2, memory_kind="device"))
+    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding,
+        make_single_device_sharding(dev2, memory_kind="device"))
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_different_device_and_memory_hbm_to_host(
@@ -253,11 +255,13 @@ class DevicePutTest(jtu.JaxTestCase):
 
     dev2 = jax.devices()[2]
     out_host1 = jax.device_put(
-        out_hbm0, SingleDeviceSharding(dev2, memory_kind=host_memory_kind))
-    self.assertEqual(out_host1.sharding.memory_kind, host_memory_kind)
-    self.assertEqual(out_host1.sharding._device, dev2)
-    self.assertEqual(out_host1.addressable_shards[0].data.sharding._device,
-                     dev2)
+        out_hbm0, make_single_device_sharding(
+            dev2, memory_kind=host_memory_kind))
+    self.assertEqual(out_host1.sharding, make_single_device_sharding(
+            dev2, memory_kind=host_memory_kind))
+    self.assertEqual(out_host1.addressable_shards[0].data.sharding,
+                     make_single_device_sharding(
+                         dev2, memory_kind=host_memory_kind))
     self.assertEqual(
         out_host1.addressable_shards[0].data.sharding.memory_kind,
         host_memory_kind)
@@ -272,8 +276,10 @@ class DevicePutTest(jtu.JaxTestCase):
 
     np_inp = np.arange(16).reshape(8, 2)
 
-    s_hbm_dev_0 = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_hbm_dev_1 = SingleDeviceSharding(jax.devices()[1], memory_kind="device")
+    s_hbm_dev_0 = make_single_device_sharding(
+        jax.devices()[0], memory_kind="device")
+    s_hbm_dev_1 = make_single_device_sharding(
+        jax.devices()[1], memory_kind="device")
     inp_hbm_dev0 = jax.device_put(np_inp, s_hbm_dev_0)
     out_hbm_dev_1 = jax.device_put(inp_hbm_dev0, s_hbm_dev_1)
     self._check_device_put_addressable_shards(
@@ -296,7 +302,7 @@ class DevicePutTest(jtu.JaxTestCase):
   #   # Reshard single device array on HBM to multi device on host
   #   sds_inp_hbm = jax.device_put(
   #       jnp.arange(16).reshape(8, 2),
-  #       SingleDeviceSharding(jax.devices()[0], memory_kind="device"))
+  #       make_single_device_sharding(jax.devices()[0], memory_kind="device"))
   #   # device_put on host
   #   out_sharded_host = jax.device_put(sds_inp_hbm, s_host)
   #   self._check_device_put_addressable_shards(
@@ -305,7 +311,8 @@ class DevicePutTest(jtu.JaxTestCase):
   #   # Reshard single device array on host to multi device on hbm
   #   sds_inp_host = jax.device_put(
   #       jnp.arange(16).reshape(8, 2),
-  #       SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
+  #       make_single_device_sharding(
+  #           jax.devices()[0], memory_kind="unpinned_host"))
   #   # device_put on hbm
   #   out_sharded_hbm = jax.device_put(sds_inp_host, s_hbm)
   #   self._check_device_put_addressable_shards(
@@ -332,7 +339,7 @@ class DevicePutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
     np_inp = np.float32(8)
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_hbm = make_single_device_sharding(jax.devices()[0], memory_kind="device")
     s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(np_inp, s_hbm)
@@ -347,7 +354,7 @@ class DevicePutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
     py_scalar = float(8)
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_hbm = make_single_device_sharding(jax.devices()[0], memory_kind="device")
     s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(py_scalar, s_hbm)
@@ -363,7 +370,7 @@ class DevicePutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
     py_inp = 8
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_hbm = make_single_device_sharding(jax.devices()[0], memory_kind="device")
     s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(py_inp, s_hbm)
@@ -822,7 +829,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(cpu_array.sharding, cpu_sharding)
 
   def test_compute_on_basic(self):
-    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
+    out_s = make_single_device_sharding(
+        jax.devices()[0], memory_kind='pinned_host')
 
     @compute_on2(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
@@ -851,7 +859,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out2.sharding.memory_kind, "pinned_host")
 
   def test_compute_on_2d(self):
-    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind="pinned_host")
+    out_s = make_single_device_sharding(
+        jax.devices()[0], memory_kind="pinned_host")
 
     @compute_on("device_host")
     @jax.jit
@@ -941,7 +950,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
                      'to_apply=g.*frontend_attributes={_xla_compute_type="host"}')
 
   def test_compute_on_reduction(self):
-    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
+    out_s = make_single_device_sharding(
+        jax.devices()[0], memory_kind='pinned_host')
 
     @compute_on('device_host')
     @jax.jit
@@ -1368,7 +1378,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     @jax.jit
     def f(x):
       return jax.device_put(
-          x, SingleDeviceSharding(jax.devices()[0], memory_kind="pinned_host"))
+          x, make_single_device_sharding(
+              jax.devices()[0], memory_kind="pinned_host"))
 
     with self.assertRaisesRegex(
         ValueError, "Received incompatible devices for jitted computation"):
@@ -1585,10 +1596,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   def test_compute_offload_with_donation(self):
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    p_sharding = jax.sharding.SingleDeviceSharding(
-        jax.devices()[0], memory_kind="pinned_host"
-    )
+    sharding = make_single_device_sharding(jax.devices()[0])
+    p_sharding = make_single_device_sharding(
+        jax.devices()[0], memory_kind="pinned_host")
 
     @compute_on("device_host")
     @jax.jit
@@ -1619,10 +1629,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_offload_with_linear_layout(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("GPU does not support tiling.")
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    p_sharding = jax.sharding.SingleDeviceSharding(
-        jax.devices()[0], memory_kind="pinned_host"
-    )
+    sharding = make_single_device_sharding(jax.devices()[0])
+    p_sharding = make_single_device_sharding(
+        jax.devices()[0], memory_kind="pinned_host")
 
     @compute_on("device_host")
     @jax.jit
@@ -1913,6 +1922,32 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
 
+class ComputeTypeMetadataTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      dict(testcase_name='DeviceHost', compute_type='device_host',
+           expected_regex=r'_xla_compute_type\s*=\s*"host"'),
+      dict(testcase_name='GpuStream', compute_type='gpu_stream:1',
+           expected_regex=r'_xla_stream_annotation\s*=\s*"1"'),
+  )
+  def test_compute_type_metadata(self, compute_type, expected_regex):
+    def f(x):
+      with compute_on(compute_type):
+        return jnp.sin(x)
+
+    hlo = jax.jit(f).lower(1.0).as_text()
+    self.assertRegex(hlo, expected_regex)
+
+  def test_compute_type_metadata_preserves_attributes(self):
+    def f(x):
+      with compute_on('device_host'):
+        return set_xla_metadata(jnp.sin(x), foo='bar')
+
+    hlo = jax.jit(f).lower(1.0).as_text()
+    self.assertRegex(hlo, r'_xla_compute_type\s*=\s*"host"')
+    self.assertRegex(hlo, r'foo\s*=\s*"bar"')
+
+
 class StreamAnnotationTest(jtu.JaxTestCase):
 
   def test_stream_annotation_single_instruction(self):
@@ -1939,6 +1974,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     self.assertIn('call-start', compiled_text)
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertIn('wrapped_add', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 2)
 
@@ -1980,6 +2016,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
     self.assertIn('call-start.1', compiled_text)
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertIn('_scheduling_group_id="1"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 1024)
 
@@ -2016,6 +2053,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="1"', compiled_text)
     self.assertIn('call-start.1', compiled_f.as_text())
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertIn('inlineable="false"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
 
   @jtu.skip_on_devices('cpu')

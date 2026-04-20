@@ -46,7 +46,7 @@ def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.call_p.bind(f, *args)
+  out = core.call_p.bind(*args, subfuns=(f,))
   return jax.tree.unflatten(out_tree(), out)
 # call = core_call
 core_call = util.curry(core_call)
@@ -56,7 +56,7 @@ def core_closed_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_closed_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.closed_call_p.bind(f, *args)
+  out = core.closed_call_p.bind(*args, subfuns=(f,))
   return jax.tree.unflatten(out_tree(), out)
 
 def simple_fun(x, y):
@@ -595,6 +595,29 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(f)(1.).jaxpr
     assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
+
+
+class InternedTest(jtu.JaxTestCase):
+
+  def test_manual_axis_type_pickle(self):
+    import pickle
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    pickled = pickle.dumps(mt)
+    unpickled = pickle.loads(pickled)
+    self.assertIs(mt, unpickled)
+
+  def test_manual_axis_type_deepcopy(self):
+    import copy
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    copied = copy.deepcopy(mt)
+    self.assertIs(mt, copied)
+
+  def test_manual_axis_type_immutable(self):
+    mt = core.ManualAxisType(varying={'x'}, unreduced={'y'}, reduced={'z'})
+    with self.assertRaises(AttributeError):
+      mt.varying = frozenset()
+    with self.assertRaises(AttributeError):
+      del mt.varying
 
 
 if __name__ == '__main__':

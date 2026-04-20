@@ -22,8 +22,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
 import jax.numpy as jnp
-
-# pylint: disable=g-import-not-at-top
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401
@@ -43,6 +41,8 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if attention_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or

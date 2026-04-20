@@ -20,7 +20,8 @@ import ctypes
 from collections import defaultdict
 import functools
 import itertools
-from typing import Callable, TypeGuard, Mapping
+from typing import cast, Any, TypeGuard
+from collections.abc import Callable, Mapping
 import weakref
 
 import jax
@@ -106,7 +107,7 @@ def _mlir_to_torch_dtype(torch, mlir_dtype: ir.Type):
 
 
 def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
-  import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+  import torch  # pyrefly: ignore[missing-import]
   mgpu_call: hlo.CustomCallOp | None = None
   get_outputs = None
   to_evaluate: list[Callable] = []
@@ -114,12 +115,14 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
   name_source = itertools.count()
   value_names: Mapping[ir.Value, int] = defaultdict(lambda: next(name_source))
   for op in block.operations:
+    op = cast(Any, op)
     if _is_custom_call(op, "AllocateBuffer"):
+      result_type = ir.ShapedType(op.result.type)
       def allocate_torch_buffer(
           env,
           device,
-          _shape=op.result.type.shape,
-          _dtype=_mlir_to_torch_dtype(torch, op.result.type.element_type),
+          _shape=result_type.shape,
+          _dtype=_mlir_to_torch_dtype(torch, result_type.element_type),
           _result_name=value_names[op.result],
       ):
         env[_result_name] = torch.empty(_shape, dtype=_dtype, device=device)
@@ -155,7 +158,8 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     elif op.name == "stablehlo.broadcast_in_dim":
       if op.broadcast_dimensions:
         raise ValueError("Only scalar broadcasts are supported")
-      target_shape = tuple(op.result.type.shape)
+      result_type = ir.ShapedType(op.result.type)
+      target_shape = tuple(result_type.shape)
       result_name = value_names[op.result]
       operand_name = value_names[op.operand]
       dtype = torch.int32
@@ -200,8 +204,9 @@ def _find_mgpu_call(block: ir.Block, args: list[ir.Value]):
     output_input_aliases[output_index] = alias.operand_index
 
   output_types = [
-      (result.type.shape, _mlir_to_torch_dtype(torch, result.type.element_type))
+      (result_type.shape, _mlir_to_torch_dtype(torch, result_type.element_type))
       for result in mgpu_call.results
+      if isinstance(result_type := result.type, ir.ShapedType)
   ]
   def prepare_outputs(*all_args, device):
     outputs = []
@@ -222,7 +227,7 @@ def _is_custom_call(op: ir.Operation, name: str) -> TypeGuard[hlo.CustomCallOp]:
 @util.weakref_lru_cache
 def _compile_fn(fn, in_structs):
   try:
-    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+    import torch  # pyrefly: ignore[missing-import]
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 

@@ -29,8 +29,6 @@ try:
   import torch
 except ImportError:
   torch = None
-
-# pylint: disable=g-import-not-at-top
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401
@@ -39,7 +37,6 @@ except ImportError:
 else:
   from jax.experimental.pallas.ops.gpu import attention_mgpu
 
-
 config.parse_flags_with_absl()
 
 
@@ -47,6 +44,8 @@ class TorchTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if torch is None:
       self.skipTest("Test requires PyTorch")
     if attention_mgpu is None:

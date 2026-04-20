@@ -28,7 +28,6 @@ import sys
 import unittest
 
 from absl.testing import absltest
-from absl import flags
 import jax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
@@ -41,6 +40,7 @@ jax.config.parse_flags_with_absl()
 
 
 class DebugCheckTest(jtu.JaxTestCase):
+
   @classmethod
   def setUpClass(cls):
     super().setUpClass()
@@ -51,7 +51,7 @@ class DebugCheckTest(jtu.JaxTestCase):
 
     loader = unittest.TestLoader()
     test_cases = loader.loadTestsFromModule(
-        sys.modules['__main__']
+        sys.modules["__main__"]
     ).countTestCases()
     if test_cases > total_shards:
       raise RuntimeError(
@@ -128,17 +128,11 @@ class DebugCheckTest(jtu.JaxTestCase):
       )
 
   def test_trigger_bounds_checker(self):
-    if "xla_sc_assert_level" in flags.FLAGS:
-      # The test crashes the process anyway, so no need to be clean.
-      flags.FLAGS.xla_sc_assert_level = "all-loads-stores"
-    else:
-      self.skipTest("TODO: Find another way to enable bounds checking.")
-    if jtu.is_device_tpu(7, "x"):
-      self.skipTest("TODO(b/478798643): Fails on v7x")
 
-    x = jnp.arange(8, dtype=jnp.int32)
-    # Index 8 is out-of-bounds.
-    indices = jnp.array([0, 1, 2, 3, 4, 5, 6, 8], dtype=jnp.int32)
+    size = plsc.get_sparse_core_info().num_lanes
+    x = jnp.arange(size, dtype=jnp.int32)
+    # Last index is out-of-bounds.
+    indices = jnp.append(jnp.arange(size - 1, dtype=jnp.int32), size)
 
     @functools.partial(
         pl.pallas_call,
@@ -150,12 +144,46 @@ class DebugCheckTest(jtu.JaxTestCase):
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 
-    # We expect this to fail with a runtime error from the bounds checker.
-    with self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
-        "Trying to perform an indexed vector load from out of bounds address.",
-    ):
-      jax.block_until_ready(kernel(x, indices))
+    compiled_kernel = jax.jit(
+        kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
+    )
+
+    with pl.enable_debug_checks(), self.assertRaises(
+        jax.errors.JaxRuntimeError
+    ) as error:
+      jax.block_until_ready(compiled_kernel(x, indices))
+
+    # TODO(b/479427406): Remove this once the bug is fixed.
+    if not (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
+      # We expect this to fail with a runtime error from the bounds checker.
+      self.assertIn(
+          "Trying to perform an indexed vector load from out of bounds"
+          " address.",
+          str(error.exception),
+      )
+
+  def test_no_out_of_bounds(self):
+    # TODO(b/479427406): Remove this once the bug is fixed.
+    if (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
+      self.skipTest("Skip on v7+")
+    size = plsc.get_sparse_core_info().num_lanes
+    x = jnp.arange(size, dtype=jnp.int32)
+    indices = jnp.arange(size, dtype=jnp.int32)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
+        ),
+    )
+    def kernel(x_ref, indices_ref, o_ref):
+      o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
+
+    compiled_kernel = jax.jit(
+        kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
+    )
+    jax.block_until_ready(compiled_kernel(x, indices))
 
 
 if __name__ == "__main__":

@@ -66,20 +66,20 @@ VectorType getNativeVregType(Type elem_ty,
                                       target_shape);
 }
 
-TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getFullVector(ImplicitLocOpBuilder& builder,
                                      VectorType vty, Attribute value) {
   return cast<TypedValue<VectorType>>(
       arith::ConstantOp::create(builder, DenseElementsAttr::get(vty, value))
           .getResult());
 }
 
-TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder& builder,
                                          TypedValue<VectorType> vec,
                                          Attribute value) {
   return getFullVector(builder, vec.getType(), value);
 }
 
-TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+TypedValue<VectorType> getFullVector(OpBuilder& builder, Location loc,
                                      VectorType vty, Attribute value) {
   return cast<TypedValue<VectorType>>(
       arith::ConstantOp::create(builder, loc,
@@ -87,24 +87,24 @@ TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
           .getResult());
 }
 
-TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+TypedValue<VectorType> getFullLikeVector(OpBuilder& builder, Location loc,
                                          TypedValue<VectorType> vec,
                                          Attribute value) {
   return getFullVector(builder, loc, vec.getType(), value);
 }
 
-TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder& builder,
                                       VectorType vty) {
   return getFullVector(builder, vty, builder.getZeroAttr(vty.getElementType()));
 }
 
-TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder &builder,
+TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder& builder,
                                           TypedValue<VectorType> vec) {
   return getZerosVector(builder, vec.getType());
 }
 
 FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
-    ImplicitLocOpBuilder &builder, int64_t padding,
+    ImplicitLocOpBuilder& builder, int64_t padding,
     const std::array<int64_t, 2> target_shape, int64_t dim) {
   if (dim != 0 && dim != 1) {
     return builder.emitError()
@@ -138,8 +138,8 @@ FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
   return cast<TypedValue<VectorType>>(mask_op.getResult());
 }
 
-LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
-                                    xla::Array<Value> &vregs,
+LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
+                                    xla::Array<Value>& vregs,
                                     std::array<int64_t, 2> target_shape,
                                     int64_t padding_bottom,
                                     int64_t padding_right) {
@@ -196,7 +196,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
     sublane_mask = arith::SelectOp::create(builder, mask_bottom, sublane_mask,
                                            i32_zeros_vreg);
     for (int64_t i = 0; i < vregs.dim(1); ++i) {
-      Value &vreg = vregs({vregs.dim(0) - 1, i});
+      Value& vreg = vregs({vregs.dim(0) - 1, i});
       Value i32_vreg = tpu::BitcastVregOp::create(builder, i32_vreg_ty, vreg);
       if (sub_padding > 0) {
         i32_vreg = arith::AndIOp::create(builder, i32_vreg, sublane_mask);
@@ -213,7 +213,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
         Value mask_right, getX32VmaskByPaddingEnd(builder, padding_right,
                                                   target_shape, /*dim=*/1));
     for (int64_t i = 0; i < vregs.dim(0); ++i) {
-      Value &vreg = vregs({i, vregs.dim(1) - 1});
+      Value& vreg = vregs({i, vregs.dim(1) - 1});
       Value i32_vreg = tpu::BitcastVregOp::create(builder, i32_vreg_ty, vreg);
       i32_vreg = arith::SelectOp::create(builder, mask_right, i32_vreg,
                                          i32_zeros_vreg);
@@ -224,7 +224,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
 }
 
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
-    ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
+    ImplicitLocOpBuilder& builder, TypedValue<VectorType> vec,
     int subelement_idx, std::array<int64_t, 2> target_shape) {
   int bitwidth = getElementTypeBitwidth(vec.getType());
   int packing = 32 / bitwidth;

@@ -26,13 +26,10 @@ except ImportError:
 
 import jax
 from jax import numpy as jnp
-from jax._src import config
-from jax._src import deprecations
 from jax._src import literals
 from jax._src import test_util as jtu
-from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.sharding_impls import GSPMDSharding
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 
 import numpy as np
 
@@ -77,32 +74,6 @@ class CloudpickleTest(jtu.JaxTestCase):
 
     g_unpickled = pickle.loads(s)
     actual = g_unpickled(32)
-    self.assertEqual(expected, actual)
-
-  @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
-  def testPickleOfPmappedFunctions(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest(
-          'Nested pmaps are not relevant for `pmap_shmap_merge=True` and'
-          ' `pmap`s pickled prior to `pmap_shmap_merge=True` may not work, but'
-          " perhaps it's worth making sure that freshly pickled `pmap`s still"
-          ' work?'
-      )
-
-    @jax.pmap
-    def f(x, y):
-      return x * y
-
-    @jax.pmap
-    def g(z):
-      return f(z, z + 77)  # noqa: F821
-
-    expected = g(jnp.asarray([[32]]))
-    s = cloudpickle.dumps(g)
-    del f, g
-
-    g_unpickled = pickle.loads(s)
-    actual = g_unpickled(jnp.asarray([[32]]))
     self.assertEqual(expected, actual)
 
 
@@ -167,12 +138,6 @@ class PickleTest(jtu.JaxTestCase):
     with self.assertRaises(jax.errors.ConcretizationTypeError):
       jax.jit(pickle.dumps)(0)
 
-  def testPickleSharding(self):
-    sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked(
-        (2, 2)), pxla.Unstacked(3)), (pxla.ShardedAxis(0), pxla.ShardedAxis(1),
-                                      pxla.ShardedAxis(2), pxla.Replicated(4)))
-    self.assertEqual(pickle.loads(pickle.dumps(sharding)), sharding)
-
   def testPickleOpSharding(self):
     op = xc.OpSharding()
     op.type = xc.OpSharding.Type.OTHER
@@ -183,7 +148,7 @@ class PickleTest(jtu.JaxTestCase):
         xc.HloSharding.from_proto(op))
 
   def test_pickle_single_device_sharding(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   def test_pickle_single_device_sharding_with_memory_kind(self):
@@ -192,21 +157,10 @@ class PickleTest(jtu.JaxTestCase):
         None,
     ):
       with self.subTest(memory_kind=memory_kind):
-        s = jax.sharding.SingleDeviceSharding(
+        s = make_single_device_sharding(
             jax.devices()[0], memory_kind=memory_kind
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message='jax.sharding.PmapSharding is deprecated')
-  def test_pickle_pmap_sharding(self):
-    if deprecations.is_accelerated_attribute(jax.sharding, 'PmapSharding'):
-      self.skipTest('PmapSharding is accelerated.')
-    ss = pxla.ShardingSpec(
-        sharding=(pxla.Unstacked(8),),
-        mesh_mapping=(pxla.ShardedAxis(0),))
-    s = jax.sharding.PmapSharding(jax.devices(), ss)
-    self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   def test_pickle_gspmd_sharding(self):
     s = GSPMDSharding.get_replicated(jax.devices())

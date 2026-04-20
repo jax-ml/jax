@@ -16,6 +16,121 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added `ResizeMethod.AREA` to {func}`jax.image.resize`, which matches
+    TensorFlow's AREA resizing ({jax-issue}`#20098`).
+
+* Breaking changes
+  * `with mesh:` context manager has been deprecated. Please use
+    `with jax.set_mesh(mesh):` instead.
+
+## JAX 0.10.0 (April 16, 2026)
+
+* New features:
+  * Added `ResizeMethod.CUBIC_PYTORCH` to {func}`jax.image.resize` to match
+    PyTorch's bicubic resize ({jax-issue}`#15768`).
+  * We now support differentiation of {func}`jax.lax.linalg.qr` for wide
+    matrices and when `full_matrices` is `True`.
+  * LAPACK operations are now parallelized along the batch dimension on CPU.
+  * Added `perturb_singular` argument to
+    {func}`jax.lax.linalg.tridiagonal_solve` to handle singular matrices by
+    perturbing near-zero pivots in the LU decomposition. This is useful for
+    solving numerically singular systems when computing eigenvectors by inverse
+    iteration.
+  * {func}`jax.scipy.linalg.eigh_tridiagonal` now supports computing
+    eigenvectors on CPU and GPU.
+  * Added the {meth}`jax.numpy.ndarray.byteswap` method.
+
+* Breaking changes:
+  * `PartitionSpec` objects no longer report themselves to be equal to tuples.
+    Convert tuples to `PartitionSpec` objects before testing equality.
+  * The `.vma` property has been removed from `jax.core.ShapedArray`. Use
+    `.manual_axis_type.varying` instead.
+  * JAX CPU devices now report their names as `cpu:0`, `cpu:1`, etc. instead of
+    `TFRT_CPU_0`, `TFRT_CPU_1`.
+  * The config state `jax_pmap_shmap_merge` has been removed. `jax.pmap`
+    will now always use the new implementation that wraps
+    `jax.jit(jax.shard_map)`. Please see
+    https://docs.jax.dev/en/latest/migrate_pmap.html for more information.
+  * `jax.device_put_sharded` and `jax.device_put_replicated` have been removed
+    from the public API and now raise an `AttributeError` when accessed.
+    Please see
+    https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements for
+    drop-in replacements.
+  * The C++ pmap infrastructure has been removed. The following public APIs
+    are no longer available:
+    * `jax.sharding.PmapSharding`
+    * From `jaxlib.xla_extension`: `PmapFunction`, `pmap`,
+      `NoSharding`, `Chunked`, `Unstacked`, `ShardedAxis`, `Replicated`,
+      `ShardingSpec`.
+    * From `jax.interpreters.pxla`: `MapTracer`, `PmapExecutable`,
+      `parallel_callable`, `shard_args`, `xla_pmap_p`, `Chunked`,
+      `NoSharding`, `Replicated`, `ShardedAxis`, `ShardingSpec`,
+      `Unstacked`, `spec_to_indices`.
+  * The deprecated keyword arguments `a`, `a_min`, and `a_max` to
+    `jax.numpy.clip` have been removed.
+  * Functions `jax.numpy.hstack`, `jax.numpy.vstack`, `jax.numpy.dstack`,
+    `jax.numpy.column_stack`, `jax.numpy.atleast_1d`, `jax.numpy.atleast_2d`,
+    and `jax.numpy.atleast_3d` no longer accept non-`ArrayLike` inputs.
+    Doing so previously issued a `DeprecationWarning`.
+  * {func}`jax.scipy.stats.rankdata` now returns floating point values in
+    all cases, following a similar change in the SciPy 1.18 release.
+
+* Deprecations:
+  * A number of internal APIs in `jax.core` have been newly deprecated and
+    some have been moved to `jax.extend.core`. These include `CallPrimitive`,
+    `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`,
+    `gensym`, `get_opaque_trace_state`, `jaxprs_in_params`, `new_jaxpr_eqn`,
+    `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`,
+    `JaxprPpSettings`, `OutputType`, `abstract_token`, `aval_mapping_handlers`,
+    `call`, `concretization_function_error`, `custom_typechecks`, `is_concrete`,
+    `is_constant_dim`, `is_constant_shape`, `literalable_types`, `no_axis_name`,
+    `pytype_aval_mappings`, and `trace_ctx`.
+
+* Changes:
+  * The minimum supported SciPy version is now 1.14.
+  * `vma` parameter of `jax.ShapeDtypeStruct` has been replaced with
+    `manual_axis_type: jax.sharding.ManualAxisType`. The `.vma` property has
+    been replaced with `.manual_axis_type.varying`.
+  * Removed experimental {func}`jax.experimental.custom_dce.custom_dce`
+  * {func}`jax.scipy.linalg.cho_solve`, {func}`jax.scipy.linalg.lu_solve`, and
+    {func}`jax.scipy.linalg.solve_triangular` now show a deprecation warning for
+    batched 1D solves with `b.ndim > 1`. In the future these will be treated as
+    batched 2D solves.
+  * Added a new version 10 for the jax.export serialization format. This is
+    an optimization for when there are multiple occurrences of the same
+    abstract value, abstract mesh, or sharding.
+
+* Bug fixes:
+  * Fixed a bug that led to differing output between CPU and GPU for
+    non-symmetric multidimensional IRFFTs ({jax-issue}`#29325`).
+  * Fixed an error when tiny matrices were passed to
+    `jax.lax.linalg.tridiagonal_solve` on GPU ({jax-issue}`#32487`).
+  * Fixed a bug in `jax.scipy.fft.dctn` and `idctn` where `axes=None`
+    incorrectly defaulted to all axes when `s` was specified, instead of the
+    last `len(s)` axes to match SciPy behavior ({jax-issue}`#29426`).
+  * Fixed a bug where calling `jax.distributed.initialize()` on a GCE TPU
+    Managed Instance Group raised an `IndexError` ({jax-issue}`#36593`). When
+    `jax.distributed.initialize()` is called on a GCE VM, it uses the GCE
+    [metadata
+    server](https://docs.cloud.google.com/compute/docs/metadata/overview) to
+    learn the addresses of all participating tasks. The format of this metadata
+    on Managed Instance Groups was not a format JAX expected, leading to the
+    exception. We now parse this format correctly.
+
+## JAX 0.9.2 (March 18, 2026)
+
+* Changes:
+  * The semi-private type `jax._src.literals.TypedNdArray` is now a subclass of
+    `np.ndarray`, rather than a duck type of it.
+  * {func}`jax.numpy.arange` with `step` specified no longer generates the array
+    on host. The benefit is more efficient code, though this can lead to less
+    precise outputs for narrow-width floats (e.g. bfloat16). To recover the
+    previous behavior in this case, use `jnp.array(np.arange(...))`.
+
 ## JAX 0.9.1 (March 2, 2026)
 
 * Changes:
@@ -739,6 +854,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
   * Added two new configuration flags, `jax_exec_time_optimization_effort` and `jax_memory_fitting_effort`, to control the amount of effort the compiler spends minimizing execution time and memory usage, respectively.  Valid values are between -1.0 and 1.0, default is 0.0.
+  * Added {func}`jax.scipy.special.loggamma`
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would
@@ -2095,7 +2211,7 @@ Changes:
     breaking change to the `pjit` API.  The [jax.Array migration
     guide](https://docs.jax.dev/en/latest/jax_array_migration.html) can
     help you migrate your codebase to `jax.Array`. You can also look at the
-    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/parallel.html)
     tutorial to understand the new concepts.
   * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.

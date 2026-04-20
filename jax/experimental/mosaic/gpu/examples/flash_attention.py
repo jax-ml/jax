@@ -17,6 +17,7 @@ import contextlib
 import dataclasses
 import enum
 import itertools
+from typing import cast
 
 import jax
 from jax import random
@@ -32,7 +33,6 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
 
-# mypy: ignore-errors
 # ruff: noqa: F405
 
 @dataclasses.dataclass(frozen=True)
@@ -115,7 +115,7 @@ def build_kernel(
   f16 = ir.F16Type.get()
   f32 = ir.F32Type.get()
 
-  grid = block_partition.num_chunks
+  grid = cast(tuple[int, int, int], block_partition.num_chunks)
   block = (wgs_per_block * 128, 1, 1)
   tiling = (64, 64)
   qo_scratch = jax.ShapeDtypeStruct(
@@ -296,6 +296,7 @@ def build_kernel(
         ctx.await_async_copy(0)
 
       scf.yield_([])
+    assert if_compute.else_block is not None
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
       with single_thread(scope=ThreadSubset.WARPGROUP):
@@ -576,6 +577,7 @@ def benchmark_and_verify(
         **kwargs,
     )
     out, runtime = profiler.measure(f)(q[0], k[0], v[0])
+    assert runtime is not None
     out = out[None]
 
     @jax.jit

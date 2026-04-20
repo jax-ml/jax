@@ -37,11 +37,11 @@ def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
     grid = (grid,)
   elif len(grid) > 3:
     raise ValueError("`grid` should have three or fewer dimensions.")
-  return tuple(grid) + (1,) * (3 - len(grid))  # type: ignore
+  return tuple(grid) + (1,) * (3 - len(grid))  # pyrefly: ignore[bad-return]
 
 
 def avals_to_layouts(avals):
-  return [list(reversed(range(aval.ndim))) for aval in avals]  # pytype: disable=attribute-error
+  return [list(reversed(range(aval.ndim))) for aval in avals]
 
 
 def pallas_call_lowering(
@@ -91,11 +91,25 @@ def pallas_call_lowering(
     print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
     print(grid_mapping)
 
+  try:
+    gpu_device, *_ = jax.local_devices(backend="gpu")
+  except RuntimeError:
+    # GPU device is not available. Fall back to the minimum CC supported by Triton.
+    # TODO(slebedev): Make the fallback CC configurable.
+    arch_name = "8.0"
+    compute_capability = 80
+  else:
+    arch_name = str(gpu_device.compute_capability)
+    if lowering_platform == "rocm":
+      compute_capability = 0
+    else:
+      compute_capability = int(arch_name.replace(".", ""))
+
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
   name = mlir.sanitize_name(debug_info.func_name)
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, grid_mapping, lowering_platform
+      jaxpr, grid_mapping, lowering_platform, compute_capability or None
   )
   module_op = lowering_result.module.operation
   if debug:
@@ -144,21 +158,6 @@ def pallas_call_lowering(
         operand_output_aliases=dict(input_output_aliases),
     ).results
 
-  try:
-    gpu_device, *_ = jax.local_devices(backend="gpu")
-  except RuntimeError:
-    # GPU device is not available. Fall back to the minimum CC supported by Triton.
-    # TODO(slebedev): Make the fallback CC configurable.
-    arch_name = "8.0"
-    cc = 80
-  else:
-    arch_name = str(gpu_device.compute_capability)
-    cc = (
-        0
-        if lowering_platform == "rocm"
-        else int(arch_name.replace(".", ""))
-    )
-
   compilation_result = triton.compile(
       lowering_platform,
       buf.getvalue(),
@@ -178,7 +177,7 @@ def pallas_call_lowering(
           else compilation_result.asm
       ),
       module_op.get_asm(enable_debug_info=True, pretty_debug_info=True),
-      cc,
+      compute_capability,
   )
   kernel_call = triton_kernel_call_lib.TritonKernelCall(
       kernel,
@@ -205,3 +204,6 @@ def pallas_call_lowering(
       result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
   ).results
+
+
+pallas_core.register_lowering_rule(triton_core.CompilerParams, pallas_call_lowering, "gpu")

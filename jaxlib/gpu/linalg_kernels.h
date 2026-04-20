@@ -37,6 +37,12 @@ void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
                                        std::int32_t* permutation);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(LuPivotsToPermutation);
 
+void LaunchTridiagonalSolvePerturbedKernel(
+    gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
+    xla::ffi::DataType dtype, const void* subdiag, const void* diag,
+    const void* superdiag, const void* rhs, void* x, void* workspace);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(TridiagonalSolvePerturbedFfi);
+
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 

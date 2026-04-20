@@ -38,8 +38,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/jax_jit.h"
@@ -107,8 +107,7 @@ MpmdExecutableFastpathCache::GetOrInsertIfAbsent(
   return {data, true};
 }
 
-absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(
-    nb::sequence args) {
+absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
   TF_ASSIGN_OR_RETURN(std::vector<xla::ifrt::ArrayRef> ifrt_args,
                       UnwrapArrays(args));
   xla::ifrt::ExecuteOptions execute_options;
@@ -143,7 +142,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(
 }
 
 absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
-    nb::sequence args, nb::dict kwargs) {
+    nb::args args, nb::kwargs kwargs) {
   jax::CallSignature call_signature;
   absl::InlinedVector<nb::object, 2> flat_args;
   ParseArguments(args, kwargs, call_signature.arg_signature, flat_args);
@@ -202,8 +201,8 @@ absl::StatusOr<nb::object> PyMpmdLoadedExecutable::ExecuteFastpath(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      nb::list result, Execute(nb::cast<nb::sequence>(kept_args)));
+  TF_ASSIGN_OR_RETURN(nb::list result,
+                      Execute(nb::cast<nb::sequence>(kept_args)));
   std::vector<nb::object> result_list;
   result_list.reserve(result.size());
   for (nb::handle result_item : result) {
@@ -231,8 +230,8 @@ PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
   }
 }
 
-absl::StatusOr<std::string>
-PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl() const {
+absl::StatusOr<std::string> PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl()
+    const {
   if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetIfrtIrProgramXprofUrl();
@@ -315,7 +314,7 @@ PyMpmdLoadedExecutable::GetOutputLayouts() {
 }
 
 void PyMpmdLoadedExecutable::ParseArguments(
-    nb::sequence args, nb::dict kwargs, jax::ArgumentSignature& arg_signature,
+    nb::args args, nb::kwargs kwargs, jax::ArgumentSignature& arg_signature,
     absl::InlinedVector<nb::object, 2>& flat_args) {
   size_t num_positional_args = nb::len(args);
   size_t num_keyword_args = kwargs ? kwargs.size() : 0;
@@ -384,7 +383,7 @@ void PyMpmdLoadedExecutable::PopulateCache(
 }
 
 void PyMpmdLoadedExecutable::SetupFastpath(nb::callable cache_miss,
-                                                nb::object pytree_registry) {
+                                           nb::object pytree_registry) {
   cache_miss_ = std::move(cache_miss);
   pytree_registry_ = nb::cast<jax::nb_class_ptr<jax::PyTreeRegistry>>(
       nb::handle(pytree_registry.ptr()));

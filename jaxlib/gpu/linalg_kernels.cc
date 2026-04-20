@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "jaxlib/gpu/linalg_kernels.h"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include "absl/strings/str_format.h"
 #include "jaxlib/ffi_helpers.h"
@@ -120,6 +122,71 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(LuPivotsToPermutation, LuPivotsToPermutationImpl,
                                   .Ctx<ffi::PlatformStream<gpuStream_t>>()
                                   .Arg<ffi::Buffer<ffi::DataType::S32>>()
                                   .Ret<ffi::Buffer<ffi::DataType::S32>>());
+
+namespace {
+ffi::Error TridiagonalSolvePerturbedImpl(
+    gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer subdiag,
+    ffi::AnyBuffer diag, ffi::AnyBuffer superdiag, ffi::AnyBuffer rhs,
+    ffi::Result<ffi::AnyBuffer> x) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_size, n]), SplitBatch1D(diag.dimensions()));
+
+  FFI_RETURN_IF_ERROR(CheckShape(subdiag.dimensions(),
+                                 std::make_tuple(batch_size, n), "subdiag",
+                                 "tridiagonal_solve_perturbed"));
+  FFI_RETURN_IF_ERROR(CheckShape(superdiag.dimensions(),
+                                 std::make_tuple(batch_size, n), "superdiag",
+                                 "tridiagonal_solve_perturbed"));
+
+  FFI_ASSIGN_OR_RETURN((auto [rhs_batch, rhs_n, k_rhs]),
+                       SplitBatch2D(rhs.dimensions()));
+  if (rhs_batch != batch_size || rhs_n != n) {
+    return ffi::Error::InvalidArgument(
+        "RHS batch size and length must match diagonals.");
+  }
+
+  FFI_RETURN_IF_ERROR(CheckShape(x->dimensions(),
+                                 std::make_tuple(batch_size, n, k_rhs), "x",
+                                 "tridiagonal_solve_perturbed"));
+
+  auto dtype = diag.element_type();
+  if (dtype != ffi::DataType::F32 && dtype != ffi::DataType::F64 &&
+      dtype != ffi::DataType::C64 && dtype != ffi::DataType::C128) {
+    return ffi::Error::InvalidArgument(
+        "Invalid input type for tridiagonal solve; must be float32, float64, "
+        "complex64, or complex128.");
+  }
+  if (subdiag.element_type() != dtype || superdiag.element_type() != dtype ||
+      rhs.element_type() != dtype || x->element_type() != dtype) {
+    return ffi::Error::InvalidArgument(
+        "All input and output types for tridiagonal solve must match.");
+  }
+
+  size_t workspace_bytes =
+      (batch_size * n * 3 + batch_size * k_rhs) * ffi::ByteWidth(dtype);
+  FFI_ASSIGN_OR_RETURN(auto workspace,
+                       AllocateWorkspace<char>(scratch, workspace_bytes,
+                                               "tridiagonal_solve_perturbed"));
+
+  LaunchTridiagonalSolvePerturbedKernel(
+      stream, batch_size, n, k_rhs, dtype, subdiag.untyped_data(),
+      diag.untyped_data(), superdiag.untyped_data(), rhs.untyped_data(),
+      x->untyped_data(), workspace);
+
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
+  return ffi::Error::Success();
+}
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(TridiagonalSolvePerturbedFfi,
+                              TridiagonalSolvePerturbedImpl,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Ret<ffi::AnyBuffer>());
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

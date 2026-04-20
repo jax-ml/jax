@@ -36,7 +36,6 @@ from jax._src.layout import Format
 from jax._src.lib import _jax
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
 # ruff: noqa: F401
-# pylint: disable=unused-import
 # import tensorstore-backed methods for backward compatibility.
 from jax.experimental.array_serialization.tensorstore_impl import (
     _run_deserialization as run_deserialization,
@@ -50,7 +49,6 @@ _get_metadata = functools.partial(ts_impl._get_tensorstore_metadata,
                                   driver='zarr')
 get_tensorstore_spec = functools.partial(ts_impl.get_tensorstore_spec,
                                          driver='zarr', ocdbt=False)
-# pylint: enable=unused-import
 
 
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
@@ -187,7 +185,7 @@ class AsyncManager:
     if jax.process_count() > 1 and distributed.global_state.client is None:
       raise ValueError(_DISTRIBUTED_SYSTEM_MSG)
     self._client = distributed.global_state.client
-    self._count = None
+    self._count: int | None = None
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
@@ -203,14 +201,16 @@ class AsyncManager:
       logger.info('Starting commit to storage layer by process: %s',
                    current_process)
       thread_start_time = time.time()
+      assert self._commit_futures is not None
       for future in self._commit_futures:
         future.result()
       logger.info('Finished committing to storage layer by process: %s',
                    current_process)
 
-      key_for_barrier = None
+      key_for_barrier: str | None = None
       if process_count > 1:
         assert self._client is not None
+        assert self._count is not None
         # All processes will wait at the barrier. When all processes are at the
         # barrier, the barrier will be satisfied. If not, then it will timeout.
         key_for_barrier = _get_key(self._count)
@@ -226,6 +226,7 @@ class AsyncManager:
           logger.info('on_commit_callback successfully ran!')
         if process_count > 1:
           assert self._client is not None
+          assert key_for_barrier is not None
           self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
           logger.info('Process 0 successfully set key %s in the kv store',
                       key_for_barrier)
@@ -234,7 +235,7 @@ class AsyncManager:
           '/jax/checkpoint/write/async/thread_duration_sec',
           time.time() - thread_start_time)
 
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
       self._exception = e
 
   def _start_async_commit(self, on_commit_callback):
@@ -253,7 +254,7 @@ class AsyncManager:
           'DEADLINE_EXCEEDED: Barrier timed out' in str(exception)):
         raise BarrierTimeoutError(
             '\n'.join([str(exception), _BARRIER_TIMED_OUT_MSG]))
-      raise exception  # pylint: disable=raising-bad-type
+      raise exception
 
   def wait_until_finished(self):
     if self._thread is not None:

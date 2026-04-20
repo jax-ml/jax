@@ -437,7 +437,7 @@ def _create_device_mesh_for_nd_torus_splitting_axes(
           )
       ):
         best_logical_axis_assignment = logical_axis_assignment
-    assignment[:, logical_axis] = best_logical_axis_assignment  # type: ignore  # numpy 2.2
+    assignment[:, logical_axis] = best_logical_axis_assignment  # pyrefly: ignore[unsupported-operation]  # numpy 2.2
 
   # Read out the assignment.
   logical_mesh = _generate_logical_mesh(
@@ -731,7 +731,7 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       ] = d
 
   # Check there is no "hole" in the mesh we constructed.
-  if (out == None).any():  # pylint: disable=singleton-comparison
+  if (out == None).any():
     raise AssertionError(
         'Constructed mesh contains a "hole"; probable cause: coordinates '
         f'of jax_devices are not a contiguous cuboid: {jax_devices}'

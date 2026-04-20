@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "jaxlib/gpu/triton_utils.h"
 
-#include <zlib.h>
-
 #include <string>
 #include <string_view>
 
@@ -25,6 +23,7 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
+#include <zlib.h>
 
 namespace jax::JAX_GPU_NAMESPACE {
 

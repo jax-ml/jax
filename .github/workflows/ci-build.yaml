@@ -18,26 +18,47 @@ concurrency:
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  UV_MANAGED_PYTHON: true  # Make sure `uv` uses its own Python installations
   PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  # Print cache hits/misses for setup-uv-python Python and packages,
+  # as well as timing, in summaries. For packages, time taken has to be echo'ed
+  # separately in the workflow step.
+  CI_UV_DEBUG: true
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PYTHON_VERSION: '3.11'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           persist-credentials: false
-      - name: Set up Python 3.11
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        id: setup_python
+        uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
         with:
-          python-version: 3.11
-      - run: python -m pip install pre-commit
-      - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install lint dependencies
+        env:
+          PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+        run: |
+          PKG_INSTALL_START_TIME=$(date +%s)
+          uv pip install --python "$PYTHON_BIN" pre-commit
+          echo "### lint_and_typecheck dependency install" >> "$GITHUB_STEP_SUMMARY"
+          echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
+      - id: get-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
-      - run: pre-commit run --show-diff-on-failure --color=always --all-files
+          key: pre-commit-${{ steps.get-date.outputs.date }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
+      - run: $PYTHON_BIN -m pre_commit run --show-diff-on-failure --color=always --all-files
 
   build:
     # Don't execute in fork due to runner type
@@ -65,21 +86,23 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       with:
         persist-credentials: false
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" '.[minimum-jaxlib]' -r 'build/test-requirements.txt'
+        echo "### build dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Run tests
       env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
         JAX_ENABLE_CUSTOM_PRNG: ${{ matrix.prng-upgrade }}
@@ -94,7 +117,7 @@ jobs:
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-        pytest -n auto --tb=short --maxfail=20 tests examples
+        $PYTHON_BIN -m pytest -n auto --tb=short --maxfail=20 tests examples
 
 
   documentation:
@@ -109,22 +132,28 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system -r docs/requirements.txt
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+        echo "### documentation dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Test documentation
       env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
         JAX_TRACEBACK_FILTERING: "off"
         JAX_ARRAY: 1
         PY_COLORS: 1
       run: |
-        pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
-        pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
 
 
   documentation_render:
@@ -132,7 +161,7 @@ jobs:
     runs-on: linux-x86-n4-16
     container:
       image: index.docker.io/library/ubuntu@sha256:4e0171b9275e12d375863f2b3ae9ce00a4c53ddda176bd55868df97ac6f21a6e #  ratchet:ubuntu:22.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.12']
@@ -143,18 +172,28 @@ jobs:
     - name: Image Setup
       run: |
         apt update
-        apt install -y libssl-dev libsqlite3-dev build-essential
+        apt install -y build-essential
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system -r docs/requirements.txt
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+        echo "### documentation_render dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Render documentation
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
       run: |
-        sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
+        $PYTHON_BIN build/portserver.py &
+        SERVER_PID=$!
+        PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
+        kill $SERVER_PID
 
   ffi:
     name: FFI example
@@ -166,26 +205,32 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       with:
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+    - name: Set up Python 3.12
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
       with:
-        python-version: 3.12
-    - name: Install JAX
-      run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[cuda12]
-    - name: Build and install example project
-      run: uv pip install --system ./examples/ffi[test]
+        python-version: '3.12'
+    - name: Install JAX and FFI example
       env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
         # We test building using GCC instead of clang. All other JAX builds use
         # clang, but it is useful to make sure that FFI users can compile using
         # a different toolchain. GCC is the default compiler on the
         # 'ubuntu-latest' runner, but we still set this explicitly just to be
         # clear.
         CMAKE_ARGS: -DCMAKE_CXX_COMPILER=g++ -DJAX_FFI_EXAMPLE_ENABLE_CUDA=ON
+      run: |
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" '.[cuda12]'
+        uv pip install --python "$PYTHON_BIN" './examples/ffi[test]'
+        echo "### ffi dependency install" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Run CPU tests
-      run: python -m pytest examples/ffi/tests
+      run: $PYTHON_BIN -m pytest examples/ffi/tests
       env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
         JAX_PLATFORM_NAME: cpu
     - name: Run GPU tests
-      run: python -m pytest examples/ffi/tests
+      run: $PYTHON_BIN -m pytest examples/ffi/tests
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}

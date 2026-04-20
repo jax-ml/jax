@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import dataclasses
 import re
 import os
 from typing import Any
@@ -36,7 +35,6 @@ from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 import numpy as np
 import tensorflow as tf
-from tensorflow.compiler.xla import xla_data_pb2
 from tensorflow.compiler.tf2xla.python import xla as tfxla
 
 DType = Any
@@ -69,16 +67,6 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
-
-
-## Helper functions for matching OpMetadata in TF graphs
-@dataclasses.dataclass(order=True, frozen=True)
-class OpMetadataGraph:
-  tf_type: str  # The standard Tf.Operation.type
-  op_type: str  # The rest are OpMetadata fields from _Xla... attributes
-  op_name: str
-  source_file: str
-  source_line: str
 
 
 def SaveAndLoadModel(model: tf.Module,
@@ -188,6 +176,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       self.assertGreaterEqual(version,
                               export.minimum_supported_calling_convention_version)
       self.enter_context(config.jax_export_calling_convention_version(version))
+      self.enter_context(jtu.ignore_warning(
+          category=DeprecationWarning, message='`with mesh:` context manager'))
     logging.info(
       "Using JAX serialization version %s (export.max_version %s, tf.XlaCallModule max version %s)",
       version,
@@ -320,7 +310,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         # We log the HLO dialect for easier comparison with TF
         logging.info("[%s] JAX NON_OPT HLO\n%s",
                      self._testMethodName,
-                     jax_lowered.compiler_ir(dialect="hlo").as_hlo_text())  # type: ignore
+                     jax_lowered.compiler_ir(dialect="hlo").as_hlo_text())
 
         tf_args_signature = _make_tf_input_signature(*args)
         # If we give the signature, we cannot pass scalars
@@ -412,59 +402,3 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # contains >. It seems tobe hex-encoded, so this may be safe.
     large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
     return large_consts
-
-  def CheckOpMetadata(self, jax_fun, x,
-                      expected: Sequence[OpMetadataGraph],
-                      include_xla_op_metadata=True):
-    """Checks that the tf.Graph obtained by converting `jax_fun` for argument
-    `x` contains all the given OpMetadata.
-
-    If `not include_xla_op_metadata` then disable the generation of the
-    OpMetadata attributes, and check that we don't find any ops with
-    metadata.
-    """
-    f_tf = tf.function(
-        jax2tf.convert(jax_fun,
-                       include_xla_op_metadata=include_xla_op_metadata),
-        autograph=False,
-        input_signature=[tf.TensorSpec(x.shape, x.dtype)])
-    # Trace the TF function to a graph
-    f_tf_concrete = f_tf.get_concrete_function(tf.convert_to_tensor(x))
-
-    found_tf_ops = []
-    def iter_nested_graph(graph: tf.Graph):
-      for n in graph._nodes_by_id.values():
-        try:
-          op_metadata = n.get_attr("_XlaOpMetadata")
-          op_metadata_proto = xla_data_pb2.OpMetadata()
-          op_metadata_proto.ParseFromString(op_metadata)
-          found_tf_ops.append(
-              OpMetadataGraph(
-                  tf_type=n.type,
-                  op_name=op_metadata_proto.op_name,
-                  op_type=op_metadata_proto.op_type,
-                  source_file=op_metadata_proto.source_file,
-                  source_line=op_metadata_proto.source_line))
-        except ValueError:
-          continue
-
-        # Look for nested graphs. There probably is a better way!
-        if n.type == "StatelessWhile":
-          iter_nested_graph(n._body_graph)
-          iter_nested_graph(n._cond_graph)
-        if n.type == "StatelessCase":
-          for idx in range(10):  # How can I tell how many cases there are?
-            branch = getattr(n, f"_branch_graph_{idx}", None)
-            if branch is None:
-              break
-            iter_nested_graph(branch)
-
-    iter_nested_graph(f_tf_concrete.graph)
-    try:
-      if include_xla_op_metadata:
-        self.assertContainsSubset(expected, found_tf_ops)
-      else:
-        self.assertEmpty(found_tf_ops)
-    except Exception:
-      print("Found nodes:\n  ", "\n   ".join([str(md) for md in found_tf_ops]))
-      raise

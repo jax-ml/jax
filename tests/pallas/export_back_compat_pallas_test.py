@@ -70,6 +70,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_mosaic_gpu_add_one(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on GPUs with capability >= sm90")
 
@@ -86,6 +88,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(add_one, data, expect_current_custom_calls=["mosaic_gpu_v2"])
 
   def test_mosaic_gpu_kernel_add_one(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on GPUs with capability >= sm90")
 
@@ -120,6 +124,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=2e-7)
 
   def test_mosaic_semaphore_dma(self):
+    # TODO(slebedev): Update to use a current op
+    self.skipTest("Skipped until a current op is substituted.")
     if not (jtu.test_device_matches(["tpu"]) and
             jtu.is_device_tpu_at_least(4)):
       # TODO: crashes during compilation on TPU v4
@@ -131,8 +137,8 @@ class CompatTest(bctu.CompatTestBase):
       def dma_kernel(x, y):
         def body(dma_sem, sem):
           pltpu.async_copy(x, y, dma_sem).wait()
-          pltpu.semaphore_signal(sem)
-          pltpu.semaphore_wait(sem)
+          pl.semaphore_signal(sem)
+          pl.semaphore_wait(sem)
         pl.run_scoped(
             body, pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.REGULAR
         )

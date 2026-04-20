@@ -249,7 +249,9 @@ NB_MODULE(_jax_mlir_ext, m) {
           },
           nb::arg("code_to_filename"), nb::arg("frame_limit"),
           nb::arg("context").none() = nb::none())
-      .def("get", &TracebackToLocationCache::Get);
+      .def("get", &TracebackToLocationCache::Get,
+           nb::sig(
+               "def get(self, traceback: Traceback, /) -> mlir.ir.Location"));
 }
 
 }  // namespace jax

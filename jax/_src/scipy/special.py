@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import cast, Any
+from typing import Any
 
 import numpy as np
 
@@ -24,7 +24,6 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import lax
@@ -61,6 +60,7 @@ def gammaln(x: ArrayLike) -> Array:
   See Also:
     - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
     - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
+    - :func:`jax.scipy.special.loggamma`: the principal branch of the log-gamma function
 
   Notes:
     ``gammaln`` does not support complex-valued inputs.
@@ -115,6 +115,140 @@ def gammasgn(x: ArrayLike) -> Array:
     typ(1.0))
 
 
+# Lanczos coefficients for g=7, N=9.
+# Method: C. Lanczos, "A Precision Approximation of the Gamma Function",
+#   SIAM J. Numer. Anal. Ser. B, 1, 1964. https://doi.org/10.1137/0701008
+# Coefficients: GSL (specfunc/gamma.c), lanczos_7_c[9].
+#   https://git.savannah.gnu.org/cgit/gsl.git/plain/specfunc/gamma.c
+# See also: https://en.wikipedia.org/wiki/Lanczos_approximation
+_LANCZOS_G = 7.0
+_LANCZOS_COEFFS = np.array([
+    0.99999999999980993,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.32342877765313,
+    -176.61502916214059,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.9843695780195716e-6,
+    1.5056327351493116e-7,
+])
+
+
+def _complex_loggamma(z: Array) -> Array:
+  """Principal-branch log-gamma for complex arguments via Lanczos approximation.
+
+  Uses the reflection formula for Re(z) < 0.5.
+  """
+  assert dtypes.issubdtype(z.dtype, np.complexfloating)
+
+  # Reflection: for Re(z) < 0.5, use Gamma(z) = pi / (sin(pi*z) * Gamma(1-z))
+  needs_reflection = jnp.real(z) < 0.5
+  z_lanczos = jnp.where(needs_reflection, 1.0 - z, z)
+
+  # Lanczos approximation: Ag(z) = c[0] + sum(c[k] / (z + k - 1), k=1..N-1)
+  zz = z_lanczos - 1.0
+  coeffs = jnp.asarray(_LANCZOS_COEFFS, dtype=z.dtype)
+  ks = lax.expand_dims(jnp.arange(1, 9, dtype=z.dtype), tuple(range(zz.ndim)))
+  ag = coeffs[0] + jnp.sum(
+      lax.expand_dims(coeffs[1:], tuple(range(zz.ndim)))
+      / (lax.expand_dims(zz, (zz.ndim,)) + ks), axis=-1)
+
+  t = zz + _LANCZOS_G + 0.5
+  half_log2pi = jnp.asarray(0.5 * np.log(2.0 * np.pi), dtype=z.dtype)
+  log_gamma_lanczos = (
+      half_log2pi
+      + (zz + 0.5) * jnp.log(t)
+      - t
+      + jnp.log(ag)
+  )
+
+  # Mask z to a safe value in the reflection branch so the unselected
+  # path never produces NaN (which would contaminate gradients via
+  # jnp.where's VJP: 0 * NaN = NaN in IEEE 754).
+  z_safe = jnp.where(needs_reflection, z, jnp.full_like(z, 0.5))
+  reflected = (
+      jnp.log(jnp.asarray(np.pi, dtype=z.dtype))
+      - jnp.log(jnp.sin(np.pi * z_safe))
+      - log_gamma_lanczos
+  )
+
+  return jnp.where(needs_reflection, reflected, log_gamma_lanczos)
+
+
+def _complex_gamma(z: Array) -> Array:
+  """Gamma function for complex arguments via exp(loggamma(z))."""
+  is_nan = jnp.isnan(z)
+  is_pole = (jnp.imag(z) == 0) & (jnp.real(z) == jnp.floor(jnp.real(z))) & (jnp.real(z) <= 0)
+  nan_val = jnp.array(complex(jnp.nan, jnp.nan), dtype=z.dtype)
+  # Mask poles/NaN to a safe value before calling loggamma, so the
+  # unselected path doesn't produce NaN that contaminates gradients
+  # via jnp.where's VJP (0 * NaN = NaN).
+  safe = is_pole | is_nan
+  z_safe = jnp.where(safe, jnp.ones_like(z), z)
+  return jnp.where(safe, nan_val, jnp.exp(_complex_loggamma(z_safe)))
+
+
+@jit
+def _complex_loggamma_scipy(z: Array) -> Array:
+  """Principal branch of the logarithm of the gamma function for complex arguments.
+
+  Matches SciPy's branch cuts (single cut on the negative real axis).
+  """
+  is_nan = jnp.isnan(z)
+  is_pole = (jnp.imag(z) == 0) & (jnp.real(z) == jnp.floor(jnp.real(z))) & (jnp.real(z) <= 0)
+  nan_val = jnp.array(complex(jnp.nan, jnp.nan), dtype=z.dtype)
+
+  safe = is_pole | is_nan
+  z_safe = jnp.where(safe, jnp.ones_like(z), z)
+
+  n = jnp.maximum(0, jnp.ceil(0.5 - jnp.real(z_safe)).astype(int))
+
+  def cond_fun(state):
+    k, _ = state
+    return jnp.any(k < n)
+
+  def body_fun(state):
+    k, sum_log = state
+    mask = k < n
+    zk = jnp.where(mask, z_safe + k, jnp.ones_like(z_safe))
+    return k + 1, sum_log + jnp.where(mask, jnp.log(zk), jnp.zeros_like(sum_log))
+
+  # Shift z into the right half-plane using loggamma(z) = loggamma(z+n) - sum_{k=0}^{n-1} log(z+k)
+  # to match SciPy's branch cuts along the negative real axis.
+  _, sum_log = lax.while_loop(cond_fun, body_fun, (0, jnp.zeros_like(z_safe)))
+
+  res = _complex_loggamma(z_safe + n) - sum_log
+  return jnp.where(safe, nan_val, res)
+
+
+def loggamma(x: ArrayLike) -> Array:
+  r"""Principal branch of the logarithm of the gamma function.
+
+  JAX implementation of :obj:`scipy.special.loggamma`.
+
+  Defined to be :math:`\log(\Gamma(x))` for :math:`x > 0` and
+  extended to the complex plane by analytic continuation. The
+  function has a single branch cut on the negative real axis.
+
+  Args:
+    x: arraylike, real or complex valued.
+
+  Returns:
+    array containing the values of the loggamma function. For complex inputs,
+    the output is complex-valued.
+
+  See Also:
+    - :func:`jax.scipy.special.gamma`: the gamma function.
+    - :func:`jax.scipy.special.gammaln`: the natural log of the absolute value of the gamma function.
+  """
+  x, = promote_args_inexact("loggamma", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return _complex_loggamma_scipy(x)
+  res = lax.lgamma(x)
+  return jnp.where(x > 0, res, jnp.nan)
+
+
 def gamma(x: ArrayLike) -> Array:
   r"""The gamma function.
 
@@ -134,18 +268,27 @@ def gamma(x: ArrayLike) -> Array:
 
      \Gamma(n) = (n - 1)!
 
-  * if :math:`z = -\infty`, NaN is returned.
+  For real inputs:
+
+  * if :math:`x = -\infty`, NaN is returned.
   * if :math:`x = \pm 0`, :math:`\pm \infty` is returned.
   * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
     at a negative integer depends on from which side the pole is approached.
   * if :math:`x = \infty`, :math:`\infty` is returned.
   * if :math:`x` is NaN, NaN is returned.
 
+  For complex inputs:
+
+  * at non-positive integers (poles), ``nan+nanj`` is returned, matching SciPy.
+  * if either real or imaginary component is NaN, ``nan+nanj`` is returned.
+
   Args:
-    x: arraylike, real valued.
+    x: arraylike, real or complex valued. Complex inputs use a Lanczos
+       approximation with reflection formula.
 
   Returns:
-    array containing the values of the gamma function
+    array containing the values of the gamma function. For complex inputs,
+    the output is complex-valued.
 
   See Also:
     - :func:`jax.scipy.special.factorial`: the factorial function.
@@ -153,10 +296,12 @@ def gamma(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
 
   Notes:
-    Unlike the scipy version, JAX's ``gamma`` does not support complex-valued
-    inputs.
+    For complex inputs, the implementation uses the Lanczos approximation
+    (g=7, N=9 coefficients) with the reflection formula for Re(z) < 0.5.
   """
   x, = promote_args_inexact("gamma", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return _complex_gamma(x)
   return gammasgn(x) * lax.exp(lax.lgamma(x))
 
 
@@ -922,7 +1067,6 @@ def ndtr(x: ArrayLike) -> Array:
         .format(dtype))
   return _ndtr(x)
 
-
 def _ndtr(x: ArrayLike) -> Array:
   """Implements ndtr core logic."""
   dtype = lax.dtype(x).type
@@ -1163,11 +1307,16 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
+  x_arr_gt_upper_segment = lax.gt(x_arr, upper_segment)
+  ndtr_arg = jnp.where(x_arr_gt_upper_segment, -x_arr,
+                       lax.max(x_arr, lower_segment))
+  # We combine both ndtr calls to minimize program size
+  ndtr_res = _ndtr(ndtr_arg)
   return jnp.where(
-      lax.gt(x_arr, upper_segment),
-      -_ndtr(-x_arr),  # log(1-x) ~= -x, x << 1
+      x_arr_gt_upper_segment,
+      -ndtr_res,  # log(1-x) ~= -x, x << 1
       jnp.where(lax.gt(x_arr, lower_segment),
-                       lax.log(_ndtr(lax.max(x_arr, lower_segment))),
+                       lax.log(ndtr_res),
                        _log_ndtr_lower(lax.min(x_arr, lower_segment),
                                        series_order)))
 
@@ -1820,57 +1969,6 @@ def sph_harm_y(n: Array,
       'be statically specified to use `sph_harm` within JAX transformations.')
 
   return _sph_harm(n, m, theta, phi, n_max)
-
-
-def sph_harm(m: Array,
-             n: Array,
-             theta: Array,
-             phi: Array,
-             n_max: int | None = None) -> Array:
-  r"""Computes the spherical harmonics.
-
-  Note:
-    This function is deprecated, and :func:`~jax.scipy.special.sph_harm_y`
-    should be used instead, noting that the order of ``m`` and ``n`` are
-    reversed, and definitions of ``theta`` and ``phi`` are swapped.
-
-  The JAX version has one extra argument `n_max`, the maximum value in `n`.
-
-  The spherical harmonic of degree `n` and order `m` can be written as
-  :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \phi) * \exp(i m \theta)`,
-  where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
-  {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\phi` and
-  :math:`\theta` are the colatitude and longitude, respectively. :math:`N_n^m` is
-  chosen in the way that the spherical harmonics form a set of orthonormal basis
-  functions of :math:`L^2(S^2)`.
-
-  Args:
-    m: The order of the harmonic; must have `|m| <= n`. Return values for
-      `|m| > n` are undefined.
-    n: The degree of the harmonic; must have `n >= 0`. The standard notation for
-      degree in descriptions of spherical harmonics is `l (lower case L)`. We
-      use `n` here to be consistent with `scipy.special.sph_harm`. Return
-      values for `n < 0` are undefined.
-    theta: The azimuthal (longitudinal) coordinate; must be in [0, 2*pi].
-    phi: The polar (colatitudinal) coordinate; must be in [0, pi].
-    n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
-      maximum value of `n`, the results are clipped to `n_max`. For example,
-      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
-      actually returns
-      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
-  Returns:
-    A 1D array containing the spherical harmonics at (m, n, theta, phi).
-  """
-  # Added 2025-01-06.
-  # TODO(dfm): Remove after deprecation period.
-  deprecations.warn(
-      "jax-scipy-special-sph-harm",
-      ("jax.scipy.special.sph_harm is deprecated. Please use "
-       "jax.scipy.special.sph_harm_y instead, noting that the order of `m` and "
-       "`n` are reversed, and definitions of `theta` and `phi` are swapped."),
-      stacklevel=2,
-  )
-  return sph_harm_y(n, m, phi, theta, n_max=n_max)
 
 
 # exponential integrals
@@ -2534,8 +2632,7 @@ def exp1(x: ArrayLike) -> Array:
   x, = promote_args_inexact("exp1", x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("exp1 does not support complex-valued inputs.")
-  # Casting because custom_jvp generic does not work correctly with mypy.
-  return cast(Array, expn(1, x))
+  return expn(1, x)
 
 
 def _spence_poly(w: Array) -> Array:

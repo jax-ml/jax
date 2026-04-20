@@ -20,29 +20,14 @@ import inspect
 import random
 import threading
 from typing import Any
-import weakref
 
 import jax
 from jax._src import api_util
-from jax._src import config
 from jax._src import tree_util
+from jax._src import util
 from jax._src.traceback_util import api_boundary
-from jax._src.util import wraps
 from jax.experimental.colocated_python import func
 from jax.experimental.colocated_python import obj_backend
-
-# TODO(madthanu): Remove the following config option and make its behavior the
-# default, once the behavior has been declared stable.
-_USE_WEAKREFS = config.bool_state(
-    'jax_experimental_colocated_python_object_use_weakrefs_at_backend',
-    False,
-    help=(
-        'Unstable in-development feature that switches the colocated-python'
-        ' implementation to internally use reference counting for destructing'
-        ' objects at the colocated backend, instead of invoking an explicit'
-        ' delete-object function from the frontend.'
-    ),
-)
 
 
 class _InstanceRegistry:
@@ -74,7 +59,7 @@ class _InstanceRegistry:
 SINGLETON_INSTANCE_REGISTRY = _InstanceRegistry()
 
 
-@jax._src.util.cache(max_size=4096)
+@util.cache(max_size=4096)
 def _update_instance_devices(
     uid: int, shardings: tuple[jax.sharding.Sharding, ...]
 ) -> None:
@@ -94,7 +79,6 @@ def _make_method(
     method_name: str,
     original_method: Callable[..., Any],
     func_maker: func._CachedColocatedFunctionMaker,
-    use_weakrefs: bool,
 ):
 
   class MethodCallerAtBackend:
@@ -106,40 +90,29 @@ def _make_method(
       return type(self), ()
 
     def _first_call(self):
-      # Temporarily hold a strong reference to a new object if it is created
-      # using initializer.
-      temp_strong_ref = None
-
       def initializer():
-        if not use_weakrefs:
-          return obj_backend._ClassWrapperForGarbageCollection(  # pylint: disable=protected-access
-              cls(*init_args, **init_kwargs)
-          )
-        nonlocal temp_strong_ref
-        temp_strong_ref = cls(*init_args, **init_kwargs)
-        return weakref.ref(temp_strong_ref)
+        return obj_backend._ConsumableRef(cls(*init_args, **init_kwargs))
 
       retrieved = obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
           uid, initializer
       )
 
-      if use_weakrefs:
-        self.obj = temp_strong_ref
-      else:
-        self.obj = retrieved
+      self.obj = retrieved()
 
     def __call__(self, *args, **kwargs):
       with self._lock:
         if not hasattr(self, 'obj'):
           self._first_call()
 
-      if use_weakrefs:
-        return getattr(self.obj, method_name)(*args, **kwargs)
-      else:
-        assert isinstance(
-            self.obj, obj_backend._ClassWrapperForGarbageCollection
-        )
-        return getattr(self.obj.obj, method_name)(*args, **kwargs)
+      return getattr(self.obj, method_name)(*args, **kwargs)
+
+    def __del__(self):
+      if not hasattr(self, 'obj'):
+        # It is possible that no one has ever consumed the _ConsumableRef. So
+        # consume it now.
+        obj_backend.SINGLETON_OBJECT_STORE.get_or_create(
+            uid, lambda: obj_backend._ConsumableRef(None)
+        )()
 
   # Colocated Python callable for the controller.
   callable = func_maker.make_callable(
@@ -179,8 +152,8 @@ def _make_method(
     def specialize(*args, **kwargs):
       return make_method_wrapper(callable.specialize(*args, **kwargs))
 
-    method_wrapper = wraps(original_method)(method_wrapper)
-    method_wrapper.specialize = specialize
+    method_wrapper = util.wraps(original_method)(method_wrapper)
+    method_wrapper.specialize = specialize  # pyrefly: ignore[missing-attribute]
     return method_wrapper
 
   method_wrapper = make_method_wrapper(callable)
@@ -193,13 +166,12 @@ def wrap_class(
 ) -> type[object]:
   class WrappedClass:
 
-    @wraps(cls.__init__)
+    @util.wraps(cls.__init__)
     def __init__(self, *init_args, **init_kwargs) -> None:
       uid = self._colocated_python_uid = (
           SINGLETON_INSTANCE_REGISTRY.new_instance()
       )
       self.func_maker = func._CachedColocatedFunctionMaker(uid)
-      self.use_weakrefs = _USE_WEAKREFS.value
       for attr_name in dir(cls):
         original_member = getattr(cls, attr_name)
         if not inspect.isfunction(original_member):
@@ -220,32 +192,10 @@ def wrap_class(
             attr_name,
             original_member,
             self.func_maker,
-            self.use_weakrefs,
         )
         # TODO(hyeontaek): Support method specialization similar to function
         # specialization.
         setattr(self, attr_name, method)
-
-    def __del__(self):
-      del self.func_maker
-      if self.use_weakrefs:
-        return
-      uid = self._colocated_python_uid
-      devices = SINGLETON_INSTANCE_REGISTRY.pop_instance(uid)
-      if devices:
-
-        def remove_object() -> None:
-          obj_backend.SINGLETON_OBJECT_STORE.remove(uid)
-
-        destructor = func.make_callable(
-            remove_object,
-            cls_sourceinfo,
-            None,
-        )
-        destructor = destructor.specialize(  # type: ignore[attribute-error]
-            devices=sorted(devices, key=lambda device: device.id)
-        )
-        destructor()
 
   WrappedClass.__name__ = cls.__name__
   WrappedClass.__doc__ = cls.__doc__

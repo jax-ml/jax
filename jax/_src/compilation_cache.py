@@ -24,14 +24,14 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd  # pytype: disable=import-error
+  from compression import zstd  # pyrefly: ignore[missing-import]
 except ImportError:
   zstd = None
 
 if zstd is None:
   # TODO(phawkins): remove this case when we drop support for Python 3.13.
   try:
-    import zstandard  # pytype: disable=import-error
+    import zstandard  # pyrefly: ignore[missing-import]
   except ImportError:
     zstandard = None
 else:
@@ -121,6 +121,7 @@ class VerificationCache(CacheInterface):
   def __init__(self, base_cache: CacheInterface):
     self._base_cache = base_cache
     self._verified_keys: set[str] = set()
+    self.base_cache_hits: dict[str, int] = {}
 
   @property
   def _path(self):  # pyrefly: ignore[bad-override]
@@ -131,11 +132,15 @@ class VerificationCache(CacheInterface):
     self._base_cache._path = value
 
   def get(self, key: str) -> bytes | None:
+    cache_value = self._base_cache.get(key)
+    if cache_value is not None:
+      self.base_cache_hits[key] = self.base_cache_hits.get(key, 0) + 1
+
     if key not in self._verified_keys:
       # Force a recompile the first time we see a key.
       return None
 
-    return self._base_cache.get(key)
+    return cache_value
 
   def put(self, key: str, value: bytes) -> None:
     if key not in self._verified_keys:

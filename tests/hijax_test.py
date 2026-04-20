@@ -41,7 +41,7 @@ from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
-    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec)
+    register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec, Log)
 from jax.experimental.hijax import VJPHiPrimitive
 
 jtu.request_cpu_devices(8)
@@ -328,7 +328,7 @@ def _is_zero(x):
 def _get_aval(x):
   return x.aval if _is_zero(x) else core.typeof(x)
 
-def immutbox_to_aval(box: ImmutBox) -> 'ImmutBoxTy':
+def immutbox_to_aval(box: ImmutBox) -> ImmutBoxTy:
   leaves, treedef = jax.tree.flatten(box._val, is_leaf=_is_zero)
   leaf_avals = tuple(map(_get_aval, leaves))
   return ImmutBoxTy(leaf_avals, treedef)
@@ -1322,6 +1322,31 @@ class HijaxTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
     f_vjp(MulH(x))  # doesn't crash
 
+  @parameterized.parameters([False, True])
+  def test_ref_prim(self, jit):
+    class Square(VJPHiPrimitive):
+      def __init__(self, ref_aval):
+        self.in_avals = (ref_aval,)
+        self.out_aval = None
+        self.params = {}
+        self.effects = {state.WriteEffect(0)}
+        super().__init__()
+
+      def expand(self, ref):
+        ref[...] = ref[...] ** 2
+
+    x_ref = jax.new_ref(2.)
+
+    def f(_, x_ref):
+      Square(typeof(x_ref))(x_ref)
+
+    if jit:
+      f = jax.jit(f)
+
+    f(0, x_ref)
+    self.assertAllClose(x_ref[...], 4., check_dtypes=False)
+    self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
+
 
 class BoxTest(jtu.JaxTestCase):
 
@@ -1615,6 +1640,26 @@ class BoxTest(jtu.JaxTestCase):
     f(box, 1.0)
     self.assertAllClose(box.get(), 2.0)
 
+  def test_custom_vjp_is_high_propagation_jaxpr(self):
+    @jax.custom_vjp
+    def foo(x):
+      box = immutbox_new(x)
+      return immutbox_get(box)
+
+    def foo_fwd(x):
+      return foo(x), None
+
+    def foo_bwd(_, g):
+      return g,
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(x):
+      return foo(x)
+
+    jaxpr = jax.make_jaxpr(f)(2.0)
+    self.assertTrue(jaxpr.jaxpr.is_high)
+
   @parameterized.parameters([False, True])
   def test_grad_closure_stop_gradient(self, jit):
     box = Box(0.0)
@@ -1896,6 +1941,39 @@ class BoxTest(jtu.JaxTestCase):
     compiled(box)
     self.assertAllClose(box.get(), 4.)
 
+  def test_nested_jit(self):
+    box = Box([])
+
+    @jax.jit
+    def f():
+      @jax.jit
+      def g():
+        box.set(box.get() + [1])
+      g()
+      g()
+
+    f()  # don't crash
+    self.assertEqual(box.get(), [1., 1.])
+
+  def test_nested_typecheck(self):
+    @jax.jit
+    def f(x):
+      box = Box()
+      box.set(x + 1)
+
+      @jax.jit
+      def g():
+        box.set([x, x])
+        box.set([x, x, x])
+
+      g()
+      y, z, w = box.get()
+      box.set([x])
+      g()
+      return box.get() + [y, z, w]
+
+    f(0)  # doesn't crash
+
 
 class RefTest(jtu.JaxTestCase):
 
@@ -2068,6 +2146,153 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
     jax.lax.scan(body, None, None, length=5)
     self.assertAllClose(box.get(), 8.0, check_dtypes=False)
+
+
+class LogTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    l = Log()
+
+    @jax.jit
+    def f(l, x):
+      l.append('x', x + 1)
+
+      @jax.jit
+      def g():
+        l.append('x', x + 2)
+        l.append('x', x + 3)
+
+      g()
+      g()
+
+    f(l, 0)
+    self.assertAllClose(l._dct, {'x': [1, 2, 3, 2, 3]})
+
+  # def test_log_scoping(self):
+  #   @jax.jit
+  #   def f(x):
+  #     log = Log()
+  #     log.append('x', x + 1)
+
+  #     @jax.jit
+  #     def g():
+  #       try:    log.read()
+  #       except: pass
+  #       else:   raise Exception
+  #       log.append('x', x + 2)
+  #       log.append('x', x + 3)
+
+  #     g()
+  #     log.append('x', x - 1)
+  #     g()
+  #     return log.read()
+
+  #   y = f(0)  # doesn't crash
+  #   self.assertAllClose(y, {'x': [1, 2, 3, -1, 2, 3]})
+
+  def test_scan_basic(self):
+    l = Log()
+    def body(_, x):
+      l.append('x', x + 1)
+      l.append('x', 2 * x)
+      l.append('x', 2 * x + 1)
+      l.append('x', x + 10)
+      l.append('x', x + 20)
+      return (), ()
+    (), () = jax.lax.scan(body, (), jnp.arange(3))
+    expected = {'x': [jnp.arange(3) + 1, 2 * jnp.arange(3),
+                      2 * jnp.arange(3) + 1, jnp.arange(3) + 10,
+                      jnp.arange(3) + 20]}
+    self.assertAllClose(l._dct, expected)
+
+  def test_scan_inner_jit(self):
+    l = Log()
+    def body(_, x):
+      l.append('x', x + 1)
+      jax.jit(lambda: l.append('x', 2 * x) or l.append('x', 2 * x + 1))()
+      l.append('x', x + 10)
+      jax.jit(jax.jit(lambda: l.append('x', x + 20)))()
+      return (), ()
+    (), () = jax.lax.scan(body, (), jnp.arange(3))
+    expected = {'x': [jnp.arange(3) + 1, 2 * jnp.arange(3),
+                      2 * jnp.arange(3) + 1, jnp.arange(3) + 10,
+                      jnp.arange(3) + 20]}
+    self.assertAllClose(l._dct, expected)
+
+  def test_scan_nested(self):
+    def loop(*ns):
+      def wrap(f):
+        for n in reversed(ns):
+          f = (lambda f, n: lambda: jax.lax.scan(lambda _, __: f() or ((), ()), (), (), length=n))(f, n)
+        f()
+      return wrap
+
+    l = Log()
+    b = Box(0)
+
+    @loop(3, 5)
+    def f():
+      i = b.get()
+      l.append('x', i)
+      jax.jit(lambda: l.append('y', i * 2))()
+      b.set(i + 1)
+    self.assertAllClose(l._dct,
+                        {'x': [jnp.arange(3 * 5).reshape(3, 5)],
+                         'y': [jnp.arange(3 * 5).reshape(3, 5) * 2]})
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing_abstracted(self, jit):
+    log = Log()
+
+    @jax.custom_vjp
+    def foo(log, x):
+      return x
+    def foo_fwd(log, x):
+      return x, log
+    def foo_bwd(log, g):
+      log.append('g', g)
+      return None, g
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(log, x):
+      x = 2 * x
+      x = foo(log, x)
+      x = 2 * x
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(partial(f, log))(1.0)
+    self.assertAllClose(log._dct, {'g': [2.0]})
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_plumbing_scan(self, jit):
+    log = Log()
+
+    @jax.custom_vjp
+    def foo(log, x):
+      return x
+    def foo_fwd(log, x):
+      return x, log
+    def foo_bwd(log, g):
+      log.append('g', g)
+      return None, g
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(log, c):
+      def body(c, x):
+        c = foo(log, c)
+        return c * x, ()
+      c, () = jax.lax.scan(body, c, jnp.arange(1., 4.))
+      return c
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.grad(partial(f, log))(1.0)
+    self.assertAllClose(log._dct, {'g': [jnp.array([6., 6., 3.])]})
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

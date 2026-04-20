@@ -95,7 +95,8 @@ struct ConvertExtractStridedSlicePattern final
         rewriter, op.getLoc(), source, source, slice_indices);
     if (element_type != op.getResult().getType().getElementType()) {
       result = mlir::UnrealizedConversionCastOp::create(
-          rewriter, op.getLoc(), op.getResult().getType(), result).getResult(0);
+                   rewriter, op.getLoc(), op.getResult().getType(), result)
+                   .getResult(0);
     }
     rewriter.replaceOp(op, result);
     return mlir::success();

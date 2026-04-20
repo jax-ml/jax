@@ -35,6 +35,11 @@ try:
 except ImportError:
   PIL_Image = None
 
+try:
+  import torch
+except ImportError:
+  torch = None
+
 jax.config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.all_floating
@@ -48,7 +53,7 @@ class ImageTest(jtu.JaxTestCase):
     dtype=float_dtypes,
     target_shape=_TF_SHAPES,
     image_shape=_TF_SHAPES,
-    method=["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic"],
+    method=["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic", "area"],
     antialias=[False, True],
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
@@ -72,7 +77,6 @@ class ImageTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(tf_fn, jax_fn, args_maker, check_dtypes=True,
                             tol={np.float16: 2e-2, jnp.bfloat16: 1e-1,
                                  np.float32: 1e-4, np.float64: 1e-4})
-
 
   _PIL_SHAPES = [[3, 2], [6, 4], [33, 17], [50, 39]]
 
@@ -106,6 +110,74 @@ class ImageTest(jtu.JaxTestCase):
                      antialias=True)
     self._CheckAgainstNumpy(pil_fn, jax_fn, args_maker, check_dtypes=True,
                             atol=3e-5)
+
+  @jtu.sample_product(
+    [dict(antialias=False, align_corners=False),
+     dict(antialias=False, align_corners=True),
+     dict(antialias=True, align_corners=False)],
+    dtype=[np.float32],
+    target_shape=_PIL_SHAPES,
+    image_shape=_PIL_SHAPES,
+    torch_mode=["bilinear", "bicubic"],
+  )
+  @unittest.skipIf(torch is None, "PyTorch not available")
+  def testResizeAgainstPyTorch(self, dtype, image_shape, target_shape, antialias, torch_mode, align_corners):
+    jax_method = {
+        "bilinear": "linear",
+        "bicubic": "bicubic-pytorch",
+    }[torch_mode]
+
+    rng = jtu.rand_uniform(self.rng())
+    args_maker = lambda: (rng(image_shape, dtype),)
+
+    def torch_fn(x):
+      t = torch.from_numpy(x)
+      t = t[None, None]  # Add N and C dimensions: (1, 1, H, W)
+      res = torch.nn.functional.interpolate(
+          t, size=target_shape, mode=torch_mode, align_corners=align_corners,
+          antialias=antialias
+      )
+      return res[0, 0].numpy()
+
+    if align_corners:
+      # It is not clear that PyTorch's align_corners=True, antialias=True
+      # behavior is meaningful: I cannot make sense of the half pixel behavior
+      # Should it turn out to be sensible, here is how we can match it:
+      # 1. In jax_fn, use `t = -0.5 * s` instead of `t = 0.5 * (1 - s)`.
+      # 2. PyTorch appears to require an extra +0.5 pixel offset to
+      #    `expanded_indices` in compute_weight_mat., before evaluating the
+      #    kernel.
+      # 3. Do not zero weights for indices outside `[0, input_size)` in
+      #    `compute_weight_mat`. PyTorch appears to allow points whose center
+      #    is outside the input image to contribute to the result.
+      #
+      # For the moment, we're just implementing the antialias=False case here.
+      def jax_fn(x):
+        scales = []
+        translations = []
+        for i in range(len(image_shape)):
+          m = image_shape[i]
+          n = target_shape[i]
+          if m > 1 and n > 1:
+            s = (n - 1) / (m - 1)
+            t = 0.5 * (1 - s)
+          else:
+            s = n / m
+            t = 0.0
+          scales.append(s)
+          translations.append(t)
+
+        return image.scale_and_translate(
+            x, target_shape, list(range(len(image_shape))),
+            jnp.array(scales, dtype=jnp.float32),
+            jnp.array(translations, dtype=jnp.float32),
+            jax_method, antialias=antialias)
+    else:
+      jax_fn = partial(image.resize, shape=target_shape, method=jax_method,
+                       antialias=antialias)
+
+    self._CheckAgainstNumpy(torch_fn, jax_fn, args_maker, check_dtypes=True,
+                            atol=1e-4)
 
   @jtu.sample_product(
     [dict(image_shape=image_shape, target_shape=target_shape)
@@ -295,7 +367,6 @@ class ImageTest(jtu.JaxTestCase):
         scale_a[1:3], translation_a[1:3], method, antialias=antialias)
     self.assertAllClose(output, expected, atol=2e-03)
 
-
   @jtu.sample_product(antialias=[True, False])
   def testScaleAndTranslateJITs(self, antialias):
     image_shape = [1, 6, 7, 1]
@@ -365,6 +436,25 @@ class ImageTest(jtu.JaxTestCase):
       data, (5, 5), (0, 1), jnp.ones(2), jnp.zeros(2), "linear")
     self.assertAllClose(actual, expected)
 
+  def testResizePyTorchGolden(self):
+    # Golden data from https://github.com/jax-ml/jax/issues/15768
+    input_arr = jnp.array([
+        [0, 1, 2, 3, 4],
+        [5, 6, 7, 8, 9],
+    ], dtype=jnp.float32) / 9.0
+
+    expected = jnp.array([
+        [-0.0703, -0.0373, 0.0156, 0.0855, 0.1306, 0.1966, 0.2418, 0.3116, 0.3646, 0.3976],
+        [ 0.1141, 0.1471, 0.2001, 0.2700, 0.3151, 0.3811, 0.4262, 0.4961, 0.5490, 0.5820],
+        [ 0.4180, 0.4510, 0.5039, 0.5738, 0.6189, 0.6849, 0.7300, 0.7999, 0.8529, 0.8859],
+        [ 0.6024, 0.6354, 0.6884, 0.7582, 0.8034, 0.8694, 0.9145, 0.9844, 1.0373, 1.0703]
+    ], dtype=jnp.float32)
+
+    output = jax.image.resize(
+        image=input_arr, shape=(4, 10), method="bicubic-pytorch", antialias=False
+    )
+    self.assertAllClose(output, expected, atol=1e-3)
+
   def testResizeWithUnusualShapes(self):
     x = jnp.ones((3, 4))
     # Array shapes are accepted
@@ -373,7 +463,6 @@ class ImageTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       # Fractional shapes are disallowed
       jax.image.resize(x, [10.5, 17], "bicubic")
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

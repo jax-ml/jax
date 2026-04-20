@@ -39,8 +39,10 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.lax import linalg  # pyrefly: ignore[missing-import]
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
@@ -144,17 +146,15 @@ class Exported:
         ``in_avals``. Note that when the out_shardings are not specified for
         an output, the `out_avals.sharding.spec` for `Auto` axes may be `None`
         even if after compilation the compiler may pick a non-replicated
-        sharding.
-        See https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html#concrete-array-shardings-can-mention-auto-mesh-axis
-        for more details.
-    in_shardings_hlo: (Not used for exports created after 3/3/2026.) the
+        sharding. See https://docs.jax.dev/en/latest/parallel.html for more details.
+    in_shardings_hlo: (Not used for exports created after 3/17/2026.) the
         flattened input shardings, a sequence as long
         as ``in_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
         the mesh, and in general you should avoid using this field directly.
         See ``in_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
-    out_shardings_hlo: (Not used for exports created after 3/3/2026.) the
+    out_shardings_hlo: (Not used for exports created after 3/17/2026.) the
         flattened output shardings, a sequence as long
         as ``out_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
@@ -212,8 +212,8 @@ class Exported:
   _has_named_shardings: bool
   _in_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
   _out_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
-  in_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/3/2026
-  out_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/3/2026
+  in_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/17/2026
+  out_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/17/2026
 
   nr_devices: int
   platforms: tuple[str, ...]
@@ -228,9 +228,14 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
-  def mlir_module(self) -> str:
-    """A string representation of the ``mlir_module_serialized``."""
-    return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+  def mlir_module(self, serialized: bool = True) -> Any:
+    """A string or Module representation of the ``mlir_module_serialized``."""
+    if serialized:
+      with mlir.make_ir_context():
+        module = _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+        return mlir.module_to_string(module)
+    else:
+      return _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -238,8 +243,8 @@ class Exported:
     return f"Exported(fun_name={self.fun_name}, ...)"
 
   def in_shardings_jax(
-    self,
-    mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to ``self.in_shardings_hlo`` and ``self._in_named_shardings``.
 
     The Exported object stores ``in_shardings_hlo`` as HloShardings, and
@@ -282,8 +287,8 @@ class Exported:
         self._in_named_shardings, self.in_shardings_hlo, self.in_avals))
 
   def out_shardings_jax(
-      self,
-      mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+  ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings for ``out_shardings_hlo`` and ``_out_named_shardings``.
 
     See documentation for in_shardings_jax.
@@ -660,7 +665,7 @@ def _export_internal(
 
 
 def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
-  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
   for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
     # Static args may have no `shape` attribute.
     if not hasattr(aval, "shape"):
@@ -685,6 +690,11 @@ def to_named_sharding_with_abstract_mesh(
   if isinstance(s, sharding_impls.UnspecifiedValue):
     return None
   if isinstance(s, sharding_impls.NamedSharding):
+    if isinstance(s.mesh, mesh_lib.Mesh) and s.mesh.is_scalar:
+      return sharding_impls.NamedSharding(
+          s.mesh.abstract_mesh,
+          sharding_impls.PartitionSpec(*([None] *aval.ndim)),
+          memory_kind=s.memory_kind)
     return sharding_impls.NamedSharding(s.mesh.abstract_mesh,
                                         s.spec, memory_kind=s.memory_kind)
   if isinstance(s, sharding_impls.SingleDeviceSharding):
@@ -787,21 +797,20 @@ def _export_lowered(
   if "global_out_avals" in lowering.compile_args:
     # This is currently the case for pjit
     out_avals_flat = lowering.compile_args["global_out_avals"]
-  elif "shards" in lowering.compile_args:  # for PmapComputation
-    out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
   else:
-    out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
+    out_avals_flat = lowered.compile_args["out_avals"]  # pyrefly: ignore[missing-attribute]
 
   # Log and then check the module.
-  logmsg = (f"fun_name={fun_name} version={version} "
-            f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
-            f"disabled_checks={disabled_checks}")
-  logger.debug("Exported JAX function: %s\n", logmsg)
-  logger.debug(mlir.dump_module_message(mlir_module, "export"))
-  logger.debug(
-      "Size of mlir_module_serialized: %d byte",
-      len(mlir_module_serialized),
-  )
+  if logger.isEnabledFor(logging.DEBUG):
+    logmsg = (f"fun_name={fun_name} version={version} "
+              f"lowering_platforms={lowering._platforms} "  # pyrefly: ignore[missing-attribute]
+              f"disabled_checks={disabled_checks}")
+    logger.debug("Exported JAX function: %s\n", logmsg)
+    logger.debug(mlir.dump_module_message(mlir_module, "export"))
+    logger.debug(
+        "Size of mlir_module_serialized: %d byte",
+        len(mlir_module_serialized),
+    )
 
   _check_module(mlir_module,
                 disabled_checks=disabled_checks,
@@ -824,7 +833,7 @@ def _export_lowered(
       if isinstance(sharding, sharding_impls.NamedSharding):
         cur_mesh = sharding.mesh
         break
-    if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
+    if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
       cur_mesh = cur_mesh.abstract_mesh
 
   in_named_shardings = tuple(
@@ -835,7 +844,7 @@ def _export_lowered(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering._device_list  # type: ignore
+  device_assignment = lowering._device_list  # pyrefly: ignore[missing-attribute]
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
@@ -858,8 +867,8 @@ def _export_lowered(
         device_assignment=device_assignment,
         apply_jit=True,
         flat_primal_fun=True,
-        mesh=cur_mesh)  # type: ignore[arg-type]
-    return export(fun_vjp_jax,  # pytype: disable=wrong-arg-types
+        mesh=cur_mesh)
+    return export(fun_vjp_jax,
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
@@ -876,7 +885,7 @@ def _export_lowered(
       out_shardings_hlo=(None,) * len(out_named_shardings),
 
       nr_devices=nr_devices,
-      platforms=lowering._platforms,  # type: ignore
+      platforms=lowering._platforms,  # pyrefly: ignore[missing-attribute]
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=tuple(disabled_checks),
@@ -887,7 +896,6 @@ def _export_lowered(
       _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
-  mlir_str = mlir.module_to_bytecode(module)
   # `target_version` is used to manage situations when a StableHLO producer
   # and a StableHLO consumer were built using different versions of StableHLO.
   #
@@ -908,8 +916,14 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # StableHLO features from failing on older hardware.
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
-      mlir_str, target_version, xb.get_backend().serialize_with_sdy)
+
+  if jaxlib_extension_version >= 440:
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        module, target_version, xb.get_backend().serialize_with_sdy)
+  else:
+    mlir_str = mlir.module_to_bytecode(module)
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
 
 
@@ -945,7 +959,7 @@ def _wrap_main_func(
   wrapped_module = module
   with context, ir.Location.unknown(context):
     symbol_table = ir.SymbolTable(wrapped_module.operation)
-    orig_main = symbol_table["main"]
+    orig_main = cast(func_dialect.FuncOp, symbol_table["main"])
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
@@ -999,7 +1013,7 @@ def _wrap_main_func(
     try:
       new_arg_attrs = []
       for idx in new_main_arg_indices:
-        new_arg_attr = {}
+        new_arg_attr: dict[str, ir.Attribute] = {}
         for attr in arg_attrs[idx]:  # pyrefly: ignore[not-iterable]
           if attr.name == "tf.aliasing_output":
             i = new_main_result_indices.index(attr.attr.value)
@@ -1097,9 +1111,9 @@ def _check_lowering(lowering) -> None:
   allowed_compile_args = {
       "backend", "platforms", "mesh", "global_in_avals",
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
-      "mut", "spmd_lowering", "auto_spmd_lowering",
+      "mut", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
-      "keepalive", "host_callbacks", "pmap_nreps", "committed",
+      "keepalive", "host_callbacks", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
       "pgle_profiler", "intermediate_shardings", "context_mesh",
@@ -1112,7 +1126,6 @@ def _check_lowering(lowering) -> None:
   # the compile_args have the values that have been implemented.
   not_implemented_msgs = []
   for compile_arg, check_value, err_msg in (
-      ("spmd_lowering", lambda v: v, "True"),
       ("auto_spmd_lowering", lambda v: not v, "False"),
       # tuple_args is a compilation flag, does not affect lowering.
       ("tuple_args", lambda v: True, "N/A"),
@@ -1126,7 +1139,7 @@ def _check_lowering(lowering) -> None:
       ("host_callbacks", lambda v: not v, "empty"),
       # used on all platforms for callbacks. Not supported yet.
       ("keepalive", lambda v: not v, "empty"),
-      ("pmap_nreps", lambda v: v == 1, "1"),
+
       ("shape_poly_state", lambda v: True, "N/A"),
   ):
     if compile_arg in lowering.compile_args:
@@ -1165,7 +1178,7 @@ _GPU_FFI_KERNELS = [
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
     "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
-    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi", "hipsolver_gesdd_ffi",
     # tridiagonal on GPU
     "cusolver_sytrd_ffi", "hipsolver_sytrd_ffi",
     # tridiagonal_solve on GPU
@@ -1261,14 +1274,14 @@ def _check_module(mod: ir.Module, *,
     elif op_name == "sdy.sharding_constraint":
       check_sharding(op, op.location)
 
-  def walk_operations(op):
+  def walk_operations(op: ir.Operation) -> None:
     check_op(op)
     for region in op.operation.regions:
       for block in region:
-        for op in block:
-          walk_operations(op)
+        for block_op in block:
+          walk_operations(block_op.operation)
 
-  walk_operations(mod)
+  walk_operations(mod.operation)
   if disallowed_custom_call_ops:
     disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
     msg = ("Cannot serialize code with custom calls whose targets have no "
@@ -1331,7 +1344,7 @@ def _get_named_sharding(
     mem_kind = core.mem_space_to_kind(aval.memory_space)
 
   return sharding_impls.cached_named_sharding(
-      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # type: ignore
+      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # pyrefly: ignore[bad-argument-type]
       memory_kind=mem_kind)
 
 
@@ -1379,14 +1392,14 @@ def _get_vjp_fun(
     if has_named_shardings or mesh:
       vjp_in_shardings = tuple(
           _get_named_sharding(has_named_shardings, named_sharding,
-                              hlo_sharding, aval, mesh)  # type: ignore[arg-type]
+                              hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
           for named_sharding, hlo_sharding, aval in zip(
             itertools.chain(in_named_shardings, out_named_shardings),
             itertools.chain(in_shardings_hlo, out_shardings_hlo),
             vjp_in_avals))
       vjp_out_shardings = tuple(
         _get_named_sharding(has_named_shardings, named_sharding,
-                            hlo_sharding, aval, mesh)  # type: ignore
+                            hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
         for named_sharding, hlo_sharding, aval in zip(
           in_named_shardings, in_shardings_hlo, in_avals))
     else:
@@ -1439,7 +1452,7 @@ def call(exported: Exported) -> Callable[..., typing.Array]:
 
   def f_imported(*args, **kwargs):
     # since custom_vjp does not support kwargs, flatten the function first.
-    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    args_flat, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
     if in_tree != exported.in_tree:
       # Give errors with the precise tree difference; use fake leaves so we can
       # use tree_util.equality_errors.
@@ -1553,6 +1566,7 @@ call_exported_p.def_impl(_call_exported_impl)
 def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
   if "mesh" not in symtab:
     return mesh_lib.empty_abstract_mesh
+  # pyrefly: ignore[missing-attribute]
   mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
   axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
   if not axes:
@@ -1565,9 +1579,9 @@ def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
 def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:
   if "mhlo.frontend_attributes" not in submodule.operation.attributes:
     return False
-  frontend_attributes = submodule.operation.attributes[
-      "mhlo.frontend_attributes"
-  ]
+  frontend_attributes = ir.DictAttr(
+      submodule.operation.attributes["mhlo.frontend_attributes"]
+  )
   return "xla.sdy.meshes" in frontend_attributes
 
 def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
@@ -1578,9 +1592,11 @@ def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
+  _ensure_backends_initialized(exported.platforms)
   if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
-  submodule = ir.Module.parse(exported.mlir_module())
+  with ctx.module_context.module.context:
+    submodule = exported.mlir_module(serialized=False)
 
   symtab = ir.SymbolTable(submodule.operation)
   shardy_enabled = has_sdy_mesh(symtab, submodule)
@@ -1657,11 +1673,12 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                     new_aval: core.AbstractValue) -> ir.Value:
     new_ir_type = mlir.aval_to_ir_type(new_aval)
     if x.type != new_ir_type:
-      return hlo.convert(mlir.aval_to_ir_type(new_aval), x)
+      return hlo.convert(new_ir_type, x)
     else:
       return x
 
-  callee_type = symtab["main"].type
+  main = cast(func_dialect.FuncOp, symtab["main"])
+  callee_type = main.type
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
@@ -1695,7 +1712,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # Compute the rule index based on the current platform
     i32_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
-      current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+      current_platform_idx = hlo.convert(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
                                      index=current_platform_idx,
                                      num_branches=len(lowering_platforms))
@@ -1706,9 +1723,9 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
           np.int32(callee_lowering_platform_index[i]))])
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
-                                          callee_platform_idx)
+                                          callee_platform_idx.result)
 
-    submodule_args.append(callee_platform_idx)
+    submodule_args.append(callee_platform_idx.result)
   else:
     assert len(lowering_platforms) == 1
 
@@ -1764,6 +1781,10 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
+def _ensure_backends_initialized(platforms: tuple[str,...]):
+  """Ensure FFI handlers are initialized for the given platforms"""
+  if "cpu" in platforms:
+    linalg.initialize_lapack()
 
 def wrap_with_sharding(
     ctx: mlir.LoweringRuleContext,
@@ -1775,8 +1796,8 @@ def wrap_with_sharding(
   if x_sharding is None:
     return x
   if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
+    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
   else:
-    x_sharding = x_sharding.to_proto()  # type: ignore
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
+    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,
                                     allow_shardy_lowering=use_shardy)

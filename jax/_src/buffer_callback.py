@@ -136,7 +136,7 @@ def buffer_callback(
     flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
 
     in_avals = [core.typeof(x) for x in flat_args]
-    static_input_output_aliases: tuple[tuple[int, int], ...] = ()
+    static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
         i_idx, o_idx = int(i_idx), int(o_idx)
@@ -157,7 +157,7 @@ def buffer_callback(
               f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
               f"referring to an input with abstract value {in_aval} and an "
               f"output with a different abstract value {out_aval}.")
-        static_input_output_aliases += ((i_idx, o_idx),)
+        static_input_output_aliases.append((i_idx, o_idx))
 
     out_flat = buffer_callback_p.bind(
         *flat_args,
@@ -167,7 +167,7 @@ def buffer_callback(
         out_tree=out_tree,
         vmap_method=vmap_method,
         has_side_effect=has_side_effect,
-        input_output_aliases=static_input_output_aliases,
+        input_output_aliases=tuple(static_input_output_aliases),
         command_buffer_compatible=command_buffer_compatible,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)

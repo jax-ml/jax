@@ -28,7 +28,7 @@ import io
 import copy
 import operator as op
 import tokenize
-from typing import Any, TypeAlias, Union, overload
+from typing import Any, SupportsIndex, TypeAlias, TypeGuard, Union, overload
 import warnings
 
 import numpy as np
@@ -74,7 +74,6 @@ for more details.
 
   def __init__(self, message: str):
     error_msg = f"{message}{InconclusiveDimensionOperation._help_msg}"
-    # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)
 
 class UnexpectedDimVar(Exception):
@@ -212,7 +211,7 @@ class _DimFactor:
     return self._syntactic_cmp(other) >= 0
 
   def evaluate(self, env: DimVarEnv, scope: SymbolicScope):
-    from jax._src.lax import lax  # pytype: disable=import-error
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
     if self.var is not None:
       try:
@@ -222,9 +221,9 @@ class _DimFactor:
         normalized_var = _DimExpr._from_var(self.var, scope)
         if core.is_constant_dim(normalized_var):
           return normalized_var
-        non_trivial_normalization = (v1 := normalized_var._to_var()) is None or v1 != self.var  # type: ignore
+        non_trivial_normalization = (v1 := normalized_var._to_var()) is None or v1 != self.var  # pyrefly: ignore[missing-attribute]
         if non_trivial_normalization:
-          return normalized_var._evaluate(env)  # type: ignore
+          return normalized_var._evaluate(env)  # pyrefly: ignore[missing-attribute]
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
             f"The following dimension variables are appearing in the shapes of the function arguments: {list(env.keys())}.\n"
@@ -584,13 +583,13 @@ class _DimExpr:
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedTerms, i1: int, f1: int,
-      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...
 
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
       pairs1: SortedFactors, i1: int, f1: int,
-      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...  # type: ignore[bad-return-type,unused-ignore]
+      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...
 
   @staticmethod
   def _linear_combination_sorted_pairs(
@@ -764,7 +763,7 @@ class _DimExpr:
     if modulo is not None:
       raise NotImplementedError("__pow__ modulo not implemented")
     if is_symbolic_dim(power):
-      return power.__rpow__(self)  # type: ignore
+      return power.__rpow__(self)
     if power != int(power):
       raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
     if power >= 0:
@@ -823,7 +822,7 @@ class _DimExpr:
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   def __eq__(self, other: Any) -> bool:
-    if isinstance(other, _DimExpr):
+    if isinstance(other, type(self)):
       if self.scope is not other.scope:
         return False
     elif not core.is_constant_dim(other):
@@ -876,7 +875,7 @@ class _DimExpr:
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
-      while is_symbolic_dim(dividend) and not dividend._is_constant:  # type: ignore[attribute-error,unused-ignore]
+      while is_symbolic_dim(dividend) and not dividend._is_constant:
         mon, count = dividend._leading_term
         if isinstance(divisor, _DimExpr):
           dterm, dcount = divisor._leading_term
@@ -891,7 +890,7 @@ class _DimExpr:
         quotient += q
         dividend -= q * divisor
 
-      dividend = int(dividend)  # type: ignore[assignment]
+      dividend = int(dividend)
       if isinstance(divisor, _DimExpr):
         if dividend != 0:
           raise InconclusiveDimensionOperation("")
@@ -1052,9 +1051,9 @@ class SymbolicScope:
       if cmp_pos < 0:
         raise ValueError("Constraint parsing error: must contain one of '==' or '>=' or '<='")
     e1_str = c_str[:cmp_pos]
-    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
     e2_str = c_str[cmp_pos + 2:]
-    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()  # type: ignore[name-error,unused-ignore]
+    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
     if cmp == Comparator.GEQ and not is_geq:
       e1, e2 = e2, e1
 
@@ -1079,7 +1078,7 @@ class SymbolicScope:
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
 
-      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error,unused-ignore]
+      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)
       if before in self._normalization_rules:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
@@ -1201,7 +1200,7 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
 core.pytype_aval_mappings[_DimExpr] = _DimExpr._get_aval
 dtypes.register_weak_scalar_type(_DimExpr)
 
-def _convertible_to_int(p: Any) -> bool:
+def _convertible_to_int(p: Any) -> TypeGuard[SupportsIndex]:
   try:
     op.index(p)
     return True
@@ -1221,13 +1220,14 @@ def _ensure_poly(p: DimSize,
 def _convertible_to_poly(p: Any) -> bool:
   return isinstance(p, _DimExpr) or _convertible_to_int(p)
 
-def is_symbolic_dim(p: DimSize) -> bool:
+def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
   """Checks if a dimension is symbolic.
   """
   return isinstance(p, _DimExpr)
 
 dtypes.python_scalar_types.add(_DimExpr)
 dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
+dtypes.canonicalize_value_handlers[_DimExpr] = lambda x: x
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.
@@ -1343,8 +1343,9 @@ def _dim_as_value(dim: DimSize):
 def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
   res, = mlir.eval_dynamic_shape(ctx, (dim,))
+  assert isinstance(res, mlir.ir.Value)
   out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
-  if out_type != res.type:  # type: ignore
+  if out_type != res.type:
     return [mlir.hlo.convert(out_type, res)]
   else:
     return [res]
@@ -1545,7 +1546,7 @@ class _Parser:
   def next_tok(self) -> tokenize.TokenInfo:
     while True:
       try:
-        t = next(self.tokstream)  # type: ignore[attribute-error,unused-ignore]
+        t = next(self.tokstream)
       except StopIteration:
         raise self.parse_err(None, "unexpected end of string")
       if t.exact_type not in [tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT]:
@@ -1599,14 +1600,16 @@ class _Parser:
             f"{len(self.dimensions)} already and 'like' shape has "
             f"only {len(self.like_shape)} dimensions")
       if tok.exact_type == tokenize.ELLIPSIS:
-        to_add = self.like_shape[len(self.dimensions):]  # type: ignore[index]
+        assert self.like_shape is not None
+        to_add = self.like_shape[len(self.dimensions):]
         for ad in to_add:
           self.add_dim(ad, tok)
         tok = self.next_tok()
         break
 
       if tok.exact_type == tokenize.NAME and tok.string == "_":
-        e = self.like_shape[len(self.dimensions)]  # type: ignore[index]
+        assert self.like_shape is not None
+        e = self.like_shape[len(self.dimensions)]
         tok = self.next_tok()
       else:
         e, tok = self.expr(tok)
@@ -1627,10 +1630,9 @@ class _Parser:
       tok = self.next_tok()
     elif tok.exact_type == tokenize.PLUS:
       tok = self.next_tok()
-    # TODO(slebedev): Change to _DimExpr once we migrate off pytype.
-    acc: Any | None = None
+    acc: DimSize | None = None
     while True:
-      t: Any
+      t: DimSize
       t, tok = self.term(tok)
       t_sign = - t if next_t_negated else t
       acc = acc + t_sign if acc is not None else t_sign
@@ -1644,10 +1646,9 @@ class _Parser:
 
   def term(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A term is product of factors. Each factor may be raised to an integer power.
-    # TODO(slebedev): Change to _DimExpr once we migrate off pytype.
-    acc: Any | None = None
+    acc: DimSize | None = None
     while True:
-      f: Any
+      f: DimSize
       f, tok = self.factor(tok)
       if tok.exact_type == tokenize.CIRCUMFLEX:
         tok = self.next_tok()
@@ -1657,7 +1658,7 @@ class _Parser:
 
       acc = acc * f if acc is not None else f
       if tok.exact_type in self.FOLLOW_TERM:
-        return acc, tok  # type: ignore[bad-return-type,unused-ignore]
+        return acc, tok
       tok = self.consume_token(tok, tokenize.STAR)
 
   def factor(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
@@ -1760,9 +1761,9 @@ class ShapeEvaluator:
 
   def evaluate(self, e: DimSize):
     if core.is_constant_dim(e):
-      res = op.index(e)  # type: ignore
+      res = op.index(e)  # pyrefly: ignore[bad-argument-type]
     else:
-      res = e._evaluate(self.env)  # type: ignore
+      res = e._evaluate(self.env)  # pyrefly: ignore[missing-attribute]
     return res
 
 
@@ -1800,7 +1801,7 @@ class ShapeConstraint:
     resolved statically, returns a value representing if the
     constraint is satisfied.
     """
-    from jax._src.lax import lax  # pytype: disable=import-error
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
     left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     # Try to evaluate the constraint statically.
@@ -2087,10 +2088,11 @@ def _solve_dim_equations(
       return False  # This equation cannot yet be used to solve a variable
 
     if var is not None:
+      assert var_k is not None
       if var_k == 1:
         var_value = dim_value
       else:
-        var_value, var_remainder = divmod(dim_value, core.dim_constant(var_k))  # type: ignore
+        var_value, var_remainder = divmod(dim_value, core.dim_constant(var_k))
         shape_constraints.add_constraint(
             Comparator.EQ, var_remainder, 0,
             error_message_pieces=([
@@ -2101,9 +2103,9 @@ def _solve_dim_equations(
                 solution_err_msg_trailer_errors]))
 
       if not isinstance(var_value, _DimExpr):
-        assert var_value.dtype == core.dim_value_dtype()  # type: ignore[attribute-error,unused-ignore]
-      shape_env[var] = var_value  # type: ignore
-      solution_error_message_pieces.extend([  # type: ignore[container-type-mismatch,unused-ignore]
+        assert var_value.dtype == core.dim_value_dtype()  # pyrefly: ignore[missing-attribute]
+      shape_env[var] = var_value  # pyrefly: ignore[unsupported-operation]
+      solution_error_message_pieces.extend([
         f"'{var}' = ", var_value,
         f" from specification '{eqn.aval_dim_expr}' "
         f"for dimension {eqn.dim_name} (= ",
@@ -2143,7 +2145,7 @@ def _solve_dim_equations(
     for constr in scope._explicit_constraints:
       # We can't just construct constr.e1 - constr.e2 because for an equality
       # constraint it would be reduced to 0.
-      c_diff = constr.diff._evaluate(shape_env) if not core.is_constant_dim(constr.diff) else constr.diff  # type: ignore
+      c_diff = constr.diff._evaluate(shape_env) if not core.is_constant_dim(constr.diff) else constr.diff  # pyrefly: ignore[missing-attribute]
       shape_constraints.add_constraint(
           constr.cmp, c_diff, 0,
           error_message_pieces=[
@@ -2163,7 +2165,7 @@ def _solve_dim_equations(
     if not eqns:
       add_explicit_symbolic_constraints(shape_env)
       # SUCCESS
-      return shape_env, shape_constraints  # pytype: disable=bad-return-type
+      return shape_env, shape_constraints
     elif len(eqns) >= nr_eqns:
       break
 

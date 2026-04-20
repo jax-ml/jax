@@ -61,7 +61,7 @@ namespace gpu {
 
 namespace {
 
-mlir::Value packKernelArgs(mlir::OpBuilder &builder,
+mlir::Value packKernelArgs(mlir::OpBuilder& builder,
                            mlir::gpu::LaunchFuncOp launch) {
   std::vector<mlir::Type> kernel_operand_types;
   kernel_operand_types.reserve(launch.getNumKernelOperands());
@@ -127,7 +127,7 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
       /*res_attrs=*/nullptr);
 }
 
-void buildInitFunction(mlir::OpBuilder &module_builder,
+void buildInitFunction(mlir::OpBuilder& module_builder,
                        mlir::func::FuncOp init_func,
                        llvm::StringRef kernel_name,
                        mlir::gpu::ObjectAttr object,
@@ -267,7 +267,7 @@ class GpuLaunchLoweringPass
     mlir::ModuleOp module = getOperation();
     auto ptr_ty = mlir::LLVM::LLVMPointerType::get(module.getContext());
     emitRuntimeDecls(module);
-    for (mlir::Operation &op : *module.getBody()) {
+    for (mlir::Operation& op : *module.getBody()) {
       if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(&op)) {
         if (func.isDeclaration() ||
             !func->getAttr(
@@ -281,7 +281,7 @@ class GpuLaunchLoweringPass
         init_func->setAttr(mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                            mlir::UnitAttr::get(func->getContext()));
         bool had_launch = false;
-        mlir::Operation *gpu_binary = nullptr;
+        mlir::Operation* gpu_binary = nullptr;
         auto result = getOperation()->walk([&](mlir::gpu::LaunchFuncOp launch)
                                                -> mlir::WalkResult {
           if (had_launch) {

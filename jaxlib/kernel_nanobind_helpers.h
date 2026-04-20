@@ -62,7 +62,7 @@ nanobind::capsule EncapsulateFunction(T* fn) {
 
 template <typename T>
 nanobind::capsule EncapsulateFfiHandler(T* fn) {
-  static_assert(std::is_invocable_r_v<XLA_FFI_Error *, T, XLA_FFI_CallFrame *>,
+  static_assert(std::is_invocable_r_v<XLA_FFI_Error*, T, XLA_FFI_CallFrame*>,
                 "Encapsulated function must be an XLA FFI handler");
   return nanobind::capsule(absl::bit_cast<void*>(fn));
 }

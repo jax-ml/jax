@@ -17,8 +17,8 @@ limitations under the License.
 #define JAXLIB_GPU_SOLVER_HANDLE_POOL_H_
 
 #include "absl/status/statusor.h"
-#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/gpu/handle_pool.h"
+#include "jaxlib/gpu/vendor.h"
 
 #ifdef JAX_GPU_CUDA
 #include "third_party/gpus/cuda/include/cusolverSp.h"

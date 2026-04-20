@@ -20,6 +20,7 @@ from absl.testing import absltest
 
 import jax
 from jax import jit, make_jaxpr, numpy as jnp
+from jax import lax
 from jax._src import config
 from jax._src import jaxpr_util
 from jax._src import test_util as jtu
@@ -108,6 +109,56 @@ class JaxprStatsTest(jtu.JaxTestCase):
     self.assertSetEqual(
         {"sampleType", "sample", "stringTable", "location", "function"},
         set(profile.keys()))
+
+  def test_all_eqns_with_traceback(self):
+    @jit
+    def g(x):
+      return jax.lax.sin(x)
+
+    def f(x):
+      return g(x) + 1.
+
+    jaxpr = make_jaxpr(f)(1.)
+
+    eqns = list(jaxpr_util._all_eqns_with_traceback(jaxpr.jaxpr, None, set()))
+
+    self.assertGreater(len(eqns), 1)
+
+    jit_tb = None
+    sin_tb = None
+
+    for tb, eqn in eqns:
+      if eqn.primitive.name == 'jit':
+        jit_tb = tb
+      elif eqn.primitive.name == 'sin':
+        sin_tb = tb
+
+    self.assertIsNotNone(jit_tb)
+    self.assertIsNotNone(sin_tb)
+
+    jit_frames = jit_tb.raw_frames()[0]
+    sin_frames = sin_tb.raw_frames()[0]
+
+    self.assertGreater(len(sin_frames), len(jit_frames))
+    self.assertEqual(sin_frames[-len(jit_frames):], jit_frames)
+
+
+  def test_count_eqns(self):
+    # Test a simple flat jaxpr
+    def f(x):
+      return x + 2
+    jaxpr = make_jaxpr(f)(42)
+    # Check that accessing the property works on the ClosedJaxpr
+    self.assertEqual(jaxpr_util.count_eqns(jaxpr), 1)
+
+    # Test a higher-order jaxpr (contains nested subjaxprs)
+    def g(x):
+      return lax.cond(x > 0, lambda x: x + 2, lambda x: x - 2, x)
+    jaxpr_nested = make_jaxpr(g)(42)
+
+    # Verify the property resolves successfully and aggregates the nested equations
+    # (should be > 1 due to the condition and branch eqns)
+    self.assertEqual(jaxpr_util.count_eqns(jaxpr_nested), 5)
 
 
 if __name__ == "__main__":

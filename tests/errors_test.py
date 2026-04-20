@@ -302,6 +302,10 @@ class FilteredTracebackTest(jtu.JaxTestCase):
 
     @jax.custom_vjp
     def f(x):
+      return x
+
+    @jax.custom_vjp
+    def f_err(x):
       return err(x)
 
     def fwd(x):
@@ -318,18 +322,17 @@ class FilteredTracebackTest(jtu.JaxTestCase):
       g = err(g)
       return (g,)
 
-    f.defvjp(fwd_err, bwd)
-
-    check_filtered_stack_trace(self, AssertionError, lambda: f(1.), [
-        ('f', 'return err(x)'),
+    f_err.defvjp(fwd, bwd)
+    check_filtered_stack_trace(self, AssertionError, lambda: f_err(1.), [
+        ('f_err', 'return err(x)'),
         ('err', 'assert False')], filter_mode=filter_mode)
 
+    f.defvjp(fwd_err, bwd)
     check_filtered_stack_trace(self, AssertionError, lambda: jax.grad(f)(1.), [
         ('fwd_err', 'x = err(x)'),
         ('err', 'assert False')], filter_mode=filter_mode)
 
     f.defvjp(fwd, bwd_err)
-
     check_filtered_stack_trace(self, AssertionError, lambda: jax.grad(f)(1.), [
         ('bwd_err', 'g = err(g)'),
         ('err', 'assert False')], filter_mode=filter_mode)
@@ -474,7 +477,8 @@ class CustomErrorsTest(jtu.JaxTestCase):
   )
   def testErrorsURL(self, errorclass):
     class FakeTracer(core.Tracer):
-      aval = None
+      def __init__(self, trace):
+        super().__init__(trace, None)
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 

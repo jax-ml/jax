@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-import unittest
 from functools import partial
 
 from absl.testing import absltest
@@ -22,7 +21,8 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
+from jax.sharding import NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
@@ -286,7 +286,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_device_put_non_concrete_layout_error(self):
     np_inp = np.arange(16).reshape(8, 2)
 
-    l1 = Format(Layout.AUTO, SingleDeviceSharding(jax.devices()[0]))
+    l1 = Format(Layout.AUTO, make_single_device_sharding(jax.devices()[0]))
     with self.assertRaisesRegex(
         ValueError, 'sharding and layout.*should be concrete'):
       jax.device_put(np_inp, l1)
@@ -296,7 +296,7 @@ class LayoutTest(jtu.JaxTestCase):
         ValueError, 'sharding and layout.*should be concrete'):
       jax.device_put(np_inp, l2)
 
-    l3 = Format(None, SingleDeviceSharding(jax.devices()[0]))
+    l3 = Format(None, make_single_device_sharding(jax.devices()[0]))
     out = jax.device_put(np_inp, l3)
     self.assertArraysEqual(out, np_inp)
     self.assertTrue(out._committed)
@@ -402,7 +402,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     dll = Layout(major_to_minor=(1, 0))
-    s = SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
 
     out = jax.device_put(np_inp, Format(dll, s))
     self.assertEqual(out.format.layout.major_to_minor,
@@ -450,7 +450,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_compatible_aval_error(self):
     custom_dll = Layout(major_to_minor=(0, 1, 2))
-    l = Format(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    l = Format(custom_dll, make_single_device_sharding(jax.devices()[0]))
     inp = np.arange(8)
 
     @jax.jit(in_shardings=l)
@@ -464,7 +464,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_incompatible_aval_error_device_put(self):
     custom_dll = Layout(major_to_minor=(0, 1, 2))
-    l = Format(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    l = Format(custom_dll, make_single_device_sharding(jax.devices()[0]))
     inp = np.arange(8)
 
     with self.assertRaisesRegex(
@@ -505,7 +505,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_in_layouts_jit_jnp_input(self):
     major_last_layout = Layout(major_to_minor=(1, 0))
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = make_single_device_sharding(jax.devices()[0])
 
     f = jax.jit(lambda x: x + 1,
                 in_shardings=Format(major_last_layout, sharding))
@@ -575,10 +575,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   @jtu.skip_on_devices('cpu', 'gpu')
-  @unittest.skipIf(
-      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
-      'Crashes with libtpu==0.3.5 for TPU v7 due to changed tiling.',
-  )
   def test_layout_donation_mismatching_in_and_out_fails(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
@@ -731,7 +727,7 @@ class LayoutTest(jtu.JaxTestCase):
 
     custom_dll = Layout(major_to_minor=(1, 0))
 
-    cpu_sharding = jax.sharding.SingleDeviceSharding(
+    cpu_sharding = make_single_device_sharding(
         jax.local_devices(backend='cpu')[0])
     cpu_format = Format(custom_dll, cpu_sharding)
     cpu_array = jax.device_put(np.ones((128, 8)), cpu_format)

@@ -43,10 +43,9 @@ from jax._src.export import _export
 from jax._src.export import shape_poly
 from jax._src.lib import xla_client
 
-import tensorflow as tf
+import tensorflow as tf  # pyrefly: ignore [untyped-import]
 
 # These don't have public equivalents.
-# pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla
 from tensorflow.compiler.xla import xla_data_pb2
 try:
@@ -55,7 +54,6 @@ except ModuleNotFoundError:
   # This can be removed when TF 2.10 support is no longer needed.
   from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding
 from tensorflow.python.eager import context as tf_context
-# pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape  # TODO: deprecate
@@ -143,8 +141,8 @@ def convert(fun_jax: Callable,
             polymorphic_shapes: str | PolyShape | None | Sequence[str | PolyShape | None] = None,
             polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
-            enable_xla: bool = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
-            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
+            enable_xla: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
+            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
@@ -291,7 +289,7 @@ def convert(fun_jax: Callable,
     try:
       impl.before_conversion()
 
-      outs_tree: tree_util.PyTreeDef = None  # type: ignore
+      outs_tree: tree_util.PyTreeDef | None = None
       if with_gradient:
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient_tf(*args_flat_tf: TfVal) -> TfVal:
@@ -320,6 +318,7 @@ def convert(fun_jax: Callable,
     finally:
       impl.after_conversion()
 
+    assert outs_tree is not None
     outs_flat_tf = [tf.identity(x, "jax2tf_out") for x in outs_flat_tf]
     out_tf = tree_util.tree_unflatten(outs_tree, outs_flat_tf)
     return out_tf
@@ -520,7 +519,7 @@ def _make_custom_gradient_fn_tf(fun_jax,
         assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"{out_ct_tf=}"
         # Note that out_ct_aval.shape contains dimension variable from the
         # primal function scope. We use tf.zeros_like to make a 0 of the right shape.
-        return tf.zeros_like(out_tf, dtype=_tf_np_dtype_for_float0)
+        return tf.zeros_like(out_tf, dtype=_tf_np_dtype_for_float0)  # pyrefly: ignore [no-matching-overload]
 
       out_cts_fixed_flat_tf = tuple(map(fix_out_ct, out_cts_flat_tf, outs_avals, outs_tf))
       vjp_args_flat_tf = tuple(args_tf) + out_cts_fixed_flat_tf
@@ -528,6 +527,7 @@ def _make_custom_gradient_fn_tf(fun_jax,
       fun_vjp_jax, vjp_in_avals = impl.get_vjp_fun()
 
       vjp_polymorphic_shapes = tuple(
+        # pyrefly: ignore[missing-attribute]
         str(a.shape)  # Note: may be _DimExpr, not just DimVar
         for a in vjp_in_avals)
       in_cts_flat = convert(
@@ -595,7 +595,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       "You should upgrade TensorFlow, e.g., to tf_nightly."
     )
 
-  call_module_attrs = dict(
+  call_module_attrs: dict[str, Any] = dict(
       version=version,
       Tout=out_types,
       Sout=out_shapes_tf,
@@ -843,29 +843,29 @@ def _shard_value(val: TfVal,
         .flat
     )
   else:
-    tad = sharding_proto.tile_assignment_devices  # type: ignore
+    tad = sharding_proto.tile_assignment_devices
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
   xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
-      type=int(sharding_proto.type),
+      type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
       tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
-      tile_assignment_devices=tad,
+      tile_assignment_devices=tad,  # pyrefly: ignore [bad-argument-type]
       replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
-      last_tile_dims=sharding_proto.last_tile_dims,
+      last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
   )
   # Shardy requires V2 sharding format.
   if config.use_shardy_partitioner.value:
     xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
-        type=int(sharding_proto.type),
+        type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
         tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
         tile_assignment_devices=sharding_proto.tile_assignment_devices,
         iota_reshape_dims=sharding_proto.iota_reshape_dims,
         iota_transpose_perm=sharding_proto.iota_transpose_perm,
         replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
-        last_tile_dims=sharding_proto.last_tile_dims,
+        last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
     )
   else:
-    xla_sharding_v2_proto = None
+    xla_sharding_v2_proto = None  # pyrefly: ignore [bad-assignment]
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
@@ -888,12 +888,12 @@ def _register_checkpoint_pytrees():
   m = tf.Module()
   # The types here are automagically changed by TensorFlow's checkpointing
   # infrastructure.
-  m.a = (tf.Module(), tf.Module())
-  m.b = [tf.Module(), tf.Module()]
-  m.c = {"a": tf.Module()}
-  tuple_wrapper = type(m.a)
-  list_wrapper = type(m.b)
-  dict_wrapper = type(m.c)
+  m.a = (tf.Module(), tf.Module())  # pyrefly: ignore [missing-attribute]
+  m.b = [tf.Module(), tf.Module()]  # pyrefly: ignore [missing-attribute]
+  m.c = {"a": tf.Module()}  # pyrefly: ignore [missing-attribute]
+  tuple_wrapper = type(m.a)  # pyrefly: ignore [missing-attribute]
+  list_wrapper = type(m.b)  # pyrefly: ignore [missing-attribute]
+  dict_wrapper = type(m.c)  # pyrefly: ignore [missing-attribute]
 
   # TF AutoTrackable swaps container types out for wrappers.
   assert tuple_wrapper is not tuple

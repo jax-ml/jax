@@ -107,10 +107,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set +x
-          kubectl get pods --no-headers | awk '{print $1}' | while read -s pod; do
+          kubectl get pods --no-headers | awk '{print $1}' | while read -rs pod; do
             echo "========================================"
             echo "Pod $pod output:"
             echo "----------------------------------------"
-            kubectl logs $pod
+            kubectl logs "$pod"
             echo "========================================"
           done

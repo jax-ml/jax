@@ -2375,7 +2375,7 @@ def _make_select_and_scatter_add_harness(name,
       padding=padding)
 
 
-for dtype in set(jtu.dtypes.all) - {np.complex64, np.complex128}:  # pyrefly: ignore[unsupported-operation]
+for dtype in set(jtu.dtypes.all) - {np.complex64, np.complex128}:
   _make_select_and_scatter_add_harness("dtypes", dtype=dtype)
 
 # Validate different reduction primitives
@@ -2399,7 +2399,7 @@ _make_select_and_scatter_add_harness(
 _make_select_and_scatter_add_harness("window_strides", window_strides=(1, 2, 3))
 
 # Validate dtypes on TPU
-for dtype in set(jtu.dtypes.all) - {  # pyrefly: ignore[unsupported-operation]
+for dtype in set(jtu.dtypes.all) - {
     np.bool_, np.complex64, np.complex128, np.int8, np.uint8}:
   for window_strides, window_dimensions, nb_inactive_dims in [((1, 2, 1),
                                                                (1, 3, 1), 2)]:
@@ -2693,7 +2693,9 @@ def _make_reducer_harness(prim,
   define(
       prim,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      lambda arg: prim.bind(arg, axes=axes), [RandArg(shape, dtype)],
+      lambda arg: (prim.bind(arg, axes=axes, out_sharding=None)
+                   if prim is lax.reduce_sum_p else prim.bind(arg, axes=axes)),
+      [RandArg(shape, dtype)],
       prim=prim,
       shape=shape,
       dtype=dtype,

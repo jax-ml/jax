@@ -14,25 +14,28 @@
 
 """Defines expressions and constraints over layouts."""
 
-# mypy has been causing more problems than it solves here. Disable it for these
-# files. We have pytype checks anyway.
-# mypy: ignore-errors
-
 from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
 import dataclasses
+import enum
 import math
 from typing import Any, assert_never, final
 
+import numpy as np
+
+from . import dialect_lowering as lowering
 from . import fragmented_array as fa
 from . import inference_utils
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
+from . import utils
 
 
+# TODO(bchetioui): consider defining an interface for variable keys that carry
+# shape and memory space information.
 VariableKey = Any
 
 
@@ -93,9 +96,15 @@ class Reduce:
   # The rank of the shape of the input to the reduction. It is necessary to
   # know this in order to reduce `TiledLayout`s correctly.
   rank: int
+  # If `True`, the axes which are reduced are left in the result as dimensions
+  # with size one.
+  keep_dims: bool = False
 
   def __str__(self):
-    return f"Reduce([{self.axes}], {self.expression}, rank={self.rank})"
+    return (
+        f"Reduce([{self.axes}], {self.expression}, rank={self.rank},"
+        f" keep_dims={self.keep_dims})"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -172,7 +181,7 @@ def reduce_reshape_expression(
           # Therefore, we can return the tiled layout as is.
           return RegisterLayout(tiled_layout)
     case _:
-      return dataclasses.replace(reshape, expression=reduced_expr)  # pytype: disable=bad-return-type
+      return dataclasses.replace(reshape, expression=reduced_expr)
 
 
 def reduce_transpose_expression(
@@ -195,6 +204,45 @@ def reduce_transpose_expression(
       return Transpose(expression=reduced_expr)
 
 
+def reduce_reduce_expression(
+    expr: Reduce, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(expr.expression, assignments)
+
+  def default():
+    """We don't know how to reduce further."""
+    assert not isinstance(reduced_expr, Unsatisfiable)
+    return dataclasses.replace(expr, expression=reduced_expr)
+
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case RegisterLayout(value=fa.TiledLayout() as layout):
+      # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
+      if expr.keep_dims:
+        return default()
+      num_untiled_dims = expr.rank - len(layout.base_tile_shape)
+      reduced_tiling_axes = [
+          a - num_untiled_dims for a in expr.axes if a >= num_untiled_dims
+      ]
+      if reduced_tiling_axes:
+        return RegisterLayout(layout.reduce(reduced_tiling_axes))
+      return RegisterLayout(layout)
+    case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
+      # We only support reducing leading dimensions.
+      if expr.axes != tuple(range(len(expr.axes))):
+        return default()
+      shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)
+      if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
+        return default()
+      return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
+    case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
+      shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)
+      return RegisterLayout(fa.WGSplatFragLayout(shape))
+    case _:
+      return default()
+
+
 def reduce_expression(
     expr: Expression, assignments: dict[Variable, Constant]
 ) -> Expression | Unsatisfiable:
@@ -204,21 +252,8 @@ def reduce_expression(
       return expr
     case Variable():
       return assignments.get(expr, expr)
-    case Reduce(expression=expr, axes=axes, rank=rank):
-      reduced_expr = reduce_expression(expr, assignments)
-      match reduced_expr:
-        case Unsatisfiable():
-          return Unsatisfiable()
-        case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
-          num_untiled_dims = rank - len(layout.base_tile_shape)
-          reduced_tiling_axes = [
-              a - num_untiled_dims for a in axes if a >= num_untiled_dims
-          ]
-          if reduced_tiling_axes:
-            return RegisterLayout(layout.reduce(reduced_tiling_axes))
-          return RegisterLayout(layout)
-        case _:
-          return Reduce(expression=reduced_expr, axes=axes, rank=rank)
+    case Reduce():
+      return reduce_reduce_expression(expr, assignments)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
     case Transpose():
@@ -244,26 +279,34 @@ class Equals:
     return f"Equals({self.lhs} == {self.rhs})"
 
 
-_always_supported = lambda *args: True
-
-
-# Maps a tuple of layouts (source, target) to a function that takes in a
-# bitwidth and returns whether the source->target relayout is supported for
-# values of types with the given bitwidth.
-_SUPPORTED_TILED_RELAYOUTS = {
+def _is_supported_tiled_relayout(
+    src: fa.TiledLayout, dst: fa.TiledLayout, bitwidth: int
+) -> bool:
+  """Returns whether the source->target relayout is supported for values of types with the given bitwidth."""
+  match src, dst:
     # Transposed layouts.
-    (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT): _always_supported,
-    (fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT): _always_supported,
-    (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT): _always_supported,
-    (fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT): _always_supported,
+    case fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT:
+      return True
+    case fa.WGMMA_TRANSPOSED_LAYOUT, fa.WGMMA_LAYOUT:
+      return True
+    case fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT:
+      return True
+    case fa.TCGEN05_TRANSPOSED_LAYOUT, fa.TCGEN05_LAYOUT:
+      return True
     # "Conversion-optimized" layouts.
-    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT):
-     lambda bitwidth: fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X):
-     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT):
-     lambda bitwidth: fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth) and fa.can_relayout_wgmma_2x_to_wgmma(bitwidth),
-}
+    case fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT:
+      return fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
+    case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X:
+      return fa.can_relayout_wgmma_4x_to_wgmma_2x(bitwidth)
+    case fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT:
+      return fa.can_relayout_wgmma_4x_to_wgmma_2x(
+          bitwidth
+      ) and fa.can_relayout_wgmma_2x_to_wgmma(bitwidth)
+  if src == fa.tmem_native_layout(
+      src.vector_length
+  ) and dst == fa.tmem_native_layout(dst.vector_length):
+    return True
+  return False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -281,11 +324,29 @@ class Relayout:
   We include here the bitwidth of the element type we want to associate with
   this constraint, as certain relayouts are only supported for specific
   bitwidths.
+
+  If `strict` is `True`, only allows relayout from splat layouts and force
+  layout equality otherwise.
   """
 
   source: Expression
   target: Expression
   bitwidth: int
+  strict: bool = False
+
+  def canonicalize(self) -> Constraint:
+    match self:
+      # The only valid strict tiled and strided relayout is the identity.
+      case Relayout(
+          source=RegisterLayout(
+              value=fa.TiledLayout() | fa.WGStridedFragLayout()
+          ) as cst,
+          target=target,
+          strict=True,
+      ):
+        return Equals(lhs=cst, rhs=target)
+      case _:
+        return self
 
   def holds(self) -> bool | None:
     """Returns whether the relayout constraint holds.
@@ -312,11 +373,10 @@ class Relayout:
         return layouts_lib.splat_is_compatible_with_tiled(
             source_layout, target_layout
         )
-      case fa.TiledLayout(), fa.TiledLayout():
-        is_supported = _SUPPORTED_TILED_RELAYOUTS.get(
-            (source_layout, target_layout), lambda *_: False
+      case fa.TiledLayout(), fa.TiledLayout() if not self.strict:
+        return _is_supported_tiled_relayout(
+            source_layout, target_layout, self.bitwidth
         )
-        return is_supported(self.bitwidth)
       case _:
         return False
 
@@ -325,83 +385,196 @@ class Relayout:
 
 
 @dataclasses.dataclass(frozen=True)
-class IsTransferable:
+class IsTransferable(abc.ABC):
   """States that `source` layout must be transferable across memory spaces to `target` layout."""
-
   source: Expression
   target: Expression
-  # TODO(allanrenucci): Can this be derived from the layouts?
   shape: tuple[int, ...]
-
-  def supported_tmem_transfers(
-      self, packing: int
-  ) -> list[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
-    """Returns the list of supported TMEM <-> Register transfers."""
-    assert len(self.shape) == 2
-    columns = self.shape[1]
-    tmem_default_layout = tcgen05.tmem_default_layout(packing)
-    return [
-        (tmem_default_layout, fa.TCGEN05_LAYOUT),
-        (tmem_default_layout, fa.TMEM_NATIVE_LAYOUT),
-        (tcgen05.tmem_half_lane_layout(columns, packing), fa.WGMMA_LAYOUT),
-        (
-            tcgen05.tmem_m64_collective_layout(columns, packing),
-            tcgen05.fa_m64_collective_layout(columns),
-        ),
-    ]
-
-  def _is_valid_tmem_transfer(
-      self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
-  ) -> bool:
-    packing = tmem_layout.vector_length
-    return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
-
-  def _is_valid_smem_transfer(
-      self,
-      smem_layout: lc.TileTransform | None,
-      reg_layout: fa.FragmentedLayout,
-  ) -> bool:
-    # TODO(b/447079781): This is way too restrictive. We need to make it more
-    # precise by:
-    # - Consider whether the op is annotated with optimized copies or not.
-    # - If copies do not have to be optimized, always return True.
-    # - If copies have to be optimized, determine if the transfer is optimal by
-    #   calling fragmented_array.plan_tiled_transfer.
-    if inference_utils.is_mma_layout(reg_layout):
-      return smem_layout is not None and len(smem_layout.tiling) == 2
-    return smem_layout is None
 
   def holds(self) -> bool | None:
     """Returns whether the constraint holds.
 
     Returns `None` if the constraint can't be checked.
     """
+    raise NotImplementedError("Holds must be implemented by subclasses.")
 
-    assert self.source != self.target, (
-        "IsTransferable constraints within the same memory space are not"
-        " supported."
-    )
 
+@dataclasses.dataclass(frozen=True)
+class IsTransferableTmemRegisters(IsTransferable):
+  """States that `source` layout must be transferable across memory spaces to `target` layout.
+
+  In this case, one of `source` and `target` must be in TMEM, and the other must
+  be in registers. `bitwidth` is the bitwidth of the element type.
+  """
+  bitwidth: int
+
+  def __post_init__(self):
+    assert len(self.shape) == 2
+    assert 0 < self.bitwidth <= 32
+
+  def is_valid_tmem_transfer(
+      self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
+  ) -> bool:
+    if not isinstance(reg_layout, fa.TiledLayout):
+      return False
+    packing = tmem_layout.vector_length
+    columns = self.shape[1]
+    if (
+        reg_layout == fa.TCGEN05_LAYOUT
+        and tmem_layout == tcgen05.tmem_default_layout(packing)
+    ):
+      return True
+    if (
+        reg_layout == tmem_layout.as_tiled_layout()
+        and packing * self.bitwidth == 32
+    ):
+      return True
+    if (
+        reg_layout == fa.TMEM_NATIVE_LAYOUT
+        and tmem_layout == tcgen05.tmem_default_layout(packing)
+        and ((self.bitwidth == 16 and packing == 1) or self.bitwidth == 32)
+    ):
+      return True
+    if (
+        reg_layout == fa.WGMMA_LAYOUT
+        and tmem_layout == tcgen05.tmem_half_lane_layout(columns, packing)
+    ):
+      return True
+    if (
+        reg_layout == tcgen05.fa_m64_collective_layout(columns)
+        and tmem_layout == tcgen05.tmem_m64_collective_layout(columns, packing)
+    ):
+      return True
+    return False
+
+  def holds(self) -> bool | None:
     match self.source, self.target:
-      case TMEMLayout(value=src), RegisterLayout(value=dst):
-        return self._is_valid_tmem_transfer(src, dst)
       case RegisterLayout(value=src), TMEMLayout(value=dst):
-        return self._is_valid_tmem_transfer(dst, src)
-      case SMEMTiling(value=src), RegisterLayout(value=dst):
-        return self._is_valid_smem_transfer(src, dst)
-      case RegisterLayout(value=src), SMEMTiling(value=dst):
-        return self._is_valid_smem_transfer(dst, src)
+        return self.is_valid_tmem_transfer(dst, src)
+      case TMEMLayout(value=src), RegisterLayout(value=dst):
+        return self.is_valid_tmem_transfer(src, dst)
       case Constant(), Constant():
-        source_type = type(self.source).__name__
-        target_type = type(self.target).__name__
-        raise NotImplementedError(
-            f"Unsupported transfer: {source_type} -> {target_type}"
+        raise ValueError(
+            f"{self.source} -> {self.target} is not a TMEM <-> Registers"
+            " transfer."
         )
       case _:
         return None
 
   def __str__(self):
-    return f"IsTransferable({self.source}  ⟶ {self.target})"
+    return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
+
+
+class OptimizedTransferKind(enum.Enum):
+  """A classification of the type of SMEM <-> Registers transfer.
+
+  Specifically, this refers to whether the transfer should be optimized to
+  avoid bank conflicts, if optimization is not requested, or if optimization
+  should be done, but downgrading is acceptable.
+  """
+  # Denotes a conflict-free transfer.
+  OPTIMIZED = enum.auto()
+  # Denotes an unoptimized transfer.
+  UNOPTIMIZED = enum.auto()
+  # Denotes a transfer that we are willing to downgrade to UNOPTIMIZED in
+  # certain circumstances. This mode is necessary to accurately model the
+  # Pallas behavior for SMEM stores with certain combinations of layouts and
+  # transforms.
+  #
+  # TODO(bchetioui): implement symmetric default behaviours for load/store in
+  # Pallas, and remove/harden this mode.
+  DOWNGRADABLE = enum.auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class IsTransferableSmemRegisters(IsTransferable):
+  """States that `source` layout must be transferable across memory spaces to `target` layout.
+
+  In this case, one of `source` and `target` must be in SMEM, and the other must
+  be in registers.
+  """
+  strides: tuple[int, ...]
+  bitwidth: int
+  optimized: OptimizedTransferKind
+
+  def _is_supported_smem_transfer(
+      self,
+      smem_layout: lc.TileTransform | None,
+      reg_layout: fa.FragmentedLayout,
+  ) -> bool:
+    if not isinstance(reg_layout, fa.TiledLayout):
+      return smem_layout is None
+    if len(self.strides) < 2:
+      smem_transposed = False
+    else:
+      smem_transposed = self.strides[-1] > self.strides[-2]
+    tiling = smem_layout.tiling if smem_layout is not None else ()
+    tiling_rank = len(tiling)
+    # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
+    # possible to do so.
+    if smem_transposed:
+      regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      return tiling_rank == 2 and regs_transposed
+    # For a given `TiledLayout`, all transfers are possible if optimization is
+    # not required.
+    if self.optimized == OptimizedTransferKind.UNOPTIMIZED:
+      return True
+
+    if tiling_rank == 0 and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
+      # Model the Pallas behavior of downgrading to unoptimized transfers in
+      # this case.
+      return True
+
+    # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
+    # is implemented in `load_untiled` and `store_untiled`.
+    if tiling_rank == 0:
+      tiling = self.shape
+      tiling_rank = len(tiling)
+      tiled_strides = lowering.tile_strides(self.strides, tiling)
+      # Mirrors the logic in `swap_p` and `get_p` lowering, in the untiled case.
+      swizzle = 16
+    else:
+      tiled_strides = lowering.tile_strides(self.strides, tiling)
+      minor_tiling = tiling[np.argmin(tiled_strides[-len(tiling):])]
+      swizzle = inference_utils.compute_swizzle(minor_tiling, self.bitwidth)
+
+    first_tiled_dim = len(self.shape) - tiling_rank
+    nested_ref_shape = tuple(
+        (self.shape[i] // tiling[i - first_tiled_dim], tiling[i - first_tiled_dim])
+        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
+        else (self.shape[i],)
+        for i in range(len(self.shape))
+    )
+    nested_ref_strides = tuple(
+        (tiled_strides[i], tiled_strides[i + tiling_rank])
+        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
+        else (tiled_strides[i],)
+        for i in range(len(self.shape))
+    )
+
+    try:
+      fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
+                             reg_layout, self.bitwidth, swizzle)
+      return True
+    except fa.TransferPlanDerivationError:
+      return False
+
+  def holds(self) -> bool | None:
+    match self.source, self.target:
+      case SMEMTiling(value=src), RegisterLayout(value=dst):
+        return self._is_supported_smem_transfer(src, dst)
+      case RegisterLayout(value=src), SMEMTiling(value=dst):
+        return self._is_supported_smem_transfer(dst, src)
+      case Constant(), Constant():
+        raise ValueError(
+            f"{self.source} -> {self.target} is not a SMEM <-> Registers"
+            " transfer."
+        )
+      case _:
+        return None
+
+  def __str__(self):
+    return f"IsTransferableSmemRegisters({self.source} ⟶ {self.target})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -478,17 +651,23 @@ class IsValidMmaTiling:
 
   For both tcgen05.mma and wgmma, tiling is valid if it is of the form
   (8, swizzle_elems), with
-      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]}.
+      swizzle_elems in {s * 8 // dtype_bitwidth for s in [32, 64, 128]},
+  as support for unswizzled tilings is not yet supported.
+
+  If `allow_unswizzled` is True, then we additionally accept
+  (8, 16 * 8 // dtype_bitwidth) as a valid tiling.
   """
   expr: Expression
   bitwidth: int
+  allow_unswizzled: bool = False
 
   def holds(self) -> bool | None:
     match self.expr:
       case SMEMTiling(value=None):
         return False
       case SMEMTiling(value=lc.TileTransform(tiling=t)):
-        valid_tilings = {(8, s * 8 // self.bitwidth) for s in [32, 64, 128]}
+        swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
+        valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
         return t in valid_tilings
       case RegisterLayout() | TMEMLayout() as c:
         raise ValueError(f"Unexpected value {c} in IsValidMmaTiling constraint")
@@ -496,10 +675,54 @@ class IsValidMmaTiling:
         return None
 
   def __str__(self):
-    return f"IsValidMMATiling({self.expr}, {self.bitwidth})"
+    return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
-Constraint = Equals | Relayout | NotOfType | IsTransferable | IsValidMmaTiling | Divides
+@dataclasses.dataclass(frozen=True)
+class IsSupportedBroadcast:
+  """States that `src` can be broadcasted to `dst`.
+
+  See `FragmentedArray.broadcast_in_dim` for more details.
+  """
+
+  src: Expression
+  dst: Expression
+  dims: tuple[int, ...]
+
+  def holds(self) -> bool | None:
+    match self.src, self.dst:
+      case RegisterLayout(
+          value=fa.WGStridedFragLayout() as src_layout
+      ), RegisterLayout(value=fa.WGStridedFragLayout() as dst_layout):
+        return fa.is_supported_strided_layout_broadcast(src_layout, dst_layout, self.dims)
+      case RegisterLayout(value=src_layout), RegisterLayout(value=dst_layout):
+        # This is an intentionally loose check. We rely on the presence of a
+        # `src = Reduce(dst)` constraint to enforce correctness.
+        return type(src_layout) == type(dst_layout)
+      case Constant() as src, Constant() as dst:
+        raise ValueError(
+            f"Unexpected values {src=} {dst=} in IsSupportedBroadcast"
+            " constraint"
+        )
+      case _:
+        return None
+
+  def __str__(self):
+    return (
+        f"IsSupportedBroadcast(src={self.src}, dst={self.dst},"
+        f" dims={self.dims})"
+    )
+
+
+Constraint = (
+    Equals
+    | Relayout
+    | NotOfType
+    | IsTransferable
+    | IsValidMmaTiling
+    | Divides
+    | IsSupportedBroadcast
+)
 
 
 def reduce_constraint(
@@ -516,35 +739,46 @@ def reduce_constraint(
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
       return Equals(lhs_red, rhs_red)
-    case Relayout(source=source, target=target, bitwidth=bitwidth):
+    case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
-      return Relayout(source_red, target_red, bitwidth)
+      reduced = dataclasses.replace(
+          relayout, source=source_red, target=target_red
+      )
+      return reduced.canonicalize()
     case NotOfType(expr=expr, type=ty):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return NotOfType(expr_red, ty)
-    case IsTransferable(source=source, target=target, shape=shape):
+    case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsTransferable(source_red, target_red, shape)
-    case IsValidMmaTiling(expr=expr, bitwidth=bitwidth):
+      return dataclasses.replace(transfer, source=source_red, target=target_red)
+    case IsValidMmaTiling(expr=expr) as is_valid_mma_tiling:
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      return IsValidMmaTiling(expr_red, bitwidth)
+      return dataclasses.replace(is_valid_mma_tiling, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return Divides(expr_red, tiling_multiple)
+    case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
+      src_red = reduce_expression(src, assignments)
+      dst_red = reduce_expression(dst, assignments)
+      if isinstance(src_red, Unsatisfiable) or isinstance(
+          dst_red, Unsatisfiable
+      ):
+        return Unsatisfiable()
+      return IsSupportedBroadcast(src_red, dst_red, dims)
     case _ as never:
       assert_never(never)
 
@@ -582,7 +816,7 @@ class ConstraintSystem:
         case Transpose(expression=e):
           extract_variables(e)
         case _:
-          assert_never(expr)
+          assert_never(never)
     for constraint in self.constraints:
       match constraint:
         case Equals(lhs=lhs, rhs=rhs):
@@ -593,13 +827,16 @@ class ConstraintSystem:
           extract_variables(target)
         case NotOfType(expr=expr):
           extract_variables(expr)
-        case IsTransferable(source=source, target=target, shape=_):
+        case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
         case IsValidMmaTiling(expr=expr):
           extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
+        case IsSupportedBroadcast(src=src, dst=dst):
+          extract_variables(src)
+          extract_variables(dst)
         case _ as never:
           assert_never(never)
     return free_variables
@@ -643,7 +880,6 @@ def non_splat_variables(
   for constraint in constraints:
     match constraint:
       case NotOfType(expr=Variable() as v, type=fa.WGSplatFragLayout):
-        assert isinstance(v, Variable)  # make pytype happy
         vs.add(v)
   return vs
 
@@ -741,8 +977,6 @@ def compute_transitively_equal_vars(
   for constraint in system.constraints:
     match constraint:
       case Equals(lhs=Variable() as lhs, rhs=Variable() as rhs):
-        assert isinstance(lhs, Variable)  # make pytype happy
-        assert isinstance(rhs, Variable)  # make pytype happy
         all_vars.add(lhs)
         all_vars.add(rhs)
         union(lhs, rhs)
@@ -764,8 +998,7 @@ def compute_transitively_equal_vars(
 def saturate_divides_constraints_for_equal_vars(
     system: ConstraintSystem,
 ) -> ConstraintSystem:
-  """Saturates Divides constraints between all transitively equal vars.
-  """
+  """Saturates Divides constraints between all transitively equal vars."""
   equal_vars = compute_transitively_equal_vars(system)
   new_constraints: list[Constraint] = []
   for constraint in system.constraints:
@@ -777,37 +1010,41 @@ def saturate_divides_constraints_for_equal_vars(
             new_constraints.append(Divides(equal_var, tiling_multiple))
       case _:
         pass
-  new_constraints = merge_divides_constraints(new_constraints)
+  new_constraints = _merge_all_divides_constraints(new_constraints)
   return dataclasses.replace(system, constraints=new_constraints)
 
 
-# TODO(bchetioui): clean up API.
-def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
+def _merge_all_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
   """Merges Divides constraints that can be merged."""
   result: list[Constraint] = []
-  var_to_tiling_multiples : dict[Variable, tuple[int, ...]] = {}
+  var_to_divides : dict[Variable, Divides] = {}
   for constraint in constraints:
     match constraint:
-      case Divides(expr=Variable() as v, tiling_multiple=tiling_multiple):
-        assert isinstance(v, Variable)  # make pytype happy
-        if (previous_tiling_multiple := var_to_tiling_multiples.get(v)) is None:
-          var_to_tiling_multiples[v] = tiling_multiple
+      case Divides(expr=Variable() as v) as d1:
+        if (d0 := var_to_divides.get(v)) is None:
+          var_to_divides[v] = d1
           continue
-        # If the two tuples are of different lengths, the larger tuple will
-        # be truncated (removing initial multiples) to the length of the
-        # smaller tuple. This preserves the semantics of the Divides constraints
-        # where a tiling's rank cannot exceed the size of tiling_multiple.
-        min_len = min(len(tiling_multiple), len(previous_tiling_multiple))
-        new_tiling_multiple = []
-        if min_len > 0:
-          for x, y in zip(tiling_multiple[-min_len:], previous_tiling_multiple[-min_len:], strict=True):
-            new_tiling_multiple.append(math.gcd(x, y))
-        var_to_tiling_multiples[v] = tuple(new_tiling_multiple)
+        var_to_divides[v] = merge_divides_constraints(d0, d1)
       case _:
         result.append(constraint)
-  for expr, tiling_multiple in var_to_tiling_multiples.items():
-    result.append(Divides(expr, tiling_multiple))
+  result.extend(var_to_divides.values())
   return result
+
+
+def merge_divides_constraints(d0: Divides, d1: Divides) -> Divides:
+  if d0.expr != d1.expr:
+    raise ValueError("Divides constraints must apply to the same expression.")
+  # If the two tuples are of different lengths, the larger tuple will be
+  # truncated to the length of the smaller tuple. This preserves the semantics
+  # of the Divides constraints where a tiling's rank cannot exceed the size of
+  # tiling_multiple.
+  min_len = min(len(d0.tiling_multiple), len(d1.tiling_multiple))
+  if min_len == 0:
+    return Divides(d0.expr, ())
+  tiling_multiple = []
+  for t0, t1 in zip(d0.tiling_multiple[-min_len:], d1.tiling_multiple[-min_len:], strict=True):
+    tiling_multiple.append(math.gcd(t0, t1))
+  return Divides(d0.expr, tuple(tiling_multiple))
 
 
 def _reduce_system_once(
@@ -843,18 +1080,17 @@ def _reduce_system_once(
         if not try_assign(var, cst):
           return Unsatisfiable()
         changed = True
-      case _ as new_constraint:
-        assert isinstance(new_constraint, Constraint)  # make pytype happy
-        match new_constraint.holds():
+      case new_constraint:
+        match new_constraint.holds():  # pyrefly: ignore[missing-attribute]
           case None:
-            constraints.append(new_constraint)
+            constraints.append(new_constraint)  # pyrefly: ignore[bad-argument-type]
             changed |= new_constraint != constraint
           case False:
             return Unsatisfiable()
           case True:
             changed = True
 
-  new_constraints = merge_divides_constraints(constraints)
+  new_constraints = _merge_all_divides_constraints(constraints)
   changed |= len(new_constraints) != len(constraints)
   constraints = new_constraints
 
@@ -889,6 +1125,6 @@ def reduce(
       case ConstraintSystem() as new_system:
         constraint_system = new_system
       case _ as never:
-        assert_never(never)
+        assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2858
 
   return constraint_system

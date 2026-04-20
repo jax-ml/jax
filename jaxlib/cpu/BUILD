@@ -38,12 +38,14 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//jaxlib:ffi_helpers",
+        "//jaxlib:tridiagonal_solve_perturbed",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@xla//xla:future",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -55,6 +57,18 @@ cc_library(
     # compatible with libtpu
     deps = [":lapack_kernels"],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "tridiagonal_solve_kernels",
+    srcs = ["tridiagonal_solve_kernels.cc"],
+    hdrs = ["tridiagonal_solve_kernels.h"],
+    # compatible with libtpu
+    deps = [
+        "//jaxlib:ffi_helpers",
+        "//jaxlib:tridiagonal_solve_perturbed",
+        "@xla//xla/ffi/api:ffi",
+    ],
 )
 
 nanobind_extension(
@@ -75,6 +89,7 @@ nanobind_extension(
     ],
     deps = [
         ":lapack_kernels",
+        ":tridiagonal_solve_kernels",
         "//jaxlib:kernel_nanobind_helpers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
@@ -91,6 +106,7 @@ cc_library(
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
         ":sparse_kernels",
+        ":tridiagonal_solve_kernels",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
     ],

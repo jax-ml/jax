@@ -42,7 +42,6 @@ class ClusterEnv:
 
 
   @classmethod
-  # pytype: disable=bad-return-type
   def auto_detect_unset_distributed_params(cls,
                                            coordinator_address: str | None,
                                            num_processes: int | None,
@@ -55,7 +54,7 @@ class ClusterEnv:
     # First, we check the spec detection method because it will ignore submitted values
     # If if succeeds.
     if cluster_detection_method is not None:
-      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )  # pytype: disable=attribute-error
+      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )
       if env is None:
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {cluster_detection_method} is not supported.")
@@ -84,13 +83,12 @@ class ClusterEnv:
       # Otherwise local_device_ids will remain unset,
       # which will default to all devices being visible.
       if (local_device_ids is None and not running_in_cloud_tpu_vm and
-          env.get_local_process_id() is not None):
-        local_device_ids = [env.get_local_process_id()] # type: ignore[list-item]
+          (pid := env.get_local_process_id()) is not None):
+        local_device_ids = [pid]
     else:
       logger.debug('Could not find a known environment for initializing distributed JAX. '
         'Known environments: %s', ', '.join(e.__name__ for e in cls._cluster_types))
     return (coordinator_address, num_processes, process_id, local_device_ids)
-  # pytype: enable=bad-return-type
 
   @classmethod
   def is_env_present(cls) -> bool:

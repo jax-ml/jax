@@ -32,9 +32,14 @@ py_library(
     ],
     deps = [
         "//jax",
+        "//jax/_src:core",
+        "//jax/_src:deprecations",
+        "//jax/_src:frozen_dict",
+        "//jax/_src:lax",
+        "//jax/_src:partial_eval",
+        "//jax/_src:util",
         "//jax/_src/pallas",
-        "//jax/extend:backend",
-    ],
+    ] + py_deps("numpy"),
 )
 
 py_library(
@@ -89,11 +94,13 @@ py_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":error_handling",
         ":primitives",
         ":random",
+        ":sc_core",
         ":tpu_info",
         "//jax",
         "//jax/_src:ad_util",
@@ -107,7 +114,6 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:export",
         "//jax/_src:lax",
-        "//jax/_src:literals",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
@@ -128,6 +134,7 @@ pytype_strict_library(
     srcs = [
         "sc_lowering.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
@@ -157,6 +164,7 @@ pytype_strict_library(
     srcs = [
         "sc_core.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
@@ -176,6 +184,7 @@ pytype_strict_library(
     srcs = [
         "sc_primitives.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
@@ -235,11 +244,13 @@ py_library(
 pytype_strict_library(
     name = "tpu_info",
     srcs = ["tpu_info.py"],
+    type_checking = "pyrefly",
     deps = [
-        ":core",
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:dtypes",
+        "//jax/_src:mesh",
         "//jax/_src:util",
         "//jax/_src/pallas",
     ],

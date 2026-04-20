@@ -24,6 +24,6 @@ from jax.experimental.source_mapper.generate_map import generate_sourcemaps as g
 from jax.experimental.source_mapper.mlir import create_mlir_sourcemap as create_mlir_sourcemap
 
 # We import the jaxpr and hlo passes to register them.
-import jax.experimental.source_mapper.jaxpr  # pylint: disable=unused-import # noqa: F401
+import jax.experimental.source_mapper.jaxpr # noqa: F401
 from jax.experimental.source_mapper.jaxpr import canonicalize_filename as canonicalize_filename
-import jax.experimental.source_mapper.hlo  # pylint: disable=unused-import # noqa: F401
+import jax.experimental.source_mapper.hlo # noqa: F401

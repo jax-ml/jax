@@ -1,6 +1,28 @@
 # JAX on ROCm
 This directory provides setup instructions and necessary files to build, test, and run JAX with ROCm support in a Docker environment, suitable for both runtime and CI workflows. Explore the following methods to use or build JAX on ROCm!
 
+## 0. Install via `pip` (JAX extras)
+
+JAX supports ROCm via pip extras:
+
+```bash
+pip install --upgrade "jax[rocm7-local]"
+```
+
+### ROCm fixes via post-releases
+
+ROCm-specific fixes are shipped as *post-releases* of the ROCm plugin/PJRT
+packages (for example, `jax-rocm7-plugin==0.9.1.post1`). Upgrading
+`jax[rocm7-local]` will pick up the newest compatible post-release 
+available from your configured package indexes.
+
+### Important: ROCm must already be installed (for now)
+
+Until ROCm wheels are distributed via TheRock, the `jax[rocm7-local]` extra 
+installs the JAX ROCm plugin packages, but **do not install ROCm itself**. 
+You must run in an environment where ROCm is already installed (for example, 
+a ROCm Docker container).
+
 ## 1. Using Prebuilt Docker Images
 
 The ROCm JAX team provides prebuilt Docker images, which the simplest way to use JAX on ROCm. These images are available on Docker Hub and come with JAX configured for ROCm.

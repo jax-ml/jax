@@ -33,7 +33,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import pxla
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
                                 tree_unflatten, treedef_tuple)
 
@@ -351,7 +350,6 @@ custom_vmap_p.def_impl(custom_vmap_impl)
 custom_vmap_p.def_effectful_abstract_eval(custom_vmap_abstract_eval)
 batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
-pxla.register_initial_style_primitive(custom_vmap_p)
 mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
 
@@ -394,7 +392,7 @@ def sequential_vmap(f):
   See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
   more details.
   """
-  from jax._src.lax import control_flow  # pytype: disable=import-error
+  from jax._src.lax import control_flow  # pyrefly: ignore[missing-import]
 
   f = custom_vmap(f)
 

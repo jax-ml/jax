@@ -39,8 +39,6 @@ from jax._src.interpreters.ad import (
   custom_lin_p as custom_lin_p,
 )
 
-from jax._src.interpreters.pxla import xla_pmap_p as xla_pmap_p
-
 from jax._src.lax.lax import (
   abs_p as abs_p,
   acos_p as acos_p,
@@ -240,3 +238,8 @@ from jax._src.prng import (
 )
 
 from jax._src.random import random_gamma_p as random_gamma_p
+
+from jax._src.state.primitives import (
+  get_p as get_p,
+  swap_p as swap_p,
+)

@@ -42,7 +42,6 @@ limitations under the License.
 
 namespace jax {
 
-void InitializeThreadLocalState();
 bool GetDisableJit();
 bool GetEnableX64();
 std::optional<nanobind::callable> GetPostHook();

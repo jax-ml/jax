@@ -13,7 +13,7 @@ The main idea
 - **Initialize the cluster with {func}`jax.distributed.initialize`**.
 - **A {class}`jax.Array` can span all processes**, and if each process applies
   the same JAX function to it, it's like programming against one big device.
-- **Use the same [unified sharding mechanism][unified_sharding]** as in
+- **Use the same [unified sharding mechanism][distributed_arrays]** as in
   single-controller JAX to control how data is distributed and computation is
   parallelized. XLA automatically exploits high-speed networking links like TPU
   ICI or NVLink between hosts when available, and otherwise uses available host
@@ -889,9 +889,8 @@ else:
 ```
 
 [cloud_tpu]: https://cloud.google.com/tpu?hl=en
-[distributed_arrays]: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
+[distributed_arrays]: https://jax.readthedocs.io/en/latest/parallel.html
 [gpu_machines]: https://cloud.google.com/compute/docs/gpus
-[unified_sharding]: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
 [google-artifact-tpu]: https://console.cloud.google.com/artifacts/docker/cloud-tpu-images/us/jax-ai-image/tpu
 [google-artifact-gpu]: https://console.cloud.google.com/artifacts/docker/deeplearning-images/us-central1/jax-ai-image/gpu
 [nvidia-ngc]: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/jax

@@ -16,7 +16,8 @@
 from collections.abc import Callable, Sequence
 import enum
 import functools
-from typing import overload, TypeAlias, TypeVar
+import inspect
+from typing import Any, TypeAlias, TypeVar, overload
 
 import jax
 from jax import api_util
@@ -105,7 +106,7 @@ def load_expanded(ref: Ref, *, mask: jax.Array) -> jax.Array:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   return load_p.bind(ref.ref, *flat_transforms, mask, has_mask=True, tree=tree)
@@ -170,7 +171,7 @@ def store_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -195,7 +196,7 @@ def addupdate(ref: Ref, x: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -212,7 +213,7 @@ def addupdate_compressed(ref: Ref, x: jax.Array, *, mask: jax.Array) -> None:
   if not isinstance(ref, Ref):
     raise TypeError(f"ref must be an AbstractRef or TransformedRef, got {ref}")
   if not isinstance(ref, TransformedRef):
-    ref = ref.at[...]  # type: ignore
+    ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
   _ = swap_p.bind(
@@ -265,7 +266,10 @@ def _gather_lowering_rule(
 ):
   ref, transforms, indices, mask = tree.unflatten(flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if ref_aval.memory_space not in (tpu_core.MemorySpace.VMEM, None):
+  if ref_aval.memory_space not in (
+      tpu_core.MemorySpace.VMEM,
+      pallas_core.MemorySpace.DEFAULT,
+  ):
     raise ValueError(
         f"Gather only supports loading from VMEM, got {ref_aval.memory_space}"
     )
@@ -339,7 +343,10 @@ def _scatter_lowering_rule(
 ):
   ref, transforms, indices, x, mask = jax.tree.unflatten(tree, flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if ref_aval.memory_space not in (tpu_core.MemorySpace.VMEM, None):
+  if ref_aval.memory_space not in (
+      tpu_core.MemorySpace.VMEM,
+      pallas_core.MemorySpace.DEFAULT,
+  ):
     raise ValueError(
         f"Scatter only supports storing to VMEM, got {ref_aval.memory_space}"
     )
@@ -550,10 +557,10 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
-  if ctx.avals_in[0].dtype == jnp.int32 and reduction_kind in ("max", "min"):
-    u32 = ir.IntegerType.get_signless(32)
+  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32) and reduction_kind in ("max", "min"):
+    i32 = ir.IntegerType.get_signless(32)
     sign_bit_vec = vector.broadcast(
-        x.type, arith.constant(u32, ir.IntegerAttr.get(u32, 0x80000000)))
+        x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
   result = tpu.scan(
       x.type, x, ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
@@ -677,9 +684,10 @@ masked_sort_p.multiple_results = True
 def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
   del descending  # Unused.
   supported_shape = (sc_core.get_sparse_core_info().num_lanes,)
-  if keys.dtype not in (jnp.int32, jnp.float32):
+  if keys.dtype not in (jnp.uint32, jnp.int32, jnp.float32):
     raise NotImplementedError(
-        f"sort_key_val: keys dtype {keys.dtype} should be int32 or float32")
+        f"sort_key_val: keys dtype {keys.dtype} should be uint32, int32 or"
+        " float32")
   if keys.shape != supported_shape:
     raise ValueError(f"keys shape {keys.shape} must be {supported_shape}")
   if jnp.dtype(values.dtype).itemsize != 4:
@@ -698,7 +706,6 @@ def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
 @sc_lowering.register_lowering_rule(masked_sort_p)
 def _masked_sort_lowering_rule(
     ctx: sc_lowering.LoweringRuleContext, keys, values, *maybe_mask, descending):
-  del ctx  # Unused.
   if maybe_mask:
     [mask] = maybe_mask
   else:
@@ -707,10 +714,20 @@ def _masked_sort_lowering_rule(
         ir.IntegerType.get_signless(1))
     mask = arith.constant(mask_type, ir.DenseElementsAttr.get_splat(
         mask_type, ir.BoolAttr.get(True)))
+  # tpu.sort comparisons assume unsigned int predicates, so we sort
+  # with the sign bit flipped to get correct signed int32 ordering.
+  sign_bit_vec = None
+  if ctx.avals_in[0].dtype == jnp.dtype(jnp.int32):
+    i32 = ir.IntegerType.get_signless(32)
+    sign_bit_vec = vector.broadcast(
+        keys.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
+    keys = arith.xori(keys, sign_bit_vec)
   out_mask, sorted_keys, sorted_values = tpu.sort(
       mask.type, keys.type, values.type, keys, values, mask=mask,
       descending=descending
   )
+  if sign_bit_vec is not None:
+    sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
   if maybe_mask:
     return sorted_keys, sorted_values, out_mask
   return sorted_keys, sorted_values
@@ -1217,10 +1234,10 @@ def _fetch_and_add_abstract_eval(*args):
 def _fetch_and_add_lowering_rule(ctx: sc_lowering.LoweringRuleContext, *args):
   del ctx  # Unused.
   x_ref, value, *indices, subcore_id = args
-  core_type = ir.Attribute.parse("#tpu.core_type<sc_vector_subcore>")
-  return tpu.fetch_and_add_sync(
-      x_ref, indices, value, core_type=core_type, core_id=subcore_id
-  )
+  kwargs: dict[str, Any] = {}
+  if "core_type" in inspect.signature(tpu.fetch_and_add_sync).parameters:
+    kwargs = {"core_type": ir.Attribute.parse("#tpu.core_type<sc_vector_subcore>")}
+  return tpu.fetch_and_add_sync(x_ref, indices, value, core_id=subcore_id, **kwargs)
 
 
 def fetch_and_add(

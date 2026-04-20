@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import partial
+import math
 from absl.testing import absltest
 
 import re
@@ -46,16 +48,147 @@ input_shardings = [
     ((None, ("dp", "tp"), None), (None, ("dp"), None)),
 ]
 c_name = "__cudnn$blockScaledDot"
-expected_hlos = [
-    [("all-reduce", "f32[1,512,512]", "replica_groups={{0,1},{2,3}}"), (c_name,)],
-    [("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
-    [("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
-    [(c_name,)],
-    [("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]"), (c_name,)],
-    [(c_name,)],
-    [("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]"), (c_name,)],
-    [("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]"), (c_name,)],
-    [("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]"), (c_name,)],
+
+
+@dataclass(frozen=True)
+class CollectiveExpectation:
+  family: str
+  shape_fragment: str
+  dimensions: tuple[int, ...] | None = None
+  group_size: int = 2
+  num_groups: int = 2
+  total_devices: int = 4
+
+
+@dataclass(frozen=True)
+class HloExpectation:
+  collectives: tuple[CollectiveExpectation, ...] = ()
+  optional_collectives: tuple[CollectiveExpectation, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParsedCollective:
+  line: str
+  op_name: str
+  family: str
+  dimensions: tuple[int, ...] | None
+  group_size: int | None
+  num_groups: int | None
+  total_devices: int | None
+  is_async_start: bool = False
+
+
+def _parse_int_list(text):
+  text = text.strip()
+  if not text:
+    return ()
+  return tuple(int(x.strip()) for x in text.split(",") if x.strip())
+
+
+def _normalize_collective_family(op_name):
+  if op_name.endswith("-start"):
+    return op_name[:-6]
+  if op_name.endswith("-done"):
+    return op_name[:-5]
+  return op_name
+
+
+def _parse_replica_group_semantics(line):
+  mesh_match = re.search(
+      r"replica_groups=mesh\[(.*?)\](?:,\s*device_ids=\((.*?)\))?\s*\{(.*?)\}",
+      line,
+  )
+  if mesh_match is not None:
+    mesh_shape = {
+        axis: int(size)
+        for axis, size in re.findall(r"'([^']+)'=(\d+)", mesh_match.group(1))
+    }
+    selected_axes = re.findall(r"'([^']+)'", mesh_match.group(3))
+    if selected_axes:
+      group_size = math.prod(mesh_shape[axis] for axis in selected_axes)
+    else:
+      group_size = 1
+    if mesh_match.group(2):
+      total_devices = len(_parse_int_list(mesh_match.group(2)))
+    else:
+      total_devices = math.prod(mesh_shape.values())
+    num_groups = total_devices // group_size if group_size else None
+    return group_size, num_groups, total_devices
+
+  iota_match = re.search(r"replica_groups=\[([0-9,\s]+)\]<=\[([0-9,\s]+)\]", line)
+  if iota_match is not None:
+    layout_dims = _parse_int_list(iota_match.group(1))
+    device_dims = _parse_int_list(iota_match.group(2))
+    total_devices = math.prod(device_dims or layout_dims)
+    group_size = min(layout_dims) if layout_dims else total_devices
+    num_groups = total_devices // group_size if group_size else None
+    return group_size, num_groups, total_devices
+
+  explicit_match = re.search(r"replica_groups=(\{\{.*?\}\})", line)
+  if explicit_match is not None:
+    groups = tuple(
+        _parse_int_list(group)
+        for group in re.findall(r"\{([0-9,\s]+)\}", explicit_match.group(1))
+    )
+    devices = {device for group in groups for device in group}
+    group_sizes = {len(group) for group in groups}
+    group_size = next(iter(group_sizes)) if len(group_sizes) == 1 else None
+    return group_size, len(groups), len(devices)
+
+  return None, None, None
+
+
+def _parse_collective_line(line):
+  op_match = re.search(
+      r"\b("
+      r"all-gather(?:-start|-done)?|"
+      r"all-reduce(?:-start|-done)?|"
+      r"reduce-scatter(?:-start|-done)?"
+      r")\(",
+      line,
+  )
+  if op_match is None:
+    return None
+
+  op_name = op_match.group(1)
+  dimensions_match = re.search(r"dimensions=\{([0-9,\s]+)\}", line)
+  dimensions = None
+  if dimensions_match is not None:
+    dimensions = _parse_int_list(dimensions_match.group(1))
+
+  group_size, num_groups, total_devices = (
+      _parse_replica_group_semantics(line)
+  )
+  return ParsedCollective(
+      line=line,
+      op_name=op_name,
+      family=_normalize_collective_family(op_name),
+      dimensions=dimensions,
+      group_size=group_size,
+      num_groups=num_groups,
+      total_devices=total_devices,
+      is_async_start=op_name.endswith("-start"),
+  )
+
+
+def _collective_lines(hlo_text):
+  return tuple(
+      parsed
+      for line in hlo_text.splitlines()
+      if (parsed := _parse_collective_line(line)) is not None
+  )
+
+
+expected_hlo_semantics = [
+    HloExpectation(collectives=(CollectiveExpectation("all-reduce", "f32[1,512,512]"),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
+    HloExpectation(),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[256,1024]", (0,)),)),
+    HloExpectation(optional_collectives=(CollectiveExpectation("reduce-scatter", "f32[2,256,512]"),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,512,512]", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,256,1024]", (0,)),)),
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -69,16 +202,15 @@ expected_output_spec = [
     PartitionSpec(None, ('dp', 'tp'), None),
 ]
 
-# The GSPMD sharding logic inserts additional reduce-scatters which don't exist
-# in Shardy.
+# GSPMD uses a different output sharding for this case, and may also emit an
+# extra reduce-scatter in compiled HLO.
 if not config.use_shardy_partitioner.value:
     expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
-    expected_hlos[5] += [("reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}")]
 
 sharding_configs = {
     input_sharding: (hlo, output_spec)
     for input_sharding, hlo, output_spec in zip(input_shardings,
-                                                expected_hlos,
+                                                expected_hlo_semantics,
                                                 expected_output_spec)
 }
 
@@ -288,13 +420,64 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 
     expected_hlo = sharding_configs[in_shardings][0]
     hlo_text = get_hlo_text(in_shardings, block_scale_configs)
+    collectives = _collective_lines(hlo_text)
+    custom_call_lines = [
+        line for line in hlo_text.splitlines()
+        if "custom-call" in line or c_name in line
+    ] or ["<none>"]
 
-    for expected_hlo_patterns in expected_hlo:
-      hlo_pattern_str = r".*".join(map(re.escape, expected_hlo_patterns))
-      hlo_pattern = re.compile(hlo_pattern_str, flags=re.DOTALL)
-      # Check all patterns in case of failures
-      with self.subTest(pattern=hlo_pattern_str):
-        self.assertRegex(hlo_text, hlo_pattern, msg=f"Failed to find pattern: {hlo_pattern_str}")
+    def maybe_assert_async_done(parsed):
+      if not parsed.is_async_start:
+        return
+      done_name = f"{parsed.family}-done"
+      self.assertTrue(
+          any(other.op_name == done_name for other in collectives),
+          msg=(
+              f"Found async collective start without matching "
+              f"{done_name}:\n{parsed.line}"
+          ),
+      )
+
+    def matches(expectation, parsed):
+      return (
+          parsed.family == expectation.family and
+          expectation.shape_fragment in parsed.line and
+          (expectation.dimensions is None or
+           parsed.dimensions == expectation.dimensions) and
+          parsed.group_size == expectation.group_size and
+          parsed.num_groups == expectation.num_groups and
+          parsed.total_devices == expectation.total_devices and
+          not parsed.op_name.endswith("-done")
+      )
+
+    def check_collective(expectation, *, optional=False):
+      family_lines = [
+          parsed.line for parsed in collectives if parsed.family == expectation.family
+      ]
+      if optional and not family_lines:
+        return
+      for parsed in collectives:
+        if matches(expectation, parsed):
+          maybe_assert_async_done(parsed)
+          return
+      self.fail(
+          f"Failed to find {'optional ' if optional else ''}collective matching "
+          f"{expectation!r}.\n"
+          f"Candidate lines:\n" + "\n".join(family_lines or ["<none>"])
+      )
+
+    for collective in expected_hlo.collectives:
+      with self.subTest(collective=collective):
+        check_collective(collective)
+    for collective in expected_hlo.optional_collectives:
+      with self.subTest(optional_collective=collective):
+        check_collective(collective, optional=True)
+    with self.subTest(custom_call=c_name):
+      if not any(c_name in line for line in custom_call_lines):
+        self.fail(
+            f"Failed to find a line containing {c_name!r}.\n"
+            f"Candidate custom-call lines:\n" + "\n".join(custom_call_lines)
+        )
 
   @jtu.sample_product(
       contract=[160, 96],

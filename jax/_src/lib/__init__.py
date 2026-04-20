@@ -104,7 +104,6 @@ import jaxlib._jax as _jax  # noqa: F401
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
 from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
-from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
 from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
@@ -112,7 +111,6 @@ from jaxlib import _profile_data as _profile_data  # noqa: F401
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
-has_cpu_sparse = True
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
@@ -136,25 +134,17 @@ for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   else:
     break
 
-import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_solver as gpu_solver  # noqa: F401
+import jaxlib.gpu_sparse as gpu_sparse  # noqa: F401
+import jaxlib.gpu_prng as gpu_prng  # noqa: F401
+import jaxlib.gpu_linalg as gpu_linalg  # noqa: F401
 
-import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
-import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
+import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
-import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
+import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
 
-# TODO(olechwierowicz): Remove this once init_cc_mlir is always available in jaxlib (min ver 0.9.1).
-if hasattr(mosaic_gpu_dialect, 'init_cc_mlir'):
-  try:
-    from jaxlib.mlir import ir  # type: ignore[import-not-found]
-  except ImportError:
-    from mlir import ir  # type: ignore[import-not-found]
-  mosaic_gpu_dialect.init_cc_mlir(ir)
-
-import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
+import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 
 # TODO(rocm): check if we need the same for rocm.
 

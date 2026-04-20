@@ -194,7 +194,7 @@ def mixed_matmul_kernel(
           wg_n_slice = slice(None)
         else:
           wg_m_slice = slice(None)
-          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)  # type: ignore
+          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)
 
         def compute_context(eval_pipeline):
           @functools.partial(
@@ -323,7 +323,7 @@ def main(_) -> None:
           continue
         raise
       np.testing.assert_allclose(out, ref)
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:

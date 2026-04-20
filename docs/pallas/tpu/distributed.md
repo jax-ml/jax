@@ -224,7 +224,7 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
       send_sem=send_sem,
       recv_sem=recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -347,7 +347,7 @@ def all_gather_kernel(input_ref,
       send_sem=send_sem,
       recv_sem=recv_sems.at[outer_step],
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
   remote_copy_op.wait()
@@ -436,13 +436,13 @@ def semaphore_signal(
     device_id_type: DeviceIdType
 ) -> None:
   ... # Increments the semaphore `sem` on the target device `device_id` by `inc`.
-  
+
 def semaphore_wait(
     semaphore: Ref[SemaphoreType],
     value: int,
 ) -> None:
   ... # Blocks until the locally allocated copy of `sem` reaches `value`, then decrement by `value` and proceed.
-    
+
 def semaphore_read(
     sem: Ref[SemaphoreType],
 ) -> jax.Array:
@@ -475,13 +475,13 @@ def example_kernel(...):
   def _():
     barrier_sem = pltpu.get_barrier_semaphore()
     # Increment the semaphore of your right neighbor.
-    pltpu.semaphore_signal(
+    pl.semaphore_signal(
           barrier_sem,
           device_id=right_neighbor,
-          device_id_type=pltpu.DeviceIdType.LOGICAL,
+          device_id_type=pl.DeviceIdType.LOGICAL,
     )
     # Wait until your left neighbor has incremented your semaphore
-    pltpu.semaphore_wait(barrier_sem, 1)
+    pl.semaphore_wait(barrier_sem, 1)
   # ...
 ```
 
@@ -522,10 +522,10 @@ def kernel(...):
     send_sem=send_sem,
     recv_sem=recv_sem,
     device_id=target_device,
-    device_id_type=pltpu.DeviceIdType.MESH,
+    device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy_op.start()
-  
+
   local_copy_op.wait()
   # ... do work on local_scratch while waiting for async_copy_op to finish.
   remote_copy_op.wait()
@@ -589,13 +589,13 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
   """
   barrier_sem = pltpu.get_barrier_semaphore()
   for neighbor in [left_neighbor, right_neighbor]:
-    pltpu.semaphore_signal(
+    pl.semaphore_signal(
       barrier_sem,
       inc=1,
       device_id=(neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
     )
-  pltpu.semaphore_wait(barrier_sem, 2)
+  pl.semaphore_wait(barrier_sem, 2)
   if double_barrier:
     # The double-barrier prevents a race condition where one neighbor can
     # re-enter the kernel again on a subsequent call and increment the
@@ -607,13 +607,13 @@ def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
                        second_barrier=pltpu.SemaphoreType.REGULAR)
     def _(second_barrier):
       for neighbor in [left_neighbor, right_neighbor]:
-        pltpu.semaphore_signal(
+        pl.semaphore_signal(
           second_barrier,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pltpu.DeviceIdType.MESH,
+          device_id_type=pl.DeviceIdType.MESH,
         )
-      pltpu.semaphore_wait(second_barrier, 2)
+      pl.semaphore_wait(second_barrier, 2)
 
 
 def all_reduce_kernel(
@@ -649,7 +649,7 @@ def all_reduce_kernel(
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
+        device_id_type=pl.DeviceIdType.MESH,
     )
     initial_copy.start()
     initial_copy.wait()
@@ -657,11 +657,11 @@ def all_reduce_kernel(
   # Signal to our left neighbor that we are ready to receive.
   # Without this signal, our left neighbor can be >=1 iteration ahead,
   # meaning it could write into our working slot.
-  pltpu.semaphore_signal(
+  pl.semaphore_signal(
       capacity_sem,
       inc=1,
       device_id=(left_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   # Copy the partial result our left neighbor sent to us into VMEM for
@@ -674,7 +674,7 @@ def all_reduce_kernel(
   local_copy.start()
 
   # Block until our right neighbor is ready to receive.
-  pltpu.semaphore_wait(capacity_sem, 1)
+  pl.semaphore_wait(capacity_sem, 1)
   # Pass the value to our right neighbor.
   remote_copy = pltpu.make_async_remote_copy(
       src_ref=hbm_scratch.at[working_slot],
@@ -682,7 +682,7 @@ def all_reduce_kernel(
       send_sem=remote_send_sem,
       recv_sem=remote_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
   remote_copy.start()
   # Finish local copy and accumulate while remote_copy is happening.
@@ -831,11 +831,11 @@ def signal(left_or_right, semaphore):
     neighbor = mod(my_id - 1, num_devices)
   else:
     neighbor = mod(my_id + 1, num_devices)
-  pltpu.semaphore_signal(
+  pl.semaphore_signal(
       semaphore,
       inc=1,
       device_id=(neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
 
@@ -876,7 +876,7 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -885,7 +885,7 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -894,7 +894,7 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
       # Note: Right copy is flipped with regards to slots since we are copying
@@ -904,7 +904,7 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   # --- Prologue ---
@@ -938,14 +938,14 @@ def reduce_scatter_kernel(
     def _():
       # We block here until our right neighbor tells use we can send to
       # the right.
-      pltpu.semaphore_wait(right_capacity_sem, 1)
+      pl.semaphore_wait(right_capacity_sem, 1)
       right_copy.start()
 
     @pl.when(phase == RIGHT)
     def _():
       # We block here until our left neighbor tells use we can send to
       # the left.
-      pltpu.semaphore_wait(left_capacity_sem, 1)
+      pl.semaphore_wait(left_capacity_sem, 1)
       left_copy.start()
 
   local_copy = pltpu.make_async_copy(
@@ -1000,12 +1000,12 @@ def reduce_scatter_kernel(
     @pl.when(phase == LEFT)
     def _():
       o_ref[left_copy_slice, ...] = accum_scratch[...]
-      pltpu.semaphore_wait(right_capacity_sem, 1)
+      pl.semaphore_wait(right_capacity_sem, 1)
 
     @pl.when(phase == RIGHT)
     def _():
       o_ref[right_copy_slice, ...] = accum_scratch[...]
-      pltpu.semaphore_wait(left_capacity_sem, 1)
+      pl.semaphore_wait(left_capacity_sem, 1)
 
 
 out_shape = (
@@ -1167,11 +1167,13 @@ Our new kernel replaces it with the following `emit_pipeline` call:
 
 ```python
 def inner_kernel(input_ref, accum_ref):
-  accum_ref[...] = input_ref[...]
+  @pl.when(pl.program_id(1) == 0)
+  def _():
+    accum_ref[...] = jnp.zeros_like(accum_ref)
+  accum_ref[...] += input_ref[...]
 accum_pipeline = pltpu.emit_pipeline(inner_kernel,
                                      in_specs=[inner_block_spec],
                                      out_specs=inner_block_spec,
-                                     should_accumulate_out=True,
                                      grid=inner_grid)
 @pl.when(~last_iteration)
 def _():
@@ -1269,7 +1271,7 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   initial_right_copy = pltpu.make_async_remote_copy(
@@ -1278,7 +1280,7 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   left_copy = pltpu.make_async_remote_copy(
@@ -1287,7 +1289,7 @@ def reduce_scatter_kernel(
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
       device_id=(left_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
       src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
@@ -1295,7 +1297,7 @@ def reduce_scatter_kernel(
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
       device_id=(right_neighbor,),
-      device_id_type=pltpu.DeviceIdType.MESH,
+      device_id_type=pl.DeviceIdType.MESH,
   )
 
   # --- Prologue ---
@@ -1320,26 +1322,27 @@ def reduce_scatter_kernel(
     def _():
       # We block here until our right neighbor tells use we can send to
       # the right.
-      pltpu.semaphore_wait(right_capacity_sem, 1)
+      pl.semaphore_wait(right_capacity_sem, 1)
       right_copy.start()
 
     @pl.when(phase == RIGHT)
     def _():
       # We block here until our left neighbor tells use we can send to
       # the left.
-      pltpu.semaphore_wait(left_capacity_sem, 1)
+      pl.semaphore_wait(left_capacity_sem, 1)
       left_copy.start()
 
   # --- Body ---
   def inner_kernel(input_ref, accum_ref):
-    # We do not explicitly use += because we set should_accumulate_out=True.
-    accum_ref[...] = input_ref[...]
+    @pl.when(pl.program_id(1) == 0)
+    def _():
+      accum_ref[...] = jnp.zeros_like(accum_ref)
+    accum_ref[...] += input_ref[...]
 
   accum_pipeline = pltpu.emit_pipeline(
       inner_kernel,
       in_specs=[inner_block_spec],
       out_specs=inner_block_spec,
-      should_accumulate_out=True,
       grid=inner_grid,
   )
 
@@ -1390,11 +1393,11 @@ def reduce_scatter_kernel(
     # Clean up semaphores so that they exit with a value of 0.
     @pl.when(phase == LEFT)
     def _():
-      pltpu.semaphore_wait(right_capacity_sem, 1)
+      pl.semaphore_wait(right_capacity_sem, 1)
 
     @pl.when(phase == RIGHT)
     def _():
-      pltpu.semaphore_wait(left_capacity_sem, 1)
+      pl.semaphore_wait(left_capacity_sem, 1)
 
 
 out_shape = (

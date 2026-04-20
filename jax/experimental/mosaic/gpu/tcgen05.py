@@ -19,7 +19,8 @@ import dataclasses
 import functools
 import itertools
 import math
-from typing import Any, Callable, Iterator, cast
+from typing import Any, cast
+from collections.abc import Callable, Iterator
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -248,8 +249,8 @@ def mma(
       )
     n_lane_groups = 1
   elif m == 64:
-    if is_scaled:
-      raise NotImplementedError("MMA with block scaling is not supported for M=64")
+    if is_scaled and not collective:
+      raise NotImplementedError("MMA with block scaling is not supported for 1CTA M=64")
     if is_sparse:
       raise NotImplementedError("Sparse MMA not supported for M=64")
     # Watch out: this layout must be consistent with A's layout (up to packing).
@@ -344,7 +345,8 @@ def mma(
     k_group_elems = 64
   scale_block: int | None = None
   if is_scaled:
-    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16  # type: ignore
+    assert a_scale is not None
+    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16
     if is_sparse:
       scale_block *= 2
     k_group_elems = max(k_group_elems, 4 * scale_block)
@@ -396,7 +398,6 @@ def mma(
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
   if is_scaled:
-    assert m == 128  # Checked above.
     if n % 32:
       raise ValueError(
           f"MMA with block scaling requires N to be divisible by 32, got: {n}"
@@ -416,23 +417,37 @@ def mma(
           f" {b_scale.dtype}"
       )
     k_scales = k // scale_block
-    if a_scale.shape != (m, k_scales):
+    if a_scale.shape != (TMEM_ROWS, k_scales):
       raise ValueError(
-          f"A scale shape mismatch: expected ({m}, {k_scales}), got"
+          f"A scale shape mismatch: expected ({TMEM_ROWS}, {k_scales}), got"
           f" {a_scale.shape}"
       )
+    if a_scale.layout != scales_layout():
+      raise ValueError(f"A scale layout {a_scale.layout} is not supported")
+    if collective and m == 64:
+      if b_scale.layout != b_scales_m64_collective_layout():
+        raise ValueError(
+            "Expected B scales to have a M=64 collective layout, got"
+            f" {b_scale.layout}"
+        )
+    elif m == 128:
+      if b_scale.layout != scales_layout():
+        raise ValueError(
+            f"Expected B scales to have a M=128 layout, got {b_scale.layout}"
+        )
+    else:
+      raise AssertionError("Should not happen")
     if b_scale.shape[0] % 128 or b_scale.shape[0] < n * num_cta:
       raise ValueError(
           f"B scale shape[0] must be a multiple of 128 and >= N={n * num_cta},"
           f" got {b_scale.shape[0]}"
       )
-    if b_scale.shape != (b_scale.shape[0], k_scales):
+    if b_scale.shape[1] != k_scales:
       raise ValueError(
           f"B scale shape mismatch: expected ({b_scale.shape[0]}, {k_scales}),"
           f" got {b_scale.shape}"
       )
   if is_sparse:
-    a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
     sparse_group_elems = 8 if utils.bitwidth(element_type) == 4 else 4
     # Each sparse group has 2 entries.
     expected_meta_k = k // sparse_group_elems * 2
@@ -501,11 +516,17 @@ def mma(
   n_col_groups = n_groups // n_lane_groups
   assert d.layout.base_tile_shape[0] % 4 == 0
   lanes_per_n_group = d.layout.base_tile_shape[0] // 4
-  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None  # type: ignore
-  a_scale_addr_base = a_scale.address if is_scaled else None  # type: ignore
-  b_scale_addr_base = b_scale.address if is_scaled else None  # type: ignore
+  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None
+  a_scale_addr_base = a_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
+  b_scale_addr_base = b_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
   # B scales are padded when N is short, so it can't be derived from n_collective_group_elems.
-  b_scale_n_stride = cast(TMEMRef, b_scale).shape[0] // 32 if is_scaled else None
+  # Same for A scales when M is short.
+  if is_scaled:
+    assert isinstance(a_scale, TMEMRef) and isinstance(b_scale, TMEMRef)
+    a_scale_m_stride = a_scale.layout.cols_in_shape((a_scale.shape[0], 4), bitwidth=8)
+    b_scale_n_stride = b_scale.layout.cols_in_shape((b_scale.shape[0], 4), bitwidth=8)
+  else:
+    a_scale_m_stride = b_scale_n_stride = None
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
     if isinstance(a, TMEMRef):
       if m_groups != 1:
@@ -513,6 +534,7 @@ def mma(
       a_k_group_elems = k_group_elems // (1 + is_sparse)
       a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
     else:
+      assert a_desc_base is not None
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
       a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
@@ -535,10 +557,9 @@ def mma(
       assert k_group_elems % (scale_block * 4) == 0
       assert m_group_elems % 32 == 0 and n_group_elems % 32 == 0
       k_scales_per_group = k_group_elems // (scale_block * 4)
-      # A scales are sharded, B scales are replicated across CTAs.
       a_scale_addr = arith.addi(
           a_scale_addr_base,
-          utils.c(ki * k_scales_per_group * m_group_elems // 32, i32),
+          utils.c(ki * k_scales_per_group * a_scale_m_stride, i32),
       )
       b_scale_addr = arith.addi(
           b_scale_addr_base,
@@ -570,6 +591,7 @@ def mma(
         a_scale_addr=a_scale_addr,
         b_scale_addr=b_scale_addr,
         b_scale_n_stride=b_scale_n_stride,
+        a_scale_m_stride=a_scale_m_stride,
         a_sparse_addr=a_sparse_addr,
         accumulate=acc,
         element_type=mma_element_type,
@@ -588,6 +610,7 @@ def _do_mma(
     a_scale_addr: ir.Value | None,
     b_scale_addr: ir.Value | None,
     b_scale_n_stride: int | None,
+    a_scale_m_stride: int | None,
     a_sparse_addr: ir.Value | None,
     m: int,
     n: int,
@@ -600,9 +623,12 @@ def _do_mma(
 ) -> None:
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)
-  b_k_idx_tiling, b_k_strides = b_k_strides
-  assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))
+  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
+  b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
+  assert all(
+      s % 16 == 0   # pyrefly: ignore[unsupported-operation]
+      for s in itertools.chain(a_k_strides or (), b_k_strides)
+  )
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
@@ -611,6 +637,7 @@ def _do_mma(
   packing = 8 * 4 // elem_bitwidth
 
   scale_steps = None
+  kind = None
   if is_scaled:
     if isinstance(element_type, ir.Float8E5M2Type) or isinstance(
         element_type, ir.Float8E4M3FNType
@@ -663,7 +690,7 @@ def _do_mma(
       )
     extra_constraints = extra_ptx = ""
 
-    def create_scaled_instr_descriptor(*args):  # type: ignore
+    def create_scaled_instr_descriptor(*args):
       raise NotImplementedError
 
   num_cta = 2 if collective else 1
@@ -689,6 +716,7 @@ def _do_mma(
     return offset >> 4
   for k_step in range(k // instr_k):
     if is_sparse:
+      assert a_sparse_addr is not None
       sparse_group_elems = 8 if elem_bitwidth == 4 else 4
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
       meta_cols_per_instr = instr_k // sparse_group_elems * 2 // 16
@@ -708,11 +736,14 @@ def _do_mma(
           m * num_cta, n * num_cta, element_type, element_type,
           scale_id, scale_id, a_transpose, b_transpose
       )
-      assert m == 128
+      assert (m == 64 and collective) or m == 128
       assert (n * num_cta) % 32 == 0
+      assert a_scale_addr is not None
+      assert b_scale_addr is not None
+      assert a_scale_m_stride is not None
       assert b_scale_n_stride is not None
       # A scales are sharded, B scales are replicated across CTAs.
-      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * 4)
+      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
       b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
       scales_addrs = (
           arith.addi(a_scale_addr, a_scale_addr_offset),
@@ -733,11 +764,12 @@ def _do_mma(
       assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
       a_enc_addr_base = a_desc_or_addr
     else:
+      assert not isinstance(a_desc_or_addr, ir.Value)
       assert a_k_idx_tiling is not None and a_k_strides is not None
       a_enc_addr_base, a_offset = a_desc_or_addr
-      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)
+      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
     b_enc_addr_base, b_offset = b_desc
-    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)
+    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(
@@ -823,7 +855,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
   i32 = ir.IntegerType.get_signless(32)
-  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols
+  return nvvm.tcgen05_alloc(tmem_addr, utils.c(ncols, i32), group=group), ncols  # pyrefly: ignore[bad-return]
 
 
 def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:
@@ -883,6 +915,7 @@ def _tmem_load(tmem_addr, shape, num, pack: bool):
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )
+  assert isinstance(regs, ir.Value)
   return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
 
 
@@ -961,7 +994,7 @@ def _infer_tmem_load_registers_layout(
   raise ValueError(f"TMEM layout {tmem_layout} is not supported")
 
 
-def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -> TMEMLayout:
+def _infer_tmem_layout(shape: tuple[int, ...], collective: bool, packing: int) -> TMEMLayout:
   if len(shape) != 2:
     raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
   if packing > 8 or packing.bit_count() != 1:
@@ -1057,6 +1090,22 @@ def scales_layout() -> TMEMLayout:
       warp_dims=(fa.Replicated(times=4),),
       lane_dims=(-2,),
       vector_dim=-3,
+  )
+
+
+def b_scales_m64_collective_layout() -> TMEMLayout:
+  """A TMEM layout for B scales in 2CTA M=128 (.scale_vec::1X) configuration.
+
+  When M per CTA is 64, the B scales use a different TMEM addressing than the
+  standard scales_layout(). The first half of the data is in quarters 0 and 2,
+  while the second half goes to quarters 1 and 3.
+  """
+  TMEM_QUARTER = TMEM_ROWS // 4
+  return TMEMLayout(
+      fa.Tiling(((TMEM_ROWS * 2, 4), (TMEM_ROWS, 4), (TMEM_QUARTER, 4))),
+      warp_dims=(fa.Replicated(times=2), -6),
+      lane_dims=(-2,),
+      vector_dim=-1,
   )
 
 
@@ -1257,9 +1306,10 @@ class TMEMRef:
     # FA more generally, not just for 2x32b.
     # TODO(apaszke): Support a wider range of layouts when dealing with unpacking.
     # 16-bit types are special, because the store instruction can unpack them.
-    elif value.layout == TMEM_NATIVE_LAYOUT and has_default_layout and (
-        (bitwidth == 16 and packing == 1)
-        or (bitwidth == 32 and value.layout.vector_length == 2)
+    elif (
+        value.layout == TMEM_NATIVE_LAYOUT
+        and has_default_layout
+        and ((bitwidth == 16 and packing == 1) or bitwidth == 32)
     ):
       _store_32xcols_native(self.address, value.registers.reshape(-1), packing)
     elif (
@@ -1397,7 +1447,7 @@ def _store_32xcols_native(base_addr, vector_regs, tmem_packing) -> None:
   if reg_packing == 1:
     if vector_length == 2:
       # Transform data such that each reg is 32 bits wide.
-      regs = [None] * (len(vector_regs) * 2)
+      regs: list[ir.Value | None] = [None] * (len(vector_regs) * 2)
       c0 = arith.constant(i32, 0)
       c1 = arith.constant(i32, 1)
       for idx, vreg in enumerate(vector_regs):
@@ -1550,14 +1600,15 @@ def async_copy_scales_smem_to_tmem(
   on the chosen ``Barrier``. However, if TMEM reference is to be consumed by a
   MMA issued in the same thread, no additional synchronization is needed.
 
-  At the moment the function requires ``smem_ref`` to be contiguous and have a
-  shape of ``(MN // 128, K // 4, 32, 16)`` for 8-bit scales (here MN stands
-  for the size of the non-contracting dimension which is M or N, padded up to
-  a multiple of 128), matching the scale layout for .scale_vec::1X. See
+  Two TMEM layouts are supported:
+
+  **scales_layout()**: The standard layout for A and B scales. The ``smem_ref``
+  must be contiguous with shape ``(MN // 128, K // 4, 32, 16)`` for 8-bit
+  scales (here MN is the non-contracting dimension, padded to a multiple of
+  128), matching the scale layout for .scale_vec::1X. See
   https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
-  for more details. Note that we always put the non-contracting dimension first.
-  If you have a (MN, K // 32) array of scales in JAX (where MN is divisible by
-  32 and K is divisible by 128), you can prepare it for use in the kernel this
+  for more details. If you have a (MN, K // 32) array of scales in JAX (where
+  MN is divisible by 32 and K is divisible by 128), you can prepare it this
   way (pad_mn = (MN + 127) // 128 * 128)::
 
       jnp.pad(scales, ((0, pad_mn - mn), (0, 0)))
@@ -1565,32 +1616,80 @@ def async_copy_scales_smem_to_tmem(
         .transpose(0, 3, 2, 1, 4)
         .reshape(pad_mn // 128, k // 4, 32, 16)
 
-  The TMEM ref is expected to have a shape of ``(pad_mn, K // 32)`` (i.e., with
-  MN padded to a multiple of 128), and the layout created by ``scales_layout()``.
+  The TMEM ref is expected to have shape ``(pad_mn, K // 32)`` and the layout
+  created by ``scales_layout()``.
+
+  **b_scales_m64_collective_layout()**: Used for B scales in 2CTA block-scaled
+  MMA with M=128 (64 per CTA). Note that both the SMEM and TMEM layout need N to
+  be treated as padded to 256. The ``smem_ref`` must be contiguous with shape
+  ``(1, K // 4, 64, 16)``. The TMEM ref is expected to have shape
+  ``(256, K // 32)``, no matter how long N is. If you have a (N, K // 32)
+  array of B scales in JAX (where N is a multiple of 64), you can prepare them
+  this way (columns_per_cta = N // 64)::
+
+      jnp.pad(
+          scales.reshape(2, columns_per_cta, 32, k // 4, 4)
+          .transpose(3, 0, 2, 1, 4)
+          .reshape(1, k // 4, 64, columns_per_cta * 4),
+          ((0, 0), (0, 0), (0, 0), (0, 16 - columns_per_cta * 4)),
+      )
   """
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
   if dtype not in {ir.Float8E8M0FNUType.get(), ir.Float8E4M3FNType.get()}:
-    raise NotImplementedError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
+    raise ValueError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:
     raise ValueError(f"TMEM reference must have a multiple of 4 columns, but got {tmem_ref.shape[1]}")
-  if tmem_ref.layout != scales_layout():
-    raise ValueError(f"TMEM layout {tmem_ref.layout} is not supported")
+
   smem_shape = tuple(smem_ty.shape)
+  strides, _ = smem_ty.get_strides_and_offset()
+  # TODO(apaszke): This should only matter for the two minor dims.
+  if strides != utils.get_contiguous_strides(smem_shape):
+    raise ValueError("Only copies from contiguous SMEM references are supported")
+
+  if tmem_ref.layout == b_scales_m64_collective_layout():
+    k_tiles = tmem_ref.shape[1] // 4
+    expected_smem_shape = (1, k_tiles, 64, 16)
+    if smem_shape != expected_smem_shape:
+      raise NotImplementedError(
+          f"SMEM has shape {smem_shape}, but expected {expected_smem_shape} for"
+          f" TMEM ref shape {tmem_ref.shape}"
+      )
+    smem_base_ptr = utils.memref_ptr(smem_ref, 3)
+    k_tile_stride_i32 = strides[1] // 4
+    for k_tile in range(k_tiles):
+      load_ptr = utils.getelementptr(
+          smem_base_ptr, [k_tile * k_tile_stride_i32], i32,
+      )
+      store_addr = arith.addi(
+          tmem_ref.address, arith.constant(i32, 4 * k_tile),
+      )
+      desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
+      nvvm.tcgen05_cp(
+          nvvm.Tcgen05CpShape.SHAPE_64x128b,
+          _tmem_addr_to_ptr(store_addr),
+          desc,
+          multicast=nvvm.Tcgen05CpMulticast.WARPX2_01_23,
+          group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1,
+      )
+    return
+
+  if tmem_ref.layout != scales_layout():
+    raise ValueError(
+        f"TMEM layout {tmem_ref.layout} is not supported for scale copies. Only"
+        " scales_layout() and b_scales_m64_collective_layout() are supported."
+    )
+
   expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, tmem_ref.shape[1] // 4, 32, 16)
   if smem_shape != expected_smem_shape:
     raise NotImplementedError(
         f"SMEM has {smem_shape}, but expected {expected_smem_shape} for TMEM"
         f" ref shape {tmem_ref.shape}"
     )
-  strides, _ = smem_ty.get_strides_and_offset()
-  # TODO(apaszke): This should only matter for the two minor dims.
-  if strides != utils.get_contiguous_strides(smem_shape):
-    raise ValueError("Only copies from contiguous SMEM references are supported")
   mn_tile_stride, k_tile_stride = strides[:2]
   # One tile of scales has 128 bytes.
   if mn_tile_stride % 128 or k_tile_stride % 128:
@@ -1620,7 +1719,7 @@ def async_copy_scales_smem_to_tmem(
         _tmem_addr_to_ptr(store_addr),
         desc,
         multicast=nvvm.Tcgen05CpMulticast.WARPX4,
-        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
+        group=nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1,
     )
 
 

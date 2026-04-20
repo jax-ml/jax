@@ -22,21 +22,18 @@ warnings.warn(
 
 del warnings
 
-from jax._src.cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
-
 _deprecations = {
-  # Added 2025-10-28, remove in JAX 0.10.
+  # Deprecated in v0.8.1, finalized in v0.10.0
+  # TODO(jakevdp): remove in v0.11.0
   "cloud_tpu_init": (
     "jax.cloud_tpu_init was deprecated in JAX v0.8.1. You do not need to call "
     "this function explicitly; JAX calls this function automatically.",
-    _cloud_tpu_init
+    None
   ),
 }
 
 import typing as _typing
-if _typing.TYPE_CHECKING:
-  cloud_tpu_init = _cloud_tpu_init
-else:
+if not _typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr

@@ -19,12 +19,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/str_format.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "jaxlib/hash_util.h"
 
 namespace nb = nanobind;
 
@@ -135,8 +135,7 @@ PartitionSpec::PartitionSpec(nb::tuple partitions, nb::frozenset unreduced,
 Py_hash_t PartitionSpec::Hash() const {
   size_t h = absl::HashOf(nb::hash(partitions_), nb::hash(unreduced_),
                           nb::hash(reduced_));
-  Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
-  return s == -1 ? -2 : s;  // -1 must not be used as a Python hash value.
+  return AbslHashToPythonHash(h);
 }
 
 bool PartitionSpec::operator==(const PartitionSpec& other) const {
@@ -152,20 +151,6 @@ bool PartitionSpec::Eq(const nb::object& other) const {
   PartitionSpec* other_spec;
   if (nb::try_cast<PartitionSpec*>(other, other_spec)) {
     return *this == *other_spec;
-  }
-  nb::tuple other_tuple;
-  if (nb::try_cast<nb::tuple>(other, other_tuple)) {
-    if (unreduced().size() > 0 || reduced().size() > 0 ||
-        partitions().size() != other_tuple.size()) {
-      return false;
-    }
-    for (size_t i = 0; i < partitions().size(); ++i) {
-      if (!partitions()[i].equal(CanonicalizePartition(
-              *unconstrained_singleton_, other_tuple[i]))) {
-        return false;
-      }
-    }
-    return true;
   }
   return false;
 }

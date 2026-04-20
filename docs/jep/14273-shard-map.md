@@ -18,7 +18,7 @@ We need great APIs for both, and rather than being mutually exclusive
 alternatives, they need to compose with each other.
 
 With `pjit` (now just `jit`) we have [a next-gen
-API](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+API](https://docs.jax.dev/en/latest/parallel.html)
 for the first school. But we haven't quite leveled-up the second school. `pmap`
 follows the second school, but over time we found it has [fatal
 flaws](#why-dont-pmap-or-xmap-already-solve-this). `xmap` solved those flaws,

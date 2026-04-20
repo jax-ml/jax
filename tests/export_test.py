@@ -31,7 +31,7 @@ from jax import export
 from jax._src.shard_map import shard_map
 from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
                           reshard)
-from jax._src.sharding_impls import GSPMDSharding
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 from jax import tree_util
 
 from jax._src import config
@@ -208,7 +208,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_basic_single_device_sharding(self):
     device = jax.local_devices()[0]
-    s = jax.sharding.SingleDeviceSharding(device)
+    s = make_single_device_sharding(device)
     x = np.arange(16, dtype=np.float32).reshape(4, -1)
     f = jax.jit(lambda x: x * 2., in_shardings=s, out_shardings=s)
     exp_f = get_exported(f)(x)
@@ -821,7 +821,7 @@ class JaxExportTest(jtu.JaxTestCase):
   # shapes. We use export.call and we also run the shape check
   # module.
   @jtu.parameterized_filterable(
-    testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",  # type: ignore
+    testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",
     kwargs=[
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
@@ -874,7 +874,7 @@ class JaxExportTest(jtu.JaxTestCase):
   # An inner function is exported with polymorphic shapes inner_poly_spec, and
   # is called from an outer function, which is exported with outer_poly_spec.
   @jtu.parameterized_filterable(
-    testcase_name=lambda kw:f"inner={kw['inner_poly_spec']}_outer={kw['outer_poly_spec']}",  # type: ignore
+    testcase_name=lambda kw:f"inner={kw['inner_poly_spec']}_outer={kw['outer_poly_spec']}",
     #one_containing="",
     # By default arg_shape = (3, 4, 12) for both the outer function and the inner
     # The inner function is exported for f32.
@@ -1459,7 +1459,7 @@ class JaxExportTest(jtu.JaxTestCase):
       exp.call(b)
 
   def test_memory_space_from_arg(self):
-    shd = jax.sharding.SingleDeviceSharding(
+    shd = make_single_device_sharding(
         jax.devices()[0], memory_kind="pinned_host")
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
@@ -1486,7 +1486,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertEqual(b.sharding, a.sharding)
 
   def test_memory_space_from_out_shardings(self):
-    shd = jax.sharding.SingleDeviceSharding(jax.devices()[0],
+    shd = make_single_device_sharding(jax.devices()[0],
                                             memory_kind="pinned_host")
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
@@ -2350,6 +2350,39 @@ class JaxExportTest(jtu.JaxTestCase):
             jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
         else:
           jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+
+  def test_with_multiple_meshes(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest("Need at least 2 devices")
+    devices = jax.devices()[0:nr_devices]
+
+    mesh_inputs = Mesh(np.array(devices).reshape(1, 2), axis_names=("x1", "x2"))
+    mesh_weights = Mesh(np.array(devices).reshape(2, 1), axis_names=("y2", "y1"))
+
+    inp = np.arange(32., dtype=np.float32).reshape((4, 8))
+    TUPLE_SIZE = 4
+    inputs = (inp,) * TUPLE_SIZE
+    w = np.arange(16., dtype=np.float32).reshape((8, 2))
+    weights = (w,) * TUPLE_SIZE
+    in_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x2")),) * TUPLE_SIZE,
+      (jax.sharding.NamedSharding(mesh_weights, P("y2", None),),) * TUPLE_SIZE)
+    out_shardings = (
+      (jax.sharding.NamedSharding(mesh_inputs, P(None, "x1")),) * TUPLE_SIZE)
+    @functools.partial(
+        jax.jit,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings)
+    def f(inputs, weights):
+      return tuple(i @ w for i, w in zip(inputs, weights))
+
+    exp = get_exported(f)(inputs, weights)
+
+    (placed_inputs, placed_weights) = jax.device_put((inputs, weights),
+                                                      in_shardings)
+    out = exp.call(placed_inputs, placed_weights)
+    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
 
 
 if __name__ == "__main__":

@@ -376,7 +376,7 @@ dma_start_p.multiple_results = True
 def _dma_is_high(*avals, **params):
   return any(aval.is_high for aval in avals)
 
-dma_start_p.is_high = _dma_is_high  # type: ignore[method-assign]
+dma_start_p.is_high = _dma_is_high
 
 def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
   (
@@ -684,7 +684,7 @@ state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_d
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
-dma_wait_p.is_high = _dma_is_high  # type: ignore[method-assign]
+dma_wait_p.is_high = _dma_is_high
 
 def _dma_wait_to_lojax(*args, tree, device_id_type):
   (
@@ -748,7 +748,7 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
   ):
     raise ValueError(
         "dma_wait requires a DMA semaphore, but got a regular semaphore."
-        " Use pltpu.semaphore_wait() instead."
+        " Use pl.semaphore_wait() instead."
     )
   return [], _get_dma_effects(
       src_transforms_avals,
@@ -1279,7 +1279,11 @@ matmul_push_rhs_p.multiple_results = True
 
 
 def matmul_push_rhs(
-    rhs: jax.Array, staging_register: int, mxu_index: int
+    rhs: jax.Array,
+    staging_register: int,
+    mxu_index: int,
+    *,
+    transpose: bool = False,
 ) -> None:
   """Prepares the RHS for a matrix multiplication in the chosen MXU.
 
@@ -1299,9 +1303,13 @@ def matmul_push_rhs(
     rhs: The right-hand side operand. Must be 256x256.
     staging_register: The staging register to use.
     mxu_index: The MXU to use.
+    transpose: Whether to transpose the RHS.
   """
   matmul_push_rhs_p.bind(
-      rhs, staging_register=staging_register, mxu_index=mxu_index
+      rhs,
+      staging_register=staging_register,
+      mxu_index=mxu_index,
+      transpose=transpose,
   )
 
 

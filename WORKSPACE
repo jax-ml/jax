@@ -17,10 +17,10 @@ xla_workspace3()
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "e7d35bbbff97d446ef131039bec254a8781afaf734fc1cbd5dedc67cc2137c46",
-    strip_prefix = "rules_ml_toolchain-b22c707cd970eb47fd0539c429416640d930e834",
+    sha256 = "f2c924e85a22ba2eaa0c08657e5f5467fedbc3d0506f9cc0c69dd97ed9fbaf28",
+    strip_prefix = "rules_ml_toolchain-99c43dfe995a0e81c767d5b6d686191992672fe6",
     urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b22c707cd970eb47fd0539c429416640d930e834.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/99c43dfe995a0e81c767d5b6d686191992672fe6.tar.gz",
     ),
 )
 
@@ -41,7 +41,7 @@ load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
 
 python_init_rules()
 
-load("@xla//third_party/py:python_init_repositories.bzl", "python_init_repositories")
+load("@rules_ml_toolchain//py:python_init_repositories.bzl", "python_init_repositories")
 
 python_init_repositories(
     default_python_version = "system",
@@ -68,11 +68,11 @@ python_init_repositories(
     },
 )
 
-load("@xla//third_party/py:python_init_toolchains.bzl", "python_init_toolchains")
+load("@rules_ml_toolchain//py:python_register_toolchain.bzl", "python_register_toolchain")
 
-python_init_toolchains()
+python_register_toolchain()
 
-load("@xla//third_party/py:python_init_pip.bzl", "python_init_pip")
+load("@rules_ml_toolchain//py:python_init_pip.bzl", "python_init_pip")
 
 python_init_pip()
 
@@ -98,6 +98,7 @@ flatbuffers()
 
 load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
 
+# Used for --//jax:build_jaxlib=wheel (locally-built wheels).
 external_deps_repository(
     name = "rocm_external_test_deps",
     deps = [
@@ -118,6 +119,27 @@ jax_python_wheel_repository(
     name = "jax_wheel",
     version_key = "_version",
     version_source = "//jax:version.py",
+)
+
+load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+load("//third_party/rocm_wheels:workspace.bzl", "rocm_wheels_repository")
+
+# Pre-built ROCm wheels from a GitHub release (ROCm/rocm-jax).
+rocm_wheels_repository(
+    name = "rocm_wheels",
+    jaxlib_version = WHEEL_VERSION,
+    python_version = HERMETIC_PYTHON_VERSION,
+    # rocm_version = "7.2.0",  # Optional: pick a specific ROCm version.
+)
+
+# Used for --//jax:build_jaxlib=false (pre-built wheels from GitHub).
+external_deps_repository(
+    name = "rocm_prebuilt_test_deps",
+    deps = [
+        "@rocm_wheels//:rocm_pjrt_py_import",
+        "@rocm_wheels//:rocm_plugin_py_import",
+    ],
 )
 
 load(

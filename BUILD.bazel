@@ -38,7 +38,6 @@ wheel_sources(
         "//jax/experimental:colocated_python",
         "//jax/experimental:compilation_cache",
         "//jax/experimental:compute_on",
-        "//jax/experimental:custom_dce",
         "//jax/experimental:custom_partitioning",
         "//jax/experimental:fused",
         "//jax/experimental:hijax",
@@ -88,7 +87,6 @@ wheel_sources(
         "//jax/extend:ifrt_programs",
         "//jax/extend/mlir",
         "//jax/extend/mlir/dialects",
-        "//jax/tools:colab_tpu",
         "//jax/tools:jax_to_ir",
         "//jax/tools:pgo_nsys_converter",
     ],
@@ -142,6 +140,7 @@ genrule(
     testonly = True,
     srcs = [
         "//jax/_src:internal_test_harnesses",
+        "//jax/_src:hypothesis_test_util",
         "//jax/_src:internal_test_util",
         "//jax/_src:internal_export_back_compat_test_util",
         "//jax/_src:internal_export_back_compat_test_data",

@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ else:
 
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=100)
+htu.setup_hypothesis(max_examples=100)
 
 _JAX_DTYPES_NO_BOOL = (
     jnp.float32,
@@ -77,7 +78,7 @@ def rand(
   raise NotImplementedError(f"Unsupported random data generation for {dtype=}")
 
 
-@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(
@@ -125,6 +126,32 @@ class OpsTest(ptu.PallasTPUTest):
           interpret=True,
       )(inp)
       self.assertAllClose(out, out_interpret)
+
+  @parameterized.product(
+      from_dtype=_JAX_DTYPES,
+      to_dtype=_JAX_DTYPES,
+  )
+  def test_bitcast_scalar(self, from_dtype, to_dtype):
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+    if dtypes.itemsize_bits(from_dtype) != dtypes.itemsize_bits(to_dtype):
+      self.skipTest("Bitwidths must match for scalar bitcast")
+    if from_dtype == jnp.bool_ or to_dtype == jnp.bool_:
+      self.skipTest("Bitcasting with bool is not supported")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), to_dtype),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+    )
+    def _kernel(x_ref, o_ref):
+      o_ref[0] = jax.lax.bitcast_convert_type(x_ref[0], to_dtype)
+
+    x = jnp.array([1], dtype=from_dtype)
+    out = _kernel(x)
+    expected = jax.lax.bitcast_convert_type(x, to_dtype)
+    self.assertAllClose(out, expected)
 
   def test_stop_gradient(self):
     def kernel(x_ref, y_ref):
@@ -297,10 +324,17 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if jtu.get_tpu_version() < 5 and dtype in (jnp.int16, jnp.int8):
+    if dtype == jnp.int8 and jtu.get_tpu_version() < 5:
       self.skipTest(
           f"Not implemented: cast vector to mask with dtype == {dtype}"
       )
+    if dtype == jnp.int16:
+      if jtu.get_tpu_version() < 4:
+        self.skipTest("Requires TPUv4+")
+      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest("requires newer libTPU")
 
     shape = (128, 128)
 
@@ -460,17 +494,15 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.int32, jnp.int16, jnp.int8],
   )
   def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
-
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 8):
-      self.skipTest("Requires Cloud TPU >= 2026.3.8")
-
-    if (
-        any(dtypes.itemsize_bits(ty) <= 16 for ty in (msk_dtype, dtype))
-        and jtu.get_tpu_version() < 5
-    ):
-      self.skipTest(
-          "Requires TPUv5+ for bitwidth <= 16 and TPUv6+ for bitwidth <= 8"
-      )
+    if msk_dtype == jnp.int8 and jtu.get_tpu_version() < 5:
+      self.skipTest("Requires TPUv5+")
+    if msk_dtype == jnp.int16:
+      if jtu.get_tpu_version() < 4:
+        self.skipTest("Requires TPUv4+")
+      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
+          2026, 4, 6
+      ):
+        self.skipTest("requires newer libTPU")
 
     shape = (1024,)
 
@@ -516,28 +548,34 @@ class OpsTest(ptu.PallasTPUTest):
     ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
     np.testing.assert_array_equal(out, ref)
 
-  @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
-  def test_dynamic_gather_along_axis(self, axis, mode):
-    if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
-        axis == 1 and not jtu.is_device_tpu_at_least(version=4)
+  @parameterized.product(
+      idx_shape=[(8, 128), (2, 32, 256)],
+      axis=[-2, -1],
+      mode=["promise_in_bounds", None],
+  )
+  def test_dynamic_gather_along_axis(self, idx_shape, axis, mode):
+    if (axis == -2 and not jtu.is_device_tpu_at_least(version=5)) or (
+        axis == -1 and not jtu.is_device_tpu_at_least(version=4)
     ):
-      self.skipTest("Requires TPUv5+ for axis=0 and TPUv4+ for axis=1")
+      self.skipTest("Requires TPUv5+ for axis=-2 and TPUv4+ for axis=-1")
     dtype = jnp.int32
-    shape = (8, 128)
+    x_shape = list(idx_shape)
+    # Only a single vreg along the gather axis is supported
+    x_shape[axis] = (8, 128)[axis]
 
     def kernel(x, indices, out):
       out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
 
-    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    x = np.arange(np.prod(x_shape), dtype=dtype).reshape(x_shape)
     idx = jax.random.randint(
         key=jax.random.key(1234),
-        shape=shape,
+        shape=idx_shape,
         minval=0,
-        maxval=shape[axis],
+        maxval=x_shape[axis],
         dtype=jnp.int32,
     )
     actual = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+        kernel, out_shape=jax.ShapeDtypeStruct(idx_shape, dtype)
     )(x, idx)
     expected = np.take_along_axis(x, idx, axis=axis)
     np.testing.assert_array_equal(actual, expected)
@@ -818,10 +856,6 @@ class OpsTest(ptu.PallasTPUTest):
     if packed_dtype == jnp.int2:
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
-      if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-        raise self.skipTest(
-            "int2 is only supported for tpu at least 03/01/2026"
-        )
       if (shape[-2] % (8 * 16)) or (shape[-1] % 128):
         raise self.skipTest(
             "int2 is only supported for shapes with vreg alignment"
@@ -946,6 +980,19 @@ class OpsTest(ptu.PallasTPUTest):
         jax.nn.sigmoid(x),
     )
 
+  def test_erf(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/36149.
+    x = jnp.zeros((32,), dtype=jnp.float32)
+
+    @functools.partial(
+      self.pallas_call,
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jax.scipy.special.erf(x_ref[...])
+
+    _ = jax.jit(kernel).lower(x)
+
   @parameterized.parameters(jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32)
   def test_unsigned_dtype_dot_raises(self, dtype):
     k = 256
@@ -961,6 +1008,101 @@ class OpsTest(ptu.PallasTPUTest):
         NotImplementedError, "Unsigned integer dtype.*dot_general.*matmul"
     ):
       self.pallas_call(kernel, out_shape=out_shape)(lhs, rhs)
+
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
+      shapes_axis_and_out=[
+          ((11, 300), (9, 300), 0, (20, 300)),
+          ((20, 400), (17, 400), 0, (37, 400)),
+          ((35, 200), (41, 200), 0, (76, 200)),
+          ((35, 200), (35, 300), 1, (35, 500)),
+      ],
+  )
+  def test_2d_concatenate(self, dtype, shapes_axis_and_out):
+    packing = 32 // jnp.iinfo(dtype).bits
+    if packing > 1 and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    if packing > 2 and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+
+    x_shape, y_shape, axis, out_shape = shapes_axis_and_out
+
+    min_val = dtype(jnp.iinfo(dtype).min)
+    max_val = dtype(jnp.iinfo(dtype).max)
+    x = jax.random.randint(
+        jax.random.key(42), x_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+    y = jax.random.randint(
+        jax.random.key(0), y_shape, minval=min_val, maxval=max_val, dtype=dtype
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.concatenate([x_ref[...], y_ref[...]], axis=axis)
+
+    np.testing.assert_array_equal(
+        kernel(x, y),
+        jnp.concatenate([x, y], axis=axis),
+    )
+
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
+      shapes_and_out=[
+          # cases for 32-bit
+          (200, 300, 500),
+          (1153, 1200, 2353),
+          # cases for 16-bit
+          (256, 1024, 1280),
+          (2176, 2100, 4276),
+          (2304, 2560, 4864),
+          # cases for 8-bit
+          (512, 2048, 2560),
+          (4225, 5000, 9225),
+          (4608, 5120, 9728),
+      ],
+  )
+  def test_1d_concatenate(self, dtype, shapes_and_out):
+    packing = 32 // jnp.iinfo(dtype).bits
+    x_shape, y_shape, out_shape = shapes_and_out
+
+    if packing >= 4:
+      if not jtu.is_device_tpu_at_least(version=5):
+        self.skipTest("Requires TPU v5+")
+    if packing >= 2:
+      if not jtu.is_device_tpu_at_least(version=4):
+        self.skipTest("Requires TPU v4+")
+
+    min_val = dtype(jnp.iinfo(dtype).min)
+    max_val = dtype(jnp.iinfo(dtype).max)
+    x = jax.random.randint(
+        jax.random.key(42),
+        (x_shape,),
+        minval=min_val,
+        maxval=max_val,
+        dtype=dtype,
+    )
+    y = jax.random.randint(
+        jax.random.key(0),
+        (y_shape,),
+        minval=min_val,
+        maxval=max_val,
+        dtype=dtype,
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((out_shape,), dtype),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.concatenate([x_ref[...], y_ref[...]], axis=0)
+
+    np.testing.assert_array_equal(
+        kernel(x, y),
+        jnp.concatenate([x, y], axis=0),
+    )
 
 
 if __name__ == "__main__":

@@ -21,13 +21,12 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import literals
@@ -40,11 +39,12 @@ from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.mesh import empty_concrete_mesh
+from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
+                           use_abstract_mesh)
 from jax._src.sharding import Sharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding,
+    make_single_device_sharding, NamedSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
@@ -59,7 +59,7 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.sharding._internal_device_list  # pytype: disable=attribute-error
+  devices = a.sharding._internal_device_list
   if len(devices) != 1:
     raise ValueError(
         "When making an array from single-device arrays the input arrays must "
@@ -175,6 +175,7 @@ def _validate_shape_and_dtype_for_per_device_arrays(
       )
 
 
+@use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
   aval: core.ShapedArray
   _sharding: Sharding
@@ -272,7 +273,7 @@ class ArrayImpl(basearray.Array):
   @property
   def device(self):
     self._check_if_deleted()
-    if isinstance(self.sharding, SingleDeviceSharding):
+    if len(self.sharding.device_set) == 1:
       return list(self.sharding.device_set)[0]
     return self.sharding
 
@@ -334,35 +335,9 @@ class ArrayImpl(basearray.Array):
     else:
       return repr(self)
 
-  def __getitem__(self, idx):  # pyrefly: ignore[bad-param-name-override]
-    from jax._src.lax import lax  # pytype: disable=import-error
-    from jax._src.numpy import indexing  # pytype: disable=import-error
+  def __getitem__(self, idx, /):
+    from jax._src.numpy import indexing  # pyrefly: ignore[missing-import]
     self._check_if_deleted()
-
-    if isinstance(self.sharding, PmapSharding):
-      cidx = idx if isinstance(idx, tuple) else (idx,)
-
-      padded_cidx = tuple(
-          slice(i, i + 1, None) if isinstance(i, int) else i for i in cidx
-      ) + (slice(None),) * (len(self.shape) - len(cidx))
-
-      indices = tuple(self.sharding.devices_indices_map(self.shape).values())
-      try:
-        arr_idx = indices.index(padded_cidx)
-      except ValueError:
-        arr_idx = None
-      if arr_idx is not None:
-        out = self._arrays[arr_idx]
-        sharding = SingleDeviceSharding(_get_device(out))
-
-        # If cidx was the index of a single shard, then it corresponds to one
-        # shard of the chunked dimension.
-        dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-        # Squeeze on committed arrays to avoid data movement to shard 0.
-        out = lax.squeeze(out, dimensions=dims)
-        assert isinstance(out, ArrayImpl)
-        return ArrayImpl(
-            out.aval, sharding, [out], committed=False, _skip_checks=True)
 
     return indexing.rewriting_take(self, idx)
 
@@ -371,10 +346,8 @@ class ArrayImpl(basearray.Array):
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
-      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
+      if self.sharding.num_devices == 1 or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # pyrefly: ignore[missing-attribute]
-      elif isinstance(self.sharding, PmapSharding):
-        return (self[i] for i in range(self.shape[0]))
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
         # here after uneven partitioning support is added.
@@ -433,7 +406,9 @@ class ArrayImpl(basearray.Array):
     """
     return self.sharding.is_fully_addressable
 
-  def __array__(self, dtype=None, context=None, copy=None):  # pyrefly: ignore[bad-override]
+  def __array__(self, dtype: np.dtype | None = None,
+                context: None = None, copy: bool | None = None):
+    del context  # unused
     # copy argument is supported by np.asarray starting in numpy 2.0
     kwds = {} if copy is None else {'copy': copy}
     return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
@@ -442,7 +417,7 @@ class ArrayImpl(basearray.Array):
                  max_version: tuple[int, int] | None = None,
                  dl_device: tuple[DLDeviceType, int] | None = None,
                  copy: bool | None = None):
-    from jax._src.dlpack import to_dlpack  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pyrefly: ignore[missing-import]
 
     device_set = self.sharding.device_set
     if len(device_set) > 1:
@@ -462,7 +437,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise BufferError("__dlpack__ only supported for unsharded arrays.")
 
-    from jax._src.dlpack import DLDeviceType  # pytype: disable=import-error  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import DLDeviceType  # pyrefly: ignore[missing-import]
 
     if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
       return DLDeviceType.kDLCPU, 0
@@ -486,7 +461,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise BufferError(
           "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"
+          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
       )
 
   def __reduce__(self):
@@ -507,7 +482,7 @@ class ArrayImpl(basearray.Array):
     if len(self._arrays) != 1:
       raise ValueError("__cuda_array_interface__() is supported only for "
                        "unsharded arrays.")
-    return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
+    return self._arrays[0].__cuda_array_interface__  # bind-properties
 
   @use_cpp_method()
   def on_device_size_in_bytes(self):
@@ -567,7 +542,7 @@ class ArrayImpl(basearray.Array):
     If a `Shard` is not addressable, then its `data` will be `None`.
     """
     self._check_if_deleted()
-    if self.is_fully_addressable:  # pylint: disable=using-constant-test
+    if self.is_fully_addressable:
       return self.addressable_shards
 
     out = []
@@ -612,7 +587,7 @@ class ArrayImpl(basearray.Array):
 
   @use_cpp_method()
   def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
-    ...  # pytype: disable=bad-return-type
+    ...
 
   @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
@@ -664,13 +639,6 @@ class ArrayImpl(basearray.Array):
       self._npy_value = npy_value
       self._npy_value.flags.writeable = False
     return self._npy_value
-
-
-# TODO(b/273265390): ideally we would write this as a decorator on the ArrayImpl
-# class, however this triggers a pytype bug. Workaround: apply the decorator
-# after the fact.
-if not TYPE_CHECKING:
-  ArrayImpl = use_cpp_class(xc.ArrayImpl)(ArrayImpl)
 
 
 def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
@@ -784,9 +752,9 @@ def make_array_from_callback(
     r = dtypes.canonicalize_value(r)
     if isinstance(r, (literals.TypedInt, literals.TypedFloat,
                       literals.TypedComplex)):
-      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype))
     elif isinstance(r, bool):
-      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_))
     return r
 
   if sharding.is_fully_replicated:
@@ -831,7 +799,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
+    devices = [Format(dll, make_single_device_sharding(d)) for d in devices]
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
@@ -991,7 +959,7 @@ def _array_from_process_local_data(
   # making local_to_global_shape available in the api.
   local_shape = local_data.shape
   if global_shape is None:
-    global_shape = local_to_global_shape(sharding, local_shape)  # type: ignore[assignment]
+    global_shape = local_to_global_shape(sharding, local_shape)  # pyrefly: ignore[bad-assignment]
     assert global_shape is not None
     if None in global_shape:
       raise ValueError(
@@ -1103,7 +1071,7 @@ def make_array_from_single_device_arrays(
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
-  arrays = list(arrays) if isinstance(arrays, tuple) else arrays  # pyrefly: ignore[no-matching-overload]  # pyrefly#2607
+  arrays = list(arrays) if isinstance(arrays, tuple) else arrays
   # TODO(phawkins): ideally the cast() could be checked.
   try:
     return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
@@ -1156,7 +1124,7 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
   removed_dims: list[int] = []
 
   tuple_idx = idx if isinstance(idx, tuple) else (idx,)
-  for dim, sub_idx in enumerate(tuple_idx):  # pyrefly: ignore[bad-argument-type]
+  for dim, sub_idx in enumerate(tuple_idx):
     if isinstance(sub_idx, int):
       start_indices[dim] = sub_idx
       limit_indices[dim] = sub_idx + 1
@@ -1181,7 +1149,8 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with _internal_use_concrete_mesh(empty_concrete_mesh):
+    with (_internal_use_concrete_mesh(empty_concrete_mesh),
+          use_abstract_mesh(empty_abstract_mesh)):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
@@ -1265,7 +1234,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(api.device_put(x, Format(layout, sharding)))
       else:
         indices = sharding.addressable_devices_indices_map(x.shape).values()
-        if dispatch.is_single_device_sharding(x.sharding):
+        if x.sharding.num_devices == 1:
           results.append(shard_device_array(x, devices, indices, sharding))
         else:
           results.append(
@@ -1284,7 +1253,8 @@ pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     def handler(xs):
-      return np.zeros(global_aval.shape, dtypes.float0)
+      return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
+                                   aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
     return xc.array_result_handler(phys_aval, out_sharding, committed=committed,
                                    _skip_checks=True).wrap(handler)
@@ -1295,23 +1265,6 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       global_aval, out_sharding, committed=committed, _skip_checks=True
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
-
-# Only used for Arrays that come out of pmap.
-def _array_local_result_handler(aval, sharding, indices):
-  if aval.dtype == dtypes.float0:
-    def handler(xs):
-      return np.zeros(aval.shape, dtypes.float0)
-    phys_aval = core.physical_aval(aval)
-    return xc.array_result_handler(phys_aval, sharding, committed=True,
-                                   _skip_checks=True).wrap(handler)
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return aval.dtype._rules.local_sharded_result_handler(
-        aval, sharding, indices)
-  return xc.array_result_handler(
-      aval, sharding, committed=True, _skip_checks=True
-  )
-pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
-
 
 # Token handlers
 

@@ -77,6 +77,13 @@ Experimental features
 
 Features here are experimental and must be tried with caution.
 
+``XLA_PYTHON_CLIENT_ALLOCATOR=vmm``
+  This uses CUDA's virtual memory management (VMM) allocator
+  (``cudaDeviceAddressVmmAllocator``). This is a CUDA-only experimental
+  allocator that provides fine-grained virtual memory control. It does not
+  preallocate memory; use ``XLA_CLIENT_MEM_FRACTION`` to control the
+  fraction of GPU memory used.
+
 ``TF_GPU_ALLOCATOR=cuda_malloc_async``
   This replace XLA's own BFC memory allocator with `cudaMallocAsync
   <https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html>`_.

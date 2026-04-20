@@ -67,7 +67,7 @@ class WGMMAAccumulator:
     if m % 64 or n % 8:
       raise ValueError("WGMMA requires m and n to be multiples of 64 and 8, "
                        f"got {m} and {n}")
-    if is_signed is False:  # pylint: disable=g-bool-id-comparison
+    if is_signed is False:
       raise TypeError("PTX does not support unsigned WGMMA accumulators")
     f32 = ir.F32Type.get()
     if dtype is None:
@@ -295,6 +295,7 @@ def wgmma_m64(
         asm_dialect=0,
         has_side_effects=True,
     )
+    assert isinstance(acc_struct, ir.Value)
     acc_regs = [
         llvm.extractvalue(out_ty_field, acc_struct, [i]) for i in range(len(acc_regs))
     ]
@@ -380,7 +381,7 @@ def wgmma(
           f"of type f32 or f16, but got: {acc._value.mlir_dtype}"
       )
   elif element_type == i8:
-    if a_in_regs and not a.is_signed:
+    if a_in_regs and not a.is_signed:  # pyrefly: ignore[missing-attribute]
       raise NotImplementedError("WGMMA with lhs of type u8")
     if acc._value.mlir_dtype != i32 or not acc._value.is_signed:
       raise ValueError(
@@ -413,6 +414,7 @@ def wgmma(
     a_desc_base = a_m_group_stride = a_k_group_stride = None
     a_instr_params = dict(a_transpose=None, a_k_stride=None)
   else:
+    assert isinstance(a, ir.Value)
     (
         (a_desc_base, a_k_instr_stride),
         (a_m_group_stride, a_k_group_stride),
@@ -445,6 +447,7 @@ def wgmma(
 
   # Step 4. Issue the instructions.
   if a_in_regs:
+    assert isinstance(a, fa.FragmentedArray)
     a = wgmma_fence(a)  # Make sure the registers are ready.
 
   i64 = ir.IntegerType.get_signless(64)
@@ -452,6 +455,7 @@ def wgmma(
   for mi in range(m_groups):
     for ki in range(k_groups):
       if a_in_regs:
+        assert isinstance(a, fa.FragmentedArray)
         a_mk = a[
             mi * m_group_elems : (mi + 1) * m_group_elems,
             ki * k_group_elems : (ki + 1) * k_group_elems,

@@ -13,14 +13,12 @@
 # limitations under the License.
 
 # pyrefly: ignore-errors
-# pylint: disable=missing-function-docstring
-# pylint: disable=g-doc-args
-# pytype: disable=wrong-keyword-args
 
 """Internal API for the Pallas pipelining scheduler."""
 
 import dataclasses
-from typing import Any, Optional, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import jax
 from jax._src import api_util
@@ -261,7 +259,7 @@ def schedule_pipeline(
     stages: Sequence[Stage],
     grid: Sequence[int],
     args: Sequence[Any],
-    ref_filter: Optional[Any] = None,
+    ref_filter: Any | None = None,
     initial_state: schedulers.PipelineState | None = None,
     scheduler: schedulers.PipelineScheduler = schedulers.static_nd_loop_scheduler,
     **scheduler_kwargs,

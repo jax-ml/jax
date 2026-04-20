@@ -230,6 +230,11 @@ class PyTreeDef {
   // Flattens a Pytree into a list of `leaves` and a PyTreeDef (this).
   // `leaves` owns references to the flattened objects, which might be
   // temporary objects in the case of custom pytype handlers.
+  //
+  // It is legal to call Flatten repeatedly on the same pytreedef, forming
+  // a forest. However such a pytreedef cannot be unflattened at the moment,
+  // This facility exists only for pytreedefs used for their __eq__ and
+  // __hash__ in MultiWeakrefLRUCache.
   void Flatten(nanobind::handle handle, std::vector<nanobind::object>& leaves,
                std::optional<nanobind::callable> leaf_predicate = std::nullopt);
   void Flatten(nanobind::handle handle,
@@ -318,6 +323,10 @@ class PyTreeDef {
 
   static PyType_Slot slots_[];
 
+  // Traverses all Python objects held by this PyTreeDef.
+  // Used for Python cyclic garbage collection.
+  int Traverse(visitproc visit, void* arg) const;
+
  private:
   void SetNumLeavesAndNumNodes();
 
@@ -391,8 +400,11 @@ class PyTreeDef {
 
 template <typename H>
 H AbslHashValue(H h, const PyTreeDef::Node& n) {
-  h = H::combine(std::move(h), n.kind, n.arity, n.custom);
-  return h;
+  if (n.kind == PyTreeKind::kCustom && n.custom != nullptr) {
+    return H::combine(std::move(h), n.kind, n.arity, n.custom->type.ptr(),
+                      n.custom->from_iterable.ptr());
+  }
+  return H::combine(std::move(h), n.kind, n.arity, n.custom);
 }
 
 template <typename H>

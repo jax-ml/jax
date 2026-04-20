@@ -21,6 +21,7 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
+from jax._src import api
 from jax._src import array
 from jax._src import core
 from jax._src import op_shardings
@@ -430,7 +431,7 @@ def sda_index_8(state):
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def bench_shaped_abstractify(state):
   device, *_ = jax.devices()
-  args = [jax.device_put_replicated(1, [device])] * 1000
+  args = [api.device_put_replicated(1, [device])] * 1000
   while state:
     _ = [core.shaped_abstractify(x) for x in args]
 
@@ -729,7 +730,7 @@ def device_put_sharded(state):
   dev = jax.devices()
 
   while state:
-    _ = jax.device_put_sharded(arr_inp, dev).block_until_ready()
+    _ = api.device_put_sharded(arr_inp, dev).block_until_ready()
 
 
 @google_benchmark.register

@@ -192,6 +192,5 @@ TEST_F(MosaicGpuTest, RuntimeFunctionsAreRegistered) {
       UnorderedElementsAre(mosaic_gpu::kRuntimeTmaDescriptorInitializerName));
 }
 
-
 }  // anonymous namespace
 }  // namespace mosaic_gpu

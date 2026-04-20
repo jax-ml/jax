@@ -31,6 +31,7 @@ from jax._src import util
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax._src.shard_map import shard_map
+from jax._src.sharding_impls import make_single_device_sharding
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -1011,7 +1012,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     callback_device_index = sharding._device_assignment.index(callback_device)
 
     def f(x):
-      sharding = jax.sharding.SingleDeviceSharding(callback_device)
+      sharding = make_single_device_sharding(callback_device)
       return jax.pure_callback(func, x, x, sharding=sharding)
 
     f_jit = jax.jit(f, in_shardings=sharding, out_shardings=sharding)
@@ -1144,6 +1145,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
+    self.enter_context(jtu.ignore_warning(
+        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   def tearDown(self):
     super().tearDown()
@@ -1181,16 +1184,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.vmap(f)(x)
     jax.effects_barrier()
     self.assertEqual(_mut, 8)
-
-  def test_cannot_call_ordered_io_in_pmap(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Test does not raise under pmap_shmap_merge=True")
-    def f(x):
-      return io_callback(
-          lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Ordered effects not supported in `pmap`"):
-      jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
   def test_cannot_call_ordered_io_in_vmap(self):
     def f(x):
@@ -1286,7 +1279,7 @@ class IOCallbackTest(jtu.JaxTestCase):
     callback_device = devices[0]
     if with_sharding:
       callback_device = devices[-1]
-      io_callback_kwargs['sharding'] = jax.sharding.SingleDeviceSharding(
+      io_callback_kwargs['sharding'] = make_single_device_sharding(
           callback_device
       )
 

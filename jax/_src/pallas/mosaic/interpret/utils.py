@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import abc
 from collections.abc import Sequence
 import dataclasses
-import enum
 import math
 import threading
 from typing import Any, Literal
@@ -43,30 +43,54 @@ def get_uninitialized_value(
   raise NotImplementedError(uninitialized_memory + " + " + str(dtype))
 
 
-class LoggingMode(enum.Flag):
-  """Logging mode for the kernel interpreter.
+def get_uninitialized_array(
+    shape, dtype, uninitialized_memory: Literal["nan", "zero"]
+):
+  return jnp.full(
+      shape,
+      get_uninitialized_value(dtype, uninitialized_memory),
+      dtype,
+  )
 
-  Attrs:
-    BARRIER: Enable logging inside GPU barrier objects.
-    SEMAPHORE: Enable logging inside (TPU) semaphore objects.
-    SHARED_MEMORY: Enable logging in the shared memory object.
+
+def pad_to_block_dimension(
+    value, block_shape, uninitialized_memory: Literal["nan", "zero"]
+):
+  """Pads values so the shape evenly divides into block dimensions.
+
+  For example, if values has a shape of (33, 2, 5) with a block_shape of
+  (32, 2, 4), this function will pad the value of shape to (64, 2, 8).
+
+  Args:
+    value: Array to be padded.
+    block_shape: Block shapes to use for padding. If None, no padding will be
+      performed.
+    uninitialized_memory: The value to use for padding.
+
+  Returns:
+    A padded array.
   """
-
-  BARRIER = enum.auto()
-  SEMAPHORE = enum.auto()
-  SHARED_MEMORY = enum.auto()
+  padded_shape = tuple(
+      ((v - 1) // b + 1) * b for v, b in zip(value.shape, block_shape)
+  )
+  if padded_shape != value.shape:
+    pad_width = tuple((0, a - b) for a, b in zip(padded_shape, value.shape))
+    pad_value = get_uninitialized_array((), value.dtype, uninitialized_memory)
+    value = jnp.pad(value, pad_width, constant_values=pad_value)
+  return value
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class LoggingInfo:
+class LoggingInfo(abc.ABC):
   """Holds information for logging."""
 
-  device_id: int
-  local_core_id: int
   source_info: source_info_util.SourceInfo | None = None
+  device_id: int
 
+  @abc.abstractmethod
   def get_location_str(self) -> str:
-    return f"Device {self.device_id}, core {self.local_core_id}"
+    """Returns a string representation of the location (device/core/thread)."""
+    raise NotImplementedError()
 
   def get_source_info_str(self) -> str:
     if self.source_info is None:
@@ -103,129 +127,23 @@ class LoggingInfo:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class InterpretParams:
-  """Parameters for kernel interpret mode.
+class TPULoggingInfo(LoggingInfo):
+  """Logging info for TPU interpret mode."""
 
-  Interpret mode is a way to run Pallas kernels on CPU, while simulating TPU/GPU
-  shared memory, communication, and synchronization operations.
+  local_core_id: int
 
-  Attributes:
-    detect_races: If True, a dynamic, happens-before race detector will be used
-      to detect data races during kernel interpretation.  If any races are
-      detected, a message will be printed and `races.races_found` will be set to
-      True.
-      Default: False.
-    out_of_bounds_reads: If "raise", an exception will be raised on any
-      out-of-bounds read of a buffer.  If "uninitialized_value", any parts of
-      the read that are out-of-bounds will return the value used to fill
-      uninitialized memory, which can be configured via the
-      "uninitialized_memory".
-      Default: "raise".
-    skip_floating_point_ops: If True, operations that produce only floating
-      point values will not be interpreted; instead, their results will be
-      replaced with arrays all of `jnp.inf`. Additionally any floating point
-      operands to any operation will be replaced with (arrays of) `jnp.inf`.
-      Default: False.
-    uninitialized_memory: If "nan", allocated buffers are initialized to contain
-      all NaNs (or to their maximum possible value for integers). If "zero",
-      allocated buffers are initialized to all zeros.
-      Default: "nan".
-    num_cores_or_threads: The number of cores per device (TPU) or threads per
-      block (GPU). Note that for interpreting GPU kernels, we currently only
-      support a single block in the grid. (So the number of threads per block on
-      the GPU can be thought of as the number of threads that runs concurrently
-      on the GPU.)
-      Default: 1.
-    vector_clock_size: The number of entries in the vector clocks. This should
-      be an integer bigger then the total number of cores, i.e. bigger than
-      `number of devices * num_cores_per_device`. If `None`, the vector clock
-      size that is used in the interpreter will default to twice the total
-      number of cores.
-      Default: None.
-    logging_mode: Logging mode for the kernel interpreter.
-  """
-
-  detect_races: bool = False
-  out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
-  skip_floating_point_ops: bool = False
-  uninitialized_memory: Literal["nan", "zero"] = "nan"
-  num_cores_or_threads: int = 1
-  vector_clock_size: int | None = None
-  logging_mode: LoggingMode | None = None
-
-  def __post_init__(self):
-    if self.num_cores_or_threads < 1:
-      raise ValueError(
-          "Number of cores or threads must be at least 1, but got"
-          f" {self.num_cores_or_threads}."
-      )
-
-  def get_vector_clock_size(self, num_devices) -> int:
-    """Returns the number of vector clocks to use.`"""
-    num_cores_or_threads = num_devices * self.num_cores_or_threads
-    if self.vector_clock_size is not None:
-      if num_cores_or_threads >= self.vector_clock_size:
-        raise ValueError(
-            f"Vector clock size ({self.vector_clock_size}) must be greater than"
-            f" the total number of cores/threads ({num_cores_or_threads})."
-        )
-      return self.vector_clock_size
-    else:
-      # Default to twice the total number of cores/threads.
-      return 2 * num_cores_or_threads
-
-  def get_uninitialized_array(self, shape, dtype):
-    return jnp.full(
-        shape,
-        get_uninitialized_value(dtype, self.uninitialized_memory),
-        dtype,
-    )
-
-  def pad_to_block_dimension(self, value, block_shape):
-    """Pads values so the shape evenly divides into block dimensions.
-
-    For example, if values has a shape of (33, 2, 5) with a block_shape of
-    (32, 2, 4), this function will pad the value of shape to (64, 2, 8).
-
-    Args:
-      value: Array to be padded.
-      block_shape: Block shapes to use for padding. If None, no padding will be
-        performed.
-
-    Returns:
-      A padded array.
-    """
-    padded_shape = tuple(
-        ((v - 1) // b + 1) * b for v, b in zip(value.shape, block_shape)
-    )
-    if padded_shape != value.shape:
-      pad_width = tuple((0, a - b) for a, b in zip(padded_shape, value.shape))
-      pad_value = self.get_uninitialized_array((), value.dtype)
-      value = jnp.pad(value, pad_width, constant_values=pad_value)
-    return value
+  def get_location_str(self) -> str:
+    return f"Device {self.device_id}, core {self.local_core_id}"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class InterpretGPUParams(InterpretParams):
-  """Parameters for GPU interpret mode.
+class GPULoggingInfo(LoggingInfo):
+  """Logging info for GPU interpret mode."""
 
-  GPU interpret mode is a way run Pallas GPU kernels on CPU, while simulating
-  a GPU's shared memory spaces (GMEM, SMEM, etc.), threads and synchronization
-  operations (e.g. barriers). This mode is intended for debugging and testing.
+  pallas_thread_id: int
 
-  To run a kernel under GPU interpret mode, pass an instance of
-  ``InterpretParams`` as an argument for the ``interpret`` parameter of
-  :func:`pallas_call`, :func:`core_map` or :func:`kernel`.
-
-  NOTE: If an exception is raised while interpreting a kernel, you must call
-  :func:`reset_gpu_interpret_mode_state` before using GPU interpret mode
-  again in the same process.
-
-  Attrs:
-    logging_mode: Logging mode for GPU interpret mode.
-  """
-
-  logging_mode: LoggingMode | None = None
+  def get_location_str(self) -> str:
+    return f"Device {self.device_id}, (Pallas) thread {self.pallas_thread_id}"
 
 
 class Counter:

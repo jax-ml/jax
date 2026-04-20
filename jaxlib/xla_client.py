@@ -34,10 +34,6 @@ from jaxlib import _jax as _xla
 
 # Most functions are snake_case for consistency with other modules, some
 # method names are CamelCase for consistency with XLA.
-# pylint: disable=invalid-name
-
-# Pylint has false positives for type annotations.
-# pylint: disable=invalid-sequence-index
 
 ifrt_programs = _xla.ifrt_programs
 
@@ -47,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 416  # safe_zip error messages include all argument lengths
+_version = 440  # add MlirModule overload for serialize_portable_artifact
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -194,10 +190,10 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   collective_memory_size = os.getenv(
       'XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB', ''
   )
-  if allocator not in ('default', 'platform', 'bfc', 'cuda_async'):
+  if allocator not in ('default', 'platform', 'bfc', 'cuda_async', 'vmm'):
     raise ValueError(
         'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", or "cuda_async", got "%s"' % allocator
+        '"bfc", "cuda_async", or "vmm", got "%s"' % allocator
     )
   options['allocator'] = allocator
   if memory_fraction:
@@ -339,7 +335,6 @@ HloSharding = _xla.HloSharding
 Sharding = _xla.Sharding
 NamedSharding = _xla.NamedSharding
 SingleDeviceSharding = _xla.SingleDeviceSharding
-PmapSharding = _xla.PmapSharding
 GSPMDSharding = _xla.GSPMDSharding
 PjRtLayout = _xla.PjRtLayout
 AutotuneCacheMode = _xla.AutotuneCacheMode
@@ -360,8 +355,8 @@ def LoadedExecutable_execute_with_token(self, arguments, device=None):
   )
 
 
-LoadedExecutable.execute = LoadedExecutable_execute  # type: ignore[method-assign]
-LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token  # type: ignore[method-assign]
+LoadedExecutable.execute = LoadedExecutable_execute
+LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
 
 
 class CustomCallTargetTraits(enum.IntFlag):

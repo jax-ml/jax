@@ -638,19 +638,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # Call get_compiler_ir in a function context
     x = np.array([2., 3., 4.], dtype=np.float32)
 
-    def fun_tf_outer(x):
-      x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
-      _ = tf.function(tf.math.sin, jit_compile=True, autograph=False).experimental_get_compiler_ir(x_const)()
-
-    # TODO(b/193754660)
-    # with self.assertRaisesRegex(
-    #     TypeError, "An op outside of the function building code is being passed"):
-    #   tf.function(fun_tf_outer)(x)
-    #
-    # with self.assertRaisesRegex(
-    #     TypeError, "An op outside of the function building code is being passed"):
-    #   tf.function(fun_tf_outer, jit_compile=True)(x)
-
     # Call get_concrete_function in a graph context
     def fun_tf_outer_2(x):
       _ = tf.function(tf.math.sin, jit_compile=True).get_concrete_function(tf.TensorSpec(x.shape, x.dtype))
@@ -726,7 +713,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     x = jnp.zeros((10), dtype=jnp.float32)
 
     @tf.function(jit_compile=True, autograph=False)
-    def fun_tf(x):  # pylint: disable=unused-argument
+    def fun_tf(x):
       return
 
     fun_jax_1 = jax2tf.call_tf(fun_tf, output_shape_dtype=None)

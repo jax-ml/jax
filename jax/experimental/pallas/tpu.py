@@ -17,6 +17,7 @@ import typing
 
 from jax._src.pallas.einshape import einshape as einshape
 from jax._src.pallas.mosaic import core as core
+from jax._src.pallas.mosaic.core import CoreMemorySpace as CoreMemorySpace
 from jax._src.pallas.mosaic.core import CoreType as CoreType
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
@@ -29,17 +30,16 @@ from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
-from jax._src.pallas.mosaic.interpret.interpret_pallas_call import InterpretParams as InterpretParams
+from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_interpret_mode as force_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
+from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
-from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule as get_pipeline_schedule
-from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations as make_pipeline_allocations
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
@@ -73,15 +73,12 @@ from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
-# Those primitives got moved to Pallas core. Keeping the updated imports
-# here for backward compatibility.
-from jax._src.pallas import primitives as pl_primitives
-from jax._src.pallas.core import semaphore as semaphore
-from jax._src.pallas.core import MemorySpace as GeneralMemorySpace
-from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
-from jax._src.pallas.primitives import semaphore_read as semaphore_read
-from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
-from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.core import semaphore as _deprecated_semaphore
+from jax._src.pallas.primitives import DeviceIdType as _DeprecatedDeviceIdType
+from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
+from jax._src.pallas.primitives import semaphore_read as _deprecated_semaphore_read
+from jax._src.pallas.primitives import semaphore_signal as _deprecated_semaphore_signal
+from jax._src.pallas.primitives import semaphore_wait as _deprecated_semaphore_wait
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
@@ -96,18 +93,25 @@ HBM = MemorySpace.HBM
 HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
 
-from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
 
 _deprecations = {
-    # Added Oct 31, 2025
-    "delay": (
-      "pltpu.delay is deprecated, use pl.delay instead.",
-      pl_primitives.delay
+    # Added Mar 24, 2026
+    "semaphore": ("pltpu.semaphore is deprecated, use pl.semaphore instead.", _deprecated_semaphore),
+    "DeviceIdType": (
+        "pltpu.DeviceIdType is deprecated, use pl.DeviceIdType instead.",
+        _DeprecatedDeviceIdType,
     ),
-    # Added Dec 10, 2025
-    "ANY": (
-        "pltpu.ANY is deprecated, use pl.ANY instead.",
-        GeneralMemorySpace.ANY
+    "semaphore_read": (
+        "pltpu.semaphore_read is deprecated, use pl.semaphore_read instead.",
+        _deprecated_semaphore_read,
+    ),
+    "semaphore_signal": (
+        "pltpu.semaphore_signal is deprecated, use pl.semaphore_signal instead.",
+        _deprecated_semaphore_signal,
+    ),
+    "semaphore_wait": (
+        "pltpu.semaphore_wait is deprecated, use pl.semaphore_wait instead.",
+        _deprecated_semaphore_wait,
     ),
     # Added Feb 11, 2026
     "repeat": (
@@ -122,8 +126,11 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  delay = pl_primitives.delay
-  ANY = GeneralMemorySpace.ANY
+  semaphore = _deprecated_semaphore
+  DeviceIdType = _DeprecatedDeviceIdType
+  semaphore_read = _deprecated_semaphore_read
+  semaphore_signal = _deprecated_semaphore_signal
+  semaphore_wait = _deprecated_semaphore_wait
   repeat = _deprecated_repeat
   KernelType = CoreType
 else:
@@ -131,5 +138,3 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del pl_primitives
-del GeneralMemorySpace

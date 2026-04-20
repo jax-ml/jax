@@ -42,7 +42,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
     loc: arraylike, distribution offset parameter
 
   Returns:
-    array of logpdf values.
+    array of logpmf values.
 
   See Also:
     :func:`jax.scipy.stats.nbinom.pmf`

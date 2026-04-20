@@ -16,6 +16,8 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", _cc_proto_library = "cc_proto_library")
+load("@com_google_protobuf//bazel:proto_library.bzl", _proto_library = "proto_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
@@ -23,7 +25,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
 load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
-load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
+load("@rocm_prebuilt_test_deps//:external_deps.bzl", PREBUILT_EXTERNAL_DEPS = "EXTERNAL_DEPS")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
@@ -35,8 +37,7 @@ load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_c
 cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
-proto_library = native.proto_library
-nanobind_extension = _pybind_extension
+proto_library = _proto_library
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_windows = _if_windows
@@ -83,28 +84,28 @@ _py_deps = {
     "absl/testing": ["@pypi//absl_py"],
     "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
-    "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
-    "disable_pmap_shmap_merge": [],
-    "epath": get_optional_dep("@pypi//etils"),  # etils.epath
-    "filelock": get_optional_dep("@pypi//filelock"),
+    "cloudpickle": ["@pypi//cloudpickle"],
+    "epath": ["@pypi//etils"],  # etils.epath
+    "filelock": ["@pypi//filelock"],
     "flatbuffers": ["@pypi//flatbuffers"],
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": get_optional_dep("@pypi//matplotlib"),
-    "mpmath": [],
+    "matplotlib": ["@pypi//matplotlib"],
+    "mpmath": ["@pypi//mpmath"],
     "opt_einsum": ["@pypi//opt_einsum"],
-    "pil": get_optional_dep("@pypi//pillow"),
+    "pil": ["@pypi//pillow"],
     "portpicker": ["@pypi//portpicker"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": get_optional_dep("@pypi//tensorstore"),
+    "tensorstore": ["@pypi//tensorstore"],
     "torch": [],
     "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
     "tpu_ops": [],
-    # TODO(vam): remove this once zstandard builds against Python >3.13
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13", "3.13-ft", "3.14", "3.14-ft"]),
+    # We're never going to need zstandard for 3.14+ because zstandard is now
+    # in the Python stdlib.
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13-ft", "3.14", "3.14-ft"]),
 }
 
 def all_py_deps(excluded = []):
@@ -141,12 +142,14 @@ def pytype_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     py_library(name = name, data = data, **new_kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     py_library(name = name, data = data, **new_kwargs)
 
 py_strict_library = py_library
@@ -156,7 +159,26 @@ def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_src
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
+    new_kwargs.pop("type_checking", None)
     lib_rule(name = name, data = data, **new_kwargs)
+
+def nanobind_extension(
+        name,
+        additional_stubgen_deps = [],  # @unused
+        stub_replacement_patterns = {},  # @unused
+        postprocess_stubgen = None,  # @unused
+        enable_stub_generation = False,  # @unused
+        module_name = None,
+        pytype_srcs = None,
+        data = [],
+        **kwargs):
+    module_name_suffix = module_name or name
+    if pytype_srcs == None:
+        pytype_srcs = native.glob([
+            module_name_suffix + ".pyi",
+            module_name_suffix + "/**/*.pyi",
+        ])
+    _pybind_extension(name = name, module_name = module_name, data = data + pytype_srcs, **kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
@@ -203,7 +225,7 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(PREBUILT_EXTERNAL_DEPS),
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
@@ -663,6 +685,7 @@ def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
     test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
+    kwargs.pop("type_checking", None)
     py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):

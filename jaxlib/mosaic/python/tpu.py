@@ -17,12 +17,11 @@
 # ruff: noqa: F401
 # ruff: noqa: F403
 
-
-# pylint: disable=g-bad-import-order
-from . import _tpu_gen
-from ._tpu_gen import *  # pylint: disable=wildcard-import
-from ._tpu_gen import _Dialect
-from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import
+from ._tpu_enum_gen import *
+from . import _tpu_ops_gen
+from ._tpu_ops_gen import *
+from ._tpu_ops_gen import _Dialect, VectorLoadOp, VectorStoreOp
+from jaxlib.mlir._mlir_libs._tpu_ext import *
 try:
   from jaxlib.mlir.dialects._ods_common import _cext
 except ImportError:
@@ -33,7 +32,7 @@ _cext.globals.append_dialect_search_prefix("jax.jaxlib.mosaic.python")
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class TraceOp(_tpu_gen.TraceOp):  # noqa: F405
+class TraceOp(_tpu_ops_gen.TraceOp):  # noqa: F405
   """An extension to the automatically generated TraceOp bindings."""
 
   def __init__(self, results, message, level, *, loc=None, ip=None):
@@ -46,7 +45,7 @@ class TraceOp(_tpu_gen.TraceOp):  # noqa: F405
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class RegionOp(_tpu_gen.RegionOp):  # noqa: F405
+class RegionOp(_tpu_ops_gen.RegionOp):  # noqa: F405
   """An extension to the automatically generated RegionOp bindings."""
 
   def __init__(self, results, *, loc=None, ip=None):
@@ -56,3 +55,38 @@ class RegionOp(_tpu_gen.RegionOp):  # noqa: F405
   @property
   def body(self):
     return self.regions[0].blocks[0]
+
+
+def vector_load(
+    result,
+    base,
+    indices,
+    *,
+    strides=None,
+    mask=None,
+    loc=None,
+    ip=None,
+):
+  if strides is None:
+    strides = []
+  return VectorLoadOp(
+      result, base, indices, strides, mask=mask, loc=loc, ip=ip
+  ).result
+
+
+def vector_store(
+    value_to_store,
+    base,
+    indices,
+    *,
+    strides=None,
+    add=False,
+    mask=None,
+    loc=None,
+    ip=None,
+):
+  if strides is None:
+    strides = []
+  return VectorStoreOp(
+      value_to_store, base, indices, strides, mask=mask, add=add, loc=loc, ip=ip
+  )

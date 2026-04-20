@@ -44,7 +44,7 @@ limitations under the License.
 
 namespace mlir::tpu {
 
-std::ostream &operator<<(std::ostream &os, Print p) {
+std::ostream& operator<<(std::ostream& os, Print p) {
   std::string s;
   llvm::raw_string_ostream tmp_os(s);
   p.payload_->print(tmp_os);
@@ -71,7 +71,7 @@ SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
 }
 
 FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
+    Operation* op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape) {
   SmallVector<int> squeezed;
   int source_index = source_shape.size() - 1;
@@ -207,24 +207,17 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
-bool isContiguousMemref(TypedValue<MemRefType> memref) {
-  auto memref_ty = getMemRefType(memref);
-  if (auto tiled_layout =
-          dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout())) {
-    auto contiguous_tile_strides = ComputeTileStrides(
-        memref_ty, tiled_layout.getTiles().front().dimensions());
-    return contiguous_tile_strides == tiled_layout.getTileStrides();
-  }
-  return true;
-}
-
-bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
+bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
+                    std::optional<CoreType> type) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
-  return memory_space && memory_space.getValue() == space;
+  if (!memory_space || memory_space.getValue() != space) {
+    return false;
+  }
+  return !type.has_value() || memory_space.getCoreType() == type;
 }
 
-bool layoutIsValidForValue(const Layout &l, const Value v,
+bool layoutIsValidForValue(const Layout& l, const Value v,
                            const std::array<int64_t, 2> target_shape) {
   // l must be non-null iff v is of vector type
   if (const auto vty = dyn_cast<VectorType>(v.getType())) {
@@ -265,7 +258,7 @@ FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr) {
 
 // TODO(tlongeri, jevinjiang): Unify with infer_vector_layout.cc's getOutLayout.
 FailureOr<SmallVector<Layout>> getOutLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
+    Operation& op, const std::array<int64_t, 2> target_shape) {
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layouts.size() != op.getNumResults()) {
@@ -282,7 +275,7 @@ FailureOr<SmallVector<Layout>> getOutLayouts(
 }
 
 FailureOr<SmallVector<Layout>> getInLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
+    Operation& op, const std::array<int64_t, 2> target_shape) {
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
                              getLayoutArrayFromAttr(op.getAttr("in_layout")));
   if (in_layouts.size() != op.getNumOperands()) {
@@ -299,42 +292,42 @@ FailureOr<SmallVector<Layout>> getInLayouts(
   return in_layouts;
 }
 
-void setInLayout(Operation *op, ArrayRef<Layout> in) {
+void setInLayout(Operation* op, ArrayRef<Layout> in) {
   CHECK_EQ(in.size(), op->getNumOperands()) << Print(op);
   SmallVector<Attribute, 4> in_attrs;
   in_attrs.reserve(in.size());
-  for (const Layout &p : in) {
+  for (const Layout& p : in) {
     in_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
   }
   op->setAttr("in_layout", ArrayAttr::get(op->getContext(), in_attrs));
 }
 
-void setOutLayout(Operation *op, Layout out) {
+void setOutLayout(Operation* op, Layout out) {
   setOutLayout(op, ArrayRef<Layout>(out));
 }
 
-void setOutLayout(Operation *op, ArrayRef<Layout> out) {
+void setOutLayout(Operation* op, ArrayRef<Layout> out) {
   SmallVector<Attribute, 4> out_attrs;
   out_attrs.reserve(out.size());
-  for (const Layout &p : out) {
+  for (const Layout& p : out) {
     out_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
   }
   op->setAttr("out_layout", ArrayAttr::get(op->getContext(), out_attrs));
 }
 
-void setLayout(Operation *op, Layout in, Layout out) {
+void setLayout(Operation* op, Layout in, Layout out) {
   setLayout(op, ArrayRef<Layout>(in), ArrayRef<Layout>(out));
 }
 
-void setLayout(Operation *op, ArrayRef<Layout> in, Layout out) {
+void setLayout(Operation* op, ArrayRef<Layout> in, Layout out) {
   setLayout(op, in, ArrayRef<Layout>(out));
 }
 
-void setLayout(Operation *op, Layout in, ArrayRef<Layout> out) {
+void setLayout(Operation* op, Layout in, ArrayRef<Layout> out) {
   setLayout(op, ArrayRef<Layout>(in), out);
 }
 
-void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
+void setLayout(Operation* op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
   setInLayout(op, in);
   setOutLayout(op, out);
 }
@@ -348,20 +341,20 @@ std::optional<int64_t> getIntConst(Value v) {
   return std::nullopt;
 }
 
-SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {
-  auto isUnaryElementwise = [](Operation *op) {
+SmallVector<Operation*> getNontrivialTransitiveUsers(Value v) {
+  auto isUnaryElementwise = [](Operation* op) {
     if (!op->hasTrait<mlir::OpTrait::Elementwise>()) {
       return false;
     }
     return op->getNumOperands() == 1 && op->getNumResults() == 1;
   };
-  SmallVector<Operation *> users;
+  SmallVector<Operation*> users;
   SmallVector<Value> candidates;
   candidates.push_back(v);
   while (!candidates.empty()) {
     Value candidate = candidates.back();
     candidates.pop_back();
-    for (const auto &user : candidate.getUsers()) {
+    for (const auto& user : candidate.getUsers()) {
       if (isa<tpu::BitcastOp>(user) || isUnaryElementwise(user))
         candidates.push_back(user->getResult(0));
       else
@@ -387,6 +380,21 @@ SmallVector<Value> fillPositions(ValueRange values, ArrayRef<int32_t> positions,
     result[position] = value;
   }
   return result;
+}
+
+// TODO(apaszke): Unify this with mlir::tpu::canReinterpretToUntiledMemref.
+bool canReinterpretToUntiledContiguousMemref(MemRefType ty) {
+  if (ty.getRank() != 1 ||
+      mlir::tpu::getElementTypeBitwidth(ty.getElementType()) != 32) {
+    return false;
+  }
+  auto tiled_layout = cast<TiledLayoutAttr>(ty.getLayout());
+  if (tiled_layout.getTileStrides() != ArrayRef<int64_t>{1}) {
+    return false;
+  }
+  return tiled_layout.getTiles().empty() ||
+         (tiled_layout.getTiles().size() == 1 &&
+          tiled_layout.getTiles().front().dimensions().size() == 1);
 }
 
 }  // namespace mlir::tpu

@@ -261,12 +261,13 @@ class InterpretTest(jtu.JaxTestCase):
     def run():
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 128,), jnp.float32),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           interpret=pltpu.InterpretParams(
-              out_of_bounds_reads=out_of_bounds_reads),
+              out_of_bounds_reads=out_of_bounds_reads
+          ),
       )(jnp.zeros((8, 4, 128), jnp.float32))
 
     if out_of_bounds_reads == 'raise':
@@ -277,6 +278,41 @@ class InterpretTest(jtu.JaxTestCase):
       out = run().block_until_ready()
       np.testing.assert_equal(np.array(out[:4]), 0.0)
       self.assertTrue(np.isnan(out[4:]).all())
+
+  def test_masked_store(self):
+    def kernel(i_ref, j_ref, x_ref, mask_ref, o_ref):
+      o_ref[...] = jnp.zeros(o_ref.shape, o_ref.dtype)
+      pltpu.store(
+          o_ref.at[pl.ds(pl.multiple_of(i_ref[0], 8), 16),
+                   pl.ds(pl.multiple_of(j_ref[0], 128), 256)],
+          x_ref[...],
+          mask=mask_ref[...])
+
+    @jax.jit
+    def f(i, j, x, mask):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((16, 256), jnp.float32),
+          grid_spec=pltpu.PrefetchScalarGridSpec(num_scalar_prefetch=2),
+          interpret=pltpu.InterpretParams(),
+      )(i, j, x, mask)
+
+    i = jnp.array([8], jnp.int32)
+    j = jnp.array([128], jnp.int32)
+    x = jnp.ones((16, 256), dtype=jnp.float32)
+    mask = np.full((16, 256), False)
+    mask[0, 0] = True
+
+    with self.subTest('in_bounds'):
+      y = f(i, j, x, jnp.array(mask))
+      self.assertArraysEqual(y, jnp.zeros_like(y).at[8, 128].set(1.0))
+
+    with self.subTest('out_of_bounds'):
+      mask[:] = True
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds masked swap'):
+        f(i, j, x, jnp.array(mask)).block_until_ready()
+      pltpu.reset_tpu_interpret_mode_state()
 
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
@@ -759,7 +795,7 @@ class InterpretTest(jtu.JaxTestCase):
           def body(sem):
             @pl.when(jax.lax.axis_index('x') == second_core_to_copy)
             def _():
-              pltpu.semaphore_wait(sem, 1)
+              pl.semaphore_wait(sem, 1)
 
             def copy(x_hbm_ref):
               pltpu.sync_copy(x_ref, x_hbm_ref)
@@ -772,7 +808,7 @@ class InterpretTest(jtu.JaxTestCase):
 
             @pl.when(jax.lax.axis_index('x') == first_core_to_copy)
             def _():
-              pltpu.semaphore_signal(sem, 1, core_index=second_core_to_copy)
+              pl.semaphore_signal(sem, 1, core_index=second_core_to_copy)
 
           pl.run_scoped(
               body,
@@ -786,6 +822,31 @@ class InterpretTest(jtu.JaxTestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
     self.assertFalse(mosaic_interpret.races.races_found)
+
+  def test_grid_names(self):
+    def kernel(x, y):
+      y[:] = (x[:] + 10.0 * jax.lax.axis_index('foo').astype(x.dtype)
+              + jax.lax.axis_index('bar').astype(x.dtype))
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+        kernel,
+        grid_spec=pl.GridSpec(
+            grid=(('foo', 2), ('bar', 4)),
+            in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+            out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+        ),
+        out_shape=jax.ShapeDtypeStruct((2 * 8, 4 * 128), jnp.float32),
+        interpret=pltpu.InterpretParams(),
+    )(x)
+
+    x = jnp.zeros((2 * 8, 4 * 128), dtype=jnp.float32)
+    y = f(x)
+    self.assertArraysEqual(
+        jnp.array([[0.0, 1.0, 2.0, 3.0],
+                   [10.0, 11.0, 12.0, 13.0]], dtype=jnp.float32),
+        y[::8, ::128])
 
   @parameterized.product(
       slow_core=[0, 1],
@@ -1283,11 +1344,11 @@ class InterpretTest(jtu.JaxTestCase):
       )
     pltpu.reset_tpu_interpret_mode_state()
 
-  def test_run_scoped_with_memory_space_is_none(self):
-    self.skipTest(
-        'Fails with a `KeyError` because the TPU kernel interpreter considers'
-        ' refs in a DMA that have memory space set to `None` to be HBM.'
-    )
+  @parameterized.parameters(
+      pl.BlockSpec(memory_space=None),
+      pl.no_block_spec,
+  )
+  def test_run_scoped_with_memory_space_is_none(self, out_block_spec):
     shape = (8, 128)
     dtype = jnp.float32
 
@@ -1342,6 +1403,25 @@ class InterpretTest(jtu.JaxTestCase):
     # `input_output_aliases={0: 0}` argument.
     np.testing.assert_array_equal(y[:8], x[:8])
     np.testing.assert_array_equal(y[8:], x[:8])
+
+  def test_pallas_call_compiles_with_has_side_effects_true(self):
+    def kernel(x, y):
+      y[:] = x[:] + 1.0
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        interpret=pltpu.InterpretParams(),
+        compiler_params=pltpu.CompilerParams(has_side_effects=True),
+      )(x)
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+    y = f(x)
+    self.assertArraysEqual(y, x + 1.0)
 
 
 if __name__ == '__main__':

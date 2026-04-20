@@ -116,13 +116,14 @@ pytype_library(
         "xla_client.py",
         ":version",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":_jax",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
-    ],
+    ] + py_deps(["numpy"]),
 )
 
 symlink_files(
@@ -221,6 +222,15 @@ cc_library(
 )
 
 cc_library(
+    name = "tridiagonal_solve_perturbed",
+    hdrs = ["tridiagonal_solve_perturbed.h"],
+    # compatible with libtpu
+    deps = [
+        "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_library(
     name = "kernel_nanobind_helpers",
     hdrs = ["kernel_nanobind_helpers.h"],
     copts = [
@@ -278,8 +288,15 @@ nanobind_pywrap_extension(
 
 nanobind_pywrap_extension(
     name = "weakref_lru_cache",
-    srcs = ["weakref_lru_cache.cc"],
-    pytype_srcs = ["weakref_lru_cache.pyi"],
+    srcs = [
+        "weak_key_weak_value_cache.cc",
+        "weak_key_weak_value_cache.h",
+        "weak_value_interner.cc",
+        "weak_value_interner.h",
+        "weakref_lru_cache.cc",
+        "weakref_lru_cache.h",
+        "weakref_lru_cache_module.cc",
+    ],
     deps = [
         ":nb_class_ptr",
         ":pytree",
@@ -305,6 +322,19 @@ py_strict_test(
     srcs = ["weakref_lru_cache_test.py"],
     deps = [
         ":weakref_lru_cache",
+    ] + py_deps([
+        "absl/flags",
+        "absl/logging",
+        "absl/testing",
+    ]),
+)
+
+py_strict_test(
+    name = "weak_value_interner_test",
+    srcs = ["weak_value_interner_test.py"],
+    deps = [
+        ":weakref_lru_cache",
+        "//jax/_src:util",
     ] + py_deps([
         "absl/flags",
         "absl/logging",
@@ -339,10 +369,8 @@ nanobind_pywrap_extension(
         "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
     ],
-    enable_stub_generation = True,
     postprocess_stubgen = "//jaxlib:backport_stubs",
     pytype_deps = py_deps(["numpy"]),
-    pytype_srcs = glob(["_jax/*.pyi"]),
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
@@ -355,11 +383,11 @@ nanobind_pywrap_extension(
         ":dlpack",
         ":ffi",
         ":guard_lib",
+        ":hash_util",
         ":jax_jit",
         ":mlir",
         ":nb_class_ptr",
         ":pjit",
-        ":pmap_lib",
         ":pprof_profile_builder",
         ":py_client",
         ":python_ref_manager",
@@ -698,7 +726,9 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_ifrt_proxy",
     srcs = ["ifrt_proxy.cc"],
-    pytype_srcs = ["_ifrt_proxy.pyi"],
+    stub_replacement_patterns = {
+        "_ifrt_proxy.__prefix__": "from jax.jaxlib._jax import Client",
+    },
     deps = [
         ":nb_class_ptr",
         ":py_client",
@@ -722,7 +752,9 @@ nanobind_pywrap_extension(
 nanobind_pywrap_extension(
     name = "_pathways",
     srcs = ["pathways.cc"],
-    pytype_srcs = ["_pathways.pyi"],
+    stub_replacement_patterns = {
+        "_pathways.__prefix__": "from jax.jaxlib._jax import Client",
+    },
     visibility = jax_visibility("jaxlib/_pathways"),
     deps = [
         ":nb_class_ptr",
@@ -770,6 +802,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":config",
+        ":hash_util",
         ":nb_class_ptr",
         ":py_client",
         ":pytree",
@@ -809,7 +842,10 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BytecodeWriter",
+        "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonCore",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
@@ -838,6 +874,15 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/nb_class_ptr"),
     deps = ["@nanobind"],
+)
+
+cc_library(
+    name = "hash_util",
+    hdrs = ["hash_util.h"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@xla//third_party/python_runtime:headers",
+    ],
 )
 
 cc_library(
@@ -892,56 +937,6 @@ cc_library(
 )
 
 cc_library(
-    name = "pmap_lib",
-    srcs = ["pmap_lib.cc"],
-    hdrs = ["pmap_lib.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        ":call_location",
-        ":config",
-        ":jax_jit",
-        ":nb_class_ptr",
-        ":py_client",
-        ":py_user_context",
-        ":python_ref_manager",
-        ":pytree",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
-        "@tsl//tsl/profiler/lib:traceme",
-        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
-        "@xla//xla:status_macros",
-        "@xla//xla:util",
-        "@xla//xla:xla_data_proto_cc",
-        "@xla//xla/pjrt:exceptions",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/python:nb_helpers",
-        "@xla//xla/python:nb_numpy",
-        "@xla//xla/python:safe_static_init",
-        "@xla//xla/python:types",
-        "@xla//xla/python/ifrt",
-        "@xla//xla/python/ifrt:user_context",
-        "@xla//xla/tsl/concurrency:ref_count",
-        "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:statusor",
-        "@xla//xla/tsl/python/lib/core:numpy",
-    ],
-)
-
-cc_library(
     name = "cached_py_object",
     hdrs = ["cached_py_object.h"],
     copts = [
@@ -982,7 +977,6 @@ cc_library(
         "py_memory_space.h",
         "py_program.h",
         "py_values.h",
-        "sharded_device_array.h",
         "sharding.h",
         "to_ifrt_sharding.h",
     ],
@@ -997,6 +991,7 @@ cc_library(
         ":cached_py_object",
         ":call_location",
         ":guard_lib",
+        ":hash_util",
         ":nb_class_ptr",
         ":pprof_profile_builder",
         ":py_client_cpu",
@@ -1077,6 +1072,7 @@ cc_library(
         "@xla//xla/tsl/concurrency:future",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/framework:allocator",
+        "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
@@ -1330,6 +1326,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/pytree"),
     deps = [
+        ":hash_util",
         ":nb_class_ptr",
         ":pytree_cc_proto",
         "@com_google_absl//absl/algorithm:container",
@@ -1339,6 +1336,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
@@ -1349,6 +1347,19 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_sdy_mpmd",
     srcs = ["sdy_mpmd.cc"],
+    additional_stubgen_deps = [
+        "//jaxlib/mlir:ir",
+    ],
+    pytype_deps = [
+        "//jaxlib/mlir:ir",
+    ],
+    stub_replacement_patterns = {
+        "_sdy_mpmd.__prefix__": "from jax.jaxlib._jax import OpSharding, PjRtLayout",
+        # TODO(slebedev): Remove all of these once we no longer need to support pytype.
+        "PartitioningPhase._boundary_": "_boundary_: enum.FlagBoundary = ...",
+        "_sdy_mpmd\\.(NONE|IMPORT|OPTIMIZE|PARTITION|ALL)": "\\1: PartitioningPhase = ...",
+        "_sdy_mpmd\\.(KEEP_TRANSFERRED|DROP_TRANSFERRED)": "\\1: SplitFragmentType = ...",
+    },
     deps = [
         ":nb_class_ptr",
         ":py_client",
@@ -1400,6 +1411,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/traceback"),
     deps = [
+        ":hash_util",
         ":nb_class_ptr",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1455,6 +1467,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":dlpack",
+        ":hash_util",
         ":py_client",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
@@ -1499,6 +1512,7 @@ cc_library(
 pytype_strict_library(
     name = "xla_client",
     srcs = ["xla_client.py"],
+    type_checking = "pyrefly",
     visibility = [":xla_python"],
     deps = py_deps([
         "numpy",
@@ -1581,4 +1595,31 @@ cc_test(
         "@xla//xla/tsl/platform:test_benchmark",
         "@xla//xla/tsl/platform:test_main",
     ],
+)
+
+nanobind_pywrap_extension(
+    name = "test_exceptions",
+    testonly = True,
+    srcs = ["test_exceptions.cc"],
+    # No need, since we do not currently type check tests.
+    enable_stub_generation = False,
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
+        "@xla//xla/pjrt:exceptions",
+        "@xla//xla/pjrt:status_casters",
+    ],
+)
+
+py_strict_test(
+    name = "exception_test",
+    srcs = ["exception_test.py"],
+    deps = [
+        ":_jax",
+        ":test_exceptions",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )

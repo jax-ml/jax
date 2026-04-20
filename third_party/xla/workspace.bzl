@@ -22,6 +22,10 @@ def repo():
         sha256 = XLA_SHA256,
         strip_prefix = "xla-{commit}".format(commit = XLA_COMMIT),
         urls = tf_mirror_urls("https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
+        patch_file = [
+            # Add any patch files here.
+            # "//third_party/xla:temporary.patch
+        ],
     )
 
     # For development, one often wants to make changes to the TF repository as well

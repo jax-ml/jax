@@ -14,6 +14,7 @@
 
 import numpy as np
 
+from jax._src import api
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
@@ -46,6 +47,7 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.pmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
@@ -79,6 +81,7 @@ def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.logpmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   return jnp.exp(logpmf(k, mu, loc))
 
@@ -92,9 +95,9 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
 
   .. math::
 
-     f_{cdf}(k, p) = \sum_{i=0}^k f_{pmf}(k, p)
+     f_{cdf}(k, \mu) = \sum_{i=0}^k f_{pmf}(k, \mu)
 
-  where :math:`f_{pmf}(k, p)` is the probability mass function
+  where :math:`f_{pmf}(k, \mu)` is the probability mass function
   :func:`jax.scipy.stats.poisson.pmf`.
 
   Args:
@@ -108,6 +111,7 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   See Also:
     - :func:`jax.scipy.stats.poisson.pmf`
     - :func:`jax.scipy.stats.poisson.logpmf`
+    - :func:`jax.scipy.stats.poisson.entropy`
   """
   k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
@@ -115,6 +119,7 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   p = gammaincc(jnp.floor(1 + x), mu)
   return jnp.where(lax.lt(x, zero), zero, p)
 
+@api.jit
 def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   r"""Shannon entropy of the Poisson distribution.
 
@@ -158,9 +163,10 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
     >>> poisson.entropy(5.0)
     Array(2.204394, dtype=float32)
     >>> poisson.entropy(jax.numpy.array([1, 10, 100]))
-    Array([1.3048419, 2.5614073, 3.7206903], dtype=float32)
+    Array([1.3048419, 2.561407 , 3.7206903], dtype=float32)
 
   See Also:
+    - :func:`jax.scipy.stats.poisson.cdf`
     - :func:`jax.scipy.stats.poisson.pmf`
     - :func:`jax.scipy.stats.poisson.logpmf`
     - :obj:`scipy.stats.poisson`

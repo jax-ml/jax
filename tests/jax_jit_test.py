@@ -24,6 +24,7 @@ from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
+from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 
 
@@ -32,7 +33,7 @@ config.parse_flags_with_absl()
 def _cpp_device_put(value, device, enable_x64: bool | None = None):
   aval = core.shaped_abstractify(value)
   return pxla.batched_device_put(
-      aval, jax.sharding.SingleDeviceSharding(device), [value], [device],
+      aval, make_single_device_sharding(device), [value], [device],
       enable_x64=enable_x64)
 
 

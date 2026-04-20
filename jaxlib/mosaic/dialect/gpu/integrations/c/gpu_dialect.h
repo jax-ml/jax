@@ -19,6 +19,7 @@ limitations under the License.
 #include <stddef.h>
 
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,8 +27,19 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(MosaicGPU, mosaic_gpu);
 
-MLIR_CAPI_EXPORTED void
-mlirDialectRegistryInsertMosaicGpuInlinerExtensions(MlirDialectRegistry registry);
+MLIR_CAPI_EXPORTED void mlirDialectRegistryInsertMosaicGpuInlinerExtensions(
+    MlirDialectRegistry registry);
+
+//===----------------------------------------------------------------------===//
+// BarrierType
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsABarrierType(MlirType type);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuBarrierTypeGet(MlirContext ctx, bool orders_tensor_core);
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuBarrierTypeGetOrdersTensorCore(
+    MlirType type);
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuBarrierTypeGetTypeID();
 
 #ifdef __cplusplus
 }

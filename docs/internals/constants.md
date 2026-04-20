@@ -24,7 +24,7 @@ def f(x):
 ```
 
 We describe below the **future** internal implementation details for
-constants. As of July 2025, this is not yet the default implementation;
+constants. As of March 2026, this is not yet the default implementation;
 it is enabled by the environment variable `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=True`.
 See further [below](#previous-implementation) for the details of the previous
 implementation, including its drawbacks.
@@ -76,6 +76,11 @@ by `mlir.ir_constant`: when a constant is encountered, we just reuse
 the existing lowering from `const_lowering` instead of emitting a
 `stablehlo.constant`.
 
+An exception is made for small constants, with size at most
+`config.embedded_constants_max_bytes`.
+These are not hoisted as additional arguments and are instead embedded in the
+generated HLO and the executable.
+
 When we lower an HLO inner function (i.e., not the `main` function),
 we call again `core.jaxpr_const_args`
 to get the actual constants in the corresponding `Jaxpr`. These are
@@ -90,9 +95,11 @@ but instead creates a block within the current function. It uses
 the enclosing function's `const_lowering`.
 
 Note also that there will still be `stablehlo.constant` in the lowered
-code, in three cases:
+code:
   * when the constant is a scalar; we want these constants to be
   available to XLA for constant folding.
+  * when the constant is small, with size at most
+  `config.embedded_constants_max_bytes`, as described above.
   * when the constant did not appear in the traced program, and is
   hence not in the `Jaxpr`. This can happen for constants that
   arise during lowering, e.g., the lowering of some PRNG functions
@@ -148,7 +155,10 @@ The C++ fast path has support for const args starting with jaxlib 0.7.1.
 In prior versions, the fast path is disabled when there are const args.
 
 To implement this scheme, we keep the `const_args` in
-`stages.Lowering`, `stages.Lowered`, and `stages.CompiledCallParams`.
+`stages.Lowering`, `stages.Lowered`, `stages.CompiledCallParams`,
+and `pxla.MeshExecutable`.
+In `stages.Compiled` the fields, e.g., `in_avals`, do not include
+`const_args`.
 
 Interestingly, when we serialize an executable, e.g., for the compilation
 cache, we do not need to serialize the closed over constants. The executable

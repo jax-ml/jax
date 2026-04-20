@@ -12,31 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Mapping, Sequence
 import dataclasses
 import math
 from typing import Any
 
 import jax
-from jax._src import callback
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.pallas.mosaic_gpu.interpret import jaxpr_interpret
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.typing import Array
 from jax._src.util import (safe_zip, split_list)
 from jax.experimental.pallas import mosaic_gpu as plgpu
-
-
-InterpretParams = interpret_utils.InterpretGPUParams
-
-
-def get_interpret_effects() -> Set[effects.Effect]:
-  return {callback._OrderedIOEffect}  # pylint: disable=protected-access
 
 
 def get_races() -> gpu_callbacks.RaceDetectionState:
@@ -61,31 +53,28 @@ def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
   return tuple(result)
 
 
-def _get_grid_dims_and_num_threads(
+def _get_grid_and_cluster_dims_and_num_threads(
     grid_mapping: pallas_core.GridMapping, mesh: plgpu.Mesh | None
-) -> tuple[tuple[int, ...], int]:
+) -> tuple[tuple[int, ...], tuple[int, ...], int]:
   if not mesh:
     num_threads = 1
+    cluster_dims = ()
     grid_dims = _get_grid_bounds(grid_mapping)
   elif isinstance(mesh, plgpu.Mesh):
-    if mesh.cluster is not None and math.prod(mesh.cluster) != 1:
-      raise NotImplementedError(
-          f"Invalid cluster {mesh.cluster} in mesh: GPU interpret mode does not"
-          " support (non-trivial) clusters."
-      )
     num_threads = int(mesh.num_threads or 1)
+    cluster_dims = tuple(mesh.cluster) if mesh.cluster is not None else ()
     grid_dims = tuple(mesh.grid)
   else:
     raise ValueError(f"Unsupported mesh type: {type(mesh)}")
 
-  reconstructed_grid = grid_dims + (num_threads,)
+  reconstructed_grid = grid_dims + cluster_dims + (num_threads,)
   if math.prod(_get_grid_bounds(grid_mapping)) != math.prod(reconstructed_grid):
     raise NotImplementedError(
         f"Invalid grid {grid_mapping.grid} in grid_mapping: expected grid to"
         f" have the same size as {reconstructed_grid}"
     )
 
-  return grid_dims, num_threads
+  return grid_dims, cluster_dims, num_threads
 
 
 def _allocate_buffers_for_inputs(
@@ -135,7 +124,7 @@ def _allocate_buffers_for_outputs(
     grid_mapping: pallas_core.GridMapping,
     input_buffer_keys: Sequence[jax.Array],
     input_vals: Sequence[jax.Array],
-    interpret_params: interpret_utils.InterpretGPUParams,
+    interpret_params: InterpretGPUParams,
 ) -> list[AllocationKeyAndValue]:
   """Allocates `GMEM` buffers for `pallas_call` outputs, respecting aliased inputs."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -146,7 +135,7 @@ def _allocate_buffers_for_outputs(
   output_buffer_keys_and_values = []
 
   block_shapes = [
-      pallas_core._get_block_shape(bm.block_shape)  # pylint: disable=protected-access
+      pallas_core._get_block_shape(bm.block_shape)
       for bm in grid_mapping.block_mappings
   ]
   num_inputs = grid_mapping.num_inputs
@@ -164,12 +153,12 @@ def _allocate_buffers_for_outputs(
           )
       )
     else:
-      out_val = interpret_params.get_uninitialized_array(
-          bm.array_aval.shape, bm.array_aval.dtype
-      )
-      padded_val = interpret_params.pad_to_block_dimension(
-          out_val, output_block_shapes[output_idx]
-      )
+      out_val = interpret_utils.get_uninitialized_array(
+          bm.array_aval.shape, bm.array_aval.dtype,
+          interpret_params.uninitialized_memory)
+      padded_val = interpret_utils.pad_to_block_dimension(
+          out_val, output_block_shapes[output_idx],
+          interpret_params.uninitialized_memory)
       allocation_request = gpu_callbacks.make_allocation_request_array(
           device_id=device_id,
           # All outputs of a `pallas_call`/`core_map` that are arrays (i.e. that
@@ -198,7 +187,7 @@ def _get_kernel_buffers(
     invars: Sequence[Any],
     input_buffer_keys: Sequence[jax.Array],
     output_buffer_keys: Sequence[jax.Array],
-    interpret_params: interpret_utils.InterpretGPUParams,
+    interpret_params: InterpretGPUParams,
 ) -> list[jax.Array]:
   """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
@@ -227,8 +216,8 @@ def _get_kernel_buffers(
           memory_space_id=gpu_callbacks.get_memory_space_idx(aval.memory_space),
           initial_ref_count=num_threads,
       )
-      init_val = interpret_params.get_uninitialized_array(
-          aval.shape, aval.dtype
+      init_val = interpret_utils.get_uninitialized_array(
+          aval.shape, aval.dtype, interpret_params.uninitialized_memory
       )
       kernel_buffer_keys.append(
           gpu_callbacks.call_allocate_buffer_for_all_threads(
@@ -339,7 +328,7 @@ def interpret_pallas_call(
     compiler_params: Mapping[str, Any],
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    interpret_params: interpret_utils.InterpretGPUParams,
+    interpret_params: InterpretGPUParams,
     metadata: Mapping[str, str] | None,
     **kwargs,
 ) -> Sequence[Array]:
@@ -351,9 +340,10 @@ def interpret_pallas_call(
   # `index_map`s).
   assert all(bm.has_trivial_window() for bm in grid_mapping.block_mappings)
 
-  grid_dims, num_threads = _get_grid_dims_and_num_threads(
-      grid_mapping, mesh
+  grid_dims, cluster_dims, num_threads = (
+      _get_grid_and_cluster_dims_and_num_threads(grid_mapping, mesh)
   )
+  num_blocks_per_cluster = math.prod(cluster_dims)
   device_info = jaxpr_interpret.DeviceInfo()
 
   interpret_params = dataclasses.replace(
@@ -361,8 +351,9 @@ def interpret_pallas_call(
   )
 
   gpu_callbacks.call_initialize_shared_memory(
-      num_devices=device_info.num_devices,
-      num_threads=num_threads,
+      num_gpus=device_info.num_devices,
+      num_threads_per_block=num_threads,
+      num_blocks_per_cluster=num_blocks_per_cluster,
       interpret_params=interpret_params,
   )
 
@@ -437,6 +428,7 @@ def interpret_pallas_call(
 
     jaxpr_interpreter = jaxpr_interpret.JaxprInterpreter(
         grid_point_coords=grid_point_coords,
+        cluster_dims=cluster_dims,
         thread_id=thread_id,
         mesh=mesh,
         device_info=device_info,
@@ -465,7 +457,9 @@ def interpret_pallas_call(
     grid_point_coords = interpret_utils.get_indices(
         grid_dims, loop_idx
     )
-    thread_map.thread_map(_kernel, num_threads, grid_point_coords)
+    thread_map.thread_map(
+        _kernel, math.prod(cluster_dims) * num_threads, grid_point_coords
+    )
 
   # TODO(nrink): Should we only create happens-before here from thread 0 to
   # the other threads? Currently we update the vector clocks for all threads by

@@ -26,7 +26,7 @@ from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
 from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
-from typing import Sequence
+from collections.abc import Sequence
 
 
 @dataclasses.dataclass(frozen=True)
@@ -51,7 +51,7 @@ def do_matmul(a_gmem,
               grid_indices: Sequence[jax.Array],
               wg_axis: str,
               collective_axes: tuple[str, ...],
-              local_index: jax.Array,
+              local_index: jax.Array | int,
               config: TuningConfig,
               group_info: ragged_dot_mgpu.GroupInfo,
               a_smem, b_smem, acc_tmem, acc_smem,
@@ -77,9 +77,9 @@ def do_matmul(a_gmem,
     is_lead_block = cluster_idx == 0
   else:
     m_index, n_index = grid_indices
-    cluster_idx = 0  # type: ignore
+    cluster_idx = 0
     block_m_index = m_index
-    is_lead_block = True  # type: ignore
+    is_lead_block = True
   wg_idx = lax.axis_index(wg_axis)
   collective_axis = collective_axes[0] if collective else None
 
@@ -113,14 +113,18 @@ def do_matmul(a_gmem,
               a_gmem.at[slice_m, slice_k],
               a_smem.at[slot],
               a_tma_barrier.at[slot],
-              partitioned_axis=0 if collective else None,
+              leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
+              if collective
+              else None,
               collective_axes=collective_axis,
           )
           plgpu.copy_gmem_to_smem(
               b_gmem.at[slice_k, slice_n],
               b_smem.at[slot],
               b_tma_barrier.at[slot],
-              partitioned_axis=1 if collective else None,
+              leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
+              if collective
+              else None,
               collective_axes=collective_axis,
           )
         lax.fori_loop(0, k_iters, _loop_body, None)
@@ -298,9 +302,9 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
     def _scoped(**ref_kwargs):
       @plgpu.nd_loop(grid=(linear_grid,),
                      collective_axes="sm")
-      def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      def mn_loop(loop_info: plgpu.NDLoopInfo):
         linear_idx, = loop_info.index
-        local_index = loop_info.local_index  # type: ignore
+        local_index = loop_info.local_index
         m_index, n_index = plgpu.planar_snake(
           linear_idx,
           (m_iters + num_groups - 1, n_iters),
@@ -318,7 +322,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
             grid_indices=(group_info.block, n_index, cluster_idx),
             wg_axis="wg",
             collective_axes=("x",) if collective else (),
-            local_index=local_index,  # type: ignore
+            local_index=local_index,
             config=config,
             group_info=group_info,
             **ref_kwargs
@@ -407,7 +411,7 @@ def main(_) -> None:
           functools.partial(ragged_dot_kernel, config=config),
           iterations=10
       )(a, b, group_sizes)
-      runtime_ms = np.median(runtime_ms if runtime_ms else [])  # type: ignore
+      runtime_ms = np.median(runtime_ms if runtime_ms else [])
     except ValueError as e:
       if ("exceeds available shared memory" in e.args[0] or
           "Accumulator layout mismatch:" in e.args[0]):
@@ -417,7 +421,7 @@ def main(_) -> None:
     expected = ragged_dot_reference(a, b, group_sizes)
     np.testing.assert_allclose(out, expected)
 
-    runtime_us = runtime_ms * 1e3   # type: ignore
+    runtime_us = runtime_ms * 1e3
     optimal_time = matmul_flops / peak_flops * 1e6  # us
     achieved_tc_util = optimal_time / runtime_us * 100
     if achieved_tc_util > best_util:

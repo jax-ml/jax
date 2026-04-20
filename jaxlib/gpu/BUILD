@@ -38,6 +38,8 @@ exports_files(srcs = [
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
     "gpu_kernels.cc",
+    "householder_kernels.cu.cc",
+    "householder_kernels.h",
     "hybrid.cc",
     "hybrid_kernels.cc",
     "hybrid_kernels.h",

@@ -23,7 +23,6 @@ import logging
 import string
 import sys
 from typing import Any, Union
-import weakref
 
 import numpy as np
 
@@ -628,13 +627,7 @@ def _inspect_sharding_jvp_rule(primals, _, **params):
   return inspect_sharding_p.bind(*primals, **params), []
 ad.primitive_jvps[inspect_sharding_p] = _inspect_sharding_jvp_rule
 
-sharding_callbacks = weakref.WeakValueDictionary()
 _INSPECT_SHARDING_CALL_NAME = "InspectSharding"
-
-class ShardingCallbackInfo:
-  def __init__(self, callback, module_context):
-    self.callback = callback
-    self.module_context = module_context
 
 def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                                     callback):
@@ -663,7 +656,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
       return callback(
-          sharding_impls.GSPMDSharding(devices, hlo_sharding))  # pyrefly: ignore[bad-argument-type]
+          sharding_impls.GSPMDSharding(devices, hlo_sharding))
     pspec = (P() if hlo_sharding.is_manual() else
              parse_flatten_op_sharding(hlo_sharding, mesh)[0])
     return callback(NamedSharding(mesh, pspec))
@@ -736,14 +729,12 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
 
   # These imports are local so that they don't affect JAX import times.
-  # pytype: disable=import-error
-  import rich.align
-  import rich.console
-  import rich.box
-  import rich.padding
-  import rich.style
-  import rich.table
-  # pytype: enable=import-error
+  import rich.align  # pyrefly: ignore[missing-import]
+  import rich.console  # pyrefly: ignore[missing-import]
+  import rich.box  # pyrefly: ignore[missing-import]
+  import rich.padding  # pyrefly: ignore[missing-import]
+  import rich.style  # pyrefly: ignore[missing-import]
+  import rich.table  # pyrefly: ignore[missing-import]
 
   if len(shape) > 2 or len(shape) < 1:
     raise ValueError(
@@ -752,7 +743,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   use_color = use_color and console.color_system is not None
   if use_color and not color_map:
     try:
-      import matplotlib as mpl  # pytype: disable=import-error
+      import matplotlib as mpl  # pyrefly: ignore[missing-import]
       color_map = mpl.colormaps["tab20b"]
     except ModuleNotFoundError:
       use_color = False

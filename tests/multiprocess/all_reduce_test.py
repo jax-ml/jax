@@ -122,9 +122,6 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
     for actual in out.addressable_shards:
       jtu.check_close(actual.data, local_xs)
 
-  # TODO(dsuo): Remove this warning once PmapSharding is removed. We don't
-  # convert this to shard_map since axis_index_groups raises a
-  # NotImplementedError.
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_psum_axis_index_groups(self):
     devices = list(range(jax.device_count()))
@@ -140,16 +137,10 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
     xs = xs.reshape([jax.device_count(), 100])
     group0_expected = sum(xs[0::2, :])
     group1_expected = sum(xs[1::2, :])
-    if jax.config.jax_pmap_shmap_merge:
-      for i, shard in enumerate(out.addressable_shards):
-        device_id = i + jax.process_index() * jax.local_device_count()
-        expected = group0_expected if device_id % 2 == 0 else group1_expected
-        np.testing.assert_array_equal(np.squeeze(shard.data), expected)
-    else:
-      for i, actual in enumerate(out):
-        device_id = i + jax.process_index() * jax.local_device_count()
-        expected = group0_expected if device_id % 2 == 0 else group1_expected
-        np.testing.assert_array_equal(actual, expected)
+    for i, shard in enumerate(out.addressable_shards):
+      device_id = i + jax.process_index() * jax.local_device_count()
+      expected = group0_expected if device_id % 2 == 0 else group1_expected
+      np.testing.assert_array_equal(np.squeeze(shard.data), expected)
 
 
 if __name__ == "__main__":

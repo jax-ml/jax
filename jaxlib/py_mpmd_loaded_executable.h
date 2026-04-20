@@ -42,7 +42,6 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/pytree.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/attribute_map.h"
@@ -100,8 +99,7 @@ class PyMpmdLoadedExecutable {
 
   absl::StatusOr<nb::list> Execute(nb::sequence args);
 
-  absl::StatusOr<nb::object> ExecuteFastpath(
-      nb::sequence args, nb::dict kwargs);
+  absl::StatusOr<nb::object> ExecuteFastpath(nb::args args, nb::kwargs kwargs);
 
   // Returns a mapping between atom program name and compiled memory stats.
   absl::StatusOr<absl::flat_hash_map<std::string, xla::CompiledMemoryStats>>
@@ -130,7 +128,7 @@ class PyMpmdLoadedExecutable {
   absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetOutputLayouts();
 
-  void ParseArguments(nb::sequence args, nb::dict kwargs,
+  void ParseArguments(nb::args args, nb::kwargs kwargs,
                       jax::ArgumentSignature& arg_signature,
                       absl::InlinedVector<nb::object, 2>& flat_args);
 

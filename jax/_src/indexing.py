@@ -111,9 +111,7 @@ def dslice(
   if not isinstance(stride, int):
     raise ValueError("Non-static stride in `dslice`")
   if size is None:
-    if not isinstance(start, int):
-      raise ValueError("Non-static `dslice`")
-    return Slice(0, start, stride)
+    start, size = 0, start
   return Slice(start, size, stride)
 
 

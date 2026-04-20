@@ -43,12 +43,13 @@ from jax._src.pallas.mosaic_gpu.core import untile_ref as untile_ref
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
+from jax._src.pallas.mosaic_gpu.helpers import dynamic_scheduling_loop as dynamic_scheduling_loop
 from jax._src.pallas.mosaic_gpu.helpers import find_swizzle as find_swizzle
 from jax._src.pallas.mosaic_gpu.helpers import format_tcgen05_sparse_metadata as format_tcgen05_sparse_metadata
 from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
 from jax._src.pallas.mosaic_gpu.helpers import NDLoopInfo as NDLoopInfo
 from jax._src.pallas.mosaic_gpu.helpers import planar_snake as planar_snake
-from jax._src.pallas.mosaic_gpu.helpers import dynamic_scheduling_loop as dynamic_scheduling_loop
+from jax._src.pallas.mosaic_gpu.helpers import warp_map as warp_map
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline
@@ -58,7 +59,14 @@ from jax._src.pallas.mosaic_gpu.primitives import async_copy_sparse_metadata_to_
 from jax._src.pallas.mosaic_gpu.primitives import async_load_tmem as async_load_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_prefetch as async_prefetch
 from jax._src.pallas.mosaic_gpu.primitives import async_store_tmem as async_store_tmem
+from jax._src.pallas.mosaic_gpu.primitives import atomic_add as atomic_add
+from jax._src.pallas.mosaic_gpu.primitives import atomic_and as atomic_and
+from jax._src.pallas.mosaic_gpu.primitives import atomic_max as atomic_max
+from jax._src.pallas.mosaic_gpu.primitives import atomic_min as atomic_min
+from jax._src.pallas.mosaic_gpu.primitives import atomic_or as atomic_or
+from jax._src.pallas.mosaic_gpu.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive as barrier_arrive
+from jax._src.pallas.mosaic_gpu.primitives import barrier_test as barrier_test
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
 from jax._src.pallas.mosaic_gpu.primitives import broadcasted_iota as broadcasted_iota
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem as commit_smem
@@ -68,8 +76,8 @@ from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
-from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multimem_load_reduce
+from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
 from jax._src.pallas.mosaic_gpu.primitives import query_cluster_cancel as query_cluster_cancel
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
@@ -91,6 +99,8 @@ from jax._src.state.types import Transform as Transform
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 from jax.experimental.mosaic.gpu.fragmented_array import Replicated as Replicated
 from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
+from jax.experimental.mosaic.gpu.launch_context import CopyPartition as CopyPartition
+from jax.experimental.mosaic.gpu.launch_context import OOBFillMode as OOBFillMode
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.

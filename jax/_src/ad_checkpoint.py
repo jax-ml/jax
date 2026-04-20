@@ -26,7 +26,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
@@ -48,7 +47,7 @@ from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map)
+    tree_map, tree_leaves, Partial, tracing_registry)
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -350,15 +349,15 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  # TODO(jakevdp): Remove the concrete argument in JAX v0.11.0.
   if not isinstance(concrete, DeprecatedArg):
     concrete_msg = (
-        "The `concrete` option to `jax.checkpoint` has been deprecated."
+        "The `concrete` option to `jax.checkpoint` was deprecated in JAX"
+        " v0.8.2, and removed in JAX v0.10.0."
         " In its place please use `static_argnums`; for details refer to"
         " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
     )
-    deprecations.warn("jax-checkpoint-concrete", concrete_msg, stacklevel=2)
-    if concrete:
-      raise NotImplementedError(concrete_msg)
+    raise NotImplementedError(concrete_msg)
 
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,
@@ -375,7 +374,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
-    args_flat, in_tree = tree_flatten((args, kwargs))
+    args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     api_util.check_no_transformed_refs_args(lambda: debug, args_flat)
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
@@ -645,12 +644,12 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
   _, tracers_staged = partition_list(in_used_staged, tracers)
-  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # type: ignore
+  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # pyrefly: ignore[bad-argument-type]
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   if isinstance(prevent_cse, tuple):
     _, prevent_cse_ = partition_list(in_used_staged, prevent_cse)
-    prevent_cse = (True,) * len(res_tracers) + tuple(prevent_cse_)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+    prevent_cse = (True,) * len(res_tracers) + tuple(prevent_cse_)
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True,
                     prevent_cse=prevent_cse)
   recipe = pe.new_eqn_recipe(trace, in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
@@ -737,9 +736,8 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
 
 def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   # TODO(mattjj): avoid round-tripping into UndefinedPrimals
-  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.ValAccum) else x
+  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
            for x in args]
-  if any(isinstance(x, ad.GradAccum) for x in args_): raise NotImplementedError
 
   assert not jaxpr.constvars
   in_linear = [ad.is_undefined_primal(x) for x in args_]
@@ -756,7 +754,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
                            prevent_cse=prevent_cse, **params)
   in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
   for x in args:
-    if isinstance(x, ad.ValAccum) and not next(in_zeros_):
+    if isinstance(x, ad.GradAccum) and not next(in_zeros_):
       x.accum(next(in_cts_nz_))
 ad.fancy_transposes[remat_p] = remat_transpose
 
@@ -782,12 +780,6 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
     # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
-    ins_iter = iter(ins_flat)
-    _in_pvals = [pe.PartialVal.unknown(aval) if lin else
-                 pe.PartialVal.known(next(ins_iter))
-                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
-    assert next(ins_iter, None) is None
-
     # TODO(mattjj): revise not to require disabling checks
     with config.mutable_array_checks(False):
       jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
@@ -806,7 +798,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts = in_cts[len(consts):]
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
-    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # type: ignore[missing-attribute]
+    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # pyrefly: ignore[missing-attribute]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
@@ -815,7 +807,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # type: ignore[missing-attribute]
+  return transposed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
@@ -856,24 +848,6 @@ def _has_effects(effects) -> bool:
   return any(not isinstance(e, not_really_effects) for e in effects)
 
 
-def remat_expansion(
-    *args, jaxpr: core.Jaxpr, prevent_cse: bool, differentiated: bool, **_
-):
-  assert not jaxpr.constvars
-
-  if differentiated and prevent_cse:
-    translation_rule = _remat_translation_using_opt_barrier
-  else:
-    translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
-
-  return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
-
-
-def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
-  args = lax_internal.optimization_barrier(args)
-  return core.eval_jaxpr(jaxpr, (), *args)
-
-
 def _remat_lowering(
     ctx: mlir.LoweringRuleContext,
     *args,
@@ -883,7 +857,7 @@ def _remat_lowering(
     policy,
 ):
   if isinstance(prevent_cse, bool):
-    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # type: ignore
+    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # pyrefly: ignore[bad-assignment]
   assert isinstance(prevent_cse, tuple)
   if differentiated and any(prevent_cse):
     _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)
@@ -891,7 +865,7 @@ def _remat_lowering(
     barrier_op = hlo.OptimizationBarrierOp(
         mlir.flatten_ir_values(barrier_args))
     barrier_results = mlir.unflatten_ir_values_like_types(
-        barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+        barrier_op.results, map(mlir._aval_to_ir_types, barrier_avals))
     args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
@@ -909,7 +883,7 @@ remat_p.is_high = _remat_is_high
 
 
 def _remat_to_lojax(*hi_args, jaxpr, **kwds):
-  closed_lo_jaxpr = pe.lower_jaxpr(pe.close_jaxpr(jaxpr))
+  closed_lo_jaxpr = pe.lower_jaxpr2(pe.close_jaxpr(jaxpr))
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
@@ -995,7 +969,6 @@ def _remat_state_discharge_rule(
 
 # TODO
 #  [ ] zeros propagation (needs separate ruleset, maybe jax.vjp improvement)
-#  [ ] accum-native vjp_bwd via with_accums
 
 def checkpoint_name3(name, x):
   return CheckpointName(name, core.typeof(x))(x)
@@ -1005,6 +978,17 @@ def remat3(f=None, /, policy=frozenset()):
 
 def _remat3(policy, f, *args):
   return RematTraced(api.jit(f).trace(*args), policy)(*args)
+
+def dce(traced):
+  jaxpr_, used = pe.dce_jaxpr(traced.jaxpr.jaxpr, True)
+  jaxpr = core.ClosedJaxpr(jaxpr_, traced.jaxpr.consts)
+  used_res, used_primals = split_list(used, [traced._num_consts])
+  res = [r for r, u in zip(traced._consts, used_res) if u]
+  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree), res)
+
+def _dced(jaxpr, out_tree, res, *args):
+  out_flat = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *res, *args)
+  return tree_unflatten(out_tree, out_flat)
 
 class RematTraced(VJPHiPrimitive):
   traced: Any
@@ -1021,19 +1005,20 @@ class RematTraced(VJPHiPrimitive):
 
   def vjp_fwd(self, _nzs_in, *primals):
     primals_out, fwd2 = remat_transform(self.policy, self.traced, *primals)
-    return primals_out, (primals, fwd2)
+    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals))
+    primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
+    return primals_out, (primals_, rem)
 
-  def vjp_bwd(self, res, outgrad, *arg_accums):
-    primals, fwd2 = res
-    _, bwd = api.vjp(fwd2, *lax_internal.optimization_barrier(primals))
-    arg_grads = bwd(outgrad)
-    for x, ct in zip(arg_accums, arg_grads):
-      x.accum(ct)
+  def vjp_bwd(self, primals_vjp, outgrad, *arg_accums):
+    primals, rem = primals_vjp
+    bwd = rem(*lax_internal.optimization_barrier(primals))
+    bwd.with_refs(arg_accums)(outgrad)
 
   def jvp(self, primals, tangents):
     return api.jvp(self.traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
+    # TODO(mattjj,yashkatariya): use remat_transform for partial remat here too
     primals_out, f_lin = api.linearize(self.traced, *primals)
     return primals_out, primals
 

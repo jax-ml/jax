@@ -1207,6 +1207,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         jnp.tile(x_block, block_reps),
     )
 
+  def test_pipeline_mode(self):
+    def f(x):
+      return jnp.tanh(x) + x
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+    pmode = pl.Buffered(2)
+    block_spec = pl.BlockSpec(
+        (128, 128), lambda i, j, k: (i, j), pipeline_mode=pmode)
+    _, (value_block_specs, in_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid_len=3,
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(in_block_spec.block_shape, (128, 128))
+    self.assertEqual(in_block_spec.pipeline_mode, pmode)
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 

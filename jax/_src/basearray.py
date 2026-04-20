@@ -19,9 +19,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import sys
 from typing import Any, Union
-import warnings
 
-from jax._src import literals
+from jax._src import deprecations
 from jax._src.lib import xla_client as xc
 from jax._src.util import use_cpp_class
 import numpy as np
@@ -65,10 +64,15 @@ class Array:
   @property
   def __numpy_dtype__(self) -> np.dtype:
     # __numpy_dtype__ protocol added in NumPy v2.4.0.
-    warnings.warn(
-      "Implicit conversion of an array to a dtype is deprecated;"
-      " rather than dtype=arr use dtype=arr.dtype. In the future"
-      " this will result in an error.", DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      'jax-array-numpy-dtype',
+      (
+        "Implicit conversion of an array to a dtype is deprecated;"
+        " rather than dtype=arr use dtype=arr.dtype. In the future"
+        " this will result in an error."
+      ),
+      stacklevel=2,
+      error_class=TypeError)
     return self.dtype
 
   @property
@@ -135,8 +139,8 @@ class Array:
     """Whether the array is committed or not.
 
     An array is committed when it is explicitly placed on device(s) via JAX
-    APIs. For example, `jax.device_put(np.arange(8), jax.devices()[0])` is
-    committed to device 0. While `jax.device_put(np.arange(8))` is uncommitted
+    APIs. For example, ``jax.device_put(np.arange(8), jax.devices()[0])`` is
+    committed to device 0. While ``jax.device_put(np.arange(8))`` is uncommitted
     and will be placed on the default device.
 
     Computations involving some committed inputs will happen on the committed
@@ -144,16 +148,13 @@ class Array:
     Invoking an operation on arguments that are committed to different device(s)
     will raise an error.
 
-    For example:
-
-    ```
-    a = jax.device_put(np.arange(8), jax.devices()[0])
-    b = jax.device_put(np.arange(8), jax.devices()[1])
-    a + b  # Raises an error
-    ```
-
-    See https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
-    for more information.
+    Examples:
+      >>> a = jax.device_put(np.arange(8), jax.devices()[0])
+      >>> b = jax.device_put(np.arange(8), jax.devices()[1])
+      >>> a + b  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+        ...
+      ValueError: Received incompatible devices for jitted computation.
     """
     raise NotImplementedError
 
@@ -208,7 +209,6 @@ ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
   StaticScalar,  # valid scalars
-  literals.TypedNdArray,  # Typed array type
 ]
 
 if sys.version_info[:2] < (3, 14):

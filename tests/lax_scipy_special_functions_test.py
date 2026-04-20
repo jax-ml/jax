@@ -67,6 +67,17 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
+        "gamma", 1, jtu.dtypes.complex, jtu.rand_default, False,
+        test_name="gamma_complex"
+    ),
+    op_record(
+        "loggamma", 1, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "loggamma", 1, jtu.dtypes.complex, jtu.rand_default, False,
+        test_name="loggamma_complex"
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
@@ -354,13 +365,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       # will be available
       a_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
       b_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
-    elif jtu.parse_version(scipy.__version__) >= (1, 12):
+    else:
       # disabled samples that contradict with scipy/scipy#22425
       a_samples = [nan, -0.5, 0.5]
       b_samples = [nan, -0.5, 0.5]
-    else:
-      a_samples = [-0.5, 0.5]
-      b_samples = [-0.5, 0.5]
     x_samples = [nan, -0.5, 0, 0.5, 1, 1.5]
 
     a_samples = np.array(a_samples, dtype=dtype)
@@ -417,6 +425,21 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Argument `x` to sici must be real-valued."):
       lsp_special.sici(samples)
 
+  def testComplexGammaPoles(self):
+    """Test that gamma returns nan+nanj at non-positive integer poles."""
+    poles = jnp.array([0+0j, -1+0j, -2+0j, -5+0j])
+    result = np.array(lsp_special.gamma(poles))
+    # Both real and imaginary parts should be NaN
+    self.assertTrue(np.all(np.isnan(result.real)))
+    self.assertTrue(np.all(np.isnan(result.imag)))
+
+  def testComplexGammaBranchCut(self):
+    """Test gamma near the negative real axis and at the reflection boundary."""
+    # Points near poles (approached from above/below) should match SciPy
+    z = np.array([-0.5+0j, -1.5+0j, 0.5+1j, 0.5-1j, -2.5+1e-12j, -2.5-1e-12j])
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
+                        atol=1e-5, rtol=rtol)
 
 
 if __name__ == "__main__":

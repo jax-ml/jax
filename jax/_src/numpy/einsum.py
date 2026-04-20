@@ -290,8 +290,10 @@ def einsum(
   path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
   # Extract __jax_array__ before passing to contract_path()
-  operands = tuple(op.__jax_array__() if hasattr(op, "__jax_array__") else op
-                   for op in operands)
+  def _convert(op):
+    m = getattr(op, "__jax_array__", None)
+    return m() if m is not None else op
+  operands = tuple(_convert(op) for op in operands)
 
   # Allow handling of shape polymorphism
   non_constant_dim_types = {
@@ -307,7 +309,7 @@ def einsum(
   operands, contractions = contract_path(
         *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
-  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)  # pytype: disable=attribute-error
+  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
   num_contractions = len(contractions)
 
   out_sharding = canonicalize_sharding(out_sharding, 'einsum')
@@ -446,31 +448,31 @@ def _einsum(
     )
     output_weak_type = False
 
-  def sum(x, axes):
+  def sum(x, axes, out_s):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
     return lax.reduce(
         x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
-        axes, out_sharding)
+        axes, out_s)
 
-  def sum_uniques(operand, names, uniques):
+  def sum_uniques(operand, names, uniques, out_s=None):
     if uniques:
       axes = [names.index(name) for name in uniques]
-      operand = sum(operand, axes)
+      operand = sum(operand, axes, out_s)
       names = _removechars(names, uniques)
     return operand, names
 
-  def sum_repeats(operand, names, counts, keep_names):
+  def sum_repeats(operand, names, counts, keep_names, out_s=None):
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
         eye = lax._delta(np.dtype('bool'), operand.shape, axes)
         operand = lax.select(eye, operand, lax.full_like(operand, 0))
         if name not in keep_names:
-          operand = sum(operand, axes)
+          operand = sum(operand, axes, out_s)
           names = names.replace(name, '')
         else:
-          operand = sum(operand, axes[:-1])
+          operand = sum(operand, axes[:-1], out_s)
           names = names.replace(name, '', count - 1)
     return operand, names
 
@@ -492,14 +494,12 @@ def _einsum(
       operand = operands.pop(operand_indices[0])
       names, = input_names
       counts = collections.Counter(names)
-
       # sum out unique contracted indices with a single reduce-sum
       uniques = [name for name in contracted_names if counts[name] == 1]
-      operand, names = sum_uniques(operand, names, uniques)
-
+      operand, names = sum_uniques(operand, names, uniques, out_sharding)
       # for every repeated index, do a contraction against an identity matrix
-      operand, names = sum_repeats(operand, names, counts, result_names)
-
+      operand, names = sum_repeats(operand, names, counts, result_names,
+                                   out_sharding)
     elif len(operand_indices) == 2:
       lhs, rhs = map(operands.pop, operand_indices)
       lhs_names, rhs_names = input_names
@@ -591,9 +591,9 @@ def _einsum(
       perm = tuple(names.index(name) for name in result_names)
       operand = lax.transpose(operand, perm)
     operands.append(operand)  # used in next iteration
-
   return lax._convert_element_type(operands[0], preferred_element_type,
                                    output_weak_type)
+
 
 def _get_inverse_sharding(out_sharding, names, result_names):
   if len(result_names) > len(out_sharding.spec):

@@ -213,7 +213,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/version.py",
           f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
-          f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
           f"{source_file_prefix}jaxlib/_ifrt_proxy.{pyext}",
           f"{source_file_prefix}jaxlib/_jax.{pyext}",
           f"{source_file_prefix}jaxlib/_sdy_mpmd.{pyext}",
@@ -246,7 +245,13 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   )
   # TODO (sharadmv,skyewm): can we avoid patching this file?
   patch_copy_mlir_import(
-      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_gen.py",
+      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_enum_gen.py",
+      dst_dir=mosaic_python_dir,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+  patch_copy_mlir_import(
+      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_ops_gen.py",
       dst_dir=mosaic_python_dir,
       runfiles=r,
       wheel_sources_map=wheel_sources_map,
@@ -350,6 +355,11 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_tpu_ext.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_chlo.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_jax_mlir_ext.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsNVGPU.pyi",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirHlo.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_sdyMpmd.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_sdy.pyi",

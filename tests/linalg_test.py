@@ -15,9 +15,6 @@
 from functools import partial
 import itertools
 from collections.abc import Iterator
-import platform
-import unittest
-
 import numpy as np
 import scipy
 import scipy.linalg
@@ -99,33 +96,32 @@ def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarra
     return np.vectorize(
       scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
 
+def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
+  """Batched scipy hankel for testing."""
+  if scipy_version >= (1, 19):
+    if r is None:
+      return scipy.linalg.hankel(c)
+    return scipy.linalg.hankel(c, r)
+  if r is None:
+    r = np.zeros_like(c)
+  return np.vectorize(
+      scipy.linalg.hankel, signature="(m),(n)->(m,n)",
+      otypes=(np.result_type(c.dtype, r.dtype),))(c, r)
 
 def svd_algorithms():
   algorithms = [None]
   if jtu.device_under_test() in ["cpu", "gpu"]:
     algorithms.append(lax.linalg.SvdAlgorithm.QR)
+  if jtu.device_under_test() == "cpu":
+    algorithms.append(lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER)
   if jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.JACOBI)
+    algorithms.append(lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER)
   if jtu.device_under_test() == "tpu" or jtu.device_under_test() == "gpu":
     algorithms.append(lax.linalg.SvdAlgorithm.POLAR)
   return algorithms
 
 
-# (complex) Eigenvectors are only unique up to an arbitrary phase. This makes the gradient
-# tests based on finite differences unstable, since perturbing the input matri may cause an
-# arbitrary sign flip of one or more of the eigenvectors. To remedy this, we normalize the
-# vectors such that the first component has phase 0.
-def _normalizing_eigh(H: np.ndarray, lower: bool, symmetrize_input: bool):
-  uplo = "L" if lower else "U"
-  e, v = jnp.linalg.eigh(H, UPLO=uplo, symmetrize_input=symmetrize_input)
-  top_rows = v[..., 0:1, :]
-  if np.issubdtype(H.dtype, np.complexfloating):
-    angle = -jnp.angle(top_rows)
-    phase = lax.complex(jnp.cos(angle), jnp.sin(angle))
-  else:
-    phase = jnp.sign(top_rows)
-  v *= phase
-  return e, v
 
 
 # (complex) singular vectors are only unique up to an arbitrary phase. This makes the gradient
@@ -406,6 +402,45 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    shape=[(4, 4), (5, 5)],
+    dtype=complex_types,
+    left_right=[(False, True), (True, False), (True, True)],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradComplexInputs(self, shape, dtype, left_right):
+    # Small matrices only; the eigenvector derivative blows up like
+    # 1/min|w_i - w_j| so close eigenvalues make the FD check noisy.
+    left, right = left_right
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    tol = 1e-3 if dtype == np.complex128 else 5e-1
+    f = partial(lax.linalg.eig, compute_left_eigenvectors=left,
+                compute_right_eigenvectors=right, enable_eigvec_derivs=True)
+    jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (5, 5)],
+    dtype=float_types,
+    left_right=[(False, True), (True, False), (True, True)],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def testEigGradRealInputs(self, shape, dtype, left_right):
+    # dgeev does not pin the sign of complex-pair eigenvectors so the primal
+    # output is itself discontinuous; compose with elementwise v -> v*v which
+    # is sign-invariant but still phase-sensitive (so still exercises the
+    # gauge-fixing part of the JVP).
+    left, right = left_right
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+    tol = 1e-3 if dtype == np.float64 else 5e-1
+    def f(a):
+      out = lax.linalg.eig(a, compute_left_eigenvectors=left,
+                           compute_right_eigenvectors=right,
+                           enable_eigvec_derivs=True)
+      return (out[0],) + tuple(v * v for v in out[1:])
+    jtu.check_grads(f, (a,), order=2, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )
@@ -443,242 +478,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(np.all(np.linalg.norm(
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
-  @jtu.sample_product(
-      n=[0, 4, 5, 50, 512],
-      dtype=float_types + complex_types,
-      lower=[True, False],
-  )
-  def testEigh(self, n, dtype, lower):
-    rng = jtu.rand_default(self.rng())
-    eps = np.finfo(dtype).eps
-    args_maker = lambda: [rng((n, n), dtype)]
-
-    uplo = "L" if lower else "U"
-
-    a, = args_maker()
-    a = (a + np.conj(a.T)) / 2
-    w, v = jnp.linalg.eigh(np.tril(a) if lower else np.triu(a),
-                           UPLO=uplo, symmetrize_input=False)
-    w = w.astype(v.dtype)
-    tol = 2 * n * eps
-    self.assertAllClose(
-        np.eye(n, dtype=v.dtype),
-        np.matmul(np.conj(T(v)), v),
-        atol=tol,
-        rtol=tol,
-    )
-
-    with jax.numpy_rank_promotion('allow'):
-      tol = 100 * eps
-      self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), tol * np.linalg.norm(a)
-      )
-
-    self._CompileAndCheck(
-        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=eps
-    )
-
-    # Compare eigenvalues against Numpy using double precision. We do not compare
-    # eigenvectors because they are not uniquely defined, but the two checks above
-    # guarantee that that they satisfy the conditions for being eigenvectors.
-    double_type = dtype
-    if dtype == np.float32:
-      double_type = np.float64
-    if dtype == np.complex64:
-      double_type = np.complex128
-    w_np = np.linalg.eigvalsh(a.astype(double_type))
-    tol = 8 * eps
-    self.assertAllClose(
-        w_np.astype(w.dtype), w, atol=tol * np.linalg.norm(a), rtol=tol
-    )
-
-  @jax._src.config.explicit_x64_dtypes("allow")
-  @jtu.run_on_devices("gpu")
-  @unittest.skip("Needs a large amount of GPU memory, doesn't work in CI")
-  def testEighLargeMatrix(self):
-    # https://github.com/jax-ml/jax/issues/33062
-    n = 16384
-    A = jnp.eye(n, dtype=jnp.float64)
-    jax.block_until_ready(jax.lax.linalg.eigh(A))
-
-  @jtu.sample_product(
-      start=[0, 1, 63, 64, 65, 255],
-      end=[1, 63, 64, 65, 256],
-  )
-  @jtu.run_on_devices("tpu")  # TODO(rmlarsen: enable on other devices)
-  def testEighSubsetByIndex(self, start, end):
-    if start >= end:
-      return
-    dtype = np.float32
-    n = 256
-    rng = jtu.rand_default(self.rng())
-    eps = np.finfo(dtype).eps
-    args_maker = lambda: [rng((n, n), dtype)]
-    subset_by_index = (start, end)
-    k = end - start
-    (a,) = args_maker()
-    a = (a + np.conj(a.T)) / 2
-
-    v, w = lax.linalg.eigh(
-        a, symmetrize_input=False, subset_by_index=subset_by_index
-    )
-    w = w.astype(v.dtype)
-
-    self.assertEqual(v.shape, (n, k))
-    self.assertEqual(w.shape, (k,))
-    with jax.numpy_rank_promotion("allow"):
-      tol = 200 * eps
-      self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), tol * np.linalg.norm(a)
-      )
-    tol = 3 * n * eps
-    self.assertAllClose(
-        np.eye(k, dtype=v.dtype),
-        np.matmul(np.conj(T(v)), v),
-        atol=tol,
-        rtol=tol,
-    )
-
-    self._CompileAndCheck(partial(jnp.linalg.eigh), args_maker, rtol=eps)
-
-    # Compare eigenvalues against Numpy. We do not compare eigenvectors because
-    # they are not uniquely defined, but the two checks above guarantee that
-    # that they satisfy the conditions for being eigenvectors.
-    double_type = dtype
-    if dtype == np.float32:
-      double_type = np.float64
-    if dtype == np.complex64:
-      double_type = np.complex128
-    w_np = np.linalg.eigvalsh(a.astype(double_type))[
-        subset_by_index[0] : subset_by_index[1]
-    ]
-    tol = 20 * eps
-    self.assertAllClose(
-        w_np.astype(w.dtype), w, atol=tol * np.linalg.norm(a), rtol=tol
-    )
-
-  def testEighZeroDiagonal(self):
-    a = np.array([[0., -1., -1.,  1.],
-                  [-1.,  0.,  1., -1.],
-                  [-1.,  1.,  0., -1.],
-                  [1., -1., -1.,  0.]], dtype=np.float32)
-    w, v = jnp.linalg.eigh(a)
-    w = w.astype(v.dtype)
-    eps = jnp.finfo(a.dtype).eps
-    with jax.numpy_rank_promotion('allow'):
-      self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 2.5 * eps * np.linalg.norm(a)
-      )
-
-  def testEighTinyNorm(self):
-    rng = jtu.rand_default(self.rng())
-    a = rng((300, 300), dtype=np.float32)
-    eps = jnp.finfo(a.dtype).eps
-    a = eps * (a + np.conj(a.T))
-    w, v = jnp.linalg.eigh(a)
-    w = w.astype(v.dtype)
-    with jax.numpy_rank_promotion("allow"):
-      self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 80 * eps * np.linalg.norm(a)
-      )
-
-  @jtu.sample_product(
-      rank=[1, 3, 299],
-  )
-  def testEighRankDeficient(self, rank):
-    rng = jtu.rand_default(self.rng())
-    eps = jnp.finfo(np.float32).eps
-    a = rng((300, rank), dtype=np.float32)
-    a = a @ np.conj(a.T)
-    w, v = jnp.linalg.eigh(a)
-    w = w.astype(v.dtype)
-    with jax.numpy_rank_promotion("allow"):
-      self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v),
-          85 * eps * np.linalg.norm(a),
-      )
-
-  @jtu.sample_product(
-    n=[0, 4, 5, 50, 512],
-    dtype=float_types + complex_types,
-    lower=[True, False],
-  )
-  def testEighIdentity(self, n, dtype, lower):
-    tol = np.finfo(dtype).eps
-    uplo = "L" if lower else "U"
-
-    a = jnp.eye(n, dtype=dtype)
-    w, v = jnp.linalg.eigh(a, UPLO=uplo, symmetrize_input=False)
-    w = w.astype(v.dtype)
-    self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), tol
-    )
-    with jax.numpy_rank_promotion('allow'):
-      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                           tol * np.linalg.norm(a))
-
-  @jtu.sample_product(
-    shape=[(4, 4), (5, 5), (50, 50)],
-    dtype=float_types + complex_types,
-  )
-  def testEigvalsh(self, shape, dtype):
-    rng = jtu.rand_default(self.rng())
-    n = shape[-1]
-    def args_maker():
-      a = rng((n, n), dtype)
-      a = (a + np.conj(a.T)) / 2
-      return [a]
-    self._CheckAgainstNumpy(
-        np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker, tol=2e-5
-    )
-
-  @jtu.sample_product(
-      shape=[(1, 1), (4, 4), (5, 5), (25, 25), (2, 10, 10)],
-      dtype=float_types + complex_types,
-      lower=[True, False],
-  )
-  def testEighGrad(self, shape, dtype, lower):
-    if platform.system() == "Windows":
-      self.skipTest("Skip on Windows due to tolerance issues.")
-    rng = jtu.rand_default(self.rng())
-    a = rng(shape, dtype)
-    a = (a + np.conj(T(a))) / 2
-    ones = np.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
-    a *= np.tril(ones) if lower else np.triu(ones)
-    # Gradient checks will fail without symmetrization as the eigh jvp rule
-    # is only correct for tangents in the symmetric subspace, whereas the
-    # checker checks against unconstrained (co)tangents.
-    f = partial(_normalizing_eigh, lower=lower, symmetrize_input=True)
-    norm_a = jnp.linalg.norm(a)
-    eps = 2e-5 * norm_a
-    atol = 5e-3 * norm_a
-    rtol = 0.025
-    jtu.check_grads(f, (a,), 2, atol=atol, rtol=rtol, eps=eps)
-
-  def testEighGradPrecision(self):
-    rng = jtu.rand_default(self.rng())
-    a = rng((3, 3), np.float32)
-    jtu.assert_dot_precision(
-        lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
-
-  def testEighGradRankPromotion(self):
-    rng = jtu.rand_default(self.rng())
-    a = rng((10, 3, 3), np.float32)
-    jvp(jnp.linalg.eigh, (a,), (a,))  # doesn't crash
-
-  @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (5, 5), (300, 300)],
-    dtype=float_types + complex_types,
-  )
-  def testEighBatching(self, shape, dtype):
-    rng = jtu.rand_default(self.rng())
-    shape = (10,) + shape
-    args = rng(shape, dtype)
-    args = (args + np.conj(T(args))) / 2
-    ws, vs = vmap(jsp.linalg.eigh)(args)
-    ws = ws.astype(vs.dtype)
-    norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
-    self.assertLess(norm, 1.4e-2)
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],
@@ -913,6 +712,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
       self.skipTest("ROCM polar SVD not implemented")
 
+    if (not jtu.is_device_rocm() and jtu.device_under_test() == "gpu"
+        and algorithm == lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER):
+      self.skipTest("Divide-and-conquer SVD only supported on AMD (ROCm) GPUs")
+
     if (
         jtu.test_device_matches(["cuda"])
         and (algorithm, m, n) in [
@@ -1103,11 +906,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       q1 *= phases
       nm = norm(q1 - q2)
       max_norm = 220 if jtu.is_device_tpu(7, 'x') else 160
-      self.assertTrue(np.all(nm < max_norm), msg=f"norm={np.amax(nm)}")
+      if not np.all(nm < max_norm):
+        self.fail(f"norm={np.amax(nm)}")
 
     # Check a ~= qr
     norm_error = norm(a - np.matmul(lq, lr))
-    self.assertTrue(np.all(norm_error < 60), msg=np.amax(norm_error))
+    if not np.all(norm_error < 60):
+      self.fail(np.amax(norm_error))
 
     # Compare the first 'k' vectors of Q; the remainder form an arbitrary
     # orthonormal basis for the null space.
@@ -1123,8 +928,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       q, r = jnp.linalg.qr(a, mode=mode)
       return q @ r
 
-    if m == n or (m > n and not full_matrices):
-      jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
+    jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.skip_on_devices("tpu")
   def testQrInvalidDtypeCPU(self, shape=(5, 6), dtype=np.float16):
@@ -1395,7 +1199,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   def testLstsqZeroMatrix(self, shape):
     # Regression test for https://github.com/jax-ml/jax/issues/32666
-    args_maker = lambda: [np.zeros(shape), np.ones((shape))]
+    args_maker = lambda: [np.zeros(shape), np.ones(shape)]
     np_fun = np.linalg.lstsq
     jnp_fun = partial(jnp.linalg.lstsq, numpy_resid=True)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
@@ -1623,6 +1427,39 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+     for lhs_shape, rhs_shape in [
+       # batched lu, unbatched b (vector)
+       ((3, 4, 4), (4,)),
+       # batched lu, unbatched b (matrix)
+       ((3, 8, 8), (8, 4)),
+       # unbatched lu, batched b (matrix) — broadcast lu -> batch
+       ((4, 4), (3, 4, 2)),
+     ]
+    ],
+    trans=[0, 1, 2],
+    dtype=float_types + complex_types,
+  )
+  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testLuSolveBroadcast(self, lhs_shape, rhs_shape, dtype, trans):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.lu_solve batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    lu_factor_vec = np.vectorize(osp.linalg.lu_factor,
+                                  signature="(n,n)->(n,n),(n)")
+
+    def args_maker():
+      a = rng(lhs_shape, dtype)
+      lu, piv = lu_factor_vec(a) if a.ndim > 2 else osp.linalg.lu_factor(a)
+      return [lu, piv, rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [
         ((1, 1), (1, 1)),
         ((4, 4), (4,)),
@@ -1658,7 +1495,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
         ((4, 4), (4,)),
         ((4, 4), (4, 3)),
-        ((2, 8, 8), (2, 8, 10)),
       ]
     ],
     lower=[False, True],
@@ -1681,20 +1517,48 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       a = l
     a = a if lower else T(a)
 
-    inv = np.linalg.inv(T(a) if transpose_a else a).astype(a.dtype)
-    if len(lhs_shape) == len(rhs_shape):
-      np_ans = np.matmul(inv, b)
-    else:
-      np_ans = np.einsum("...ij,...j->...i", inv, b)
+    osp_fun = partial(osp.linalg.solve_triangular, trans=1 if transpose_a else 0,
+                      lower=lower, unit_diagonal=unit_diagonal)
+    jsp_fun = partial(jsp.linalg.solve_triangular, trans=1 if transpose_a else 0,
+                      lower=lower, unit_diagonal=unit_diagonal)
+    args_maker = lambda: [a, b]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            rtol={np.float32: 1e-4, np.float64: 1e-11})
+    self._CompileAndCheck(jsp_fun, args_maker)
 
-    # The standard scipy.linalg.solve_triangular doesn't support broadcasting.
-    # But it seems like an inevitable extension so we support it.
-    ans = jsp.linalg.solve_triangular(
-        l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
-        unit_diagonal=unit_diagonal)
-
-    self.assertAllClose(np_ans, ans,
-                        rtol={np.float32: 1e-4, np.float64: 1e-11})
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+        # matching batch dims
+        ((2, 8, 8), (2, 8, 10)),
+        # batched a, unbatched b (vector) — broadcast b
+        ((3, 4, 4), (4,)),
+        # batched a, unbatched b (matrix)
+        ((3, 4, 4), (4, 2)),
+        # unbatched a, batched b (matrix) — broadcast a
+        ((4, 4), (3, 4, 2)),
+      ]
+    ],
+    lower=[False, True],
+    dtype=float_types,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testSolveTriangularBroadcast(self, lower, lhs_shape, rhs_shape, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.solve_triangular batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    k = rng(lhs_shape, dtype)
+    l = np.linalg.cholesky(
+        np.matmul(k, T(k)) + lhs_shape[-1] * np.eye(lhs_shape[-1]))
+    l = l.astype(k.dtype)
+    a = l if lower else T(l)
+    b = rng(rhs_shape, dtype)
+    osp_fun = partial(osp.linalg.solve_triangular, lower=lower)
+    jsp_fun = partial(jsp.linalg.solve_triangular, lower=lower)
+    args_maker = lambda: [a, b]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            rtol={np.float32: 1e-4, np.float64: 1e-11})
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(left_side=left_side, a_shape=a_shape, b_shape=b_shape)
@@ -1832,6 +1696,77 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4), (3, 6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+      pivoting=[False, True],
+  )
+  def testQrMultiply(self, shape, dtype, mode, pivoting):
+    if pivoting and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+    k = min(m, n)
+    c_shape = shape[:-2] + (k, 2) if mode == 'left' else shape[:-2] + (2, m)
+    args_maker = lambda: [rng(shape, dtype), rng(c_shape, dtype)]
+    fn = partial(jax.scipy.linalg.qr_multiply, mode=mode, pivoting=pivoting)
+
+    a, c = args_maker()
+    if pivoting:
+      result, r, p = fn(a, c)
+    else:
+      result, r = fn(a, c)
+
+    # Compute reference using full QR
+    if pivoting:
+      q_full, r_full, p_ref = jax.scipy.linalg.qr(a, pivoting=True)
+    else:
+      q_full, r_full = jax.scipy.linalg.qr(a)
+    r_ref = r_full[..., :k, :]
+
+    with jax.default_matmul_precision("highest"):
+      if mode == 'left':
+        expected = q_full[..., :k] @ c  # Q_eco @ c: (M,K) @ (K,2) = (M,2)
+      else:
+        expected = c @ q_full[..., :k]  # c @ Q_eco: (2,M) @ (M,K) = (2,K)
+
+    tol = {np.float32: 1e-5, np.complex64: 1e-5, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
+    # R should match
+    self.assertAllClose(r, r_ref, rtol=tol, atol=tol)
+    self._CompileAndCheck(fn, args_maker)
+
+  @jtu.sample_product(
+      shape=[(4, 3), (4, 4), (6, 4)],
+      dtype=float_types + complex_types,
+      mode=['right', 'left'],
+  )
+  def testQrMultiply1D(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    m, n = shape[-2:]
+    k = min(m, n)
+    c_shape = (k,) if mode == 'left' else (m,)
+    args_maker = lambda: [rng(shape, dtype), rng(c_shape, dtype)]
+    fn = partial(jax.scipy.linalg.qr_multiply, mode=mode)
+
+    a, c = args_maker()
+    result, r = fn(a, c)
+    self.assertEqual(result.ndim, 1)
+
+    q_full, _ = jax.scipy.linalg.qr(a)
+    with jax.default_matmul_precision("highest"):
+      if mode == 'left':
+        expected = (q_full[..., :k] @ c[:, None]).ravel()  # Q_eco @ c: (M,)
+      else:
+        expected = (c[None, :] @ q_full[..., :k]).ravel()  # c @ Q_eco: (K,)
+
+    tol = {np.float32: 1e-5, np.complex64: 1e-5, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
+    self._CompileAndCheck(fn, args_maker)
+
+  @jtu.sample_product(
       [dict(shape=shape, k=k)
        for shape in [(1, 1), (3, 4, 4), (10, 5)]
        # TODO(phawkins): there are some test failures on GPU for k=0
@@ -1862,6 +1797,50 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(reference_fn, lax.linalg.householder_product,
                             args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(lax.linalg.householder_product, args_maker)
+
+  @jtu.sample_product(
+      [dict(a_shape=a_shape, c_shape=c_shape, left=left)
+       for a_shape, c_shape, left in [
+           ((4, 3), (4, 2), True),    # Q @ C, tall A
+           ((4, 4), (4, 3), True),    # Q @ C, square A
+           ((6, 4), (6, 5), True),    # Q @ C, tall A
+           ((4, 3), (2, 4), False),   # C @ Q, tall A
+           ((4, 4), (3, 4), False),   # C @ Q, square A
+           ((3, 6, 4), (3, 6, 5), True),  # batched Q @ C
+       ]],
+      dtype=float_types + complex_types,
+      transpose=[False, True],
+  )
+  def testOrmqr(self, a_shape, c_shape, dtype, left, transpose):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(a_shape, dtype), rng(c_shape, dtype)]
+
+    def fn(a, c):
+      qr_result, taus = lax_linalg.geqrf(a)
+      return lax_linalg.ormqr(qr_result, taus, c, left=left, transpose=transpose)
+
+    a, c = args_maker()
+    qr_result, taus = lax_linalg.geqrf(a)
+    result = lax_linalg.ormqr(qr_result, taus, c, left=left, transpose=transpose)
+
+    # Reference: build full Q from householder_product, then matmul.
+    m, n = a_shape[-2:]
+    if m > n:
+      padded = jnp.pad(qr_result,
+                        [(0, 0)] * (qr_result.ndim - 1) + [(0, m - n)])
+      q = lax.linalg.householder_product(padded, taus)
+    elif m < n:
+      q = lax.linalg.householder_product(qr_result[..., :m, :m], taus)
+    else:
+      q = lax.linalg.householder_product(qr_result, taus)
+    q_op = jnp.conj(jnp.swapaxes(q, -1, -2)) if transpose else q
+    with jax.default_matmul_precision("highest"):
+      expected = q_op @ c if left else c @ q_op
+
+    tol = {np.float32: 1e-5, np.complex64: 1e-5, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self.assertAllClose(result, expected, rtol=tol, atol=tol)
+    self._CompileAndCheck(fn, args_maker)
 
   @jtu.sample_product(
       shape=[(1, 1), (2, 4, 4), (0, 100, 100), (10, 10)],
@@ -1949,6 +1928,38 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     lower=[True, False],
   )
   def testChoSolve(self, lhs_shape, rhs_shape, dtype, lower):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      b = rng(rhs_shape, dtype)
+      if lower:
+        L = np.tril(rng(lhs_shape, dtype))
+        return [(L, lower), b]
+      else:
+        U = np.triu(rng(lhs_shape, dtype))
+        return [(U, lower), b]
+    self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
+                            args_maker, tol=1e-3)
+
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+          # batched c, unbatched b (vector)
+          [(3, 4, 4), (4,)],
+          # batched c, unbatched b (matrix)
+          [(3, 4, 4), (4, 2)],
+          # batched c, batched b
+          [(3, 4, 4), (3, 4, 2)],
+          # unbatched c, batched b (broadcast c -> batch)
+          [(4, 4), (3, 4, 2)],
+      ]
+    ],
+    dtype=float_types,
+    lower=[True, False],
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testChoSolveBroadcast(self, lhs_shape, rhs_shape, dtype, lower):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.cho_solve batch broadcasting requires scipy >= 1.16")
     rng = jtu.rand_default(self.rng())
     def args_maker():
       b = rng(rhs_shape, dtype)
@@ -2053,6 +2064,53 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         osp.linalg.rsf2csf, jsp.linalg.rsf2csf, args_maker, tol=tol
     )
     self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
+
+  @jtu.sample_product(
+    [dict(t_shape=t_shape, z_shape=z_shape)
+     for t_shape, z_shape in [
+       # batched T and Z
+       ((3, 4, 4), (3, 4, 4)),
+       # batched T, unbatched Z — broadcast Z
+       ((3, 4, 4), (4, 4)),
+       # unbatched T, batched Z — broadcast T
+       ((4, 4), (3, 4, 4)),
+     ]
+    ],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testRsf2csfBroadcast(self, t_shape, z_shape, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.rsf2csf batch broadcasting requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(t_shape, dtype), rng(z_shape, dtype)]
+    self._CheckAgainstNumpy(osp.linalg.rsf2csf, jsp.linalg.rsf2csf,
+                            args_maker, tol=3e-5)
+    self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, side=side)
+     for shape, side in [
+       ((4, 4), 'right'),  # square, side='right' (m >= n)
+       ((5, 3), 'right'),  # tall, side='right' (m > n)
+       ((3, 5), 'left'),   # wide, side='left' (m < n, qdwh constraint)
+     ]
+    ],
+    batch=[3],
+    dtype=float_types,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testPolarBatch(self, batch, shape, side, dtype):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.polar batch support requires scipy >= 1.16")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((batch,) + shape, dtype)]
+    self._CheckAgainstNumpy(
+        partial(osp.linalg.polar, side=side),
+        partial(jsp.linalg.polar, side=side),
+        args_maker, tol=1e-4)
+    self._CompileAndCheck(partial(jsp.linalg.polar, side=side), args_maker)
 
   @jtu.sample_product(
     shape=[(1, 1), (5, 5), (20, 20), (50, 50)],
@@ -2193,6 +2251,42 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+  def testHankelConstructionWithKnownCases(self):
+    # r=None should default to zeros_like(c)
+    c = np.array([1, 2, 3], dtype=np.float32)
+    expected = osp_linalg_hankel(c, None)
+    actual = jsp.linalg.hankel(c)
+    self.assertAllClose(expected, actual)
+
+    # r[0] is ignored (changing it should not change output)
+    r1 = np.array([999, 4, 5, 6], dtype=np.float32)
+    r2 = np.array([c[-1], 4, 5, 6], dtype=np.float32)
+    out1 = jsp.linalg.hankel(c, r1)
+    out2 = jsp.linalg.hankel(c, r2)
+    self.assertAllClose(out1, out2)
+
+  @jtu.sample_product(
+     cshape = [(3,), (0,), (2, 3), (1, 2, 3)],
+     rshape = [(4,), (0,), (1, 4), (2, 4), (1, 1, 4)],
+     cdtype=float_types + complex_types + int_types,
+     rdtype=float_types + complex_types + int_types,
+  )
+  def testHankelConstruction(self, cshape, cdtype, rshape, rdtype):
+    int_types_excl_i8 = set(int_types) - {np.int8}
+    if ((rdtype in int_types_excl_i8 or cdtype in int_types_excl_i8)
+        and jtu.test_device_matches(["gpu"])):
+      self.skipTest("Integer (except int8) hankel is not supported on GPU")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(cshape, cdtype), rng(rshape, rdtype)]
+    with jtu.strict_promotion_if_dtypes_match([rdtype, cdtype]):
+      self._CheckAgainstNumpy(
+          jtu.promote_like_jnp(osp_linalg_hankel),
+          jsp.linalg.hankel,
+          args_maker,
+          check_dtypes=False,
+      )
+      self._CompileAndCheck(jsp.linalg.hankel, args_maker)
+
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
@@ -2258,128 +2352,71 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-5)
     self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
 
+  @jtu.sample_product(
+    [dict(a_shape=a_shape, b_shape=b_shape, c_shape=c_shape)
+     for a_shape, b_shape, c_shape in [
+       # unbatched A,B; batched C — broadcast A,B to batch
+       ((3, 3), (4, 4), (2, 3, 4)),
+       # batched A; unbatched B, C
+       ((2, 3, 3), (4, 4), (3, 4)),
+       # all batched
+       ((2, 3, 3), (2, 4, 4), (2, 3, 4)),
+     ]
+    ],
+    dtype=float_types,
+    method=["schur", "eigen"],
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def test_solve_sylvester_broadcast(self, a_shape, b_shape, c_shape, dtype, method):
+    if scipy_version < (1, 16, 0):
+      self.skipTest("scipy.linalg.solve_sylvester batch broadcasting requires scipy >= 1.16")
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+      self.skipTest("Schur not supported on GPU.")
+    tol = {np.float32: 5e-2, np.float64: 1e-9}
+    rng = jtu.rand_default(self.rng())
+
+    def args_maker():
+      A = rng(a_shape, dtype)
+      B = rng(b_shape, dtype)
+      # Compute the broadcast batch shape to construct a valid C
+      batch = np.broadcast_shapes(a_shape[:-2], b_shape[:-2], c_shape[:-2])
+      A_bc = np.broadcast_to(A, batch + a_shape[-2:])
+      B_bc = np.broadcast_to(B, batch + b_shape[-2:])
+      X_true = rng(batch + c_shape[-2:], dtype)
+      C = np.einsum("...ij,...jk->...ik", A_bc, X_true) + \
+          np.einsum("...ij,...jk->...ik", X_true, B_bc)
+      # Return un-broadcast A, B so JAX must do the broadcasting itself
+      return [A, B, C]
+
+    jnp_fun = partial(jsp.linalg.solve_sylvester, method=method)
+    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
 
-  @jtu.sample_product(
-    n=[0, 4, 5, 50],
-    dtype=float_types + complex_types,
-    lower=[True, False],
-    sort_eigenvalues=[True, False],
-  )
-  def testEigh(self, n, dtype, lower, sort_eigenvalues):
-    implementations = [
-        None,
-        lax.linalg.EighImplementation.QR,
-        lax.linalg.EighImplementation.JACOBI,
-        lax.linalg.EighImplementation.QDWH,
-    ]
 
-    for implementation in implementations:
-      if (
-          implementation == lax.linalg.EighImplementation.QR
-          and jtu.test_device_matches(["tpu"])
-      ):
-        continue
-      if (
-          implementation == lax.linalg.EighImplementation.JACOBI
-          and jtu.test_device_matches(["cpu"])
-      ):
-        continue
-      if (
-          implementation == lax.linalg.EighImplementation.QDWH
-          and jtu.test_device_matches(["cpu", "gpu"])
-      ):
-        continue
+  @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],
+                      dtype=float_types + complex_types,
+                      k_rhs=[1, 2],
+                      perturb_singular=[False, True])
+  def test_tridiagonal_solve(self, shape, dtype, k_rhs, perturb_singular):
 
-      rng = jtu.rand_default(self.rng())
-      tol = 1e-3
-      args_maker = lambda: [rng((n, n), dtype)]
-
-      a, = args_maker()
-      a = (a + np.conj(a.T)) / 2
-      v, w = lax.linalg.eigh(np.tril(a) if lower else np.triu(a),
-                             lower=lower, symmetrize_input=False,
-                             sort_eigenvalues=sort_eigenvalues,
-                             implementation=implementation)
-      w = np.asarray(w)
-      v = np.asarray(v)
-      self.assertLessEqual(
-          np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
-      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                           tol * np.linalg.norm(a))
-
-      w_expected, v_expected = np.linalg.eigh(np.asarray(a))
-      self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
-                          rtol=1e-4, atol=1e-4)
-
-  def run_eigh_tridiagonal_test(self, alpha, beta):
-    n = alpha.shape[-1]
-    # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
-    # this we call the slower numpy.linalg.eigh.
-    if np.issubdtype(alpha.dtype, np.complexfloating):
-      tridiagonal = np.diag(alpha) + np.diag(beta, 1) + np.diag(
-          np.conj(beta), -1)
-      eigvals_expected, _ = np.linalg.eigh(tridiagonal)
-    else:
-      eigvals_expected = scipy.linalg.eigh_tridiagonal(
-          alpha, beta, eigvals_only=True)
-    eigvals = jax.scipy.linalg.eigh_tridiagonal(
-        alpha, beta, eigvals_only=True)
-    finfo = np.finfo(alpha.dtype)
-    atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
-    self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
-
-  @jtu.sample_product(
-    n=[1, 2, 3, 7, 8, 100],
-    dtype=float_types + complex_types,
-  )
-  def testToeplitz(self, n, dtype):
-    for a, b in [[2, -1], [1, 0], [0, 1], [-1e10, 1e10], [-1e-10, 1e-10]]:
-      alpha = a * np.ones([n], dtype=dtype)
-      beta = b * np.ones([n - 1], dtype=dtype)
-      self.run_eigh_tridiagonal_test(alpha, beta)
-
-  @jtu.sample_product(
-    n=[1, 2, 3, 7, 8, 100],
-    dtype=float_types + complex_types,
-  )
-  def testRandomUniform(self, n, dtype):
-    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
-    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
-    self.run_eigh_tridiagonal_test(alpha, beta)
-
-  @jtu.sample_product(dtype=float_types + complex_types)
-  def testSelect(self, dtype):
-    n = 5
-    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
-    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
-    eigvals_all = jax.scipy.linalg.eigh_tridiagonal(alpha, beta, select="a",
-                                                    eigvals_only=True)
-    eps = np.finfo(alpha.dtype).eps
-    atol = 2 * n * eps
-    for first in range(n - 1):
-      for last in range(first + 1, n - 1):
-        # Check that we get the expected eigenvalues by selecting by
-        # index range.
-        eigvals_index = jax.scipy.linalg.eigh_tridiagonal(
-            alpha, beta, select="i", select_range=(first, last),
-            eigvals_only=True)
-        self.assertAllClose(
-            eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
-
-  @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
-                      dtype=float_types + complex_types)
-  def test_tridiagonal_solve(self, shape, dtype):
-    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
-      self.skipTest("Data type not supported on GPU")
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    # TODO: Add these tests back once rocSparse issues are fixed.
+    if jtu.is_device_rocm() and shape in [(3, 4), (3, 4, 5)]:
+      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
     du = jtu.rand_default(rng)(shape, dtype)
-    b = jtu.rand_default(rng)(shape + (1,), dtype)
-    x = lax.linalg.tridiagonal_solve(dl, d, du, b)
+    b = jtu.rand_default(rng)(shape + (k_rhs,), dtype)
+    x = lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
 
     def build_tri(dl, d, du):
       return jnp.diag(d) + jnp.diag(dl[1:], -1) + jnp.diag(du[:-1], 1)
@@ -2392,7 +2429,84 @@ class LaxLinalgTest(jtu.JaxTestCase):
           np.float32: 1e-3, np.float64: 1e-10, np.complex64: 1e-3,
           np.complex128: 1e-10})
 
-  def test_tridiagonal_solve_endpoints(self):
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_zero_matrix(self, perturb_singular):
+
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    dtype = np.float32
+    dl = np.zeros((3,), dtype=dtype)
+    d = np.zeros((3,), dtype=dtype)
+    du = np.zeros((3,), dtype=dtype)
+    b = np.ones((3, 1), dtype=dtype)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+
+    if perturb_singular:
+      self.assertFalse(np.any(np.isnan(x)))
+      self.assertTrue(np.all(np.abs(x) > 1e6))
+    else:
+      self.assertTrue(np.any(np.isnan(x)) or np.any(np.isinf(x)))
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_requiring_pivoting(self, perturb_singular):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+
+    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
+    if jtu.is_device_rocm() and not perturb_singular:
+      self.skipTest(
+          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
+    d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
+    du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [2.0], [3.0], [4.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+    expected = np.array([[8.0], [-3.5], [0.0], [-4.0]], dtype=np.float32)
+    self.assertAllClose(x, expected)
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_requiring_pivoting_last_rows(self, perturb_singular):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+
+    # TODO(magaonka-amd): Re-enable once hipSPARSE gtsv2 numerical issues are resolved.
+    if jtu.is_device_rocm() and not perturb_singular:
+      self.skipTest(
+          "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
+    d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)
+    du = np.array([2.0, 1.0, -1.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [2.0], [-1.0], [-2.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular)
+    expected = np.array([[5.0], [-2.0], [-5.0], [3.0]], dtype=np.float32)
+    self.assertAllClose(x, expected)
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_2x2_singular(self, perturb_singular):
+
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    dl = np.array([0.0, 1.0], dtype=np.float32)
+    d = np.array([1.0, 3.0], dtype=np.float32)
+    du = np.array([3.0, 0.0], dtype=np.float32)
+    b = np.array([[1.0], [4.0]], dtype=np.float32)
+
+    x = lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
+    if perturb_singular:
+      self.assertFalse(np.any(np.isnan(x)))
+      self.assertTrue(np.all(np.abs(x) > 1e6))
+    else:
+      self.assertTrue(np.any(np.isnan(x)) or np.any(np.isinf(x)))
+
+  @jtu.sample_product(perturb_singular=[False, True])
+  def test_tridiagonal_solve_endpoints(self, perturb_singular):
+
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
     # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
     dtype = np.float32
     size = 10
@@ -2405,26 +2519,28 @@ class LaxLinalgTest(jtu.JaxTestCase):
     duz[-1] = 0.0
     b = np.linspace(0.1, -0.1, size, dtype=dtype)[:, None]
     self.assertAllClose(
-        lax.linalg.tridiagonal_solve(dl, d, du, b),
-        lax.linalg.tridiagonal_solve(dlz, d, duz, b),
+        lax.linalg.tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular),
+        lax.linalg.tridiagonal_solve(dlz, d, duz, b, perturb_singular=perturb_singular),
     )
 
-  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
-  def test_tridiagonal_solve_grad(self, shape, dtype):
-    if jtu.is_device_rocm() and shape == (3, 4) and dtype == np.float32:
-      # numerical errors seen as of ROCm 7.2 due to rocSparse issue for grad0 variant
-      # TODO: re-enable the test once the rocSparse issue is fixed
-      self.skipTest("test_tridiagonal_solve_grad0 not supported on ROCm due to rocSparse issue")
-    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
-      self.skipTest("Data type not supported on GPU")
+  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types,
+                      perturb_singular=[False, True])
+  def test_tridiagonal_solve_grad(self, shape, dtype, perturb_singular):
+
+    if perturb_singular and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("perturb_singular=True only supported on CPU and GPU")
+    # TODO: Add these tests back once rocSparse issues are fixed.
+    if jtu.is_device_rocm() and shape == (3, 4):
+      self.skipTest("Skipped on ROCm due to rocSparse numerical error.")
     rng = self.rng()
     d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
     dl = jtu.rand_default(rng)(shape, dtype)
     du = jtu.rand_default(rng)(shape, dtype)
     b = jtu.rand_default(rng)(shape + (1,), dtype)
     args = (dl, d, du, b)
-    jtu.check_grads(lax.linalg.tridiagonal_solve, args, order=2, atol=1e-1,
-                    rtol=1e-1)
+    f = lambda dl, d, du, b: lax.linalg.tridiagonal_solve(
+      dl, d, du, b, perturb_singular=perturb_singular)
+    jtu.check_grads(f, args, order=2, atol=1e-1, rtol=1e-1)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],

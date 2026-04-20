@@ -46,8 +46,10 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
+from jax._src.lib import jaxlib_extension_version
 
 config.parse_flags_with_absl()
 
@@ -133,6 +135,24 @@ class LaxTest(jtu.JaxTestCase):
     elif op_name == "pow" and dtype == np.complex128:
       tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
+
+  @parameterized.parameters(itertools.chain.from_iterable(
+      jtu.sample_product_testcases(
+          [dict(op_name=rec.op, rng_factory=rec.rng_factory)],
+          [dict(dtype=dtype, out_dtype=preferred)
+           for dtype, preferred in preferred_type_combinations],
+          shapes=itertools.chain.from_iterable(
+              itertools.combinations_with_replacement(shape_group, rec.nargs)
+              for shape_group in lax_test_util.compatible_shapes))
+      for rec in lax_test_util.lax_out_dtype_ops()))
+  def testOpOutDtype(self, op_name, rng_factory, shapes, dtype, out_dtype):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    op = partial(getattr(lax, op_name), out_dtype=out_dtype)
+    numpy_op = partial(getattr(lax_reference, op_name), out_dtype=out_dtype)
+
+    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+    self._CompileAndCheck(op, args_maker)
 
   @parameterized.parameters(["logistic", "tanh"])
   def testEvenFunctionGrads(self, op_name):
@@ -1458,6 +1478,8 @@ class LaxTest(jtu.JaxTestCase):
               ([2], [2, 3], [0]),
               ([], [2, 3], []),
               ([1], [2, 3], [1]),
+              ([3, 1], [2, 3, 4], [1, 2]),
+              ([3, 1], [2, 3, 4], [1, 0]),
           ]
       ],
       dtype=lax_test_util.default_dtypes,
@@ -1489,7 +1511,7 @@ class LaxTest(jtu.JaxTestCase):
                           'dimensions')),
       ([2], [3], [0], ('operand dimension sizes must either be 1, or be '
                        'equal to their corresponding dimensions in the target broadcast shape')),
-      ([2, 2], [2, 2], [1, 0], ('broadcast_dimensions must be strictly increasing')),
+      ([2, 2], [2, 2], [0, 0], ('broadcast_in_dim broadcast_dimensions must not contain duplicates')),
     ])
   def testBroadcastInDimShapeCheck(self, inshape, outshape, broadcast_dimensions, err_msg):
     rng = jtu.rand_default(self.rng())
@@ -3441,13 +3463,6 @@ class LaxTest(jtu.JaxTestCase):
                                        np.zeros((2, 2), dtype=np.float32),
                                        (np.int32(1), np.int16(2))))
 
-  def test_primitive_jaxtype_error(self):
-    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
-               r"value is of type .* and was passed to the function at path args\[1\].")
-    with jax.enable_checks(False):
-      with self.assertRaisesRegex(TypeError, err_str):
-        lax.add(1, 'hi')
-
   def test_reduction_with_repeated_axes_error(self):
     with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
       lax.reduce(np.arange(3), 0, lax.add, (0, 0))
@@ -3831,6 +3846,30 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertNoWarnings():
       jax.jacobian(f)(x, y)
 
+  def test_dce_sink_prevents_xla_dce(self):
+    if jaxlib_extension_version < 438:
+      self.skipTest("Requires jaxlib extension version >= 438")
+    if jtu.is_cloud_tpu_at_least(2026, 4, 17):
+      self.skipTest('Requires nightly libtpu')
+
+    x = jnp.array(1.0)
+
+    def f(x):
+      y = x + 1
+      lax.dce_sink(y, prevent_mlir_dce=True)
+      return x
+    hlo = jax.jit(f).lower(x).compile().as_text()
+    self.assertIn("custom_call", hlo)
+    self.assertIn("dce_sink", hlo)
+    self.assertIn("add", hlo)
+
+    def g(x):
+      y = x + 1
+      lax.dce_sink(y)  # default prevent_mlir_dce=False
+      return x
+    hlo = jax.jit(g).lower(x).compile().as_text()
+    self.assertNotIn("add", hlo)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4114,7 +4153,7 @@ def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
     device, = sharding._addressable_device_assignment
     aval = core.typeof(x.data)
     results.append(pxla.batched_device_put(
-        aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
+        aval, make_single_device_sharding(device), [x.data], [device]))
   return results
 
 def foo_array_constant_handler(x, aval):

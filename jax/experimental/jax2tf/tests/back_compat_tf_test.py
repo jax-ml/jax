@@ -30,7 +30,8 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
-from jax._src.lib import _jax
+from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.interpreters import mlir
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 import jax.numpy as jnp
@@ -72,7 +73,8 @@ class CompatTensoflowTest(bctu.CompatTestBase):
   `tf.Graph` containing a XlaCallModule with the actual MLIR module.
   """
 
-  def run_current(self, func: Callable, data: bctu.CompatTestData):
+  def run_current(self, func: Callable, data: bctu.CompatTestData,
+                  prepare_inputs = None):
     # Here we use tf.saved_model and provide  string serialize/deserialize methods
     # for the whole directory.
     @tf.function(autograph=False, jit_compile=True)
@@ -81,7 +83,8 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func
-    return tf_func(*data.inputs)
+    inputs = prepare_inputs(data.inputs) if prepare_inputs else data.inputs
+    return tf_func(*inputs)
 
   def serialize(
       self,
@@ -96,9 +99,15 @@ class CompatTensoflowTest(bctu.CompatTestBase):
     for op in tf_graph.get_operations():
       if op.type == "XlaCallModule":
         serialized_module = op.get_attr("module")
-        module_str = _jax.mlir.deserialize_portable_artifact(
-            serialized_module
-        )
+        if jaxlib_extension_version >= 437:
+          with mlir.make_ir_context():
+            module_str = mlir.module_to_string(
+                _jax.mlir.deserialize_portable_artifact(serialized_module)
+            )
+        else:
+          module_str = _jax.mlir.deserialize_portable_artifact(
+              serialized_module
+          )
         module_version = op.get_attr("version")
         break
     else:

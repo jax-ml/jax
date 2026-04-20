@@ -18,15 +18,15 @@ from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
-from typing import Any, Union, overload
+from typing import Any, Union
 
-from jax._src.util import use_cpp_class, cache, use_cpp_method
+from jax._src.util import use_cpp_class, cache, use_cpp_method, unzip3
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
-from jax._src import sharding as JSharding
+from jax._src import sharding as jsharding
 import numpy as np
 
 Shape = tuple[int, ...]
@@ -84,7 +84,7 @@ def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):
 
 
 @use_cpp_class(xc.NamedSharding)
-class NamedSharding(JSharding.Sharding):
+class NamedSharding(jsharding.Sharding):
   r"""A :class:`NamedSharding` expresses sharding using named axes.
 
   A :class:`NamedSharding` is a pair of a :class:`Mesh` of devices and
@@ -118,8 +118,8 @@ class NamedSharding(JSharding.Sharding):
     >>> spec = P('x', 'y')
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
   """
 
   mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
@@ -225,6 +225,8 @@ class NamedSharding(JSharding.Sharding):
   def is_fully_replicated(self) -> bool:
     if self.mesh.size == 1:
       return True
+    if self.spec.unreduced:
+      return False
     array_mapping = get_array_mapping(self.spec)
     mesh_shape = self.mesh.shape
     num_partitions = 1
@@ -253,6 +255,13 @@ class NamedSharding(JSharding.Sharding):
         memory_kind=kwargs.pop("memory_kind", self.memory_kind),
         _logical_device_ids=kwargs.pop("_logical_device_ids",
                                        self._logical_device_ids))
+
+  def is_equivalent_to(self, other, ndim: int) -> bool:
+    if (isinstance(self.mesh, mesh_lib.AbstractMesh) and
+        isinstance(other.mesh, mesh_lib.AbstractMesh)):
+      return jsharding.common_is_equivalent_to(self, other, ndim,
+                                               check_devices=False)
+    return jsharding.common_is_equivalent_to(self, other, ndim)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
@@ -285,22 +294,7 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
-
-@overload
-def get_array_mapping(axis_resources: PartitionSpec) -> ArrayMapping:
-  ...
-
-@overload
-def get_array_mapping(axis_resources: AUTO) -> AUTO:
-  ...
-
-@overload
-def get_array_mapping(axis_resources: UnspecifiedValue) -> UnspecifiedValue:
-  ...
-
-def get_array_mapping(
-    axis_resources: PartitionSpec | AUTO | UnspecifiedValue
-) -> ArrayMappingOrAutoOrUnspecified:
+def get_array_mapping(axis_resources):
   if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
   d = collections.OrderedDict()
@@ -394,23 +388,44 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
   return sdy_sharding
 
 
+def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
+  new_spec: list[Any] = []
+  for s in spec:
+    if s is None or s is PartitionSpec.UNCONSTRAINED:
+      new_spec.append(s)
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
+    else:
+      new_spec.append(None if mesh.shape[s] == 1 else s)
+  unreduced = frozenset(u for u in spec.unreduced if mesh.shape[u] != 1)
+  reduced = frozenset(r for r in spec.reduced if mesh.shape[r] != 1)
+  return PartitionSpec(*new_spec, unreduced=unreduced, reduced=reduced)
+
+
+def get_non_one_sized_mesh_spec(mesh, spec):
+  spec = remove_size_one_mesh_axis(spec, mesh)
+  axis_sizes, axis_names, axis_types = unzip3(
+      [(s, n, t) for s, n, t in zip(mesh.axis_sizes, mesh.axis_names, mesh.axis_types)
+      if s != 1])
+  mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names, axis_types)
+  return mesh, spec
+
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
-  mesh_shape = self.mesh.shape
-  array_mapping = get_array_mapping(self.spec)
-  mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
+  mesh, spec = get_non_one_sized_mesh_spec(self.mesh, self.spec)
+  mesh_shape = mesh.shape
+  array_mapping = get_array_mapping(spec)
+  mesh_axis_pos = {name: i for i, name in enumerate(mesh.axis_names)}
 
   special_axes = {}
-  manual_axes = frozenset(self.mesh.manual_axes)
-  if manual_axes:
-    axis_names = self.mesh.axis_names
+  if (manual_axes := frozenset(mesh.manual_axes)):
+    axis_names = mesh.axis_names
     for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
 
-  unreduced_axes = self.spec.unreduced
-  if unreduced_axes:
-    axis_names = self.mesh.axis_names
+  if (unreduced_axes := spec.unreduced):
+    axis_names = mesh.axis_names
     for u in unreduced_axes:
       special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
 
@@ -459,7 +474,7 @@ def named_sharding_to_xla_hlo_sharding(
   #     transpose_perm = [3, 1, 2, 0]  # 'a' is replicated hence 0 is at the end
   #     subgroup_types = [xc.OpSharding.Type.REPLICATED]
   dims = new_mesh_shape
-  reshape_dims = self.mesh.axis_sizes
+  reshape_dims = mesh.axis_sizes
   if self._logical_device_ids is None:
     return xc.HloSharding.iota_tile(
         dims=dims, reshape_dims=reshape_dims, transpose_perm=mesh_permutation,
@@ -484,7 +499,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   for i in range(max_index + 1):
     axis = reverse_map[i]
     if axis:
-      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))  # pytype: disable=container-type-mismatch
+      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))
     else:
       partitions.append(None)
   return PartitionSpec(*partitions)
@@ -551,10 +566,10 @@ def _check_mesh_unreduced(mesh, pspec):
       raise ValueError(
           f'Unreduced axes {u} is not found in {mesh.axis_names=}. '
           f'Got {pspec=}')
-    if mesh._name_to_type[u] == AxisType.Auto:
+    if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
       raise ValueError(
-          'Unreduced axes can only refer to mesh axes that are of type'
-          f' `Explicit` or `Manual`. Got unreduced axes: {pspec.unreduced} and'
+          'Unreduced axes can only refer to mesh axes that is of type'
+          f' `Explicit`. Got unreduced axes: {pspec.unreduced} and'
           f' mesh: {mesh}')
 
   for u in pspec.reduced:
@@ -562,8 +577,8 @@ def _check_mesh_unreduced(mesh, pspec):
       raise ValueError(
           f'Reduced axes {u} is not found in {mesh.axis_names=}. '
           f'Got {pspec=}')
-    if mesh._name_to_type[u] == AxisType.Auto:
+    if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
       raise ValueError(
-          'Reduced axes can only refer to mesh axes that are of type'
-          f' `Explicit` or `Manual`. Got reduced axes: {pspec.reduced} and'
+          'Reduced axes can only refer to mesh axes that is of type'
+          f' `Explicit`. Got reduced axes: {pspec.reduced} and'
           f' mesh: {mesh}')

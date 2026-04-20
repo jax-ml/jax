@@ -113,6 +113,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
+    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
     batch, rhs_non_contract = 4, 256
@@ -138,6 +141,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
+    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
 
     configs = create_mxfp8_configs_if_available()
     cast_to_representable = partial(
@@ -885,6 +891,33 @@ class NNInitializersTest(jtu.JaxTestCase):
 
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
+
+  @jtu.sample_product(
+    rows=range(4),
+    cols=range(4),
+    dtype=jtu.dtypes.floating,
+  )
+  def testInitializerOrthogonalZeroSize(self, rows, cols, dtype):
+    rng = random.PRNGKey(0)
+    initializer = nn.initializers.orthogonal()
+    val = initializer(rng, (rows, cols), dtype)
+    assert val.shape == (rows, cols)
+    assert val.dtype == dtype
+
+    if jtu.test_device_matches(["tpu"]):
+      atol = 2e-3
+      rtol = 1e-2
+    else:
+      atol = None
+      rtol = None
+
+    if rows <= cols:
+      m = val @ val.T
+      self.assertAllClose(m, jnp.eye(rows, dtype=dtype), atol=atol, rtol=rtol)
+
+    if cols <= rows:
+      m = val.T @ val
+      self.assertAllClose(m, jnp.eye(cols, dtype=dtype), atol=atol, rtol=rtol)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(

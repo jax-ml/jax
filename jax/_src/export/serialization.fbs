@@ -18,7 +18,9 @@
 //  1.  Run flatc --python --gen-onefile serialization.fbs
 //  2.  Delete the trailing newlines at the end
 //  3.  Add back the licence comment at the start
-//  4.  Add back "# pytype: skip-file" near the top of the file
+//  4.  Add back the following:
+//        # pyrefly: ignore-errors
+//      before the "# automatically generated ..." comment
 //
 
 namespace jax_export.serialization;
@@ -106,7 +108,7 @@ table AbstractMesh {
   axis_sizes: [uint32];
   axis_names: [string];
   axis_types: [AxisType];
-  abstract_device: AbstractDevice;  // Added 3/8/2026
+  abstract_device: AbstractDevice;  // Added 3/12/2026
 }
 
 table PartitionSpecOneAxis {
@@ -123,6 +125,7 @@ table NamedSharding {
   mesh: AbstractMesh;
   spec: PartitionSpec;
   memory_kind: string;
+  abstract_mesh_idx: uint32;  // Index in unique_abstract_meshes (added 4/4/2026, v10)
 }
 
 table AbstractValue {
@@ -132,7 +135,7 @@ table AbstractValue {
   memory_space: MemorySpace;
 }
 
-// Deprecated 3/3/2026
+// Deprecated 3/17/2026
 enum ShardingKind: byte {
   unspecified = 0,
   hlo_sharding = 1,
@@ -140,8 +143,8 @@ enum ShardingKind: byte {
 }
 
 table Sharding {
-  kind: ShardingKind;  // Deprecated 3/3/2026
-  hlo_sharding_proto: [byte];  // unused for exports created after 3/3/2026
+  kind: ShardingKind;  // Deprecated 3/17/2026
+  hlo_sharding_proto: [byte];  // unused for exports created after 3/17/2026
   named_sharding: NamedSharding;  // added 1/15/2026
 }
 
@@ -191,6 +194,19 @@ table Exported {
 
   vjp: Exported;
   nr_devices: uint32 = 0;  // Added 11/25/2025
+
+  // Added 4/4/2026, v10
+  unique_avals: [AbstractValue];
+  unique_abstract_meshes: [AbstractMesh];
+  unique_named_shardings: [NamedSharding];
+
+  // Indices into unique_avals (added 4/4/2026, v10)
+  in_avals_idxs: [uint32];
+  out_avals_idxs: [uint32];
+
+  // 1-based indices into unique_named_shardings, or 0 if unspecified (added 4/4/2026, v10)
+  in_shardings_idxs: [uint32];
+  out_shardings_idxs: [uint32];
 }
 
 root_type Exported;

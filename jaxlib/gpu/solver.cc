@@ -30,12 +30,17 @@ nb::dict Registrations() {
   dict[JAX_GPU_PREFIX "solver_getrf_ffi"] = EncapsulateFfiHandler(GetrfFfi);
   dict[JAX_GPU_PREFIX "solver_geqrf_ffi"] = EncapsulateFfiHandler(GeqrfFfi);
   dict[JAX_GPU_PREFIX "solver_orgqr_ffi"] = EncapsulateFfiHandler(OrgqrFfi);
+  dict[JAX_GPU_PREFIX "solver_ormqr_ffi"] = EncapsulateFfiHandler(OrmqrFfi);
   dict[JAX_GPU_PREFIX "solver_potrf_ffi"] = EncapsulateFfiHandler(PotrfFfi);
   dict[JAX_GPU_PREFIX "solver_syevd_ffi"] = EncapsulateFfiHandler(SyevdFfi);
   dict[JAX_GPU_PREFIX "solver_syrk_ffi"] = EncapsulateFfiHandler(SyrkFfi);
   dict[JAX_GPU_PREFIX "solver_gesvd_ffi"] = EncapsulateFfiHandler(GesvdFfi);
   dict[JAX_GPU_PREFIX "solver_gesvdj_ffi"] = EncapsulateFfiHandler(GesvdjFfi);
   dict[JAX_GPU_PREFIX "solver_sytrd_ffi"] = EncapsulateFfiHandler(SytrdFfi);
+
+#ifdef JAX_GPU_HIP
+  dict[JAX_GPU_PREFIX "solver_gesdd_ffi"] = EncapsulateFfiHandler(GesddFfi);
+#endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA
   dict[JAX_GPU_PREFIX "solver_gesvdp_ffi"] = EncapsulateFfiHandler(GesvdpFfi);
@@ -50,9 +55,7 @@ nb::dict Registrations() {
   return dict;
 }
 
-NB_MODULE(_solver, m) {
-  m.def("registrations", &Registrations);
-}
+NB_MODULE(_solver, m) { m.def("registrations", &Registrations); }
 
 }  // namespace
 }  // namespace JAX_GPU_NAMESPACE

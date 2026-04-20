@@ -27,9 +27,9 @@ from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
-    generate_key_paths, broadcast_prefix, prefix_errors,
-    none_leaf_registry, broadcast_flattened_prefix_with_treedef,
-    treedef_is_leaf, tree_structure)
+    broadcast_prefix, prefix_errors, none_leaf_registry,
+    broadcast_flattened_prefix_with_treedef, treedef_is_leaf, tree_structure,
+    tracing_registry)
 from jax._src import linear_util as lu
 from jax._src.util import safe_map, HashableFunction, Unhashable, safe_zip
 from jax._src import traceback_util
@@ -288,7 +288,7 @@ def donation_vector(donate_argnums, donate_argnames, in_tree,
     donate = bool(i in donate_argnums)
     res.extend((donate,) * arg.num_leaves)
   if kwargs_tree is not None:
-    for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # type: ignore
+    for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # pyrefly: ignore[unsupported-operation]
       donate = key in donate_argnames
       res.extend((donate,) * val.num_leaves)
   return tuple(res)
@@ -367,9 +367,17 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
           hint += (f" In particular, you're passing in a single argument which "
                    f"means that {name} might need to be wrapped in "
                    f"a singleton tuple.")
-    raise ValueError(f"{name} specification must be a tree prefix of the "
-                     f"corresponding value, got specification {axis_tree} "
-                     f"for value tree {treedef}.{hint}") from None
+    dummy_tree = tree_unflatten(treedef, [PytreeLeaf()] * treedef.num_leaves)
+    errors = prefix_errors(axis_tree, dummy_tree)
+    if errors:
+      details = "\n  ".join(e(name).args[0] for e in errors)
+      prefix_err_msg = (
+          f"\n  Mismatch details ({len(errors)} found):\n  {details}")
+      raise ValueError(
+          f"{name} specification must be a tree prefix of the "
+          f"corresponding value; {hint}{prefix_err_msg}") from None
+    # At this point we've failed to find a tree prefix error.
+    assert False, "unreachable code"
   assert len(axes) == treedef.num_leaves
   return axes
 
@@ -426,8 +434,10 @@ def flatten_axis_resources(what, tree, shardings, tupled_args):
   dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
   errors = prefix_errors(axis_tree, dummy_tree)
   if errors:
-    e = errors[0]  # Only show information about the first disagreement found.
-    raise e(what)
+    details = "\n".join(e(what).args[0] for e in errors)
+    raise ValueError(
+        f"Mismatch details ({len(errors)} found):\n{details}"
+    )
 
   # At this point we've failed to find a tree prefix error.
   assert False, "Please open a bug report!"  # This should be unreachable.
@@ -709,17 +719,8 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
 
   return tuple(f'{name}{lu._clean_keystr_arg_names(path)}'
                for name, x in ordered_args
-               for path, l in generate_key_paths(x) if l is not static)
-
-
-class _HashableByObjectId:
-  __slots__ = ['val']
-  def __init__(self, val):
-    self.val = val
-  def __hash__(self):
-    return id(self.val)
-  def __eq__(self, other):
-    return self.val is other.val
+               for path, l in tracing_registry.flatten_with_path(x)[0]
+               if l is not static)
 
 # TODO(mattjj): make this function faster
 def check_no_aliased_ref_args(dbg_fn: Callable[[], core.DebugInfo],

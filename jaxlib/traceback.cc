@@ -28,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -40,6 +39,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/hash_util.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/nb_helpers.h"
 #include "tsl/platform/platform.h"
@@ -84,9 +84,8 @@ bool traceback_check(nb::handle o) {
 
 Py_hash_t traceback_tp_hash(PyObject* o) {
   TracebackObject* tb = reinterpret_cast<TracebackObject*>(o);
-  size_t h = absl::HashOf(*tb);
-  Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
-  return s == -1 ? -2 : s;  // -1 must not be used as a Python hash value.
+  Py_hash_t h = AbslHashToPythonHash(absl::HashOf(*tb));
+  return h == -1 ? -2 : h;  // tp_hash must not return -1 as a hash value.
 }
 
 PyObject* traceback_tp_richcompare(PyObject* self, PyObject* other, int op) {
@@ -479,11 +478,8 @@ void Traceback::Register(nb::module_& m) {
         return traceback;
       },
       "Creates a traceback from a list of frames.",
-      nb::sig(
-          // clang-format off
-          "def traceback_from_frames(frames: list[Frame]) -> traceback.TracebackType"
-          // clang-format on
-          ));
+      nb::sig("def traceback_from_frames(frames: list[Frame])"
+              " -> traceback.TracebackType"));
 
   type.attr("code_addr2line") = nb::cpp_function(
       [](nb::handle code, int lasti) {

@@ -30,10 +30,10 @@ limitations under the License.
 namespace mosaic {
 namespace gpu {
 
-#define NVSHMEM_SET_FN(FnName)                                            \
-  FnName = reinterpret_cast<decltype(FnName)>(dlsym(library, #FnName));   \
-  if (!FnName) {                                                          \
-    fprintf(stderr, #FnName " not available in this library.");           \
+#define NVSHMEM_SET_FN(FnName)                                          \
+  FnName = reinterpret_cast<decltype(FnName)>(dlsym(library, #FnName)); \
+  if (!FnName) {                                                        \
+    fprintf(stderr, #FnName " not available in this library.");         \
   }
 
 class NvshmemApi {
@@ -67,11 +67,9 @@ class NvshmemApi {
     return nvshmemx_init_status != nullptr && nvshmemx_init_status() == 2;
   }
 
-  int n_pes() {
-    return nvshmem_n_pes();
-  }
+  int n_pes() { return nvshmem_n_pes(); }
 
-  NvshmemApi(NvshmemApi const&)     = delete;
+  NvshmemApi(NvshmemApi const&) = delete;
   void operator=(NvshmemApi const&) = delete;
 
  private:

@@ -113,7 +113,7 @@ def conv_general_dilated(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
       for more details.
 
   Returns:
@@ -542,6 +542,8 @@ def _conv_general_dilated_transpose_lhs(
       window_strides, np.take(g.shape, out_sdims), padding, lhs_dilation,
       rhs_dilation)
   revd_weights = lax.rev(rhs, rhs_sdims)
+  if g.dtype != revd_weights.dtype:
+    revd_weights = lax.convert_element_type(revd_weights, g.dtype)
   out = conv_general_dilated(
       g, revd_weights, window_strides=lhs_dilation, padding=padding,
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
@@ -550,6 +552,8 @@ def _conv_general_dilated_transpose_lhs(
       batch_group_count=1, precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=lhs.aval.sharding)
+  if out.dtype != lhs.aval.dtype:
+    out = lax.convert_element_type(out, lhs.aval.dtype)
   if batch_group_count > 1:
     out = _reshape_axis_out_of(lhs_spec[1], batch_group_count, out)
     out = _reshape_axis_into(lhs_spec[1], lhs_spec[0], out)
@@ -579,7 +583,9 @@ def _conv_general_dilated_transpose_rhs(
       np.take(lhs_shape, lhs_sdims), np.take(rhs_shape, rhs_sdims),
       window_strides, np.take(g.shape, out_sdims), padding, lhs_dilation,
       rhs_dilation)
-  return conv_general_dilated(
+  if g.dtype != lhs.dtype:
+    lhs = lax.convert_element_type(lhs, g.dtype)
+  out = conv_general_dilated(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers,
@@ -587,6 +593,9 @@ def _conv_general_dilated_transpose_rhs(
       batch_group_count=batch_group_count, precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=rhs.aval.sharding)
+  if out.dtype != rhs.aval.dtype:
+    out = lax.convert_element_type(out, rhs.aval.dtype)
+  return out
 
 def _conv_general_dilated_batch_rule(
     axis_data,
@@ -813,8 +822,9 @@ def _conv_general_dilated_lower(
     # TODO(https://github.com/openxla/stablehlo/issues/1268)
     raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
+    result_type = mlir.aval_to_ir_type(aval_out)
     out = hlo.convolution(
-        mlir.aval_to_ir_type(aval_out), lhs, rhs,
+        result_type, lhs, rhs,
         dimension_numbers=dnums,
         feature_group_count=mlir.i64_attr(feature_group_count),
         batch_group_count=mlir.i64_attr(batch_group_count),
@@ -832,11 +842,13 @@ def _conv_general_dilated_lower(
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pad1 = mlir.eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
       return hlo.ReshapeOp(int2d, pad1)
-    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
-                                  mlir.i64_attr(0))
+    d_padding = hlo.concatenate(
+        list(map(prep_one_pad, padding)), mlir.i64_attr(0)
+    )
+    result_type = mlir.aval_to_ir_type(aval_out)
     return [
         hlo.dynamic_conv(
-          mlir.aval_to_ir_type(aval_out),
+          result_type,
           lhs,
           rhs,
           d_padding,
@@ -928,6 +940,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
                      for i, k, s in zip(lhs_trans[2:],
                                         rhs_trans[2:],
                                         window_strides)]
+  # pyrefly: ignore[no-matching-overload]
   out_space = np.sum([unpad_out_space, padding], axis=0).tolist()
   out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
   return tuple(np.take(out_trans, np.argsort(out_perm)))

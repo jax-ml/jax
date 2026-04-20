@@ -31,6 +31,8 @@ from jax._src.lax.linalg import (
   lu_p as lu_p,
   lu_pivots_to_permutation as lu_pivots_to_permutation,
   lu_pivots_to_permutation_p as lu_pivots_to_permutation_p,
+  ormqr as ormqr,
+  ormqr_p as ormqr_p,
   qr as qr,
   qr_p as qr_p,
   schur as schur,

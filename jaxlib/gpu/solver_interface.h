@@ -117,6 +117,21 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, OrgqrBufferSize);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Orgqr);
 #undef JAX_GPU_SOLVER_Orgqr_ARGS
 
+// Householder multiply: ormqr/unmqr
+
+#define JAX_GPU_SOLVER_OrmqrBufferSize_ARGS(Type, ...) \
+  gpusolverDnHandle_t handle, gpublasSideMode_t side,  \
+      gpublasOperation_t trans, int m, int n, int k
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, OrmqrBufferSize);
+#undef JAX_GPU_SOLVER_OrmqrBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_Ormqr_ARGS(Type, ...)                           \
+  gpusolverDnHandle_t handle, gpublasSideMode_t side,                  \
+      gpublasOperation_t trans, int m, int n, int k, Type *a, int lda, \
+      Type *tau, Type *c, int ldc, Type *workspace, int lwork, int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Ormqr);
+#undef JAX_GPU_SOLVER_Ormqr_ARGS
+
 // Cholesky decomposition: potrf
 
 #define JAX_GPU_SOLVER_PotrfBufferSize_ARGS(Type, ...) \
@@ -124,13 +139,13 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Orgqr);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, PotrfBufferSize);
 #undef JAX_GPU_SOLVER_PotrfBufferSize_ARGS
 
-#define JAX_GPU_SOLVER_Potrf_ARGS(Type, ...)                          \
+#define JAX_GPU_SOLVER_Potrf_ARGS(Type, ...)                            \
   gpusolverDnHandle_t handle, gpusolverFillMode_t uplo, int n, Type *a, \
       Type *workspace, int lwork, int *info
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Potrf);
 #undef JAX_GPU_SOLVER_Potrf_ARGS
 
-#define JAX_GPU_SOLVER_PotrfBatched_ARGS(Type, ...)                       \
+#define JAX_GPU_SOLVER_PotrfBatched_ARGS(Type, ...)                      \
   gpusolverDnHandle_t handle, gpusolverFillMode_t uplo, int n, Type **a, \
       int lda, int *info, int batch
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, PotrfBatched);
@@ -226,6 +241,22 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBatchedBufferSize);
       gpuGesvdjInfo_t params, int batch
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, GesvdjBatched);
 #undef JAX_GPU_SOLVER_GesvdjBatched_ARGS
+
+// Singular Value Decomposition (divide-and-conquer): gesdd (ROCm only, via
+// rocsolver; CUDA cusolver does not expose gesdd).
+#define JAX_GPU_SOLVER_Gesdd_ARGS(Type, Real)                                  \
+  gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,      \
+      int n, Type *a, int lda, Real *s, Type *u, int ldu, Type *v, int ldv,   \
+      int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesdd);
+#undef JAX_GPU_SOLVER_Gesdd_ARGS
+
+#ifdef JAX_GPU_HIP
+// Set user-owned workspace for rocsolver/rocblas (HIP only). Call with
+// (handle, ptr, size) before Gesdd; call with (handle, nullptr, 0) to clear.
+// The kernel computes workspace size via formula (see solver_kernels_ffi.cc).
+absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size);
+#endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA
 

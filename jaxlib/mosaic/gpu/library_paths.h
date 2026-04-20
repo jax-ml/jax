@@ -21,9 +21,7 @@ limitations under the License.
 namespace mosaic {
 namespace gpu {
 
-inline const char *GetCUDARoot() {
-  return getenv("CUDA_ROOT");
-}
+inline const char* GetCUDARoot() { return getenv("CUDA_ROOT"); }
 
 }  // namespace gpu
 }  // namespace mosaic

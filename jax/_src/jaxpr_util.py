@@ -58,11 +58,33 @@ def all_eqns(
   yield from _all_eqns(jaxpr, None if revisit_inner_jaxprs else set())
 
 
+def _all_eqns_with_traceback(
+    jaxpr: core.Jaxpr, caller_tb: xla_client.Traceback | None,
+    visited: set[core.Jaxpr]
+) -> Iterator[tuple[xla_client.Traceback | None, core.JaxprEqn]]:
+  for eqn in jaxpr.eqns:
+    tb = eqn.source_info.traceback
+    if caller_tb is not None:
+      tb = caller_tb if tb is None else tb + caller_tb
+    yield tb, eqn
+
+    for subjaxpr in core.jaxprs_in_params(eqn.params):
+      if subjaxpr not in visited:
+        visited.add(subjaxpr)
+        yield from _all_eqns_with_traceback(subjaxpr, tb, visited)
+
+
 def collect_eqns(jaxpr: core.Jaxpr, key: Callable):
   d = defaultdict(list)
   for _, eqn in all_eqns(jaxpr):
     d[key(eqn)].append(eqn)
   return dict(d)
+
+@util.weakref_lru_cache
+def count_eqns(
+    jaxpr: core.Jaxpr, revisit_inner_jaxprs: bool = True
+) -> int:
+  return sum(1 for _ in all_eqns(jaxpr, revisit_inner_jaxprs=revisit_inner_jaxprs))
 
 def histogram(jaxpr: core.Jaxpr, key: Callable,
               key_fmt: Callable = lambda x: x):
@@ -219,10 +241,11 @@ def pprof_equation_profile(jaxpr: core.Jaxpr, *,
     pprof tool for visualization.
   """
   d = Counter(
-      (eqn.source_info.traceback, eqn.primitive)
-      for _, eqn in all_eqns(jaxpr, revisit_inner_jaxprs=False)
+      (tb, eqn.primitive)
+      for tb, eqn in _all_eqns_with_traceback(jaxpr, None, set())
   )
   return _pprof_profile(d, workspace_root or DEFAULT_WORKSPACE_ROOT)
+
 
 def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
   """Find all the equations which use invar and the positional index of its binder"""

@@ -26,10 +26,13 @@ package(
 pytype_strict_library(
     name = "extend",
     srcs = ["__init__.py"],
+    type_checking = "pyrefly",
     deps = [
         ":backend",
         ":core",
         ":linear_util",
+        ":lowering",
+        ":pallas",
         ":random",
         ":sharding",
         ":source_info_util",
@@ -41,6 +44,7 @@ py_library_providing_imports_info(
     name = "core",
     srcs = glob(["core/**/*.py"]),
     lib_rule = pytype_strict_library,
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:abstract_arrays",
@@ -55,14 +59,34 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
+    name = "lowering",
+    srcs = ["lowering.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src:mlir",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas",
+    srcs = ["pallas.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
     name = "linear_util",
     srcs = ["linear_util.py"],
+    type_checking = "pyrefly",
     deps = ["//jax/_src:core"],
 )
 
 pytype_strict_library(
     name = "backend",
     srcs = ["backend.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src:api",
         "//jax/_src:compiler",
@@ -75,6 +99,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "random",
     srcs = ["random.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:extend_src",
@@ -85,6 +110,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding",
     srcs = ["sharding.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src:sharding_impls",
         "//jax/_src/lib",
@@ -94,11 +120,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "source_info_util",
     srcs = ["source_info_util.py"],
+    type_checking = "pyrefly",
     deps = ["//jax/_src:source_info_util"],
 )
 
 pytype_strict_library(
     name = "ifrt_programs",
     srcs = ["ifrt_programs.py"],
+    type_checking = "pyrefly",
     deps = ["//jax/_src/lib"],
 )

@@ -161,6 +161,7 @@ py_library_providing_imports_info(
             "numpy/*.pyi",
         ],
     ),
+    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         ":version",
@@ -184,11 +185,9 @@ py_library_providing_imports_info(
         "//jax/_src:cudnn",
         "//jax/_src:custom_api_util",
         "//jax/_src:custom_batching",
-        "//jax/_src:custom_dce",
         "//jax/_src:custom_derivatives",
         "//jax/_src:custom_partitioning",
         "//jax/_src:custom_partitioning_sharding_rule",
-        "//jax/_src:custom_transpose",
         "//jax/_src:debugger",
         "//jax/_src:debugging",
         "//jax/_src:deprecations",
@@ -211,7 +210,6 @@ py_library_providing_imports_info(
         "//jax/_src:lax",
         "//jax/_src:layout",
         "//jax/_src:lazy_loader",
-        "//jax/_src:memory",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src:monitoring",
@@ -234,7 +232,6 @@ py_library_providing_imports_info(
         "//jax/_src:shard_map",
         "//jax/_src:sharding",
         "//jax/_src:sharding_impls",
-        "//jax/_src:sharding_specs",
         "//jax/_src:source_info_util",
         "//jax/_src:sourcemap",
         "//jax/_src:stages",
@@ -254,4 +251,5 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
+    type_checking = "pyrefly",
 )

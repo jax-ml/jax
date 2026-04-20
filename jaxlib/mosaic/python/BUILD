@@ -17,6 +17,10 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 load("@rules_python//python:defs.bzl", "py_library")
 
+package(
+    default_applicable_licenses = [],
+)
+
 py_library(
     name = "gpu_dialect",
     srcs = [
@@ -39,7 +43,14 @@ gentbl_filegroup(
                 "-gen-python-op-bindings",
                 "-bind-dialect=tpu",
             ],
-            "_tpu_gen_raw.py",
+            "_tpu_ops_gen_raw.py",
+        ),
+        (
+            [
+                "-gen-python-enum-bindings",
+                "-bind-dialect=tpu",
+            ],
+            "_tpu_enum_gen_raw.py",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
@@ -51,16 +62,24 @@ gentbl_filegroup(
 )
 
 genrule(
-    name = "tpu_python_gen",
-    srcs = ["_tpu_gen_raw.py"],
-    outs = ["_tpu_gen.py"],
-    cmd = "cat $(location _tpu_gen_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
+    name = "tpu_python_ops_gen",
+    srcs = ["_tpu_ops_gen_raw.py"],
+    outs = ["_tpu_ops_gen.py"],
+    cmd = "cat $(location _tpu_ops_gen_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
+)
+
+genrule(
+    name = "tpu_python_enum_gen",
+    srcs = ["_tpu_enum_gen_raw.py"],
+    outs = ["_tpu_enum_gen.py"],
+    cmd = "cat $(location _tpu_enum_gen_raw.py) | sed -e 's/^from \\.\\./from jaxlib\\.mlir\\./g;s/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
 )
 
 py_library(
     name = "tpu_dialect",
     srcs = [
-        "_tpu_gen.py",
+        "_tpu_enum_gen.py",
+        "_tpu_ops_gen.py",
         "tpu.py",
     ],
     visibility = ["//visibility:public"],

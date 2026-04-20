@@ -425,8 +425,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerWhere(self, name, rng_factory, shape, dtype, axis,
                        keepdims, initial, inexact, whereshape, tol):
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 28):
-      self.skipTest("Requires a newer libTPU")
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     if (shape in [()] + scalar_shapes and
@@ -490,8 +488,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerWhereNoInitial(self, name, rng_factory, shape, dtype, axis,
                                 keepdims, inexact, whereshape, tol):
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 28):
-      self.skipTest("b/412684823: Requires a newer libTPU")
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
@@ -1093,6 +1089,44 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(
       [eqn.primitive for eqn in jaxpr2.eqns],
       [reduce_sum_p, div_p])
+
+  @jtu.sample_product(
+    opname=["quantile", "nanquantile", "percentile", "nanpercentile"],
+    shape=[(10,), (4, 3, 5), (2, 3, 4, 5)],
+    axis=[0, -1, None],
+    dtype=jtu.dtypes.floating,
+    keepdims=[False, True],
+  )
+  def testWeightedQuantile(self, opname, shape, axis, dtype, keepdims):
+    if "nan" in opname:
+      a_rng = jtu.rand_some_nan(self.rng())
+    else:
+      a_rng = jtu.rand_default(self.rng())
+    w_rng = jtu.rand_positive(self.rng())
+    is_percentile = "percentile" in opname
+    q_limit = 100.0 if is_percentile else 1.0
+    def args_maker():
+      data = a_rng(shape, dtype)
+      q = jnp.array([0.25, 0.5, 0.75], dtype=dtype) * (q_limit / 1.0)
+      weights = w_rng(shape, dtype)
+      return [data, q, weights]
+    @jtu.ignore_warning(category=RuntimeWarning, message="All-NaN slice encountered")
+    def np_fun(data, q, weights):
+      if dtype == dtypes.bfloat16:
+        data, q, weights = (x.astype(np.float32) for x in (data, q, weights))
+      out = getattr(np, opname)(
+          data, q, axis=axis, weights=weights,
+          method='inverted_cdf', keepdims=keepdims
+      )
+      return out.astype(dtype) if dtype == dtypes.bfloat16 else out
+    def jnp_fun(data, q, weights):
+      return getattr(jnp, opname)(
+          data, q, axis=axis, weights=weights,
+          method='inverted_cdf', keepdims=keepdims
+      )
+    tol = {jnp.float16: 1e-2, dtypes.bfloat16: 1e-1, jnp.float32: 1e-5}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

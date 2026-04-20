@@ -515,5 +515,119 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     self.assertEqual(set(deleted_strong_keys), set(range(10)))
 
 
+class WeakKeyWeakValueCacheTest(absltest.TestCase):
+
+  def testBasic(self):
+    class WRKey:
+      pass
+
+    class WRValue:
+      pass
+
+    call_count = 0
+
+    def compute(x):
+      nonlocal call_count
+      call_count += 1
+      return WRValue()
+
+    cache = weakref_lru_cache.weak_key_weak_value_cache(compute)
+
+    k1 = WRKey()
+    v1 = cache(k1)
+    self.assertEqual(call_count, 1)
+
+    v2 = cache(k1)
+    self.assertEqual(call_count, 1)
+    self.assertIs(v1, v2)
+
+    k2 = WRKey()
+    _ = cache(k2)
+    self.assertEqual(call_count, 2)
+
+    del k1
+    gc.collect()
+
+    k1 = WRKey()
+    v3 = cache(k1)
+    self.assertEqual(call_count, 3)
+    self.assertIsNot(v3, v1)
+
+  def testTraversal(self):
+    class WRKey:
+      pass
+
+    def compute(x):
+      return x
+
+    cache = weakref_lru_cache.weak_key_weak_value_cache(compute)
+
+    k1 = WRKey()
+    cache(k1)
+
+    expected_refs = [
+        compute,
+        weakref.getweakrefs(k1)[0],
+    ]
+    referents = gc.get_referents(cache)
+    for ref in expected_refs:
+      self.assertIn(ref, referents)
+
+  def testMultiThreaded(self):
+    class WeakKey:
+      pass
+
+    class WeakValue:
+      pass
+
+    def compute(x):
+      return WeakValue()
+
+    cache = weakref_lru_cache.weak_key_weak_value_cache(compute)
+
+    num_threads = 10
+    actions_per_thread = 1000
+
+    keys = [WeakKey() for _ in range(10)]
+    values = []
+    lock = threading.Lock()
+
+    def worker():
+      for _ in range(actions_per_thread):
+        choice = random.random()
+        if choice < 0.4:
+          with lock:
+            if keys:
+              k = random.choice(keys)
+            else:
+              k = WeakKey()
+              keys.append(k)
+          v = cache(k)
+          with lock:
+            values.append(v)
+        elif choice < 0.6:
+          k = WeakKey()
+          v = cache(k)
+          with lock:
+            keys.append(k)
+            values.append(v)
+        elif choice < 0.8:
+          with lock:
+            if keys:
+              keys.pop(random.randrange(len(keys)))
+        elif choice < 0.95:
+          with lock:
+            if values:
+              values.pop(random.randrange(len(values)))
+        else:
+          gc.collect()
+
+    threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+
 if __name__ == "__main__":
   absltest.main()

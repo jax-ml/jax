@@ -58,7 +58,7 @@ def _custom_evaluate_jaxpr(
   util.safe_map(write, jaxpr.invars, args)
   lu = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
-    subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+    bind_params = eqn.primitive.get_bind_params(eqn.params)
 
     if eqn.primitive in disallowed_primitives:
       raise NotImplementedError(f'Primitive {eqn.primitive} not supported.')
@@ -72,7 +72,7 @@ def _custom_evaluate_jaxpr(
         traceback, name_stack=name_stack
     ), eqn.ctx.manager:
       ans = eqn.primitive.bind(
-          *subfuns, *util.safe_map(read, eqn.invars), **bind_params
+          *util.safe_map(read, eqn.invars), **bind_params
       )
     if eqn.primitive.multiple_results:
       util.safe_map(write, eqn.outvars, ans)

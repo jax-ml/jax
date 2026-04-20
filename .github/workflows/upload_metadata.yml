@@ -1,0 +1,39 @@
+# This workflow runs automatically when targeted test workflows complete.
+# It collects workflow metadata and uploads it to GCS.
+name: Upload Workflow Metadata
+
+on:
+  workflow_run:
+    workflows:
+      - "CI - Wheel Tests (Continuous)"
+      - "CI - Pytest CPU"
+      - "CI - Bazel CPU tests with wheel dependencies (RBE)"
+      - "CI - Bazel CUDA tests"
+      - "CI - Pytest TPU"
+      - "CI - Bazel test TPU"
+      - "CI - Pytest CUDA"
+      - "CI - Bazel H100 and B200 CUDA tests"
+      - "CI - Bazel ROCm tests"
+      - "CI - Pytest ROCm"
+      - "CI - jaxlib head with NumPy nightly"
+      - "CI - Oldest Supported NumPy (presubmit)"
+    types:
+      - completed
+
+jobs:
+  upload:
+    name: "Upload Workflow Metadata"
+    runs-on: linux-x86-n4-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    steps:
+      - name: Fetch and Upload Metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          run_id=${{ github.event.workflow_run.id }}
+          curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
+            https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id > workflow_run.json
+          curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
+            https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id/jobs?per_page=200 > jobs.json
+          gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.event.workflow_run.name }}/${{ github.event.workflow_run.run_number }}/${{ github.event.workflow_run.run_attempt }}"
+          gcloud storage cp workflow_run.json jobs.json "$gcs_upload_uri/"

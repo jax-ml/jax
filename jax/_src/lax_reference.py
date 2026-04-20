@@ -71,16 +71,25 @@ acosh = np.arccosh
 atanh = np.arctanh
 
 def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)
 def digamma(x): return scipy.special.digamma(x).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 igamma = scipy.special.gammainc
+# pyrefly: ignore[missing-attribute]
 igammac = scipy.special.gammaincc
+# pyrefly: ignore[missing-attribute]
 def erf(x): return scipy.special.erf(x).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 def erfc(x): return scipy.special.erfc(x).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 def erf_inv(x): return scipy.special.erfinv(x).astype(x.dtype)
 
+# pyrefly: ignore[missing-attribute]
 def bessel_i0e(x): return scipy.special.i0e(x).astype(x.dtype)
+# pyrefly: ignore[missing-attribute]
 def bessel_i1e(x): return scipy.special.i1e(x).astype(x.dtype)
 
 real = np.real
@@ -102,7 +111,12 @@ bitwise_xor = np.bitwise_xor
 
 add = np.add
 sub = np.subtract
-mul = np.multiply
+
+def mul(x, y, /, *, out_dtype=None):
+  if out_dtype is not None:
+    x = np.astype(x, out_dtype)
+    y = np.astype(y, out_dtype)
+  return np.multiply(x, y)
 
 def div(lhs, rhs):
   if dtypes.issubdtype(dtypes.result_type(lhs), np.integer):
@@ -343,7 +357,7 @@ def rev(operand, dimensions):
 
 select = np.where
 
-def slice(operand, start_indices, limit_indices, strides=None):  # pylint: disable=redefined-builtin
+def slice(operand, start_indices, limit_indices, strides=None):
   if strides is None:
     strides = np.ones(len(start_indices)).astype(int)
   slices = tuple(_map(_slice, start_indices, limit_indices, strides))
@@ -365,7 +379,7 @@ def dynamic_update_slice(operand, update, start_indices):
 
 transpose = np.transpose
 
-def reduce(operand, init_value, computation, dimensions):  # pylint: disable=redefined-builtin
+def reduce(operand, init_value, computation, dimensions):
   reducer = _make_reducer(computation, init_value)
   return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 

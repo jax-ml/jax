@@ -107,7 +107,6 @@ def cdf(k: ArrayLike, p: ArrayLike) -> Array:
   Args:
     k: arraylike, value at which to evaluate the CDF
     p: arraylike, distribution shape parameter
-    loc: arraylike, distribution offset
 
   Returns:
     array of cdf values
@@ -138,9 +137,8 @@ def ppf(q: ArrayLike, p: ArrayLike) -> Array:
   distribution function, :func:`jax.scipy.stats.bernoulli.cdf`.
 
   Args:
-    k: arraylike, value at which to evaluate the PPF
+    q: arraylike, value at which to evaluate the PPF
     p: arraylike, distribution shape parameter
-    loc: arraylike, distribution offset
 
   Returns:
     array of ppf values

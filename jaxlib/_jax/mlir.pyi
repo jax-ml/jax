@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2026 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """MLIR/XLA integration"""
 
-from typing import overload
+from typing import Any, overload
 
 from . import XlaComputation as _XlaComputation
 
@@ -32,15 +32,12 @@ def mlir_module_to_xla_computation(
 def mhlo_to_stablehlo(mlir_module: bytes) -> bytes: ...
 @overload
 def mhlo_to_stablehlo(mlir_module: str) -> bytes: ...
-@overload
 def serialize_portable_artifact(
-    mlir_module: bytes, target: str, use_mixed_serialization: bool = ...
+    mlir_module: Any, target: str, use_mixed_serialization: bool = False
 ) -> bytes: ...
-@overload
-def serialize_portable_artifact(
-    mlir_module: str, target: str, use_mixed_serialization: bool = ...
-) -> bytes: ...
-def deserialize_portable_artifact(mlir_module: bytes) -> str: ...
+def deserialize_portable_artifact(
+    mlir_module: bytes, context: Any = None
+) -> Any: ...
 def refine_polymorphic_shapes(
     mlir_module: bytes,
     enable_shape_assertions: bool = ...,

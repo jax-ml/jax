@@ -15,21 +15,18 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
-#include <algorithm>
 #include <cstdint>
-#include <functional>
-#include <iterator>
 #include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -55,10 +52,12 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -68,6 +67,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 // Generated definitions.
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attr_interfaces.cc.inc"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.cc.inc"
 #define GET_ATTRDEF_CLASSES
@@ -255,7 +255,7 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
     mlir::ArrayRef<int64_t> slice_lengths,
     mlir::Operation::operand_range indices) {
   auto error = [op](auto... params) {
-    return op->emitError(llvm::formatv(params...));
+    return op->emitOpError(llvm::formatv(params...));
   };
 
   if (gmem_type.getElementType() != smem_type.getElementType()) {
@@ -291,7 +291,8 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
       if (first_vector_index_dim >= 0) {
         return error(
             "Only one index may be a vector but got multiple vector indices "
-            "for dimensions {0} and {1}.", first_vector_index_dim, i);
+            "for dimensions {0} and {1}.",
+            first_vector_index_dim, i);
       }
       first_vector_index_dim = i;
       if (vec_type.getShape()[0] != slice_lengths[i]) {
@@ -318,7 +319,7 @@ llvm::LogicalResult AsyncLoadOp::verify() {
   for (int i = 0; i < getCollective().size(); ++i) {
     for (int k = i + 1; k < getCollective().size(); ++k)
       if (getCollective()[i] == getCollective()[k]) {
-        return emitError(
+        return emitOpError(
             "The `collective` attribute must not contain duplicate "
             "dimensions.");
       }
@@ -333,14 +334,14 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
         "The `slice_lengths` attribute must not contain values less than -1.");
   }
   if (getIndices().size() != getSource().getType().getRank()) {
-     return emitOpError(
+    return emitOpError(
         "The size of `indices` must be equal to the rank of `source`.");
   }
 
   for (int i = 0; i < getCollective().size(); ++i) {
     for (int k = i + 1; k < getCollective().size(); ++k)
       if (getCollective()[i] == getCollective()[k]) {
-        return emitError(
+        return emitOpError(
             "The `collective` attribute must not contain duplicate "
             "dimensions.");
       }
@@ -350,15 +351,48 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
 }
 
 llvm::LogicalResult AsyncStoreOp::verify() {
+  if (getGmemPeerId() && getIsGlobalBroadcast()) {
+    return emitOpError() << "Both `gmem_peer_id` or `is_global_broadcast` "
+                            "cannot be specified.";
+  }
   return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
                                  getSliceLengths(), getIndices());
 }
 
+llvm::LogicalResult TryClusterCancelOp::verify() {
+  auto result_ty = getCancellationResult().getType();
+  if (result_ty.getNumElements() != 16) {
+    return emitOpError()
+           << "Try cluster cancel response must have 16 elements, but has "
+           << result_ty.getNumElements() << " elements.";
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (result_ty.getMemorySpace() != smem) {
+    return emitOpError() << "Response memref must be in SMEM.";
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult QueryClusterCancelOp::verify() {
+  auto result_ty = getCancellationResult().getType();
+  if (result_ty.getNumElements() != 16) {
+    return emitOpError() << "Response to decode must have 16 elements, but has "
+                         << result_ty.getNumElements() << " elements.";
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (result_ty.getMemorySpace() != smem) {
+    return emitOpError() << "Response memref must be in SMEM.";
+  }
+  return llvm::success();
+}
+
 llvm::LogicalResult WGMMAOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   if (operands.empty()) {
     return mlir::emitOptionalError(location, "expected non-empty operands");
@@ -369,7 +403,7 @@ llvm::LogicalResult WGMMAOp::inferReturnTypes(
 
 llvm::LogicalResult WGMMAOp::verify() {
   auto error = [this](auto... params) {
-    return getOperation()->emitOpError(llvm::formatv(params...));
+    return emitOpError(llvm::formatv(params...));
   };
 
   auto a_type = mlir::cast<mlir::ShapedType>(getA().getType());
@@ -419,235 +453,9 @@ llvm::LogicalResult WGMMAOp::verify() {
   return llvm::success();
 }
 
-namespace {
-
-absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileShape(
-    llvm::ArrayRef<int64_t> shape, llvm::ArrayRef<int32_t> tiling) {
-  CHECK_LE(tiling.size(), shape.size());
-  llvm::SmallVector<int64_t, 4> num_tiles;
-  for (auto [dim_size, tile_size] :
-       llvm::zip_equal(shape.take_back(tiling.size()), tiling)) {
-    if (dim_size % tile_size != 0) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "The dimension size ", dim_size,
-          " must be a multiple of the tile size ", tile_size, "."));
-    }
-    num_tiles.push_back(dim_size / tile_size);
-  }
-
-  llvm::SmallVector<int64_t, 8> tiled_shape;
-  absl::c_copy(shape.drop_back(tiling.size()), std::back_inserter(tiled_shape));
-  absl::c_copy(num_tiles, std::back_inserter(tiled_shape));
-  absl::c_copy(tiling, std::back_inserter(tiled_shape));
-  return tiled_shape;
-}
-
-// Tiles the trailing strides in `strides` according to `tiling`.
-//
-// The `len(tiling)` trailing strides in `strides` must be the `len(tiling)`
-// smallest strides in `strides`. The same property holds in the result, i.e.,
-// given two tiles with indices i and j (i < j) with strides tiled according to
-// this function, then all the elements in tile i are physically ordered before
-// all the elements in tile j.
-
-// E.g., TileStrides((2048, 32, 1), (8, 4)) = (2048, 256, 32, 4, 1)
-absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileStrides(
-    llvm::ArrayRef<int64_t> strides, llvm::ArrayRef<int32_t> tiling) {
-  int64_t tiling_rank = tiling.size();
-  if (strides.size() < tiling_rank) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("Strides have lower rank than tiling: ",
-                     strides.size(), " < ", tiling.size()));
-  }
-
-  llvm::SmallVector<int64_t, 8> ordered_strides(strides.begin(), strides.end());
-  std::sort(ordered_strides.begin(), ordered_strides.end(),
-            std::greater<int64_t>());
-
-  absl::flat_hash_set<int64_t> smallest_strides(
-      ordered_strides.end() - tiling_rank, ordered_strides.end());
-  absl::flat_hash_set<int64_t> trailing_strides(strides.end() - tiling_rank,
-                                                strides.end());
-  if (smallest_strides != trailing_strides) {
-    return absl::InvalidArgumentError(
-        "Can not tile strides when tiled dimensions have been transposed with "
-        "untiled dimensions.");
-  }
-
-  llvm::ArrayRef<int64_t> tiled_ordered_strides =
-      llvm::ArrayRef(ordered_strides).take_back(tiling_rank);
-  llvm::ArrayRef<int64_t> tiled_strides = strides.take_back(tiling_rank);
-
-  auto to_ordered = [&](int64_t i) -> int64_t {
-    for (int64_t j = 0; j < tiling_rank; ++j) {
-      if (tiled_ordered_strides[j] == tiled_strides[i]) return j;
-    }
-    llvm_unreachable("Stride not found");
-  };
-
-  auto from_ordered = [&](int64_t i) -> int64_t {
-    for (int64_t j = 0; j < tiling_rank; ++j) {
-      if (tiled_strides[j] == tiled_ordered_strides[i]) return j;
-    }
-    llvm_unreachable("Stride not found");
-  };
-
-  llvm::SmallVector<int32_t, 4> ordered_tiling(tiling_rank);
-  llvm::SmallVector<int64_t, 4> ordered_tiled_strides(tiling_rank);
-  for (int64_t i = 0; i < tiling_rank; ++i) {
-    ordered_tiling[i] = tiling[from_ordered(i)];
-    ordered_tiled_strides[i] = tiled_strides[from_ordered(i)];
-  }
-
-  llvm::SmallVector<int64_t, 8> ordered_tiled_tiling_strides;
-  ordered_tiled_tiling_strides.push_back(1);
-  for (int64_t i = tiling_rank - 1; i >= 0; --i) {
-    ordered_tiled_tiling_strides.push_back(ordered_tiled_tiling_strides.back() *
-                                           ordered_tiling[i]);
-  }
-
-  int64_t prev_s = ordered_tiled_strides[tiling_rank - 1];
-  for (int64_t i = tiling_rank - 2; i >= 0; --i) {
-    int64_t s = ordered_tiled_strides[i];
-    int64_t t = ordered_tiling[i + 1];
-    int64_t d = prev_s * t;
-    if (s % d != 0) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Stride ", s, " is not divisible by ", d, " (tile size = ", t, ")"));
-    }
-    ordered_tiled_tiling_strides.push_back(s / d *
-                                           ordered_tiled_tiling_strides.back());
-    prev_s = s;
-  }
-
-  std::reverse(ordered_tiled_tiling_strides.begin(),
-               ordered_tiled_tiling_strides.end());
-
-  llvm::SmallVector<int64_t, 8> result;
-  for (int64_t i = 0; i < strides.size() - tiling_rank; ++i) {
-    result.push_back(strides[i]);
-  }
-  for (int64_t i = 0; i < tiling_rank; ++i) {
-    result.push_back(ordered_tiled_tiling_strides[to_ordered(i)]);
-  }
-  for (int64_t i = 0; i < tiling_rank; ++i) {
-    result.push_back(ordered_tiled_tiling_strides[tiling_rank + to_ordered(i)]);
-  }
-  return result;
-}
-
-
-// Tiles the trailing offsets in `offsets` according to `tiling`.
-absl::StatusOr<llvm::SmallVector<int64_t, 8>> TileOffset(
-    llvm::ArrayRef<int64_t> offsets, llvm::ArrayRef<int32_t> tiling) {
-  int64_t tiling_rank = tiling.size();
-  if (offsets.size() < tiling_rank) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("Offsets have lower rank than tiling: ",
-                     offsets.size(), " < ", tiling.size()));
-  }
-
-  llvm::SmallVector<int64_t, 8> result;
-  // Untiled offsets are unchanged.
-  for (int64_t i = 0; i < offsets.size() - tiling_rank; ++i) {
-    result.push_back(offsets[i]);
-  }
-  for (int64_t i = offsets.size() - tiling_rank; i < offsets.size(); ++i) {
-    int32_t t = tiling[i - (offsets.size() - tiling_rank)];
-    if (offsets[i] % t != 0) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Offset ", offsets[i], " is not divisible by tile size ", t, "."));
-    }
-    result.push_back(offsets[i] / t);
-  }
-  for (int64_t i = 0; i < tiling_rank; ++i) {
-    result.push_back(0);
-  }
-  return result;
-}
-
-absl::StatusOr<MemRefType> TileMemRefTypeImpl(MemRefType source_type,
-                                              llvm::ArrayRef<int32_t> tiling) {
-  llvm::ArrayRef<int64_t> source_shape = source_type.getShape();
-  auto [strides, offset] = source_type.getStridesAndOffset();
-
-  TF_ASSIGN_OR_RETURN(auto tiled_shape, TileShape(source_shape, tiling));
-  TF_ASSIGN_OR_RETURN(auto tiled_strides, TileStrides(strides, tiling));
-
-  int64_t tiled_offset;
-  if (offset == mlir::ShapedType::kDynamic) {
-    tiled_offset = offset;
-  } else {
-    llvm::SmallVector<int64_t, 4> delinearized_offset(strides.size(), 0);
-    llvm::SmallVector<std::pair<int64_t, int64_t>, 4> stride_index_pairs;
-    for (int64_t i = 0; i < strides.size(); ++i) {
-      stride_index_pairs.push_back({strides[i], i});
-    }
-    std::sort(stride_index_pairs.begin(), stride_index_pairs.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
-
-    int64_t remaining_offset = offset;
-    for (auto [stride, idx] : stride_index_pairs) {
-      delinearized_offset[idx] = remaining_offset / stride;
-      remaining_offset %= stride;
-    }
-
-    TF_ASSIGN_OR_RETURN(auto tiled_delinearized_offset,
-                        TileOffset(delinearized_offset, tiling));
-
-    tiled_offset = 0;
-    for (int64_t i = 0; i < tiled_strides.size(); ++i) {
-      tiled_offset += tiled_delinearized_offset[i] * tiled_strides[i];
-    }
-  }
-
-  return MemRefType::get(
-      tiled_shape, source_type.getElementType(),
-      mlir::StridedLayoutAttr::get(source_type.getContext(), tiled_offset,
-                                   tiled_strides),
-      source_type.getMemorySpace());
-}
-
-}  // namespace
-
-::llvm::LogicalResult TileShapeOp::inferReturnTypes(
-    mlir::MLIRContext* context, std::optional<mlir::Location> location,
-    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
-    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
-  auto fail = [&location](absl::string_view message) -> llvm::LogicalResult {
-    if (location.has_value()) {
-      return mlir::emitError(*location) << message;
-    }
-    return llvm::failure();
-  };
-  MemRefType source_type = llvm::cast<MemRefType>(operands.front().getType());
-  llvm::ArrayRef<int64_t> source_shape = source_type.getShape();
-  llvm::ArrayRef<int32_t> tiling = properties.as<Properties*>()->getTiling();
-
-  if (source_shape.size() < tiling.size()) {
-    return fail(absl::StrCat(
-        "The source shape must have at least as many dimensions as the tiling, "
-        " but got ",
-        source_shape.size(), " < ", tiling.size()));
-  }
-
-  if (!source_type.isStrided()) {
-    return fail("The source memref must have a strided layout.");
-  }
-
-  auto result = TileMemRefTypeImpl(source_type, tiling);
-  if (!result.ok()) {
-    return fail(result.status().message());
-  }
-
-  inferredReturnTypes.push_back(*result);
-  return llvm::success();
-}
-
 llvm::LogicalResult TcGen05MMAOp::verify() {
   auto error = [this](auto... params) {
-    return getOperation()->emitOpError(llvm::formatv(params...));
+    return emitOpError(llvm::formatv(params...));
   };
 
   auto a_type = getA().getType();
@@ -836,7 +644,7 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
         "The size of the `broadcast_dimensions` attribute must be equal to "
         "the rank of the input vector.");
   }
-  auto dims = llvm::to_vector(getBroadcastDimensions());
+  llvm::ArrayRef<int64_t> dims = getBroadcastDimensions();
   for (int i = 0; i < dims.size(); ++i) {
     if (dims[i] < 0 || dims[i] >= result_type.getRank()) {
       return error(
@@ -848,6 +656,14 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
       return error(
           "The values in the `broadcast_dimensions` attribute must be strictly "
           "increasing.");
+    }
+    int64_t operand_dim = operand_type.getShape()[i];
+    int64_t result_dim = result_type.getShape()[dims[i]];
+    if (operand_dim != 1 && operand_dim != result_dim) {
+      return error(
+          "The size of the input vector's dimension {0} must be either 1 or "
+          "equal to the size of the result vector's dimension {1}.",
+          i, dims[i]);
     }
   }
 
@@ -864,12 +680,12 @@ llvm::LogicalResult ReturnOp::verify() {
 
   for (unsigned i = 0, e = results.size(); i != e; ++i)
     if (getOperand(i).getType() != results[i])
-      return emitError() << "type of return operand " << i << " ("
-                         << getOperand(i).getType()
-                         << ") doesn't match the result type (" << results[i]
-                         << ")"
-                         << " in custom_primitive @"
-                         << getParentOp()->getName();
+      return emitOpError() << "type of return operand " << i << " ("
+                           << getOperand(i).getType()
+                           << ") doesn't match the result type (" << results[i]
+                           << ")"
+                           << " in custom_primitive @"
+                           << getParentOp()->getName();
 
   return llvm::success();
 }
@@ -882,21 +698,156 @@ llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
                                       mlir::MemRefType tmem_ref_type) {
   mlir::Attribute tmem = TmemAttr::get(op->getContext());
   if (tmem_ref_type.getMemorySpace() != tmem) {
-    return op->emitError() << "The tmem memref must have a "
-                              "mosaic_gpu.tmem memory space but got: "
-                           << tmem_ref_type.getMemorySpace();
+    return op->emitOpError() << "The tmem memref must have a "
+                                "mosaic_gpu.tmem memory space but got: "
+                             << tmem_ref_type.getMemorySpace();
   }
 
   return llvm::success();
 }
 }  // namespace
 
+llvm::LogicalResult AsyncStoreSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+  if (source_type.getShape() != dest_type.getShape()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "shape.",
+        absl::StrJoin(source_type.getShape(), ", "),
+        absl::StrJoin(dest_type.getShape(), ", "));
+  }
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "element type.",
+        source_type.getElementType(), dest_type.getElementType());
+  }
+
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AsyncStoreSparseMetadataSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  llvm::ArrayRef<int64_t> tmem_shape = dest_type.getShape();
+  CHECK_EQ(tmem_shape.size(), 2);
+  if (tmem_shape[0] % 128 != 0) {
+    return error(
+        "The first dimension of the TMEM memref must be a multiple of "
+        "128, but got {0}.",
+        tmem_shape[0]);
+  }
+  if (tmem_shape[1] % 64 != 0) {
+    return error(
+        "The second dimension of the TMEM memref must be a multiple of "
+        "64, but got {0}.",
+        tmem_shape[1]);
+  }
+
+  llvm::ArrayRef<int64_t> smem_shape = source_type.getShape();
+  CHECK_EQ(smem_shape.size(), 4);
+
+  std::vector<int64_t> expected_smem_shape_vec = {tmem_shape[0] / 128,
+                                                  tmem_shape[1] / 64, 128, 64};
+  llvm::ArrayRef<int64_t> expected_smem_shape(expected_smem_shape_vec);
+  if (smem_shape != expected_smem_shape) {
+    return error("The `source` memref must have shape ({0}), but got ({1}).",
+                 absl::StrJoin(expected_smem_shape, ", "),
+                 absl::StrJoin(smem_shape, ", "));
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult AsyncStoreScalesSmemToTmemOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` ({0}) and `destination` ({1}) memrefs must have the same "
+        "element type.",
+        source_type.getElementType(), dest_type.getElementType());
+  }
+
+  llvm::ArrayRef<int64_t> tmem_shape = dest_type.getShape();
+  if (tmem_shape[0] % 128 != 0) {
+    return error(
+        "The first dimension of the TMEM memref must be a multiple of "
+        "128, but got {0}.",
+        tmem_shape[0]);
+  }
+  if (tmem_shape[1] % 4 != 0) {
+    return error(
+        "The second dimension of the TMEM memref must be a multiple of "
+        "4, but got {0}.",
+        tmem_shape[1]);
+  }
+
+  llvm::ArrayRef<int64_t> smem_shape = source_type.getShape();
+  int k_tiles = tmem_shape[1] / 4;
+  llvm::SmallVector<int64_t, 4> expected_smem_shape0 = {tmem_shape[0] / 128,
+                                                        k_tiles, 32, 16};
+  llvm::SmallVector<int64_t, 4> expected_smem_shape1 = {1, k_tiles, 64, 16};
+  if (expected_smem_shape0 != smem_shape &&
+      expected_smem_shape1 != smem_shape) {
+    return error(
+        "The `source` memref must have shape ({0}) or ({1}), but got ({2}).",
+        absl::StrJoin(expected_smem_shape0, ", "),
+        absl::StrJoin(expected_smem_shape1, ", "),
+        absl::StrJoin(smem_shape, ", "));
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (source_type.getMemorySpace() != smem) {
+    return error("The `source` memref must be in SMEM.");
+  }
+  if (auto result = VerifyTmemRefType(getOperation(), dest_type);
+      result.failed()) {
+    return result;
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult TmemAllocOp::verify() {
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);
   mlir::MemRefType smem_ref_type = getSmemPtr().getType();
   if (smem_ref_type.getMemorySpace() != smem) {
-    return emitError()
+    return emitOpError()
            << "The `smem_ptr` memref must have the Workgroup address "
               "space but got: "
            << smem_ref_type.getMemorySpace();
@@ -912,23 +863,23 @@ llvm::LogicalResult TmemAllocOp::verify() {
   int packing = getPacking();
   if (packing != 1) {
     if (packing * tmem_ref_type.getElementTypeBitWidth() != kTmemCellBitwidth) {
-      return emitError() << "Only unpacked, or fully packed allocations "
-                            "are supported. Expected packing to be either "
-                            "1 or 32 / element_bitwidth, but got: "
-                            "packing = "
-                         << packing << ", element_bitwidth = "
-                         << tmem_ref_type.getElementTypeBitWidth();
+      return emitOpError() << "Only unpacked, or fully packed allocations "
+                              "are supported. Expected packing to be either "
+                              "1 or 32 / element_bitwidth, but got: "
+                              "packing = "
+                           << packing << ", element_bitwidth = "
+                           << tmem_ref_type.getElementTypeBitWidth();
     }
     if (num_unpacked_columns % packing != 0) {
-      return emitError() << "The number of unpacked columns must be "
-                            "divisible by the packing factor, but got: "
-                         << num_unpacked_columns << " / " << packing;
+      return emitOpError() << "The number of unpacked columns must be "
+                              "divisible by the packing factor, but got: "
+                           << num_unpacked_columns << " / " << packing;
     }
   }
 
   int num_allocated_columns = num_unpacked_columns / packing;
   if (num_allocated_columns > kTmemMaxColumns) {
-    return emitError()
+    return emitOpError()
            << "The number of allocated columns must be less than or equal to "
            << kTmemMaxColumns << " but got: " << num_allocated_columns;
   }
@@ -943,7 +894,7 @@ llvm::LogicalResult TmemDeallocOp::verify() {
 llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
@@ -956,11 +907,12 @@ llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
   if (getSource().getType().getElementType() !=
       getResult().getType().getElementType()) {
-    return emitError() << "The `source` and `result` must have "
-                          "the same element type.";
+    return emitOpError() << "The `source` and `result` must have "
+                            "the same element type.";
   }
   if (getSource().getType().getShape() != getResult().getType().getShape()) {
-    return emitError() << "The `source` and `result` must have the same shape.";
+    return emitOpError()
+           << "The `source` and `result` must have the same shape.";
   }
   return VerifyTmemRefType(getOperation(), getSource().getType());
 }
@@ -968,12 +920,12 @@ llvm::LogicalResult AsyncLoadTmemOp::verify() {
 llvm::LogicalResult AsyncStoreTmemOp::verify() {
   if (getSource().getType().getElementType() !=
       getDestination().getType().getElementType()) {
-    return emitError() << "The `source` and `destination` must have "
-                          "the same element type.";
+    return emitOpError() << "The `source` and `destination` must have "
+                            "the same element type.";
   }
   if (getSource().getType().getShape() !=
       getDestination().getType().getShape()) {
-    return emitError()
+    return emitOpError()
            << "The `source` and `destination` must have the same shape.";
   }
   return VerifyTmemRefType(getOperation(), getDestination().getType());
@@ -989,8 +941,8 @@ llvm::LogicalResult SliceTmemOp::verify() {
     return llvm::failure();
   }
   if (getOffset() % 4 != 0) {
-    return emitError() << "The offset must be a multiple of 4 but got: "
-                       << getOffset();
+    return emitOpError() << "The offset must be a multiple of 4 but got: "
+                         << getOffset();
   }
   // TODO(allanrenucci): We can't precisely compute the number of columns in
   // source/result because we need to know packing. We can however assume
@@ -1001,7 +953,7 @@ llvm::LogicalResult SliceTmemOp::verify() {
 
 llvm::LogicalResult VectorLoadOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location>,
-    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::OpaqueProperties,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::PropertyRef,
     mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
@@ -1011,27 +963,89 @@ llvm::LogicalResult VectorLoadOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult MultimemLoadReduceOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr, mlir::PropertyRef,
+    mlir::RegionRange, llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  mlir::MemRefType memref_type =
+      mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto vector_type = mlir::VectorType::get(memref_type.getShape(),
+                                           memref_type.getElementType());
+  inferredReturnTypes.assign({vector_type});
+  return mlir::success();
+}
+
+llvm::LogicalResult MultimemLoadReduceOp::verify() {
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::Type source_element_type = source_type.getElementType();
+  MultimemLoadReductionType reduction_type = getReductionType();
+
+  if (auto int_type = llvm::dyn_cast<mlir::IntegerType>(source_element_type)) {
+    int bitwidth = int_type.getIntOrFloatBitWidth();
+    if (bitwidth != 32 && bitwidth != 64) {
+      return emitOpError() << "Only supported 32 and 64 bit integer operations";
+    }
+    if (reduction_type == MultimemLoadReductionType::Min ||
+        reduction_type == MultimemLoadReductionType::Max) {
+      return emitOpError() << "Integer Min, or Max reductions must specify "
+                              "signedness (use Umin, Smin, Umax, Smax).";
+    }
+  } else if (llvm::isa<mlir::FloatType>(source_element_type)) {
+    if (reduction_type != MultimemLoadReductionType::Add &&
+        reduction_type != MultimemLoadReductionType::Max &&
+        reduction_type != MultimemLoadReductionType::Min) {
+      return emitOpError() << "Only Add, Max and Min reductions are supported "
+                              "on float source.";
+    }
+    if (llvm::isa<mlir::Float32Type>(source_element_type) &&
+        reduction_type != MultimemLoadReductionType::Add) {
+      return emitOpError() << "Only Add is supported for F32 source type.";
+    }
+
+    if (!llvm::isa<mlir::Float32Type, mlir::Float16Type, mlir::BFloat16Type,
+                   mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(
+            source_element_type)) {
+      return emitOpError() << "Unsupported source type: "
+                           << source_element_type;
+    }
+  } else {
+    return emitOpError() << "Unsupported source type: " << source_element_type;
+  }
+
+  if (source_type.getMemorySpace()) {
+    return emitOpError() << "Expected the ref to be in GMEM.";
+  }
+
+  return mlir::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();
   if (src_type.getShape() != dst_type.getShape()) {
-    return emitError()
+    return emitOpError()
            << "The source and destination must have the same shape but got "
            << src_type.getShape() << " and " << dst_type.getShape();
   }
   if (src_type.getElementType() != dst_type.getElementType()) {
-    return emitError()
+    return emitOpError()
            << "The source and destination must have the same element type but "
               "got "
            << src_type.getElementType() << " and " << dst_type.getElementType();
   }
+
+  if (getMultimem() && dst_type.getMemorySpace()) {
+    return emitOpError()
+           << "The destination must be in GMEM for multidevice multicast";
+  }
+
   return llvm::success();
 }
 
 llvm::LogicalResult BroadcastedIotaOp::verify() {
   mlir::VectorType result_type = getResult().getType();
   if (getDimension() >= result_type.getRank()) {
-    return emitError(llvm::formatv(
+    return emitOpError(llvm::formatv(
         "dimension={0} must be smaller than the rank={1} of the result.",
         getDimension(), result_type.getRank()));
   }
@@ -1050,7 +1064,7 @@ llvm::LogicalResult PrintLayoutOp::verify() {
 llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
     mlir::MLIRContext*, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
   if (operands.empty()) {
     return mlir::emitOptionalError(location, "expected non-empty operands");
@@ -1058,6 +1072,121 @@ llvm::LogicalResult OptimizationBarrierOp::inferReturnTypes(
   mlir::TypeRange operand_types = operands.getTypes();
   inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
   return mlir::success();
+}
+
+llvm::LogicalResult WarpMapOp::verify() {
+  for (mlir::Value operand : getOperands()) {
+    if (mlir::isa<mlir::VectorType>(operand.getType())) {
+      return emitOpError() << "Can only map over scalars and refs.";
+    }
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult ReinterpretCastOp::verify() {
+  auto source_type = getSource().getType();
+  auto result_type = getResult().getType();
+
+  if (source_type.getElementType() != result_type.getElementType()) {
+    return emitOpError(
+        "source and result memrefs must have the same element type");
+  }
+
+  int64_t source_num_elements = source_type.getNumElements();
+  int64_t result_num_elements = result_type.getNumElements();
+
+  if (source_num_elements != result_num_elements) {
+    return emitOpError(llvm::formatv(
+        "source and result memrefs must have the same number of elements, "
+        "but got {0} and {1}",
+        source_num_elements, result_num_elements));
+  }
+
+  return llvm::success();
+}
+
+mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
+  // Eliminate no-op casts: if source and result types are identical, return the
+  // source directly.
+  if (getSource().getType() == getResult().getType()) {
+    return getSource();
+  }
+
+  // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
+  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
+    getSourceMutable().assign(parent_cast.getSource());
+    return getResult();
+  }
+
+  return {};
+}
+
+namespace {
+
+// Rewrites `mgpu.reinterpret_cast(ty, mgpu.slice_smem(...))` to
+// `mgpu.slice_smem(ty, ...)`.
+struct FoldMGPUReinterpretCastOfSliceSMEM
+    : public mlir::OpRewritePattern<ReinterpretCastOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
+    auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
+    if (!slice_op) {
+      return mlir::failure();
+    }
+
+    MemRefType result_type = op.getResult().getType();
+    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
+        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
+    return mlir::success();
+  }
+};
+}  // namespace
+
+void ReinterpretCastOp::getCanonicalizationPatterns(
+    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
+  patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
+}
+
+namespace {
+
+struct HoistReinterpretCastOutOfWarpMap
+    : public mlir::OpRewritePattern<WarpMapOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
+    bool modified = false;
+    mlir::Block& body = op->getRegion(0).getBlocks().front();
+    for (auto [i, operand, body_operand] :
+        llvm::enumerate(op->getOperands(), body.getArguments())) {
+      // It is not safe to rewrite the type of the argument if it has other
+      // uses, as this would affect other operations that we currently do not
+      // handle.
+      if (body_operand.hasOneUse()) {
+        mlir::Operation* user = *body_operand.user_begin();
+        if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
+          mlir::IRMapping mapping;
+          mapping.map(rc_op.getOperand(), operand);
+          rewriter.modifyOpInPlace(op, [&]() {
+            op->setOperand(i, rewriter.clone(*rc_op, mapping)->getResult(0));
+            body_operand.setType(rc_op.getType());
+          });
+          rewriter.replaceAllUsesWith(rc_op, body_operand);
+          rewriter.eraseOp(rc_op);
+          modified = true;
+        }
+      }
+    }
+    return modified ? mlir::success() : mlir::failure();
+  }
+};
+}  // namespace
+
+void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
+                                            mlir::MLIRContext* context) {
+  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
 }
 
 void MosaicGPUDialect::initialize() {

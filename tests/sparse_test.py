@@ -17,7 +17,6 @@ from functools import partial
 import itertools
 import math
 import os
-import unittest
 from pathlib import Path
 
 from absl.testing import absltest
@@ -621,6 +620,9 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_csr_spmm(self, shape, dtype, transpose):
+    # TODO: Add these tests back once hipSparse issue is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm due to hipSparse internal error.")
     rng_sparse = sptu.rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
 
@@ -853,7 +855,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     def to_elt(x):
       assert x.ndim == 2
       assert x.n_sparse == 2
-      return jnp.empty(x.shape, x.dtype)
+      return jnp.zeros(x.shape, x.dtype)
 
     with self.subTest('to_elt'):
       M_out = vmap(to_elt)(Msp)
@@ -890,7 +892,9 @@ class SparseObjectTest(sptu.SparseTestCase):
     M = sparse.empty(shape, sparse_format=sparse_format)
     self.assertIsInstance(M, cls)
     self.assertEqual(M.nse, 0)
-    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+    MD = M.todense()
+    self.assertEqual(MD.shape, tuple(shape))
+    self.assertEqual(MD.dtype, jnp.empty(()).dtype)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}{(N, M, k)}",
@@ -922,7 +926,9 @@ class SparseObjectTest(sptu.SparseTestCase):
   def test_empty_nse(self, shape, nse=2):
     M = sparse.empty(shape, nse=nse)
     self.assertEqual(M.nse, nse)
-    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+    MD = M.todense()
+    self.assertEqual(MD.shape, tuple(shape))
+    self.assertEqual(MD.dtype, jnp.empty(()).dtype)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
@@ -1149,10 +1155,6 @@ class SparseRandomTest(sptu.SparseTestCase):
       ],
       dtype=jtu.dtypes.floating,
       indices_dtype=jtu.dtypes.integer,
-  )
-  @unittest.skipIf(
-      not jtu.is_cloud_tpu_at_least(2026, 2, 24),
-      "Crashes with libtpu<=0.3.5 on TPU v7.",
   )
   def test_random_bcoo(self, shape, dtype, indices_dtype, n_batch, n_dense):
     key = jax.random.PRNGKey(1701)

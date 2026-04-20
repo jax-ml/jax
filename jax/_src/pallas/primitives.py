@@ -42,8 +42,6 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 import jax._src.lax as lax
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import arith
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
@@ -75,7 +73,7 @@ def program_id(axis: int) -> jax_typing.Array:
   """
   return program_id_p.bind(axis=axis)
 
-def program_id_bind_with_trace(trace, _, params):
+def program_id_bind_with_trace(trace, _, avals, params):
   axis = params.pop("axis")
   grid_env = pallas_core.current_grid_env()
   if grid_env:
@@ -84,7 +82,8 @@ def program_id_bind_with_trace(trace, _, params):
   # Query the size of the axis to make sure it's a valid axis (and error
   # otherwise).
   _ = frame.size(axis)
-  return jax_core.Primitive.bind_with_trace(program_id_p, trace, (), dict(axis=axis))
+  return jax_core.Primitive.bind_with_trace(program_id_p, trace, (), avals,
+                                            dict(axis=axis))
 # TODO(dougalm): figure out how put the grid_env contest on the relevant trace
 program_id_p.def_bind_with_trace(program_id_bind_with_trace)
 
@@ -98,7 +97,7 @@ def num_programs(axis: int) -> int | jax_typing.Array:
   """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
-def _num_programs_bind_with_trace(trace, _, params):
+def _num_programs_bind_with_trace(trace, _, avals, params):
   axis = params.pop("axis")
   # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()
@@ -108,7 +107,8 @@ def _num_programs_bind_with_trace(trace, _, params):
   frame = pallas_core.axis_frame()
   size = frame.size(axis)
   if size is pallas_core.dynamic_grid_dim:
-    return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), dict(axis=axis))
+    return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), avals,
+                                              dict(axis=axis))
   return size
 num_programs_p.def_bind_with_trace(_num_programs_bind_with_trace)
 
@@ -528,7 +528,12 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
 
   dtype = jnp.promote_types(_handle_small(a.dtype), _handle_small(b.dtype))
-  out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
+  if jnp.issubdtype(dtype, jnp.integer):
+    out_dtype = jnp.int32
+  elif dtype == jnp.float64:
+    out_dtype = jnp.float64
+  else:
+    out_dtype = jnp.float32
   return lax.dot_general(
       a,
       b,
@@ -549,7 +554,7 @@ def reciprocal(x, *, approx=False, full_range=True):
     full_range: Whether to use the full range of the input. If False, compilers
       may produce non-IEEE compliant results for edge cases, but may be faster.
       On TPU, setting it to `False` may produce incorrect results when `x` or
-      output is ±inf or NaN; or when `x` is ±1/flt_min.
+      output is ±inf or NaN; or when `x` is ±1/flt_min or ±0.
 
   Returns:
     The reciprocal of the array.
@@ -651,11 +656,11 @@ run_scoped_p.multiple_results = True
 def _run_scoped_is_high(*avals, jaxpr, **params):
   del avals, params
   return jaxpr.is_high
-run_scoped_p.is_high = _run_scoped_is_high  # type: ignore[method-assign]
+run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
   closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
-  closed_lo_jaxpr = pe.lower_jaxpr(closed_hi_jaxpr)
+  closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
   consts = closed_lo_jaxpr.consts
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
@@ -806,7 +811,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
 get_global_p = jax_core.Primitive("get_global")
 get_global_p.multiple_results = False
 get_global_p.ref_primitive = True
-jax_core._ref_allocating_primitives.add(get_global_p)
+get_global_p.ref_allocating = True
 
 def get_global(what: pallas_core.ScratchShape) -> jax_typing.Array:
   """Returns a global reference that persists across all kernel invocations.
@@ -1161,7 +1166,6 @@ state_discharge.register_discharge_rule(semaphore_wait_p)(
 
 
 def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_id_dict, get_axis_index):
-  i32 = ir.IntegerType.get_signless(32)
   if mesh_context is None:
     mesh_axis_sizes = {}
   else:
@@ -1182,24 +1186,20 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
       for axis_index, axis_name in enumerate(axis_name):
         axis_size = mesh_axis_sizes[axis_name]
         inner_mesh_size = math.prod(axes_dimensions[axis_index + 1 :])
-        minor_divisor = arith.constant(i32, inner_mesh_size)
 
         # Fast path for power of 2s
         if inner_mesh_size & (inner_mesh_size - 1) == 0:
           shift_len = (inner_mesh_size & -inner_mesh_size).bit_length() - 1
-          partial_device_idx = arith.shrui(idx, arith.constant(i32, shift_len))
+          partial_device_idx = idx >> shift_len
         else:
-          partial_device_idx = arith.divsi(idx, minor_divisor)
+          partial_device_idx = idx // inner_mesh_size
 
         if axis_size & (axis_size - 1) == 0:
-          device_idx = arith.andi(
-              partial_device_idx,
-              arith.constant(i32, mesh_axis_sizes[axis_name] - 1),
+          device_idx = partial_device_idx & jnp.asarray(
+              axis_size - 1, dtype=partial_device_idx.dtype
           )
         else:
-          device_idx = arith.remsi(
-              partial_device_idx, arith.constant(i32, axis_size)
-          )
+          device_idx = lax.rem(partial_device_idx, axis_size)
         physical_axis_dict[axis_name] = device_idx
     else:
       physical_axis_dict[axis_name] = idx
@@ -1219,10 +1219,10 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
 
 def device_id_to_logical(
     mesh_context: pallas_utils.MeshInfo | None,
-    device_id: ir.Value | tuple[ir.Value, ...] | dict[Any, ir.Value],
+    device_id: Any,
     device_id_type: DeviceIdType,
-    get_axis_index,
-) -> tuple[ir.Value | None, dict[Any, ir.Value]]:
+    get_axis_index: Callable[[Any], Any],
+) -> tuple[Any | None, dict[Any, Any]]:
   """Normalizes a device id into a logical device id and axes that don't correspond to JAX mesh axes.
 
   The indexing implied by the returned axis dict should be handled by the
@@ -1251,19 +1251,12 @@ def device_id_to_logical(
           f" {len(device_ids)} ids for a {len(mesh_strides)}D mesh."
       )
 
-    i32 = ir.IntegerType.get_signless(32)
     if not device_ids:
       # If there are no device ids, then it is purely local communication.
       return None, non_mesh_axes
-    return functools.reduce(
-        arith.addi,
-        (
-            arith.muli(a, arith.constant(i32, b))
-            for a, b in zip(device_ids, mesh_strides)
-        ),
-    ), non_mesh_axes
+    return sum(a * b for a, b in zip(device_ids, mesh_strides)), non_mesh_axes
   elif device_id_type is DeviceIdType.LOGICAL:
-    return device_id, non_mesh_axes  # pyrefly: ignore[bad-return]
+    return device_id, non_mesh_axes
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
 

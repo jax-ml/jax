@@ -61,6 +61,7 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       $OVERRIDE_XLA_REPO \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
+      --remote_download_regex='.*test\.xml$' \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
       --test_tag_filters=-multiaccelerator \
@@ -73,4 +74,7 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-      //jaxlib/tools:check_gpu_wheel_sources_test
+      //jaxlib/tools:check_gpu_wheel_sources_test || bazel_retval=$?
+
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+exit "${bazel_retval:-0}"

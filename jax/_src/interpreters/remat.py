@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable
+from collections.abc import Callable
 
 from jax._src import core
 from jax._src import api_util
@@ -24,6 +24,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (
     FlatTree, Partial, tree_unflatten, tree_leaves_checked)
 from jax._src import source_info_util
+from jax._src.core import typeof
 
 map = safe_map
 zip = safe_zip
@@ -31,7 +32,6 @@ zip = safe_zip
 # TODO
 #  [ ] static_argnums and static_argnames (via FlatTree)
 #  [ ] allow NotAvailable sentinels
-#  [ ] DCE pass
 #  [ ] primal-output-to-residual forwarding
 
 def remat_transform(policy, f, *args):
@@ -40,8 +40,9 @@ def remat_transform(policy, f, *args):
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
     args_ft = FlatTree.flatten_static_argnums_argnames(args, {}, (), ())
-    new_arg = lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(core.typeof(x), None))  # noqa F821  # type: ignore
-    in_tracers = args_ft.map(new_arg)
+    in_tracers = args_ft.map(
+        # pyrefly: ignore[bad-argument-type]
+        lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # noqa F821
     with core.set_current_trace(trace):
       args, kwargs = in_tracers.unflatten()
       ans_pytree = f(*args, **kwargs)
@@ -49,26 +50,22 @@ def remat_transform(policy, f, *args):
       ans_ft = FlatTree.flatten(ans_pytree)
       del ans_pytree, args, kwargs
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
-    jaxpr, rs = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, source_info_util.current())
+    jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, source_info_util.current())
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
-  def f_rem(rs, *args):
+  def f_rem(res, *args):
     args_flat = tree_leaves_checked(in_tree, (args, {}))
-    out_flat = core.eval_jaxpr(jaxpr, rs, *args_flat)
+    out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
     return tree_unflatten(out_tree, out_flat)
-  return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, rs))
+  return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
 
-class RematTracer(core.Tracer):
-  _trace: RematTrace  # pyrefly: ignore[bad-override]
+class RematTracer(core.Tracer['RematTrace']):
+  _trace: RematTrace
 
   def __init__(self, trace, x, jaxpr_tracer):
-    self._trace = trace  # pytype: disable=name-error
+    super().__init__(trace, core.typeof(x))
     self.val = x
     self.tracer = jaxpr_tracer
-
-  @property
-  def aval(self):
-    return core.typeof(self.val)
 
 class RematTrace(core.Trace):
   def __init__(self, parent_trace, jaxpr_trace, tag, policy):
@@ -81,9 +78,14 @@ class RematTrace(core.Trace):
 
   def to_val_tracer_pair(self, x):
     if isinstance(x, RematTracer) and x._trace.tag is self.tag:
-      return (x.val, x.tracer)
+      return x.val, x.tracer
     else:
-      raise NotImplementedError  # TODO(mattjj)
+      return x, x
+
+  def stage_value(self, val):
+    new_val = self.parent_trace.stage_value(val)
+    new_tracer = self.jaxpr_trace.stage_value(val)
+    return RematTracer(self, new_val, new_tracer)
 
   def process_primitive(self, prim, tracers, params, /):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
@@ -125,7 +127,7 @@ def _remat_jaxpr(jaxpr, policy):
   src = source_info_util.current()
 
   def new_arg(a):
-    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821  # pytype: disable=name-error
+    return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):
@@ -141,4 +143,4 @@ def _remat_jaxpr(jaxpr, policy):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
   fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, len(rem_consts)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+  return fwd_jaxpr, rem_jaxpr, len(rem_consts)

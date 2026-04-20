@@ -265,7 +265,7 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   :func:`jax.scipy.stats.norm.sf`.
 
   Args:
-    x: arraylike, value at which to evaluate the ISF
+    q: arraylike, value at which to evaluate the ISF
     loc: arraylike, distribution offset parameter
     scale: arraylike, distribution scale parameter
 

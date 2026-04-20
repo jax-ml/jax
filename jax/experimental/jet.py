@@ -200,18 +200,14 @@ def traceable(f, store, in_tree_def, *primals_and_series):
   return out_flat
 
 
-class JetTracer(core.Tracer):
+class JetTracer(core.Tracer['JetTrace']):
   __slots__ = ["primal", "terms"]
 
   def __init__(self, trace, primal, terms):
     assert type(terms) in (ZeroSeries, list, tuple)
-    self._trace = trace
+    super().__init__(trace, core.typeof(primal))
     self.primal = primal
     self.terms = terms
-
-  @property
-  def aval(self):
-    return core.typeof(self.primal)
 
   def full_lower(self):
     if self.terms is zero_series or all(t is zero_term for t in self.terms):
@@ -234,12 +230,23 @@ class JetTrace(core.Trace):
     else:
       return val, zero_series
 
+  def stage_value(self, val):
+    primal, series = self.to_primal_terms_pair(val)
+    new_primal = self.parent_trace.stage_value(primal)
+    if series is zero_series:
+      new_series = zero_series
+    else:
+      new_series = [t if t is zero_term else self.parent_trace.stage_value(t)
+                    for t in series]
+    return JetTracer(self, new_primal, new_series)
+
   def process_primitive(self, primitive, tracers, params, /):
-    order = self.order              # pytype: disable=attribute-error
+    order = self.order
     primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
 
     if all(t is zero_series for t in series_in):
-      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, params)
+      avals = tuple(core.typeof(x) for x in primals_in)
+      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
       if primitive.multiple_results:
         return [JetTracer(self, p, zero_series) for p in primal_out]
       else:
@@ -276,8 +283,8 @@ class JetTrace(core.Trace):
     del primitive, jvp  # Unused.
     return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees):
-    del primitive, fwd, bwd, out_trees  # Unused.
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
+    del primitive, fwd, bwd, out_trees, symbolic_zeros  # Unused.
     return fun.call_wrapped(*tracers)
 
 
@@ -411,7 +418,7 @@ def deriv_prop(prim, deriv, primals_in, series_in):
   c0, cs = jet2(deriv, primals_in, series_in)
   c = [c0] + cs
   u = [x] + series
-  v = [primal_out] + [None] * len(series)
+  v: list[Any] = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
     v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
@@ -448,9 +455,9 @@ def _erf_inv_rule(primals_in, series_in):
   x, = primals_in
   series, = series_in
 
-  u = [x] + series
+  u: list[Any] = [x] + series
   primal_out = lax.erf_inv(x)
-  v = [primal_out] + [None] * len(series)
+  v: list[Any] = [primal_out] + [None] * len(series)
 
   # derivative on co-domain for caching purposes
   deriv_const = np.sqrt(np.pi) / 2.
@@ -458,9 +465,9 @@ def _erf_inv_rule(primals_in, series_in):
 
   # manually propagate through deriv_y since we don't have lazy evaluation of sensitivities
 
-  c = [deriv_y(primal_out)] + [None] * (len(series) - 1)
-  tmp_sq = [lax.square(v[0])] + [None] * (len(series) - 1)
-  tmp_exp = [lax.exp(tmp_sq[0])] + [None] * (len(series) - 1)
+  c: list[Any] = [deriv_y(primal_out)] + [None] * (len(series) - 1)
+  tmp_sq: list[Any] = [lax.square(v[0])] + [None] * (len(series) - 1)
+  tmp_exp: list[Any] = [lax.exp(tmp_sq[0])] + [None] * (len(series) - 1)
   for k in range(1, len(series)):
     # we know c[:k], we compute c[k]
 
@@ -492,7 +499,7 @@ def _exp_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.exp(x)] + [None] * len(series)
+  v: list[Any] = [lax.exp(x)] + [None] * len(series)
   for k in range(1,len(v)):
     v[k] = sum(j * v[k-j] * u[j] for j in range(1, k+1)) / k
   primal_out, *series_out = v
@@ -535,8 +542,8 @@ def _logistic_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.logistic(x)] + [None] * len(series)
-  e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
+  v: list[Any] = [lax.logistic(x)] + [None] * len(series)
+  e: list[Any] = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = sum(j * e[k-j] * u[j] for j in range(1, k+1)) / k
     e[k] = (1 - v[0]) * v[k] - sum(v[j] * v[k-j] for j in range(1, k+1))
@@ -561,7 +568,7 @@ def _log_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [lax.log(x)] + [None] * len(series)
+  v: list[Any] = [lax.log(x)] + [None] * len(series)
   for k in range(1, len(v)):
     conv = sum(j * v[j] * u[k-j] for j in range(1, k))
     v[k] = (u[k] - conv / k) / u[0]
@@ -576,9 +583,9 @@ def _atan2_taylor(primals_in, series_in):
   x, series = jet2(lax.div, primals_in, series_in)
   one = lax_internal._const(x, 1)
   c0, cs = jet2(lambda x: lax.div(one, 1 + lax.square(x)), (x, ), (series, ))
-  c = [c0] + cs
-  u = [x] + series
-  v = [primal_out] + [None] * len(series)
+  c: list[Any] = [c0] + cs
+  u: list[Any] = [x] + series
+  v: list[Any] = [primal_out] + [None] * len(series)
   for k in range(1, len(v)):
     v[k] = sum(j * c[k-j] * u[j] for j in range(1, k + 1)) / k
   primal_out, *series_out = v
@@ -624,7 +631,7 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x_terms, y_terms = series_in
   u = [x] + x_terms
   w = [y] + y_terms
-  v = [None] * len(u)
+  v: list[Any] = [None] * len(u)
   op = partial(prim.bind, **params)
   for k in range(0, len(v)):
     v[k] = sum(op(u[j], w[k-j]) for j in range(0, k+1))

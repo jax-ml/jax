@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2026 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 from collections.abc import Sequence
 from typing import Any, overload
 
-import typing_extensions
+from typing_extensions import CapsuleType
 
 from . import (
     CompileOptions as _CompileOptions,
@@ -47,7 +47,7 @@ def make_plugin_program(data: bytes) -> Program: ...
 def make_xla_compile_options(
     options: _CompileOptions,
     executable_devices: Sequence[_Device],
-    host_callbacks: Sequence[typing_extensions.CapsuleType],
+    host_callbacks: Sequence[CapsuleType],
 ) -> CompileOptions: ...
 def make_colocated_python_compile_options() -> CompileOptions: ...
 def make_plugin_compile_options() -> CompileOptions: ...

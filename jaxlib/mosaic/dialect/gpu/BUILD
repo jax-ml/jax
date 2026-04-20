@@ -63,6 +63,12 @@ gentbl_cc_library(
         ],
         "mosaic_gpu_enums.h.inc": ["-gen-enum-decls"],
         "mosaic_gpu_enums.cc.inc": ["-gen-enum-defs"],
+        "mosaic_gpu_attr_interfaces.h.inc": [
+            "-gen-attr-interface-decls",
+        ],
+        "mosaic_gpu_attr_interfaces.cc.inc": [
+            "-gen-attr-interface-defs",
+        ],
         "mosaic_gpu_attrdefs.h.inc": [
             "-gen-attrdef-decls",
             "--attrdefs-dialect=mosaic_gpu",

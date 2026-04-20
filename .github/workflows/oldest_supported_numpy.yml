@@ -35,6 +35,8 @@ jobs:
       JAXCI_PYTHON: "python3.11"
       JAXCI_ENABLE_X64: 0
       JAX_NUM_GENERATED_CASES: 5
+      NUMPY_VERSION: "2.0.0"
+      SCIPY_VERSION: "1.13.0"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -45,13 +47,21 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
           # Install NumPy and SciPy with the oldest supported versions
-          $JAXCI_PYTHON -m uv pip install numpy==2.0.0 scipy==1.13.0
+          $JAXCI_PYTHON -m uv pip install numpy==${{ env.NUMPY_VERSION }} scipy==${{ env.SCIPY_VERSION }}
 
           # Install JAX using the changes in the PR
-          $JAXCI_PYTHON -m uv pip install -e .[minimum-jaxlib]
+          $JAXCI_PYTHON -m uv pip install -e '.[minimum-jaxlib]'
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
       - name: Run Pytest CPU tests
         timeout-minutes: 30
         run: ./ci/run_pytest_cpu.sh
+      - name: Upload test artifacts
+        if: always()
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          artifact-name: oldest-supported-numpy
+          inputs_json: ${{ toJSON(inputs) }}
+          matrix_json: ${{ toJSON(matrix) }}
+          env_json: ${{ toJSON(env) }}

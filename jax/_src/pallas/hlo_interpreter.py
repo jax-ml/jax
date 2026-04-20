@@ -217,14 +217,14 @@ def eval_jaxpr_recursive(
         ans = _eval_jaxpr_hop_rules[eqn.primitive](
             recurse_hop_rule, *in_vals, **eqn.params)
       else:
-        subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-        ans = eqn.primitive.bind(*subfuns, *in_vals, **bind_params)
+        bind_params = eqn.primitive.get_bind_params(eqn.params)
+        ans = eqn.primitive.bind(*in_vals, **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
     jax_core.clean_up_dead_vars(eqn, env, lu)
-  return map(read, jaxpr.outvars)  # pyrefly: ignore[bad-return]  # pyrefly#2385
+  return map(read, jaxpr.outvars)
 
 # Higher-order primitive rules.
 _eval_jaxpr_hop_rules = {}
@@ -363,7 +363,7 @@ def pallas_call_hlo_interpret(
   )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
-      a if a is not pallas_core.dynamic_grid_dim
+      a if not isinstance(a, pallas_core.DynamicGridDim)
       else next(dynamic_grid_args_iter)
       for a in grid_mapping.grid
   )
@@ -407,12 +407,12 @@ def pallas_call_hlo_interpret(
   # to catch OOB accesses.
 
   carry = map(_pad_to_block_dimension, carry, block_shapes)
-  carry.extend(scratch_values)  # pyrefly: ignore[missing-attribute]  # pyrefly#2385
+  carry.extend(scratch_values)
 
   num_inout_blocks = len(block_args) + len(out)
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
+    num_iterations = reduce(jnp.multiply, grid)
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -430,7 +430,7 @@ def pallas_call_hlo_interpret(
       local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
     else:
       local_grid_env = tuple(
-          pallas_core.GridAxis(idx, b)  # pyrefly: ignore[bad-argument-type]
+          pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.vmapped_dims
       )
@@ -448,12 +448,12 @@ def pallas_call_hlo_interpret(
     blocks = map(_dynamic_slice, start_indices, block_shapes,
                  carry_consts_ins, is_squeeze_dim)
     with pallas_core.grid_env(local_grid_env):
-      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
           scratch_values
       ), (
           len(discharged_jaxpr.invars),
           len(scalars),
-          len(blocks),  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+          len(blocks),
           len(scratch_values),
       )
 

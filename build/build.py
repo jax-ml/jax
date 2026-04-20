@@ -693,7 +693,9 @@ async def main():
       if ("plugin" in wheel or "pjrt" in wheel) and "jax" not in wheel:
         wheel = "jax-" + wheel
 
-      wheel_build_command = copy.deepcopy(wheel_build_command_base)
+      # Don't copy `wheel_build_command_base` because its contents are already saved in .jax_configure.bazelrc
+      wheel_build_command = copy.deepcopy(bazel_command_base)
+      # Always pass this explicitly to make sure it wins.
       if "cuda" in args.wheels:
         wheel_build_command.append("--config=cuda_libraries_from_stubs")
 

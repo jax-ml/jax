@@ -32,7 +32,6 @@ from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
-
 config.parse_flags_with_absl()
 
 
@@ -375,11 +374,11 @@ def matmul3(a, b, config: TuningConfig):
           k_slice = pl.ds(ki * tile_k, tile_k)
           plgpu.copy_gmem_to_smem(
               a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-              collective_axes="cluster", partitioned_axis=0
+              collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
           )
           plgpu.copy_gmem_to_smem(
               b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-              collective_axes="cluster", partitioned_axis=1
+              collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
           )
         lax.fori_loop(0, k_iters, _loop_body, None)
 
@@ -489,11 +488,11 @@ def matmul4(a, b, config: TuningConfig):
             k_slice = pl.ds(ki * tile_k, tile_k)
             plgpu.copy_gmem_to_smem(
                 a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                collective_axes="cluster", partitioned_axis=0
+                collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
             )
             plgpu.copy_gmem_to_smem(
                 b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                collective_axes="cluster", partitioned_axis=1
+                collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
             )
 
           lax.fori_loop(0, k_iters, _loop_body, None)
@@ -615,11 +614,11 @@ def matmul5(a, b, config: TuningConfig):
               k_slice = pl.ds(ki * tile_k, tile_k)
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=0
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=1
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
               )
 
             lax.fori_loop(0, k_iters, _loop_body, None)
@@ -763,11 +762,11 @@ def matmul6(a, b, config: TuningConfig):
               k_slice = pl.ds(ki * tile_k, tile_k)
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=0
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
-                  collective_axes="cluster", partitioned_axis=1
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
               )
 
             lax.fori_loop(0, k_iters, _loop_body, None)
@@ -858,6 +857,8 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
     self.skip_unless_tcgen05()
@@ -884,7 +885,7 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         raise
       assert runtimes_ms is not None
       runtime_ms = statistics.median(runtimes_ms)
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       achieved_tc_util = optimal_time_us / runtime_us * 100
       print(f"{config} {achieved_tc_util:.2f}% TC utilization")
       if achieved_tc_util > best_util:
@@ -898,7 +899,7 @@ class MatmulTutorialTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         iterations=100,
     )(a, b)
     runtime_ms = statistics.median(runtimes_ms)
-    runtime_us = runtime_ms * 1e3   # type: ignore
+    runtime_us = runtime_ms * 1e3
     achieved_tc_util = optimal_time_us / runtime_us * 100
     print(f"Reference: {achieved_tc_util:.2f}% TC utilization")
 

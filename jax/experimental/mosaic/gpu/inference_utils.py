@@ -18,10 +18,9 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Union
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
-from . import fragmented_array as fa
-from . import tcgen05
 from . import utils
 
 MlirOperation = Union[ir.Operation, ir.OpView]
@@ -33,9 +32,7 @@ def in_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an in_layouts attribute.
   """
-  if "in_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_layouts attribute.")
-  return op.attributes["in_layouts"]  # type: ignore
+  return _array_attr(op, "in_layouts")
 
 
 def out_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -44,31 +41,25 @@ def out_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an out_layouts attribute.
   """
-  if "out_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_layouts attribute.")
-  return op.attributes["out_layouts"]  # type: ignore
+  return _array_attr(op, "out_layouts")
 
 
-def in_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
+def in_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   """Returns the in_transforms attribute of the given operation.
 
   Raises:
     ValueError: If the operation does not have an in_transforms attribute.
   """
-  if "in_transforms" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_transforms attribute.")
-  return op.attributes["in_transforms"]  # type: ignore
+  return _array_attr(op, "in_transforms")  # pyrefly: ignore[bad-return]
 
 
-def out_transforms(op: MlirOperation) -> Sequence[ir.Attribute]:
+def out_transforms(op: MlirOperation) -> Sequence[ir.ArrayAttr]:
   """Returns the out_transforms attribute of the given operation.
 
   Raises:
     ValueError: If the operation does not have an out_transforms attribute.
   """
-  if "out_transforms" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_transforms attribute.")
-  return op.attributes["out_transforms"]  # type: ignore
+  return _array_attr(op, "out_transforms")  # pyrefly: ignore[bad-return]
 
 
 def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -77,9 +68,7 @@ def in_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an in_tmem_layouts attribute.
   """
-  if "in_tmem_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_tmem_layouts attribute.")
-  return op.attributes["in_tmem_layouts"]  # type: ignore
+  return _array_attr(op, "in_tmem_layouts")
 
 
 def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
@@ -88,9 +77,17 @@ def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   Raises:
     ValueError: If the operation does not have an out_tmem_layouts attribute.
   """
-  if "out_tmem_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_tmem_layouts attribute.")
-  return op.attributes["out_tmem_layouts"]  # type: ignore
+  return _array_attr(op, "out_tmem_layouts")
+
+
+def _array_attr(op: MlirOperation, name: str) -> Sequence[ir.Attribute]:
+  try:
+    result = op.attributes[name]
+  except KeyError:
+    raise ValueError(f"{op} does not have an {name} attribute") from None
+  if not isinstance(result, ir.ArrayAttr):
+    raise TypeError(f"{op} has {name} of an unexpected type: {result}")
+  return result  # pyrefly: ignore[bad-return]
 
 
 def should_have_in_tmem_layout(op: MlirOperation) -> bool:
@@ -112,14 +109,6 @@ def should_have_out_tmem_layout(op: MlirOperation) -> bool:
 def should_have_tmem_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation should be assigned a TMEM layout."""
   return should_have_in_tmem_layout(op) or should_have_out_tmem_layout(op)
-
-
-def has_in_tmem_layouts_set(op: MlirOperation) -> bool:
-  return "in_tmem_layouts" in op.attributes
-
-
-def has_out_tmem_layouts_set(op: MlirOperation) -> bool:
-  return "out_tmem_layouts" in op.attributes
 
 
 def should_have_in_layout(op: MlirOperation) -> bool:
@@ -149,10 +138,6 @@ def has_any_layout_set(op: MlirOperation) -> bool:
   return has_in_layouts_set(op) or has_out_layouts_set(op)
 
 
-def has_in_transforms_set(op: MlirOperation) -> bool:
-  return "in_transforms" in op.attributes
-
-
 def has_out_transforms_set(op: MlirOperation) -> bool:
   return "out_transforms" in op.attributes
 
@@ -170,7 +155,8 @@ def attr_element(
   attr = op.attributes[attr_name]
   if not attr:
     return None
-  return op.attributes[attr_name][index]  # type: ignore
+  assert isinstance(attr, ir.ArrayAttr)
+  return attr[index]
 
 
 def _in_attr_for_operand(
@@ -182,6 +168,11 @@ def _in_attr_for_operand(
     predicate = lambda v: isinstance(v.type, ir.VectorType)
   elif attr_name == "in_transforms":
     predicate = is_transformable_smem_memref
+  elif attr_name == "in_tmem_layouts":
+    predicate = (
+        lambda v: isinstance(v.type, ir.MemRefType)
+        and ir.MemRefType(v.type).memory_space == utils.tmem()
+    )
   else:
     raise ValueError(f"Unknown attribute: {attr_name}")
 
@@ -192,6 +183,9 @@ def _in_attr_for_operand(
 
 in_layout_for_operand = partial(
     _in_attr_for_operand, attr_name="in_layouts"
+)
+in_tmem_layout_for_operand = partial(
+    _in_attr_for_operand, attr_name="in_tmem_layouts"
 )
 in_transforms_for_operand = partial(
     _in_attr_for_operand, attr_name="in_transforms"
@@ -215,32 +209,23 @@ def should_have_transforms(op: ir.OpView) -> bool:
 
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
-  barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
   return (
       isinstance(v.type, ir.MemRefType)
       # barriers have no business being transformed
-      and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
+      and not isinstance(v.type.element_type, mgpu.BarrierType)
       and utils.is_smem_ref(v)
   )
 
 
-def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
-  if not isinstance(layout, fa.TiledLayout):
-    return False
-  if layout in {
-      fa.WGMMA_LAYOUT,
-      fa.WGMMA_LAYOUT_ACC_32BIT,
-      fa.WGMMA_LAYOUT_UPCAST_2X,
-      fa.WGMMA_LAYOUT_UPCAST_4X,
-      fa.WGMMA_TRANSPOSED_LAYOUT,
-      fa.WGMMA_LAYOUT_8BIT,
-      fa.TCGEN05_LAYOUT,
-      fa.TCGEN05_TRANSPOSED_LAYOUT,
-  }:
-    return True
-  if len(layout.tiling.tiles[0]) != 2:
-    return False
-  columns = layout.tiling.tiles[0][1]
-  return columns % 16 == 0 and (
-      layout == tcgen05.fa_m64_collective_layout(columns)
-  )
+def compute_swizzle(minor_tiling: int, bitwidth: int) -> int:
+  """Computes the swizzle for the given minor tiled dimension and bitwidth."""
+  tiling_bitwidth = minor_tiling * bitwidth
+  if tiling_bitwidth % 8:
+    raise ValueError("Minor tiling dimension is not byte aligned. "
+                     f"Got {minor_tiling} elements of {bitwidth} bits.")
+  tiling_bytewidth = tiling_bitwidth // 8
+  # Do not swizzle if the bytewidth of the minor tiling dimension does not
+  # exactly match a swizzle width.
+  if tiling_bytewidth in [128, 64, 32]:
+    return tiling_bytewidth
+  return 16  # no swizzle

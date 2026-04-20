@@ -32,7 +32,7 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   ty = typeof(x)
   if isinstance(ty, HiType):
     return ty.vspace_add(x, y)
@@ -53,9 +53,9 @@ def add_abstract(x, y):
   return x
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
-  from jax._src.hijax import HiType  # pytype: disable=import-error
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
-    return aval.vspace_zero()  # pytype: disable=attribute-error
+    return aval.vspace_zero()
   return aval_zeros_likers[type(aval)](aval)
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
@@ -84,6 +84,9 @@ def p2tz(primal_value):
 
 def p2cz(primal_value):
   return Zero(typeof(primal_value).to_ct_aval())
+
+def a2tz(primal_aval):
+  return Zero(primal_aval.to_tangent_aval())
 
 
 def _stop_gradient_impl(x: T) -> T:
@@ -130,12 +133,10 @@ class SymbolicZero:
 
 def zero_from_primal(val, symbolic_zeros=False):
   def f(x):
-    tangent_aval = typeof(x).to_tangent_aval()
-    if symbolic_zeros:
-      return SymbolicZero(tangent_aval)
-    else:
-      return zeros_like_aval(tangent_aval)
+    t_aval = typeof(x).to_tangent_aval()
+    return SymbolicZero(t_aval) if symbolic_zeros else zeros_like_aval(t_aval)
   return tree_map(f, val)
+
 
 JaxTypeOrTracer = Any
 

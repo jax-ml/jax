@@ -74,6 +74,16 @@ rocm_library(
     ],
 )
 
+rocm_library(
+    name = "hip_householder_kernels",
+    srcs = ["//jaxlib/gpu:householder_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:householder_kernels.h"],
+    deps = [
+        ":hip_vendor",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
 cc_library(
     name = "hip_blas_handle_pool",
     srcs = ["//jaxlib/gpu:blas_handle_pool.cc"],
@@ -116,6 +126,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_rnn",
     deps = [
@@ -156,6 +167,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocsolver",
     ],
 )
 
@@ -166,6 +179,7 @@ cc_library(
     deps = [
         ":hip_blas_handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_householder_kernels",
         ":hip_make_batch_pointers",
         ":hip_solver_handle_pool",
         ":hip_vendor",
@@ -188,6 +202,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
@@ -240,6 +255,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_sparse",
     deps = [
@@ -289,6 +305,7 @@ rocm_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
+        "//jaxlib:tridiagonal_solve_perturbed",
         "@xla//xla/ffi/api:ffi",
     ],
 )
@@ -300,6 +317,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_linalg",
     deps = [
@@ -350,6 +368,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_prng",
     deps = [
@@ -391,6 +410,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_hybrid",
     deps = [
@@ -459,6 +479,7 @@ rocm_nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = False,
     features = ["-use_header_modules"],
     module_name = "_triton",
     deps = [
@@ -530,6 +551,7 @@ cc_library(
 rocm_nanobind_extension(
     name = "rocm_plugin_extension",
     srcs = ["rocm_plugin_extension.cc"],
+    enable_stub_generation = False,
     module_name = "rocm_plugin_extension",
     deps = [
         ":py_client_gpu",

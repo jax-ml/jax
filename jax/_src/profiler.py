@@ -91,10 +91,10 @@ class _ProfileState:
     self.lock = threading.Lock()
 
   def reset(self):
-    _profile_state.profile_session = None
-    _profile_state.create_perfetto_link = False
-    _profile_state.create_perfetto_trace = False
-    _profile_state.log_dir = None
+    self.profile_session = None
+    self.create_perfetto_link = False
+    self.create_perfetto_trace = False
+    self.log_dir = None
 
 
 _profile_state = _ProfileState()
@@ -206,7 +206,7 @@ class _PerfettoServer(http.server.SimpleHTTPRequestHandler):
     return super().end_headers()
 
   def do_GET(self):
-    self.server.last_request = self.path  # type: ignore[missing-attribute]
+    self.server.last_request = self.path  # pyrefly: ignore[missing-attribute]
     return super().do_GET()
 
   def do_POST(self):
@@ -242,9 +242,9 @@ def stop_trace():
     profile_session = _profile_state.profile_session
     if profile_session is None:
       raise RuntimeError("No profile started")
-    profile_session.stop_and_export(str(_profile_state.log_dir))  # pytype: disable=attribute-error
+    profile_session.stop_and_export(str(_profile_state.log_dir))
     if _profile_state.create_perfetto_trace:
-      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)  # type: ignore[bad-argument-type]
+      abs_filename = _write_perfetto_trace_file(str(_profile_state.log_dir))
       if _profile_state.create_perfetto_link:
         _host_perfetto_trace_file(abs_filename)
     _profile_state.reset()
@@ -438,12 +438,12 @@ class PGLEProfiler:
   def __init__(self, retries: int, percentile: int):
     self.retries: int = retries
     self.percentile: int = percentile
-    self.collected_fdo: str | None = None
+    self.collected_fdo: bytes | None = None
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
     self.current_session: _profiler.ProfilerSession | None = None
 
-  def consume_fdo_profile(self) -> str | None:
+  def consume_fdo_profile(self) -> bytes | None:
     if self.collected_fdo is not None:
       return self.collected_fdo
 

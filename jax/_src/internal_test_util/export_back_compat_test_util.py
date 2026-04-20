@@ -82,6 +82,7 @@ from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import datetime
 import os
+import tempfile
 import re
 import sys
 from typing import Any
@@ -183,6 +184,8 @@ class CompatTestBase(jtu.JaxTestCase):
                    func: Callable[..., Array] | stages.Wrapped,
                    data: CompatTestData,
                    polymorphic_shapes: Sequence[str] | None = None,
+                   prepare_inputs: Callable[[Sequence[np.ndarray]],
+                                            Sequence[Any]] | None = None,
                    rtol: float | None = None,
                    atol: float | None = None,
                    allow_unstable_custom_call_targets: Sequence[str] = (),
@@ -196,6 +199,9 @@ class CompatTestBase(jtu.JaxTestCase):
       data: the test data
       polymorphic_shapes: when using shape polymorphism, the specification for
         each argument of `func`.
+      prepare_inputs: invoked with the inputs to `func`, should return the
+        arguments to pass to `func`. Useful, e.g., when you want to place the
+        inputs on specific devices, or with specific shardings.
       rtol: relative tolerance for numerical comparisons
       atol: absolute tolerance for numerical comparisons
       check_results: invoked with the results obtained from running the
@@ -217,7 +223,8 @@ class CompatTestBase(jtu.JaxTestCase):
       self.skipTest(f"Test enabled only for {data.platform}")
 
     logging.info("Lowering and running the function at the current version")
-    res_run_current = self.run_current(func, data)
+    res_run_current = self.run_current(func, data,
+                                       prepare_inputs=prepare_inputs)
     if not isinstance(res_run_current, (list, tuple)):
       res_run_current = (res_run_current,)
     res_run_current = tuple(np.array(a) for a in res_run_current)
@@ -232,9 +239,9 @@ class CompatTestBase(jtu.JaxTestCase):
     current_custom_call_targets = sorted(
         set(re.findall(custom_call_re, module_str)))
 
-    np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
-    # Print the current test data to simplify updating the test.
-    updated_testdata = f"""
+    with np.printoptions(threshold=sys.maxsize, floatmode="unique"):
+      # Print the current test data to simplify updating the test.
+      updated_testdata = f"""
 # Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
@@ -253,7 +260,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # Replace the word that should not appear.
     updated_testdata = re.sub(r"google.", "googlex", updated_testdata)
     output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
-                           "/tmp/back_compat_testdata")
+                           os.path.join(tempfile.gettempdir(),
+                                        "back_compat_testdata"))
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
     output_file = os.path.join(output_dir, f"{self._testMethodName}.py")
@@ -287,10 +295,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_current(self,
                   func: Callable | stages.Wrapped,
-                  data: CompatTestData):
+                  data: CompatTestData,
+                  prepare_inputs: Callable[[Sequence[np.ndarray]],
+                                            Sequence[Any]] | None = None):
     """Lowers and runs the test function at the current JAX version."""
     jit_func = func if isinstance(func, stages.Wrapped) else api.jit(func)
-    return jit_func(*data.inputs)
+    inputs = prepare_inputs(data.inputs) if prepare_inputs else data.inputs
+    return jit_func(*inputs)
 
   def serialize(self,
                 func: Callable | stages.Wrapped, data: CompatTestData, *,

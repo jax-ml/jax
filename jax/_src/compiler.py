@@ -35,6 +35,7 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
@@ -67,6 +68,28 @@ traceback_util.register_exclusion(__file__)
 CompileOptions = xc.CompileOptions
 
 logger = logging.getLogger(__name__)
+
+
+def _get_cross_compile_backend(compile_only_backend):
+  """Returns a real backend for cross-compilation via a real client.
+
+  When cross-compiling via a compile-only client, checks if a real backend
+  is available for the same platform. If so, returns it so compilation can
+  leverage real hardware (e.g., for GPU kernel autotuning).
+  """
+  platform = compile_only_backend.platform
+  try:
+    real_backend = xb.get_backend(platform)
+  except Exception:
+    return None
+  # Don't use the real backend if it's also a compile-only client.
+  if isinstance(real_backend, _jax.CompileOnlyPyClient):
+    return None
+  # Don't use real backend if platform version is different, this can lead
+  # to timeouts and hangs.
+  if real_backend.platform_version != compile_only_backend.platform_version:
+    return None
+  return real_backend
 
 
 # Will be monkeypatched with the function that gets the XLA-AutoFDO profile
@@ -283,33 +306,6 @@ def get_compile_options(
 
 
 @profiler.annotate_function
-def backend_compile(
-    backend: xc.Client,
-    module: ir.Module,
-    executable_devices: xc.DeviceList,
-    options: xc.CompileOptions,
-) -> xc.Executable:
-  sym_name = module.operation.attributes['sym_name']
-  module_name = ir.StringAttr(sym_name).value
-  if (options.executable_build_options.fdo_profile is not None
-      and len(options.executable_build_options.fdo_profile)):
-    logger.debug(
-        "Compiling module %s with FDO profile of length %d",
-        module_name,
-        len(options.executable_build_options.fdo_profile),
-    )
-
-  try:
-    return backend.compile(module, executable_devices, options)
-  except _jax.JaxRuntimeError as e:
-    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
-      handler_result = error_handler(e)
-      if handler_result is not None:
-        raise handler_result from e
-    raise e
-
-
-@profiler.annotate_function
 def backend_compile_and_load(
     backend: xc.Client,
     module: ir.Module,
@@ -333,8 +329,19 @@ def backend_compile_and_load(
     # separately in Python profiling results
     # TODO(dsuo): Simplify this logic once we delete _jax.CompileOnlyPyClient.
     if isinstance(backend, _jax.CompileOnlyPyClient):
+      # When a real backend is available for the same platform, use it for
+      # cross-compilation. The real client provides hardware access (e.g.,
+      # for GPU kernel autotuning) while the topology specifies the target.
+      cross_compile_backend = _get_cross_compile_backend(backend)
+      if cross_compile_backend is not None and not host_callbacks:
+        cross_compile_topology = xc.get_topology_for_devices(backend.devices())
+        return cross_compile_backend.compile(
+            module,
+            topology=cross_compile_topology,
+            compile_options=options,
+        )
       if host_callbacks:
-        return backend.compile(  # type: ignore
+        return backend.compile(  # pyrefly: ignore[bad-return]
             module,
             executable_devices=executable_devices,
             compile_options=options,
@@ -343,7 +350,7 @@ def backend_compile_and_load(
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
       # to take in `host_callbacks`
-      return backend.compile(  # type: ignore
+      return backend.compile(  # pyrefly: ignore[bad-return]
           module,
           executable_devices=executable_devices,
           compile_options=options,
@@ -651,8 +658,8 @@ def _share_fdo_profiles(
     )
     return fdo_profile
 
-  if profile_key in _share_fdo_profiles.modules_profiles:  # type: ignore[missing-attribute]
-    return _share_fdo_profiles.modules_profiles[profile_key]  # type: ignore[missing-attribute]
+  if profile_key in _share_fdo_profiles.modules_profiles:  # pyrefly: ignore[missing-attribute]
+    return _share_fdo_profiles.modules_profiles[profile_key]  # pyrefly: ignore[missing-attribute]
 
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   if distributed.global_state.process_id == min_process_id:
@@ -672,11 +679,11 @@ def _share_fdo_profiles(
         profile_key, share_timeout
     )
 
-  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile  # type: ignore[missing-attribute]
+  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile  # pyrefly: ignore[missing-attribute]
   return fdo_profile
 
 
-_share_fdo_profiles.modules_profiles = {}  # type: ignore[missing-attribute]
+_share_fdo_profiles.modules_profiles = {}  # pyrefly: ignore[missing-attribute]
 
 
 # The process with the first_process_id should compile the module and write it
@@ -694,8 +701,8 @@ def _compile_and_share_module(
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
-  if cache_key in _compile_and_share_module.modules_cache:  # type: ignore[missing-attribute]
-    return _compile_and_share_module.modules_cache[cache_key]  # type: ignore[missing-attribute]
+  if cache_key in _compile_and_share_module.modules_cache:  # pyrefly: ignore[missing-attribute]
+    return _compile_and_share_module.modules_cache[cache_key]  # pyrefly: ignore[missing-attribute]
 
   if distributed.global_state.process_id == first_process_id:
     logger.debug("Process %d compiling and sharing module: %s",
@@ -726,11 +733,11 @@ def _compile_and_share_module(
     executable = backend.deserialize_executable(
         serialized_executable, executable_devices, compile_options)
 
-  _compile_and_share_module.modules_cache[cache_key] = executable  # type: ignore[missing-attribute]
+  _compile_and_share_module.modules_cache[cache_key] = executable  # pyrefly: ignore[missing-attribute]
   return executable
 
 
-_compile_and_share_module.modules_cache = {}  # type: ignore[missing-attribute]
+_compile_and_share_module.modules_cache = {}  # pyrefly: ignore[missing-attribute]
 
 
 def _compile_and_write_cache(

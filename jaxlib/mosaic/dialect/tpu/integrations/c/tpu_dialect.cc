@@ -33,8 +33,8 @@ extern "C" {
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(TPU, tpu, mlir::tpu::TPUDialect);
 
 void mlirTPUAnalyzePotentialCommunication(MlirOperation op,
-                                          bool *has_communication,
-                                          bool *has_custom_barrier) {
+                                          bool* has_communication,
+                                          bool* has_custom_barrier) {
   auto result = mlir::tpu::mightCommunicateBetweenChips(unwrap(op));
   *has_communication = result.first;
   *has_custom_barrier = result.second;

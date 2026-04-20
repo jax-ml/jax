@@ -41,6 +41,7 @@ pytype_strict_library(
         "__init__.py",
         "interpreters/__init__.py",
     ],
+    type_checking = "pyrefly",
     deps = [":traceback_util"],
 )
 
@@ -56,6 +57,7 @@ pytype_strict_library(
         "test_util.py",
         "test_warning_util.py",
     ],
+    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_test_util_visibility,
@@ -79,12 +81,29 @@ pytype_strict_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+pytype_strict_library(
+    name = "hypothesis_test_util",
+    srcs = ["hypothesis_test_util.py"],
+    type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_test_util_visibility,
+    deps = [
+        ":config",
+        ":test_util",
+    ] + py_deps(["hypothesis"]),
 )
 
 pytype_strict_library(
     name = "indexing",
     srcs = ["indexing.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":tree_util",
@@ -104,6 +123,7 @@ pytype_strict_library(
             "internal_test_util/lazy_loader_module/*.py",
         ],
     ),
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
@@ -128,6 +148,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "internal_test_harnesses",
     srcs = ["internal_test_util/test_harnesses.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_internal_test_harnesses_visibility,
     deps = if_building_jaxlib(
         if_building = [
@@ -150,6 +171,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "test_multiprocess",
     srcs = ["test_multiprocess.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
@@ -165,6 +187,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "internal_export_back_compat_test_util",
     srcs = ["internal_test_util/export_back_compat_test_util.py"],
+    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_internal_export_back_compat_test_util_visibility,
@@ -189,6 +212,7 @@ pytype_strict_library(
         "internal_test_util/export_back_compat_test_data/*.py",
         "internal_test_util/export_back_compat_test_data/pallas/*.py",
     ]),
+    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ],
@@ -198,6 +222,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "abstract_arrays",
     srcs = ["abstract_arrays.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad_util",
         ":config",
@@ -205,12 +230,15 @@ pytype_strict_library(
         ":dtypes",
         ":literals",
         ":traceback_util",
+        ":util",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "ad_util",
     srcs = ["ad_util.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":traceback_util",
@@ -229,6 +257,7 @@ pytype_strict_library(
         "interpreters/pxla.py",
         "pjit.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("api"),
     deps = [
         ":abstract_arrays",
@@ -255,7 +284,6 @@ pytype_strict_library(
         ":remat",
         ":sharding",
         ":sharding_impls",
-        ":sharding_specs",
         ":source_info_util",
         ":stages",
         ":state_types",
@@ -271,6 +299,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "api_util",
     srcs = ["api_util.py"],
+    type_checking = "pyrefly",
     deps = [
         ":abstract_arrays",
         ":config",
@@ -288,7 +317,7 @@ pytype_strict_library(
     srcs = ["basearray.py"],
     pytype_srcs = ["basearray.pyi"],
     deps = [
-        ":literals",
+        ":deprecations",
         ":named_sharding",
         ":partition_spec",
         ":sharding",
@@ -300,6 +329,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "blocked_sampler",
     srcs = ["blocked_sampler.py"],
+    type_checking = "pyrefly",
     deps = [
         ":numpy",
         ":random",
@@ -310,6 +340,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "buffer_callback",
     srcs = ["buffer_callback.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -325,13 +356,9 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "memory",
-    srcs = ["memory.py"],
-)
-
-pytype_strict_library(
     name = "callback",
     srcs = ["callback.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -356,6 +383,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "checkify",
     srcs = ["checkify.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("checkify"),
     deps = [
         ":ad",
@@ -388,6 +416,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["cloud_tpu_init.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         ":hardware_utils",
@@ -397,6 +426,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compilation_cache_internal",
     srcs = ["compilation_cache.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":cache_key",
@@ -412,6 +442,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cache_key",
     srcs = ["cache_key.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":config",
@@ -422,6 +453,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compilation_cache_interface",
     srcs = ["compilation_cache_interface.py"],
+    type_checking = "pyrefly",
     deps = [":util"],
 )
 
@@ -452,7 +484,6 @@ py_library_providing_imports_info(
         ":effects",
         ":ffi",
         ":hijax",
-        ":literals",
         ":mesh",
         ":mlir",
         ":named_sharding",
@@ -475,6 +506,7 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "lru_cache",
     srcs = ["lru_cache.py"],
+    type_checking = "pyrefly",
     deps = [
         ":compilation_cache_interface",
         ":path",
@@ -484,6 +516,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "config",
     srcs = ["config.py"],
+    type_checking = "pyrefly",
     deps = [
         ":deprecations",
         ":logging_config",
@@ -494,12 +527,14 @@ pytype_strict_library(
 pytype_strict_library(
     name = "logging_config",
     srcs = ["logging_config.py"],
+    type_checking = "pyrefly",
     deps = ["//jax/_src/lib"],
 )
 
 pytype_strict_library(
     name = "compiler",
     srcs = ["compiler.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("compiler"),
     deps = [
         ":cache_key",
@@ -523,12 +558,13 @@ pytype_strict_library(
         "errors.py",
         "linear_util.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         ":dtypes",
         ":effects",
+        ":frozen_dict",
         ":layout",
-        ":memory",
         ":mesh",
         ":named_sharding",
         ":partition_spec",
@@ -547,7 +583,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "literals",
     srcs = ["literals.py"],
+    type_checking = "pyrefly",
     deps = [
+        ":core",
+        ":dtypes",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -555,32 +594,16 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_api_util",
     srcs = ["custom_api_util.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "custom_batching",
     srcs = ["custom_batching.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
-        ":api_util",
-        ":batching",
-        ":core",
-        ":custom_api_util",
-        ":mlir",
-        ":partial_eval",
-        ":source_info_util",
-        ":traceback_util",
-        ":tree_util",
-        ":util",
-    ],
-)
-
-pytype_strict_library(
-    name = "custom_dce",
-    srcs = ["custom_dce.py"],
-    deps = [
-        ":ad",
         ":api_util",
         ":batching",
         ":core",
@@ -597,6 +620,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_derivatives",
     srcs = ["custom_derivatives.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":ad_util",
@@ -606,7 +630,6 @@ pytype_strict_library(
         ":config",
         ":core",
         ":custom_api_util",
-        ":custom_transpose",
         ":dtypes",
         ":effects",
         ":mlir",
@@ -621,6 +644,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_partitioning",
     srcs = ["custom_partitioning.py"],
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":api_util",
@@ -642,33 +666,16 @@ pytype_strict_library(
 pytype_strict_library(
     name = "custom_partitioning_sharding_rule",
     srcs = ["custom_partitioning_sharding_rule.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src/lib",
     ],
 )
 
 pytype_strict_library(
-    name = "custom_transpose",
-    srcs = ["custom_transpose.py"],
-    deps = [
-        ":ad",
-        ":ad_util",
-        ":api",
-        ":api_util",
-        ":core",
-        ":custom_api_util",
-        ":mlir",
-        ":partial_eval",
-        ":source_info_util",
-        ":traceback_util",
-        ":tree_util",
-        ":util",
-    ],
-)
-
-pytype_strict_library(
     name = "debugger",
     srcs = glob(["debugger/**/*.py"]),
+    type_checking = "pyrefly",
     deps = [
         ":callback",
         ":core",
@@ -685,6 +692,7 @@ pytype_strict_library(
     srcs = [
         "debugging.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -712,11 +720,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "deprecations",
     srcs = ["deprecations.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "dlpack",
     srcs = ["dlpack.py"],
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":deprecations",
@@ -735,9 +745,9 @@ pytype_strict_library(
     srcs = [
         "dtypes.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":config",
-        ":literals",
         ":traceback_util",
         ":typing",
         ":util",
@@ -748,6 +758,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "earray",
     srcs = ["earray.py"],
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":basearray",
@@ -763,11 +774,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "effects",
     srcs = ["effects.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "environment_info",
     srcs = ["environment_info.py"],
+    type_checking = "pyrefly",
     deps = [
         ":xla_bridge",
         "//jax/_src/lib",
@@ -777,6 +790,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "error_check",
     srcs = ["error_check.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":export",
@@ -797,6 +811,7 @@ pytype_strict_library(
     srcs = glob([
         "export/**/*.py",
     ]),
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("export"),
     deps = [
         ":ad_util",
@@ -806,6 +821,7 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":lax",
         ":mesh",
         ":mlir",
         ":named_sharding",
@@ -826,6 +842,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ffi",
     srcs = ["ffi.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -848,6 +865,7 @@ pytype_strict_library(
     srcs = [
         "flatten_util.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":dtypes",
         ":lax",
@@ -860,16 +878,19 @@ pytype_strict_library(
 pytype_strict_library(
     name = "frozen_dict",
     srcs = ["frozen_dict.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "hashable_array",
     srcs = ["hashable_array.py"],
+    type_checking = "pyrefly",
     deps = py_deps("numpy"),
 )
 
@@ -878,6 +899,7 @@ pytype_strict_library(
     srcs = glob([
         "image/**/*.py",
     ]),
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("image"),  # buildifier: disable=visibility-as-string-list
     deps = [
         ":api",
@@ -892,6 +914,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "lax_reference",
     srcs = ["lax_reference.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("lax_reference"),
     deps = [
         ":core",
@@ -903,11 +926,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "lazy_loader",
     srcs = ["lazy_loader.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "jaxpr_util",
     srcs = ["jaxpr_util.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         ":core",
@@ -921,6 +946,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mesh",
     srcs = ["mesh.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         ":util",
@@ -932,6 +958,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ad",
     srcs = ["interpreters/ad.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad_util",
         ":api_util",
@@ -950,6 +977,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "batching",
     srcs = ["interpreters/batching.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad_util",
         ":config",
@@ -968,6 +996,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mlir",
     srcs = ["interpreters/mlir.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad_util",
         ":api_util",
@@ -1000,11 +1029,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "monitoring",
     srcs = ["monitoring.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "op_shardings",
     srcs = ["op_shardings.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -1016,6 +1047,7 @@ pytype_strict_library(
         "scipy/**/*.py",
         "third_party/**/*.py",
     ]),
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":api_util",
@@ -1038,11 +1070,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sourcemap",
     srcs = ["sourcemap.py"],
+    type_checking = "pyrefly",
 )
 
 pytype_strict_library(
     name = "partial_eval",
     srcs = ["interpreters/partial_eval.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("partial_eval"),
     deps = [
         ":ad_util",
@@ -1064,6 +1098,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "remat",
     srcs = ["interpreters/remat.py"],
+    type_checking = "pyrefly",
     deps = [
         ":api_util",
         ":config",
@@ -1078,6 +1113,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "partition_spec",
     srcs = ["partition_spec.py"],
+    type_checking = "pyrefly",
     deps = [
         ":util",
         "//jax/_src/lib",
@@ -1087,21 +1123,25 @@ pytype_strict_library(
 pytype_strict_library(
     name = "path",
     srcs = ["path.py"],
+    type_checking = "pyrefly",
     deps = py_deps("epath"),
 )
 
 pytype_strict_library(
     name = "pickle_util",
     srcs = ["pickle_util.py"],
+    type_checking = "pyrefly",
     deps = [":profiler"] + py_deps("cloudpickle"),
 )
 
 pytype_strict_library(
     name = "pretty_printer",
     srcs = ["pretty_printer.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("pretty_printer"),
     deps = [
         ":config",
+        ":util",
         "//jax/_src/lib",
     ],
 )
@@ -1109,6 +1149,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "profiler",
     srcs = ["profiler.py"],
+    type_checking = "pyrefly",
     deps = [
         ":init",
         ":traceback_util",
@@ -1123,6 +1164,7 @@ pytype_strict_library(
     srcs = [
         "pmap.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":api_util",
@@ -1148,6 +1190,7 @@ pytype_strict_library(
     srcs = [
         "public_test_util.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":config",
@@ -1159,6 +1202,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding",
     srcs = ["sharding.py"],
+    type_checking = "pyrefly",
     deps = [
         ":op_shardings",
         ":util",
@@ -1172,6 +1216,7 @@ pytype_strict_library(
     srcs = [
         "shard_alike.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -1188,6 +1233,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "shard_map",
     srcs = ["shard_map.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":ad_util",
@@ -1218,6 +1264,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "hijax",
     srcs = ["hijax.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":ad_util",
@@ -1232,6 +1279,7 @@ pytype_strict_library(
         ":partial_eval",
         ":remat",
         ":state_types",
+        ":traceback_util",
         ":tree_util",
         ":util",
     ],
@@ -1240,6 +1288,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stages",
     srcs = ["stages.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("stages"),
     deps = [
         ":config",
@@ -1260,6 +1309,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["compute_on.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -1278,6 +1328,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "xla_metadata",
     srcs = ["xla_metadata.py"],
+    type_checking = "pyrefly",
     deps = [
         ":ad",
         ":api",
@@ -1294,6 +1345,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "xla_metadata_lib",
     srcs = ["xla_metadata_lib.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         "//jax/_src/lib",
@@ -1303,6 +1355,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout",
     srcs = ["layout.py"],
+    type_checking = "pyrefly",
     deps = [
         ":dtypes",
         ":named_sharding",
@@ -1315,6 +1368,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding_impls",
     srcs = ["sharding_impls.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = [
         ":config",
@@ -1326,7 +1380,6 @@ pytype_strict_library(
         ":op_shardings",
         ":partition_spec",
         ":sharding",
-        ":sharding_specs",
         ":source_info_util",
         ":tree_util",
         ":util",
@@ -1338,6 +1391,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "named_sharding",
     srcs = ["named_sharding.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         ":mesh",
@@ -1354,6 +1408,7 @@ pytype_strict_library(
     srcs = glob([
         "nn/**/*.py",
     ]),
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":config",
@@ -1389,9 +1444,9 @@ py_library_providing_imports_info(
         ":dtypes",
         ":error_check",
         ":export",
+        ":hijax",
         ":indexing",
         ":lax",
-        ":literals",
         ":mesh",
         ":sharding",
         ":sharding_impls",
@@ -1404,18 +1459,9 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
-    name = "sharding_specs",
-    srcs = ["sharding_specs.py"],
-    deps = [
-        ":op_shardings",
-        ":util",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
     name = "internal_mesh_utils",
     srcs = ["mesh_utils.py"],
+    type_checking = "pyrefly",
     deps = [
         ":xla_bridge",
     ] + py_deps("numpy"),
@@ -1424,6 +1470,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "source_info_util",
     srcs = ["source_info_util.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("source_info_util"),
     deps = [
         ":traceback_util",
@@ -1438,6 +1485,7 @@ pytype_strict_library(
         "state/indexing.py",
         "state/types.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("state_types"),
     deps = [
         ":ad_util",
@@ -1458,6 +1506,7 @@ pytype_strict_library(
     srcs = glob([
         "tpu/**/*.py",
     ]),
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":config",
@@ -1476,12 +1525,14 @@ pytype_strict_library(
 pytype_strict_library(
     name = "tree",
     srcs = ["tree.py"],
+    type_checking = "pyrefly",
     deps = [":tree_util"],
 )
 
 pytype_strict_library(
     name = "tree_util",
     srcs = ["tree_util.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("tree_util"),
     deps = [
         ":traceback_util",
@@ -1493,6 +1544,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "traceback_util",
     srcs = ["traceback_util.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("traceback_util"),
     deps = [
         ":config",
@@ -1506,12 +1558,14 @@ pytype_strict_library(
     srcs = [
         "typing.py",
     ],
+    type_checking = "pyrefly",
     deps = [":basearray"] + py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "tpu_custom_call",
     srcs = ["tpu_custom_call.py"],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = [
         ":api",
@@ -1535,6 +1589,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "util",
     srcs = ["util.py"],
+    type_checking = "pyrefly",
     deps = [
         ":config",
         "//jax/_src/lib",
@@ -1555,6 +1610,7 @@ pytype_strict_library(
         "distributed.py",
         "xla_bridge.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("xla_bridge"),
     deps = [
         ":cloud_tpu_init",
@@ -1569,6 +1625,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cudnn",
     srcs = glob(["cudnn/**/*.py"]),
+    type_checking = "pyrefly",
     deps = [
         ":api",
         ":batching",
@@ -1591,6 +1648,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "extend_src",
     srcs = glob(include = ["extend/**/*.py"]),
+    type_checking = "pyrefly",
     deps = [
         ":random",
         ":typing",
@@ -1603,6 +1661,7 @@ pytype_strict_library(
         "prng.py",
         "random.py",
     ],
+    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("random"),
     deps = [
         ":ad",
@@ -1613,11 +1672,11 @@ pytype_strict_library(
         ":dtypes",
         ":ffi",
         ":lax",
-        ":literals",
         ":mesh",
         ":mlir",
         ":numpy",
         ":pretty_printer",
+        ":sharding",
         ":sharding_impls",
         ":source_info_util",
         ":tree_util",
@@ -1631,6 +1690,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ref",
     srcs = ["ref.py"],
+    type_checking = "pyrefly",
     deps = [":core"],
 )
 
@@ -1639,6 +1699,7 @@ pytype_strict_library(
     srcs = [
         "stateful_rng.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":api_util",
         ":core",

@@ -75,7 +75,7 @@ class JaxAotTest(jtu.JaxTestCase):
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
-    if jtu.is_device_cuda():
+    if jtu.test_device_matches(['gpu']):
       raise unittest.SkipTest('Broken on GPU: b/442353988')
 
     @jax.jit
@@ -163,7 +163,11 @@ class JaxAotTest(jtu.JaxTestCase):
     inp = jnp.arange(8.)
     compiled = f.lower(inp).compile()
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertEqual(compiled.args_info[0][0]._aval.shape, inp.shape)
     self.assertLen(compiled.in_avals[0], 1)
+    self.assertEqual(compiled.in_avals[0][0].shape, inp.shape)
+    self.assertLen(compiled.input_shardings[0], 1)
+    self.assertLen(compiled.input_formats[0], 1)
     if config.use_simplified_jaxpr_constants.value:
       self.assertLen(compiled._params.const_args, 1)
       self.assertIs(compiled._params.const_args[0], const)
@@ -171,6 +175,46 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(compiled._params.const_args, 0)
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
+
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
+  def test_with_small_constants(self):
+    const1 = np.ones((4,), dtype=np.int32)  # Will be embedded
+    const2 = jnp.ones((16,), dtype=np.int32)
+    @jax.jit
+    def f():
+      return const1 + const2[:const1.shape[0]]
+    with config.embedded_constants_max_bytes(const1.nbytes):
+      compiled = f.lower().compile()
+    self.assertLen(compiled._params.const_args, 1)
+    self.assertIs(compiled._params.const_args[0], const2)
+
+  def test_with_constants_and_dce(self):
+    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+
+    @jax.jit
+    def f(x, y_dead):  # y is DCEed
+      z = const[0:8] + x
+      return z
+
+    inp = jnp.arange(8.)
+    y_dead = jnp.arange(24.)
+    compiled = f.lower(inp, y_dead).compile()
+    # `compiled.` fields include dead args, but not the const_args
+    self.assertLen(compiled.args_info[0], 2)
+    self.assertEqual(compiled.args_info[0][0]._aval.shape, inp.shape)
+    self.assertEqual(compiled.args_info[0][1]._aval.shape, y_dead.shape)
+    self.assertLen(compiled.in_avals[0], 2)
+    self.assertEqual(compiled.in_avals[0][0].shape, inp.shape)
+    self.assertEqual(compiled.in_avals[0][1].shape, y_dead.shape)
+    self.assertLen(compiled.input_shardings[0], 2)
+    self.assertLen(compiled.input_formats[0], 2)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+    self.assertArraysEqual(compiled(inp, y_dead), const[0:8] + inp)
+    self.assertCacheMisses(lambda: compiled(inp, y_dead), cpp=0, aot_call=0)
 
   @jtu.parameterized_filterable(
       kwargs=[
@@ -185,13 +229,13 @@ class JaxAotTest(jtu.JaxTestCase):
     # execution can be run in 64-bit or 32-bit mode.
     with config.enable_x64(True):
       arange = np.arange if use_np else jnp.arange
-      const = arange(8, dtype=np.int64) + 42
+      const = arange(16, dtype=np.int64) + 42
 
       @jax.jit
       def f(x):
         return lax.convert_element_type(const, np.float32) + x
 
-    inp = np.arange(8., dtype=np.float32)
+    inp = np.arange(16., dtype=np.float32)
     with config.enable_x64(True) if lower else contextlib.nullcontext():
       lowered = f.lower(inp)
     with config.enable_x64(True) if compile else contextlib.nullcontext():
@@ -203,6 +247,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
     self.assertLen(compiled.in_avals[0], 1)
+    self.assertLen(compiled.input_shardings[0], 1)
+    self.assertLen(compiled.input_formats[0], 1)
     if config.use_simplified_jaxpr_constants.value:
       self.assertLen(compiled._params.const_args, 1)
       self.assertLen(compiled._executable.in_avals, 2)
@@ -212,24 +258,11 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertEqual(compiled._executable.in_avals[0].dtype, expected_dtype)
 
       if expected_dtype is np.int64:  # Otherwise, we made a copy of the const
-        if use_np:
-          self.assertIs(np.asarray(compiled._params.const_args[0]), const)
-        else:
+        if not use_np:
           self.assertIs(compiled._params.const_args[0], const)
     else:
       self.assertLen(compiled._params.const_args, 0)
       self.assertLen(compiled._executable.in_avals, 1)
-
-    # In some cases we expect errors: in 32-bit mode, lowered with 64-bit mode
-    # and execute in 32-bit mode.
-    if (config.use_simplified_jaxpr_constants.value and
-        not config.enable_x64.value and
-        use_np and lower and not exec):
-      with self.assertRaisesRegex(
-          xc.XlaRuntimeError,
-          "got buffer with incompatible size"):
-        run()
-      return
 
     self.assertArraysEqual(run(),
                            lax.convert_element_type(const, inp.dtype) + inp)
@@ -294,6 +327,49 @@ class JaxAotTest(jtu.JaxTestCase):
     input = jnp.array([[0., 1.], [2., 3.]], dtype=jnp.float32, device=jax.devices()[0])
     result = compiled(input)
     self.assertEqual(result, 14.)
+
+  @jtu.run_on_devices('gpu')
+  def test_cross_compile_with_real_gpu(self):
+    """Test that cross-compilation uses the real GPU for autotuning."""
+    target_config = xc.get_topology_for_devices(jax.devices()).target_config
+    gpu_platform = jax.devices()[0].platform
+
+    # Create a compile-only topology, but DON'T switch to CPU so the real
+    # GPU backend remains available for cross-compilation with autotuning.
+    topology = topologies.get_topology_desc(
+        platform=gpu_platform,
+        target_config=target_config,
+        topology="1x1x1",
+    )
+    assert topology.devices[0].client.runtime_type == "compile_only_runtime"
+    mesh = topologies.make_mesh(
+        topo=topology, mesh_shape=(1,), axis_names=("x",)
+    )
+    x = jax.ShapeDtypeStruct(
+        shape=(2, 2),
+        dtype=jnp.float32,
+        sharding=jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec("x")
+        ),
+    )
+    compiled = jax.jit(lambda x: jnp.sum(x * x)).lower(x).compile()
+    serialized_executable, _, _ = serialize(compiled)
+
+    _, in_tree = jax.tree.flatten(((0,), {}))
+    _, out_tree = jax.tree.flatten(0)
+    compiled = deserialize_and_load(
+        serialized_executable,
+        in_tree,
+        out_tree,
+        backend=gpu_platform,
+        execution_devices=jax.devices()[:1],
+    )
+    input = jnp.array(
+        [[0., 1.], [2., 3.]], dtype=jnp.float32, device=jax.devices()[0]
+    )
+    result = compiled(input)
+    self.assertEqual(result, 14.)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

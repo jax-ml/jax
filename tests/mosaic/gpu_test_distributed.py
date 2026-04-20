@@ -25,22 +25,22 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 import jax.experimental.mosaic.gpu as mgpu
 import jax.experimental.mosaic.gpu.fragmented_array as fa
 
-
 # ruff: noqa: F405
-# pylint: disable=g-complex-comprehension
 P = jax.sharding.PartitionSpec
 
 
 class TestCase(parameterized.TestCase):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
@@ -406,6 +406,79 @@ class ProfilerTest(TestCase):
           raise ValueError(reduction)
       np.testing.assert_array_equal(
           y.astype(jnp.float32), np.tile(np_reduction(x_local[:64], x_local[64:]), (2, 1))
+      )
+
+  @parameterized.parameters(
+      (jnp.int32, 1, "add"),
+      (jnp.int32, 1, "min"),
+      (jnp.int32, 1, "max"),
+      (jnp.int32, 1, "and"),
+      (jnp.int32, 1, "or"),
+      (jnp.int32, 1, "xor"),
+      (jnp.float32, 1, "add"),
+      (jnp.float32, 4, "add"),
+      (jnp.float16, 2, "add"),
+      (jnp.bfloat16, 2, "add"),
+  )
+  def test_multimem_red(self, dtype, vector_length, reduction):
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, inp, out, sem, _):
+      my_device = ctx.device_id()
+      other_device = arith.subi(arith.constant(i32, 1), my_device)
+      my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
+      other_dst = ctx.to_remote(sem, other_device)
+      other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
+      arr = mgpu.FragmentedArray.load_strided(
+          inp, is_signed=mgpu.utils.is_signed(dtype), vec_size=vector_length,
+      )
+      multicast_ref = ctx.to_remote_multicast(out)
+      arr.store_untiled(multicast_ref, optimized=False, atomic=reduction)
+      other_sem.signal(arith.constant(i32, 1))
+      my_sem.wait(1)
+
+    mesh = jax.make_mesh(
+        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.set_mesh(mesh):
+      sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      x_local = jax.random.randint(
+          jax.random.key(1234), (128, 32), dtype=jnp.int32, minval=1, maxval=100
+      ).astype(dtype)
+      x = jax.sharding.reshard(x_local, P("x"))
+      x_shard = jax.ShapeDtypeStruct((64, 32), dtype)
+      out_init = jax.sharding.reshard(jnp.zeros((128, 32), dtype=dtype), P("x"))
+      y, out_sem = jax.jit(
+          jax.shard_map(
+              mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), x_shard, (), (),
+                  inout_shape=(x_shard, sem),
+              ),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      )(x, out_init, sem)
+      out_sems = multihost_utils.process_allgather(out_sem, tiled=True)
+      np.testing.assert_array_equal(out_sems, np.zeros_like(out_sems))
+      y = multihost_utils.process_allgather(y, tiled=True)
+      match reduction:
+        case "add":
+          np_reduction = jnp.add
+        case "min":
+          np_reduction = jnp.minimum
+        case "max":
+          np_reduction = jnp.maximum
+        case "and":
+          np_reduction = jnp.bitwise_and
+        case "or":
+          np_reduction = jnp.bitwise_or
+        case "xor":
+          np_reduction = jnp.bitwise_xor
+        case _:
+          raise ValueError(reduction)
+      zero = jnp.zeros((64, 32), dtype=dtype)
+      expected = np_reduction(np_reduction(zero, x_local[:64]), x_local[64:])
+      np.testing.assert_array_equal(
+          y.astype(jnp.float32), np.tile(expected, (2, 1))
       )
 
 

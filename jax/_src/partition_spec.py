@@ -94,17 +94,6 @@ class P:
       return (self._partitions == other._partitions and
               self.unreduced == other.unreduced and
               self.reduced == other.reduced)
-    elif isinstance(other, tuple):
-      if self.unreduced:
-        raise TypeError(
-            f"other {other} cannot be of instance `tuple` when self {self} has"
-            " unreduced in `__eq__` of PartitionSpec.")
-      if self.reduced:
-        raise TypeError(
-            f"other {other} cannot be of instance `tuple` when self {self} has"
-            " reduced in `__eq__` of PartitionSpec.")
-      other_p = tuple(_canonicalize_partition(o) for o in other)
-      return self._partitions == other_p
     else:
       return False
 
@@ -154,10 +143,14 @@ class P:
              unreduced=kwargs.pop("unreduced", self.unreduced),
              reduced=kwargs.pop("reduced", self.reduced))
 
-  def to_lo(self): return [self]
-  def to_tangent_spec(self): return self
+  def to_lo(self):
+    return [self]
+
+  def to_tangent_spec(self):
+    return self
+
   def to_ct_spec(self):
-    return P(*self._partitions, unreduced=self.reduced, reduced=self.unreduced)
+    return self.update(unreduced=self.reduced, reduced=self.unreduced)
 
   def _normalized_spec_for_aval(self, ndim: int) -> P:
     out = [None if p is _UNCONSTRAINED_PARTITION else p

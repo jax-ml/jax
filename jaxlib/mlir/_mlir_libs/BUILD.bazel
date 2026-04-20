@@ -77,6 +77,11 @@ nanobind_pywrap_extension(
     ],
 )
 
+py_stubgen(
+    name = "_mlirDialectsGPU_pyi",
+    module = "jaxlib.mlir._mlir_libs._mlirDialectsGPU",
+)
+
 nanobind_pywrap_extension(
     name = "_mlirGPUPasses",
     srcs = [
@@ -108,6 +113,11 @@ nanobind_pywrap_extension(
     ],
 )
 
+py_stubgen(
+    name = "_mlirDialectsNVGPU_pyi",
+    module = "jaxlib.mlir._mlir_libs._mlirDialectsNVGPU",
+)
+
 nanobind_pywrap_extension(
     name = "_mlirDialectsLLVM",
     srcs = [
@@ -125,6 +135,11 @@ nanobind_pywrap_extension(
     ],
 )
 
+py_stubgen(
+    name = "_mlirDialectsLLVM_pyi",
+    module = "jaxlib.mlir._mlir_libs._mlirDialectsLLVM",
+)
+
 nanobind_pywrap_extension(
     name = "_mlirDialectsSparseTensor",
     srcs = [
@@ -138,6 +153,11 @@ nanobind_pywrap_extension(
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
         "@nanobind",
     ],
+)
+
+py_stubgen(
+    name = "_mlirDialectsSparseTensor_pyi",
+    module = "jaxlib.mlir._mlir_libs._mlirDialectsSparseTensor",
 )
 
 nanobind_pywrap_extension(
@@ -161,6 +181,7 @@ nanobind_pywrap_extension(
     copts = COPTS,
     pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
+        "//jaxlib:hash_util",
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
         "//jaxlib/mosaic/gpu:tiled_layout",
         "//jaxlib/mosaic/gpu:transfer_plan",
@@ -306,6 +327,11 @@ nanobind_pywrap_extension(
     ],
 )
 
+py_stubgen(
+    name = "_jax_mlir_ext_pyi",
+    module = "jaxlib.mlir._mlir_libs._jax_mlir_ext",
+)
+
 ##---------------------------------------------------------------------------##
 # MHLO Extensions
 ##---------------------------------------------------------------------------##
@@ -443,7 +469,12 @@ pywrap_library(
     visibility = ["//visibility:private"],
     deps = [
         ":_chlo",
+        ":_jax_mlir_ext",
         ":_mlir",
+        ":_mlirDialectsGPU",
+        ":_mlirDialectsLLVM",
+        ":_mlirDialectsNVGPU",
+        ":_mlirDialectsSparseTensor",
         ":_mlirHlo",
         ":_sdy",
         ":_sdyMpmd",
@@ -481,6 +512,11 @@ filegroup(
     name = "all_pyi",
     srcs = [
         ":_chlo_pyi",
+        ":_jax_mlir_ext_pyi",
+        ":_mlirDialectsGPU_pyi",
+        ":_mlirDialectsLLVM_pyi",
+        ":_mlirDialectsNVGPU_pyi",
+        ":_mlirDialectsSparseTensor_pyi",
         ":_mlirHlo_pyi",
         ":_mlir_pyi",
         ":_sdyMpmd_pyi",

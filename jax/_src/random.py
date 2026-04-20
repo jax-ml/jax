@@ -330,6 +330,20 @@ def wrap_key_data(key_bits_array: Array, *,
     A PRNG key array, whose dtype is a subdtype of ``jax.dtypes.prng_key``
       corresponding to ``impl``, and whose shape equals the leading shape
       of ``key_bits_array.shape`` up to the key bit dimensions.
+
+  Examples:
+    Construct a key, and extract its data and impl:
+
+    >>> import jax
+    >>> key = jax.random.key(42)
+    >>> data = jax.random.key_data(key)
+    >>> impl = jax.random.key_impl(key)
+
+    Reconstruct an equivalent key with :func:`wrap_key_data`:
+
+    >>> new_key = jax.random.wrap_key_data(data, impl=impl)
+    >>> key == new_key
+    Array(True, dtype=bool)
   """
   impl_obj = resolve_prng_impl(impl)
   return prng.random_wrap(key_bits_array, impl=impl_obj)
@@ -340,7 +354,7 @@ def wrap_key_data(key_bits_array: Array, *,
 
 def _check_shape(name: str, shape: Shape, *param_shapes) -> None:
   if param_shapes:
-    shape_ = lax.broadcast_shapes(shape, *param_shapes)  # type: ignore
+    shape_ = lax.broadcast_shapes(shape, *param_shapes)  # pyrefly: ignore[no-matching-overload]
     if shape != shape_:
       msg = ("{} parameter shapes must be broadcast-compatible with shape "
              "argument, and the result of broadcasting the shapes must equal "
@@ -692,7 +706,7 @@ def permutation(key: ArrayLike,
 def _permutation(key, x, axis, independent):
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
-  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # pytype: disable=attribute-error
+  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)
   return jnp.take(x, ind, axis, unique_indices=True)
 
 
@@ -1238,7 +1252,7 @@ def dirichlet(key: ArrayLike,
 
 @jit(static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
-  from jax._src.nn.functions import softmax  # pytype: disable=import-error
+  from jax._src.nn.functions import softmax  # pyrefly: ignore[missing-import]
 
   if not np.ndim(alpha) >= 1:
     msg = "dirichlet requires alpha.ndim >= 1, got alpha.ndim == {}"
@@ -1308,10 +1322,10 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
-  zero = core.pvary(zero, tuple(core.typeof(alpha).vma))
-  one = core.pvary(one, tuple(core.typeof(alpha).vma))
-  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).vma))
-  two = core.pvary(two, tuple(core.typeof(alpha).vma))
+  zero = core.pvary(zero, tuple(core.typeof(alpha).mat.varying))
+  one = core.pvary(one, tuple(core.typeof(alpha).mat.varying))
+  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).mat.varying))
+  two = core.pvary(two, tuple(core.typeof(alpha).mat.varying))
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
@@ -1713,17 +1727,57 @@ def gumbel(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   if mode is None:
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
-  if mode not in ("high", "low"):
+  if mode not in ("highest", "high", "low"):
     raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gumbel", shape)
   return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
                          mode=mode)(key)
 
+def _safe_int_to_float(bits, dtype):
+  """Converts bits: u32[2,...] into f32[...] in the range (0,1)."""
+  if bits.dtype != np.uint32 or dtype != np.float32:
+    raise RuntimeError("_safe_int_to_float only works for u32 -> f32")
+  finfo = dtypes.finfo(dtype)
+  hiclz, loclz = lax.clz(bits)
+  hi, lo = bits
+
+  mantissa = lax.bitwise_or(
+      lax.shift_left(hi, hiclz),
+      jnp.where(
+          hiclz == 32,
+          lax.shift_left(lo, loclz),
+          lax.shift_right_logical(lo, finfo.bits - hiclz)))
+  mantissa = lax.shift_right_logical(
+      mantissa, np.array(finfo.bits - finfo.nmant - 1, dtype=np.uint32))
+  mantissa = lax.bitwise_and(
+      mantissa, np.array((1 << finfo.nmant) - 1, dtype=np.uint32))
+  exp = lax.shift_left(
+      (-finfo.minexp - jnp.where(hiclz == 32, 32 + loclz, hiclz)),
+      np.array(finfo.nmant, dtype=np.uint32))
+  exp = lax.bitwise_and(exp, np.array(
+      (1 << (finfo.bits - 2)) - (1 << (finfo.nmant - 1)), dtype=np.uint32))
+  return lax.bitwise_or(exp, mantissa).view(dtype)
+
+
 @jit(static_argnums=(1, 2, 3))
 def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
-  if mode == "high":
+  if dtype == np.float32 and mode == "highest":
+    finfo = dtypes.finfo(dtype)
+    bits = _random_bits(key, finfo.bits, shape=(2,) + shape)
+    neg = lax.bitwise_not(bits)
+    lo_bits = neg[1]
+    # 1 - bits in u64 fixed point.
+    neg = neg + jnp.array([
+        lo_bits == np.array((1 << finfo.bits) - 1, dtype=np.uint32),
+        jnp.ones_like(lo_bits)], dtype=np.uint32)
+    flip_mask = bits[0] < np.array(1 << (finfo.bits - 1), dtype=np.uint32)
+    x = _safe_int_to_float(jnp.where(flip_mask, bits, neg), dtype=np.float32)
+    # use log1p for (0,0.5) and log for [0.5, 1).
+    return jnp.where(flip_mask,
+        -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))
+  elif mode == "high" or mode == "highest":
     high, low = _uniform(key, minval=0., maxval=1.,
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
@@ -2975,10 +3029,11 @@ def random_insert_pvary(name, key, *args):
     return key, args
   if not args:
     return key, args
-  key_vma = core.typeof(key).vma
+  key_vma = core.typeof(key).mat.varying
   out = []
   for a in args:
-    arg_vma = (aval.vma if isinstance(aval := core.typeof(a), core.ShapedArray)
+    arg_vma = (aval.mat.varying
+               if isinstance(aval := core.typeof(a), core.ShapedArray)
                else frozenset())
     # If key is less varying than the args, then it's an error and user should
     # pvary at their level because it has key-reuse implications. They can
@@ -2986,7 +3041,7 @@ def random_insert_pvary(name, key, *args):
     # getting correctly varying keys. But JAX shouldn't auto-pvary the key.
     if key_vma - arg_vma:
       a = core.pvary(a, tuple(k for k in key_vma if k not in arg_vma))
-    if key_vma != core.typeof(a).vma:
+    if core.typeof(key).mat != core.typeof(a).mat:
       raise TypeError(
           f"{name} requires all arguments to have matching type. Got key type:"
           f" {core.typeof(key)} vs arg type: {core.typeof(a)}. Use"

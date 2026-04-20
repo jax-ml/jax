@@ -80,7 +80,7 @@ import jax.numpy as jnp
 try:
   from jax.experimental import jax2tf
 except ImportError:
-  jax2tf = None  # type: ignore[assignment]
+  jax2tf = None
 
 try:
   import tensorflow as tf

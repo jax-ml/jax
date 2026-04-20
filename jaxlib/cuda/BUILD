@@ -122,6 +122,10 @@ cc_library(
 nanobind_extension(
     name = "_rnn",
     srcs = ["//jaxlib/gpu:rnn.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -172,6 +176,16 @@ cc_library(
     ],
 )
 
+cuda_library(
+    name = "cuda_householder_kernels",
+    srcs = ["//jaxlib/gpu:householder_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:householder_kernels.h"],
+    deps = [
+        ":cuda_vendor",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
 cc_library(
     name = "cusolver_kernels_ffi",
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
@@ -179,6 +193,7 @@ cc_library(
     deps = [
         ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
+        ":cuda_householder_kernels",
         ":cuda_make_batch_pointers",
         ":cuda_solver_handle_pool",
         ":cuda_vendor",
@@ -198,6 +213,10 @@ cc_library(
 nanobind_extension(
     name = "_solver",
     srcs = ["//jaxlib/gpu:solver.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -252,6 +271,10 @@ cc_library(
 nanobind_extension(
     name = "_sparse",
     srcs = ["//jaxlib/gpu:sparse.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -308,6 +331,7 @@ cuda_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        "//jaxlib:tridiagonal_solve_perturbed",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -316,6 +340,10 @@ cuda_library(
 nanobind_extension(
     name = "_linalg",
     srcs = ["//jaxlib/gpu:linalg.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -371,6 +399,10 @@ cuda_library(
 nanobind_extension(
     name = "_prng",
     srcs = ["//jaxlib/gpu:prng.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -412,6 +444,10 @@ cc_library(
 nanobind_extension(
     name = "_hybrid",
     srcs = ["//jaxlib/gpu:hybrid.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -501,6 +537,10 @@ cc_library(
 nanobind_extension(
     name = "_triton",
     srcs = ["//jaxlib/gpu:triton.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -546,6 +586,10 @@ cc_library(
 nanobind_extension(
     name = "_versions",
     srcs = ["versions.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -625,6 +669,10 @@ cc_library(
 nanobind_extension(
     name = "cuda_plugin_extension",
     srcs = ["cuda_plugin_extension.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
     module_name = "cuda_plugin_extension",
     deps = [
         ":py_client_gpu",

@@ -4,32 +4,34 @@ module(name = "jax")
 # Bazel module dependencies
 ##############################################################
 
-bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20260107.1", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "2.13.6")
 bazel_dep(name = "rules_cc", version = "0.2.9")
-bazel_dep(name = "rules_python", version = "1.8.4")
+bazel_dep(name = "rules_python", version = "1.8.5")
+bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-59Nbu/+X1EbvExA5vsJUqHga+vc0/By9Xe3GfMITfEY=",
-    strip_prefix = "rules_ml_toolchain-b22c707cd970eb47fd0539c429416640d930e834",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/b22c707cd970eb47fd0539c429416640d930e834.tar.gz"],
+    integrity = "sha256-8skk6Foiui6qDAhlfl9UZ/7bw9BQb5zAxp3Zftn7ryg=",
+    strip_prefix = "rules_ml_toolchain-99c43dfe995a0e81c767d5b6d686191992672fe6",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/99c43dfe995a0e81c767d5b6d686191992672fe6.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-BBRcjQzWRpX8YX1wBeLGa7FwKSaMu/Xp95wFJbiC0WY=",
-    strip_prefix = "xla-025e6820d7e5a6ae698f3cca5a13b3d699318fa6",
-    urls = ["https://github.com/openxla/xla/archive/025e6820d7e5a6ae698f3cca5a13b3d699318fa6.tar.gz"],
+    integrity = "sha256-wcKzQGoMB58YKZk1Kh7pmYpb5IWTIlBmqSEj6U/oY+I=",
+    strip_prefix = "xla-8b5fd56745d1deaacee5a142838b80398a04dbc9",
+    urls = ["https://github.com/openxla/xla/archive/8b5fd56745d1deaacee5a142838b80398a04dbc9.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
@@ -77,7 +79,7 @@ use_repo(
 rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
 use_repo(rocm, "local_config_rocm")
 
-python_version_ext = use_extension("@xla//third_party/extensions:python_version.bzl", "python_version_ext")
+python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
 
 ### RBE
@@ -101,17 +103,22 @@ single_version_override(
         "//third_party/py:rules_python_versions.patch",
         "//third_party/py:rules_python_scope.patch",
     ],
-    version = "1.8.4",
+    version = "1.8.5",
 )
 
 ### Toolchains
 
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
 # python version.
+# Keep in sync with jax/version.py (_version) and python.defaults below.
+DEFAULT_PYTHON_VERSION = "3.11"
+
+JAXLIB_VERSION = "0.9.2"
+
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(
     # The environment variable takes precedence if set.
-    python_version = "3.11",
+    python_version = DEFAULT_PYTHON_VERSION,
     python_version_env = "HERMETIC_PYTHON_VERSION",
 )
 python.toolchain(python_version = "3.11")
@@ -130,7 +137,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     python_version = python_version,
     requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
     whl_modifications = {
-        "@//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+        "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
 ) for python_version in [
     "3.11",
@@ -244,10 +251,33 @@ external_deps_repository = use_repo_rule(
     "external_deps_repository",
 )
 
+rocm_wheels_repository = use_repo_rule(
+    "//third_party/rocm_wheels:workspace.bzl",
+    "rocm_wheels_repository",
+)
+
+# Pre-built ROCm wheels from GitHub (ROCm/rocm-jax).
+rocm_wheels_repository(
+    name = "rocm_wheels",
+    jaxlib_version = JAXLIB_VERSION,
+    python_version = DEFAULT_PYTHON_VERSION,
+    # rocm_version = "7.2.0",  # Optional: pick a specific ROCm version.
+)
+
+# Used for --//jax:build_jaxlib=wheel (locally-built wheels).
 external_deps_repository(
     name = "rocm_external_test_deps",
     deps = [
         "//jaxlib/tools:jax_rocm_pjrt_py_import",
         "//jaxlib/tools:jax_rocm_plugin_py_import",
+    ],
+)
+
+# Used for --//jax:build_jaxlib=false (pre-built wheels from GitHub).
+external_deps_repository(
+    name = "rocm_prebuilt_test_deps",
+    deps = [
+        "@rocm_wheels//:rocm_pjrt_py_import",
+        "@rocm_wheels//:rocm_plugin_py_import",
     ],
 )

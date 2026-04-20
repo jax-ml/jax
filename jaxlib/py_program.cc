@@ -113,10 +113,6 @@ absl::StatusOr<ifrt::DeviceListRef> GetIfrtDeviceList(nb::handle sharding) {
     return nb::cast<const SingleDeviceSharding*>(sharding)
         ->internal_device_list()
         ->ifrt_device_list();
-  } else if (sharding.type().is(PmapSharding::type())) {
-    return nb::cast<const PmapSharding*>(sharding)
-        ->internal_device_list()
-        ->ifrt_device_list();
   } else if (sharding.type().is(GSPMDSharding::type())) {
     return nb::cast<const GSPMDSharding*>(sharding)
         ->internal_device_list()
@@ -286,8 +282,8 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
            xla::ValueOrThrowWrapper(MakeColocatedPythonProgram),
            nb::arg("name"), nb::arg("pickled_function"), nb::arg("devices"),
            nb::arg("input_avals"), nb::arg("output_avals"),
-          nb::sig(
-            // clang-format off
+           nb::sig(
+               // clang-format off
             "def make_colocated_python_program("
             "name: str, "
             "picked_function: bytes, "
@@ -295,8 +291,8 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
             "input_avals: Sequence[typing.Any], "
             "output_avals: Sequence[Any]"
             ") -> Program"
-            // clang-format on
-          ))
+               // clang-format on
+               ))
       .def("make_plugin_program",
            xla::ValueOrThrowWrapper(MakePluginProgramFromString),
            nb::arg("data"))
@@ -306,15 +302,15 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
       .def("make_xla_compile_options",
            xla::ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
            nb::arg("executable_devices"), nb::arg("host_callbacks"),
-          nb::sig(
-            // clang-format off
+           nb::sig(
+               // clang-format off
             "def make_xla_compile_options("
             "options: _CompileOptions, "
             "executable_devices: Sequence[_Device], "
-            "host_callbacks: Sequence[typing_extensions.CapsuleType]"
+            "host_callbacks: Sequence[types.CapsuleType]"
             ") -> CompileOptions"
-            // clang-format on
-          ))
+               // clang-format on
+               ))
       .def("make_colocated_python_compile_options",
            xla::ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
       .def("make_plugin_compile_options",

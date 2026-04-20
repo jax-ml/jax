@@ -282,3 +282,38 @@ module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_parti
     xla_call_module_version=10,
     nr_devices=1,
 )  # End paste
+
+# Pasted from the test output (see export_back_compat_test_util.py module docstring)
+data_2026_03_24_tpu = {}
+data_2026_03_24_tpu['shardy'] = dict(
+    testdata_version=1,
+    platform='tpu',
+    custom_call_targets=['annotate_device_placement'],
+    serialized_date=datetime.date(2026, 3, 24),
+    inputs=(array([1.], dtype=float32), array([2.], dtype=float32)),
+    expected_outputs=(array([3.], dtype=float32),),
+    mlir_module_text=r"""
+#loc1 = loc("x")
+#loc2 = loc("y")
+module @jit_func attributes {jax.uses_shape_polymorphism = false, mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+  sdy.mesh @mesh = <["a"=1]> loc(#loc)
+  func.func public @main(%arg0: tensor<1xf32> {mhlo.memory_kind = "device", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>} loc("x"), %arg1: tensor<1xf32> {mhlo.memory_kind = "pinned_host", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>} loc("y")) -> (tensor<1xf32> {jax.result_info = "result", mhlo.memory_kind = "device", sdy.sharding = #sdy.sharding<@mesh, [{"a"}]>}) {
+    %0 = sdy.sharding_constraint %arg1 <@mesh, [{"a"}]> : tensor<1xf32> loc(#loc7)
+    %1 = stablehlo.custom_call @annotate_device_placement(%0) {has_side_effect = true, mhlo.frontend_attributes = {_xla_buffer_placement = "device"}} : (tensor<1xf32>) -> tensor<1xf32> loc(#loc7)
+    %2 = stablehlo.add %arg0, %1 : tensor<1xf32> loc(#loc8)
+    %3 = stablehlo.custom_call @annotate_device_placement(%2) {has_side_effect = true, mhlo.frontend_attributes = {_xla_buffer_placement = "device"}} : (tensor<1xf32>) -> tensor<1xf32> loc(#loc)
+    return %3 : tensor<1xf32> loc(#loc)
+  } loc(#loc)
+} loc(#loc)
+#loc = loc(unknown)
+#loc3 = loc("third_party/py/jax/tests/export_back_compat_test.py":929:17)
+#loc4 = loc("third_party/py/jax/tests/export_back_compat_test.py":929:13)
+#loc5 = loc("jit(func)"(#loc3))
+#loc6 = loc("jit(func)"(#loc4))
+#loc7 = loc("device_put"(#loc5))
+#loc8 = loc("add"(#loc6))
+""",
+    mlir_module_serialized=b"ML\xefR\rStableHLO_v1.13.7\x00\x01'\x07\x01\x05\t\x11\x01\x05\x0f\x13\x03\x05\x17\x1b\x05\t\x1f#'+\x03\x8fi\x0f\x015\x07\x0f\x0f\x0b\x0f\x0b\x0b\x13#\x0b\x0f\x0b\x0b\x0b\x0b\x0f\x0b\x0b\x0b\x0f\x17\x0b\x0f\x0b\x0f\x17\x03\x0b\x17\x13\x0f\x17\x0f\x05+\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x13\x1b\x1b\x0b\x0b\x0f#\x0b\x0b\x0b\x0b\x13\x0b\x01\t\x13\x0b\x0f\x07\x05\x07\x13\x1b\x07\x02\xbe\x02\x1f\x1d%'\x11\x05\x05\x05\x0b\x1d#\x01\x05\x17\x05\x19\x03\x03+e\x03\x07\x13\x15\x17\x05\x19\x05\x05\x1b\x11\x03\x00\x05\x1d\x05\x1f\x05!\t\x07\x1d!\x01\x05#\x05%\x05'\x1d\x0b)\x17\r\x86\x0e#\x05)\x1d/1\x05+\x1d\x0b3\x17\r\x86\x0e\x1b\r\x1d\x03;\x01\x05\x039\x01\x03-\x05\x0b\x03=\x01\x01\t-\x01\x03\x01\x1d/\x1d1\x1d3\x0b\x03\x1d5\x1d7\x05\x03\x03\x05QS\r\x05ACE5\r\x05AUE5\x1d9#\x0b\x03\x03[\r\x07]_ACE5\x1d;\x1d=\x1d?\x1dA\r\x03gC\x1dC\x1b\x03\x05\x07\x01\t\x01\x02\x02\x0b)\x03\x05\r\x11\x05\t\t\x03\t\t\x04\xab\x05\x03Q\x01\x11\x01\x07\x04\x99\x03\x01\t\x05@\x01\x03\x0bP\x01\x05\x07\x04}\x03\x11\x1f\x05\x13\x1f\x13\t\x00\x01\x06\t\x03\x01\x03\x03\x07F\x03\x07\x03\x01\x03\x05\x01\x06\x03\x03\t\x03\x07\tG\x03\x0f\t\x03\t\x03\t\r\x06-\x03\t\x05\x01\x0b\tG\x01\x0f\t\x03\t\x03\r\x0f\x04\x01\x03\x0f\x06\x03\x01\x05\x01\x00N\x07E-\x0f\x0b\x0f!\x195\x03\x1b\x0f#\x05\t3\x17\x05\x05\x13%)9i\x15\x15\x0f\x11\x1f)\x0b\x0f7\x0b\t\x11builtin\x00sdy\x00vhlo\x00unrealized_conversion_cast\x00module\x00mesh\x00sharding_constraint\x00custom_call_v1\x00func_v1\x00add_v1\x00return_v1\x00jit(func)\x00third_party/py/jax/tests/export_back_compat_test.py\x00jax.uses_shape_polymorphism\x00mhlo.num_partitions\x00mhlo.num_replicas\x00jit_func\x00x\x00y\x00device_put\x00mhlo.frontend_attributes\x00add\x00a\x00mhlo.memory_kind\x00device\x00sdy.sharding\x00\x00annotate_device_placement\x00pinned_host\x00jax.result_info\x00result\x00main\x00public\x00_xla_buffer_placement\x00\x081\x0b\x057\x01\x057\x07\x0bOWYac\x035\x11GIK?M???",
+    xla_call_module_version=10,
+    nr_devices=1,
+)  # End paste

@@ -3,10 +3,8 @@ from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import promote_args_inexact
 
-# Note: for mysterious reasons, annotating this leads to very slow mypy runs.
-# def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
 
-def algdiv(a, b):
+def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
     """
     Compute ``log(gamma(a))/log(gamma(a + b))`` when ``b >= 8``.
 

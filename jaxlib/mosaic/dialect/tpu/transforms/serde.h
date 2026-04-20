@@ -42,7 +42,7 @@ struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
 
   // When this is bumped, we should file a TODO to update the forward-compatible
   // version in tpu_custom_call.py in a month!
-  static constexpr int kVersion = 10;
+  static constexpr int kVersion = 11;
 
   MosaicSerdePass() = default;
 
@@ -51,12 +51,12 @@ struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
     target_version = options.target_version;
   }
 
-  MosaicSerdePass(const MosaicSerdePass &other) {
+  MosaicSerdePass(const MosaicSerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
   }
 
-  MosaicSerdePass &operator=(const MosaicSerdePass &other) {
+  MosaicSerdePass& operator=(const MosaicSerdePass& other) {
     serialize = other.serialize;
     target_version = other.target_version;
     return *this;

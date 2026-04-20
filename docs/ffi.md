@@ -506,7 +506,7 @@ and there will be no runtime overhead to using {func}`jax.lax.platform_dependent
 ## Sharding
 
 Most large scale users of JAX use its APIs for distributed computation across multiple devices.
-As discussed in {ref}`sharded-computation`, parallelism in JAX is controlled by sharding data across devices, and most JAX operations can be used within any of the supported parallel programming paradigms (from automatic to fully manual).
+As discussed in {ref}`parallel`, parallelism in JAX is controlled by sharding data across devices, and most JAX operations can be used within any of the supported parallel programming paradigms (from automatic to fully manual).
 But, the story is a little bit more complicated for FFI calls.
 Since the internals of an FFI call are opaque to both JAX and XLA, FFI calls won't typically show optimal (or even good) performance when the data are sharded.
 

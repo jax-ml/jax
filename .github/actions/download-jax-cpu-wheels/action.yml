@@ -1,27 +1,24 @@
 # Composite action to download the jax and jaxlib wheels
 name: Download JAX CPU wheels
+description: "Downloads JAX and jaxlib wheels from Google Cloud Storage based on the runner and Python version."
 
 inputs:
   runner:
     description: "Which runner type should the wheels be downloaded for?"
-    type: string
     default: "linux-x86-n4-16"
   python:
     description: "Which python version should the artifact be downloaded for?"
     required: true
-    type: string
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"
-    type: string
     default: "head"
   skip-download-jaxlib-from-gcs:
     description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
     default: '0'
-    type: string
   gcs_download_uri:
     description: "GCS location prefix from where the artifacts should be downloaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
-    type: string
+
 permissions: {}
 runs:
   using: "composite"

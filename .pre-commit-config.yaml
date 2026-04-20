@@ -36,7 +36,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 30778c6e83a71508a62b7297f8b22660ce4496fc  # frozen: v0.55.0
+  rev: f0d6ae09431cf86ecc3dad5d8f323ae04fa81533  # frozen: v0.61.0
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)
@@ -47,6 +47,7 @@ repos:
         - numpy~=2.4.0
         - ml_dtypes~=0.5.0
         - opt-einsum~=3.4.0
+        - tensorstore
         - scipy-stubs
         - --pre
         - --extra-index-url
@@ -69,3 +70,9 @@ repos:
     additional_dependencies: [google-re2]
     files: \.(py|cc|h|c|cu|bzl)$|BUILD
     exclude: ^(jax/_src/third_party/|tests/third_party/)
+
+- repo: https://github.com/rhysd/actionlint
+  rev: 393031adb9afb225ee52ae2ccd7a5af5525e03e8  # frozen: v1.7.11
+  hooks:
+    - id: actionlint
+      files: .github/workflows/

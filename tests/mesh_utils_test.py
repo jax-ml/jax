@@ -24,7 +24,7 @@ from jax._src import mesh as mesh_lib
 from jax._src import mesh_utils
 from jax._src import test_util
 from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
-from jax.sharding import Mesh  # pylint: disable=g-importing-member
+from jax.sharding import Mesh
 import numpy as np
 
 # pyformat: disable
@@ -129,11 +129,6 @@ def _validate_mocked_devices(devices, num_local_devices):
     assert {d.coords for d in local_devices} == expected, local_devices
 
 
-def mock_1x1_devices():
-  """Hard-coded reproduction of jax.devices() output on v3-1x1."""
-  return mock_tpu_devices(1, 1, 1, 'TPU v3', False)
-
-
 def mock_2x2_devices():
   """Hard-coded reproduction of jax.devices() output on v3-2x2."""
   return mock_tpu_devices(2, 2, 1, 'TPU v3', False)
@@ -147,11 +142,6 @@ def mock_4x4_devices():
 def mock_8x8_devices(one_device_per_chip=False):
   """Hard-coded reproduction of jax.devices() output on v3-8x8."""
   return mock_tpu_devices(8, 8, 1, 'TPU v3', one_device_per_chip)
-
-
-def mock_1x2x1_devices(one_device_per_chip):
-  """Hard-coded reproduction of jax.devices() output on 2x2x1."""
-  return mock_tpu_devices(1, 2, 1, 'TPU v4', one_device_per_chip)
 
 
 def mock_2x2x1_devices(one_device_per_chip):
@@ -182,11 +172,6 @@ def mock_8x8x8_devices(one_device_per_chip):
 def mock_4x8x8_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 4x8x8."""
   return mock_tpu_devices(4, 8, 8, 'TPU v4', one_device_per_chip)
-
-
-def mock_4x8x16_devices(one_device_per_chip):
-  """Hard-coded reproduction of jax.devices() output on 4x8x16."""
-  return mock_tpu_devices(4, 8, 16, 'TPU v4', one_device_per_chip)
 
 
 def mock_8x8x16_devices(one_device_per_chip):

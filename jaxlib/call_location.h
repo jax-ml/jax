@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef JAXLIB_CALL_LOCATION_H_
 #define JAXLIB_CALL_LOCATION_H_
 
-#include <string>
 #include <optional>
+#include <string>
 
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/user_context.h"
@@ -37,7 +37,6 @@ void AddExcludePath(std::string path);
 void SetSendTracebackToRuntimeGlobal(RuntimeTracebackMode mode);
 void SetSendTracebackToRuntimeThreadLocal(
     std::optional<RuntimeTracebackMode> mode);
-
 
 }  // namespace jax
 

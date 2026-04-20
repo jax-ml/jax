@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
 import math
-import operator as op
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -27,9 +26,9 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
-from jax._src import literals
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
+from jax._src.sharding import Sharding
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import typing
@@ -49,8 +48,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, SingleDeviceSharding, physical_sharding,
-    logical_sharding)
+    make_single_device_sharding, physical_sharding, logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -168,12 +166,12 @@ class PRNGKeyArray(Array):
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
-    if isinstance(key_data, (np.ndarray, literals.TypedNdArray)):
+    if isinstance(key_data, np.ndarray):
       aval = core.typeof(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(
-          aval, SingleDeviceSharding(device), [np.asarray(key_data)], [device],
-          committed=False)
+          aval, make_single_device_sharding(device),
+          [np.asarray(key_data)], [device], committed=False)
     self._base_array = key_data
 
   def _replace_with(self, value: PRNGKeyArray):
@@ -188,8 +186,8 @@ class PRNGKeyArray(Array):
 
   @property
   def aval(self):
-    vma = self._base_array.aval.vma
-    return keys_shaped_array(self._impl, self.shape, self.sharding, vma)
+    mt = self._base_array.aval.mat
+    return keys_shaped_array(self._impl, self.shape, self.sharding, mt)
 
   @property
   def shape(self):
@@ -215,16 +213,42 @@ class PRNGKeyArray(Array):
   def itemsize(self):
     return self.dtype.itemsize
 
-  _device = property(op.attrgetter('_base_array._device'))
-  _committed = property(op.attrgetter('_base_array._committed'))
-  device = property(op.attrgetter('_base_array.device'))  # pyrefly: ignore[bad-override]
-  devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
-  is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
-  is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
-  delete = property(op.attrgetter('_base_array.delete'))  # type: ignore[assignment]
-  is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
-  on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
-  unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
+  @property
+  def _device(self) -> Device:
+    assert hasattr(self._base_array, "_device")
+    return self._base_array._device
+
+  @property
+  def _committed(self) -> bool:
+    assert hasattr(self._base_array, "_committed")
+    return self._base_array._committed
+
+  @property
+  def device(self) -> Device | Sharding:
+    return self._base_array.device
+
+  @property
+  def is_fully_addressable(self) -> bool:
+    return self._base_array.is_fully_addressable
+
+  @property
+  def is_fully_replicated(self) -> bool:
+    return self._base_array.is_fully_replicated
+
+  def devices(self) -> set[Device]:
+    return self._base_array.devices()
+
+  def delete(self) -> None:
+    self._base_array.delete()
+
+  def is_deleted(self) -> bool:
+    return self._base_array.is_deleted()
+
+  def on_device_size_in_bytes(self) -> int:
+    return self._base_array.on_device_size_in_bytes()
+
+  def unsafe_buffer_pointer(self) -> int:
+    return self._base_array.unsafe_buffer_pointer()
 
   def addressable_data(self, index: int) -> PRNGKeyArray:
     return PRNGKeyArray(self._impl, self._base_array.addressable_data(index))
@@ -284,6 +308,9 @@ class PRNGKeyArray(Array):
     # ShapedArray._iter when the element type is KeyTy...
     return (PRNGKeyArray(self._impl, k) for k in iter(self._base_array))
 
+  def __bool__(self):
+    raise TypeError("key array cannot be converted to boolean.")
+
   def __repr__(self):
     return (f'Array({self.shape}, dtype={self.dtype.name}) overlaying:\n'
             f'{self._base_array}')
@@ -300,10 +327,12 @@ class PRNGKeyArray(Array):
     out._consumed = self._consumed  # TODO(jakevdp): is this correct?
     return out
 
-  __hash__ = None  # type: ignore[assignment]
+  __hash__ = None
   __array_priority__ = 100
 
-  def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+  def __array__(self, dtype: np.dtype | None = None, context: None = None,
+                copy: bool | None = None) -> np.ndarray:
+    del dtype, context, copy
     raise TypeError("JAX array with PRNGKey dtype cannot be converted to a NumPy array."
                     " Use jax.random.key_data(arr) if you wish to extract the underlying"
                     " integer array.")
@@ -319,7 +348,7 @@ class PRNGKeyArray(Array):
   def at(self)                  -> _IndexUpdateHelper: assert False  # pyrefly: ignore[bad-override]
   @property
   def T(self)                   -> PRNGKeyArray: assert False
-  def __getitem__(self, key)    -> PRNGKeyArray: assert False
+  def __getitem__(self, _, /)   -> PRNGKeyArray: assert False
   def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
   def ravel(self, *_, **__)     -> PRNGKeyArray: assert False
   def reshape(self, *_, **__)   -> PRNGKeyArray: assert False
@@ -350,9 +379,9 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
   return random_seed(seed, impl=impl)
 
 
-def keys_shaped_array(impl, shape, sharding, vma):
+def keys_shaped_array(impl, shape, sharding, mat):
   aval = core.ShapedArray(shape, KeyTy(impl))
-  return core.update_aval_with_sharding(aval, sharding, vma=vma)
+  return core.update_aval_with_sharding(aval, sharding, mat=mat)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -389,31 +418,6 @@ class KeyTyRules:
     return handler
 
   @staticmethod
-  def local_sharded_result_handler(aval, sharding, indices):
-    phys_aval = core.physical_aval(aval)
-    key_shape = aval.dtype._impl.key_shape
-    phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
-
-    # set up a grounded sharding (with a grounded sharding spec)
-    if isinstance(sharding, (PmapSharding, NamedSharding)):
-      phys_sharding = physical_sharding(aval, sharding)
-    else:
-      assert False, f'impossible sharding {sharding} in local sharded result handler'
-
-    # set up grounded indices
-    trailing_inds = [slice(None)] * len(key_shape)
-    phys_indices = [(*inds, *trailing_inds) for inds in indices]
-
-    # make a physical handler
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding, phys_indices)
-
-    # set up a handler that calls the physical one and wraps back up
-    def handler(arr):
-      return PRNGKeyArray(aval.dtype._impl, arr)
-
-    return phys_handler.wrap(handler)
-
-  @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
     phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
@@ -447,7 +451,7 @@ class KeyTyRules:
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
     physical_result = pxla.batched_device_put(
-        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)
+        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)  # pyrefly: ignore[bad-argument-type]
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod
@@ -543,7 +547,7 @@ def iterated_vmap_binary_bcast(shape1, shape2, f):
     else:
       return lambda x, y: iterated_vmap_unary(ndim1, lambda x: f(x, y))(x)
   assert len(shape1) == len(shape2)
-  for sz1, sz2 in reversed(zip(shape1, shape2)):  # pyrefly: ignore[no-matching-overload]  # pyrefly#2385
+  for sz1, sz2 in reversed(zip(shape1, shape2)):
     if sz1 == sz2:
       f = api.vmap(f, out_axes=0)
     else:
@@ -571,7 +575,7 @@ batching.defvectorized(random_seed_p)
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
   return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
-                           seeds_aval.vma)
+                           seeds_aval.mat)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
@@ -610,7 +614,7 @@ def random_split_abstract_eval(keys_aval, *, shape):
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           out_sharding, keys_aval.vma)
+                           out_sharding, keys_aval.mat)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -651,7 +655,9 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   sharding = lax.broadcasting_sharding_rule(
       'random_fold_in', keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
-  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding, vma=vma)
+  out_mat = core.ManualAxisType(varying=vma)
+  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
+                          manual_axis_type=out_mat)
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
@@ -696,7 +702,7 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
   return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                          vma=keys_aval.vma)
+                          manual_axis_type=keys_aval.mat)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
@@ -753,7 +759,7 @@ ad.defjvp_zero(random_wrap_p)
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
   sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
-  return keys_shaped_array(impl, shape, sharding, base_arr_aval.vma)
+  return keys_shaped_array(impl, shape, sharding, base_arr_aval.mat)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):
@@ -857,7 +863,8 @@ def _threefry2x32_abstract_eval(*args):
                     .format(args))
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule(*args)
-    aval = core.ShapedArray(shape, np.dtype('uint32'))
+    sharding = lax.broadcasting_sharding_rule(*args)
+    aval = core.ShapedArray(shape, np.dtype('uint32'), sharding=sharding)
   else:
     raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
   return (aval,) * 2
@@ -1074,7 +1081,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
       x_const = hlo.convert(
           ir.RankedTensorType.get(
               [],
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)  # pyrefly: ignore[bad-argument-type]
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
     return mlir.hlo.multiply(x_bcast, y)
@@ -1088,8 +1095,9 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
                                 broadcast_dimensions=[])
   counts_shifted = mlir.hlo.shift_right_logical(counts, shift)
-  counts_lo = mlir.hlo.convert(mlir.aval_to_ir_type(aval_out), counts)
-  counts_hi = mlir.hlo.convert(mlir.aval_to_ir_type(aval_out), counts_shifted)
+  result_type = mlir.aval_to_ir_type(aval_out)
+  counts_lo = mlir.hlo.convert(result_type, counts)
+  counts_hi = mlir.hlo.convert(result_type, counts_shifted)
   return counts_hi, counts_lo
 mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
 
@@ -1335,8 +1343,8 @@ register_prng(unsafe_rbg_prng_impl)
 
 # Register export serialization for PRNG key types.
 try:
-  from jax._src.export import serialization  # pytype: disable=import-error
-  from jax._src.export import serialization_generated as ser_flatbuf  # pytype: disable=import-error
+  from jax._src.export import serialization  # pyrefly: ignore[missing-import]
+  from jax._src.export import serialization_generated as ser_flatbuf  # pyrefly: ignore[missing-import]
 except ImportError:
   # This can happen if flatbuffers is not installed, in which case export
   # serialization is not supported and it is safe to skip the registration.

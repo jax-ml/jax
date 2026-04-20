@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
@@ -41,8 +42,8 @@ namespace solver {
   }                                                                            \
                                                                                \
   template <>                                                                  \
-  absl::Status Getrf<Type>(gpusolverDnHandle_t handle, int m, int n, Type *a,  \
-                           Type *workspace, int lwork, int *ipiv, int *info) { \
+  absl::Status Getrf<Type>(gpusolverDnHandle_t handle, int m, int n, Type* a,  \
+                           Type* workspace, int lwork, int* ipiv, int* info) { \
     return JAX_AS_STATUS(                                                      \
         Name(handle, m, n, a, m, workspace, lwork, ipiv, info));               \
   }
@@ -55,8 +56,8 @@ JAX_GPU_DEFINE_GETRF(gpuDoubleComplex, gpusolverDnZgetrf);
 
 #define JAX_GPU_DEFINE_GETRF_BATCHED(Type, Name)                              \
   template <>                                                                 \
-  absl::Status GetrfBatched<Type>(gpublasHandle_t handle, int n, Type **a,    \
-                                  int lda, int *ipiv, int *info, int batch) { \
+  absl::Status GetrfBatched<Type>(gpublasHandle_t handle, int n, Type** a,    \
+                                  int lda, int* ipiv, int* info, int batch) { \
     return JAX_AS_STATUS(Name(handle, n, a, lda, ipiv, info, batch));         \
   }
 
@@ -79,8 +80,8 @@ JAX_GPU_DEFINE_GETRF_BATCHED(gpublasDoubleComplex, gpublasZgetrfBatched);
   }                                                                            \
                                                                                \
   template <>                                                                  \
-  absl::Status Geqrf<Type>(gpusolverDnHandle_t handle, int m, int n, Type *a,  \
-                           Type *tau, Type *workspace, int lwork, int *info) { \
+  absl::Status Geqrf<Type>(gpusolverDnHandle_t handle, int m, int n, Type* a,  \
+                           Type* tau, Type* workspace, int lwork, int* info) { \
     return JAX_AS_STATUS(                                                      \
         Name(handle, m, n, a, m, tau, workspace, lwork, info));                \
   }
@@ -94,7 +95,7 @@ JAX_GPU_DEFINE_GEQRF(gpuDoubleComplex, gpusolverDnZgeqrf);
 #define JAX_GPU_DEFINE_GEQRF_BATCHED(Type, Name)                        \
   template <>                                                           \
   absl::Status GeqrfBatched<Type>(gpublasHandle_t handle, int m, int n, \
-                                  Type **a, Type **tau, int *info,      \
+                                  Type** a, Type** tau, int* info,      \
                                   int batch) {                          \
     return JAX_AS_STATUS(Name(handle, m, n, a, m, tau, info, batch));   \
   }
@@ -119,8 +120,8 @@ JAX_GPU_DEFINE_GEQRF_BATCHED(gpublasDoubleComplex, gpublasZgeqrfBatched);
                                                                                \
   template <>                                                                  \
   absl::Status Orgqr<Type>(gpusolverDnHandle_t handle, int m, int n, int k,    \
-                           Type *a, Type *tau, Type *workspace, int lwork,     \
-                           int *info) {                                        \
+                           Type* a, Type* tau, Type* workspace, int lwork,     \
+                           int* info) {                                        \
     return JAX_AS_STATUS(                                                      \
         Name(handle, m, n, k, a, m, tau, workspace, lwork, info));             \
   }
@@ -130,6 +131,36 @@ JAX_GPU_DEFINE_ORGQR(double, gpusolverDnDorgqr);
 JAX_GPU_DEFINE_ORGQR(gpuComplex, gpusolverDnCungqr);
 JAX_GPU_DEFINE_ORGQR(gpuDoubleComplex, gpusolverDnZungqr);
 #undef JAX_GPU_DEFINE_ORGQR
+
+// Householder multiply: ormqr/unmqr
+
+#define JAX_GPU_DEFINE_ORMQR(Type, Name)                                       \
+  template <>                                                                  \
+  absl::StatusOr<int> OrmqrBufferSize<Type>(                                   \
+      gpusolverDnHandle_t handle, gpublasSideMode_t side,                      \
+      gpublasOperation_t trans, int m, int n, int k) {                         \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(Name##_bufferSize(                       \
+        handle, side, trans, m, n, k, /*A=*/nullptr,                           \
+        /*lda=*/(side == GPUBLAS_SIDE_LEFT ? m : n), /*tau=*/nullptr,          \
+        /*C=*/nullptr, /*ldc=*/m, &lwork)));                                   \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Ormqr<Type>(gpusolverDnHandle_t handle, gpublasSideMode_t side, \
+                           gpublasOperation_t trans, int m, int n, int k,      \
+                           Type* a, int lda, Type* tau, Type* c, int ldc,      \
+                           Type* workspace, int lwork, int* info) {            \
+    return JAX_AS_STATUS(Name(handle, side, trans, m, n, k, a, lda, tau, c,    \
+                              ldc, workspace, lwork, info));                   \
+  }
+
+JAX_GPU_DEFINE_ORMQR(float, gpusolverDnSormqr);
+JAX_GPU_DEFINE_ORMQR(double, gpusolverDnDormqr);
+JAX_GPU_DEFINE_ORMQR(gpuComplex, gpusolverDnCunmqr);
+JAX_GPU_DEFINE_ORMQR(gpuDoubleComplex, gpusolverDnZunmqr);
+#undef JAX_GPU_DEFINE_ORMQR
 
 // Cholesky decomposition: potrf
 
@@ -145,10 +176,9 @@ JAX_GPU_DEFINE_ORGQR(gpuDoubleComplex, gpusolverDnZungqr);
                                                                                \
   template <>                                                                  \
   absl::Status Potrf<Type>(gpusolverDnHandle_t handle,                         \
-                           gpusolverFillMode_t uplo, int n, Type *a,           \
-                           Type *workspace, int lwork, int *info) {            \
-    return JAX_AS_STATUS(                                                      \
-        Name(handle, uplo, n, a, n, workspace, lwork, info));                  \
+                           gpusolverFillMode_t uplo, int n, Type* a,           \
+                           Type* workspace, int lwork, int* info) {            \
+    return JAX_AS_STATUS(Name(handle, uplo, n, a, n, workspace, lwork, info)); \
   }
 
 JAX_GPU_DEFINE_POTRF(float, gpusolverDnSpotrf);
@@ -157,12 +187,12 @@ JAX_GPU_DEFINE_POTRF(gpuComplex, gpusolverDnCpotrf);
 JAX_GPU_DEFINE_POTRF(gpuDoubleComplex, gpusolverDnZpotrf);
 #undef JAX_GPU_DEFINE_POTRF
 
-#define JAX_GPU_DEFINE_POTRF_BATCHED(Type, Name)                               \
-  template <>                                                                  \
-  absl::Status PotrfBatched<Type>(gpusolverDnHandle_t handle,                  \
-                                  gpusolverFillMode_t uplo, int n, Type **a,   \
-                                  int lda, int *info, int batch) {             \
-    return JAX_AS_STATUS(Name(handle, uplo, n, a, lda, info, batch));         \
+#define JAX_GPU_DEFINE_POTRF_BATCHED(Type, Name)                             \
+  template <>                                                                \
+  absl::Status PotrfBatched<Type>(gpusolverDnHandle_t handle,                \
+                                  gpusolverFillMode_t uplo, int n, Type** a, \
+                                  int lda, int* info, int batch) {           \
+    return JAX_AS_STATUS(Name(handle, uplo, n, a, lda, info, batch));        \
   }
 
 JAX_GPU_DEFINE_POTRF_BATCHED(float, gpusolverDnSpotrfBatched);
@@ -190,8 +220,8 @@ JAX_GPU_DEFINE_POTRF_BATCHED(gpuDoubleComplex, gpusolverDnZpotrfBatched);
   template <>                                                                  \
   absl::Status Syevj<Type>(                                                    \
       gpusolverDnHandle_t handle, gpusolverEigMode_t jobz,                     \
-      gpusolverFillMode_t uplo, int n, Type *a, RealType<Type>::value *w,      \
-      Type *workspace, int lwork, int *info, gpuSyevjInfo_t params) {          \
+      gpusolverFillMode_t uplo, int n, Type* a, RealType<Type>::value* w,      \
+      Type* workspace, int lwork, int* info, gpuSyevjInfo_t params) {          \
     return JAX_AS_STATUS(                                                      \
         Name(handle, jobz, uplo, n, a, n, w, workspace, lwork, info, params)); \
   }
@@ -217,8 +247,8 @@ JAX_GPU_DEFINE_SYEVJ(gpuDoubleComplex, gpusolverDnZheevj);
   template <>                                                              \
   absl::Status SyevjBatched<Type>(                                         \
       gpusolverDnHandle_t handle, gpusolverEigMode_t jobz,                 \
-      gpusolverFillMode_t uplo, int n, Type *a, RealType<Type>::value *w,  \
-      Type *workspace, int lwork, int *info, gpuSyevjInfo_t params,        \
+      gpusolverFillMode_t uplo, int n, Type* a, RealType<Type>::value* w,  \
+      Type* workspace, int lwork, int* info, gpuSyevjInfo_t params,        \
       int batch) {                                                         \
     return JAX_AS_STATUS(Name(handle, jobz, uplo, n, a, n, w, workspace,   \
                               lwork, info, params, batch));                \
@@ -245,8 +275,8 @@ JAX_GPU_DEFINE_SYEVJ_BATCHED(gpuDoubleComplex, gpusolverDnZheevjBatched);
   template <>                                                                  \
   absl::Status Syevd<Type>(gpusolverDnHandle_t handle,                         \
                            gpusolverEigMode_t jobz, gpusolverFillMode_t uplo,  \
-                           int n, Type *a, RealType<Type>::value *w,           \
-                           Type *workspace, int lwork, int *info) {            \
+                           int n, Type* a, RealType<Type>::value* w,           \
+                           Type* workspace, int lwork, int* info) {            \
     return JAX_AS_STATUS(                                                      \
         Name(handle, jobz, uplo, n, a, n, w, workspace, lwork, info));         \
   }
@@ -263,8 +293,8 @@ JAX_GPU_DEFINE_SYEVD(gpuDoubleComplex, gpusolverDnZheevd);
   template <>                                                                 \
   absl::Status Syrk<Type>(gpublasHandle_t handle, gpublasFillMode_t uplo,     \
                           gpublasOperation_t trans, int n, int k,             \
-                          const Type *alpha, const Type *a, const Type *beta, \
-                          Type *c) {                                          \
+                          const Type* alpha, const Type* a, const Type* beta, \
+                          Type* c) {                                          \
     int lda = trans == GPUBLAS_OP_N ? n : k;                                  \
     return JAX_AS_STATUS(                                                     \
         Name(handle, uplo, trans, n, k, alpha, a, lda, beta, c, n));          \
@@ -290,8 +320,8 @@ JAX_GPU_DEFINE_SYRK(gpublasDoubleComplex, gpublasZsyrk);
                                                                                \
   template <>                                                                  \
   absl::Status Gesvd<Type>(gpusolverDnHandle_t handle, signed char job, int m, \
-                           int n, Type *a, RealType<Type>::value *s, Type *u,  \
-                           Type *vt, Type *workspace, int lwork, int *info) {  \
+                           int n, Type* a, RealType<Type>::value* s, Type* u,  \
+                           Type* vt, Type* workspace, int lwork, int* info) {  \
     return JAX_AS_STATUS(Name(handle, job, job, m, n, a, m, s, u, m, vt, n,    \
                               workspace, lwork, /*rwork=*/nullptr, info));     \
   }
@@ -317,8 +347,8 @@ JAX_GPU_DEFINE_GESVD(gpuDoubleComplex, gpusolverDnZgesvd);
   template <>                                                                  \
   absl::Status Gesvdj<Type>(                                                   \
       gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m,     \
-      int n, Type *a, RealType<Type>::value *s, Type *u, Type *v,              \
-      Type *workspace, int lwork, int *info, gpuGesvdjInfo_t params) {         \
+      int n, Type* a, RealType<Type>::value* s, Type* u, Type* v,              \
+      Type* workspace, int lwork, int* info, gpuGesvdjInfo_t params) {         \
     return JAX_AS_STATUS(Name(handle, job, econ, m, n, a, m, s, u, m, v, n,    \
                               workspace, lwork, info, params));                \
   }
@@ -345,8 +375,8 @@ JAX_GPU_DEFINE_GESVDJ(gpuDoubleComplex, gpusolverDnZgesvdj);
   template <>                                                                 \
   absl::Status GesvdjBatched<Type>(                                           \
       gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n,       \
-      Type *a, RealType<Type>::value *s, Type *u, Type *v, Type *workspace,   \
-      int lwork, int *info, gpuGesvdjInfo_t params, int batch) {              \
+      Type* a, RealType<Type>::value* s, Type* u, Type* v, Type* workspace,   \
+      int lwork, int* info, gpuGesvdjInfo_t params, int batch) {              \
     return JAX_AS_STATUS(Name(handle, job, m, n, a, m, s, u, m, v, n,         \
                               workspace, lwork, info, params, batch));        \
   }
@@ -357,14 +387,100 @@ JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
 #undef JAX_GPU_DEFINE_GESVDJ_BATCHED
 
+#ifdef JAX_GPU_HIP
+// GESDD (divide-and-conquer SVD) is provided by rocsolver; hipSOLVER does not
+// expose it. rocsolver uses rocblas_handle; on ROCm the solver handle is
+// compatible with rocblas_handle.
+#include "rocm/include/rocsolver/rocsolver.h"
+
+namespace {
+rocblas_svect JobToRocblasSvect(signed char job) {
+  switch (job) {
+    case 'A':
+      return rocblas_svect_all;
+    case 'S':
+      return rocblas_svect_singular;
+    case 'N':
+    default:
+      return rocblas_svect_none;
+  }
+}
+
+absl::Status RocblasStatusToStatus(rocblas_status status, const char* file,
+                                  int line, const char* expr) {
+  if (ABSL_PREDICT_FALSE(status != rocblas_status_success)) {
+    return absl::InternalError(
+        absl::StrFormat("%s:%d: %s failed: rocblas_status %d", file, line, expr,
+                        static_cast<int>(status)));
+  }
+  return absl::OkStatus();
+}
+}  // namespace
+
+#define JAX_GPU_DEFINE_GESDD_REAL(Type, Name)                                  \
+  template <>                                                                  \
+  absl::Status Gesdd<Type>(                                                    \
+      gpusolverDnHandle_t handle, signed char jobu, signed char jobvt,        \
+      int m, int n, Type *a, int lda, RealType<Type>::value *s, Type *u,      \
+      int ldu, Type *v, int ldv, int *info) {                                  \
+    auto h = reinterpret_cast<rocblas_handle>(handle);                        \
+    rocblas_status st = Name(h, JobToRocblasSvect(jobu),                       \
+                             JobToRocblasSvect(jobvt), m, n, a, lda, s, u,    \
+                             ldu, v, ldv, info);                               \
+    return RocblasStatusToStatus(st, __FILE__, __LINE__, #Name);               \
+  }
+
+JAX_GPU_DEFINE_GESDD_REAL(float, rocsolver_sgesdd);
+JAX_GPU_DEFINE_GESDD_REAL(double, rocsolver_dgesdd);
+#undef JAX_GPU_DEFINE_GESDD_REAL
+
+template <>
+absl::Status Gesdd<gpuComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuComplex *a, int lda, float *s, gpuComplex *u, int ldu,
+    gpuComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_cgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_float_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_float_complex*>(u), ldu,
+      reinterpret_cast<rocblas_float_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_cgesdd");
+}
+
+template <>
+absl::Status Gesdd<gpuDoubleComplex>(
+    gpusolverDnHandle_t handle, signed char jobu, signed char jobvt, int m,
+    int n, gpuDoubleComplex *a, int lda, double *s, gpuDoubleComplex *u,
+    int ldu, gpuDoubleComplex *v, int ldv, int *info) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocsolver_zgesdd(
+      h, JobToRocblasSvect(jobu), JobToRocblasSvect(jobvt), m, n,
+      reinterpret_cast<rocblas_double_complex*>(a), lda, s,
+      reinterpret_cast<rocblas_double_complex*>(u), ldu,
+      reinterpret_cast<rocblas_double_complex*>(v), ldv, info);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocsolver_zgesdd");
+}
+
+// Set user-owned workspace for rocsolver/rocblas (two-phase memory model).
+// The kernel uses a formula for workspace size (see solver_kernels_ffi.cc)
+// and calls SetWorkspace before Gesdd.
+absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size) {
+  auto h = reinterpret_cast<rocblas_handle>(handle);
+  rocblas_status st = rocblas_set_workspace(h, ptr, size);
+  return RocblasStatusToStatus(st, __FILE__, __LINE__, "rocblas_set_workspace");
+}
+
+#endif  // JAX_GPU_HIP
+
 #ifdef JAX_GPU_CUDA
 
 #define JAX_GPU_DEFINE_CSRLSVQR(Type, Scalar, Name)                          \
   template <>                                                                \
   absl::Status Csrlsvqr<Type>(                                               \
       cusolverSpHandle_t handle, int n, int nnz, cusparseMatDescr_t matdesc, \
-      const Type *csrValA, const int *csrRowPtrA, const int *csrColIndA,     \
-      const Type *b, double tol, int reorder, Type *x, int *singularity) {   \
+      const Type* csrValA, const int* csrRowPtrA, const int* csrColIndA,     \
+      const Type* b, double tol, int reorder, Type* x, int* singularity) {   \
     return JAX_AS_STATUS(Name(handle, n, nnz, matdesc, csrValA, csrRowPtrA,  \
                               csrColIndA, b, static_cast<Scalar>(tol),       \
                               reorder, x, singularity));                     \
@@ -393,9 +509,9 @@ JAX_GPU_DEFINE_CSRLSVQR(gpuDoubleComplex, double, cusolverSpZcsrlsvqr);
                                                                                \
   template <>                                                                  \
   absl::Status Sytrd<Type>(gpusolverDnHandle_t handle,                         \
-                           gpusolverFillMode_t uplo, int n, Type *a,           \
-                           RealType<Type>::value *d, RealType<Type>::value *e, \
-                           Type *tau, Type *workspace, int lwork, int *info) { \
+                           gpusolverFillMode_t uplo, int n, Type* a,           \
+                           RealType<Type>::value* d, RealType<Type>::value* e, \
+                           Type* tau, Type* workspace, int lwork, int* info) { \
     return JAX_AS_STATUS(                                                      \
         Name(handle, uplo, n, a, n, d, e, tau, workspace, lwork, info));       \
   }

@@ -589,12 +589,12 @@ def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
                                  lhs_spinfo):
   *lhs_args, rhs = batched_args
   *lhs_dims, rhs_bdim = batch_dims
-  *new_lhs_args, new_lhs_spinfo = _bcsr_batch_dims_to_front(
+  new_data, new_indices, new_indptr, new_lhs_spinfo = _bcsr_batch_dims_to_front(
     lhs_args, lhs_dims, lhs_spinfo,
     batch_size=None if rhs_bdim is None else rhs.shape[rhs_bdim])
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
       (len(lhs_spinfo.shape), rhs.ndim), (0, rhs_bdim), dimension_numbers)
-  batched_out = _bcsr_dot_general(*new_lhs_args, rhs, lhs_spinfo=new_lhs_spinfo,
+  batched_out = _bcsr_dot_general(new_data, new_indices, new_indptr, rhs, lhs_spinfo=new_lhs_spinfo,
                                   dimension_numbers=new_dimension_numbers,
                                   preferred_element_type=preferred_element_type)
   return batched_out, result_batch_dim
@@ -799,10 +799,9 @@ mlir.register_lowering(bcsr_dot_general_p,
                         platform='rocm')
 
 
-if _lowerings.has_cpu_sparse:
-  mlir.register_lowering(
-      bcsr_dot_general_p, _bcsr_dot_general_cpu_lowering, platform="cpu"
-  )
+mlir.register_lowering(
+    bcsr_dot_general_p, _bcsr_dot_general_cpu_lowering, platform="cpu"
+)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
@@ -838,16 +837,37 @@ class BCSR(JAXSparse):
   indices: jax.Array
   indptr: jax.Array
   shape: Shape
-  nse = property(lambda self: self.indices.shape[-1])
-  dtype = property(lambda self: self.data.dtype)
-  n_batch = property(lambda self: self.indices.ndim - 1)
-  n_sparse = property(lambda _: 2)
-  n_dense = property(lambda self: self.data.ndim - self.indices.ndim)
   indices_sorted: bool
   unique_indices: bool
-  _bufs = property(lambda self: (self.data, self.indices, self.indptr))
-  _info = property(lambda self: SparseInfo(self.shape, self.indices_sorted,
-                                           self.unique_indices))
+
+  @property
+  def _bufs(self) -> tuple[jax.Array, jax.Array, jax.Array]:
+    return (self.data, self.indices, self.indptr)
+
+  @property
+  def _info(self) -> SparseInfo:
+    return  SparseInfo(self.shape, self.indices_sorted,
+                       self.unique_indices)
+
+  @property
+  def nse(self) -> int:
+    return self.indices.shape[-1]
+
+  @property
+  def dtype(self) -> np.dtype:
+    return self.data.dtype
+
+  @property
+  def n_batch(self) -> int:
+    return self.indices.ndim - 1
+
+  @property
+  def n_sparse(self) -> int:
+    return 2
+
+  @property
+  def n_dense(self) -> int:
+    return self.data.ndim - self.indices.ndim
 
   @property
   def _sparse_shape(self):
@@ -869,7 +889,7 @@ class BCSR(JAXSparse):
       n_dense = self.n_dense
       dtype = self.dtype
       shape = list(self.shape)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:
       repr_ = f"{name}(<invalid>)"
     else:
       extra = f", {nse=}"

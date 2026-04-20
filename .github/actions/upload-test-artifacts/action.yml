@@ -1,0 +1,96 @@
+# Composite action to upload test artifacts (JUnit XML) to GitHub Actions.
+name: Upload test artifacts
+description: Upload test artifacts (JUnit XML) to GitHub Actions.
+
+inputs:
+  test-artifacts-dir:
+    description: "Directory containing test artifact files"
+    default: 'test-artifacts'
+  artifact-name:
+    description: "Name for the GitHub Actions artifact upload"
+    default: 'test-artifacts-${{ github.job }}'
+  gcs-upload-uri:
+    description: "GCS location prefix where the test artifacts should be uploaded"
+    default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+  metadata:
+    description: "JSON string containing job-level metadata"
+    default: ''
+  inputs_json:
+    description: "JSON string of workflow inputs"
+    default: '{}'
+  matrix_json:
+    description: "JSON string of matrix parameters"
+    default: '{}'
+  env_json:
+    description: "JSON string of environment variables"
+    default: '{}'
+  custom_json:
+    description: "JSON string of custom metadata"
+    default: '{}'
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Check for test artifacts
+      id: check-artifacts
+      shell: bash
+      env:
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+      run: |
+        printf -v padded_attempt "attempt%03d" "${{ github.run_attempt }}"
+        echo "padded_attempt=${padded_attempt}" >> "$GITHUB_OUTPUT"
+        if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR"/*.xml 2>/dev/null)" ]]; then
+          echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+          echo "Found test artifacts in $TEST_ARTIFACTS_DIR/"
+          ls -la "$TEST_ARTIFACTS_DIR"/*.xml
+        else
+          echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+          echo "No test artifacts found in $TEST_ARTIFACTS_DIR/"
+        fi
+
+    - name: Generate metadata file
+      shell: bash
+      env:
+        INPUTS_JSON: ${{ inputs.inputs_json }}
+        MATRIX_JSON: ${{ inputs.matrix_json }}
+        ENV_JSON: ${{ inputs.env_json }}
+        CUSTOM_JSON: ${{ inputs.custom_json }}
+        EXPLICIT_METADATA: ${{ inputs.metadata }}
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+      run: |
+        mkdir -p "$TEST_ARTIFACTS_DIR"
+        python3 -c "
+        import json, os
+        inputs = json.loads(os.environ.get('INPUTS_JSON', '{}') or '{}') or {}
+        matrix = json.loads(os.environ.get('MATRIX_JSON', '{}') or '{}') or {}
+        env_vars = json.loads(os.environ.get('ENV_JSON', '{}') or '{}') or {}
+        custom = json.loads(os.environ.get('CUSTOM_JSON', '{}') or '{}') or {}
+        explicit_str = os.environ.get('EXPLICIT_METADATA', '')
+
+        merged = {**inputs, **matrix, **env_vars, **custom}
+
+        if explicit_str:
+            try:
+                explicit = json.loads(explicit_str)
+                merged = {**merged, **explicit}
+            except json.JSONDecodeError:
+                print(f'Warning: could not parse explicit metadata as JSON: {explicit_str}')
+                merged['explicit_metadata_raw'] = explicit_str
+
+        with open(os.path.join(os.environ['TEST_ARTIFACTS_DIR'], 'metadata.json'), 'w') as f:
+            json.dump(merged, f)
+        "
+
+    - name: Upload test artifacts to GCS
+      if: steps.check-artifacts.outputs.has_artifacts == 'true'
+      shell: bash
+      continue-on-error: true
+      env:
+        TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+        GCS_UPLOAD_URI: ${{ inputs.gcs-upload-uri }}
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      run: |
+        artifact_name="$INPUT_ARTIFACT_NAME-${{ steps.check-artifacts.outputs.padded_attempt }}"
+        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$GCS_UPLOAD_URI/$artifact_name/"
+

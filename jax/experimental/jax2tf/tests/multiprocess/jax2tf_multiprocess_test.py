@@ -36,9 +36,9 @@ try:
   JaxToTfTestCase = tf_test_util.JaxToTfTestCase
 except ImportError:
   tf = None
-  jax2tf = None  # type: ignore[assignment]
-  tf_test_util = None  # type: ignore[assignment]
-  JaxToTfTestCase = jtu.JaxTestCase  # type: ignore[misc]
+  jax2tf = None
+  tf_test_util = None
+  JaxToTfTestCase = jtu.JaxTestCase
 
 
 @unittest.skipIf(tf is None, "Test requires tensorflow.")

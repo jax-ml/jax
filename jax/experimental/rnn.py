@@ -98,7 +98,7 @@ import jax.numpy as jnp
 try:
   from jax._src.lib import gpu_rnn
 except ImportError:
-  gpu_rnn = None  # type: ignore[assignment]
+  gpu_rnn = None
 
 PRNGKeyArray = Any
 sigmoid = jax.nn.sigmoid
@@ -367,6 +367,7 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: dict[int, Array],
   # bidirectional
   final_h = []
   final_c = []
+  seq_first_y_fwd: Array | None = None
   for l in range(num_layers * 2):
     cell = partial(
         lstm_cell, W_ih=W_ih[l], W_hh=W_hh[l], b_ih=b_ih[l], b_hh=b_hh[l])
@@ -384,7 +385,8 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: dict[int, Array],
       # align reversed sequence with original sequence
       seq_first_y_bwd = _flip_sequence(seq_first_y_bwd, seq_lengths)
       # Inputs to next layer are concat'ed from fwd and bwd.
-      seq_first_y = jnp.concatenate([seq_first_y_fwd, seq_first_y_bwd], axis=-1)  # pytype: disable=name-error
+      assert seq_first_y_fwd is not None
+      seq_first_y = jnp.concatenate([seq_first_y_fwd, seq_first_y_bwd], axis=-1)
     final_h.append(h_t)
     final_c.append(c_t)
   h_n = jnp.stack(final_h)
@@ -446,7 +448,8 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   output_shape = (batch_size, max_seq_length, num_directions * hidden_size)
   output_aval = core.ShapedArray(output_shape, x_aval.dtype)
   _, reserve_space_size = (
-      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
+      # pyrefly: ignore[missing-attribute]
+      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(
           input_size, hidden_size, num_layers, batch_size, max_seq_length,
           dropout, bidirectional, cudnn_allow_tf32))
   reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)

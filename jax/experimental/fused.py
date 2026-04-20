@@ -61,9 +61,10 @@ dispatch.simple_impl(fused_p)
 def _fused_lowering(ctx, *args, out_spaces, jaxpr):
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_arg_avals = unzip2(const_args_and_avals)
-  const_arg_values = [
-      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
-      for c, aval in const_args_and_avals]
+  const_arg_values = mlir.flatten_ir_values(
+      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals
+  )
   in_avals = [*const_arg_avals, *ctx.avals_in]
   func_op, _, _ = mlir.lower_called_computation(
       "fused", jaxpr, ctx.module_context, len(const_args), in_avals,
@@ -149,10 +150,10 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
               if type(ct) is ad.Zero else ct for ct in cts_in]
     out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
-    cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
+    cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore
+  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.primitive_transposes[fused_p] = _fused_transpose

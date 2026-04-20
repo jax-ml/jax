@@ -53,7 +53,6 @@ Configuration
    default_prng_impl
    enable_checks
    enable_custom_prng
-   enable_custom_vjp_by_custom_transpose
    enable_x64
    log_compiles
    no_tracing
@@ -190,6 +189,7 @@ Array properties and methods
     Array.argsort
     Array.astype
     Array.at
+    Array.byteswap
     Array.choose
     Array.clip
     Array.compress

@@ -31,6 +31,7 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax.sharding import PartitionSpec as P
 import numpy as np
+from jax.experimental import multihost_utils
 
 X_SIZE = 2
 Y_SIZE = 2
@@ -51,8 +52,10 @@ def sorted_devices():
 def use_default_mesh():
   devices = sorted_devices()
   mesh_devices = np.array(devices).reshape((X_SIZE, Y_SIZE, CHIPS_SIZE))
-  with jax.sharding.Mesh(mesh_devices, ("x", "y", "chips")):
-    yield
+  with jtu.ignore_warning(category=DeprecationWarning,
+                          message='`with mesh:` context manager'):
+    with jax.sharding.Mesh(mesh_devices, ("x", "y", "chips")):
+      yield
 
 
 def create_2d_non_contiguous_mesh():
@@ -87,8 +90,8 @@ def create_2d_non_contiguous_mesh2():
   return jax.sharding.Mesh(device_mesh, ("x", "y"))
 
 
-# TODO(apaszke): Test with mesh that has host-tiled axes (especially nesting!)
-class PJitTestMultiHost(jt_multiprocess.MultiProcessTest):
+
+class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def testLocalInputsWithJaxArray(self):
@@ -101,20 +104,17 @@ class PJitTestMultiHost(jt_multiprocess.MultiProcessTest):
     oar = jax.sharding.PartitionSpec("x")
     with mesh:
       f = pjit.pjit(lambda x, y: (x, y), in_shardings=iar, out_shardings=oar)
-      gx = jax.experimental.multihost_utils.host_local_array_to_global_array(
+      gx = multihost_utils.host_local_array_to_global_array(
           (x, x), mesh, iar
       )
       global_out = f(*gx)
       out1, out2 = (
-          jax.experimental.multihost_utils.global_array_to_host_local_array(
+          multihost_utils.global_array_to_host_local_array(
               global_out, mesh, oar
           )
       )
       np.testing.assert_array_equal(out1, x)
       np.testing.assert_array_equal(out2, x)
-
-
-class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
 
   def test_pjit_array_single_output(self):
     global_mesh = jtu.create_mesh((4, 2), ("x", "y"))
@@ -381,6 +381,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     for out in list(result):
       np.testing.assert_array_equal(out(x), expected_out)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message='`with mesh:` context manager')
   def test_fully_sharded_on_all_devices(self):
     if jax.local_device_count() > 1:
       self.skipTest("This test only works with 1 process per device.")

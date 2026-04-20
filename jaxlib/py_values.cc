@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -193,7 +194,8 @@ MakeIfrtArrayFromFullyReplicatedShard(ifrt::Client* ifrt_client,
       host_buffer_shard.data, host_buffer_shard.dtype,
       std::move(host_buffer_shard.shape),
       std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
-      shard.host_buffer_semantics, std::move(host_buffer_shard.on_done));
+      /*layout=*/nullptr, shard.host_buffer_semantics,
+      std::move(host_buffer_shard.on_done));
 }
 
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
@@ -679,10 +681,8 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
     return xla::InvalidArgument("Array has been deleted.");
   }
 
-  // Fallback to python for non-matching clients or pmap sharding.
-  if (py_array.sharding().type().ptr() == PmapSharding::type().ptr() ||
-      ifrt_array->sharding().devices()->devices().front()->client() !=
-          to_device->client()) {
+  if (ifrt_array->sharding().devices()->devices().front()->client() !=
+      to_device->client()) {
     return HandleNumpyArray(obj.attr("_value"), client, to_device,
                             to_memory_kind, options);
   }
@@ -1110,18 +1110,12 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
                       GetIfrtDeviceList(sharding));
   ifrt::DeviceList* ifrt_addressable_device_list =
       ifrt_device_list->AddressableDeviceList();
-  // Pmap sharding requires special handling because it needs a shard shape
-  // upfront.
-  const bool is_pmap_sharding = sharding.type().is(PmapSharding::type());
 
   if (src_shards.size() != dst_devices->size()) {
     return xla::InvalidArgument(
         "Number of input shards does not match the number of destination "
-        "devices: %d vs. %d", src_shards.size(), dst_devices->size());
-  }
-  if (is_pmap_sharding && src_shards.empty()) {
-    return xla::InvalidArgument(
-        "Pmap sharding requires at least one addressable shard.");
+        "devices: %d vs. %d",
+        src_shards.size(), dst_devices->size());
   }
 
   TF_ASSIGN_OR_RETURN(ifrt::DType ifrt_dtype, DtypeToIfRtDType(dtype));
@@ -1131,28 +1125,19 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   std::vector<ShardFn> shard_fns;
   shard_fns.reserve(src_shards.size());
   for (int i = 0; i < src_shards.size(); ++i) {
-    TF_ASSIGN_OR_RETURN(
-        ShardFn shard,
-        MakeShardFn(src_shards[i], ifrt_client,
-                    dst_devices->devices()[i], ifrt_memory_kind, options));
+    TF_ASSIGN_OR_RETURN(ShardFn shard, MakeShardFn(src_shards[i], ifrt_client,
+                                                   dst_devices->devices()[i],
+                                                   ifrt_memory_kind, options));
     shard_fns.push_back(std::move(shard));
   }
 
   ifrt::ShardingRef ifrt_sharding;
-  bool is_fully_replicated;
-  if (is_pmap_sharding) {
-    CHECK(!shard_fns.empty());
-    // IFRT Sharding will be determined once we discover the shard shape.
-    is_fully_replicated = false;
-  } else {
-    TF_ASSIGN_OR_RETURN(ifrt_sharding,
-                        GetIfrtHloSharding(sharding, ifrt_shape));
-    // Fully-replicated shardings enable additional optimizations of using a
-    // single host buffer.
-    // TODO(hyeontaek): Enable a similar optimization for partially replicated
-    // cases to reduce the number of host buffers to obtain.
-    is_fully_replicated = ifrt_sharding->IsFullyReplicated();
-  }
+  TF_ASSIGN_OR_RETURN(ifrt_sharding, GetIfrtHloSharding(sharding, ifrt_shape));
+  // Fully-replicated shardings enable additional optimizations of using a
+  // single host buffer.
+  // TODO(hyeontaek): Enable a similar optimization for partially replicated
+  // cases to reduce the number of host buffers to obtain.
+  bool is_fully_replicated = ifrt_sharding->IsFullyReplicated();
 
   nb::gil_scoped_release gil_release;
 
@@ -1185,13 +1170,6 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   // supported.
   if (!shards.empty()) {
     ifrt_dtype = shards.front().ifrt_dtype();
-  }
-  if (is_pmap_sharding) {
-    ifrt_sharding = ifrt::ConcreteEvenSharding::Create(
-        ifrt::DeviceListRef(tsl::FormRef(ifrt_addressable_device_list)),
-        ifrt_memory_kind, ifrt_shape,
-        /*shard_shape=*/shards.front().ifrt_shape(),
-        /*is_fully_replicated=*/false);
   }
 
   ifrt::ArrayRef ifrt_array;

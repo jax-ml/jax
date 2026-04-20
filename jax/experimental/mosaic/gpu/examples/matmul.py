@@ -32,9 +32,7 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
 
-# mypy: ignore-errors
-# ruff: noqa: F405
-# pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access
+# ruff: noqa: F405 wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access
 
 SmemRef = ir.Value
 
@@ -71,7 +69,7 @@ class WGMMADefaultImpl:
       rhs_transpose: bool,
   ) -> dict[str, jax.ShapeDtypeStruct]:
     del block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose  # Unused.
-    return ()
+    return {}
 
   @staticmethod
   def get_result(acc: WGMMAAccumulator) -> FragmentedArray:
@@ -79,7 +77,7 @@ class WGMMADefaultImpl:
 
   @staticmethod
   def wgmma(
-      smem_scratch: Any,  # pylint: disable=unused-argument
+      smem_scratch: Any,
       acc: WGMMAAccumulator,
       a_slice: SmemRef,
       b_slice: SmemRef,
@@ -424,6 +422,7 @@ if __name__ == "__main__":
           m, n, k, dtype, dtype, dtype, wgmma_impl=WGMMADefaultImpl, **kwargs
       )
       _, runtime = profiler.measure(f)(x, y)
+      assert runtime is not None
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise

@@ -81,8 +81,8 @@ class MultiPageAsyncCopyDescriptor:
   def _make_scales_async_copy(self, i):
     page_index = self._page_indices[self._page_indices_start_offset + i]
     return pltpu.make_async_copy(
-        self._scales_pages_hbm_ref.at[page_index],  # pytype: disable=attribute-error
-        self._scales_vmem_buffer.at[i],  # pytype: disable=attribute-error
+        self._scales_pages_hbm_ref.at[page_index],
+        self._scales_vmem_buffer.at[i],
         self._sem,
     )
 
@@ -225,14 +225,14 @@ def paged_flash_attention_kernel(
     return async_copy_k, async_copy_v
 
   @pl.when(i * bk < length)
-  def flash_attention():  # pylint: disable=unused-variable
+  def flash_attention():
     init_flag = init_flag_ref[0]
     init_flag_ref[0] = 0
     buffer_index = buffer_index_ref[0]
     next_b, next_h, next_i = compute_block_indices(b, h, i + 1)
 
     @pl.when(init_flag)
-    def prefetch_first_block():  # pylint: disable=unused-variable
+    def prefetch_first_block():
       async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
           b, h, i, buffer_index
       )
@@ -240,13 +240,13 @@ def paged_flash_attention_kernel(
       async_copy_v.start()
 
     @pl.when(i == 0)
-    def init():  # pylint: disable=unused-variable
+    def init():
       m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
       l_ref[...] = jnp.zeros_like(l_ref)
       o_ref[...] = jnp.zeros_like(o_ref)
 
     @pl.when(next_b < batch_size)
-    def prefetch_next_block():  # pylint: disable=unused-variable
+    def prefetch_next_block():
       next_buffer_index = jnp.where(buffer_index == 0, 1, 0)
       async_copy_next_k, async_copy_next_v = create_kv_async_copy_descriptors(
           next_b, next_h, next_i, next_buffer_index
@@ -440,7 +440,7 @@ def paged_attention(
   if k_pages.shape != v_pages.shape:
     raise ValueError(
         f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"
-        f" {v_pages.shape}"  # pytype: disable=attribute-error
+        f" {v_pages.shape}"
     )
   if num_q_heads % num_kv_heads != 0:
     raise ValueError(
@@ -541,7 +541,7 @@ def paged_attention(
         if megacore_mode == "kv_head"
         else num_kv_heads,
         pages_per_sequence // pages_per_compute_block,
-    )  # type: ignore
+    )
     dimension_semantics = ("parallel", "arbitrary", "arbitrary", "arbitrary")
 
   if k_scales_pages is not None and v_scales_pages is not None:
@@ -569,7 +569,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            k_scales_pages.dtype,  # pytype: disable=attribute-error
+            k_scales_pages.dtype,
         ),  # k_scales_pages buffer
         pltpu.VMEM(
             (
@@ -587,7 +587,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            v_scales_pages.dtype,  # pytype: disable=attribute-error
+            v_scales_pages.dtype,
         ),  # v_scales_pages buffer
         pltpu.SemaphoreType.DMA((2,)),
         pltpu.SemaphoreType.DMA((2,)),
@@ -596,9 +596,9 @@ def paged_attention(
     in_specs = [
         q_block_spec,
         pl.BlockSpec(memory_space=pl.ANY),
-        None,  # type: ignore[list-item]
+        None,
         pl.BlockSpec(memory_space=pl.ANY),
-        None,  # type: ignore[list-item]
+        None,
     ]
     scratch_shapes = (
         pltpu.VMEM(

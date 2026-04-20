@@ -15,7 +15,7 @@
 
 See README.md for instructions.
 """
-import grpc  # type: ignore
+import grpc  # pyrefly: ignore[missing-import]
 import json
 import logging
 import requests
@@ -27,8 +27,8 @@ from jax.experimental.jax2tf.examples import mnist_lib
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore[import-not-found]
-from tensorflow_serving.apis import predict_pb2  # type: ignore[import-not-found]
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
+from tensorflow_serving.apis import predict_pb2  # pyrefly: ignore[missing-import]
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 
@@ -111,7 +111,7 @@ def main(_):
   images_and_labels = tfds.as_numpy(test_ds.take(
       _COUNT_IMAGES.value // _SERVING_BATCH_SIZE.value))
 
-  accurate_count = 0
+  accurate_count = np.array(0)
   for batch_idx, (images, labels) in enumerate(images_and_labels):
     predictions_one_hot = serving_call_mnist(images)
     predictions_digit = np.argmax(predictions_one_hot, axis=1)

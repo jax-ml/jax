@@ -36,8 +36,9 @@ from .launch_context import (
     GLOBAL_BROADCAST as GLOBAL_BROADCAST,
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    CopyPartition as CopyPartition,
+    OOBFillMode as OOBFillMode,
     TMAReductionOp as TMAReductionOp,
-    Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
 )
@@ -46,7 +47,7 @@ from .dialect_lowering import (
     lower_mgpu_dialect as lower_mgpu_dialect,
 )
 
-from .layout_inference import (
+from .layout_inference import (  # pyrefly: ignore[missing-import]
     infer_layout as infer_layout,
 )
 
@@ -76,6 +77,7 @@ from .fragmented_array import (
     WGStridedFragLayout as WGStridedFragLayout,
     copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
+    Rounding as Rounding,
 )
 from .utils import (
     BarrierRef as BarrierRef,

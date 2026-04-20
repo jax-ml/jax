@@ -134,6 +134,7 @@ class LoggingTest(jtu.JaxTestCase):
     lines = [l for l in lines if l in allowlist]
     self.assertEmpty(lines)
 
+  @jtu.thread_unsafe_test()  # jax_debug_log_modules is not thread-safe
   def test_debug_logging(self):
     # Warmup so we don't get "No GPU/TPU" warning later.
     jax.jit(lambda x: x + 1)(1)
@@ -148,7 +149,7 @@ class LoggingTest(jtu.JaxTestCase):
     with jax_debug_log_modules("jax"):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
-      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertIn("Finished tracing", log_output.getvalue())
       self.assertIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn off all debug logging.
@@ -161,7 +162,7 @@ class LoggingTest(jtu.JaxTestCase):
     with jax_debug_log_modules("jax._src.dispatch"):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
-      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertIn("Finished tracing", log_output.getvalue())
       self.assertNotIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn everything off again.
@@ -232,7 +233,7 @@ class LoggingTest(jtu.JaxTestCase):
     log_output_verbose = log_output[:m.start()]
     log_output_silent = log_output[m.end():]
 
-    self.assertIn("Finished tracing + transforming <lambda> for pjit",
+    self.assertIn("Finished tracing <lambda> for jit",
                   log_output_verbose)
     self.assertEqual(log_output_silent, "")
 
@@ -255,7 +256,7 @@ class LoggingTest(jtu.JaxTestCase):
     # only one tracing line should be printed, if there's more than one
     # then logs are printing duplicated
     self.assertLen([line for line in log_lines
-                    if "Finished tracing + transforming" in line], 1)
+                    if "Finished tracing" in line], 1)
 
   @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",

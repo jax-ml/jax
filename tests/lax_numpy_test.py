@@ -40,13 +40,12 @@ except ImportError:
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.sharding import SingleDeviceSharding
 from jax.test_util import check_grads
 
 from jax._src import array
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -848,11 +847,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(ValueError, msg):
         jnp.clip(x, max=jnp.array([-1+5j]))
-
-  def testClipDeprecatedArgs(self):
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-clip-args",
-                                             "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"):
-      jnp.clip(jnp.arange(4), a_min=2, a_max=3)
 
   def testClipUpperPrecedence(self):
     a_min = 3 * np.ones(1)
@@ -2820,7 +2814,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     zeros_like_with_device = partial(jnp.zeros_like, device=jax.devices()[0])
     y = jax.jit(zeros_like_with_device)(x)
     self.assertEqual(x.shape, y.shape)
-    self.assertEqual(y.sharding, SingleDeviceSharding(jax.devices()[0]))
+    self.assertEqual(y.sharding, make_single_device_sharding(jax.devices()[0]))
 
   @jtu.sample_product(
     [dict(shape=shape, out_shape=out_shape, fill_value_shape=fill_value_shape)
@@ -2874,7 +2868,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testArrayCreationWithSharding(self, func, shape, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     kwds = {'fill_value': 1} if func is jnp.full else {}
     out = func(**kwds, shape=shape, dtype=dtype, device=sharding)
     self.assertEqual(out.sharding, sharding)
@@ -2908,7 +2902,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testArangeEyeLinspaceArrayWithSharding(self, func, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     output = func(dtype=dtype, device=sharding)
     if isinstance(output, tuple):
       self.assertEqual(output[0].sharding, sharding)
@@ -2940,7 +2934,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   def testFullLikeWithSharding(self, func, shape, dtype):
-    sharding = SingleDeviceSharding(jax.devices()[-1])
+    sharding = make_single_device_sharding(jax.devices()[-1])
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     kwds = {'fill_value': 1} if func is jnp.full_like else {}
@@ -2957,8 +2951,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((1, 2, 3), np.dtype("int32"))
     self.assertArraysEqual(jnp.zeros_like(x), jnp.zeros(x.shape, x.dtype))
     self.assertArraysEqual(jnp.ones_like(x), jnp.ones(x.shape, x.dtype))
-    self.assertArraysEqual(jnp.empty_like(x), jnp.empty(x.shape, x.dtype))
     self.assertArraysEqual(jnp.full_like(x, 2), jnp.full(x.shape, 2, x.dtype))
+
+    self.assertEqual(jnp.empty_like(x).shape, jnp.empty(x.shape, x.dtype).shape)
+    self.assertEqual(jnp.empty_like(x).dtype, jnp.empty(x.shape, x.dtype).dtype)
 
   @jtu.sample_product(
     [dict(func=func, args=args)
@@ -3383,7 +3379,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           ValueError, device_error_msg.format(expected_platform)):
         jnp.asarray(x, copy=False, device=jax.local_devices()[0])
-      sharding = SingleDeviceSharding(jax.local_devices()[0])
+      sharding = make_single_device_sharding(jax.local_devices()[0])
       with self.assertRaisesRegex(
           ValueError, device_error_msg.format(expected_platform)):
         jnp.asarray(x, copy=False, device=sharding)
@@ -3399,7 +3395,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # test explicit CPU device or default CPU device context managers overwrite the default backend
     x = make_python_array('l', [0, 1, 2, 3])
     for device in [jax.local_devices(backend='cpu')[0],
-                   SingleDeviceSharding(jax.local_devices(backend='cpu')[0])]:
+                   make_single_device_sharding(
+                       jax.local_devices(backend='cpu')[0])]:
       self.assertArraysEqual(jnp.asarray(x, copy=False, device=device),
                              x_jax, check_dtypes=False)
     with jax.default_device('cpu'):
@@ -3505,6 +3502,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jnp.ones(10)
     y = jax.vmap(f)(x)
     self.assertIsNot(x, y)
+
+  def testArrayContains(self):
+    self.assertIn(1, jnp.arange(4))
+    self.assertNotIn(100, jnp.arange(4))
+
+    with self.assertRaisesRegex(
+        ValueError, "Array.__contains__: search array must be one-dimensional"):
+      _ = 1 in jnp.array(1)
+
+    with self.assertRaisesRegex(
+        ValueError, "Array.__contains__: query value must be a scalar"):
+      _ = jnp.arange(2) in jnp.arange(2)
+
+    with self.assertRaisesRegex(
+        TypeError, "Array.__contains__: unsupported operand type.*"
+    ):
+      _ = "abc" in jnp.arange(2)
+
+    with self.assertRaisesRegex(
+        TypeError, "Array.__contains__: unsupported operand type.*"
+    ):
+      _ = None in jnp.arange(2)
 
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(
@@ -4012,6 +4031,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape=array_shapes,
     dtype=all_dtypes,
   )
+  def testByteSwap(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_op = lambda x: np.asarray(x).byteswap()
+    jnp_op = lambda x: jnp.asarray(x).byteswap()
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(
+    shape=array_shapes,
+    dtype=all_dtypes,
+  )
   def testNbytes(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     np_op = lambda x: np.asarray(x).nbytes
@@ -4235,19 +4266,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArgsort(self, dtype, shape, axis, use_method):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    kwds = {} if axis is NO_VALUE else {'axis': axis}
+    kwds = {'stable': True}
+    if axis is not NO_VALUE:
+      kwds['axis'] = axis
 
     @jtu.with_jax_dtype_defaults
     def np_fun(arr):
       # Note: numpy sort fails on NaN and Inf values with bfloat16
       if arr.dtype == jnp.bfloat16:
         arr = arr.astype('float32')
-      # TODO(jakevdp): switch to stable=True when supported by numpy.
-      return np.argsort(arr, kind='stable', **kwds)
+      return np.argsort(arr, **kwds)
     if use_method:
-      jnp_fun = lambda x: jnp.asarray(x).argsort(stable=True, **kwds)
+      jnp_fun = lambda x: jnp.asarray(x).argsort(**kwds)
     else:
-      jnp_fun = partial(jnp.argsort, stable=True, **kwds)
+      jnp_fun = partial(jnp.argsort, **kwds)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -4954,16 +4986,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       (0, 5, 1+1j),
   )
   def testArangeComplex(self, *args):
-    dep_id = "jax-numpy-arange-complex"
-    msg = "Passing complex start/stop/step to jnp.arange is deprecated"
-    if deprecations.is_accelerated(dep_id):
-      with self.assertRaisesRegex(ValueError, msg):
-        jax_result = jnp.arange(*args)
-    else:
-      with self.assertWarnsRegex(DeprecationWarning, msg):
-        jax_result = jnp.arange(*args)
-      np_result = np.arange(*args)
-      self.assertArraysEqual(jax_result, np_result)
+    msg = "Passing complex start/stop/step to jnp.arange is no longer supported"
+    with self.assertRaisesRegex(ValueError, msg):
+      _ = jnp.arange(*args)
 
   @parameterized.parameters(int, float, np.int32, np.float32)
   def testArangeTransferGuard(self, typ):
@@ -5549,7 +5574,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testBroadcastToIssue1522(self):
     self.assertRaisesRegex(
-        ValueError, "Incompatible shapes for broadcasting: .*",
+        ValueError, "Incompatible.*broadcasting: .*",
         lambda: jnp.broadcast_to(np.ones((2, 3)), (1, 3)))
 
   def testBroadcastToIntIssue1548(self):
@@ -5741,26 +5766,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg('stop')):
       jax.jit(lambda stop: jnp.arange(0, stop))(3)
-
-  @jtu.sample_product(dtype=[None] + float_dtypes)
-  def testArange64Bit(self, dtype):
-    # Test that jnp.arange uses 64-bit arithmetic to define its range, even if the
-    # output has another dtype. The issue here is that if python scalar inputs to
-    # jnp.arange are cast to float32 before the range is computed, it changes the
-    # number of elements output by the range.  It's unclear whether this was deliberate
-    # behavior in the initial implementation, but it's behavior that downstream users
-    # have come to rely on.
-    args = (1.2, 4.8, 0.24)
-
-    # Ensure that this test case leads to differing lengths if cast to float32.
-    self.assertLen(np.arange(*args), 15)
-    self.assertLen(np.arange(*map(np.float32, args)), 16)
-
-    jnp_fun = lambda: jnp.arange(*args, dtype=dtype)
-    np_fun = jtu.with_jax_dtype_defaults(lambda: np.arange(*args, dtype=dtype), dtype is None)
-    args_maker = lambda: []
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testIssue2347(self):
     # https://github.com/jax-ml/jax/issues/2347
@@ -6383,16 +6388,16 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'frompyfunc': ['kwargs'],
       'fromstring': ['like'],
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
-      'nanpercentile': ['interpolation', 'weights'],
-      'nanquantile': ['interpolation', 'weights'],
+      'nanpercentile': ['interpolation'],
+      'nanquantile': ['interpolation'],
       'nanstd': ['correction'],
       'nanvar': ['correction'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
-      'percentile': ['interpolation', 'weights'],
+      'percentile': ['interpolation'],
       'promote_types': ['type1', 'type2'],
-      'quantile': ['interpolation', 'weights'],
+      'quantile': ['interpolation'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'tri': ['like'],

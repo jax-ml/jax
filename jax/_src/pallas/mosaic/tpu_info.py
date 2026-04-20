@@ -16,14 +16,15 @@
 
 import dataclasses
 import enum
-from typing import Callable, cast
+from typing import cast
+from collections.abc import Callable
 
 from jax import numpy as jnp
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
-from jax._src.pallas import utils as pallas_utils
-from jax._src.pallas.mosaic import core
+from jax._src.interpreters import pxla
 
 
 class ChipVersionBase:
@@ -72,8 +73,8 @@ class ChipVersion(ChipVersionBase, enum.Enum):
     return self.value
 
   @property
-  def _num_physical_tensor_cores_per_chip(self) -> int:  # pyrefly: ignore[bad-return]  # pyrefly#2080
-    match self:  # pyrefly: ignore[non-exhaustive-match]  # pyrefly#2080
+  def num_physical_tensor_cores_per_chip(self) -> int:
+    match self:
       case (
           ChipVersion.TPU_V2
           | ChipVersion.TPU_V3
@@ -85,11 +86,6 @@ class ChipVersion(ChipVersionBase, enum.Enum):
         return 2
       case ChipVersion.TPU_V4I | ChipVersion.TPU_V5E | ChipVersion.TPU_V6E:
         return 1
-
-  @property
-  def num_physical_tensor_cores_per_chip(self) -> int:
-    # TODO(slebedev): Remove this wrapper once pyrefly#2080 is fixed.
-    return cast(int, self._num_physical_tensor_cores_per_chip)
 
   @property
   def supports_megacore(self) -> bool:
@@ -262,7 +258,7 @@ class TpuInfo:
 
 
 def is_tpu_device() -> bool:
-  return chip_version_from_device_kind(core.get_device_kind()) is not None
+  return chip_version_from_device_kind(get_device_kind()) is not None
 
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
@@ -459,13 +455,13 @@ def get_tpu_info() -> TpuInfo:
   Note that all information is *per-TensorCore* so you would need to multiply by
   `num_cores` to obtain the total for the chip.
   """
-  device_kind = core.get_device_kind()
+  device_kind = get_device_kind()
   chip_version = chip_version_from_device_kind(device_kind)
   if chip_version is None:
     if device_kind in registry:
       return registry[device_kind]()
     raise ValueError(f"Unsupported TPU device kind: {device_kind}")
-  return _get_tpu_info_impl(chip_version, core.get_num_device_cores())
+  return _get_tpu_info_impl(chip_version, get_num_device_cores())
 
 
 @jax_util.cache(trace_context_in_key=True)
@@ -519,8 +515,6 @@ class Tiling(enum.Enum):
         return (8, 128)
       case Tiling.SPARSE_CORE:
         return (8,)
-      case _:
-        raise NotImplementedError  # pyrefly#2080
 
 
 def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
@@ -533,9 +527,8 @@ def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
 
 
 def infer_tiling(
-    ty: jax_core.AbstractValue,
-    tiling: Tiling | None = None,
-) -> tuple[int | None, ...] | None:
+    ty: jax_core.AbstractValue, tiling: Tiling | None = None
+) -> tuple[int | None, ...]:
   """Compute a tiling for the given shape and type.
 
   For an n-dimensional shape, returns the tiling for the last
@@ -559,11 +552,9 @@ def infer_tiling(
     tiling = Tiling.COMPACT
   tiling_rank = len(tiling.shape)
   if len(shape) == 1 and tiling == Tiling.COMPACT:
-    sublane_count, lane_count = tiling.shape
-    src_sublane = pallas_utils.cdiv(shape[0], lane_count)
-    max_tiling = max(sublane_count, packing)
-    factor = _get_tiling_factor(src_sublane, max_tiling, packing)
-    return (factor * lane_count,)
+    _, lane_count = tiling.shape
+    tpu_generation = get_tpu_info().generation
+    return ((1 + int(tpu_generation < 4)) * packing * lane_count,)
   if len(shape) < tiling_rank:
     raise ValueError(
         f"Shape must have at least {tiling_rank} dimensions: {shape=}"
@@ -578,3 +569,15 @@ def infer_tiling(
     case Tiling.SPARSE_CORE:
       [tile_size] = tiling.shape
       return (*(1,) * len(leading_dims), tile_size * packing)
+
+
+def get_device_kind() -> str:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return pxla.get_default_device().device_kind
+
+
+def get_num_device_cores() -> int:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return pxla.get_default_device().num_cores

@@ -16,6 +16,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -50,6 +51,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/ffi.h"
+#include "jaxlib/hash_util.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
 #include "jaxlib/py_values.h"
@@ -101,7 +103,6 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/pjit.h"
-#include "jaxlib/pmap_lib.h"
 #include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_compile_only_client.h"
@@ -182,6 +183,102 @@ bool IsTsan() {
 // IsSanitized reports whether the build is under any sanitizer.
 bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
+// Global handle for the Python type object for JaxRuntimeError. Its lifetime is
+// tied to the module it's registered in.
+nb::handle jax_runtime_error_type;
+
+void register_runtime_error_bindings(nb::module_& m) {
+  if (jax_runtime_error_type.is_valid()) {
+    return;
+  }
+
+  nb::exception<xla::XlaRuntimeError> exc(m, "JaxRuntimeError",
+                                          PyExc_RuntimeError);
+  exc.attr("__init__") = nb::cpp_function(
+      [](nb::object self, std::optional<std::string> msg,
+         std::optional<int> code) {
+        std::string msg_val = msg.value_or("");
+        int code_val =
+            code.value_or(static_cast<int>(absl::StatusCode::kUnknown));
+        self.attr("_error_code") = code_val;
+        self.attr("_error_message") = msg_val;
+        nb::handle(PyExc_RuntimeError)
+            .attr("__init__")(self, std::move(msg_val));
+      },
+      nb::is_method(), nb::arg("msg") = nb::none(),
+      nb::arg("code") = nb::none());
+
+  auto get_error_code_string = nb::cpp_function(
+      [](nb::object self) {
+        int code = nb::cast<int>(self.attr("error_code"));
+        return absl::StatusCodeToString(static_cast<absl::StatusCode>(code));
+      },
+      nb::is_method());
+
+  nb::object property_type = nb::borrow((PyObject*)&PyProperty_Type);
+  exc.attr("error_code_string") = property_type(get_error_code_string);
+
+  auto get_error_code = nb::cpp_function(
+      [](nb::object self) { return nb::cast<int>(self.attr("_error_code")); },
+      nb::is_method());
+  exc.attr("error_code") = property_type(get_error_code);
+
+  auto get_error_message = nb::cpp_function(
+      [](nb::object self) {
+        return nb::cast<std::string>(self.attr("_error_message"));
+      },
+      nb::is_method());
+  exc.attr("error_message") = property_type(get_error_message);
+
+  exc.attr("__str__") = nb::cpp_function(
+      [](nb::object self) {
+        return nb::cast<std::string>(self.attr("_error_message"));
+      },
+      nb::is_method());
+
+  exc.attr("__doc__") = nb::str(
+      "Runtime errors thrown by the JAX runtime. While the JAX runtime may "
+      "raise other exceptions as well, most exceptions thrown by the runtime "
+      "are instances of this class.");
+
+  jax_runtime_error_type = exc;
+}
+
+void translate_xla_runtime_error(const std::exception_ptr& p, void*) {
+  try {
+    // It's a bit silly, but the only real way to cast an exception pointer is
+    // to rethrow it and catch the concrete type we want.
+    if (p) {
+      std::rethrow_exception(p);
+    }
+  } catch (const xla::XlaRuntimeError& e) {
+    if (!jax_runtime_error_type.is_valid()) {
+      PyErr_SetString(PyExc_RuntimeError,
+                      "JaxRuntimeError type not initialized in translator");
+      return;
+    }
+
+    int code = static_cast<int>(absl::StatusCode::kUnknown);
+    std::string msg(e.what());
+    if (e.status().has_value()) {
+      code = static_cast<int>(e.status()->code());
+      msg = std::string(e.what());
+    }
+
+    try {
+      // Create a Python instance of our JaxRuntimeError type.
+      nb::object exc_inst = jax_runtime_error_type(msg, code);
+
+      // Set the current Python error to this new exception instance.
+      PyErr_SetObject(jax_runtime_error_type.ptr(), exc_inst.ptr());
+    } catch (nb::python_error& py_err) {
+      // If creating the Python exception fails, restore the Python error
+      // state from the nanobind exception.
+      py_err.restore();
+    }
+  }
+}
+
 }  // namespace
 
 NB_MODULE(_jax, m) {
@@ -197,12 +294,8 @@ NB_MODULE(_jax, m) {
   tsl::ImportNumpy();
 
   // Exceptions
-  nb::exception<xla::XlaRuntimeError> xla_runtime_error(m, "JaxRuntimeError",
-                                                        PyExc_RuntimeError);
-  xla_runtime_error.attr("__doc__") = nb::str(
-      "Runtime errors thrown by the JAX runtime. While the JAX runtime may "
-      "raise other exceptions as well, most exceptions thrown by the runtime "
-      "are instances of this class.");
+  register_runtime_error_bindings(m);
+  nb::register_exception_translator(translate_xla_runtime_error);
 
   // Must be before PyClient.compile.
   xla::BuildXlaCompilerSubmodule(m);
@@ -225,7 +318,9 @@ NB_MODULE(_jax, m) {
                     layout == nb::cast<const xla::PjRtLayout&>(other);
            })
       .def("__hash__",
-           [](const xla::PjRtLayout& layout) { return absl::HashOf(layout); })
+           [](const xla::PjRtLayout& layout) -> Py_hash_t {
+             return AbslHashToPythonHash(absl::HashOf(layout));
+           })
       .def("_xla_layout", &xla::PjRtLayout::xla_layout)
       .def("__getstate__",
            [](const xla::PjRtLayout& layout) -> nb::tuple {
@@ -558,7 +653,7 @@ NB_MODULE(_jax, m) {
       nb::sig(
           // clang-format off
       "def dlpack_managed_tensor_to_buffer("
-      "dlpack: typing_extensions.CapsuleType, "
+      "dlpack: types.CapsuleType, "
       "device: Device, "
       "stream: int | None, "
       "copy: bool | None = ..."
@@ -586,7 +681,6 @@ NB_MODULE(_jax, m) {
   BuildPytreeSubmodule(m);
   BuildGuardSubmodule(m);
   BuildJaxjitSubmodule(m);
-  BuildPmapSubmodule(m);
   BuildPjitSubmodule(m);
   Traceback::Register(m);
   BuildMlirSubmodule(m);
@@ -893,10 +987,9 @@ NB_MODULE(_jax, m) {
                    [](xla::ifrt::Topology& topology) {
                      return topology.platform_version();
                    })
-      .def("serialize",
-           [](xla::ifrt::Topology& topology) -> nb::bytes {
-             std::string serialized = xla::ValueOrThrow(topology.Serialize());
-             return nb::bytes(serialized.data(), serialized.size());
+      .def("fingerprint",
+           [](xla::ifrt::Topology& topology) -> uint64_t {
+             return xla::ValueOrThrow(topology.Fingerprint());
            })
       .def("__getattr__",
            [](xla::ifrt::Topology& topology,

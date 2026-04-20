@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 
 #include <Python.h>
+#include <structmember.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -226,10 +227,7 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   }
 
   absl::StatusOr<ifrt::ShardingRef> ifrt_sharding =
-      sharding.type().is(PmapSharding::type())
-          ? GetIfrtConcreteSharding(sharding, ifrt::Shape(shape),
-                                    std::move(shapes))
-          : GetIfrtHloSharding(sharding, ifrt::Shape(shape));
+      GetIfrtHloSharding(sharding, ifrt::Shape(shape));
   if (!ifrt_sharding.ok()) {
     // TODO(hyeontaek): Return a absl::Status.
     throw nb::value_error(ifrt_sharding.status().ToString().c_str());
@@ -575,8 +573,10 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
           ? nb::object(nb::str(memory_kind.memory_kind()->data(),
                                memory_kind.memory_kind()->size()))
           : nb::none();
-  nb::object sharding = make_nb_class<SingleDeviceSharding>(
-      py_client, ifrt_array->sharding().devices(), std::move(py_memory_kind));
+  nb::object sharding = MakeSingleDeviceSharding(
+      py_client->GetPyDevice(
+          ifrt_array->sharding().devices()->devices().front()),
+      std::move(py_memory_kind));
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
                  std::move(ifrt_array), committed,
@@ -812,12 +812,8 @@ absl::Status PyArray::set_arrays(nb::object obj) {
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto ifrt_sharding,
-      sharding().type().is(PmapSharding::type())
-          ? GetIfrtConcreteSharding(sharding(), ifrt::Shape(shape()),
-                                    std::move(shapes))
-          : GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
+  TF_ASSIGN_OR_RETURN(auto ifrt_sharding,
+                      GetIfrtHloSharding(sharding(), ifrt::Shape(shape())));
   TF_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
@@ -886,24 +882,14 @@ absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
         "GetOnDeviceSizeInBytes() is not yet supported for arrays with no "
         "addressable devices");
   }
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
-                      layout());
-  TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
-                      ifrt::ToPrimitiveType(ifrt_array->dtype()));
-  if (sharding().type().is(SingleDeviceSharding::type())) {
-    // An array with `SingleDeviceSharding` takes a fast path. We do not need to
-    // compute a shard shape separately, and the array aval is often `None`.
-    xla::Shape shard_shape = xla::ShapeUtil::MakeShape(element_type, shape());
-    *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
-    return xla::ShapeUtil::ArraySize(shard_shape);
+  TF_ASSIGN_OR_RETURN(std::optional<int64_t> byte_size, ifrt_array->ByteSize());
+  if (!byte_size.has_value()) {
+    return xla::Unimplemented(
+        "GetOnDeviceSizeInBytes() is not supported for arrays with no defined "
+        "byte size");
   }
-  auto shard_shape_dims = nb::cast<std::vector<int64_t>>(
-      sharding().attr("shard_shape")(aval().attr("shape")));
-  xla::Shape shard_shape =
-      xla::ShapeUtil::MakeShape(element_type, shard_shape_dims);
-  *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
-  return xla::ShapeUtil::ArraySize(shard_shape) *
-         nb::len(nb::object(sharding().attr("device_set")));
+  return static_cast<size_t>(*byte_size *
+                             ifrt_array->sharding().devices()->size());
 }
 
 absl::Status PyArray::BlockUntilResultStatusIsReady() {
@@ -1382,6 +1368,9 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
             .c_str());
   }
   for (const PyDevice* device : dst_devices) {
+    if (device == nullptr) {
+      return xla::InvalidArgument("Device cannot be None.");
+    }
     if (device->client().get() == nullptr) {
       return xla::InvalidArgument("Cannot copy to unattached devices.");
     }
@@ -1426,13 +1415,11 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
     ifrt_devices.push_back(device->device());
   }
   ifrt::Client* ifrt_client = py_device_list->py_client()->ifrt_client();
-  TF_ASSIGN_OR_RETURN(
-      xla::ifrt::DeviceListRef ifrt_device_list,
-      ifrt_client->MakeDeviceList(ifrt_devices));
-  TF_ASSIGN_OR_RETURN(
-      DevicePutResult device_put_result,
-      DevicePutWithSharding(args, ifrt_device_list, ifrt_client, dtype, shape,
-                            sharding, options));
+  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_device_list,
+                      ifrt_client->MakeDeviceList(ifrt_devices));
+  TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
+                      DevicePutWithSharding(args, ifrt_device_list, ifrt_client,
+                                            dtype, shape, sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(),
@@ -1688,7 +1675,8 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
           "Python buffer protocol is only defined for buffers with a single "
           "shard.");
     }
-    if (!py_array.sharding().type().is(SingleDeviceSharding::type())) {
+
+    if (!array->sharding().IsFullyReplicated()) {
       return xla::InvalidArgument(
           "Python buffer protocol is only defined for single-device sharded "
           "buffers.");
@@ -2275,8 +2263,9 @@ absl::Status PyArray::Register(nb::module_& m) {
       [](PyArray& self) { xla::ThrowIfError(self.Delete()); }, nb::is_method());
   type.attr("_rewrap_with_aval_and_sharding") = nb::cpp_function(
       // NOTE(dsuo): Zero-copy metadata rewrapping. Returns a new PyArray with
-      // new aval and sharding metadata that shares the same underlying ifrt
-      // array, avoiding memory copies when only the logical view changes.
+      // new aval and sharding metadata with a new underlying ifrt
+      // array that reuses the same underlying buffers, avoiding memory copies
+      // when only the logical view changes.
       [](PyArray self, nb::object aval, nb::object sharding) -> PyArray {
         xla::ifrt::Array* ifrt_array_ptr = self.ifrt_array();
         if (ifrt_array_ptr == nullptr) {
@@ -2289,9 +2278,28 @@ absl::Status PyArray::Register(nb::module_& m) {
         xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(aval.attr("dtype"));
         std::vector<int64_t> shape =
             nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+        auto ifrt_sharding = xla::ValueOrThrow(
+            jax::GetIfrtHloSharding(sharding, xla::ifrt::Shape(shape)));
+        PyUserContextScope user_context;
+
+        auto single_device_arrays =
+            xla::ValueOrThrow(ifrt_array_ptr->DisassembleIntoSingleDeviceArrays(
+                xla::ifrt::ArrayCopySemantics::kReuseInput,
+                xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+
+        auto new_ifrt_array = xla::ValueOrThrow(
+            self.py_client()
+                ->ifrt_client()
+                ->AssembleArrayFromSingleDeviceArrays(
+                    ifrt_array_ptr->dtype(), xla::ifrt::Shape(shape),
+                    std::move(ifrt_sharding),
+                    absl::MakeSpan(single_device_arrays),
+                    xla::ifrt::ArrayCopySemantics::kReuseInput,
+                    xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+
         return PyArray(std::move(aval), weak_type, dtype, std::move(shape),
                        std::move(sharding), self.py_client(),
-                       tsl::FormRef(ifrt_array_ptr), /*committed=*/true,
+                       std::move(new_ifrt_array), /*committed=*/true,
                        /*skip_checks=*/true);
       },
       nb::is_method(), nb::arg("aval"), nb::arg("sharding"));

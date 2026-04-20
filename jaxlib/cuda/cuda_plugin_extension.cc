@@ -69,6 +69,8 @@ nb::dict FfiHandlers() {
       EncapsulateFfiHandler(cuda::kXlaBufferPythonGpuCallback);
   dict["xla_buffer_python_gpu_callback_cmd_buffer"] =
       EncapsulateFfiHandler(cuda::kXlaBufferPythonGpuCallbackCmdBuffer);
+  dict["dce_sink"] =
+      EncapsulateFfiHandler(cuda::dce_sink_gpu_ffi);
   return dict;
 }
 

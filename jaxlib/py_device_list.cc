@@ -35,6 +35,7 @@ limitations under the License.
 #include "nanobind/stl/set.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
@@ -102,9 +103,10 @@ absl::StatusOr<xla::ifrt::DeviceListRef> PyDeviceList::ifrt_device_list()
 int64_t PyDeviceList::Hash() {
   if (!hash_.has_value()) {
     switch (device_list_.index()) {
-      case 0:
-        hash_ = absl::HashOf(std::get<0>(device_list_));
+      case 0: {
+        hash_ = AbslHashToPythonHash(absl::HashOf(std::get<0>(device_list_)));
         break;
+      }
       case 1:
         hash_ = nb::hash(std::get<1>(device_list_));
         break;

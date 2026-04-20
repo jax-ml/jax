@@ -51,7 +51,7 @@ from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.tree_util import tree_structure, tree_unflatten
+from jax._src.tree_util import tree_unflatten, FlatTree
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -320,13 +320,13 @@ class ArgInfo:
   def shape(self):
     if not hasattr(self._aval, "shape"):
       raise TypeError(f"No shape attribute with aval of type {type(self._aval)}")
-    return self._aval.shape  # pytype: disable=attribute-error
+    return self._aval.shape
 
   @property
   def dtype(self):
     if not hasattr(self._aval, "dtype"):
       raise TypeError(f"No dtype attribute with aval of type {type(self._aval)}")
-    return self._aval.dtype  # pytype: disable=attribute-error
+    return self._aval.dtype
 
 
 class Stage:
@@ -335,7 +335,7 @@ class Stage:
   @property
   def in_tree(self) -> tree_util.PyTreeDef:
     """Tree structure of the pair (positional arguments, keyword arguments)."""
-    return tree_structure(self.args_info)
+    return tree_util.tracing_registry.flatten(self.args_info)[1]
 
   @property
   def in_avals(self):
@@ -392,7 +392,7 @@ def _traced_out_info(self):
           core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=Format(out_l, s),
               weak_type=a.weak_type,
-              vma=(a.vma if config._check_vma.value else None)))
+              manual_axis_type=(a.mat if config._check_vma.value else None)))
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)
@@ -449,10 +449,13 @@ class Traced(Stage):
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
     from jax._src.interpreters import partial_eval as pe  # type:ignore
+    from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
+    in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
+    params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
     if any(a.is_high for a in hi_jaxpr.final_aval_qdds):
       in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
     else:
@@ -461,7 +464,6 @@ class Traced(Stage):
       out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     else:
       out_tree = self.out_tree
-    params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
     lo_meta_tys = [mty.replace(aval=lo_ty)
                    for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
                    for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
@@ -480,7 +482,7 @@ class Traced(Stage):
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      from jax._src.pjit import _resolve_and_lower  # pytype: disable=import-error
+      from jax._src.pjit import _resolve_and_lower  # pyrefly: ignore[missing-import]
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)
@@ -494,18 +496,9 @@ class Traced(Stage):
                    in_types=lo._in_types, out_types=lo._out_types)
 
 
-def lojax_expand_params(jaxpr, params):
-  from jax._src.pjit import _lojax_expand_params  # pytype: disable=import-error
-  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
-  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
-                    if aval.has_qdd)
-  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
-                              **dict(params, jaxpr=jaxpr))
-
 def lojax_pytree(hi_avals, tree):
   lo_avals = [t.lo_ty() for t in hi_avals]
-  return tree_structure(tree_unflatten(tree, lo_avals))
+  return tree_util.tracing_registry.flatten(tree_unflatten(tree, lo_avals))[1]
 
 
 class LoJax:
@@ -561,9 +554,7 @@ class Lowered(Stage):
 
   @property
   def in_avals(self):
-    in_avals_ = self._lowering.compile_args.get("global_in_avals", None)
-    if in_avals_ is None:  # For old pmap code i.e. PmapComputation
-      return tree_util.tree_map(lambda x: x._aval, self.args_info)
+    in_avals_ = self._lowering.compile_args["global_in_avals"]
     kept_var_idx = self._lowering.compile_args["kept_var_idx"]
     non_dce_avals = self._lowering.compile_args["all_args_info"].in_avals
     if self.in_tree.num_leaves > len(in_avals_):
@@ -661,7 +652,8 @@ class Compiled(Stage):
   """
   __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs", "_params"]
 
-  args_info: Any                # PyTree of ArgInfo, not including const_args
+  # PyTree of ArgInfo, including dead args, but not const_args
+  args_info: Any
   out_tree: tree_util.PyTreeDef
   _executable: Executable
   _no_kwargs: bool
@@ -730,12 +722,14 @@ class Compiled(Stage):
 
   @property
   def in_avals(self):
-    in_avals_ = self._executable.in_avals  # pyrefly: ignore[missing-attribute]
+    # Including dead args, but not const_args
+    nr_const_args = len(self._params.const_args)
+    in_avals_ = self._executable.in_avals[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     if self.in_tree.num_leaves > len(in_avals_):
       iter_in_avals = iter(in_avals_)
-      non_dce_avals = self._executable._all_args_info.in_avals  # pyrefly: ignore[missing-attribute]
+      non_dce_avals = self._executable._all_args_info.in_avals[nr_const_args:]  # pyrefly: ignore[missing-attribute]
       in_avals_ = [
-          next(iter_in_avals) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+          next(iter_in_avals) if i + nr_const_args in self._executable._kept_var_idx # pyrefly: ignore[missing-attribute]
           else a for i, a in zip(range(self.in_tree.num_leaves), non_dce_avals)]
     return self.in_tree.unflatten(in_avals_)
 
@@ -760,39 +754,43 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   def _input_shardings_flat(self):
-    shardings_flat = self._executable._in_shardings  # pyrefly: ignore[missing-attribute]
+    nr_const_args = len(self._params.const_args)
+    shardings_flat = self._executable._in_shardings[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
       iter_shardings_flat = iter(shardings_flat)
-      shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+      shardings_flat = [next(iter_shardings_flat) if i + nr_const_args in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                         else None for i in range(self.in_tree.num_leaves)]
     return shardings_flat
 
   @property
   def input_shardings(self):  # -> PyTree[sharding.Sharding]
+    # Including dead args, but not const_args
     shardings_flat = self._input_shardings_flat()
-    return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.in_tree, shardings_flat)
 
   @property
   def output_shardings(self):  # -> PyTree[sharding.Sharding]
     shardings_flat = self._executable._out_shardings  # pyrefly: ignore[missing-attribute]
-    return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.out_tree, shardings_flat)
 
   def _input_layouts_flat(self):
-    layouts_flat = self._executable._xla_in_layouts  # pyrefly: ignore[missing-attribute]
+    nr_const_args = len(self._params.const_args)
+    layouts_flat = self._executable._xla_in_layouts[nr_const_args:]  # pyrefly: ignore[missing-attribute]
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
-      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
+      layouts_flat = [next(iter_layouts_flat) if i + nr_const_args in self._executable._kept_var_idx  # pyrefly: ignore[missing-attribute]
                       else None for i in range(self.in_tree.num_leaves)]
     return layouts_flat
 
   @property
   def input_formats(self):
+    # Including dead args, but not const_args
     layouts_flat = self._input_layouts_flat()
     shardings_flat = self._input_shardings_flat()
     formats_flat = [Format(l, s) for l, s in zip(layouts_flat, shardings_flat)]
-    return tree_util.tree_unflatten(self.in_tree, formats_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.in_tree, formats_flat)
 
   @property
   def _output_formats_flat(self):
@@ -804,7 +802,7 @@ class Compiled(Stage):
   @property
   def output_formats(self):
     formats_flat = self._output_formats_flat
-    return tree_util.tree_unflatten(self.out_tree, formats_flat)  # pytype: disable=attribute-error
+    return tree_util.tree_unflatten(self.out_tree, formats_flat)
 
   @staticmethod
   def call(*args, **kwargs):
@@ -822,17 +820,17 @@ class Compiled(Stage):
           f"keyword arguments, but called with keyword arguments: {kws}")
 
     if params.is_high:
-      hi_args_flat, in_hi_tree = tree_util.tree_flatten((args, kwargs))
+      hi_args_flat, hi_tree = tree_util.tracing_registry.flatten((args, kwargs))
       _in_hi_tree, final_qdds = params.in_types
       # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
       args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                  else a.lower_val(x) for x in hi_args_flat]
-      args_flat, in_tree = \
-          tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
+                   else a.lower_val(x) for x in hi_args_flat]
+      args_flat, in_tree = tree_util.tracing_registry.flatten(
+          tree_util.tree_unflatten(hi_tree, args_flat))
     else:
       hi_args_flat = []
       final_qdds = None
-      args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+      args_flat, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
 
     # TODO(mattjj): improve wrong-number-of-args error
     if in_tree != params.in_tree:
@@ -866,7 +864,7 @@ class Compiled(Stage):
       out_mut, lo_outs = util.split_list(lo_outs, [_num_himuts_out(final_qdds)])
       _apply_himut(final_qdds, hi_args_flat, out_mut)
       out_hi_tree, out_hi_types = params.out_types
-      out_flat = _raise_lo_outs(out_hi_types, lo_outs)
+      out_flat = raise_lo_outs(out_hi_types, lo_outs)
       outs = tree_util.tree_unflatten(out_hi_tree, out_flat)
     else:
       out_flat = lo_outs
@@ -885,10 +883,6 @@ class Compiled(Stage):
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
 
-def _raise_lo_outs(avals, lo_outs):
-  from jax._src.interpreters import partial_eval as pe
-  return pe.raise_lo_outs(avals, lo_outs)
-
 # TODO(mattjj): de-dup with partial_eval.py
 def _num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
@@ -899,9 +893,15 @@ def _apply_himut(final_qdds, hi_args, out_mut):
   for i, a in enumerate(final_qdds):
     if isinstance(a, core.AvalQDD):
       lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
-      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # type: ignore
+      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # pyrefly: ignore[missing-attribute]
   assert next(out_mut_, None) is None
 
+# TODO(mattjj): de-dup with partial_eval.py
+def raise_lo_outs(hi_avals, lo_outs):
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in hi_avals]
+  assert next(lo_outs_, None) is None
+  return hi_outs
 
 @runtime_checkable
 class Wrapped(Protocol):
@@ -970,17 +970,17 @@ class SourceInfo(NamedTuple):
 
 @dataclasses.dataclass
 class DeviceAssignmentMismatch:
-  da: Sequence[xc.Device]
+  da: Sequence[xc.Device] | int
   m_type: MismatchType
   source_info: SourceInfo | None
 
   @property
   def device_ids(self) -> Sequence[int]:
-    return [d.id for d in self.da]
+    return [d.id for d in self.da]  # pyrefly: ignore[not-iterable]
 
   @property
   def platform(self) -> str:
-    return self.da[0].platform.upper()
+    return self.da[0].platform.upper()  # pyrefly: ignore[bad-index]
 
   def _maybe_api_name(self, api_name) -> str:
     return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
@@ -994,14 +994,17 @@ class DeviceAssignmentMismatch:
 
   @property
   def _dev_ids_plat_str(self):
-    return f"device ids {self.device_ids} on platform {self.platform}"
+    if isinstance(self.da, int):
+      return f"as AbstractMesh of size {self.da}"
+    else:
+      return f"with device ids {self.device_ids} on platform {self.platform}"
 
   def m_type_str(self, api_name):
     return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
             if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
 
   def _str(self, api_name):
-    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
+    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} "
             f"{self._dev_ids_plat_str}{self.source_info_str}")
 
 
@@ -1036,7 +1039,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
 
   if len(mismatched_args_msg) == 2:
-    first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
+    first, second = mismatched_args_msg
     extra_msg = f" Got {first} and {second}"
   elif len(mismatched_args_msg) == 1:
     first, second = fails

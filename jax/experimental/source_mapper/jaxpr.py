@@ -73,8 +73,6 @@ def make_jaxpr_dump(jaxpr: core.Jaxpr, **_) -> common.SourceMapDump:
 
 common.register_pass(
     common.Pass(
-        name='jaxpr',
-        compile_fn=compile_jaxpr,  # type: ignore[arg-type]
-        generate_dump=make_jaxpr_dump,  # type: ignore[arg-type]
+        name='jaxpr', compile_fn=compile_jaxpr, generate_dump=make_jaxpr_dump
     )
 )

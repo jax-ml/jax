@@ -131,7 +131,7 @@ def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
   op = value_mlir.owner
   if op is None or isinstance(op, ir.Block):
     return None
-  return op
+  return op.operation
 
 
 def _attach_xla_metadata_to_op(
@@ -144,7 +144,7 @@ def _attach_xla_metadata_to_op(
     # Combine with existing mhlo.frontend_attributes
     for attr in op.attributes:
       if attr == "mhlo.frontend_attributes":
-        for a in op.attributes[attr]:
+        for a in ir.DictAttr(op.attributes[attr]):
           existing_attributes[a.name] = a.attr
     op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
         ctx_attributes | existing_attributes

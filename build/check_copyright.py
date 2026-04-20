@@ -21,7 +21,7 @@ import re2
 
 
 def check_copyright(filename):
-  with open(filename, "r", encoding="utf-8") as f:
+  with open(filename, encoding="utf-8") as f:
     content = f.read(2048)
     return bool(
         re2.search(

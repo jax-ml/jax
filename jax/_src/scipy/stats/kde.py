@@ -14,7 +14,8 @@
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, cast
+from typing import Any, cast
+from collections.abc import Callable
 
 import numpy as np
 
@@ -154,6 +155,7 @@ class gaussian_kde:
     return _gaussian_kernel_convolve(chol, norm, self.dataset, self.weights,
                                      mean)
 
+  @api.jit
   def integrate_box_1d(self, low, high):
     """Integrate the distribution over the given limits."""
     if self.d != 1:
@@ -181,6 +183,7 @@ class gaussian_kde:
                       in_axes=1)(sm.dataset)
     return jnp.sum(result * sm.weights)
 
+  @partial(api.jit, static_argnames=("shape",))
   def resample(self, key, shape=()):
     r"""Randomly sample a dataset from the estimated pdf
 

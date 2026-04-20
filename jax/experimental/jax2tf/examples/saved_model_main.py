@@ -35,7 +35,7 @@ from jax.experimental.jax2tf.examples import saved_model_lib
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds  # type: ignore
+import tensorflow_datasets as tfds  # pyrefly: ignore[missing-import]
 
 _MODEL = flags.DEFINE_enum(
     "model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],
@@ -202,6 +202,8 @@ def tf_accelerator_and_tolerances():
     tolerances = dict(atol=1e-6, rtol=1e-4)
   elif tf_accelerator.device_type == "CPU":
     tolerances = dict(atol=1e-5, rtol=1e-5)
+  else:
+    raise RuntimeError(f"Unrecognized {tf_accelerator.device_type=}")
   logging.info("Using tolerances %s", tolerances)
   return tf_accelerator, tolerances
 

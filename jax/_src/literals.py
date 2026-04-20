@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Sequence, Literal
+from jax._src import dtypes
+from jax._src.core import ShapedArray
 from jax._src.lib import _jax
-
 import numpy as np
 
 # TypedInt, TypedFloat, and TypedComplex are subclasses of int, float, and
@@ -22,14 +22,28 @@ import numpy as np
 # float, and complex. Repeated canonicalization, including under different
 # jax_enable_x64 modes, preserves the dtype.
 
+# Precomputed weak scalar avals
+_weak_int32_aval = ShapedArray((), np.dtype(np.int32), weak_type=True)
+_weak_int64_aval = ShapedArray((), np.dtype(np.int64), weak_type=True)
+_weak_float32_aval = ShapedArray((), np.dtype(np.float32), weak_type=True)
+_weak_float64_aval = ShapedArray((), np.dtype(np.float64), weak_type=True)
+_weak_complex64_aval = ShapedArray((), np.dtype(np.complex64), weak_type=True)
+_weak_complex128_aval = ShapedArray((), np.dtype(np.complex128), weak_type=True)
+
 
 class TypedInt(int):
-
   dtype: np.dtype
+  aval: ShapedArray
 
   def __new__(cls, value: int, dtype: np.dtype):
-    v = super(TypedInt, cls).__new__(cls, value)
+    v = super().__new__(cls, value)
     v.dtype = dtype
+    if dtype == np.dtype(np.int32):
+      v.aval = _weak_int32_aval
+    elif dtype == np.dtype(np.int64):
+      v.aval = _weak_int64_aval
+    else:
+      v.aval = ShapedArray((), dtype, weak_type=True)
     return v
 
   def __repr__(self):
@@ -40,12 +54,18 @@ class TypedInt(int):
 
 
 class TypedFloat(float):
-
   dtype: np.dtype
+  aval: ShapedArray
 
   def __new__(cls, value: float, dtype: np.dtype):
-    v = super(TypedFloat, cls).__new__(cls, value)
+    v = super().__new__(cls, value)
     v.dtype = dtype
+    if dtype == np.dtype(np.float32):
+      v.aval = _weak_float32_aval
+    elif dtype == np.dtype(np.float64):
+      v.aval = _weak_float64_aval
+    else:
+      v.aval = ShapedArray((), dtype, weak_type=True)
     return v
 
   def __repr__(self):
@@ -59,12 +79,18 @@ class TypedFloat(float):
 
 
 class TypedComplex(complex):
-
   dtype: np.dtype
+  aval: ShapedArray
 
   def __new__(cls, value: complex, dtype: np.dtype):
-    v = super(TypedComplex, cls).__new__(cls, value)
+    v = super().__new__(cls, value)
     v.dtype = dtype
+    if dtype == np.dtype(np.complex64):
+      v.aval = _weak_complex64_aval
+    elif dtype == np.dtype(np.complex128):
+      v.aval = _weak_complex128_aval
+    else:
+      v.aval = ShapedArray((), dtype, weak_type=True)
     return v
 
   def __repr__(self):
@@ -74,70 +100,73 @@ class TypedComplex(complex):
     return (complex(self), self.dtype)
 
 
-_jax.set_typed_int_type(TypedInt)
-_jax.set_typed_float_type(TypedFloat)
-_jax.set_typed_complex_type(TypedComplex)
-
-
 typed_scalar_types: set[type] = {TypedInt, TypedFloat, TypedComplex}
 
 
-class TypedNdArray:
+class TypedNdArray(np.ndarray):
   """A TypedNdArray is a host-side array used by JAX during tracing.
 
-  To most intents and purposes a TypedNdArray is a thin wrapper around a numpy
-  array and should act like it. The primary differences are that a TypedNdArray
-  carries a JAX type:
+  TypedNdArray is a subclass of np.ndarray that carries additional JAX type
+  information:
   * its type is not canonicalized by JAX, irrespective of the jax_enable_x64
     mode
   * it can be weakly typed.
   """
+  __slots__ = ('_aval', '_weak_type')
 
-  __slots__ = ('val', 'weak_type')
+  def __new__(cls, val: np.ndarray, aval: ShapedArray | None = None):
+    obj = np.asarray(val).view(cls)
+    if aval is not None:
+      obj._aval = aval
+    return obj
 
-  val: np.ndarray
-  weak_type: bool
-
-  def __init__(self, val: np.ndarray, weak_type: bool):
-    self.val = val
-    self.weak_type = weak_type
-
-  @property
-  def dtype(self) -> np.dtype:
-    return self.val.dtype
-
-  @property
-  def shape(self) -> tuple[int, ...]:
-    return self.val.shape
+  def __array_finalize__(self, obj):
+    self._aval = None
+    self._weak_type = (obj.aval.weak_type
+                       if isinstance(obj, TypedNdArray) else False)
 
   @property
-  def strides(self) -> Sequence[int]:
-    return self.val.strides
+  def aval(self) -> ShapedArray:
+    result = self._aval
+    if result is None:
+      # It is possible that multiple threads might race to reach here. However
+      # this seems safe since they will all set the same value.
+      result = ShapedArray(self.shape, self.dtype, weak_type=self._weak_type)
+      self._aval = result
+    return result
 
   @property
-  def ndim(self) -> int:
-    return self.val.ndim
+  def weak_type(self) -> bool:
+    return self.aval.weak_type
 
   @property
-  def size(self) -> int:
-    return self.val.size
+  def val(self) -> np.ndarray:
+    return np.asarray(self)
 
-  def __len__(self) -> int:
-    return self.val.__len__()
+  def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+    inputs = tuple(
+        np.asarray(x) if isinstance(x, TypedNdArray) else x for x in inputs
+    )
+    if 'out' in kwargs:
+      kwargs['out'] = tuple(
+          np.asarray(x) if isinstance(x, TypedNdArray) else x
+          for x in kwargs['out']
+      )
+    return getattr(ufunc, method)(*inputs, **kwargs)
 
   def __repr__(self):
     prefix = 'TypedNdArray('
-    if self.weak_type:
-      dtype_str = f'dtype={self.val.dtype.name}, weak_type=True)'
+    if self.aval.weak_type:
+      dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
     else:
-      dtype_str = f'dtype={self.val.dtype.name})'
+      dtype_str = f'dtype={self.dtype.name})'
 
     line_width = np.get_printoptions()['linewidth']
     if self.size == 0:
-      s = f'[], shape={self.val.shape}'
+      s = f'[], shape={self.shape}'
     else:
       s = np.array2string(
-          self.val,
+          np.asarray(self),
           prefix=prefix,
           suffix=',',
           separator=', ',
@@ -149,119 +178,20 @@ class TypedNdArray:
       sep = ' ' * len(prefix)
     return f'{prefix}{s},{sep}{dtype_str}'
 
-  def __array__(self, dtype=None, copy=None):
-    # You might think that we can do the following here:
-    # return self.val.__array__(dtype=dtype, copy=copy)
-    # Unfortunately __array__ appears to be buggy on NumPy < 2.3 and interprets
-    # the "dtype=None" as "the default float type".
-    # TODO(phawkins): revert to the above form once NumPy 2.3 is the minimum
-    # supported version.
-    return np.asarray(self.val, dtype=dtype, copy=copy)  # pytype: disable=wrong-keyword-args
+  def __reduce__(self):
+    return (TypedNdArray, (np.asarray(self), self.aval.weak_type))
 
-  def __add__(self, other):
-    return self.val.__add__(other)
+  def __getnewargs__(self):
+    return (np.asarray(self), self.aval.weak_type)
 
-  def __sub__(self, other):
-    return self.val.__sub__(other)
-
-  def __mul__(self, other):
-    return self.val.__mul__(other)
-
-  def __floordiv__(self, other):
-    return self.val.__floordiv__(other)
-
-  def __truediv__(self, other):
-    return self.val.__truediv__(other)
-
-  def __mod__(self, other):
-    return self.val.__mod__(other)
-
-  def __pow__(self, other):
-    return self.val.__pow__(other)
-
-  def __radd__(self, other):
-    return self.val.__radd__(other)
-
-  def __rsub__(self, other):
-    return self.val.__rsub__(other)
-
-  def __rmul__(self, other):
-    return self.val.__rmul__(other)
-
-  def __rtruediv__(self, other):
-    return self.val.__rtruediv__(other)
-
-  def __rfloordiv__(self, other):
-    return self.val.__rfloordiv__(other)
-
-  def __rmod__(self, other):
-    return self.val.__rmod__(other)
-
-  def __rpow__(self, other):
-    return self.val.__rpow__(other)
-
-  def __getitem__(self, index):
-    return self.val.__getitem__(index)
-
-  def __bool__(self):
-    return self.val.__bool__()
-
-  def __int__(self):
-    return self.val.__int__()
-
-  def __float__(self):
-    return self.val.__float__()
-
-  def __complex__(self):
-    return self.val.__complex__()
-
-  def __index__(self):
-    return self.val.__index__()
-
-  def __lt__(self, other):
-    return self.val.__lt__(other)
-
-  def __le__(self, other):
-    return self.val.__le__(other)
-
-  def __eq__(self, other):
-    return self.val.__eq__(other)
-
-  def __ne__(self, other):
-    return self.val.__ne__(other)
-
-  def __gt__(self, other):
-    return self.val.__gt__(other)
-
-  def __ge__(self, other):
-    return self.val.__ge__(other)
-
-  def __abs__(self):
-    return self.val.__abs__()
-
-  def reshape(self, *args, **kw):
-    return self.val.reshape(*args, **kw)
-
-  def item(self, *args):
-    return self.val.item(*args)
-
-  @property
-  def T(self):
-    return self.val.T
-
-  @property
-  def mT(self):
-    return self.val.mT
-
-  def clip(self, *args, **kwargs):
-    return self.val.clip(*args, **kwargs)
-
-  def astype(self, dtype, order: str = 'K', casting: str = 'unsafe', subok: bool = True, copy: bool = True):
-    return self.val.astype(  # type: ignore[no-matching-overload, call-overload]
-        dtype, order=order, casting=casting, subok=subok, copy=copy
-    )
-
-  def tobytes(self, order: Literal['A', 'C', 'F', 'K'] | None = 'C'):
-    return self.val.tobytes(order=order)
 
 _jax.set_typed_ndarray_type(TypedNdArray)
+dtypes.register_type_whose_dtype_should_not_be_canonicalized(TypedNdArray)
+
+_jax.set_typed_int_type(TypedInt)
+_jax.set_typed_float_type(TypedFloat)
+_jax.set_typed_complex_type(TypedComplex)
+
+for _typ in typed_scalar_types:
+  dtypes.register_weak_scalar_type(_typ)
+  dtypes.register_type_whose_dtype_should_not_be_canonicalized(_typ)

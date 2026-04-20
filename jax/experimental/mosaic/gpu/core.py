@@ -63,6 +63,7 @@ from . import utils
 cuda_root = lib.cuda_path or "/usr/local/cuda"
 os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
+BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")
 
 _SMEM_SIZE_BOUND = None  # For test purposes.
 
@@ -99,20 +100,29 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 
 
 try:
-  from nvidia import nvshmem  # pytype: disable=import-error
+  from nvidia import nvshmem  # pyrefly: ignore[missing-import]
 except ImportError:
-  # Try to find the nvshmem library in Bazel runfiles.
-  if PYTHON_RUNFILES:
+  # Try to find the nvshmem library in Bazel test runfiles.
+  if BAZEL_TEST == "1" and PYTHON_RUNFILES:
     libdevice_path = os.path.join(
         PYTHON_RUNFILES, "nvidia_nvshmem", "lib", "libnvshmem_device.bc"
     )
     if os.path.exists(libdevice_path):
       os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for root, _, files in os.walk(os.getcwd()):
-      if "/_solib" in root and "libnvshmem_host.so.3" in files:
-        os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
-            root, "libnvshmem_host.so.3"
-        )
+    for solib_path in ["_solib_linux_x86_64", "_solib_linux_aarch64"]:
+      if not os.path.exists(
+          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
+      ):
+        continue
+      for root, _, files in os.walk(
+          os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
+      ):
+        if "libnvshmem_host.so.3" in files:
+          os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
+              root, "libnvshmem_host.so.3"
+          )
+          break
+      if "MOSAIC_GPU_NVSHMEM_SO_PATH" in os.environ:
         break
   else:
     pass
@@ -250,7 +260,7 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  backend_config = dict(
+  backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
       use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
@@ -264,16 +274,26 @@ def _mosaic_gpu_lowering_rule(
         ",".join(map(str, replica_ids))
     )
 
+    if launch_context.MULTIMEM_ARGS_ATTR in module.operation.attributes:
+      multimem_args = np.array(
+          module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR]
+      )
+      backend_config["multimem_parameters"] = ir.StringAttr.get(
+          ",".join(map(str, multimem_args))
+      )
+
   return mlir.custom_call(
       call_target_name="mosaic_gpu_v2",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      result_types=mlir.flatten_ir_types(
+          mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
+      ),
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
-  ).results  # type: ignore
+  ).results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -299,6 +319,7 @@ class TMABarrier:
 class Barrier:
   arrival_count: int
   num_barriers: int = 1
+  orders_tensor_core: bool = False
 
   def __post_init__(self):
     if self.arrival_count < 1:
@@ -308,9 +329,10 @@ class Barrier:
 
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
-  collective_dims: Sequence[gpu.Dimension]
+  collective_dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]]
   arrival_count: int = 1
   num_barriers: int = 1
+  leader_tracked: bool = False
 
 @dataclasses.dataclass(frozen=True)
 class TMEM:
@@ -394,14 +416,14 @@ class _TMEMDialectAlloc:
 def _slice_smem(
     result: ir.Type,
     smem_base: ir.Value,
-    offset: ir.Value,  # This should be an ir.IndexType.
+    offset: int,
     lowering_semantics: LoweringSemantics,
 ) -> ir.Value:
   if lowering_semantics == LoweringSemantics.Warpgroup:
-    offset = arith.index_cast(ir.IntegerType.get_signless(32), offset)
-    return dialect.slice_smem(result, offset)
+    return dialect.slice_smem(result, offset)  # pyrefly: ignore[bad-argument-type]
   else:
-    return memref.view(result, smem_base, offset, [])
+    ir_offset = arith.constant(ir.IndexType.get(), offset)
+    return memref.view(result, smem_base, ir_offset, [])
 
 
 def _construct_smem_reftree(
@@ -414,7 +436,6 @@ def _construct_smem_reftree(
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
-  index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
@@ -427,7 +448,7 @@ def _construct_smem_reftree(
       nonlocal dynamic_smem_offset
       barrier_ty = ir.MemRefType.get(
           (num_barriers,),
-          ir.Type.parse("!mosaic_gpu.barrier")
+          dialect.BarrierType.get()
           if lowering_semantics == LoweringSemantics.Warpgroup
           else i64,
           memory_space=utils.smem(),
@@ -435,7 +456,7 @@ def _construct_smem_reftree(
       barrier_memref = _slice_smem(
             barrier_ty,
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
       dynamic_smem_offset += num_barriers * utils.MBARRIER_BYTES
@@ -462,27 +483,34 @@ def _construct_smem_reftree(
 
       case TMABarrier(num_barriers):
         init_fn: Callable[..., Any] = (
-            utils.DialectBarrierRef.initialize
+            functools.partial(
+                utils.DialectBarrierRef.initialize,
+                orders_tensor_core=False,
+            )
             if lowering_semantics == LoweringSemantics.Warpgroup
             else utils.BarrierRef.initialize
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
-      case Barrier(arrival_count, num_barriers):
+      case Barrier(arrival_count, num_barriers, orders_tensor_core):
         init_fn = (
-            utils.DialectBarrierRef.initialize
+            functools.partial(
+                utils.DialectBarrierRef.initialize,
+                orders_tensor_core=orders_tensor_core,
+            )
             if lowering_semantics == LoweringSemantics.Warpgroup
             else utils.BarrierRef.initialize
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
-      case ClusterBarrier(collective_dims, arrival_count, num_barriers):
+      case ClusterBarrier(collective_dims, arrival_count, num_barriers, leader_tracked):
         ref = utils.CollectiveBarrierRef.initialize(
-            barrier_memref(num_barriers), arrival_count, collective_dims, cluster_shape
+            barrier_memref(num_barriers), arrival_count, collective_dims,
+            cluster_shape, leader_tracked=leader_tracked
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=utils.smem()),
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
         packing = 1 if packing is None else packing
@@ -518,7 +546,7 @@ def _construct_smem_reftree(
         tile_smem = _slice_smem(
             ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=utils.smem()),
             dynamic_smem,
-            c(dynamic_smem_offset, index),
+            dynamic_smem_offset,
             lowering_semantics,
         )
         dynamic_smem_offset += _count_buffer_bytes(ref_ty)
@@ -545,8 +573,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
         size += max(_smem_tree_size(s) for s in members)
       case (
           TMABarrier(num_barriers)
-          | ClusterBarrier(_, _, num_barriers=num_barriers)
-          | Barrier(_, num_barriers=num_barriers)
+          | ClusterBarrier(num_barriers=num_barriers)
+          | Barrier(num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError(
@@ -574,11 +602,12 @@ def _launch(
     smem_buffers: ShapeTree | Union[ShapeTree],
     lowering_semantics: LoweringSemantics,
     module: ir.Module,
+    inout_buffers_ptr: ir.Value,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
     device_collective_metadata: ir.Value | None = None,
-    host_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
+    num_params: int = 0,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -654,7 +683,7 @@ def _launch(
               memory_space=utils.smem(),
           ),
           dynamic_smem,
-          c(profiler_start, index),
+          profiler_start,  # pyrefly: ignore[unbound-name]
           lowering_semantics,
       )
       if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -662,6 +691,7 @@ def _launch(
         wrap_in_custom_primitive = True
       else:
         wrap_in_custom_primitive = False
+      assert maybe_prof_buffer is not None
       prof = profiler.OnDeviceProfiler(
           profiler_spec,
           prof_smem,
@@ -675,10 +705,11 @@ def _launch(
         module,
         launch_context.Scratch(launch_op),
         cluster,
+        inout_buffers_ptr,
         prof,
         device_collective_metadata=device_collective_metadata,
-        host_collective_metadata=host_collective_metadata,
         num_peers=num_peers,
+        num_params=num_params,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -689,8 +720,8 @@ def _launch(
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       nvvm.fence_mbarrier_init()
       if math.prod(cluster) != 1:
-        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+        nvvm.cluster_arrive_relaxed(aligned=True)
+        nvvm.cluster_wait(aligned=True)
       if tmem_allocs:
         init_warp_ctx: contextlib.AbstractContextManager
         if lowering_semantics == LoweringSemantics.Warpgroup:
@@ -734,12 +765,12 @@ def _launch(
     if tmem_allocs:
       gpu.barrier()  # Make sure everyone is done before we release TMEM.
       if any(alloc.collective for alloc in tmem_allocs):
-        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+        nvvm.cluster_arrive_relaxed(aligned=True)
+        nvvm.cluster_wait(aligned=True)
       if lowering_semantics == LoweringSemantics.Warpgroup:
         init_warp_ctx = contextlib.nullcontext()
       else:
-        init_warp_ctx = utils.when(is_init_warp)
+        init_warp_ctx = utils.when(is_init_warp)  # pyrefly: ignore[unbound-name]
       with init_warp_ctx:
         for alloc in tmem_allocs:
           alloc.dealloc()
@@ -761,7 +792,7 @@ def _infer_arch() -> tuple[int, int]:
         f"Mosaic GPU does not yet support AMD ROCm devices. "
         f"Got compute_capability: {arch_name}"
     )
-  return tuple(map(int, arch_name.split(".")))  # type: ignore
+  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
 
 
 def _lower_as_gpu_kernel(
@@ -839,8 +870,8 @@ def _lower_as_gpu_kernel(
         arg_refs.append(arg_memref)
 
       collective_metadata = None
-      host_collective_metadata = None
       num_peers = 0
+      num_params = 0
 
       # Collective metadata parameter is used to lower collective operations
       # in a single-process setup.
@@ -849,23 +880,17 @@ def _lower_as_gpu_kernel(
           and jax_mesh.size > 1
           and is_single_process_multi_device_topology()
       ):
-        num_args = len(arg_refs)
+        num_params = len(arg_refs)
         num_peers = jax_mesh.size
         metadata_ptr = llvm.load(
-            ptr_ty, utils.getelementptr(buffers, [num_args], ptr_ty)
+            ptr_ty, utils.getelementptr(buffers, [num_params], ptr_ty)
         )
+
         metadata_ty = ir.MemRefType.get(
-            (launch_context.COLLECTIVE_METADATA_SIZE + num_args * num_peers,),
-            ir.IntegerType.get_signless(64)
+            (launch_context.get_collective_metadata_size(num_params, num_peers),),
+            ir.IntegerType.get_signless(64),
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
-
-        host_metadata_ptr = llvm.load(
-            ptr_ty, utils.getelementptr(buffers, [num_args + 1], ptr_ty)
-        )
-        host_collective_metadata = utils.ptr_as_memref(
-            host_metadata_ptr, metadata_ty
-        )
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -877,13 +902,13 @@ def _lower_as_gpu_kernel(
           smem_scratch_shape,
           lowering_semantics,
           module,
+          buffers,
           prof_spec,
           prof_buffer,
           collective_metadata,
-          host_collective_metadata,
           num_peers,
+          num_params,
       ) as (_launch_ctx, smem_refs):
-        nonlocal launch_ctx
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
@@ -975,8 +1000,8 @@ def _kernel_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    layout_inference.infer_layout(module)  # pytype: disable=attribute-error
-    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
+    layout_inference.infer_layout(module, arch=_infer_arch())
+    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)
 
   launch_ctx.scratch.finalize_size()
   module.operation.verify()
@@ -1118,7 +1143,7 @@ def as_torch_gpu_kernel(
 
 def _compile_as_torch_gpu_kernel(module_asm: bytes):
   try:
-    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+    import torch  # pyrefly: ignore[missing-import]
   except ImportError:
     raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 
@@ -1127,9 +1152,9 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   # Get our hands on the compilation and unload functions
   try:
     try:
-      import jax_plugins.xla_cuda13 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
+      import jax_plugins.xla_cuda13 as cuda_plugin  # pyrefly: ignore[missing-import]
     except ImportError:
-      import jax_plugins.xla_cuda12 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
+      import jax_plugins.xla_cuda12 as cuda_plugin  # pyrefly: ignore[missing-import]
   except ImportError:
     dll = ctypes.CDLL(None)
   else:
@@ -1181,7 +1206,7 @@ def _as_torch_gpu_kernel(
 
   launch, unload = _compile_as_torch_gpu_kernel(module_asm)
   # _compile_as_torch_gpu_kernel checks that this succeeds
-  import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+  import torch  # pyrefly: ignore[missing-import]
 
   def as_torch_dtype(dtype):
     # torch contains NumPy-compatible dtypes in its top namespace
@@ -1225,6 +1250,6 @@ def _as_torch_gpu_kernel(
     return out[0] if unwrap_output_tuple else out
 
   # Unload the compiled code when the Python function is destroyed.
-  apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)
+  apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)  # pyrefly: ignore[missing-attribute]
 
   return apply

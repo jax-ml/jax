@@ -30,6 +30,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import earray
 from jax._src import config
+from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
 from jax._src import test_util as jtu
@@ -152,15 +153,13 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(
         np.dtype(np.int32),
         dtypes.canonicalize_value(
-            TypedNdArray(np.array([6], dtype=np.dtype(np.int32)),
-                         weak_type=False)
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int32)))
         ).dtype,
     )
     self.assertEqual(
         np.dtype(np.int64),
         dtypes.canonicalize_value(
-            TypedNdArray(np.array([6], dtype=np.dtype(np.int64)),
-                         weak_type=False)
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int64)))
         ).dtype,
     )
 
@@ -231,7 +230,7 @@ class DtypesTest(jtu.JaxTestCase):
            "path when jax_numpy_dtype_promotion=strict")
 
     assertTypePromotionError = functools.partial(
-      self.assertRaisesRegex, dtypes.TypePromotionError, msg,
+      self.assertRaisesRegex, jax.dtypes.TypePromotionError, msg,
       dtypes.promote_types)
 
     # Check that strong types have diagonal promotion table:
@@ -276,7 +275,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testPromoteDtypesStandard(self):
     assertTypePromotionError = functools.partial(
         self.assertRaisesRegex,
-        dtypes.TypePromotionError,
+        jax.dtypes.TypePromotionError,
         'Input dtypes .* have no available implicit dtype promotion path.',
         dtypes.promote_types,
     )
@@ -471,8 +470,8 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int32))), np.dtype(np.int32))
     self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
     self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32))), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64))), np.dtype(np.int64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):
@@ -565,8 +564,6 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
 
   def test_custom_tangent_dtype(self):
-    from jax._src import core
-
     class scale(dtypes.extended):
       pass
 
@@ -632,7 +629,6 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertTrue(dtypes.issubdtype(ScaleTy(dtypes.float8_e5m2), scale))
 
   def test_custom_tangent_dtype_with_scan(self):
-    from jax._src import core
 
     class ScalesTyRules:
       # tell JAX how to lower this dtype to an HLO representation dtype
@@ -735,6 +731,10 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     self.assertEqual(bwd_result.dtype, jnp.bfloat16)
     self.assertAllClose(bwd_result, 2 * g)
     self.assertEqual(repr(dt), 'PrimalTangentDType{i8/bf16}')
+
+    # test equality
+    dt_ = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
+    self.assertEqual(dt, dt_)
 
   @parameterized.parameters(itertools.product([(), (2,), (3, 4)], repeat=2))
   def test_edtype_conversion(self, shape_prefix, shape_suffix):
@@ -858,7 +858,6 @@ class EArrayTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
   def test_extended_dtypes_at_rest(self, jit):
     # Test a trivial isomorphic-to-float32 extended dtype working with EArray
-    from jax._src import core
     from jax._src.interpreters import pxla
 
     class foo(dtypes.extended): pass
@@ -1133,7 +1132,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         continue
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(dtypes.TypePromotionError,
+      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
                                   ".*8-bit floats do not support implicit promotion"):
         x + y
 
@@ -1145,7 +1144,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         continue
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(dtypes.TypePromotionError,
+      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
                                   ".*4-bit floats do not support implicit promotion"):
         x + y
 
@@ -1160,7 +1159,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='int32')
       with self.assertRaisesRegex(
-          dtypes.TypePromotionError,
+          jax.dtypes.TypePromotionError,
           '.*[124]-bit integers do not support implicit promotion',
       ):
         x + y
@@ -1238,11 +1237,11 @@ class TestPromotionTables(jtu.JaxTestCase):
 
       try:
         result_dtype = dtypes.result_type(input_dtype, dtypes.canonicalize_dtype(output_dtype))
-      except dtypes.TypePromotionError:
+      except jax.dtypes.TypePromotionError:
         result_dtype = None
 
       if result_dtype is None and input_dtype != output_dtype:
-        with self.assertRaises(dtypes.TypePromotionError):
+        with self.assertRaises(jax.dtypes.TypePromotionError):
           dtypes.safe_to_cast(input_dtype, output_dtype)
       else:
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,

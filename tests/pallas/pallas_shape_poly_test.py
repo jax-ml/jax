@@ -445,8 +445,6 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       f_e(x_shape, x_shape)
 
   def test_export_vmap(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 2, 24):
-      self.skipTest("Requires a newer libTPU")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       o_ref[...] = x_ref[...] + y_ref[...]
 
@@ -502,6 +500,9 @@ class ExportTestWithTriton(jtu.JaxTestCase):
     )
 
   def test_cross_platform(self):
+    # TODO: Add this test back once gfx arch string parsing is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipped on ROCm due to gfx arch string parsing error.")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       x, y = x_ref[...], y_ref[...]
       o_ref[...] = x + y
@@ -552,6 +553,8 @@ class ExportTestWithTriton(jtu.JaxTestCase):
 class ExportTestWithMosaicGpu(ExportTestWithTriton):
 
   def setUp(self):
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     # TODO(b/432678342): remove once this is fixed.
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least(
         "9.0"

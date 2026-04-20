@@ -37,22 +37,22 @@ jobs:
           persist-credentials: false
       - name: Build JAX
         run: |
-          pushd $WORKSPACE_DIR
+          pushd "$WORKSPACE_DIR"
           python3 build/rocm/ci_build \
-            --rocm-version $ROCM_VERSION \
-            --base-docker $BASE_IMAGE \
-            --python-versions $PYTHON_VERSION \
+            --rocm-version "$ROCM_VERSION" \
+            --base-docker "$BASE_IMAGE" \
+            --python-versions "$PYTHON_VERSION" \
             --compiler=clang \
             dist_docker \
-            --image-tag $TEST_IMAGE
+            --image-tag "$TEST_IMAGE"
       - name: Archive jax wheels
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
           path: ${{ env.WORKSPACE_DIR }}/dist/*.whl
           retention-days: 2
       - name: Run tests
         run: |
-          cd $WORKSPACE_DIR
-          python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
+          cd "$WORKSPACE_DIR"
+          python3 build/rocm/ci_build test "$TEST_IMAGE" --test-cmd "pytest tests/core_test.py"
 

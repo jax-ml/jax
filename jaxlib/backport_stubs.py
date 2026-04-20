@@ -17,32 +17,24 @@
 import argparse
 import re
 
-_REPLACEMENTS = [
-    (re.compile(r"\btypes\.CapsuleType\b"), "typing_extensions.CapsuleType"),
-]
-
+_TYPES_CAPSULE_TYPE = re.compile(r"\btypes\.CapsuleType\b")
 _TYPES_USAGE = re.compile(r"\btypes\.")
 _IMPORT_TYPES = re.compile(r"^import types\n", re.MULTILINE)
-_TYPING_EXTENSIONS_USAGE = re.compile(r"\btyping_extensions\.")
-_IMPORT_TYPING_EXTENSIONS = re.compile(
-    r"^import typing_extensions\b", re.MULTILINE
+_CAPSULE_TYPE_IMPORT = re.compile(
+    r"^from typing_extensions import\b.*\bCapsuleType\b", re.MULTILINE
 )
-_DOCSTRING_END = re.compile(r'^""".*?"""\n', re.MULTILINE | re.DOTALL)
 
 
 def backport(content: str) -> str:
-  for pattern, replacement in _REPLACEMENTS:
-    content = pattern.sub(replacement, content)
+  content, n = _TYPES_CAPSULE_TYPE.subn("CapsuleType", content)
+
+  if n and not _CAPSULE_TYPE_IMPORT.search(content):
+    content = _IMPORT_TYPES.sub(
+        r"from typing_extensions import CapsuleType\n\g<0>", content
+    )
 
   if not _TYPES_USAGE.search(content):
     content = _IMPORT_TYPES.sub("", content)
-
-  if _TYPING_EXTENSIONS_USAGE.search(
-      content
-  ) and not _IMPORT_TYPING_EXTENSIONS.search(content):
-    content = _DOCSTRING_END.sub(
-        r"\g<0>\nimport typing_extensions\n", content, count=1
-    )
 
   return content
 

@@ -31,8 +31,8 @@ coordinator_port = '8482'
 metadata_response_code_success = 200
 
 def get_metadata(key):
-  import requests  # pytype: disable=import-error
-  import time  # pytype: disable=import-error
+  import requests  # pyrefly: ignore[missing-source-for-stubs]
+  import time
   # Based on https://github.com/tensorflow/tensorflow/pull/40317
   gce_metadata_endpoint = 'http://' + os.environ.get(
       'GCE_METADATA_IP', 'metadata.google.internal')
@@ -202,8 +202,19 @@ class GceTpuCluster(BaseTpuCluster):
 
   @staticmethod
   def _get_worker_list_in_slice() -> list[str]:
-    workers = get_metadata('worker-network-endpoints')[0].split(',')
-    return [worker.split(':')[2] for worker in workers]
+    addrs = []
+    for worker in get_metadata('worker-network-endpoints')[0].split(','):
+      # worker-network-endpoints can have one of two formats. In the new format,
+      # it is just a list of hostnames. In the old format, it is a list of
+      # name:id:ip triples.
+      parts = worker.split(':')
+      if len(parts) == 1:
+        addrs.append(parts[0])
+      elif len(parts) == 3:
+        addrs.append(parts[2])
+      else:
+        raise ValueError(f'unsupported worker-network-endpoints format: {worker}')
+    return addrs
 
 class GkeTpuCluster(BaseTpuCluster):
 

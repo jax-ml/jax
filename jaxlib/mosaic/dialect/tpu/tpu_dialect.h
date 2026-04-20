@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -60,7 +61,7 @@ struct TpuTilingFlags {
   bool use_x4_large_second_minor = false;
 };
 
-std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
+std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 // Creates a pass that infers the layout of memrefs in the given function.
 //
@@ -69,7 +70,7 @@ std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
 // * 2D -- (sublane count, lane count) TensorCore tiling.
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation, absl::Span<const int64_t> target_shape,
-    const TpuTilingFlags& tpu_tiling_flags, bool align = true);
+    const TpuTilingFlags& tpu_tiling_flags);
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
@@ -91,9 +92,15 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 // vector ops. This functions inverts the layout erasure applied to the value.
 MemRefType getMemRefType(Value value);
 
+// Returns true if `value` is guaranteed to be divisible by `divisor`, false if
+// value is known to not be divisible by `divisor`, and nullopt if the
+// divisibility is not known.
+std::optional<bool> isDivisible(Value value, int64_t divisor,
+                                int64_t fuel = 128);
+
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 128);
 
-DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
                                                 bool transpose_lhs,
                                                 bool transpose_rhs);
 

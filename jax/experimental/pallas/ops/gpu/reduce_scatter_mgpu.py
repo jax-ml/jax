@@ -96,7 +96,7 @@ def reduce_scatter(
       raise ValueError("Integer types only support vec_size=1")
   elif vec_size is None:  # vec_size inference for floating point types
     dtype_bits = jnp.finfo(dtype).bits
-    max_vec_size = min(128 // dtype_bits, output_size // 128)  # pyrefly: ignore[unbound-name]  # pyrefly#2382
+    max_vec_size = min(128 // dtype_bits, output_size // 128)
     if tile_size is not None:
       max_vec_size_for_tile = tile_size // 128
       max_vec_size = min(max_vec_size, max_vec_size_for_tile)
@@ -240,5 +240,5 @@ def _run_example():
 
 
 if __name__ == "__main__":
-  from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
+  from jax._src import test_multiprocess as jt_multiprocess  # pyrefly: ignore[missing-module-attribute]
   jt_multiprocess.main(shard_main=_run_example)

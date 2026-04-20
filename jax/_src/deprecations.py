@@ -36,7 +36,7 @@ import warnings
 # __getattr__ = _deprecation_getattr(__name__, _deprecations)
 # del _deprecation_getattr
 
-# Note that type checkers such as Pytype will not know about the deprecated
+# Note that type checkers such as Pyrefly will not know about the deprecated
 # names. If it is desirable that a deprecated name is known to the type checker,
 # add:
 # import typing
@@ -112,10 +112,12 @@ def is_accelerated(deprecation_id: str) -> bool:
   return _registered_deprecations[deprecation_id].accelerated
 
 
-def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
+def warn(deprecation_id: str, message: str, stacklevel: int, *,
+         error_class: type[Exception] = ValueError) -> None:
   """Warns about a deprecation, or errors if the deprecation is accelerated."""
   if is_accelerated(deprecation_id):
-    raise ValueError(message)
+    assert issubclass(error_class, Exception)
+    raise error_class(message)
   else:
     warnings.warn(message, category=DeprecationWarning,
                   stacklevel=stacklevel + 1)
@@ -123,12 +125,6 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 
 # Register a number of deprecations: we do this here to ensure they're
 # always registered by the time `accelerate` and `is_acelerated` are called.
-register('default-dtype-bits-config')
-register('jax-checkpoint-concrete')
+register('jax-array-numpy-dtype')
 register('jax-nn-one-hot-float-input')
-register('jax-numpy-arange-complex')
 register('jax-numpy-astype-complex-to-real')
-register('jax-numpy-clip-args')
-register('jax-scipy-special-sph-harm')
-register('jax-pmap-shmap-merge')
-register('pltpu-memory-space-any')

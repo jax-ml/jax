@@ -98,68 +98,71 @@ mlir::LogicalResult RunSerde(
   std::string storage;
   // Explicitly use a post-order walk to allow for deleting operations on the
   // fly.
-  auto result = module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation*
-                                                                op) {
-    if (mlir::isa<mlir::ModuleOp>(op)) {  // Don't mangle the ModuleOp itself.
-      return mlir::WalkResult::advance();
-    }
-    std::optional<mlir::OperationName> new_name;
-    bool was_erased = false;
-    if (serialize) {
-      auto new_name_str = mangle(op->getName().getStringRef(),
-                                 options.dialect_prefix, &storage);
-      new_name = mlir::OperationName(new_name_str, op->getContext());
-    } else {
-      if (auto demangled =
-              demangle(op->getName().getStringRef(), options.dialect_prefix)) {
-        auto new_name_str = *demangled;
-        if (auto registered = mlir::RegisteredOperationName::lookup(
-                new_name_str, op->getContext())) {
-          new_name = *registered;
-        } else {
+  auto result =
+      module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation* op) {
+        if (mlir::isa<mlir::ModuleOp>(
+                op)) {  // Don't mangle the ModuleOp itself.
+          return mlir::WalkResult::advance();
+        }
+        std::optional<mlir::OperationName> new_name;
+        bool was_erased = false;
+        if (serialize) {
+          auto new_name_str = mangle(op->getName().getStringRef(),
+                                     options.dialect_prefix, &storage);
           new_name = mlir::OperationName(new_name_str, op->getContext());
+        } else {
+          if (auto demangled = demangle(op->getName().getStringRef(),
+                                        options.dialect_prefix)) {
+            auto new_name_str = *demangled;
+            if (auto registered = mlir::RegisteredOperationName::lookup(
+                    new_name_str, op->getContext())) {
+              new_name = *registered;
+            } else {
+              new_name = mlir::OperationName(new_name_str, op->getContext());
+            }
+          } else {
+            op->emitError("Operation not in a serialized form");
+            return mlir::WalkResult::interrupt();
+          }
+          // Upgrade the op to the current version, if needed.
+          if (const auto rule = upgrade_rules.find(new_name->getStringRef());
+              rule != upgrade_rules.end()) {
+            if (rule->second(op, version, was_erased).failed()) {
+              return mlir::WalkResult::interrupt();
+            }
+          }
         }
-      } else {
-        op->emitError("Operation not in a serialized form");
-        return mlir::WalkResult::interrupt();
-      }
-      // Upgrade the op to the current version, if needed.
-      if (const auto rule = upgrade_rules.find(new_name->getStringRef());
-          rule != upgrade_rules.end()) {
-        if (rule->second(op, version, was_erased).failed()) {
-          return mlir::WalkResult::interrupt();
+
+        // In this case, the op is no longer accessible, and can't be processed
+        // further.
+        if (was_erased) {
+          return mlir::WalkResult::advance();
         }
-      }
-    }
 
-    // In this case, the op is no longer accessible, and can't be processed
-    // further.
-    if (was_erased) {
-      return mlir::WalkResult::advance();
-    }
-
-    auto new_op = mlir::Operation::create(
-        op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
-        op->getAttrs(), nullptr, op->getSuccessors(), op->getRegions());
-    op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
-                                                new_op);
-    // Downgrade the op to the target version, if needed.
-    bool downgrade_failed = false;
-    if (serialize && version != serialize_version) {
-      if (const auto rule = downgrade_rules.find(op->getName().getStringRef());
-          rule != downgrade_rules.end()) {
-        downgrade_failed =
-            rule->second(new_op, serialize_version, was_erased).failed();
-      }
-    }
-    if (was_erased) {
-      return mlir::WalkResult::advance();
-    }
-    op->replaceAllUsesWith(new_op->getResults());
-    op->erase();
-    return downgrade_failed ? mlir::WalkResult::interrupt()
-                            : mlir::WalkResult::advance();
-  });
+        auto new_op = mlir::Operation::create(
+            op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
+            op->getAttrs(), mlir::PropertyRef{}, op->getSuccessors(),
+            op->getRegions());
+        op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
+                                                    new_op);
+        // Downgrade the op to the target version, if needed.
+        bool downgrade_failed = false;
+        if (serialize && version != serialize_version) {
+          if (const auto rule =
+                  downgrade_rules.find(op->getName().getStringRef());
+              rule != downgrade_rules.end()) {
+            downgrade_failed =
+                rule->second(new_op, serialize_version, was_erased).failed();
+          }
+        }
+        if (was_erased) {
+          return mlir::WalkResult::advance();
+        }
+        op->replaceAllUsesWith(new_op->getResults());
+        op->erase();
+        return downgrade_failed ? mlir::WalkResult::interrupt()
+                                : mlir::WalkResult::advance();
+      });
   return result.wasInterrupted() ? mlir::failure() : mlir::success();
 }
 

@@ -38,7 +38,7 @@ from .utils import *  # noqa: F403
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
-  mosaic_gpu_lib = None  # type: ignore[assignment]
+  mosaic_gpu_lib = None
 
 # ruff: noqa: F405
 
@@ -195,7 +195,7 @@ class ProfilerSpec:
 
   def mlir_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
-  ) -> ir.Type:
+  ) -> ir.MemRefType:
     return ir.MemRefType.get(
         (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
         ir.IntegerType.get_signless(32),
@@ -203,7 +203,7 @@ class ProfilerSpec:
 
   def jax_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
-  ) -> ir.Type:
+  ) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(
         (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
         jnp.uint32,
@@ -408,7 +408,7 @@ class OnDeviceProfiler:
       gpu.barrier()  # Make sure all warpgroups are done.
 
       block_idx = c(0, index)
-      for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
+      for dim in gpu.Dimension:
         block_idx = arith.addi(
             arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
         )

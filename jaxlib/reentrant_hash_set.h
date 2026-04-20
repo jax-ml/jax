@@ -245,6 +245,8 @@ class ReentrantHashSet {
   size_t size() const { return size_; }
   bool empty() const { return size_ == 0; }
 
+  // Caution: unlike most methods of this class, clear() is not safe if the
+  // destructor of Key calls back into the set's methods.
   void clear() {
     if (capacity_ == 0) return;
     for (size_t i = 0; i < capacity_; ++i) {
@@ -447,13 +449,58 @@ class ReentrantHashSet {
     }
   }
 
+  // Returns a pair of the inserted (or existing) key pointer, and a boolean
+  // which is true if inserted, false if already exists.
+  // Supports heterogeneous lookup and in-place construction.
+  template <typename K, typename... Args>
+  std::pair<Key*, bool> try_emplace(const K& key, Args&&... args) {
+    size_t hash = hasher_(key);
+    while (true) {
+      if (size_ + num_deleted_ + 1 > capacity_ * max_load_factor_ ||
+          capacity_ == 0) {
+        size_t new_cap = capacity_ == 0 ? 8 : capacity_;
+        if (size_ >= capacity_ / 2) {
+          new_cap = capacity_ * 2;
+        }
+        Rehash(new_cap);
+      }
+
+      FindResult res = FindInternal(key, hash);
+      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+        continue;
+      }
+      if (res.found) {
+        return {&slots_[res.idx], false};
+      }
+
+      DCHECK(res.idx != ~size_t{0});
+      DCHECK(IsEmptyOrDeleted(ctrl_[res.idx]));
+
+      bool was_deleted = (ctrl_[res.idx] == kDeleted);
+      int8_t h2 = H2(hash);
+      ctrl_[res.idx] = h2;
+      SetCtrlMirrored(res.idx, h2);
+      new (&slots_[res.idx]) Key(std::forward<Args>(args)...);
+
+      ++size_;
+      if (was_deleted) {
+        --num_deleted_;
+      }
+      ++version_;
+      return {&slots_[res.idx], true};
+    }
+  }
+
   void erase(const_iterator it) {
     CHECK(it.set_ == this);
     CHECK(it.idx_ < capacity_);
     CHECK(IsFull(ctrl_[it.idx_]));
     ctrl_[it.idx_] = kDeleted;
     SetCtrlMirrored(it.idx_, kDeleted);
-    slots_[it.idx_].~Key();
+    // Make a temporary copy of the key before destroying it. We want to avoid
+    // reentrant calls into hash set during destruction of Key, and moving it
+    // to a temporary ensures this.
+    Key k = std::move(slots_[it.idx_]);
     --size_;
     ++num_deleted_;
     ++version_;

@@ -176,8 +176,8 @@ def stable_hlo_generate_dump(args: tuple[Any, str],
 common.register_pass(
     common.Pass(
         name=HloPass.STABLE_HLO.value,
-        compile_fn=trace_and_lower,  # type: ignore[arg-type]
-        generate_dump=stable_hlo_generate_dump,  # type: ignore[arg-type]
+        compile_fn=trace_and_lower,
+        generate_dump=stable_hlo_generate_dump,
     )
 )
 
@@ -198,8 +198,8 @@ def original_hlo_generate_dump(args: tuple[Any, str],
 common.register_pass(
     common.Pass(
         name=HloPass.ORIGINAL.value,
-        compile_fn=trace_and_lower,  # type: ignore[arg-type]
-        generate_dump=original_hlo_generate_dump,  # type: ignore[arg-type]
+        compile_fn=trace_and_lower,
+        generate_dump=original_hlo_generate_dump,
     )
 )
 
@@ -221,7 +221,7 @@ def optimized_generate_dump(args: tuple[Any, str],
 common.register_pass(
     common.Pass(
         name=HloPass.OPTIMIZED.value,
-        compile_fn=trace_and_lower,  # type: ignore[arg-type]
-        generate_dump=optimized_generate_dump,  # type: ignore[arg-type]
+        compile_fn=trace_and_lower,
+        generate_dump=optimized_generate_dump,
     )
 )

@@ -26,7 +26,8 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
-    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
+    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef,
+    default_registry, dispatch_registry)
 import jax.numpy as jnp
 
 # Easier to read.
@@ -300,6 +301,24 @@ class TreeTest(jtu.JaxTestCase):
     xs, tree = tree_util.tree_flatten(inputs)
     actual = tree_util.tree_unflatten(tree, xs)
     self.assertEqual(actual, inputs)
+
+  def testIsTreeNode(self):
+    self.assertTrue(tree_util.is_tree_node(list))
+    self.assertTrue(tree_util.is_tree_node(dict))
+    self.assertTrue(tree_util.is_tree_node(tuple))
+    self.assertTrue(tree_util.is_tree_node(type(None)))
+
+    # Custom registered type
+    self.assertTrue(tree_util.is_tree_node(AnObject))
+
+    # Namedtuple
+    self.assertTrue(tree_util.is_tree_node(ATuple))
+    self.assertTrue(tree_util.is_tree_node(ANamedTupleSubclass))
+
+    # Non-node types
+    self.assertFalse(tree_util.is_tree_node(int))
+    self.assertFalse(tree_util.is_tree_node(str))
+    self.assertFalse(tree_util.is_tree_node(float))
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
@@ -1184,6 +1203,24 @@ class StaticTest(parameterized.TestCase):
     )
     self.assertEqual(tree_structure, new_structure)
 
+  def test_compare_pytreedef_with_registries(self):
+    class MyCustomType:
+      def __init__(self, x):
+        self.x = x
+
+    tree_util.register_pytree_node(
+        MyCustomType,
+        lambda o: ((o.x,), None),
+        lambda _, xs: MyCustomType(xs[0])
+    )
+
+    obj = MyCustomType(1)
+
+    leaves1, treedef1 = default_registry.flatten(obj)
+    leaves2, treedef2 = dispatch_registry.flatten(obj)
+
+    self.assertEqual(treedef1, treedef2)
+    self.assertEqual(leaves1, leaves2)
 
 class RavelUtilTest(jtu.JaxTestCase):
 
@@ -1718,10 +1755,11 @@ class RegistrationTest(jtu.JaxTestCase):
     class Foo:
       x: int
       y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42)
 
-    # ``y`` is explicitly excluded.
+    # ``y`` and ``z`` are explicitly excluded.
     tree_util.register_dataclass(
-        Foo, data_fields=["x"], meta_fields=[], drop_fields=["y"]
+        Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
   def test_register_dataclass_invalid_plain_class(self):

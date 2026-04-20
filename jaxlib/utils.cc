@@ -253,9 +253,8 @@ void SetSafeZipLengthError(absl::InlinedVector<nb::object, 4>& iterators,
     // If arg_is_longer: arg0 exhausted, only mismatch_idx had one more fetched.
     // If !arg_is_longer: mismatch_idx exhausted early, iterators before it had
     // one more fetched.
-    size_t consumed = arg_is_longer
-                          ? (j == mismatch_idx ? n + 1 : n)
-                          : (j < mismatch_idx ? n + 1 : n);
+    size_t consumed = arg_is_longer ? (j == mismatch_idx ? n + 1 : n)
+                                    : (j < mismatch_idx ? n + 1 : n);
     int remaining = DrainIterator(iterators[j]);
     if (remaining == kDrainLimitExceeded) {
       lengths[j] = absl::StrCat(consumed + kMaxDrainCount, "+");

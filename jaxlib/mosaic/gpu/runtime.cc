@@ -24,20 +24,20 @@ namespace {
 template <typename... Args>
 void abort_on_error(CUresult result, const char* fmt, Args&&... args) {
   if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
+    const char* ptr = nullptr;
     cuGetErrorString(result, &ptr);
     fprintf(stderr, fmt, std::forward<Args>(args)..., ptr);
     abort();
   }
 }
-}
+}  // namespace
 
 extern "C" {
 
-void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
-                              int64_t elem_type, int64_t rank,
-                              int64_t *sizes, int64_t *strides,
-                              int64_t swizzle_bytes, int64_t *window_shape) {
+void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
+                              int64_t elem_type, int64_t rank, int64_t* sizes,
+                              int64_t* strides, int64_t swizzle_bytes,
+                              int64_t* window_shape) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
     fprintf(stderr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
@@ -48,42 +48,42 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   CUtensorMapDataType data_type;
   int64_t elem_bitwidth;
   // types are defined in: launch_context._tma_dma_type()
-  if (elem_type == 8){
+  if (elem_type == 8) {
     // this is for int2s
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
     elem_bitwidth = 2;
-  } else if (elem_type == 0){
+  } else if (elem_type == 0) {
     // this is for int4s
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
     elem_bitwidth = 4;
-  } else if (elem_type == 1){
+  } else if (elem_type == 1) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
     elem_bitwidth = 8;
-  } else if (elem_type == 2){
+  } else if (elem_type == 2) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
     elem_bitwidth = 16;
-  } else if (elem_type == 3){
+  } else if (elem_type == 3) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
     elem_bitwidth = 32;
-  } else if (elem_type == 4){
+  } else if (elem_type == 4) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
     elem_bitwidth = 64;
-  } else if (elem_type == 5){
+  } else if (elem_type == 5) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
     elem_bitwidth = 16;
-  } else if (elem_type == 6){
+  } else if (elem_type == 6) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT32;
     elem_bitwidth = 32;
-  } else if (elem_type == 7){
+  } else if (elem_type == 7) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
     elem_bitwidth = 16;
-  } else if (elem_type == 9){
+  } else if (elem_type == 9) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_INT32;
     elem_bitwidth = 32;
-  } else if (elem_type == 10){
+  } else if (elem_type == 10) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_INT64;
     elem_bitwidth = 64;
-  }  else{
+  } else {
     fprintf(stderr, "Unsupported element type: %ld \n", elem_type);
     abort();
   }
@@ -178,14 +178,15 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     abort();
   }
   abort_on_error(
-    cuTensorMapEncodeTiled(
-      tma_desc, data_type, rank, base_addr, tma_sizes, tma_strides,
-      tma_window_shape, element_strides, CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
-      CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
-    "cuTensorMapEncodeTiled failed: %s\n");
+      cuTensorMapEncodeTiled(tma_desc, data_type, rank, base_addr, tma_sizes,
+                             tma_strides, tma_window_shape, element_strides,
+                             CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
+                             CU_TENSOR_MAP_L2_PROMOTION_NONE,
+                             CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
+      "cuTensorMapEncodeTiled failed: %s\n");
 }
 
-void* mosaic_gpu_module_load(void *data) {
+void* mosaic_gpu_module_load(void* data) {
   CUmodule module = nullptr;
   abort_on_error(cuModuleLoadData(&module, data),
                  "cuModuleLoadData failed: %s\n");
@@ -206,26 +207,29 @@ void* mosaic_gpu_module_load(void *data) {
 }
 
 // cluster_size can be -1 when it's not statically known.
-void *mosaic_gpu_get_function(CUmodule module, const char *name,
+void* mosaic_gpu_get_function(CUmodule module, const char* name,
                               int32_t smem_bytes, int32_t cluster_size) {
   CUfunction function = nullptr;
-  abort_on_error(
-    cuModuleGetFunction(&function, module, name),
-    "Failed to retrieve function pointer to kernel \"%s\", "
-    "cuModuleGetFunction failed: %s\n", name);
+  abort_on_error(cuModuleGetFunction(&function, module, name),
+                 "Failed to retrieve function pointer to kernel \"%s\", "
+                 "cuModuleGetFunction failed: %s\n",
+                 name);
   if (smem_bytes) {
     abort_on_error(
-      cuFuncSetAttribute(
-        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_bytes),
-      "Failed to set maximum dynamic shared memory size for kernel \"%s\" "
-      "to %d bytes, cuFuncSetAttribute failed: %s\n", name, smem_bytes);
+        cuFuncSetAttribute(function,
+                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                           smem_bytes),
+        "Failed to set maximum dynamic shared memory size for kernel \"%s\" "
+        "to %d bytes, cuFuncSetAttribute failed: %s\n",
+        name, smem_bytes);
   }
   if (cluster_size > 8) {
     abort_on_error(
-      cuFuncSetAttribute(
-        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1),
-      "Failed to set allowed cluster size for kernel \"%s\" to %d, "
-      "cuFuncSetAttribute failed: %s\n", name, cluster_size);
+        cuFuncSetAttribute(
+            function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1),
+        "Failed to set allowed cluster size for kernel \"%s\" to %d, "
+        "cuFuncSetAttribute failed: %s\n",
+        name, cluster_size);
   }
   return function;
 }
@@ -236,18 +240,18 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
                               uint32_t cluster_z, uint32_t block_x,
                               uint32_t block_y, uint32_t block_z,
                               uint32_t smem_bytes, CUstream stream,
-                              void **params) {
-  CUlaunchConfig config {
-    .gridDimX = grid_x,
-    .gridDimY = grid_y,
-    .gridDimZ = grid_z,
-    .blockDimX = block_x,
-    .blockDimY = block_y,
-    .blockDimZ = block_z,
-    .sharedMemBytes = smem_bytes,
-    .hStream = stream,
-    .attrs = nullptr,
-    .numAttrs = 0,
+                              void** params) {
+  CUlaunchConfig config{
+      .gridDimX = grid_x,
+      .gridDimY = grid_y,
+      .gridDimZ = grid_z,
+      .blockDimX = block_x,
+      .blockDimY = block_y,
+      .blockDimZ = block_z,
+      .sharedMemBytes = smem_bytes,
+      .hStream = stream,
+      .attrs = nullptr,
+      .numAttrs = 0,
   };
   CUlaunchAttribute cluster_attr;
   if (cluster_x != 0) {
@@ -268,8 +272,8 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
                    "cuOccupancyMaxPotentialClusterSize failed: %s\n");
     fprintf(stderr,
             "cuLaunchKernel failed with invalid cluster size (%d, %d, %d)"
-            ": maximum is %d\n", cluster_x, cluster_y, cluster_z,
-            max_cluster_size);
+            ": maximum is %d\n",
+            cluster_x, cluster_y, cluster_z, max_cluster_size);
     abort();
   } else {
     abort_on_error(result, "cuLaunchKernelEx: %s\n");

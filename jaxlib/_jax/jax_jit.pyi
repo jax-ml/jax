@@ -1,4 +1,4 @@
-# Copyright 2025 The JAX Authors.
+# Copyright 2026 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Jax C++ jit library"""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import numpy
 
@@ -24,9 +24,6 @@ from .pytree import (PyTreeDef as _PyTreeDef, PyTreeRegistry as _PyTreeRegistry)
 def set_disable_jit_state(config: _Config) -> None: ...
 def set_enable_x64_state(config: _Config) -> None: ...
 def set_post_hook_state(config: _Config) -> None: ...
-def set_thread_local_state_initialization_callback(
-    f: Callable[[], None],
-) -> None: ...
 
 class PyArgSignature:
   @property

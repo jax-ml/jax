@@ -24,11 +24,10 @@ limitations under the License.
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-void LaunchThreeFry2x32KernelFfi(gpuStream_t stream,
-                                 std::int64_t n,
-                                 std::uint32_t *keys0, std::uint32_t *keys1,
-                                 std::uint32_t *data0, std::uint32_t *data1,
-                                 std::uint32_t *out0, std::uint32_t *out1);
+void LaunchThreeFry2x32KernelFfi(gpuStream_t stream, std::int64_t n,
+                                 std::uint32_t* keys0, std::uint32_t* keys1,
+                                 std::uint32_t* data0, std::uint32_t* data1,
+                                 std::uint32_t* out0, std::uint32_t* out1);
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(ThreeFry2x32Ffi);
 

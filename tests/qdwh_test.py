@@ -102,6 +102,12 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
     """Tests qdwh with upper triangular input of all ones."""
+    # ROCm: Triton GEMM autotuner cannot compile this specific case.
+    # TODO(gulsumgudukbay): Unskip once fixed. Issue #34711.
+    if (jtu.is_device_rocm()
+        and shape == (300, 300)
+        and dtype == np.float32):
+      self.skipTest("Skipped on ROCm, Triton GEMM autotuner issue.")
     eps = jnp.finfo(dtype).eps
     m, n = shape
     max_cond = np.log10(1.0 / eps)

@@ -19,9 +19,10 @@ import os
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 import jax.numpy as jnp
 import numpy as np
 
@@ -39,7 +40,7 @@ else:
 
 
 config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+htu.setup_hypothesis()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 
@@ -56,6 +57,8 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if matmul is None:
       self.skipTest("Mosaic GPU not available.")
     if not jtu.test_device_matches(["cuda"]):

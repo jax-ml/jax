@@ -23,14 +23,13 @@ import dataclasses
 import enum
 import io
 import json
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -72,11 +71,9 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 _FWD_COMPAT_VERSION = 9
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  # TODO(apaszke): remove the forward compatibility check after 2025-4-1.
   if (
       ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2026, 3, 1, backend)
   ):
     return _FWD_COMPAT_VERSION
   return None
@@ -272,10 +269,14 @@ class CustomCallBackendConfig:
           config.write(b",")
         else:
           config.write(b', "output_memory_space_colors": [')
-        config.write(f'{{"color":{memory_space.color}'.encode("ascii"))
         if is_tuple:
-          config.write(f',"shape_index":[{i}]'.encode("ascii"))
-        config.write(b"}")
+          config.write(
+              f'{{"color":{memory_space.color},"shape_index":[{i}]}}'.encode(
+                  "ascii"
+              )
+          )
+        else:
+          config.write(f'{{"color":{memory_space.color}}}'.encode("ascii"))
         comma = True
       if comma:
         config.write(b"]")
@@ -371,12 +372,12 @@ def _tpu_custom_call_abstract_eval(*_, out_avals, **__):
 
 
 def _avals_to_layouts(avals) -> Sequence[Sequence[int]]:
-  return [tuple(range(a.ndim - 1, -1, -1)) for a in avals]  # pytype: disable=attribute-error
+  return [tuple(range(a.ndim - 1, -1, -1)) for a in avals]
 
 
 def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
-    *in_nodes,  # pylint: disable=missing-function-docstring
+    *in_nodes,
     config: CustomCallBackendConfig,
     has_side_effects: TpuSideEffectType,
     kernel_name: str | None,
@@ -384,7 +385,7 @@ def _tpu_custom_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
 ) -> ir.OpResultList:
-  result_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_type, out_avals))
+  result_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, out_avals))
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     manual_axes = axis_context.manual_axes | set(axis_context.mesh.manual_axes)
@@ -438,7 +439,7 @@ def _tpu_custom_call_lowering(
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
-  metadata_dict = {}
+  metadata_dict: dict[str, ir.Attribute] = {}
   if metadata is not None:
     metadata_dict["kernel_metadata"] = ir.StringAttr.get(
         _compact_json_object(**metadata)
@@ -624,8 +625,8 @@ def _lower_to_custom_call_config(
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
-  if needs_layout_passes is None:
-    needs_layout_passes = not device_type
+  # TC kernels always require layout passes.
+  needs_layout_passes = needs_layout_passes or not device_type
   lowered_module_asm, (
       has_communication,
       has_custom_barrier,
@@ -872,8 +873,9 @@ def lowered_as_tpu_kernel(
     allow_collective_id_without_custom_barrier: bool = False,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
-  lowered_module_asm = lowered_module.operation.get_asm(
-      binary=True, enable_debug_info=True
+  lowered_module_asm = cast(
+      bytes,
+      lowered_module.operation.get_asm(binary=True, enable_debug_info=True),
   )
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -923,7 +925,8 @@ def _as_jax_callable(
   if not isinstance(out_type, collections.abc.Iterable):
     out_type = (out_type,)
     unpack = True
-  out_avals = tuple(core.ShapedArray(ty.shape, ty.dtype) for ty in out_type)
+  out_avals = tuple(ty if isinstance(ty, core.ShapedArray) else
+                    core.typeof(ty) for ty in out_type)
 
   # We use jax.jit to make sure we hit the fast compilation cache.
   def apply_kernel(*args):

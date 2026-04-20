@@ -126,6 +126,43 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           hlo,
       )
 
+  def test_tuple_output_memory_space_constraint(self):
+    memory_space = pltpu.VMEM
+    color = 1
+
+    def kernel(x_ref, y_ref, z_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+      pltpu.sync_copy(x_ref, z_ref)
+
+    def g(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=(
+              pltpu.VMEM(x.shape, x.dtype),
+              pltpu.VMEM(x.shape, x.dtype),
+          ),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=(
+              pl.BlockSpec(memory_space=memory_space),
+              pl.BlockSpec(memory_space=memory_space),
+          ),
+      )(x)
+
+    @jax.jit
+    def f(x):
+      y, z = g(x)
+      return y, z
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    y, z = f(x)
+    np.testing.assert_array_equal(y, x)
+    np.testing.assert_array_equal(z, x)
+    hlo = jax.jit(f).lower(x).compile().as_text()
+    self.assertIn(
+        f'"output_memory_space_colors":[{{"color":"{color}","shape_index":["0"]}},{{"color":"{color}","shape_index":["1"]}}]',
+        hlo,
+    )
+
 
 class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 

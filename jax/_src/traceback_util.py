@@ -32,9 +32,7 @@ _exclude_paths: list[str] = []
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)
-  # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
-  if hasattr(_jax, "add_exclude_path"):
-    _jax.add_exclude_path(path)
+  _jax.add_exclude_path(path)
 
 register_exclusion(__file__)
 register_exclusion(util.__file__)
@@ -143,14 +141,14 @@ SimplifiedTraceback.__module__ = "jax.errors"
 def _running_under_ipython() -> bool:
   """Returns true if we appear to be in an IPython session."""
   try:
-    get_ipython()  # type: ignore
+    get_ipython()  # pyrefly: ignore[unknown-name]
     return True
   except NameError:
     return False
 
 def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
-  import IPython  # pytype: disable=import-error
+  import IPython  # pyrefly: ignore[missing-import]
   # pyrefly: ignore[unsupported-operation]  # pyrefly#896
   return IPython.version_info[:2] >= (7, 17)
 
@@ -236,7 +234,7 @@ def api_boundary(
 
 try:
   # TODO: import from the final location
-  from jax._src import repro  # type: ignore
+  from jax._src import repro  # pyrefly: ignore[missing-module-attribute]
   repro_is_enabled = repro.is_enabled
 
 except ImportError:

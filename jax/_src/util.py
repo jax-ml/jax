@@ -16,23 +16,24 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
-import dataclasses
 import functools
+import threading
 from functools import partial
 import itertools as it
 import logging
 import math
 import operator
-from typing import (Any, Generic, SupportsIndex, Type, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, ParamSpec, Protocol, SupportsIndex,
+                    TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
 
 from jax._src import config
 from jax._src.lib import pytree as lib_pytree
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
+from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,17 @@ if TYPE_CHECKING:
   # to that used for builtins.zip in python/typeshed. This supports
   # return types matching input types for up to three arguments.
   @overload
-  def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]: ...
+  def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]:
+    ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]: ...
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]:
+    ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]: ...
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]:
+    ...
   @overload
-  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]: ...
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]:
+    ...
 
   def safe_zip(*args):
     """
@@ -305,9 +310,32 @@ memoize = cache(max_size=None)
 
 def _ignore(): return None
 
+P = ParamSpec("P")
+R = TypeVar("R", covariant=True)
+
+class WeakrefCachedFunc(Protocol, Generic[P, R]):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+  def cache_clear(self) -> None: ...
+  def cache_info(self) -> lib_weakref_lru_cache.WeakrefLRUCache.WeakrefLRUCacheInfo: ...
+  def cache_keys(self) -> list[Any]: ...
+  def evict_weakref(self, arg0: Any) -> None: ...
+
+@overload
 def weakref_lru_cache(
-    f=None, *, maxsize: int | None = 2048,
-    trace_context_in_key: bool = True, explain: Callable | None = None):
+    f: Callable[P, R], /, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+) -> WeakrefCachedFunc[P, R]: ...
+
+@overload
+def weakref_lru_cache(
+    f: None = None, /, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+) -> Callable[[Callable[P, R]], WeakrefCachedFunc[P, R]]: ...
+
+def weakref_lru_cache(
+    f: Callable[P, R] | None = None, *, maxsize: int | None = 2048,
+    trace_context_in_key: bool = True, explain: Callable | None = None
+):
   """
   Least recently used cache decorator with weakref support.
 
@@ -329,167 +357,99 @@ def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
   return cached_f
 
 
+# Interner from strong keys to weak values, intended for us to intern object
+# construction, thereby making subsequent __eq__ and __hash__ calls cheap and
+# based on object identity.
+#
+# Caution: The interner does not know about the *signature* of the cached
+# function. In particular, if the same argument value can be passed as either
+# an arg or a kwarg, then the interner may store multiple entries for the same
+# logical call. If this troubles you canonicalize the arguments first, e.g.
+# via a wrapper function.
+if jaxlib_extension_version >= 433:
+  weak_value_interner = lib_weakref_lru_cache.weak_value_interner
+else:
+  def weak_value_interner(f):
+    cache = weakref.WeakValueDictionary()
+    lock = threading.Lock()
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+      key = (args, frozenset(kwargs.items()))
+      with lock:
+        result = cache.get(key)
+        if result is not None:
+          return result
+        result = f(*args, **kwargs)
+        cache[key] = result
+        return result
+    return wrapper
+
+
+def immutable(cls):
+  """Decorator to avoid boilerplate for immutable interned classes."""
+  def __deepcopy__(self, memo):
+    # Deep copy of a singleton interned object is the identity.
+    return self
+  cls.__deepcopy__ = __deepcopy__
+
+  # Pickling calls __getstate__ and __setstate__, but we're assuming the
+  # caller will implement __getnewargs_ex__.
+  def __getstate__(self):
+    return None
+  def __setstate__(self, state):
+    pass
+  cls.__getstate__ = __getstate__
+  cls.__setstate__ = __setstate__
+
+  # Discourage mutation after construction.
+  def __setattr__(self, name, value):
+    raise AttributeError(f"cannot assign to field {name!r}")
+  def __delattr__(self, name):
+    raise AttributeError(f"cannot delete field {name!r}")
+  cls.__setattr__ = __setattr__
+  cls.__delattr__ = __delattr__
+
+  return cls
+
+
 # The types of arguments for which `multi_weakref_lru_cache` should keep
 # weak references.
-weakref_cache_key_types: set[Type] = set()
+weakref_cache_key_types: set[type] = set()
 
 
-if jaxlib_extension_version >= 414 or TYPE_CHECKING:
-  _multi_weakref_registry = lib_pytree.PyTreeRegistry(
-      enable_none=False,
-      enable_tuple=True,
-      enable_namedtuple=False,
-      enable_list=False,
-      enable_dict=True,
+_multi_weakref_registry = lib_pytree.PyTreeRegistry(
+    enable_none=False,
+    enable_tuple=True,
+    enable_namedtuple=False,
+    enable_list=False,
+    enable_dict=True,
+)
+
+
+def multi_weakref_lru_cache(
+    call: Callable,
+    *,
+    maxsize: int | None = 2048,
+    trace_context_in_key: bool = True,
+):
+  """Least recently used cache decorator with weakref support.
+
+  Similar to `weakref_lru_cache`, except that it keeps weak references
+  to all positional and keyword arguments for which
+  `is_weakref_cache_key_type()` is true, and strong references to
+  other arguments. The cache entry is removed if any of the weakref
+  arguments dies.
+  """
+  cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore,
+      call,
+      maxsize=maxsize,
+      explain=None,
+      registry=_multi_weakref_registry,
+      weak_types=weakref_cache_key_types,
   )
-
-  def multi_weakref_lru_cache(
-      call: Callable, *,
-      maxsize: int | None = 2048,
-      trace_context_in_key: bool = True):
-    """
-    Least recently used cache decorator with weakref support.
-
-    Similar to `weakref_lru_cache`, except that it keeps weak references
-    to all positional and keyword arguments for which
-    `is_weakref_cache_key_type()` is true, and strong references to
-    other arguments. The cache entry is removed if any of the weakref
-    arguments dies.
-    """
-    cached_call = lib_weakref_lru_cache.multi_weakref_lru_cache(  # type: ignore
-        config.trace_context if trace_context_in_key else _ignore,
-        call, maxsize, explain=None, registry=_multi_weakref_registry,
-        weak_types=weakref_cache_key_types
-    )
-    register_cache(cached_call, str(call))
-    return cached_call
-
-else:
-  @dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
-  class MultiWeakRefCacheKey:
-    weakrefs: tuple[weakref.ref, ...]  # Used only when len(weakrefs) >= 2
-
-
-  class MultiWeakRefPlaceholder:
-    # Stands for an arg/kwarg that was replaced with a weakref
-    pass
-  _multi_weakref_placeholder = MultiWeakRefPlaceholder()
-
-  def is_weakref_cache_key_type(v):
-    return callable(v) or (type(v) in weakref_cache_key_types)
-
-
-  def multi_weakref_lru_cache(
-        call: Callable, *,
-        maxsize=2048,
-        trace_context_in_key: bool = True):
-      """
-      Least recently used cache decorator with weakref support.
-
-      Similar to `weakref_lru_cache`, except that it keeps weak references
-      to all positional and keyword arguments for which
-      `is_weakref_cache_key_type()` is true, and strong references to
-      other arguments. The cache entry is removed if any of the weakref
-      arguments dies.
-      """
-      # Keep strong references to the MultiWeakRefCacheKeys that resulted in
-      # cache misses, and are cache keys. Indexed by id. Only keys with all
-      # included weakrefs live are present.
-      id_to_key: dict[int, MultiWeakRefCacheKey] = {}
-      # For each `wr: weakref.ref` present in `key: MultiWeakRefCacheKey` we have
-      # `id(key) in weakref_to_key_ids[wr]`.
-      weakref_to_key_ids: dict[weakref.ref, set[int]] = {}
-
-      def remove_weakref(wr: weakref.ref):
-        key_ids = weakref_to_key_ids.get(wr, set())
-        for key_id in key_ids:
-          try:
-            del id_to_key[key_id]
-          except KeyError:
-            pass
-        try:
-          del weakref_to_key_ids[wr]
-        except KeyError:
-          pass
-
-      def weakrefs_to_sentinel(v, acc: list[Any]):
-        if type(v) is tuple:
-          return tuple(weakrefs_to_sentinel(v1, acc) for v1 in v)
-        elif type(v) is dict:
-          return {k: weakrefs_to_sentinel(v1, acc) for k, v1 in v.items()}
-        elif is_weakref_cache_key_type(v):
-          acc.append(v)
-          return _multi_weakref_placeholder
-        else:
-          return v
-
-      def sentinel_to_referrents(v,
-                                it: Iterator[weakref.ref],
-                                key_id: int | None):
-        # key_id is not None iff we use a MultiWeakRefCacheKey (>= 2 weakrefs)
-        if type(v) is tuple:
-          return tuple(sentinel_to_referrents(v1, it, key_id) for v1 in v)
-        elif type(v) is dict:
-          return {k: sentinel_to_referrents(v1, it, key_id)
-                  for k, v1 in v.items()}
-        elif v is _multi_weakref_placeholder:
-          wr = next(it)
-          if key_id is not None:
-            weakref_to_key_ids.setdefault(wr, set()).add(key_id)
-          return wr()
-        else:
-          return v
-
-      def cache_miss(key: MultiWeakRefCacheKey | MultiWeakRefPlaceholder | Any,
-                    *args, **kwargs):
-        if isinstance(key, MultiWeakRefCacheKey):  # had at least 2 weakrefs
-          # We know `key` is in `cached_call` cache, so store strong references
-          key_id = id(key)
-          id_to_key[key_id] = key
-          orig_args, orig_kwargs = sentinel_to_referrents(
-              (args, kwargs), iter(key.weakrefs), key_id)
-        elif key is _multi_weakref_placeholder:  # had 0 weakrefs
-          orig_args = args
-          orig_kwargs = kwargs
-        else:  # had 1 weakref, we had put it first as the `key`
-          orig_args, orig_kwargs = sentinel_to_referrents(
-              (args, kwargs), iter([weakref.ref(key)]), None)
-        return call(*orig_args, **orig_kwargs)
-
-
-      cached_call = lib_weakref_lru_cache.weakref_lru_cache(
-          config.trace_context if trace_context_in_key else _ignore,
-          cache_miss, maxsize
-      )
-      register_cache(cached_call, str(call))
-
-      @functools.wraps(call)
-      def wrapper(*orig_args, **orig_kwargs):
-        acc_weakrefs: list[Any] = []
-        args, kwargs = weakrefs_to_sentinel((orig_args, orig_kwargs),
-                                            acc_weakrefs)
-        nr_weakrefs = len(acc_weakrefs)
-        if nr_weakrefs == 0:
-          return cached_call(_multi_weakref_placeholder,
-                            *orig_args, **orig_kwargs)
-        elif nr_weakrefs == 1:
-          # Put the single weakref first, and skip the MultiWeakRefCacheKey
-          return cached_call(acc_weakrefs[0],
-                            *args, **kwargs)
-        else:
-          value_to_weakref = {v: weakref.ref(v, remove_weakref)
-                              for v in set(acc_weakrefs)}
-          key = MultiWeakRefCacheKey(weakrefs=tuple(value_to_weakref[v]
-                                                    for v in acc_weakrefs))
-          return cached_call(key, *args, **kwargs)
-
-      wrapper = cast(Any, wrapper)  # avoids missing-attribute typing errors
-      wrapper.cache_info = cached_call.cache_info
-      wrapper.cache_clear = cached_call.cache_clear
-      wrapper.cache_keys = cached_call.cache_keys
-      wrapper._multi_weakref_id_to_key = id_to_key  # stays alive as long as wrapper
-      wrapper._multi_weakref_to_key_ids = weakref_to_key_ids
-      return wrapper
+  register_cache(cached_call, str(call))
+  return cached_call
 
 
 class Unhashable:
@@ -509,18 +469,6 @@ class Hashable:
 
   def __hash__(self):
     return hash(self.val)
-
-  def __eq__(self, other):
-    return self.val == other.val
-
-class WrapKwArgs:
-  __slots__ = ["val"]
-
-  def __init__(self, val):
-    self.val = val
-
-  def __hash__(self):
-    return hash(tuple((k, v) for k, v in sorted(self.val.items())))
 
   def __eq__(self, other):
     return self.val == other.val
@@ -612,12 +560,6 @@ def wraps(
     return fun
   return wrapper
 
-
-# NOTE: Ideally we would annotate both the argument and return type as NoReturn
-#       but it seems like pytype doesn't support that...
-def assert_unreachable(x):
-  raise AssertionError(f"Unhandled case: {type(x).__name__}")
-
 def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
@@ -668,8 +610,6 @@ class HashableFunction:
   def __repr__(self):
     return f'<hashable {self.f.__name__} with closure={self.closure}>'
 
-def as_hashable_function(closure):
-  return lambda f: HashableFunction(f, closure)
 
 class HashablePartial:
   def __init__(self, f, *args, **kwargs):
@@ -827,8 +767,8 @@ class StrictABCMeta(abc.ABCMeta):
     del subclass  # Unused.
     raise NotImplementedError(f"{cls} does not support virtual subclasses")
 
-  __instancecheck__ = type.__instancecheck__  # type: ignore[assignment]
-  __subclasscheck__ = type.__subclasscheck__  # type: ignore[assignment]
+  __instancecheck__ = type.__instancecheck__
+  __subclasscheck__ = type.__subclasscheck__
 
 
 class StrictABC(metaclass=StrictABCMeta):

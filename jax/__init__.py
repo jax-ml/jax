@@ -53,7 +53,6 @@ from jax._src.config import (
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
   softmax_custom_jvp as softmax_custom_jvp,
-  enable_custom_vjp_by_custom_transpose as enable_custom_vjp_by_custom_transpose,
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
@@ -127,7 +126,7 @@ from jax._src.api import live_arrays as live_arrays
 from jax._src.api import make_jaxpr as make_jaxpr
 from jax._src.api import named_call as named_call
 from jax._src.api import named_scope as named_scope
-from jax._src.api import pmap as pmap
+from jax._src.pmap import pmap as pmap
 from jax._src.xla_bridge import process_count as process_count
 from jax._src.xla_bridge import process_index as process_index
 from jax._src.xla_bridge import process_indices as process_indices
@@ -166,7 +165,6 @@ from jax._src.array import (
 # jax and rely on the names imported above.
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
-from jax import custom_transpose as custom_transpose
 from jax import api_util as api_util
 from jax import distributed as distributed
 from jax import debug as debug
@@ -177,6 +175,7 @@ from jax import export as export
 from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
+from jax import lib as lib  # TODO(phawkins): Deprecate and remove jax.lib.
 from jax import monitoring as monitoring
 from jax import nn as nn
 from jax import numpy as numpy
@@ -185,36 +184,42 @@ from jax import profiler as profiler
 from jax import random as random
 from jax import scipy as scipy
 from jax import sharding as sharding
-from jax import memory as memory
 from jax import stages as stages
 from jax import tree_util as tree_util
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
 
+from types import SimpleNamespace
+import jax._src.api as jax_api
+import jax._src.core as jax_core
+ad = SimpleNamespace(DontWant=jax_api.DontWant, DidntWant=jax_api.DidntWant,
+                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue)
+memory = SimpleNamespace(Space=jax_core.MemorySpace)
+del jax_api, jax_core, SimpleNamespace
+
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Remove in v0.10.0
-  "array_ref": (
-    "jax.array_ref was removed in JAX v0.9.0; use jax.new_ref instead.",
-    None,
-  ),
-  "ArrayRef": (
-    "jax.ArrayRef was removed in JAX v0.9.0; use jax.Ref instead.",
-    None
-  ),
-  # Added for v0.8.1
-  "device_put_replicated": (
-    "jax.device_put_replicated is deprecated; use jax.device_put instead.",
-    _deprecated_device_put_replicated
-  ),
-  # Added for v0.8.1
-  "device_put_sharded": (
-    "jax.device_put_sharded is deprecated; use jax.device_put instead.",
-    _deprecated_device_put_sharded
-  ),
+    # Removed for v0.10.0
+    "device_put_replicated": (
+        (
+            "jax.device_put_replicated is deprecated; use jax.device_put"
+            " instead. See"
+            " https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
+            " for a drop-in replacement."
+        ),
+        None,
+    ),
+    "device_put_sharded": (
+        (
+            "jax.device_put_sharded is deprecated; use jax.device_put instead."
+            " See https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
+            " for a drop-in replacement."
+        ),
+        None,
+    ),
 }
 
 import typing as _typing
@@ -226,8 +231,6 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-
-import jax.lib  # TODO(phawkins): remove this export.  # noqa: F401
 
 # trailer
 del _deprecated_device_put_sharded

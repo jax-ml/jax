@@ -13,11 +13,6 @@
 # limitations under the License.
 
 # pyrefly: ignore-errors
-# pytype: disable=invalid-annotation
-# pytype: disable=wrong-arg-types
-# pytype: disable=bad-return-type
-# pylint: disable=missing-function-docstring
-# pylint: disable=g-doc-args
 
 """Pipeline scheduler implementations."""
 

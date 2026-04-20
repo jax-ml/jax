@@ -82,7 +82,6 @@ SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=0), 'unroll0'),
     (partial(lax.scan, unroll=2), 'unroll2'),
-    (partial(lax.scan, _split_transpose=True), 'split_transpose'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
 ]
@@ -213,7 +212,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testNestedWhile(self):
 
-    def outer_loop(num):  # pylint: disable=missing-docstring
+    def outer_loop(num):
       def cond_fun(state):
         num, i, _ = state
         return lax.lt(i, num)
@@ -226,7 +225,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _, i, count = lax.while_loop(cond_fun, body_fun, init_val)
       return (i, count)
 
-    def inner_loop(i, count):  # pylint: disable=missing-docstring
+    def inner_loop(i, count):
       def cond_fun(state):
         i, j, _ = state
         return lax.le(j, i)
@@ -355,7 +354,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       val = lax.reshape(val, [1, 1])
       return lax.dynamic_update_slice(arr, val, (i, j))
 
-    def outer_loop(arr):  # pylint: disable=missing-docstring
+    def outer_loop(arr):
 
       def cond_fun(state):
         i, num, _, _ = state
@@ -370,7 +369,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
-    def inner_loop(i, arr, out):  # pylint: disable=missing-docstring
+    def inner_loop(i, arr, out):
 
       def cond_fun(state):
         i, j, _, _ = state
@@ -394,7 +393,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(cloop(arr), np.tril(arr), check_dtypes=False)
 
   def testLoopWithConjunctionCondition(self):
-    def sum_first_n(arr, num):  # pylint: disable=missing-docstring
+    def sum_first_n(arr, num):
       def cond_fun(state):
         arr, num, i, _ = state
         return lax.bitwise_and(lax.lt(i, num), lax.lt(i, arr.shape[0]))
@@ -2477,16 +2476,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     too_big = 2 * jax.device_count()
 
-    if config.pmap_shmap_merge.value:
-      expected_regex = re.compile(
-          "cannot select an axis to squeeze out which has size not equal to "
-          r"one, got shape=\(\d,\) and dimensions=\(\d,\)"
-      )
-    else:
-      expected_regex = re.escape(
-          "compiling computation `jit(scan)` that requires {} "
-          "replicas, but only {} XLA devices are available."
-          .format(too_big, jax.device_count()))
+    expected_regex = re.compile(
+        "cannot select an axis to squeeze out which has size not equal to "
+        r"one, got shape=\(\d,\) and dimensions=\(\d,\)"
+    )
 
     self.assertRaisesRegex(
         ValueError, expected_regex,

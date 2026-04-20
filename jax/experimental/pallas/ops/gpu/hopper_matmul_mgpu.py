@@ -27,7 +27,6 @@ from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
-# mypy: ignore-errors
 
 class MatmulDimension(enum.IntEnum):
   M = 0
@@ -310,7 +309,7 @@ def main(_) -> None:
           continue
         raise
       np.testing.assert_allclose(out, ref)
-      runtime_us = runtime_ms * 1e3   # type: ignore
+      runtime_us = runtime_ms * 1e3
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:

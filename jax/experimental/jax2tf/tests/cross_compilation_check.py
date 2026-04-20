@@ -148,7 +148,7 @@ def write_and_check_harness(harness: primitive_harness.Harness,
         from jax.experimental.jax2tf.jax2tf import cross_platform_lowering
         lowered = cross_platform_lowering(func_jax, args,
                                           platforms=[for_platform])
-      hlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore
+      hlo = lowered.compiler_ir(dialect="stablehlo")
       with open(output_file, "w") as f:
         f.write(str(hlo))
 

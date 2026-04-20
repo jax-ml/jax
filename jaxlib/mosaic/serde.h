@@ -44,7 +44,7 @@ struct SerdeOptions {
 // The function should return success if the upgrade/downgrade was successful,
 // or an error otherwise.
 using SerdeRuleType =
-    std::function<::mlir::LogicalResult(::mlir::Operation *, int, bool &)>;
+    std::function<::mlir::LogicalResult(::mlir::Operation*, int, bool&)>;
 
 // Run serialization or deserialization on the given module.
 ::mlir::LogicalResult RunSerde(

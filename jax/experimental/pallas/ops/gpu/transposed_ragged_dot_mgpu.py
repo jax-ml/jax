@@ -264,13 +264,14 @@ def main(unused_argv):
       runtime = float("inf")
     # Enable this to get more detailed information.
     else:
+      assert runtime is not None
       print(
           " ".join(f"{k}={v}" for k, v in kwargs.items()),
           f"{int(runtime * 1000):.1f} us",
       )
     assert runtime is not None
     assert best_runtime is not None
-    if runtime < best_runtime:  # pytype: disable=unsupported-operands
+    if runtime < best_runtime:
       best_runtime = runtime
       best_kwargs = kwargs
   if not best_kwargs:

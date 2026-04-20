@@ -49,6 +49,7 @@ Operators
     population_count
     broadcast
     broadcast_in_dim
+    broadcast_like
     broadcast_shapes
     broadcast_to_rank
     broadcasted_iota
@@ -174,6 +175,7 @@ Operators
     sqrt
     square
     squeeze
+    stage
     sub
     tan
     tanh
@@ -256,6 +258,7 @@ Linear algebra operators (jax.lax.linalg)
     householder_product
     lu
     lu_pivots_to_permutation
+    ormqr
     qdwh
     qr
     schur

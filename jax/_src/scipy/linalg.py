@@ -17,6 +17,7 @@ from __future__ import annotations
 from functools import partial
 import textwrap
 from typing import overload, Any, Literal
+import warnings
 
 import numpy as np
 
@@ -24,6 +25,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
+from jax._src import random
 from jax._src.api import jit, vmap, jvp
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
@@ -158,12 +160,26 @@ def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
 @jit(static_argnames=('lower',))
 def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
   c, b = promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
-  lax_linalg._check_solve_shapes(c, b)
-  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
-                                  transpose_a=not lower, conjugate_a=not lower)
-  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
-                                  transpose_a=lower, conjugate_a=lower)
-  return b
+  if b.ndim == 1:
+    signature = "(n,n),(n)->(n)"
+  elif c.ndim == b.ndim + 1 and c.shape[-1] == b.shape[-1]:
+    # Deprecation warning added 2026-03-23
+    warnings.warn(
+        "jax.scipy.linalg.cho_solve: batched 1D solves with b.ndim > 1 are "
+        "deprecated, and in the future will be treated as a batched 2D solve. "
+        "Use cho_solve(c_and_lower, b[..., None]).squeeze(-1) to avoid this warning.",
+        category=FutureWarning)
+    signature = "(n,n),(n)->(n)"
+  else:
+    signature = "(n,n),(n,k)->(n,k)"
+  b = jnp_vectorize.vectorize(
+      partial(lax_linalg.triangular_solve, left_side=True, lower=lower,
+              transpose_a=not lower, conjugate_a=not lower),
+      signature=signature)(c, b)
+  return jnp_vectorize.vectorize(
+      partial(lax_linalg.triangular_solve, left_side=True, lower=lower,
+              transpose_a=lower, conjugate_a=lower),
+      signature=signature)(c, b)
 
 
 def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
@@ -177,12 +193,16 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
     c_and_lower: ``(c, lower)``, where ``c`` is an array of shape ``(..., N, N)``
       representing the lower or upper cholesky decomposition of the matrix, and
       ``lower`` is a boolean specifying whether this is the lower or upper decomposition.
-    b: right-hand-side of linear system. Must have shape ``(..., N)``
+    b: right-hand-side of linear system. Array of shape ``(N,)`` (for a
+      1-dimensional right-hand-side) or ``(..., N, M)`` (for a batched
+      2-dimensional right-hand-side).
     overwrite_a: unused by JAX
     check_finite: unused by JAX
 
   Returns:
-    Array of shape ``(..., N)`` representing the solution of the linear system.
+    Array representing the solution of the linear system. The result has
+    shape ``(..., N)`` if ``b`` is of shape ``(N,)``, and has shape
+    ``(..., N, M)`` otherwise.
 
   See Also:
     - :func:`jax.scipy.linalg.cholesky`
@@ -675,7 +695,9 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
       ``lu`` is an array of shape ``(..., M, N)``, containing ``L`` in its lower
       triangle and ``U`` in its upper. ``piv`` is an array of shape ``(..., K)``,
       with ``K = min(M, N)``, which encodes the pivots.
-    b: right-hand-side of linear system. Must have shape ``(..., M)``
+    b: right-hand-side of linear system. Array of shape ``(M,)`` (for a
+      1-dimensional right-hand-side) or ``(..., M, K)`` (for a batched
+      2-dimensional right-hand-side).
     trans: type of system to solve. Options are:
 
       - ``0``: :math:`A x = b`
@@ -686,7 +708,9 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
     check_finite: unused by JAX
 
   Returns:
-    Array of shape ``(..., N)`` representing the solution of the linear system.
+    Array representing the solution of the linear system. The result has
+    shape ``(..., N)`` if ``b`` is of shape ``(M,)``, and has shape
+    ``(..., N, K)`` otherwise.
 
   See Also:
     - :func:`jax.scipy.linalg.lu`
@@ -714,9 +738,24 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   """
   del overwrite_b, check_finite  # unused
   lu, pivots = lu_and_piv
+  lu, b = promote_dtypes_inexact(jnp.asarray(lu), jnp.asarray(b))
   m, _ = lu.shape[-2:]
   perm = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  return lax_linalg.lu_solve(lu, perm, b, trans)
+  if b.ndim == 1:
+    signature = "(n,n),(n),(n)->(n)"
+  elif lu.ndim == b.ndim + 1 and lu.shape[-1] == b.shape[-1]:
+    # Deprecation warning added 2026-03-23
+    warnings.warn(
+        "jax.scipy.linalg.lu_solve: batched 1D solves with b.ndim > 1 are "
+        "deprecated, and in the future will be treated as a batched 2D solve. "
+        "Use lu_solve(lu_and_piv, b[..., None]).squeeze(-1) to avoid this warning.",
+        category=FutureWarning)
+    signature = "(n,n),(n),(n)->(n)"
+  else:
+    signature = "(n,n),(n),(n,k)->(n,k)"
+  return jnp_vectorize.vectorize(
+      partial(lax_linalg.lu_solve, trans=trans),
+      signature=signature)(lu, perm, b)
 
 @overload
 def _lu(a: ArrayLike, permute_l: Literal[True]) -> tuple[Array, Array]: ...
@@ -997,6 +1036,146 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
   return _qr(a, mode, pivoting)
 
 
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
+                pivoting: Literal[False] = False, conjugate: bool = False,
+                overwrite_a: bool = False, overwrite_c: bool = False
+                ) -> tuple[Array, Array]: ...
+
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
+                pivoting: Literal[True] = True, conjugate: bool = False,
+                overwrite_a: bool = False, overwrite_c: bool = False
+                ) -> tuple[Array, Array, Array]: ...
+
+@overload
+def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
+                pivoting: bool = False, conjugate: bool = False,
+                overwrite_a: bool = False, overwrite_c: bool = False
+                ) -> tuple[Array, Array] | tuple[Array, Array, Array]: ...
+
+
+def qr_multiply(a: ArrayLike, c: ArrayLike, mode: str = 'right',
+                pivoting: bool = False, conjugate: bool = False,
+                overwrite_a: bool = False, overwrite_c: bool = False
+                ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
+  """Calculate the QR decomposition and multiply Q with a matrix.
+
+  JAX implementation of :func:`scipy.linalg.qr_multiply`.
+
+  Args:
+    a: array of shape ``(..., M, N)``. Matrix to be decomposed.
+    c: array to be multiplied by Q. For ``mode='left'``, ``c`` has shape
+      ``(..., K, P)`` where ``K = min(M, N)``. For ``mode='right'``, ``c``
+      has shape ``(..., P, M)``. 1-D arrays are supported: for
+      ``mode='left'``, treated as a length-``K`` column vector; for
+      ``mode='right'``, treated as a length-``M`` row vector. The result
+      is raveled back to 1-D in either case.
+    mode: ``'right'`` (default) or ``'left'``.
+
+      - ``'left'``: compute ``Q @ c`` (or ``conj(Q) @ c`` if ``conjugate=True``)
+        and return ``(Q @ c, R)`` with result shape ``(..., M, P)``
+      - ``'right'``: compute ``c @ Q`` (or ``c @ conj(Q)`` if ``conjugate=True``)
+        and return ``(c @ Q, R)`` with result shape ``(..., P, K)`` where
+        ``K = min(M, N)``
+    pivoting: Allows the QR decomposition to be rank-revealing. If ``True``, compute
+      the column-pivoted QR decomposition and return permutation indices
+      as a third element.
+    conjugate: If ``True``, use ``conj(Q)`` (element-wise complex conjugate)
+      instead of ``Q``. For real arrays this has no effect.
+    overwrite_a: unused in JAX
+    overwrite_c: unused in JAX
+
+  Returns:
+    If ``pivoting`` is ``False``: ``(result, R)``
+
+    If ``pivoting`` is ``True``: ``(result, R, P)``
+
+  See also:
+    - :func:`jax.scipy.linalg.qr`: SciPy-style QR decomposition API
+    - :func:`jax.lax.linalg.ormqr`: XLA-style Q-multiply primitive
+
+  Examples:
+    Use :func:`qr_multiply` to efficiently solve a least-squares problem.
+    For an overdetermined system ``A @ x ≈ b``, pass ``b`` as a 1-D row
+    via ``mode='right'`` to obtain ``Q^T @ b`` and ``R`` in one step:
+
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> A = jnp.array([[1., 1.], [1., 2.], [1., 3.], [1., 4.]])
+    >>> b = jnp.array([2., 4., 5., 4.])
+    >>> Qtb, R = jax.scipy.linalg.qr_multiply(A, b, mode='right')
+    >>> x = jax.scipy.linalg.solve_triangular(R, Qtb)
+    >>> jnp.allclose(A.T @ A @ x, A.T @ b)
+    Array(True, dtype=bool)
+  """
+  del overwrite_a, overwrite_c  # unused
+  a, c = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(c))
+  if mode not in ('right', 'left'):
+    raise ValueError(f"mode must be 'right' or 'left', got {mode!r}")
+
+  onedim = c.ndim == 1
+  if onedim:
+    c = c[:, None] if mode == 'left' else c[None, :]
+
+  m, n = a.shape[-2:]
+  k = min(m, n)
+
+  if mode == 'left':
+    if c.shape[-2] != k:
+      raise ValueError(
+          f"Array shapes are not compatible for Q @ c operation: "
+          f"a has shape {tuple(a.shape)} so Q has {k} columns, "
+          f"but c has {c.shape[-2]} rows (expected {k}).")
+  else:
+    if c.shape[-1] != m:
+      raise ValueError(
+          f"Array shapes are not compatible for c @ Q operation: "
+          f"a has shape {tuple(a.shape)} so Q has {m} rows, "
+          f"but c has {c.shape[-1]} columns (expected {m}).")
+
+  batch = jnp.broadcast_shapes(a.shape[:-2], c.shape[:-2])
+  a = jnp.broadcast_to(a, batch + a.shape[-2:])
+  c = jnp.broadcast_to(c, batch + c.shape[-2:])
+
+  p: Array | None = None
+  if pivoting:
+    jpvt = jnp.zeros(a.shape[:-2] + (n,), dtype=jnp.int32)
+    r, p, taus = lax_linalg.geqp3(a, jpvt)
+    p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
+  else:
+    r, taus = lax_linalg.geqrf(a)
+
+  if m > n and mode == 'left':
+    zeros = jnp.zeros(c.shape[:-2] + (m - k,) + c.shape[-1:], dtype=c.dtype)
+    c = jnp.concatenate([c, zeros], axis=-2)
+
+  if conjugate:
+    # Avoid explicit jnp.conj call by instead transposing (for free under jit)
+    # and telling LAPACK to compute Hermitian
+    c = c.swapaxes(-1, -2)
+
+  # conjugate swaps left/right because c and Q change sides when transposing.
+  left = (mode == 'left') != conjugate
+  cQ = lax_linalg.ormqr(r, taus, c, left=left, transpose=conjugate)
+
+  if conjugate:
+    cQ = cQ.swapaxes(-1, -2)
+
+  if mode == 'right':
+    cQ = cQ[..., :k]
+
+  if onedim:
+    cQ = cQ.ravel()
+
+  r = jnp.triu(r[..., :k, :])
+
+  if pivoting:
+    assert p is not None
+    return cQ, r, p
+  return cQ, r
+
+
 @jit(static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
@@ -1098,18 +1277,24 @@ def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str,
 
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
-  # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
-  b_is_vector = np.ndim(a) == np.ndim(b) + 1
-  if b_is_vector:
-    b = b[..., None]
-  out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
-                                    transpose_a=transpose_a,
-                                    conjugate_a=conjugate_a,
-                                    unit_diagonal=unit_diagonal)
-  if b_is_vector:
-    return out[..., 0]
+  if b.ndim == 1:
+    signature = "(n,n),(n)->(n)"
+  elif a.ndim == b.ndim + 1 and a.shape[-1] == b.shape[-1]:
+    # Deprecation warning added 2026-03-23
+    warnings.warn(
+        "jax.scipy.linalg.solve_triangular: batched 1D solves with b.ndim > 1 "
+        "are deprecated, and in the future will be treated as a batched 2D solve. "
+        "Use solve_triangular(a, b[..., None]).squeeze(-1) to avoid this warning.",
+        category=FutureWarning)
+    signature = "(n,n),(n)->(n)"
   else:
-    return out
+    signature = "(n,n),(n,k)->(n,k)"
+
+  return jnp_vectorize.vectorize(
+      partial(lax_linalg.triangular_solve, left_side=True, lower=lower,
+              transpose_a=transpose_a, conjugate_a=conjugate_a,
+              unit_diagonal=unit_diagonal),
+      signature=signature)(a, b)
 
 
 def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bool = False,
@@ -1125,7 +1310,8 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
   Args:
     a: array of shape ``(..., N, N)``. Only part of the array will be accessed,
       depending on the ``lower`` and ``unit_diagonal`` arguments.
-    b: array of shape ``(..., N)`` or ``(..., N, M)``
+    b: array of shape ``(N,)`` (for a 1-dimensional right-hand-side) or
+      ``(..., N, M)`` (for a batched 2-dimensional right-hand-side).
     lower: If True, only use the lower triangle of the input, If False (default),
       only use the upper triangle.
     unit_diagonal: If True, ignore diagonal elements of ``a`` and assume they are
@@ -1141,7 +1327,9 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
     check_finite: unused by JAX
 
   Returns:
-    An array of the same shape as ``b`` containing the solution to the linear system.
+    An array containing the solution to the linear system. The result has
+    shape ``(..., N)`` if ``b`` is of shape ``(N,)``, and has shape
+    ``(..., N, M)`` otherwise.
 
   See also:
     :func:`jax.scipy.linalg.solve`: Solve a general linear system.
@@ -1484,7 +1672,8 @@ def block_diag(*arrs: ArrayLike) -> Array:
 @jit(static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
                      select: str = 'a', select_range: tuple[float, float] | None = None,
-                     tol: float | None = None) -> Array:
+                     tol: float | None = None,
+                     key: Array | None = None) -> Array | tuple[Array, Array]:
   """Solve the eigenvalue problem for a symmetric real tridiagonal matrix
 
   JAX implementation of :func:`scipy.linalg.eigh_tridiagonal`.
@@ -1502,6 +1691,9 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
       JAX does not currently implement ``select = 'v'``.
     select_range: range of values used when ``select='i'``.
     tol: absolute tolerance to use when solving for the eigenvalues.
+    key: a PRNG key, as returned by ``jax.random.key``, used to generate random
+      initialization vectors for inverse iteration. If ``None``, defaults to a
+      fixed PRNG key.
 
   Returns:
     An array of eigenvalues with shape ``(N,)``.
@@ -1529,8 +1721,8 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
     >>> jnp.allclose(eigvals, eigvals_full)
     Array(True, dtype=bool)
   """
-  if not eigvals_only:
-    raise NotImplementedError("Calculation of eigenvectors is not implemented")
+  if not eigvals_only and key is None:
+    key = random.key(42)
 
   def _sturm(alpha, beta_sq, pivmin, alpha0_perturbation, x):
     """Implements the Sturm sequence recurrence."""
@@ -1592,7 +1784,10 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
                     f"{alpha.dtype} and {beta.dtype}")
   n = alpha.shape[0]
   if n <= 1:
-    return jnp.real(alpha)
+    if eigvals_only:
+      return jnp.real(alpha)
+    else:
+      return jnp.real(alpha), jnp.eye(n, dtype=alpha.dtype)
 
   if dtypes.issubdtype(alpha.dtype, np.complexfloating):
     alpha = jnp.real(alpha)
@@ -1677,11 +1872,175 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
     mid = 0.5 * (lower + upper)
     return i + 1, lower, mid, upper
 
+  def _compute_eigenvectors(alpha, beta, eigvals, key):
+    """Implements inverse iteration to compute eigenvectors."""
+    n = alpha.shape[0]
+    k = eigvals.shape[0]
+
+    # Pad beta to length n
+    dl = jnp.pad(jnp.conj(beta), (1, 0))
+    du = jnp.pad(beta, (0, 1))
+
+    # Eigenvectors corresponding to cluster of close eigenvalues are
+    # not unique and need to be explicitly orthogonalized. Here we
+    # identify such clusters. Note: This function assumes that
+    # eigenvalues are sorted in non-decreasing order.
+    gap = eigvals[1:] - eigvals[:-1]
+    eps = np.finfo(eigvals.dtype).eps
+    t_norm = jnp.maximum(jnp.abs(eigvals[0]), jnp.abs(eigvals[-1]))
+    gaptol = jnp.sqrt(eps) * t_norm
+
+    # Find the beginning and end of runs of eigenvectors corresponding
+    # to eigenvalues closer than "gaptol", which will need to be
+    # orthogonalized against each other.
+    close = gap < gaptol
+    left_neighbor_close = jnp.pad(close, (1, 0), constant_values=False)
+    right_neighbor_close = jnp.pad(close, (0, 1), constant_values=False)
+
+    ortho_interval_start = jnp.logical_and(
+        jnp.logical_not(left_neighbor_close), right_neighbor_close)
+    ortho_interval_end = jnp.logical_and(
+        left_neighbor_close, jnp.logical_not(right_neighbor_close))
+
+    max_clusters = k // 2 + 1
+    starts = jnp.nonzero(ortho_interval_start, size=max_clusters)[0]
+    ends = jnp.nonzero(ortho_interval_end, size=max_clusters)[0] + 1
+    num_clusters = jnp.sum(ortho_interval_start)
+
+    arange_k = jnp.arange(k)
+
+    solve_dtype = np.result_type(alpha.dtype, beta.dtype)
+    base_dtype = np.finfo(solve_dtype).dtype
+    # We perform inverse iteration for all eigenvectors in parallel,
+    # starting from a random set of vectors, until all have converged.
+    v = random.normal(key, (k, n), dtype=base_dtype).astype(solve_dtype)
+    v = v / jnp.linalg.norm(v, axis=-1, keepdims=True).astype(solve_dtype)
+
+
+    def orthogonalize_close_eigenvectors(ev):
+      # Eigenvectors corresponding to a cluster of close eigenvalues are not
+      # uniquely defined, but the subspace they span is. To avoid numerical
+      # instability, we explicitly mutually orthogonalize such eigenvectors
+      # after each step of inverse iteration. It is customary to use
+      # modified Gram-Schmidt for this, but this is not very efficient
+      # on some platforms, so here we defer to the QR decomposition in JAX.
+      def orthogonalize_cluster(i, ev):
+        start = starts[i]
+        end = ends[i]
+        c = end - start
+
+        ev_padded = jnp.pad(ev, ((0, k), (0, 0)))
+        v_block = lax.dynamic_slice(ev_padded, (start, 0), (k, n))
+
+        mask = (arange_k < c).astype(ev.dtype)
+        v_block_masked = v_block * mask[:, None]
+
+        # We use the builtin QR factorization to orthonormalize the
+        # vectors in the cluster.
+        Q, _ = jnp_linalg.qr(v_block_masked.T)
+
+        QT = Q.T
+        QT_masked = QT * mask[:, None]
+
+        big_zeros = jnp.zeros((2 * k, n), dtype=ev.dtype)
+        big_update = lax.dynamic_update_slice(big_zeros, QT_masked, (start, 0))
+        update_full = big_update[:k, :]
+
+        is_in_cluster = (arange_k >= start) & (arange_k < end)
+        ev = jnp.where(is_in_cluster[:, None], update_full, ev)
+
+        return ev
+
+      ev = lax.fori_loop(0, num_clusters, orthogonalize_cluster, ev)
+      return ev
+
+    # Replicate alpha-shifted and beta across the k eigenvectors so we
+    # can solve the k systems
+    #    [T - eigvals(i)*eye(n)] x_i = r_i
+    # simultaneously using the batching mechanism.
+    alpha_shifted = alpha[None, :] - eigvals[:, None]
+    dl_batched = jnp.broadcast_to(dl[None, :], (k, n))
+    du_batched = jnp.broadcast_to(du[None, :], (k, n))
+
+    def inverse_iteration_step(state):
+      i, v, nrm_v, nrm_v_old = state
+
+      v_new = lax_linalg.tridiagonal_solve(
+          dl_batched.astype(solve_dtype),
+          alpha_shifted.astype(solve_dtype),
+          du_batched.astype(solve_dtype),
+          v[:, :, None].astype(solve_dtype),
+          perturb_singular=True)
+      v_new = jnp.squeeze(v_new, axis=-1)
+
+      nrm_v_new = jnp.linalg.norm(v_new, axis=-1, keepdims=True)
+      v_new = v_new / nrm_v_new.astype(v_new.dtype)
+      nrm_v_new = jnp.squeeze(nrm_v_new, axis=-1)
+
+      v_new = orthogonalize_close_eigenvectors(v_new)
+
+      return i + 1, v_new, nrm_v_new, nrm_v
+
+    def continue_iteration(state):
+      i, _, nrm_v, nrm_v_old = state
+      max_it = 5  # Taken from LAPACK xSTEIN.
+      min_norm_growth = 0.1
+      norm_growth_factor = 1 + min_norm_growth
+      # We stop the inverse iteration when we reach the maximum number of
+      # iterations or the norm growths is less than 10%.
+      return jnp.logical_and(
+          i < max_it,
+          jnp.any(nrm_v >= norm_growth_factor * nrm_v_old)
+      )
+
+    _, v_final, _, _ = lax.while_loop(
+        continue_iteration,
+        inverse_iteration_step,
+        (0, v, jnp.ones(k, dtype=eigvals.dtype), jnp.zeros(k, dtype=eigvals.dtype))
+    )
+
+    return v_final
+
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
-  return mid
+
+  if eigvals_only:
+    return mid
+
+  eigenvectors = _compute_eigenvectors(alpha, beta, mid, key)
+  return mid, eigenvectors.T
 
 @jit(static_argnames=('side', 'method'))
 @config.default_matmul_precision("float32")
+def _polar_2d(a: Array, side: str, method: str, eps: float | None,
+              max_iterations: int | None) -> tuple[Array, Array]:
+  m, n = a.shape
+  if method == "qdwh":
+    # TODO(phawkins): return info also if the user opts in?
+    if m >= n and side == "right":
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+    elif m < n and side == "left":
+      a = a.T.conj()
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      posdef = posdef.T.conj()
+      unitary = unitary.T.conj()
+    else:
+      raise NotImplementedError("method='qdwh' only supports mxn matrices "
+                                "where m < n where side='right' and m >= n "
+                                f"side='left', got {a.shape} with {side=}")
+  elif method == "svd":
+    u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+    s_svd = s_svd.astype(u_svd.dtype)
+    unitary = u_svd @ vh_svd
+    if side == "right":
+      posdef = (vh_svd.T.conj() * s_svd[None, :]) @ vh_svd
+    else:
+      posdef = (u_svd * s_svd[None, :]) @ (u_svd.T.conj())
+  else:
+    raise ValueError(f"Unknown polar decomposition method {method}.")
+  return unitary, posdef
+
+
+@jit(static_argnames=('side', 'method'))
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
@@ -1715,7 +2074,7 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
     Applies the `QDWH`_ (QR-based Dynamically Weighted Halley) algorithm.
 
   Args:
-    a: The :math:`m \times n` input matrix.
+    a: array of shape ``(..., m, n)``.
     side: Determines whether a right or left polar decomposition is computed.
       If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
       then :math:`a = pu`. The default is ``"right"``.
@@ -1730,9 +2089,9 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
 
   Returns:
     A ``(unitary, posdef)`` tuple, where ``unitary`` is the unitary factor
-    (:math:`m \times n`), and ``posdef`` is the positive-semidefinite factor.
-    ``posdef`` is either :math:`n \times n` or :math:`m \times m` depending on
-    whether ``side`` is ``"right"`` or ``"left"``, respectively.
+    of shape ``(..., m, n)``, and ``posdef`` is the positive-semidefinite
+    factor. ``posdef`` has shape ``(..., n, n)`` or ``(..., m, m)`` depending
+    on whether ``side`` is ``"right"`` or ``"left"``, respectively.
 
   Examples:
 
@@ -1767,40 +2126,17 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
   .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
   """
   arr = jnp.asarray(a)
-  if arr.ndim != 2:
-    raise ValueError("The input `a` must be a 2-D array.")
+  if arr.ndim < 2:
+    raise ValueError("The input `a` must be at least a 2-D array.")
 
   if side not in ["right", "left"]:
     raise ValueError("The argument `side` must be either 'right' or 'left'.")
 
-  m, n = arr.shape
-  if method == "qdwh":
-    # TODO(phawkins): return info also if the user opts in?
-    if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
-    elif m < n and side == "left":
-      arr = arr.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
-      posdef = posdef.T.conj()
-      unitary = unitary.T.conj()
-    else:
-      raise NotImplementedError("method='qdwh' only supports mxn matrices "
-                                "where m < n where side='right' and m >= n "
-                                f"side='left', got {arr.shape} with {side=}")
-  elif method == "svd":
-    u_svd, s_svd, vh_svd = lax_linalg.svd(arr, full_matrices=False)
-    s_svd = s_svd.astype(u_svd.dtype)
-    unitary = u_svd @ vh_svd
-    if side == "right":
-      # a = u * p
-      posdef = (vh_svd.T.conj() * s_svd[None, :]) @ vh_svd
-    else:
-      # a = p * u
-      posdef = (u_svd * s_svd[None, :]) @ (u_svd.T.conj())
-  else:
-    raise ValueError(f"Unknown polar decomposition method {method}.")
-
-  return unitary, posdef
+  sig = "(m,n)->(m,n),(n,n)" if side == "right" else "(m,n)->(m,n),(m,m)"
+  return jnp_vectorize.vectorize(
+      partial(_polar_2d, side=side, method=method, eps=eps,
+              max_iterations=max_iterations),
+      signature=sig)(arr)
 
 
 @jit
@@ -1886,6 +2222,52 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   return _sqrtm(A)
 
 
+@jit
+def _rsf2csf_2d(T: Array, Z: Array) -> tuple[Array, Array]:
+  T, Z = promote_dtypes_complex(T, Z)
+  eps = dtypes.finfo(T.dtype).eps
+  N = T.shape[0]
+
+  if N == 1:
+    return T, Z
+
+  def _update_T_Z(m, T, Z):
+    mu = jnp_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = jnp_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
+    c = mu[0] / r
+    s = T[m, m-1] / r
+    G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
+
+    T_rows = lax.dynamic_slice_in_dim(T, m-1, 2, axis=0)
+    col_mask = jnp.arange(N) >= m-1
+    G_dot_T_zeroed_cols = G @ jnp.where(col_mask, T_rows, 0)
+    T_rows_new = jnp.where(~col_mask, T_rows, G_dot_T_zeroed_cols)
+    T = lax.dynamic_update_slice_in_dim(T, T_rows_new, m-1, axis=0)
+
+    T_cols = lax.dynamic_slice_in_dim(T, m-1, 2, axis=1)
+    row_mask = jnp.arange(N)[:, np.newaxis] < m+1
+    T_zeroed_rows_dot_GH = jnp.where(row_mask, T_cols, 0) @ G.conj().T
+    T_cols_new = jnp.where(~row_mask, T_cols, T_zeroed_rows_dot_GH)
+    T = lax.dynamic_update_slice_in_dim(T, T_cols_new, m-1, axis=1)
+
+    Z_cols = lax.dynamic_slice_in_dim(Z, m-1, 2, axis=1)
+    Z = lax.dynamic_update_slice_in_dim(Z, Z_cols @ G.conj().T, m-1, axis=1)
+    return T, Z
+
+  def _rsf2csf_iter(i, TZ):
+    m = N-i
+    T, Z = TZ
+    T, Z = lax.cond(
+      jnp.abs(T[m, m-1]) > eps*(jnp.abs(T[m-1, m-1]) + jnp.abs(T[m, m])),
+      _update_T_Z,
+      lambda m, T, Z: (T, Z),
+      m, T, Z)
+    T = T.at[m, m-1].set(0.0)
+    return T, Z
+
+  return lax.fori_loop(1, N, _rsf2csf_iter, (T, Z))
+
+
 @jit(static_argnames=('check_finite',))
 def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Array, Array]:
   """Convert real Schur form to complex Schur form.
@@ -1895,7 +2277,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
   Args:
     T: array of shape ``(..., N, N)`` containing the real Schur form of the input.
     Z: array of shape ``(..., N, N)`` containing the corresponding Schur transformation
-      matrix.
+      matrix. Batch dimensions are broadcast with those of ``T``.
     check_finite: unused by JAX
 
   Returns:
@@ -1941,58 +2323,15 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
   T_arr = jnp.asarray(T)
   Z_arr = jnp.asarray(Z)
 
-  if T_arr.ndim != 2 or T_arr.shape[0] != T_arr.shape[1]:
+  if T_arr.ndim < 2 or T_arr.shape[-1] != T_arr.shape[-2]:
     raise ValueError("Input 'T' must be square.")
-  if Z_arr.ndim != 2 or Z_arr.shape[0] != Z_arr.shape[1]:
+  if Z_arr.ndim < 2 or Z_arr.shape[-1] != Z_arr.shape[-2]:
     raise ValueError("Input 'Z' must be square.")
-  if T_arr.shape[0] != Z_arr.shape[0]:
+  if T_arr.shape[-1] != Z_arr.shape[-1]:
     raise ValueError(f"Input array shapes must match: Z: {Z_arr.shape} vs. T: {T_arr.shape}")
 
-  T_arr, Z_arr = promote_dtypes_complex(T_arr, Z_arr)
-  eps = dtypes.finfo(T_arr.dtype).eps
-  N = T_arr.shape[0]
-
-  if N == 1:
-    return T_arr, Z_arr
-
-  def _update_T_Z(m, T, Z):
-    mu = jnp_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
-    r = jnp_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
-    c = mu[0] / r
-    s = T[m, m-1] / r
-    G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
-
-    # T[m-1:m+1, m-1:] = G @ T[m-1:m+1, m-1:]
-    T_rows = lax.dynamic_slice_in_dim(T, m-1, 2, axis=0)
-    col_mask = jnp.arange(N) >= m-1
-    G_dot_T_zeroed_cols = G @ jnp.where(col_mask, T_rows, 0)
-    T_rows_new = jnp.where(~col_mask, T_rows, G_dot_T_zeroed_cols)
-    T = lax.dynamic_update_slice_in_dim(T, T_rows_new, m-1, axis=0)
-
-    # T[:m+1, m-1:m+1] = T[:m+1, m-1:m+1] @ G.conj().T
-    T_cols = lax.dynamic_slice_in_dim(T, m-1, 2, axis=1)
-    row_mask = jnp.arange(N)[:, np.newaxis] < m+1
-    T_zeroed_rows_dot_GH = jnp.where(row_mask, T_cols, 0) @ G.conj().T
-    T_cols_new = jnp.where(~row_mask, T_cols, T_zeroed_rows_dot_GH)
-    T = lax.dynamic_update_slice_in_dim(T, T_cols_new, m-1, axis=1)
-
-    # Z[:, m-1:m+1] = Z[:, m-1:m+1] @ G.conj().T
-    Z_cols = lax.dynamic_slice_in_dim(Z, m-1, 2, axis=1)
-    Z = lax.dynamic_update_slice_in_dim(Z, Z_cols @ G.conj().T, m-1, axis=1)
-    return T, Z
-
-  def _rsf2scf_iter(i, TZ):
-    m = N-i
-    T, Z = TZ
-    T, Z = lax.cond(
-      jnp.abs(T[m, m-1]) > eps*(jnp.abs(T[m-1, m-1]) + jnp.abs(T[m, m])),
-      _update_T_Z,
-      lambda m, T, Z: (T, Z),
-      m, T, Z)
-    T = T.at[m, m-1].set(0.0)
-    return T, Z
-
-  return lax.fori_loop(1, N, _rsf2scf_iter, (T_arr, Z_arr))
+  return jnp_vectorize.vectorize(
+      _rsf2csf_2d, signature="(n,n),(n,n)->(n,n),(n,n)")(T_arr, Z_arr)
 
 @overload
 def hessenberg(a: ArrayLike, *, calc_q: Literal[False], overwrite_a: bool = False,
@@ -2162,6 +2501,73 @@ def _toeplitz(c: Array, r: Array) -> Array:
       precision=lax.Precision.HIGHEST)[0]
   return jnp.flip(patches, axis=0)
 
+def hankel(c: ArrayLike, r: ArrayLike | None = None) -> Array:
+  r"""Construct a Hankel matrix.
+
+  JAX implementation of :func:`scipy.linalg.hankel`.
+
+  A Hankel matrix has constant anti-diagonals: ``H[i, j] = v[i + j]``, where
+  ``v = concatenate([c, r[1:]])``. Notice this implies that ``r[0]`` is ignored.
+
+  Args:
+    c: array of shape ``(..., N)`` specifying the first column.
+    r: (optional) array of shape ``(..., M)`` specifying the last row. Leading
+      dimensions must be broadcast-compatible with those of ``c``. If not
+      specified, ``r`` defaults to ``zeros_like(c)``.
+
+  Returns:
+    A Hankel matrix of shape ``(..., N, M)``.
+
+  Examples:
+    >>> c = jnp.array([1, 2, 3])
+    >>> jax.scipy.linalg.hankel(c)
+    Array([[1, 2, 3],
+           [2, 3, 0],
+           [3, 0, 0]], dtype=int32)
+
+    >>> r = jnp.array([999, 4, 5, 6]) # Note r[0] is ignored
+    >>> jax.scipy.linalg.hankel(c, r)
+    Array([[1, 2, 3, 4],
+           [2, 3, 4, 5],
+           [3, 4, 5, 6]], dtype=int32)
+
+    For N-dimensional ``c`` and/or ``r``, the result is a batch of Hankel matrices.
+  """
+  if r is None:
+    check_arraylike("hankel", c)
+    c = jnp.asarray(c)
+    r = jnp.zeros_like(c)
+  else:
+    check_arraylike("hankel", c, r)
+    c = jnp.asarray(c)
+    r = jnp.asarray(r)
+  if c.ndim == 0:
+    raise ValueError("hankel: c must be at least 1-dimensional, got a scalar.")
+  if r.ndim == 0:
+    raise ValueError("hankel: r must be at least 1-dimensional, got a scalar.")
+
+  # Align batch ranks so jnp.vectorize doesn't need implicit rank promotion.
+  if c.ndim < r.ndim:
+    c = lax.expand_dims(c, range(r.ndim - c.ndim))
+  elif r.ndim < c.ndim:
+    r = lax.expand_dims(r, range(c.ndim - r.ndim))
+
+  return _hankel(c, r)
+
+@partial(jnp_vectorize.vectorize, signature="(m),(n)->(m,n)")
+def _hankel(c: Array, r: Array) -> Array:
+  ncols, = c.shape
+  nrows, = r.shape
+  if ncols == 0 or nrows == 0:
+    return jnp.empty((ncols, nrows), dtype=jnp.result_type(c, r))
+  v = jnp.concatenate((c, r[1:]))
+  return lax.conv_general_dilated_patches(
+      v.reshape((1, ncols + nrows - 1, 1)),
+      (nrows,), (1,), 'VALID',
+      dimension_numbers=('NTC', 'IOT', 'NTC'),
+      precision=lax.Precision.HIGHEST)[0]
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.
@@ -2312,7 +2718,34 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
   return Y_flat_final.reshape((m, n))
 
 
-@jit(static_argnames=["method", "tol"])
+@jit(static_argnames=["method"])
+def _solve_sylvester_2d(A: Array, B: Array, C: Array, *, method: str, tol: float) -> Array:
+  m, n = C.shape[-2:]
+  if method == "schur":
+    R, U = schur(A, output='complex')
+    S, V = schur(B.conj().T, output='complex')
+    F = U.conj().T @ C.astype(R.dtype) @ V
+    Y = _solve_sylvester_triangular_scan(R, S.conj().T, F)
+    X = U @ Y @ V.conj().T
+  elif method == "eigen":
+    RA, UA = jnp.linalg.eig(A)
+    RB, UB = jnp.linalg.eig(B)
+    F = solve(UA, C.astype(RA.dtype) @ UB)
+    W = RA[:, None] + RB[None, :]
+    Y = F / W
+    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
+  else:
+    raise ValueError(f"Unrecognized method {method}. The two valid methods are either \"schur\" or \"eigen\".")
+  if not dtypes.issubdtype(C.dtype, np.complexfloating):
+    X = X.real
+  return lax.cond(
+    jnp.any(jnp.abs(jnp.linalg.eigvals(A)[:, None] + jnp.linalg.eigvals(B)[None, :]) < tol),
+    lambda: jnp.zeros_like(X) * np.nan,
+    lambda: X,
+  )
+
+
+@jit(static_argnames=["method"])
 def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "schur", tol: float = 1e-8) -> Array:
   """
   Solves the Sylvester equation
@@ -2334,14 +2767,15 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
   (2) The Eigen decomposition algorithm [CPU and GPU]
 
   Args:
-    A: Matrix of shape m x m
-    B: Matrix of shape n x n
-    C: Matrix of shape m x n
+    A: array of shape ``(..., m, m)``
+    B: array of shape ``(..., n, n)``
+    C: array of shape ``(..., m, n)``. Batch dimensions are broadcast across
+      ``A``, ``B``, and ``C``.
     method: "schur" is the default and is accurate but slow, and "eigen" is an alternative that is faster but less accurate for ill-conditioned matrices.
     tol: How close the sum of the eigenvalues from A and B can be to zero before returning matrix of NaNs
 
   Returns:
-    X: Matrix of shape m x n
+    Array of shape ``(..., m, n)`` representing the solution ``X``.
 
   Examples:
     >>> A = jax.numpy.array([[1, 2], [3, 4]])
@@ -2370,41 +2804,12 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     can still return good estimates for ill-conditioned matrices depending on how close to zero the sums of the eigenvalues of A and B
     are.
   """
-  A, B, C = promote_args_inexact("solve_sylvester", A, B, C)
+  A, B, C = promote_dtypes_inexact(jnp.asarray(A), jnp.asarray(B), jnp.asarray(C))
 
-  m, n = C.shape
-
-  if A.shape != (m, m) or B.shape != (n, n) or C.shape != (m, n):
+  m, n = C.shape[-2:]
+  if A.shape[-2:] != (m, m) or B.shape[-2:] != (n, n):
     raise ValueError(f"Incompatible shapes for Sylvester equation:\nA: {A.shape}\nB: {B.shape}\nC: {C.shape}")
 
-  if method == "schur":
-    # Schur decomposition
-    R, U = schur(A, output='complex')
-    S, V = schur(B.conj().T, output='complex')
-
-    # Transform right-hand side
-    F = U.conj().T @ C.astype(R.dtype) @ V
-
-    # Solve triangular Sylvester system
-    Y = _solve_sylvester_triangular_scan(R, S.conj().T, F)
-
-    # Transform back
-    X = U @ Y @ V.conj().T
-  elif method == "eigen":
-    RA, UA = jnp.linalg.eig(A)
-    RB, UB = jnp.linalg.eig(B)
-    F = solve(UA, C.astype(RA.dtype) @ UB)
-    W = RA[:, None] + RB[None, :]
-    Y = F / W
-    X = UA[:m,:m] @ Y[:m,:n] @ inv(UB)[:n,:n]
-  else:
-    raise ValueError(f"Unrecognized method {method}. The two valid methods are either \"schur\" or \"eigen\".")
-
-  if not dtypes.issubdtype(C.dtype, np.complexfloating):
-    X = X.real
-
-  return lax.cond(
-    jnp.any(jnp.abs(jnp.linalg.eigvals(A)[:, None] + jnp.linalg.eigvals(B)[None, :]) < tol),
-    lambda: jnp.zeros_like(X) * np.nan,
-    lambda: X,
-  )
+  return jnp_vectorize.vectorize(
+      partial(_solve_sylvester_2d, method=method, tol=tol),
+      signature="(m,m),(n,n),(m,n)->(m,n)")(A, B, C)

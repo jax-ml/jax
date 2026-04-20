@@ -13,16 +13,19 @@
 # limitations under the License.
 # ==============================================================================
 
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import math
-from typing import Any, Literal
+from typing import cast, Any, ClassVar, Literal, TypeVar
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
@@ -35,6 +38,8 @@ import numpy as np
 from . import fragmented_array as fa
 from . import profiler
 from . import utils
+
+_OpT = TypeVar("_OpT", bound=ir.OpView)
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
@@ -53,9 +58,10 @@ TMAReductionOp = Literal[
     "smax",
 ]
 
-# Fixed size of the collective metadata structure in the XLA.
+# Fixed size of the collective metadata structure in XLA.
 # Stores rank, param_to_peers_ptrs and multicast_buffer_ptr.
-COLLECTIVE_METADATA_SIZE = 3
+# Plus alignment to 16 bytes.
+COLLECTIVE_METADATA_SIZE = 4
 
 # Attribute used to merk the module which uses collective metadata.
 COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
@@ -69,6 +75,9 @@ ORIGINAL_KERNEL_ARG_ATTR = "mosaic_gpu.original_kernel_arg"
 DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
 # Attribute used to mark that a kernel requires multicast support
 USES_MULTIMEM_ATTR = "mosaic_gpu.multimem_used"
+# Module attribute used to identify which kernel arguments are used with
+# multimem.
+MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
 
 
 def uses_collective_metadata(module):
@@ -87,6 +96,25 @@ class GlobalBroadcast:
 GLOBAL_BROADCAST = GlobalBroadcast()
 
 
+class CopyPartition:
+  PARTITIONED: ClassVar[type[_Partitioned]]
+  REPLICATED: ClassVar[_Replicated]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Partitioned(CopyPartition):
+  axis: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _Replicated(CopyPartition):
+  pass
+
+
+CopyPartition.PARTITIONED = _Partitioned
+CopyPartition.REPLICATED = _Replicated()
+
+
 @dataclasses.dataclass(frozen=True)
 class MemRefTransform:
   def apply(self, ref: ir.Value) -> ir.Value:
@@ -98,10 +126,10 @@ class MemRefTransform:
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
-  def transform_strides(self, shape: Sequence[int]) -> tuple[int, ...]:
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
-  def batch(self, leading_rank: int) -> 'MemRefTransform':
+  def batch(self, leading_rank: int) -> MemRefTransform:
     """Returns a transform that accepts a ref with the extra `leading_rank` dims.
 
     The returned transform should leave the leading dimensions unchanged and
@@ -379,7 +407,7 @@ class Scratch:
              : (!llvm.array<256 x i8>) -> !llvm.ptr
 
   """
-  def __init__(self, gpu_launch_op: gpu.LaunchOp):
+  def __init__(self, gpu_launch_op: _gpu_ops_gen.LaunchOp):
     self.next_offset: int = 0
     self.host_init: list[Callable[[ir.Value], None]] = []
     self._ops_created = False
@@ -389,21 +417,23 @@ class Scratch:
     # find the gpu.launch op from there when needed.
     op = gpu_launch_op
     while op.name != "builtin.module":
+      assert op.parent is not None
       op = op.parent.opview
     assert op is not None
-    self._module_op = op
+    self._module_op = cast(builtin.ModuleOp, op)
 
   def _find_first_op(
-      self, op_name: str, block: ir.Block, tag_attribute_name: str | None = None
-  ) -> ir.OpView | None:
+      self, op_type: type[_OpT], block: ir.Block, tag_attribute_name: str | None = None
+  ) -> _OpT | None:
+    op_name = getattr(op_type, "OPERATION_NAME", None)
     for op in block:
       if op.name == op_name and (
           tag_attribute_name is None or tag_attribute_name in op.attributes
       ):
-        return op
+        return cast(_OpT, op)
       for region in op.regions:
         for block in region:
-          child_op = self._find_first_op(op_name, block, tag_attribute_name)
+          child_op = self._find_first_op(op_type, block, tag_attribute_name)
           if child_op is not None:
             return child_op
     return None
@@ -413,7 +443,7 @@ class Scratch:
       return
     self._ops_created = True
 
-    gpu_launch_op = self._find_first_op("gpu.launch", self._module_op.body)
+    gpu_launch_op = self._find_first_op(gpu.LaunchOp, self._module_op.body)
     assert gpu_launch_op is not None
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -427,10 +457,10 @@ class Scratch:
       )
       # Tag the alloc op with an attribute so that we can find it later.
       alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
-      load_op = llvm.LoadOp(empty_arr_ty, alloc_op)
+      load_op = llvm.LoadOp(empty_arr_ty, alloc_op.result)
 
     with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
-      builtin.unrealized_conversion_cast([ptr_ty], [load_op])
+      builtin.unrealized_conversion_cast([ptr_ty], [load_op.result])
 
   def _find_alloc_load_and_device_ptr(
       self,
@@ -439,7 +469,7 @@ class Scratch:
       self._create_ops()
 
     alloc_op = self._find_first_op(
-        "llvm.alloca", self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR
+        llvm.AllocaOp, self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR
     )
     assert alloc_op is not None
     [alloc_user] = alloc_op.result.uses
@@ -448,7 +478,7 @@ class Scratch:
     [load_op_user] = load_op.result.uses
     device_ptr = load_op_user.owner
     assert device_ptr.operation.name == "builtin.unrealized_conversion_cast"
-    return alloc_op, load_op, device_ptr.result
+    return alloc_op, load_op, device_ptr.result  # pyrefly: ignore[bad-return]
 
   def device_ptr(self) -> ir.Value:
     _, _, device_ptr = self._find_alloc_load_and_device_ptr()
@@ -477,9 +507,7 @@ class _DefaultPredicate:
   pass
 
 
-def _find_kernel_argument_for_gmem_ref(
-    gmem_ref: ir.Value,
-) -> builtin.UnrealizedConversionCastOp:
+def _find_kernel_argument_for_gmem_ref(gmem_ref: ir.Value) -> ir.Value:
   """Returns the kernel argument value for a given gmem_ref.
 
   The kernel argument is expected to be an unrealized conversion cast. This
@@ -491,7 +519,7 @@ def _find_kernel_argument_for_gmem_ref(
   while isinstance(gmem_ref, ir.BlockArgument):
     gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
 
-  if ORIGINAL_KERNEL_ARG_ATTR not in gmem_ref.owner.attributes:
+  if ORIGINAL_KERNEL_ARG_ATTR not in gmem_ref.owner.attributes:  # pyrefly: ignore[missing-attribute]
     raise NotImplementedError(
         f"Expected {gmem_ref.owner} to be a GMEM kernel argument."
     )
@@ -578,15 +606,34 @@ class AsyncCopyImplementation(enum.Enum):
   CP_ASYNC = enum.auto()
 
 
+def get_collective_metadata_size(num_params: int, num_peers: int) -> int:
+  """Returns the size of the collective metadata buffer for the given number of parameters and peers."""
+  return (
+      # Stores the collective metadata structure.
+      COLLECTIVE_METADATA_SIZE
+      # For each peer we need to store a pointer to each parameter.
+      + num_peers * num_params
+      # For each parameter we need to store a pointer to the multimem address.
+      + num_params
+  )
+
+
+class OOBFillMode(enum.IntEnum):
+  UNDEFINED = 0
+  PROMISE_IN_BOUNDS = 1
+  ZEROS = 2
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
   scratch: Scratch
   cluster_size: tuple[int, int, int]
+  buffers: ir.Value
   profiler: OnDeviceProfiler | None = None
   device_collective_metadata: ir.Value | None = None
-  host_collective_metadata: ir.Value | None = None
   num_peers: int = 0
+  num_params: int = 0
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
@@ -600,6 +647,21 @@ class LaunchContext:
         yield
     else:
       yield
+
+  @property
+  def host_collective_metadata(self) -> ir.Value | None:
+    if self.device_collective_metadata is None:
+      return None
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    metadata_ty = ir.MemRefType.get(
+      (get_collective_metadata_size(self.num_params, self.num_peers),),
+      ir.IntegerType.get_signless(64),
+    )
+
+    host_metadata_ptr = llvm.load(
+      ptr_ty, utils.getelementptr(self.buffers, [self.num_params + 1], ptr_ty)
+    )
+    return utils.ptr_as_memref(host_metadata_ptr, metadata_ty)
 
   def _alloc_scratch(
       self,
@@ -634,7 +696,7 @@ class LaunchContext:
     gep = llvm.GEPOp(
         ptr_ty, self.scratch.device_ptr(), [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
-    gep.move_after(self.scratch.device_ptr().owner)
+    gep.move_after(self.scratch.device_ptr().owner)  # pyrefly: ignore[bad-argument-type]
     return device_init(gep.result)
 
   def _recompute_peer_id(
@@ -648,7 +710,7 @@ class LaunchContext:
       )
     if isinstance(peer_id, ir.BlockArgument):
       raise ReplicationError("Can't recompute a value that's a block argument")
-    op = peer_id.owner
+    op: Any = peer_id.owner
 
     # We accept all arith ops
     if op.OPERATION_NAME.startswith("arith."):
@@ -663,13 +725,18 @@ class LaunchContext:
       new_op = ir.Operation.create(
           op.OPERATION_NAME, result_types, new_operands, new_attributes
       )
-      return new_op.results if len(new_op.results) > 1 else new_op.result
+      assert len(new_op.results) == 1
+      return new_op.result
 
     # nvshmem_my_pe queries the device id of the current process and works on
     # both the host and the device.
-    if isinstance(op, llvm.CallOp) and op.callee.value == "nvshmem_my_pe":
+    if (
+        isinstance(op, llvm.CallOp)
+        and op.callee is not None
+        and op.callee.value == "nvshmem_my_pe"
+    ):
       i32 = ir.IntegerType.get_signless(32)
-      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
 
     raise ReplicationError(
         f"Unrecognized op can't be recomputed on the host: {op}"
@@ -711,6 +778,7 @@ class LaunchContext:
               f" {strides[-1]}."
           )
 
+        # pyrefly: ignore[not-iterable]
         _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
         aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
@@ -720,23 +788,8 @@ class LaunchContext:
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
         if isinstance(gmem_peer_id, GlobalBroadcast):
-          if self.host_collective_metadata is None:
-            self._ensure_nvshmem_decls()
-            self._flag_multimem_usage()
-            world_team = arith.constant(i32, 0)
-            base_ptr = llvm.call(
-                base_ptr.type,
-                [world_team, base_ptr],
-                [],
-                [],
-                callee="nvshmemx_mc_ptr",
-            )
-          else:
-            # TODO(patrios): Remove this once multimem lowering with collective
-            # metadata is supported.
-            raise NotImplementedError(
-                "GlobalBroadcast not supported with collective metadata"
-            )
+          multimem_ref = self.to_remote_multicast(ref, on_host=True)
+          base_ptr = utils.memref_ptr(multimem_ref.ref)
         elif gmem_peer_id is not None:
           if not isinstance(gmem_peer_id, ir.Value):
             peer_id = c(gmem_peer_id, i32)
@@ -758,6 +811,7 @@ class LaunchContext:
                 [],
                 callee="nvshmem_ptr",
             )
+            assert isinstance(base_ptr, ir.Value)
           else:
             remote_ref = self.to_remote(ref, peer_id, on_host=True)
             base_ptr = utils.memref_ptr(remote_ref)
@@ -771,7 +825,7 @@ class LaunchContext:
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
         dtype_or_bitwidth = c(tma_dtype, i64)
-        args = [
+        args: list[ir.Value] = [
             host_ptr,
             base_ptr,
             dtype_or_bitwidth,
@@ -802,7 +856,7 @@ class LaunchContext:
       gmem_slice: Any,
       gmem_transform: tuple[MemRefTransform, ...],
       collective: Sequence[gpu.Dimension] | None,
-      partitioned: int | None,
+      leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
@@ -860,7 +914,8 @@ class LaunchContext:
         raise ValueError("Only the TMA implementation supports collective copies")
       if gather_indices is not None:
         raise NotImplementedError("Collective copies with gather/scatter unsupported")
-    if partitioned is not None:
+    if isinstance(leader_tracked, _Partitioned):
+      partitioned = leader_tracked.axis
       # Increment partitioned by the number of preceding squeezed dimensions.
       partitioned = np.where(
           np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
@@ -881,8 +936,8 @@ class LaunchContext:
               f" {slice_shape[partitioned]}"
           )
         slice_shape[partitioned] //= collective_size
-        dyn_base_indices = list(dyn_base_indices)  # type: ignore[assignment]
-        dyn_base_indices[partitioned] = arith.addi(  # type: ignore[index]
+        dyn_base_indices = list(dyn_base_indices)
+        dyn_base_indices[partitioned] = arith.addi(
             dyn_base_indices[partitioned],
             arith.muli(
                 utils.cluster_idx(collective),
@@ -929,7 +984,7 @@ class LaunchContext:
       squeezed_dims: tuple[int, ...],
       gmem_transform: tuple[MemRefTransform, ...],
       collective: Sequence[gpu.Dimension],
-      partitioned: int | None,
+      leader_tracked: CopyPartition | None = None,
   ):
     """Finalizes setup specific to the TMA implementation of async_copy."""
     index = ir.IndexType.get()
@@ -960,7 +1015,8 @@ class LaunchContext:
       slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
       num_squeezed_dims = 1
 
-    dyn_base_indices = list(dyn_base_indices)
+    # pyrefly: ignore[redefinition]
+    dyn_base_indices: list[ir.Value] = list(dyn_base_indices)
     slice_shape = list(slice_shape)
     assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
 
@@ -970,8 +1026,8 @@ class LaunchContext:
     # and tiling change that order and if we picked a partition based on the
     # untransformed slice shape, we might have ended up with a non-contiguous
     # SMEM window, which would no longer be realizable in a single TMA transfer.
-    collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
-    if collective_size > 1 and partitioned is None:
+    collective_size = math.prod(self.cluster_size[d] for d in collective)
+    if collective_size > 1 and not isinstance(leader_tracked, _Partitioned):
       assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         # No need to partition squeezed dims. They don't even exist in smem_ref.
@@ -979,7 +1035,7 @@ class LaunchContext:
         nonlocal smem_ref
         slice_shape[dim] //= num_chunks
         block_offset = arith.muli(idx, c(slice_shape[dim], index))
-        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)  # type: ignore[index]
+        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
         if smem_ref is not None:
           smem_ref = utils.memref_slice(
               smem_ref,
@@ -1017,11 +1073,6 @@ class LaunchContext:
             f" {collective_size}"
         )
 
-    if max(slice_shape) > 256:
-      raise ValueError(
-          "Async copies only support copying <=256 elements along each"
-          f" dimension, got {tuple(slice_shape)}"
-      )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
           "Async copies require the number of bits copied along the last"
@@ -1052,11 +1103,12 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-      partitioned: int | None = None,
+      leader_tracked: CopyPartition | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
+      oob_mode: OOBFillMode = OOBFillMode.ZEROS,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -1070,19 +1122,22 @@ class LaunchContext:
     identical async_copy must be scheduled by all blocks that share the same
     coordinates along collective dimensions within a cluster. The behavior is
     undefined otherwise. The semantics of collective loads depend further on the
-    `partitioned` argument:
+    `leader_tracked` argument:
 
-    - If `partitioned` is not specified, all blocks load the same data into
+    - If `leader_tracked` is not specified, all blocks load the same data into
       their shared memory and all receive the update in their barriers, unless
       `arrive` is False. If `arrive` is False, you should expect the barrier to
       have expect_tx incremented by the same amount of bytes as if `collective`
       was not specified.
-    - If `partitioned` is specified, each block only loads a separate slice of
-      the data into SMEM, partitioned into equal tiles along the `partitioned`
-      dimension. In this case only the barrier of the first block in the
-      collective will have its expect_tx incremented by the total size of the
-      transfer across all blocks involved in the collective. Barriers supplied
-      by other blocks will be ignored (even if `arrive` is True).
+    - If `leader_tracked` is ``CopyPartition.PARTITIONED(axis)``, each block only loads a
+      separate slice of the data into SMEM, partitioned into equal tiles along
+      the given axis. Only the barrier of the first block in the collective
+      will have its expect_tx incremented by the total size of the transfer
+      across all blocks involved in the collective. Barriers supplied by other
+      blocks will be ignored (even if `arrive` is True).
+    - If `leader_tracked` is ``CopyPartition.REPLICATED``, all blocks load the same data
+      into their SMEM but only the first block in the collective tracks
+      progress via barrier arrivals. This uses the `cta_group::2` mode.
     """
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
@@ -1153,7 +1208,7 @@ class LaunchContext:
         gmem_slice,
         gmem_transform,
         collective,
-        partitioned,
+        leader_tracked,
         implementation,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
@@ -1176,7 +1231,7 @@ class LaunchContext:
 
     if implementation == AsyncCopyImplementation.CP_ASYNC:
       assert not collective
-      assert partitioned is None
+      assert leader_tracked is None
       if not isinstance(predicate, _DefaultPredicate):
         raise NotImplementedError(
             "CP_ASYNC needs to be performed by the whole warpgroup and does not"
@@ -1240,7 +1295,7 @@ class LaunchContext:
         if gmem_transform != (TileTransform((8, swizzle_elems)),):
           raise NotImplementedError(gmem_transform)
         layout = fa.tiled_copy_smem_gmem_layout(
-            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
+            *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
         )
         gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
         dst_tiled_strides = [
@@ -1288,7 +1343,7 @@ class LaunchContext:
             squeezed_dims,
             gmem_transform,
             collective,
-            partitioned,
+            leader_tracked,
         )
     )
     assert smem_ref is not None  # For type checkers.
@@ -1309,9 +1364,22 @@ class LaunchContext:
 
     collective_size = math.prod(self.cluster_size[d] for d in collective)
     assert math.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
-    transfer_bytes = c(
-        math.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
+    transfer_bytes_val = (
+        math.prod(slice_shape) * element_bitwidth * collective_size // 8
     )
+    # If a copy is multicast, then slice_shape is 1/collective_size of the
+    # local SMEM slice, so each CTA awaits all the bytes that arrive locally.
+    # If leader_tracked is partitioned, then slice_shape corresponds to the
+    # local SMEM slice. We multiply by collective_size to get the total number
+    # of bytes the leader will await.
+    # If leader_tracked is replicated, slice_shape corresponds to 1/collective_size
+    # of the local slice (we use multicast from both blocks). This means that
+    # each CTA will get prod(slice_shape) * collective_size updates, just like
+    # in the multicast case. However, multicast + .cta_group::2 routes all updates
+    # to CTA0, so we need to multiply by collective_size again to get the total.
+    if isinstance(leader_tracked, _Replicated):
+      transfer_bytes_val *= collective_size
+    transfer_bytes = c(transfer_bytes_val, i32)
 
     if gather_indices is not None:
       import builtins
@@ -1327,7 +1395,7 @@ class LaunchContext:
       # The rest can be anything, and we will unroll the transfers over them.
       if smem_ref is src_ref:
         raise NotImplementedError("Scatter unsupported for the TMA implementation")
-      assert barrier is not None  # for pytype
+      assert barrier is not None
       barrier_ptr = barrier.get_ptr()
       if squeezed_dims:
         raise NotImplementedError("Gather/scatter unsupported when using integer indexing")
@@ -1455,6 +1523,124 @@ class LaunchContext:
       return
 
     assert gather_indices is None  # Only tiled TMA handled below.
+
+    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
+
+    def check_contiguous_slice(slice_shape, strides):
+      if strides[-1] != 1:
+        return False
+
+      expected_stride = 1
+      for dim, stride in zip(reversed(slice_shape), reversed(strides), strict=True):
+        if dim != 1 and stride != expected_stride:
+          return False
+        expected_stride *= dim
+
+      return True
+
+    ref = gmem_ref
+    for t in gmem_transform:
+      ref = t.apply(ref)
+    ref_ty = ir.MemRefType(ref.type)
+    strides, _ = ref_ty.get_strides_and_offset()
+
+    # Use the simpler copy instruction for bulk contiguous transfers.
+    is_simple_contiguous_copy = (
+        check_contiguous_slice(slice_shape, strides)
+        and reduction_op is None
+        and (
+            swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle
+        )
+        and collective_size == 1
+        and oob_mode != OOBFillMode.ZEROS
+        and leader_tracked is None
+        and implementation == AsyncCopyImplementation.TMA
+    )
+    if is_simple_contiguous_copy:
+      slicing = tuple(
+          utils.ds(start, size)
+          for start, size in zip(dyn_base_indices, slice_shape)
+      )
+      ref_slice = utils.memref_slice(ref, slicing)
+      del ref  # Use ref_slice from now on.
+      gmem_base_ptr = utils.memref_ptr(ref_slice)
+
+      if oob_mode == OOBFillMode.PROMISE_IN_BOUNDS:
+        clamped_transfer_bytes = transfer_bytes
+      else:
+        index = ir.IndexType.get()
+        to_i32 = lambda x: arith.index_cast(ir.IntegerType.get_signless(32), x)
+
+        # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
+        total_elements = c(math.prod(gmem_ref_ty.shape), index)
+        linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]  # pyrefly: ignore[bad-index]
+
+        # Equivalent to: max(0, total - offset)
+        valid_offset_elems = arith.minui(linear_offset_elems, total_elements)
+        remaining_elements = arith.subi(total_elements, valid_offset_elems)
+
+        remaining_bytes = utils.elements_to_bytes(remaining_elements, element_bitwidth)
+        transfer_bytes_idx = arith.index_cast(index, transfer_bytes)
+        clamped_transfer_bytes = to_i32(arith.minui(transfer_bytes_idx, remaining_bytes))
+
+      if gmem_peer_id is not None:
+        if isinstance(gmem_peer_id, GlobalBroadcast):
+          multimem_ref = self.to_remote_multicast(ref_slice, on_host=False)
+          gmem_base_ptr = utils.memref_ptr(multimem_ref.ref)
+        else:
+          if isinstance(gmem_peer_id, int):
+            gmem_peer_id = c(gmem_peer_id, i32)
+
+          remote_ref = self.to_remote(ref_slice, gmem_peer_id, on_host=False)
+          gmem_base_ptr = utils.memref_ptr(remote_ref)
+
+      if gmem_ref is src_ref:
+        assert barrier is not None
+        barrier_ptr = barrier.get_ptr()
+        if arrive:
+          utils.nvvm_mbarrier_arrive_expect_tx(
+              barrier_ptr, clamped_transfer_bytes, predicate=predicate
+          )
+        else:
+          if oob_mode != OOBFillMode.PROMISE_IN_BOUNDS:
+            # Make sure the barrier is completed with the correct number of bytes
+            # if we resize the transfer size.
+            left_to_complete = arith.subi(transfer_bytes, clamped_transfer_bytes)
+            barrier.complete_tx(left_to_complete, predicate=predicate)
+
+        llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [predicate, smem_ptr, gmem_base_ptr, clamped_transfer_bytes, barrier_ptr],
+          """
+          @$0 cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [$1], [$2], $3, [$4];
+          """,
+          "b,l,l,r,l",
+          has_side_effects=True,
+        )
+      else:
+        llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [predicate, gmem_base_ptr, smem_ptr, clamped_transfer_bytes],
+          """
+          @$0 cp.async.bulk.global.shared::cta.bulk_group [$1], [$2], $3;
+          """,
+          "b,l,l,r",
+          has_side_effects=True,
+          )
+        if arrive:
+          nvvm.cp_async_bulk_commit_group()
+      return
+
+    # Below are tiled TMA copies using a tensormap.
+    if max(slice_shape) > 256:
+      raise ValueError(
+          "Async copies only support copying <=256 elements along each"
+          f" dimension, got {tuple(slice_shape)}"
+      )
     tma_desc = self._get_tma_desc(
         gmem_ref, gmem_transform, gmem_peer_id,
         tuple(slice_shape), swizzle, reduction_op,
@@ -1463,16 +1649,11 @@ class LaunchContext:
     rev_dyn_base_indices = [
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]
-    if isinstance(predicate, _DefaultPredicate):
-      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-    if predicate is None:
-      predicate = c(1, ir.IntegerType.get_signless(1))
-    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
-      assert barrier is not None  # for pytype
+      assert barrier is not None
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
-      if collective_size > 1 and partitioned is not None:
+      if collective_size > 1 and leader_tracked is not None:
         assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
@@ -1484,18 +1665,30 @@ class LaunchContext:
           )
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
+        if isinstance(leader_tracked, _Replicated):
+          multicast_mask = (arith.trunci(
+              i16, utils.cluster_collective_mask(self.cluster_size, collective)
+          ),)
+          smem_space = "shared::cluster"
+          multicast_mod = ".multicast::cluster"
+          multicast_operand = f", ${4 + rank}"
+        else:
+          multicast_mask = ()
+          smem_space = "shared::cta"
+          multicast_mod = ""
+          multicast_operand = ""
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices],
+            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
             f"""
             {{
             .reg .b32 mapped_addr;
             @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
-            @$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::2
-                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr];
+            @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2
+                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
             }}
             """,
-            "b,r,l,r" + ",r" * rank,
+            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
             has_side_effects=True,
         )
       else:
@@ -1542,10 +1735,11 @@ class LaunchContext:
     gmem_peer_id: int | ir.Value | None = None,
     swizzle: int | None = None,
     collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-    partitioned: int | None = None,
+    leader_tracked: CopyPartition | None = None,
     # Should select 0 or 1 threads from the WG.
     predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
   ):
+
     i32 = ir.IntegerType.get_signless(32)
 
     if isinstance(collective, gpu.Dimension):
@@ -1565,7 +1759,7 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, partitioned, impl
+        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 
@@ -1580,7 +1774,7 @@ class LaunchContext:
             squeezed_dims,
             gmem_transform,
             collective,
-            partitioned,
+            leader_tracked,
         )
     )
 
@@ -1668,10 +1862,39 @@ class LaunchContext:
         )
       op = memref_operands[0].owner
 
-    attr = op.attributes[KERNEL_ARG_ID_ATTR]
+    attr = op.attributes[KERNEL_ARG_ID_ATTR]  # pyrefly: ignore[missing-attribute]
     # Save the result so that we can find it out faster next time.
-    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr
+    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr  # pyrefly: ignore[missing-attribute]
     return attr.value
+
+  def _get_collective_metadata(self, on_host: bool):
+    return (
+        self.host_collective_metadata
+        if on_host
+        else self.device_collective_metadata
+    )
+
+  def _get_parameter_address_on_peer(
+      self, parameter_id: int, peer_id: ir.Value, on_host: bool
+  ):
+    """Returns the address of the given parameter on the given peer."""
+    collective_metadata = self._get_collective_metadata(on_host)
+    index = ir.IndexType.get()
+    offset_to_parameter = arith.constant(
+        ir.IndexType.get(),
+        COLLECTIVE_METADATA_SIZE + self.num_peers * parameter_id,
+    )
+    assert peer_id.type == ir.IntegerType.get_signless(32)
+    parameter_on_device_offset = arith.addi(
+        offset_to_parameter, arith.index_cast(index, peer_id)
+    )
+    return memref.load(collective_metadata, [parameter_on_device_offset])
+
+  def _get_offset_to_parameter(
+      self, ref: ir.Value, parameter_address: ir.Value
+  ):
+    ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref)
+    return arith.subi(ref_int, parameter_address)
 
   def to_remote(
       self,
@@ -1681,13 +1904,8 @@ class LaunchContext:
       _kernel_arg_idx: int | None = None,
       on_host: bool = False,
   ):
-    collective_metadata = (
-        self.host_collective_metadata
-        if on_host
-        else self.device_collective_metadata
-    )
+    collective_metadata = self._get_collective_metadata(on_host)
     i32 = ir.IntegerType.get_signless(32)
-    i64 = ir.IntegerType.get_signless(64)
     if isinstance(ref.type, ir.MemRefType):
       assert _kernel_arg_idx is None
       # We replace the offset in the ref type by 0, because memref_ptr always
@@ -1744,36 +1962,25 @@ class LaunchContext:
       # pointer of the kernel arguments defined with the memref.subview
       # operation.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
-      index = ir.IndexType.get()
 
       assert _kernel_arg_idx is not None
-      arg_ptrs_base = arith.constant(
-          index, COLLECTIVE_METADATA_SIZE + self.num_peers * _kernel_arg_idx
-      )
-      local_arg_ptr_offset = arith.addi(
-          arg_ptrs_base,
-          arith.index_cast(index, self.device_id(on_host)),
-      )
       # TODO(apaszke): Just use the pointer directly. After all it is an arg.
-      local_arg_ptr = memref.load(collective_metadata, [local_arg_ptr_offset])
-      local_offset = arith.subi(llvm.ptrtoint(i64, ref), local_arg_ptr)
-      remote_arg_ptr_offset = arith.addi(
-          arg_ptrs_base, arith.index_cast(index, peer)
+      current_device = self.device_id(on_host)
+      parameter_on_current_device = self._get_parameter_address_on_peer(
+          _kernel_arg_idx, current_device, on_host
       )
-      remote_arg_ptr = memref.load(collective_metadata, [remote_arg_ptr_offset])
-      memory_address = arith.addi(remote_arg_ptr, local_offset)
-      return llvm.inttoptr(ref.type, memory_address)
+      ref_offset = self._get_offset_to_parameter(
+          ref, parameter_on_current_device
+      )
+      parameter_on_peer_device = self._get_parameter_address_on_peer(
+          _kernel_arg_idx, peer, on_host
+      )
+      ref_on_peer_device = arith.addi(parameter_on_peer_device, ref_offset)
+      return llvm.inttoptr(ref.type, ref_on_peer_device)
 
-  def to_remote_multicast(self, ref: ir.Value):
+  def to_remote_multicast(self, ref: ir.Value, on_host: bool = False):
     i32 = ir.IntegerType.get_signless(32)
 
-    # TODO(patrios): Support multimem lowering with collective metadata
-    if self.device_collective_metadata is not None:
-      raise NotImplementedError(
-          "Multicast lowering with collective metadata is not implemented yet"
-      )
-
-    self._ensure_nvshmem_decls()
     self._flag_multimem_usage()
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
@@ -1787,23 +1994,62 @@ class LaunchContext:
         ir.StridedLayoutAttr.get(0, strides),
         ref_ty.memory_space,
     )
-    world_team = arith.constant(i32, 0)
-    ptr = utils.memref_ptr(ref)
-    mc_ptr = llvm.call(
-        ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr",
+
+    collective_metadata = self._get_collective_metadata(on_host)
+    if collective_metadata is None:
+      self._ensure_nvshmem_decls()
+      world_team = arith.constant(i32, 0)
+      ptr = utils.memref_ptr(ref)
+      mc_ptr = llvm.call(
+          ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr"
+      )
+      return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+
+    parameter_id = self._find_kernel_argument_index(ref)
+    module_attributes = self.module.operation.attributes
+    if MULTIMEM_ARGS_ATTR in module_attributes:
+      parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
+    else:
+      parameter_uses_multimem = np.zeros(self.num_params, dtype=np.int64)
+
+    parameter_uses_multimem[parameter_id] = 1
+    module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
+        parameter_uses_multimem
     )
-    return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
+
+    current_device = self.device_id(on_host)
+    parameter_on_current_device = self._get_parameter_address_on_peer(
+        parameter_id, current_device, on_host
+    )
+
+    # Load the multimem address of the parameter from the collective metadata.
+    multimem_addresses_offset = (
+        COLLECTIVE_METADATA_SIZE
+        + self.num_peers * self.num_params
+        + parameter_id
+    )
+    multimem_ptr_offset = arith.constant(
+        ir.IndexType.get(), multimem_addresses_offset
+    )
+    multimem_ptr = memref.load(collective_metadata, [multimem_ptr_offset])
+
+    # Compute the offset of the given reference to the parameter and add it to
+    # the multimem address of the parameter.
+    ref_offset = self._get_offset_to_parameter(
+        utils.memref_ptr(ref), parameter_on_current_device
+    )
+    multimem_address = arith.addi(multimem_ptr, ref_offset)
+
+    ptr_type = ir.Type.parse("!llvm.ptr")
+    multimem_ptr = llvm.inttoptr(ptr_type, multimem_address)
+    return utils.MultimemRef(utils.ptr_as_memref(multimem_ptr, result_type))
 
   def device_id(self, on_host: bool = False) -> ir.Value:
-    collective_metadata = (
-        self.host_collective_metadata
-        if on_host
-        else self.device_collective_metadata
-    )
+    collective_metadata = self._get_collective_metadata(on_host)
     i32 = ir.IntegerType.get_signless(32)
     if collective_metadata is None:
       self._ensure_nvshmem_decls()
-      return llvm.call(i32, [], [], [], callee="nvshmem_my_pe")
+      return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
     else:
       # Rank id is stored as the first element of the collective metadata.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()

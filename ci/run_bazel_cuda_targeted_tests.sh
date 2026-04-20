@@ -31,7 +31,7 @@
 #   JAXCI_HERMETIC_PYTHON_VERSION: Hermetic Python version (default: 3.14)
 #   JAXCI_XLA_TRACK: XLA source to use, "pinned" or "head" (default: pinned)
 
-set -euo pipefail
+set -euox pipefail
 
 source ci/envs/default.env
 
@@ -125,4 +125,7 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   exit 1
 fi
 
-bazel test "${bazel_args[@]}" "${targets[@]}"
+bazel test "${bazel_args[@]}" "${targets[@]}" || bazel_retval=$?
+
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+exit "${bazel_retval:-0}"

@@ -24,10 +24,9 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
-from jax._src.sharding_impls import SingleDeviceSharding
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip, safe_map, set_module, canonicalize_axis_tuple
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
@@ -116,40 +115,48 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
           for x in args]
 
 
-_arraylike_types = (np.ndarray, Array, literals.TypedNdArray)
+_arraylike_types = (np.ndarray, Array)
 
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, _arraylike_types) or
-          hasattr(x, '__jax_array__') or np.isscalar(x))
+          getattr(x, '__jax_array__', None) is not None or np.isscalar(x))
 
 
 def _arraylike_asarray(x: Any) -> Array:
   """Convert an array-like object to an array."""
-  if hasattr(x, '__jax_array__'):
-    x = x.__jax_array__()
+  m = getattr(x, '__jax_array__', None)
+  if m is not None:
+    x = m()
   return lax.asarray(x)
 
 
 def _check_jax_array_protocol(x: Any) -> Any:
-  return x.__jax_array__() if hasattr(x, '__jax_array__') else x
+  m = getattr(x, '__jax_array__', None)
+  return m() if m is not None else x
 
 
 @overload
-def ensure_arraylike(fun_name: str, /) -> tuple[()]: ...
+def ensure_arraylike(fun_name: str, /) -> tuple[()]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, /) -> Array: ...
+def ensure_arraylike(fun_name: str, a1: Any, /) -> Array:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, /) -> tuple[Array, Array]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, /) -> tuple[Array, Array]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, /) -> tuple[Array, Array, Array]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, /) -> tuple[Array, Array, Array]:
+  ...
 @overload
-def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, a4: Any, /, *args: Any) -> tuple[Array, ...]: ...
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, a4: Any, /, *args: Any) -> tuple[Array, ...]:
+  ...
+
 def ensure_arraylike(fun_name: str, /, *args: Any) -> Array | tuple[Array, ...]:
   """Check that arguments are arraylike and convert them to arrays."""
   check_arraylike(fun_name, *args)
   if len(args) == 1:
-    return _arraylike_asarray(args[0])  # pytype: disable=bad-return-type
-  return tuple(_arraylike_asarray(arg) for arg in args)  # pytype: disable=bad-return-type
+    return _arraylike_asarray(args[0])
+  return tuple(_arraylike_asarray(arg) for arg in args)
 
 
 def ensure_arraylike_tuple(fun_name: str, tup: Sequence[Any]) -> tuple[Array, ...]:
@@ -256,27 +263,12 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
                   ) -> Array:
   arr = ensure_arraylike("broadcast_to", arr)
-  arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   # check that shape is concrete
-  shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
-  arr_shape = np.shape(arr)
-  if (core.definitely_equal_shape(arr_shape, shape) and
-      (sharding is None or core.typeof(arr).sharding == sharding)):
-    return arr
-  elif len(shape) < len(arr_shape):
-    raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")
-  else:
-    nlead = len(shape) - len(arr_shape)
-    shape_tail = shape[nlead:]
-    compatible = all(core.definitely_equal_one_of_dim(arr_d, [1, shape_d])
-                     for arr_d, shape_d in safe_zip(arr_shape, shape_tail))
-    if nlead < 0 or not compatible:
-      msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
-      raise ValueError(msg.format(arr_shape, shape))
-    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
-                                out_sharding=sharding)
+  shape = core.canonicalize_shape(shape)  # pyrefly: ignore[bad-argument-type]
+  sharding = canonicalize_sharding(sharding, 'jnp.broadcast_to')
+  return lax.broadcast_to(arr, shape, sharding)
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like
@@ -306,7 +298,7 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
 def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
                                     ) -> Sharding | None:
   if isinstance(device, xc.Device):
-    return SingleDeviceSharding(device)
+    return make_single_device_sharding(device)
   return device
 
 def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
@@ -361,10 +353,11 @@ def ndim(a: ArrayLike | SupportsNdim) -> int:
     return a.ndim
   # Deprecation warning added 2025-2-20.
   check_arraylike("ndim", a, emit_warning=True)
-  if hasattr(a, "__jax_array__"):
-    a = a.__jax_array__()
+  m = getattr(a, "__jax_array__", None)
+  if m is not None:
+    a = m()
   # NumPy dispatches to a.ndim if available.
-  return np.ndim(a)  # type: ignore[arg-type]
+  return np.ndim(a)  # pyrefly: ignore[bad-argument-type]
 
 
 @export
@@ -405,8 +398,9 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
     return a.shape
   # Deprecation warning added 2025-2-20.
   check_arraylike("shape", a, emit_warning=True)
-  if hasattr(a, "__jax_array__"):
-    a = a.__jax_array__()
+  m = getattr(a, "__jax_array__", None)
+  if m is not None:
+    a = m()
   # NumPy dispatches to a.shape if available.
   return np.shape(a)
 
@@ -457,6 +451,6 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | Sequence[int] 
   check_arraylike("size", a, emit_warning=True)
   if axis is None and hasattr(a, "size"):
     return a.size
-  _shape = shape(a)  # type: ignore[arg-type]
+  _shape = shape(a)  # pyrefly: ignore[bad-argument-type]
   axis = canonicalize_axis_tuple(axis, len(_shape), allow_duplicate=False)
   return math.prod(_shape[i] for i in axis)

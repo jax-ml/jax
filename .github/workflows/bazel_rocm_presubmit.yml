@@ -34,7 +34,7 @@ jobs:
         matrix:
           python: ["3.14"]
           runner: ["linux-x86-64-1gpu-amd"]
-          jaxlib-version: ["head"]
+          jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1]
           rocm-version: ["7"]
     name: "Bazel single accelerator ${{ format('{0}', 'ROCm tests') }}"
@@ -49,6 +49,6 @@ jobs:
       rocm-version: ${{ matrix.rocm-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && 'wheel') || 'false' }}
-      build_jax: 'true'
-      run_multiaccelerator_tests: 'false'
+      build_jax: ${{ 'true' }}
+      run_multiaccelerator_tests: ${{ 'false' }}
       clone_main_xla: 1

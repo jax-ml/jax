@@ -28,11 +28,13 @@ from jax._src.pallas.core import core_map as core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import GridSpec as GridSpec
+from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
 from jax._src.pallas.core import pallas_export_experimental as pallas_export_experimental
+from jax._src.pallas.core import RevisitMode as RevisitMode
 from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
 from jax._src.pallas.core import squeezed as squeezed
