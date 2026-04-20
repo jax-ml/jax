@@ -3105,6 +3105,8 @@ def binomial(
     p: RealArray,
     shape: Shape | None = None,
     dtype: DTypeLikeFloat | None = None,
+    *,
+    out_sharding=None,
 ) -> Array:
   r"""Sample Binomial random values with given shape and float dtype.
 
@@ -3143,7 +3145,8 @@ def binomial(
       )
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _binomial(key, n, p, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "binomial")
+  return maybe_auto_axes(_binomial, out_sharding, shape=shape, dtype=dtype)(key, n, p)
 
 
 # Functions related to key reuse checking

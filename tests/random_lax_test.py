@@ -251,6 +251,7 @@ _OUT_SHARDING_CASES = [
     ('geometric',             lambda key, n, s: random.geometric(key, p=0.5, shape=(n,), out_sharding=s)),
     ('triangular',            lambda key, n, s: random.triangular(key, left=0., mode=0.5, right=1., shape=(n,), out_sharding=s)),
     ('lognormal',             lambda key, n, s: random.lognormal(key, sigma=1.0, shape=(n,), out_sharding=s)),
+    ('binomial',              lambda key, n, s: random.binomial(key, n=10.0, p=0.5, shape=(n,), out_sharding=s)),
 ]
 
 
