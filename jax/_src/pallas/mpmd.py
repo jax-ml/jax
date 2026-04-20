@@ -308,7 +308,7 @@ def _mpmd_map(
 
     for mesh, fn in meshes_and_fns:
       grid_spec = pallas_core.GridSpec(
-          grid=tuple(mesh.shape.items()),  # pyrefly: ignore[bad-argument-type]
+          grid=tuple(mesh.shape.items()),
           in_specs=in_tree.unflatten(
               pallas_core.BlockSpec(
                   memory_space=aval.memory_space

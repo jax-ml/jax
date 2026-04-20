@@ -730,7 +730,7 @@ def _copy_gmem_to_smem_lowering(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
       leader_tracked=leader_tracked_attr,
-      oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value)  # pyrefly: ignore[unexpected-keyword]
+      oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value)
   )
   return ()
 

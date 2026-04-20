@@ -1062,7 +1062,7 @@ def _mgpu_async_load_op_lowering_rule(
     utils.warpgroup_barrier()  # Make sure the writes have completed.
 
   # TODO(dasenov): Add support for the remaining op properties.
-  oob_mode = lc.OOBFillMode(ir.IntegerAttr(load_op.oob_fill_mode).value)  # pyrefly: ignore[missing-attribute]
+  oob_mode = lc.OOBFillMode(ir.IntegerAttr(load_op.oob_fill_mode).value)
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
@@ -1623,7 +1623,7 @@ def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   ref_ty = ir.MemRefType(op.result.type)
-  offset = op.offset.value  # pyrefly: ignore[missing-attribute]
+  offset = op.offset.value
   if isinstance(ref_ty.element_type, mgpu.BarrierType):
     # Barrier memrefs are not transformed and must not be wrapped.
     assert not inference_utils.has_out_transforms_set(op)
