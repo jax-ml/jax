@@ -52,8 +52,10 @@ def sorted_devices():
 def use_default_mesh():
   devices = sorted_devices()
   mesh_devices = np.array(devices).reshape((X_SIZE, Y_SIZE, CHIPS_SIZE))
-  with jax.sharding.Mesh(mesh_devices, ("x", "y", "chips")):
-    yield
+  with jtu.ignore_warning(category=DeprecationWarning,
+                          message='`with mesh:` context manager'):
+    with jax.sharding.Mesh(mesh_devices, ("x", "y", "chips")):
+      yield
 
 
 def create_2d_non_contiguous_mesh():
@@ -90,11 +92,6 @@ def create_2d_non_contiguous_mesh2():
 
 
 class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
-
-  def setUp(self):
-    super().setUp()
-    self.enter_context(jtu.ignore_warning(
-        category=DeprecationWarning, message='`with mesh:` context manager'))
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def testLocalInputsWithJaxArray(self):
