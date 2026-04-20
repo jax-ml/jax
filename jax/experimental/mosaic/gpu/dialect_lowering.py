@@ -457,35 +457,33 @@ def _vector_load_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array)]
 
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "MultimemLoadReduceOp"):
-  @_register_lowering(mgpu.MultimemLoadReduceOp)
-  def _multimem_load_reduce_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.MultimemLoadReduceOp
-  ) -> Sequence[ir.Value]:
-    [out_layout_attr] = inference_utils.out_layouts(op)
-    out_layout = layouts_lib.from_layout_attr(out_layout_attr)
+@_register_lowering(mgpu.MultimemLoadReduceOp)
+def _multimem_load_reduce_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.MultimemLoadReduceOp
+) -> Sequence[ir.Value]:
+  [out_layout_attr] = inference_utils.out_layouts(op)
+  out_layout = layouts_lib.from_layout_attr(out_layout_attr)
 
-    assert ctx.launch_context is not None
+  assert ctx.launch_context is not None
 
-    # pyrefly: ignore[missing-attribute]
-    reduction = str(mgpu.MultimemLoadReductionType(op.reduction_type.value))
-    if isinstance(op.source.type.element_type, ir.IntegerType):
-      is_signed = reduction in ("smax", "smin")
-      if reduction in ("smax", "smin", "umax", "umin"):
-        reduction = reduction[1:]
-    else:
-      is_signed = None
+  # pyrefly: ignore[missing-attribute]
+  reduction = str(mgpu.MultimemLoadReductionType(op.reduction_type.value))
+  if isinstance(op.source.type.element_type, ir.IntegerType):
+    is_signed = reduction in ("smax", "smin")
+    if reduction in ("smax", "smin", "umax", "umin"):
+      reduction = reduction[1:]
+  else:
+    is_signed = None
 
-    multimem_ref = utils.MultimemRef(op.source)
-    fa_res = fa.FragmentedArray.load_reduce_untiled(
-        multimem_ref,
-        out_layout,  # pyrefly: ignore[bad-argument-type]
-        reduction,  # pyrefly: ignore[bad-argument-type]
-        is_signed=is_signed
-    )
+  multimem_ref = utils.MultimemRef(op.source)
+  fa_res = fa.FragmentedArray.load_reduce_untiled(
+      multimem_ref,
+      out_layout,  # pyrefly: ignore[bad-argument-type]
+      reduction,  # pyrefly: ignore[bad-argument-type]
+      is_signed=is_signed
+  )
 
-    return [fragmented_array_to_ir(fa_res, op.result.type)]
+  return [fragmented_array_to_ir(fa_res, op.result.type)]
 
 
 @_register_lowering(mgpu.VectorStoreOp)
@@ -498,9 +496,6 @@ def _vector_store_op_lowering_rule(
   else:
     atomic = None
 
-  # TODO(olechwierowicz) Remove this check once minimum jaxlib version is 0.10.0
-  multimem = op.multimem.value if hasattr(op, "multimem") else False
-
   [to_store_layout] = inference_utils.in_layouts(op)
   fragmented_array = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
 
@@ -512,7 +507,7 @@ def _vector_store_op_lowering_rule(
   optimized = op.optimized.value if op.optimized is not None else None
 
   if ref_type.memory_space is None:  # GMEM
-    ref = utils.MultimemRef(ref) if multimem else ref
+    ref = utils.MultimemRef(ref) if op.multimem.value else ref
     fragmented_array.store_untiled(
         ref, optimized=bool(optimized), atomic=atomic
     )
@@ -1148,10 +1143,10 @@ def _mgpu_async_store_op_lowering_rule(
     reduction_op = None
 
   peer_id: ir.Value | lc.GlobalBroadcast | None = None
-  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.0
+  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.1
   if hasattr(store_op, "is_global_broadcast") and store_op.is_global_broadcast.value:
     peer_id = lc.GLOBAL_BROADCAST
-  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.0
+  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.1
   elif hasattr(store_op, "gmem_peer_id") and store_op.gmem_peer_id is not None:
     peer_id = store_op.gmem_peer_id
 
@@ -1171,21 +1166,19 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
-# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "AsyncStoreScalesSmemToTmemOp"):
-  @_register_lowering(mgpu.AsyncStoreScalesSmemToTmemOp)
-  def _async_copy_scales_smem_to_tmem_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncStoreScalesSmemToTmemOp
-  ) -> Sequence[ir.Value]:
-    ctx.check_collective(op)
-    [in_layout_attr] = inference_utils.in_tmem_layouts(op)
-    tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
-    smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
-    with utils.when(ctx.single_lane_predicate):
-      tcgen05.async_copy_scales_smem_to_tmem(
-        smem_ref, tmem_ref, collective=bool(op.collective)
-      )
-    return []
+@_register_lowering(mgpu.AsyncStoreScalesSmemToTmemOp)
+def _async_copy_scales_smem_to_tmem_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncStoreScalesSmemToTmemOp
+) -> Sequence[ir.Value]:
+  ctx.check_collective(op)
+  [in_layout_attr] = inference_utils.in_tmem_layouts(op)
+  tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
+  smem_ref = unwrap_transformed_memref(op.source, ir.ArrayAttr.get([]))
+  with utils.when(ctx.single_lane_predicate):
+    tcgen05.async_copy_scales_smem_to_tmem(
+      smem_ref, tmem_ref, collective=bool(op.collective)
+    )
+  return []
 
 @_register_lowering(mgpu.AsyncStoreSparseMetadataSmemToTmemOp)
 def _async_copy_sparse_metadata_smem_to_tmem_lowering_rule(
@@ -2229,20 +2222,18 @@ def _async_store_tmem_op_lowering_rule(
   return []
 
 
-# TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "TcGen05CommitArriveOp"):
-  @_register_lowering(mgpu.TcGen05CommitArriveOp, support_warp_semantics=True)
-  def _tcgen05_commit_arrive_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.TcGen05CommitArriveOp."""
-    ctx.check_collective(op)
-    barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
-    with utils.when(ctx.single_lane_predicate):
-      tcgen05.commit_arrive(
-          barrier.barrier_ref, op.collective.value, ctx.launch_context
-      )
-    return []
+@_register_lowering(mgpu.TcGen05CommitArriveOp, support_warp_semantics=True)
+def _tcgen05_commit_arrive_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.TcGen05CommitArriveOp."""
+  ctx.check_collective(op)
+  barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+  with utils.when(ctx.single_lane_predicate):
+    tcgen05.commit_arrive(
+        barrier.barrier_ref, op.collective.value, ctx.launch_context
+    )
+  return []
 
 
 @_register_lowering(mgpu.CustomPrimitiveOp, support_warp_semantics=True)
@@ -2271,31 +2262,29 @@ def _mgpu_custom_primitive_op_lowering_rule(
   return return_op.operands
 
 
-# TODO(allanrenucci): remove this check once minimum jaxlib version is 0.10.0.
-if hasattr(mgpu, "WarpMapOp"):
-  @_register_lowering(mgpu.WarpMapOp)
-  def _mgpu_warp_map_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.WarpMapOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.WarpMapOp."""
-    for a, o in zip(op.body.arguments, op.operands, strict=True):
-      a.replace_all_uses_with(o)
-    warp_ctx = dataclasses.replace(ctx, thread_semantics=utils.ThreadSubset.WARP)
-    # We allow the warps to schedule async copies without synchronizing with
-    # other warps, so we need to add a barrier here to make sure all reads and
-    # writes have completed.
-    if ctx.auto_barriers:
-      utils.warpgroup_barrier()
-    with ir.InsertionPoint.current as ip:
-      for op in op.body.operations:
-        op.detach_from_parent()
-        ip.insert(op)
-        warp_ctx.lower_op(op)
-    # We need to ensure that any effects produced by one warp (e.g. async copies)
-    # are observable by all other warps.
-    if ctx.auto_barriers:
-      utils.warpgroup_barrier()
-    return []
+@_register_lowering(mgpu.WarpMapOp)
+def _mgpu_warp_map_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.WarpMapOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.WarpMapOp."""
+  for a, o in zip(op.body.arguments, op.operands, strict=True):
+    a.replace_all_uses_with(o)
+  warp_ctx = dataclasses.replace(ctx, thread_semantics=utils.ThreadSubset.WARP)
+  # We allow the warps to schedule async copies without synchronizing with
+  # other warps, so we need to add a barrier here to make sure all reads and
+  # writes have completed.
+  if ctx.auto_barriers:
+    utils.warpgroup_barrier()
+  with ir.InsertionPoint.current as ip:
+    for op in op.body.operations:
+      op.detach_from_parent()
+      ip.insert(op)
+      warp_ctx.lower_op(op)
+  # We need to ensure that any effects produced by one warp (e.g. async copies)
+  # are observable by all other warps.
+  if ctx.auto_barriers:
+    utils.warpgroup_barrier()
+  return []
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
@@ -2560,28 +2549,24 @@ def _index_switch_op_lowering_rule(
     )
   return _unflatten_ir_values(new_switch_op.results, results_template)
 
-# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-if hasattr(mgpu, "TryClusterCancelOp"):
-  @_register_lowering(mgpu.TryClusterCancelOp)
-  def _try_cluster_cancel_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.TryClusterCancelOp
-  ) -> Sequence[ir.Value]:
-    barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
-    predicate = ctx.single_lane_predicate
-    if op.predicate is not None:
-      predicate = arith.andi(predicate, op.predicate)
-    utils.try_cluster_cancel(op.cancellation_result, barrier.barrier_ref, predicate)
-    return []
+@_register_lowering(mgpu.TryClusterCancelOp)
+def _try_cluster_cancel_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TryClusterCancelOp
+) -> Sequence[ir.Value]:
+  barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+  predicate = ctx.single_lane_predicate
+  if op.predicate is not None:
+    predicate = arith.andi(predicate, op.predicate)
+  utils.try_cluster_cancel(op.cancellation_result, barrier.barrier_ref, predicate)
+  return []
 
 
-# TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-if hasattr(mgpu, "QueryClusterCancelOp"):
-  @_register_lowering(mgpu.QueryClusterCancelOp)
-  def _query_cluster_cancel_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.QueryClusterCancelOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    return utils.query_cluster_cancel(op.cancellation_result)
+@_register_lowering(mgpu.QueryClusterCancelOp)
+def _query_cluster_cancel_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.QueryClusterCancelOp
+) -> Sequence[ir.Value]:
+  del ctx
+  return utils.query_cluster_cancel(op.cancellation_result)
 
 
 @_register_lowering(func.FuncOp)

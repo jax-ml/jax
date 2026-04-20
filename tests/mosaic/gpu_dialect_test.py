@@ -14,8 +14,6 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
-import inspect
-
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -1708,9 +1706,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_try_cluster_cancel_invalid_response_size(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skipTest("TryClusterCancelOp is not available.")
 
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
@@ -1725,9 +1720,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_query_cluster_cancel_invalid_response_size(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
-      self.skipTest("QueryClusterCancelOp is not available.")
 
     with ir.InsertionPoint(self.module.body):
       (result,) = undefs(ir.MemRefType.get([8], ir.IntegerType.get_signless(8)))
@@ -1739,9 +1731,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_try_cluster_cancel_not_in_smem(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "TryClusterCancelOp"):
-      self.skipTest("TryClusterCancelOp is not available.")
 
     with ir.InsertionPoint(self.module.body):
       result, barrier = undefs(
@@ -1756,9 +1745,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_query_cluster_cancel_not_in_smem(self):
-    # TODO(b/415721295): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "QueryClusterCancelOp"):
-      self.skipTest("QueryClusterCancelOp is not available.")
 
     with ir.InsertionPoint(self.module.body):
       (result,) = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8)))
@@ -1770,12 +1756,6 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_contiguous_reinterpret_cast_of_slice_smem_is_folded(self):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
-      self.skipTest("ReinterpretCastOp is not available.")
-    # TODO(bchetioui): Remove once min version of jaxlib is 0.10.0.
-    if not "alias_id" in inspect.signature(mgpu.dialect.slice_smem).parameters:
-      self.skipTest("slice_smem does not support alias_id.")
 
     shape, new_shape = (4, 8), (16, 2)
     ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu_utils.smem())
@@ -1820,9 +1800,6 @@ ir.MLIRError,
     self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
 
   def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.10.0
-    if not hasattr(mgpu.dialect, "ReinterpretCastOp"):
-      self.skipTest("ReinterpretCastOp is not available.")
 
     bf16 = ir.BF16Type.get()
     smem = mgpu_utils.smem()
