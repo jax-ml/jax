@@ -145,11 +145,11 @@ def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
   """Compute optimal Runge-Kutta stepsize."""
   dfactor = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
 
-  # Use nan-safe variants so that a NaN error ratio (e.g. from an
-  # oversized trial step) falls back to dfactor instead of poisoning
-  # all subsequent steps.  See #14612.
-  factor = jnp.nanmin(jnp.array([ifactor,
-                      jnp.nanmax(jnp.array([mean_error_ratio**(-1.0 / order) * safety, dfactor]))]))
+  # Use NaN-propagation-safe ops so that a NaN error ratio (e.g. from
+  # an oversized trial step) falls back to dfactor instead of poisoning
+  # all subsequent steps.  jnp.fmin/fmax ignore NaN operands.  #14612.
+  factor = jnp.fmin(ifactor,
+                    jnp.fmax(mean_error_ratio**(-1.0 / order) * safety, dfactor))
   return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step * factor)
 
 def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jnp.inf):
