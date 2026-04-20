@@ -1201,6 +1201,25 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
     return uniform(key, shape, lax.dtype(p)) < p
 
 
+def check_convert_element_type(name: str, value: ArrayLike, dtype: DTypeLike) -> Array:
+  try:
+    ok = dtypes.safe_to_cast(value, dtype)
+  except dtypes.TypePromotionError:
+    ok = False
+  if not ok:
+      raise TypeError(f"In arguments to {name}, cannot safely cast {value} to {dtype}")
+  return lax.convert_element_type(value, dtype)
+
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
+
+
 def beta(key: ArrayLike,
          a: RealArray,
          b: RealArray,
@@ -2890,7 +2909,9 @@ def triangular(key: ArrayLike,
                mode: RealArray,
                right: RealArray,
                shape: Shape | None = None,
-               dtype: DTypeLikeFloat | None = None) -> Array:
+               dtype: DTypeLikeFloat | None = None,
+               *,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Triangular random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2916,6 +2937,14 @@ def triangular(key: ArrayLike,
       and ``right.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2927,20 +2956,16 @@ def triangular(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `triangular` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _triangular(key, left, mode, right, shape, dtype)
+  shape = check_broadcast_shapes("triangular", shape, left, mode, right)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "triangular", shape)
+  return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
 @jit(static_argnums=(4, 5), inline=True)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
-  if shape is None:
-    shape =  lax.broadcast_shapes(np.shape(left), np.shape(mode), np.shape(right))
-  else:
-    _check_shape("triangular", shape, np.shape(left), np.shape(mode), np.shape(right))
-  left = jnp.broadcast_to(left, shape)
-  mode = jnp.broadcast_to(mode, shape)
-  right = jnp.broadcast_to(right, shape)
+  left = jnp.broadcast_to(check_convert_element_type("_triangular", left, dtype), shape)
+  right = jnp.broadcast_to(check_convert_element_type("_triangular", right, dtype), shape)
+  mode = jnp.broadcast_to(check_convert_element_type("_triangular", mode, dtype), shape)
   fc = (mode - left) / (right - left)
   u = uniform(key, shape, dtype)
   out1 = left + lax.sqrt(u * (right - left) * (mode - left))
