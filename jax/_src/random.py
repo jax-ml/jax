@@ -2325,7 +2325,9 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 def rademacher(key: ArrayLike,
                shape: Shape = (),
-               dtype: DTypeLikeInt | None = None) -> Array:
+               dtype: DTypeLikeInt | None = None,
+               *,
+               out_sharding=None) -> Array:
   r"""Sample from a Rademacher distribution.
 
   The values are distributed according to the probability mass function:
@@ -2349,7 +2351,8 @@ def rademacher(key: ArrayLike,
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  return _rademacher(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rademacher", shape)
+  return maybe_auto_axes(_rademacher, out_sharding, shape=shape, dtype=dtype)(key)
 
 
 @jit(static_argnums=(1, 2))
