@@ -885,6 +885,7 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMeth
     $source `[` $indices `]` `in` $dimensions attr-dict
     `:` type($source) `,` type($indices) `->` type($output)
   }];
+  let hasCanonicalizeMethod = 1;
   let hasVerifier = 1;
 }
 

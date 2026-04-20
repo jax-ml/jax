@@ -2203,6 +2203,18 @@ LogicalResult DynamicGatherOp::verify() {
   return success();
 }
 
+/*static*/ LogicalResult DynamicGatherOp::canonicalize(
+    DynamicGatherOp op, PatternRewriter& rewriter) {
+  if (llvm::all_of(op.getDimensions(), [&](const int32_t d) {
+        return op.getSource().getType().getDimSize(d) == 1;
+      })) {
+    rewriter.replaceOpWithNewOp<vector::BroadcastOp>(op, op.getType(),
+                                                     op.getSource());
+    return success();
+  }
+  return failure();
+}
+
 LogicalResult AllReduceOp::verify() {
   auto in_ty = getInput().getType();
   auto in_bitwidth = getElementTypeBitwidth(in_ty);
