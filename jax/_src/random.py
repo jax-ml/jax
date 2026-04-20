@@ -1316,7 +1316,9 @@ def _cauchy(key, shape, dtype) -> Array:
 def dirichlet(key: ArrayLike,
               alpha: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Dirichlet random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1356,7 +1358,8 @@ def dirichlet(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _dirichlet(key, alpha, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "dirichlet")
+  return maybe_auto_axes(_dirichlet, out_sharding, shape=shape, dtype=dtype)(key, alpha)
 
 @jit(static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
