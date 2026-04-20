@@ -387,7 +387,8 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
                     replicated_axes=replicated_axes)
   return sdy_sharding
 
-def non_one_sized_spec(spec, mesh) -> PartitionSpec:
+
+def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
   new_spec: list[Any] = []
   for s in spec:
     if s is None or s is PartitionSpec.UNCONSTRAINED:
@@ -400,8 +401,9 @@ def non_one_sized_spec(spec, mesh) -> PartitionSpec:
   reduced = frozenset(r for r in spec.reduced if mesh.shape[r] != 1)
   return PartitionSpec(*new_spec, unreduced=unreduced, reduced=reduced)
 
+
 def get_non_one_sized_mesh_spec(mesh, spec):
-  spec = non_one_sized_spec(spec, mesh)
+  spec = remove_size_one_mesh_axis(spec, mesh)
   axis_sizes, axis_names, axis_types = unzip3(
       [(s, n, t) for s, n, t in zip(mesh.axis_sizes, mesh.axis_names, mesh.axis_types)
       if s != 1])

@@ -54,7 +54,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            foreach, weakref_cache_key_types, set_module,
                            weak_value_interner, immutable)
 import jax._src.pretty_printer as pp
-from jax._src.named_sharding import NamedSharding
+from jax._src.named_sharding import NamedSharding, remove_size_one_mesh_axis
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
 from jax._src.lib import _jax
@@ -2228,18 +2228,6 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                  if mesh._name_to_type[u] == AxisType.Explicit}
   return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
-def remove_size_one_mesh_axis(spec, mesh) -> P:
-  new_spec = []
-  for s in spec:
-    if s is None:
-      new_spec.append(s)
-    elif isinstance(s, tuple):
-      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
-    else:
-      new_spec.append(None if mesh.shape[s] == 1 else s)
-  unreduced = frozenset(u for u in spec.unreduced if mesh.shape[u] != 1)
-  reduced = frozenset(r for r in spec.reduced if mesh.shape[r] != 1)
-  return P(*new_spec, unreduced=unreduced, reduced=reduced)
 
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
