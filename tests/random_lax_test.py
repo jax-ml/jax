@@ -236,6 +236,7 @@ _OUT_SHARDING_CASES = [
     ('laplace',               lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
     ('logistic',              lambda key, n, s: random.logistic(key, shape=(n,), out_sharding=s)),
     ('pareto',                lambda key, n, s: random.pareto(key, b=2.0, shape=(n,), out_sharding=s)),
+    ('t',                     lambda key, n, s: random.t(key, df=2.0, shape=(n,), out_sharding=s)),
 ]
 
 
