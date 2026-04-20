@@ -38,6 +38,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import literals
 from jax._src import custom_derivatives
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
@@ -2780,7 +2781,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     primal_outs, cotangent_ins = run(primal_ins, cotangent_outs)
 
     primal_out1, primal_out2, primal_out3 = primal_outs
-    self.assertIsInstance(primal_out1, jax.Array)
+    self.assertIsInstance(primal_out1, (jax.Array, literals.TypedNdArray))
     self.assertAllClose(primal_out1, jnp.array([2., 3.]))
     if self.__class__ is CustomVJPTest:
       # TODO(mattjj): we don't yet support this behavior for CustomVJPTraced

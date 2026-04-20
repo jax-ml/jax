@@ -175,6 +175,7 @@ Operators
     sqrt
     square
     squeeze
+    stage
     sub
     tan
     tanh

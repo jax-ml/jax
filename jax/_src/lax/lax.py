@@ -60,8 +60,8 @@ from jax._src.lax import utils as lax_utils
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
-  standard_primitive)
-from jax._src.core import typeof, getu, getr
+  standard_primitive, standard_abstract_eval)
+from jax._src.core import typeof, getu, getr, stage_p
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1591,6 +1591,16 @@ def lt(x: ArrayLike, y: ArrayLike) -> Array:
   """
   x, y = core.standard_insert_pvary(x, y)
   return lt_p.bind(x, y)
+
+@export
+def stage(x: ArrayLike, /) -> Array:
+  """Lifts a value into a trace.
+
+  This operation is logically the identity function that lifts a value, such
+  as a Python scalar or numpy ndarray, into the active trace. If we are outside
+  any active trace contexts, stage returns a JAX array.
+  """
+  return stage_p.bind(x)
 
 @export
 def convert_element_type(operand: ArrayLike,
@@ -5168,6 +5178,35 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+
+
+stage_p.def_abstract_eval(
+    partial(standard_abstract_eval, stage_p,
+            lambda x: x.shape,
+            lambda x: x.dtype,
+            lambda aval: aval.weak_type,
+            lambda x: x.sharding,
+            lambda x: x.mat.varying,
+            lambda x: (getu(x), getr(x)),
+            None))
+
+def _stage_impl(x):
+  # eval() must return Arrays, but the value being staged might be, e.g., a
+  # literal constant.
+  if not isinstance(x, core.Array):
+    return dispatch.apply_primitive(stage_p, x)
+  return x
+
+stage_p.def_impl(_stage_impl)
+batching.defvectorized(stage_p)
+ad.deflinear2(stage_p, lambda ct, _: [ct])
+mlir.register_lowering(stage_p, lambda ctx, operand: [operand])
+pe.const_fold_rules[stage_p] = lambda consts, params, out_avals: consts  # pyrefly: ignore[unsupported-operation]
+
+def _stage_bind_with_trace(trace, args, avals, params):
+  return trace.stage_value(args[0])
+
+stage_p.def_bind_with_trace(_stage_bind_with_trace)
 
 
 def _to_edtype_abstract_eval(x, *, edtype):

@@ -786,6 +786,13 @@ class Trace:
     self._weakref = weakref.ref(self)
     self.requires_low = True
 
+  def stage_value(self, val):
+    """Lifts a value into a trace.
+
+    Semantically equivalent to calling process_primitive on an identity
+    primitive, but may avoid, e.g., constructing a jaxpr equation."""
+    raise NotImplementedError("must override")
+
   def process_primitive(self, primitive, tracers, params, /):
     raise NotImplementedError("must override")
 
@@ -1216,7 +1223,14 @@ def check_eval_args(args):
     if isinstance(arg, Tracer):
       raise escaped_tracer_error(arg)
 
+stage_p = Primitive('stage')
+
 class EvalTrace(Trace):
+
+  def stage_value(self, val):
+    if isinstance(val, Array):
+      return val
+    return self.process_primitive(stage_p, [val], {})
 
   def process_primitive(self, primitive, args, params, /):
     if config.debug_key_reuse.value:

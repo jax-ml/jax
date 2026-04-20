@@ -1309,6 +1309,10 @@ class ShardMapTrace(core.Trace):
                            P(), val)
       return val_, core.empty_mat
 
+  def stage_value(self, val):
+    val_, mat = self.to_val_mat_pair(val)
+    return ShardMapTracer(self, mat, val_)
+
   def process_primitive(self, prim, tracers, params, /):
     in_vals, in_mat = unzip2(map(self.to_val_mat_pair, tracers))
     if self.check:

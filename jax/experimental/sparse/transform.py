@@ -84,6 +84,7 @@ _zero_preserving_linear_unary_primitives = [
   lax.imag_p,
   lax.neg_p,
   lax.real_p,
+  core.stage_p,
 ]
 
 _zero_preserving_unary_primitives = [

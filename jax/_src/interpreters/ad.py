@@ -610,6 +610,15 @@ class JVPTrace(Trace):
       tangent_zero = p2tz(val)
       return (val, tangent_zero)
 
+  def stage_value(self, val):
+    primal, tangent = self.to_primal_tangent_pair(val)
+    new_primal = self.parent_trace.stage_value(primal)
+    if type(tangent) is Zero:
+      return new_primal
+    else:
+      new_tangent = self.parent_trace.stage_value(tangent)
+      return JVPTracer(self, new_primal, new_tangent)
+
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
@@ -769,7 +778,7 @@ call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 # -------------------- Linearize trace --------------------
 
 class LinearizeTrace(Trace):
-  parent_trace: core.Trace | None
+  parent_trace: core.Trace
   tangent_trace: core.Trace
   is_vjp: bool
   requires_low: bool
@@ -779,6 +788,7 @@ class LinearizeTrace(Trace):
     super().__init__()
     if not hasattr(tangent_trace, "tag"):
       raise RuntimeError("Internal: LinearizeTrace.__init__ requires tangent_trace.tag to be defined.")
+    assert parent_trace is not None
     self.parent_trace = parent_trace
     self.tangent_trace = tangent_trace
     self.is_vjp = is_vjp
@@ -799,6 +809,15 @@ class LinearizeTrace(Trace):
     else:
       tangent_zero = p2tz(val)
       return (val, tangent_zero)
+
+  def stage_value(self, val):
+    primal, tangent = self.to_primal_tangent_pair(val)
+    new_primal = self.parent_trace.stage_value(primal)
+    if type(tangent) is Zero:
+      return new_primal
+    else:
+      new_tangent = self.tangent_trace.stage_value(tangent)
+      return LinearizeTracer(self, new_primal, new_tangent)
 
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))

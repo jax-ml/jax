@@ -295,6 +295,7 @@ key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): broadcast should probably consume the input to avoid implicit duplication
 key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.copy_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[core.stage_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.convert_element_type_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.reshape_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature(Forward(0, 0))

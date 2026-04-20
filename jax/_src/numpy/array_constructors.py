@@ -180,6 +180,16 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
+  # Fast path: if we're not actually doing any conversion, in many cases we
+  # can call lax.stage to lift the value into the trace.
+  if dtype is None and device is None and out_sharding is None and ndmin == 0:
+    if isinstance(object, core.Tracer) and not core.is_concrete(object):
+      return lax._array_copy(object) if copy else object
+    if isinstance(object, (int, float, complex, np.number)):
+      return lax.stage(object)
+    if isinstance(object, np.ndarray) and not isinstance(object, np.ma.MaskedArray):
+      return lax.stage(object)
+
   # check if the given dtype is compatible with JAX
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "array")

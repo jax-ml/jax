@@ -215,6 +215,8 @@ from jax._src.lax.lax import (
   sort as sort,
   sort_key_val as sort_key_val,
   sort_p as sort_p,
+  stage as stage,
+  stage_p as stage_p,
   split as split,
   split_p as split_p,
   sqrt as sqrt,

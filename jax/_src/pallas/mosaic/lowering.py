@@ -2490,6 +2490,11 @@ def _convert_element_type_lowering_rule(
   )
 
 
+@register_lowering_rule(jax_core.stage_p, kernel_types=[*tpu_core.CoreType])
+def _stage_lowering_rule(ctx: LoweringRuleContext, x):
+  return x
+
+
 @register_lowering_rule(lax.reshape_p, kernel_types=[*tpu_core.CoreType])
 def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
                            sharding):
