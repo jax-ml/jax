@@ -2589,7 +2589,8 @@ def orthogonal(
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   m: int | None = None,
-) -> Array:
+  *,
+  out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample uniformly from the orthogonal group O(n).
 
   If the dtype is complex, sample uniformly from the unitary group U(n).
@@ -2608,6 +2609,14 @@ def orthogonal(
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
     m: an integer indicating the number of columns. Defaults to `n`.
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array of shape `(*shape, n, m)` and specified dtype.
@@ -2628,7 +2637,11 @@ def orthogonal(
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "orthogonal", shape)
+  return maybe_auto_axes(_orthogonal, out_sharding, n=n, _m=_m, shape=shape, dtype=dtype)(key)
 
+@jit(static_argnums=(1, 2, 3, 4))
+def _orthogonal(key, n, _m, shape, dtype):
   z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp_linalg.qr(z)
   d = jnp_linalg.diagonal(r)
