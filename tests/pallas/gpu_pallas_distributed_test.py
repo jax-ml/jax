@@ -130,10 +130,10 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   monkey_patched_api_was_used: bool
 
   def setUp(self):
-    if jtu.test_device_matches(["rocm"]):
+    if jtu.is_device_rocm():
       self.skipTest("Mosaic GPU is not supported on ROCm.")
 
-    if (not jtu.test_device_matches(["cuda"]) or
+    if (not jtu.is_device_cuda() or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
     if not mgpu.supports_cross_device_collectives():
