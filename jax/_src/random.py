@@ -962,7 +962,9 @@ def multivariate_normal(key: ArrayLike,
                         cov: RealArray,
                         shape: Shape | None = None,
                         dtype: DTypeLikeFloat | None = None,
-                        method: str = 'cholesky') -> Array:
+                        method: str = 'cholesky',
+                        *,
+                        out_sharding=None) -> Array:
   r"""Sample multivariate normal random values with given mean and covariance.
 
   The values are returned according to the probability density function:
@@ -1006,7 +1008,8 @@ def multivariate_normal(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype, method)
+  out_sharding = canonicalize_sharding(out_sharding, "multivariate_normal")
+  return maybe_auto_axes(_multivariate_normal, out_sharding, shape=shape, dtype=dtype, method=method)(key, mean, cov)
 
 @jit(static_argnums=(3, 4, 5))
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:

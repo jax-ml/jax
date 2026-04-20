@@ -223,6 +223,7 @@ _OUT_SHARDING_CASES = [
     ('choice_no_replace',     lambda key, n, s: random.choice(key, a=jnp.ones((20, 2)), shape=(n,), replace=False, out_sharding=s)),
     ('choice_replace',        lambda key, n, s: random.choice(key, a=jnp.ones((2, 20)), shape=(n,), out_sharding=s)),
     ('choice_with_p',         lambda key, n, s: random.choice(key, a=jnp.ones((20, 2)), shape=(n,), p=jnp.ones(20)/20, out_sharding=s)),
+    ('multivariate_normal',   lambda key, n, s: random.multivariate_normal(key, mean=np.zeros(3), cov=np.eye(3), shape=(n,), out_sharding=s)),
 ]
 
 
