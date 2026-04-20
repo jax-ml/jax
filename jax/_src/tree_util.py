@@ -1469,6 +1469,7 @@ class FlatTree:
   @staticmethod
   def flatten(tree: PyTree, is_leaf=None, registry=tracing_registry) -> FlatTree:
     vals, tree = registry.flatten(tree, is_leaf)
+    # if any(isinstance(l, FlatTree) for l in vals): breakpoint()
     return FlatTree(vals, tree, False, registry=registry)
 
   @staticmethod

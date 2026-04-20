@@ -19,11 +19,14 @@ from jax._src import source_info_util
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
+jax.config.update('jax_check_tracer_leaks', True)
+
 # TODO
 #   [x] multiple outputs / pytrees
 #   [x] vjp (basic)
 #   [x] scan
 #   [x] grad-of-jit
+#   [x] higher-order AD
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
 #   [ ] cond
@@ -55,7 +58,8 @@ def end_djt(result) -> tuple[jax_core.ClosedJaxpr, list]:
 
 def emit_jit_call(jaxpr, consts, args):
   # TODO: figure out how to generate jit params so we can do this without roundtripping
-  return jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*consts, *args)
+  try: return jax.jit(partial(jax_core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))(*consts, *args)
+  except: breakpoint()
 
 # === core ===
 
@@ -147,7 +151,7 @@ class BaseTrace(Trace):
     return Val(ans_val, ans_ty)
 
   def lift(self, val):
-    assert isinstance(val, Val)
+    assert isinstance(val, Val), breakpoint()
     return val
 
 base_trace = BaseTrace(jax_core.trace_ctx.trace)
@@ -249,8 +253,7 @@ def vjp(f, args, ct_right):
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
   while tape: tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
-  # TODO zeros! if an accum isnt set, it's zero!
-  return ct_left.unflatten()
+  return ans_ft.map(lambda x: x.primal).unflatten(), ct_left.unflatten()
 
 # === built-in HOPs ===
 
@@ -304,22 +307,22 @@ class LeaveJit(Op):
     primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
     res, bwds = unzip2(enter_ctx.tape)
     outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
-    # TODO need to lift these. or require they're all lifted. currently res from
-    # call_lojax not lifted; can be raw DJT. hence the Var error.
     with ctx.set_current_trace(trace.parent):
       outs = ctx.cur_trace.bind(LeaveJit(), outs)
+    breakpoint()
     primals_out, res = outs.unpack()
     right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
     def bwd(res):
+      res = FlatTree.flatten(res)
       right_ct = right_accum.map(lambda x: x.finalize())
       res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
       local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
       tape = map(Pullback, res.unflatten(), bwds)
       while tape: tape.pop()()
-      left_ct = enter_ctx.local_left_accum.map(lambda a: a.finalize())
+      left_ct = enter_ctx.local_left_accum.map(lambda a: lift(a.finalize()))
       left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
       enter_ctx.left_accum.map2(lambda a, ct: a.accum(ct), left_ct)
-    trace.tape.append(Pullback(res, bwd))
+    trace.tape.append(Pullback(res.unflatten(), bwd))
     return primals_out.map2(partial(VJPTracer, trace), right_accum)
 
 # TODO: cache and curry
@@ -404,21 +407,20 @@ class CallLojax(Op):
     return lift_ft(self.f(*to_lojax(args_ft)))
 
   def vjp(self, trace, args_ft):
-    # TODO: Higher-order AD! Don't assume parent trace is BaseTrace (.val might not exist)
-    primals = to_lojax(args_ft.map(lambda x: x.primal))
+    primals = args_ft.map(lambda x: x.primal)
     with ctx.set_current_trace(trace.parent):
-      ans, f_vjp = jax.vjp(self.f, *primals)
-      f_vjp = jax.tree.map(lift, f_vjp)
-      ans_ft = lift_ft(ans)
+      ans_ft, f_vjp_ft = ctx.cur_trace.bind(CallLojax(partial(jax.vjp, self.f)), primals).unpack()
     left_accums = args_ft.map(lambda x: x.accum)
     right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    def bwd(f_vjp):
-      f_vjp = jax.tree.map(lambda x: x.val, f_vjp)
-      right_ct = to_lojax(right_accum.map(lambda x: x.finalize()))
-      left_cts_ft = lift_ft(f_vjp(right_ct))
-      return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts_ft)
-
-    trace.tape.append(Pullback(f_vjp, bwd))
+    def bwd(f_vjp_):
+      res, treedef = jax.tree.flatten(f_vjp_)
+      res = FlatTree.flatten(res)
+      def f_vjp(res, right_ct):
+        return jax.tree.unflatten(treedef, res)(right_ct)
+      right_ct = right_accum.map(lambda x: x.finalize())
+      left_cts = ctx.cur_trace.bind(CallLojax(f_vjp), FlatTree.pack((res, right_ct)))
+      return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts)
+    trace.tape.append(Pullback(f_vjp_ft.unflatten(), bwd))
     return ans_ft.map2(partial(VJPTracer, trace), right_accum)
 
 def call_lojax(f, *args):
@@ -477,51 +479,69 @@ def scan(body, c, xs, length):
 # print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 
-@jit
-def foo(x, y):
-  return mul(add(x, y), 2.)
+# @jit
+# def foo(x, y):
+#   return mul(add(x, y), 2.)
 
-print(vjp(foo, (1., 2.), 1.0))
+# print(vjp(foo, (1., 2.), 1.0))
 
-@jit
-def foo(x, y):
-  return mul(add(x, y), 2)
+# @jit
+# def foo(x, y):
+#   return mul(add(x, y), 2)
 
-@jit
-def bar(x, y):
-  return add(foo(x, y), y)
+# @jit
+# def bar(x, y):
+#   return add(foo(x, y), y)
 
-print(foo(1, 2))
-print(bar(1, 2))
+# print(foo(1, 2))
+# print(bar(1, 2))
 
-print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+# print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
 
-@jit
-def baz(x):
-  return mul(call_lojax(jnp.sin, x),  x)
-
-
-print(baz(1.0))
-print(vjp(baz, (1.0,), 1.0))
-
-@jit
-def closed_over(x, y):
-  @jit
-  def f(x):
-    return add(x, y)
-  return f(x)
-
-print(closed_over(1, 2))
+# @jit
+# def baz(x):
+#   return mul(call_lojax(jnp.sin, x),  x)
 
 
+# print(baz(1.0))
+# print(vjp(baz, (1.0,), 1.0))
 
-def foo(x, y):
-  return mul(add(x, y), 2.)
+# @jit
+# def closed_over(x, y):
+#   @jit
+#   def f(x):
+#     return add(x, y)
+#   return f(x)
 
-def grad(f):
-  def gradfun(*args):
-    return vjp(f, args, 1.0)[0]
-  return gradfun
+# print(closed_over(1, 2))
 
-print(grad(foo)(1., 1.))
-print(grad(grad(lambda x: foo(x, x)))(2.0))
+
+
+# def foo(x, y):
+#   return mul(add(x, y), 2.)
+
+# def grad(f):
+#   def gradfun(*args):
+#     _, (g, *_) = vjp(f, args, 1.0)
+#     return g
+#   return gradfun
+
+# print(grad(foo)(1., 1.))
+# print(grad(grad(lambda x: foo(x, x)))(2.0))
+
+# @jit
+# def baz(x):
+#   return mul(x, mul(x, x))
+
+# print(grad(grad(baz))(1.))
+
+def fun_with_nested_calls_2(x):
+  def bar(y):
+    def baz(w):
+      return jit_call(lambda _: w, y)
+    _, (t,) = vjp(baz, (1.0,), 3.0)
+    return t
+  return jit_call(bar, x)
+
+fun_with_nested_calls_2(2.0)
+# grad(fun_with_nested_calls_2)(2.0)
