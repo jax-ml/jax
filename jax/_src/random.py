@@ -1200,6 +1200,22 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
   else:
     return uniform(key, shape, lax.dtype(p)) < p
 
+def check_convert_element_type(name: str, value: ArrayLike, dtype: DTypeLike) -> Array:
+  try:
+    ok = dtypes.safe_to_cast(value, dtype)
+  except dtypes.TypePromotionError:
+    ok = False
+  if not ok:
+      raise TypeError(f"In arguments to {name}, cannot safely cast {value} to {dtype}")
+  return lax.convert_element_type(value, dtype)
+
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    _check_shape(name, shape, *arg_shapes)
+  return shape
 
 def beta(key: ArrayLike,
          a: RealArray,
@@ -2541,8 +2557,10 @@ def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
 def weibull_min(key: ArrayLike,
                 scale: RealArray,
                 concentration: RealArray,
-                shape: Shape = (),
-                dtype: DTypeLikeFloat | None = None) -> Array:
+                shape: Shape | None = None,
+                dtype: DTypeLikeFloat | None = None,
+                *,
+                out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample from a Weibull distribution.
 
   The values are distributed according to the probability density function:
@@ -2554,11 +2572,22 @@ def weibull_min(key: ArrayLike,
   parameter, and :math:`\sigma > 0` is the scale parameter.
 
   Args:
-    key: a PRNG key.
+    key: A PRNG key.
     scale: The scale parameter of the distribution.
     concentration: The concentration parameter of the distribution.
-    shape: The shape added to the parameters loc and scale broadcastable shape.
+    shape: Optional. A tuple of nonnegative integers representing the result
+      shape. Must be broadcast-compatible with ``scale`` and ``concentration``.
+      The default (None) produces a result shape equal to the result of
+      broadcasting ``scale`` and ``concentration``.
     dtype: The type used for samples.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A jnp.array of samples.
@@ -2570,14 +2599,19 @@ def weibull_min(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
-  shape = core.canonicalize_shape(shape)
-  return _weibull_min(key, scale, concentration, shape, dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "weibull_min", shape)
+  return maybe_auto_axes(_weibull_min, out_sharding, shape=shape, dtype=dtype)(key, scale, concentration)
 
 
 @jit(static_argnums=(3, 4))
 def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
+  shape = check_broadcast_shapes("weibull_min", shape, scale, concentration)
   random_uniform = uniform(
       key=key, shape=shape, minval=0, maxval=1, dtype=dtype)
+  scale = check_convert_element_type("weibull_min", scale, dtype)
+  concentration = check_convert_element_type("weibull_min", concentration, dtype)
 
   # Inverse weibull CDF.
   return jnp.power(-jnp.log1p(-random_uniform), 1.0/concentration) * scale
