@@ -244,6 +244,7 @@ _OUT_SHARDING_CASES = [
     ('double_sided_maxwell',  lambda key, n, s: random.double_sided_maxwell(key, loc=0., scale=1., shape=(n,), out_sharding=s)),
     ('weibull_min',           lambda key, n, s: random.weibull_min(key, scale=1., concentration=2., shape=(n,), out_sharding=s)),
     ('orthogonal',            lambda key, n, s: random.orthogonal(key, n=3, shape=(n,), out_sharding=s)),
+    ('generalized_normal',    lambda key, n, s: random.generalized_normal(key, p=2., shape=(n,), out_sharding=s)),
 ]
 
 
