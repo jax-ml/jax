@@ -48,6 +48,7 @@ from jax._src.util import safe_map, safe_zip
 import jax.numpy as jnp
 import jax.scipy.linalg
 import numpy as np
+from jax._src.lib import jaxlib_extension_version
 
 jtu.request_cpu_devices(8)
 
@@ -133,6 +134,30 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @unittest.skipIf(jaxlib_extension_version < 441, "Requires jaxlib_extension_version >= 441")
+  def testTopKDecomposerCrash(self):
+    N = 50
+    K = 5
+    N_ITEMS = 20
+    N_DEVICES = jax.device_count()
+    if N_DEVICES < 2:
+      raise unittest.SkipTest("Test requires at least 2 devices")
+
+    padded = ((N_ITEMS + N_DEVICES - 1) // N_DEVICES) * N_DEVICES
+    shard_indices = (jnp.arange(padded) % N_ITEMS).reshape(N_DEVICES, -1)
+
+    def fn(i):
+      i_float = jnp.float32(i)
+      x = jnp.arange(N, dtype=jnp.float32) * (1.0 + i_float * 0.01)
+      top_vals, idx = jax.lax.top_k(x, K)
+      hard_sum = jnp.sum(top_vals)
+      soft_sum = hard_sum * 0.99
+      result = jnp.where(True, hard_sum, soft_sum)
+      return result + jnp.float32(jnp.sum(idx))
+
+    # This should crash on broken versions
+    pmap(vmap(fn))(shard_indices)
 
   def testDefaultDeviceOrdering(self):
     # Users rely on the fact that the default order of jax.devices() matches
