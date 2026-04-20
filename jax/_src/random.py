@@ -3165,6 +3165,7 @@ def multinomial(
     shape: Shape | None = None,
     dtype: DTypeLikeFloat | None = None,
     unroll: int | bool = 1,
+    out_sharding=None,
 ):
   r"""Sample from a multinomial distribution.
 
@@ -3199,21 +3200,22 @@ def multinomial(
     shape = p.shape
   n = jnp.broadcast_to(n, shape[:-1])
   p = jnp.broadcast_to(p, shape)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "multinomial", shape)
+  return maybe_auto_axes(_multinomial, out_sharding, dtype=dtype, unroll=unroll)(key, n, p)
 
+@jit(static_argnums=(3, 4))
+def _multinomial(key, n, p, dtype, unroll):
   def f(remainder, ratio_key):
     ratio, key = ratio_key
     count = binomial(key, remainder, ratio.clip(0, 1), dtype=remainder.dtype)
     return remainder - count, count
 
   p = jnp.moveaxis(p, -1, 0)
-
   remaining_probs = lax_control_flow.cumsum(p, 0, reverse=True)
   ratios = p / jnp.where(remaining_probs == 0, 1, remaining_probs)
-
   keys = split(key, ratios.shape[0])
   remainder, counts = lax_control_flow.scan(f, n, (ratios, keys), unroll=unroll)
   # final remainder should be zero
-
   return jnp.moveaxis(counts, 0, -1).astype(dtype)
 
 

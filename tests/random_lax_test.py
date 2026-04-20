@@ -252,6 +252,7 @@ _OUT_SHARDING_CASES = [
     ('triangular',            lambda key, n, s: random.triangular(key, left=0., mode=0.5, right=1., shape=(n,), out_sharding=s)),
     ('lognormal',             lambda key, n, s: random.lognormal(key, sigma=1.0, shape=(n,), out_sharding=s)),
     ('binomial',              lambda key, n, s: random.binomial(key, n=10.0, p=0.5, shape=(n,), out_sharding=s)),
+    ('multinomial',           lambda key, n, s: random.multinomial(key, n=10, p=np.ones((n, 5))/5, out_sharding=s)),
 ]
 
 
