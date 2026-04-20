@@ -2017,7 +2017,9 @@ def _categorical_no_replace(key, logits_arr, batch_shape, k, axis, shape, shape_
 
 def laplace(key: ArrayLike,
             shape: Shape = (),
-            dtype: DTypeLikeFloat | None = None) -> Array:
+            dtype: DTypeLikeFloat | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample Laplace random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2042,7 +2044,8 @@ def laplace(key: ArrayLike,
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _laplace(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "laplace", shape)
+  return maybe_auto_axes(_laplace, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _laplace(key, shape, dtype) -> Array:
