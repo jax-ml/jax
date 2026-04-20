@@ -2363,7 +2363,9 @@ def _rademacher(key, shape, dtype) -> Array:
 
 def maxwell(key: ArrayLike,
             shape: Shape = (),
-            dtype: DTypeLikeFloat | None = None) -> Array:
+            dtype: DTypeLikeFloat | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample from a one sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2391,7 +2393,8 @@ def maxwell(key: ArrayLike,
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _maxwell(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "maxwell", shape)
+  return maybe_auto_axes(_maxwell, out_sharding, shape=shape, dtype=dtype)(key)
 
 
 @jit(static_argnums=(1, 2))

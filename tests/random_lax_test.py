@@ -240,6 +240,7 @@ _OUT_SHARDING_CASES = [
     ('chisquare',             lambda key, n, s: random.chisquare(key, df=2.0, shape=(n,), out_sharding=s)),
     ('f',                     lambda key, n, s: random.f(key, dfnum=2.0, dfden=3.0, shape=(n,), out_sharding=s)),
     ('rademacher',            lambda key, n, s: random.rademacher(key, shape=(n,), out_sharding=s)),
+    ('maxwell',               lambda key, n, s: random.maxwell(key, shape=(n,), out_sharding=s)),
 ]
 
 
