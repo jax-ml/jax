@@ -4088,7 +4088,7 @@ def _device_id_to_logical(
         ctx.module_ctx.mesh_info,
         device_id_val,
         device_id_type,
-        lambda name: _axis_index_rule(ctx, axis_name=name),
+        lax.axis_index
     )
     if non_mesh_axes:
         raise ValueError(f"Unrecognized axes in device_id: {non_mesh_axes}")
