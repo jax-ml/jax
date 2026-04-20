@@ -23,7 +23,7 @@ map, unsafe_map = safe_map, map
 #   [x] multiple outputs / pytrees
 #   [x] vjp (basic)
 #   [x] scan
-#   [ ] grad-of-jit
+#   [x] grad-of-jit
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
 #   [ ] cond
@@ -108,6 +108,7 @@ def lift(val:Any) -> Val:
   elif type(val) in literal_handlers:
     return trace_lift(literal_handlers[type(val)](val))
   else:
+    breakpoint()
     raise Exception(f"Don't recognize type {type(val)}")
 
 # We flatten user-supplied data. So lifting is usually necessary.
@@ -204,6 +205,7 @@ class VJPTrace(Trace):
       ct = right_accum.finalize()
       for r, pullback, left_accum in zip(res, pullbacks, left_accums):
         left_accum.accum(pullback(r, ct))
+        assert left_accum.val is not None
     self.tape.append(Pullback(res, bwd))
     return VJPTracer(self, ans, right_accum)
 
@@ -212,14 +214,18 @@ class VJPTracer(Tracer):
     self.trace = trace
     self.primal = primal
     self.accum = accum
+    self.ty = primal.ty
+
+never_set = object()
+already_finalized = object()
 
 class Accumulator:
   def __init__(self, ty):
     self.ty = ty
-    self.val = None
+    self.val = never_set
 
   def accum(self, val):
-    if self.val is None:
+    if self.val is never_set:
       self.val = val
     else: 
       self.val = add(self.val, val)  # TODO: dispatch to ty
@@ -227,7 +233,8 @@ class Accumulator:
   def finalize(self):
     val = self.val 
     del self.val
-    return val
+    assert val is not already_finalized
+    return self.ty.zero() if val is never_set else val
 
 def vjp(f, args, ct_right):
   # TODO: zeros on fwd and bwd
@@ -240,8 +247,10 @@ def vjp(f, args, ct_right):
     ans_ft = lift_ft(f(*tracers.unflatten()))
   ct_right_ft = lift_ft(ct_right)
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
+  tape_ = tape[:]
   while tape: tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
+  # TODO zeros! if an accum isnt set, it's zero!
   return ct_left.unflatten()
 
 # === built-in HOPs ===
@@ -296,15 +305,17 @@ class LeaveJit(Op):
     primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
     res, bwds = unzip2(enter_ctx.tape)
     outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
+    # TODO need to lift these. or require they're all lifted. currently res from
+    # call_lojax not lifted; can be raw DJT. hence the Var error.
     with ctx.set_current_trace(trace.parent):
-      outs = ctx.cur_trace.bind(LeaveJit(), outs.map(lift))
+      outs = ctx.cur_trace.bind(LeaveJit(), outs)
     primals_out, res = outs.unpack()
     right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
     def bwd(res):
       right_ct = right_accum.map(lambda x: x.finalize())
       res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
       local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
-      tape = map(Pullback, res.map(lambda x: x.val).unflatten(), bwds)
+      tape = map(Pullback, res.unflatten(), bwds)
       while tape: tape.pop()()
       left_ct = enter_ctx.local_left_accum.map(lambda a: a.finalize())
       left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
@@ -341,6 +352,9 @@ class ArrayTy(Ty):
   def tangent_ty(self):
     # TODO: integer types
     return self
+
+  def zero(self):
+    return Val(jnp.zeros(self.shape, self.dtype), ArrayTy(self.shape, self.dtype))
 
   def __repr__(self):
     return f"{self.dtype}{list(self.shape)}"
@@ -395,10 +409,12 @@ class CallLojax(Op):
     primals = to_lojax(args_ft.map(lambda x: x.primal))
     with ctx.set_current_trace(trace.parent):
       ans, f_vjp = jax.vjp(self.f, *primals)
+      f_vjp = jax.tree.map(lift, f_vjp)
       ans_ft = lift_ft(ans)
     left_accums = args_ft.map(lambda x: x.accum)
     right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
     def bwd(f_vjp):
+      f_vjp = jax.tree.map(lambda x: x.val, f_vjp)
       right_ct = to_lojax(right_accum.map(lambda x: x.finalize()))
       left_cts_ft = lift_ft(f_vjp(right_ct))
       return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts_ft)
@@ -456,11 +472,10 @@ def scan(body, c, xs, length):
 
 # === user level ===
 
-def scan_body(c, x):
-  return add(c, 1), add(x, 1)
+# def scan_body(c, x):
+#   return add(c, 1), add(x, 1)
 
-print(scan(scan_body, 0, jnp.arange(4), length=4))
-
+# print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 
 @jit
@@ -501,3 +516,13 @@ print(closed_over(1, 2))
 
 
 
+def foo(x, y):
+  return mul(add(x, y), 2.)
+
+def grad(f):
+  def gradfun(*args):
+    return vjp(f, args, 1.0)[0]
+  return gradfun
+
+print(grad(foo)(1., 1.))
+print(grad(grad(lambda x: foo(x, x)))(2.0))
