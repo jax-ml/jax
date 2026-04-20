@@ -65,6 +65,28 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
+
+
+def check_lub_types(name: str, dtype: DTypeLike, *args) -> DTypeLike:
+  arg_dtype = jnp.result_type(*[np.dtype(a) for a in args])
+  if dtype is None:
+    return arg_dtype
+  try:
+    if dtypes.safe_to_cast(arg_dtype, dtype):
+      return dtype
+  except dtypes.TypePromotionError:
+    pass
+  raise dtypes.TypePromotionError(f"In arguments to {name}, cannot safely cast arguments of join type {arg_dtype} to {dtype}")
+
+
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
@@ -2980,7 +3002,9 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
 def lognormal(key: ArrayLike,
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   r""" Sample lognormal random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2998,27 +3022,32 @@ def lognormal(key: ArrayLike,
       shape. The default (None) produces a result shape equal to ``()``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape``.
   """
   key, _ = _check_prng_key("lognormal", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
-  if not dtypes.issubdtype(dtype, np.inexact):
-    raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
-                     f"got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _lognormal(key, sigma, shape, dtype)
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
+    if not dtypes.issubdtype(dtype, np.inexact):
+      raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
+                      f"got {dtype}")
+  shape = check_broadcast_shapes("lognormal", shape, sigma)
+  out_sharding = canonicalize_sharding(out_sharding, "lognormal")
+  return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
 @jit(static_argnums=(2, 3), inline=True)
 def _lognormal(key, sigma, shape, dtype) -> Array:
-  if shape is None:
-    shape =  np.shape(sigma)
-  else:
-    _check_shape("triangular", shape, np.shape(sigma))
-  sigma = jnp.broadcast_to(sigma, shape)
+  dtype = check_lub_types("lognormal", dtype, sigma)
+  sigma = lax.convert_element_type(sigma, dtype)
   scaled_norm = normal(key, shape, dtype) * sigma
   return lax.exp(scaled_norm)
 

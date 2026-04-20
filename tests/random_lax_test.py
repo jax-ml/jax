@@ -227,6 +227,7 @@ _OUT_SHARDING_CASES = [
     ('laplace', lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
     ('loggamma', lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('logistic', lambda key, n, s: random.logistic(key, shape=(n,), out_sharding=s)),
+    ('lognormal', lambda key, n, s: random.lognormal(key, sigma=1.0, shape=(n,), out_sharding=s)),
     ('normal', lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
     ('orthogonal', lambda key, n, s: random.orthogonal(key, n=3, shape=(n,), out_sharding=s)),
     ('permutation', lambda key, n, s: random.permutation(key, n, out_sharding=s)),
