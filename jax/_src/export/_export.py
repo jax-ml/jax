@@ -1795,9 +1795,10 @@ def wrap_with_sharding(
 ) -> ir.Value:
   if x_sharding is None:
     return x
-  if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
+  if isinstance(x_sharding, sharding.Sharding):
+    attr = mlir.sharding_to_sharding_attr(ctx.module_context, x_aval, x_sharding, use_shardy=use_shardy)
   else:
-    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,
+    assert not use_shardy
+    attr = mlir.get_sharding_attr(x_sharding.to_proto())  # pyrefly: ignore[missing-attribute]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, attr,
                                     allow_shardy_lowering=use_shardy)

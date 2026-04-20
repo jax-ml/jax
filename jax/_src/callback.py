@@ -624,7 +624,7 @@ def send_to_host(
           SdyArray(
               mesh_shape=(), dim_shardings=[],
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
-    mlir.set_sharding(send_op, sharding)
+    mlir.set_sharding(send_op, mlir.get_sharding_attr(sharding))
   return send_op.result
 
 
@@ -664,7 +664,7 @@ def receive_from_host(
           SdyArray(
               mesh_shape=(), dim_shardings=[],
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
-    mlir.set_sharding(recv_op, sharding)
+    mlir.set_sharding(recv_op, mlir.get_sharding_attr(sharding))
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
@@ -899,7 +899,7 @@ def emit_python_callback(
   )(ctx, *operands, index=np.uint64(index))
 
   if sharding is not None:
-    mlir.set_sharding(result, sharding)
+    mlir.set_sharding(result, mlir.get_sharding_attr(sharding))
 
   results = result.results
 

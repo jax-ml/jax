@@ -905,25 +905,24 @@ def _valid_repeats(mesh: Mesh, mat: core.ManualAxisType, spec) -> bool:
 
 # Lowering
 
-def _shardy_shard_map_sharding(
+def _shardy_shard_map_sharding_attr(
     ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec, aval_in
-) -> sharding_impls.SdyArray:
+) -> ir.Attribute:
   ns = _make_scoped_manual_sharding(ctx, mesh, spec)
-  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_in, ns)
-    aval_in = core.physical_aval(aval_in)
-  sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
-  if len(manual_axes) < len(mesh.axis_names):
-    for dim_sharding in sdy_sharding.dim_shardings:
-      dim_sharding.is_open = True
-  return sdy_sharding
+  is_open = len(manual_axes) < len(mesh.axis_names)
+  attr = mlir.sharding_to_sharding_attr(ctx.module_context, aval_in, ns,
+                                        is_open=is_open, use_shardy=True)
+  assert attr is not None
+  return attr
 
 
 def _get_token_sharding(
     ctx: mlir.LoweringRuleContext, mesh
-  ) -> sharding_impls.SdyArray:
+) -> ir.Attribute:
   ns = _make_scoped_manual_sharding(ctx, mesh, P())
-  return ns._to_sdy_sharding(0)
+  attr = mlir.sharding_to_sharding_attr(ctx.module_context, core.abstract_token, ns, use_shardy=True)
+  assert attr is not None
+  return attr
 
 
 def _get_spmdaxis_ctx_mesh(mesh):
@@ -965,7 +964,7 @@ def _shard_map_lowering_shardy(
     return out_nodes
 
   in_shardings = list(
-      map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
+      map(partial(_shardy_shard_map_sharding_attr, ctx, mesh, manual_axes),
           in_specs, ctx.avals_in))
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
@@ -977,21 +976,21 @@ def _shard_map_lowering_shardy(
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = [
-      _shardy_shard_map_sharding(ctx, mesh, manual_axes, P(), core.typeof(c))
+      _shardy_shard_map_sharding_attr(ctx, mesh, manual_axes, P(), core.typeof(c))
       for c in const_args]
 
   num_dim_vars = len(ctx.dim_var_values)
   in_shardings = (
       [_get_token_sharding(ctx, mesh)] * (num_tokens + num_dim_vars) +
       const_args_shardings + in_shardings)
-  in_shardings = sharding_impls.SdyArrayList(in_shardings).build()
+  in_shardings = sdy.TensorShardingPerValueAttr.get(in_shardings)
 
   out_shardings = list(
-      map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
+      map(partial(_shardy_shard_map_sharding_attr, ctx, mesh, manual_axes),
           out_specs, ctx.avals_out))
   out_shardings = [
       _get_token_sharding(ctx, mesh)] * num_tokens + out_shardings
-  out_shardings = sharding_impls.SdyArrayList(out_shardings).build()
+  out_shardings = sdy.TensorShardingPerValueAttr.get(out_shardings)
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
                   mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)))
@@ -1084,11 +1083,13 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = (set(range(aval_in.ndim))
                  if len(manual_axes) < len(mesh.axis_names) else set())
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
+  shard_attr = mlir.get_sharding_attr(shard_proto)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_attr,
                                   unspecified_dims=unspecified)
   manual_proto = pxla.manual_proto(
       aval_in, manual_axes | set(mesh.manual_axes), mesh)
-  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto,
+  manual_attr = mlir.get_sharding_attr(manual_proto)
+  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_attr,
                                          unspecified)
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
@@ -1105,10 +1106,12 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
     aval_in = core.physical_aval(aval_in)
   manual_proto = pxla.manual_proto(
       aval_in, manual_axes | set(mesh.manual_axes), mesh)
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto,
+  manual_attr = mlir.get_sharding_attr(manual_proto)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_attr,
                                   unspecified_dims=unspecified)
   shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
+  shard_attr = mlir.get_sharding_attr(shard_proto)
+  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_attr,
                                          unspecified)
 
 def _pspec_mhlo_attrs(spec, aval: core.AbstractValue) -> str:

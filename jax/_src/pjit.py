@@ -2152,7 +2152,6 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
                                       context_mesh, unconstrained_dims):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
-  axis_ctx = ctx.module_context.axis_context
 
   if (isinstance(sharding, NamedSharding) and
       any(o is not None for o in out_aval.sharding.spec)):
@@ -2173,17 +2172,9 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
           new_spec.append(aval_spec + (user_spec,))
     sharding = sharding.update(spec=new_spec)
 
-  if dtypes.issubdtype(in_aval.dtype, dtypes.extended):
-    in_aval = core.physical_aval(in_aval)
-  if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
-      axis_ctx.manual_axes):
-    sharding = mlir.add_manual_axes(axis_ctx, sharding, in_aval.ndim)
-  if config.use_shardy_partitioner.value:
-    sharding = sharding._to_sdy_sharding(in_aval.ndim)
-  else:
-    sharding = sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+  attr = mlir.sharding_to_sharding_attr(ctx.module_context, in_aval, sharding)
   out = mlir.wrap_with_sharding_op(
-      ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
+      ctx, x_node, out_aval, attr, unspecified_dims=unconstrained_dims)
   if layout is not None:
     out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, in_aval)
   return [out]

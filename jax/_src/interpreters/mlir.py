@@ -750,6 +750,25 @@ class LoweringCacheValue:
   const_arg_avals: Sequence[core.AbstractValue]
   inline: bool  # Inline calls to this lowered function?
 
+
+@dataclasses.dataclass(frozen=True)
+class ShardingAttrCacheKey:
+  sharding: JSharding | AUTO
+  aval: core.AbstractValue
+  # Should we use shardy-style lowerings? This is passed as a parameter because
+  # jax.export may need non-shardy style annotations even when shardy is enabled
+  # globally.
+  use_shardy: bool
+
+  # Force all dim_shardings to be open. Used when lowering shard_map when there
+  # are fewer manual axes than mesh axes.
+  is_open: bool
+
+  # Flag added so we didn't change behavior when adding this cache.
+  # TODO(yashkatariya,phawkins): we believe this can probably be enabled
+  # unconditionally.
+  modify_wrt_axis_types: bool
+
 @dataclasses.dataclass
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
@@ -773,6 +792,7 @@ class ModuleContext:
   # Cached primitive lowerings.
   lowering_cache: dict[LoweringCacheKey, LoweringCacheValue]
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
+  sharding_to_attr_cache: dict[ShardingAttrCacheKey, ir.Attribute]
 
   # Cached traceback information.
   traceback_caches: TracebackCaches
@@ -799,6 +819,7 @@ class ModuleContext:
       symbol_table: ir.SymbolTable | None = None,
       lowering_cache: None | dict[LoweringCacheKey, Any] = None,
       cached_primitive_lowerings: None | dict[Any, func_dialect.FuncOp] = None,
+      sharding_to_attr_cache: None | dict[ShardingAttrCacheKey, ir.Attribute] = None,
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None,
       all_default_mem_kind: bool = True):
@@ -813,6 +834,8 @@ class ModuleContext:
     self.lowering_cache = ({} if lowering_cache is None else lowering_cache)
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
+    self.sharding_to_attr_cache = ({} if sharding_to_attr_cache is None
+                                   else sharding_to_attr_cache)
     with self.context:
       self.traceback_caches = (TracebackCaches() if traceback_caches is None
                               else traceback_caches)
@@ -1124,18 +1147,26 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 def _to_physical_op_sharding(
     ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | AUTO | None,
+    use_shardy: bool,
 ) -> xc.OpSharding | SdyArray | None:
   if sharding is None:
     return None
+  if aval is core.abstract_token:
+    if use_shardy:
+      return sharding._to_sdy_sharding(0)
+    else:
+      if isinstance(sharding, AUTO):
+        return None
+      return sharding._to_xla_hlo_sharding(0).to_proto()
   if all_unconstrained(sharding, aval):
     return None
   if isinstance(sharding, AUTO):
-    if config.use_shardy_partitioner.value:
+    if use_shardy:
       return sharding._to_sdy_sharding(aval.ndim)  # pyrefly: ignore[missing-attribute]
     return None
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
-    return _to_physical_op_sharding(ctx, aval.inner_aval, sharding)
+    return _to_physical_op_sharding(ctx, aval.inner_aval, sharding, use_shardy)
   assert isinstance(aval, core.ShapedArray)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     sharding = sharding_impls.physical_sharding(aval, sharding)
@@ -1144,9 +1175,64 @@ def _to_physical_op_sharding(
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
-  if config.use_shardy_partitioner.value:
+  if use_shardy:
     return sharding._to_sdy_sharding(aval.ndim)
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+
+
+def sharding_to_sharding_attr(
+    ctx: ModuleContext,
+    aval: core.AbstractValue,
+    sharding: JSharding | AUTO | None,
+    is_open: bool = False,
+    modify_wrt_axis_types: bool = False,
+    use_shardy: bool | None = None,
+) -> ir.Attribute | None:
+  """Converts a sharding to an MLIR attribute, utilizing a cache.
+
+  Returns None if the sharding is None, or if it is fully unconstrained (so no
+  annotation is needed), or for AUTO shardings when Shardy is disabled.
+  """
+  if sharding is None:
+    return None
+
+  use_shardy = (config.use_shardy_partitioner.value if use_shardy is None
+                else use_shardy)
+
+  is_jsharding = isinstance(sharding, JSharding)
+
+  cache_key = ShardingAttrCacheKey(sharding, aval, use_shardy, is_open,
+                                   modify_wrt_axis_types)
+
+  if is_jsharding:
+    if cache_key in ctx.sharding_to_attr_cache:
+      return ctx.sharding_to_attr_cache[cache_key]
+
+  physical_op_sharding = _to_physical_op_sharding(ctx, aval, sharding, use_shardy)
+  if physical_op_sharding is None:
+    return None
+
+  if use_shardy:
+    assert isinstance(physical_op_sharding, SdyArray)
+    if is_open:
+      for dim_sharding in physical_op_sharding.dim_shardings:
+        dim_sharding.is_open = True
+    if modify_wrt_axis_types:
+      assert isinstance(aval, core.ShapedArray)
+      physical_op_sharding = modify_sdy_sharding_wrt_axis_types(physical_op_sharding, aval.sharding.mesh)
+    else:
+      uv = _get_unconstrained_variants(sharding, aval)
+      if uv.contains_unconstrained and not uv.all_unconstrained:
+        assert isinstance(aval, core.ShapedArray)
+        physical_op_sharding = modify_sdy_sharding_wrt_axis_types(physical_op_sharding, aval.sharding.mesh)
+    attr = physical_op_sharding.build()
+  else:
+    attr = get_sharding_attr(physical_op_sharding)
+
+  if is_jsharding:
+    ctx.sharding_to_attr_cache[cache_key] = attr
+
+  return attr
 
 
 def _to_xla_layout(layout: Layout | None | AutoLayout,
@@ -1175,6 +1261,8 @@ def contains_unconstrained(s):
 
 
 def all_unconstrained(s, aval):
+  if not isinstance(aval, core.ShapedArray):
+    return False
   if isinstance(s, NamedSharding):
     if aval.ndim == 0:
       return False
@@ -1704,7 +1792,7 @@ def lower_jaxpr_to_fun(
   ir_arg_shardings = None
   if arg_shardings is not None:
     ir_arg_shardings = util.flatten(
-        [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
+        [[sharding_to_sharding_attr(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(input_avals, arg_shardings, input_types)])
 
   ir_arg_memory_kinds = None
@@ -1729,7 +1817,7 @@ def lower_jaxpr_to_fun(
   unconstrained_variants = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
-        [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
+        [[sharding_to_sharding_attr(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
     unconstrained_variants = util.flatten(
         [[_get_unconstrained_variants(s, a)] * len_ir_types(types)
@@ -1784,12 +1872,12 @@ def lower_jaxpr_to_fun(
           attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
     if use_sharding_annotations and ir_arg_shardings is not None:
-      for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
-        if sharding is not None:
+      for attrs, attr in zip(arg_attrs, ir_arg_shardings):
+        if attr is not None:
           if config.use_shardy_partitioner.value:
-            attrs["sdy.sharding"] = get_sharding_attr(sharding)
+            attrs["sdy.sharding"] = attr
           else:
-            attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+            attrs["mhlo.sharding"] = attr
 
     if ir_arg_memory_kinds is not None:
       for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
@@ -1857,13 +1945,13 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,
+    for attrs, attr, uv in zip(result_attrs, ir_result_shardings,
                                    unconstrained_variants):  # pyrefly: ignore[bad-argument-type]
-      if sharding is not None and not uv.contains_unconstrained:
+      if attr is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
-          attrs["sdy.sharding"] = get_sharding_attr(sharding)
+          attrs["sdy.sharding"] = attr
         else:
-          attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+          attrs["mhlo.sharding"] = attr
 
   if ir_result_memory_kinds is not None:
     for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
@@ -1923,16 +2011,16 @@ def lower_jaxpr_to_fun(
         const_lowering=const_lowering)
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
-          a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
-          for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
+          a if attr is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, attr)
+          for a, attr, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
     if ir_arg_shardings is not None and main_function:
       flat_args = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
-              (s is None or all_unconstrained(rs, a))) else o
-          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+              (attr is None or all_unconstrained(rs, a))) else o
+          for o, attr, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
                                  arg_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
 
@@ -1960,24 +2048,23 @@ def lower_jaxpr_to_fun(
 
     if not use_sharding_annotations and ir_result_shardings is not None:
       flat_outputs = [
-          o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
-          for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
+          o if attr is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, attr)
+          for o, attr, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
     if ir_result_shardings is not None:
       temp_flat_outputs = []
-      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,
+      for o, attr, o_aval, uv in zip(flat_outputs, ir_result_shardings,
                                   output_avals, unconstrained_variants):  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-        if (s is not None and uv.contains_unconstrained and
+        if (attr is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
-            s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
             unconstrained_dims = None  # delete this after shardy is default
           else:
             unconstrained_dims = (
                 set(range(o_aval.ndim)) if o_aval.sharding.mesh._any_axis_auto
                 else None)
           temp_flat_outputs.append(wrap_with_sharding_op(
-              entry_lowering_ctx, o, o_aval, s,
+              entry_lowering_ctx, o, o_aval, attr,
               unspecified_dims=unconstrained_dims))
         else:
           temp_flat_outputs.append(o)
@@ -1996,8 +2083,8 @@ def lower_jaxpr_to_fun(
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and
-              (s is None or all_unconstrained(rs, a))) else o
-          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+              (attr is None or all_unconstrained(rs, a))) else o
+          for o, attr, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
 
@@ -2037,10 +2124,10 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
             sharding_impls.SdyDim(axes=[], is_open=i < aval.ndim)
             for i in range(physical_ndim)
         ])
-    return wrap_with_sharding_op(ctx, val, aval, s)
+    return wrap_with_sharding_op(ctx, val, aval, s.build())
   else:
     return wrap_with_sharding_op(
-      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
+      ctx, val, aval, get_sharding_attr(xc.HloSharding.replicate().to_proto()),
       unspecified_dims=set(range(aval.ndim)))
 
 
@@ -2992,12 +3079,17 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding: xc.OpSharding | SdyArray,
+                       sharding: ir.Attribute | None,
                        unspecified_dims: set[int] | None = None,
                        has_side_effect: bool = False,
-                       allow_shardy_lowering: bool = False):
-  if config.use_shardy_partitioner.value and allow_shardy_lowering:
-    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # pyrefly: ignore[missing-attribute]
+                       allow_shardy_lowering: bool = False,
+                       use_shardy: bool | None = None):
+  if sharding is None:
+    return x
+  if use_shardy is None:
+    use_shardy = config.use_shardy_partitioner.value
+  if use_shardy and allow_shardy_lowering:
+    return dialects.sdy.ShardingConstraintOp(x, sharding).result
 
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
@@ -3043,25 +3135,26 @@ def lower_with_sharding_in_types(ctx, op, aval):
   if config.use_shardy_partitioner.value:
     proto = aval.sharding._to_sdy_sharding(aval.ndim)
     proto = modify_sdy_sharding_wrt_axis_types(proto, aval.sharding.mesh)
-    return wrap_with_sharding_op(ctx, op, aval, proto)
+    return wrap_with_sharding_op(ctx, op, aval, proto.build())
   else:
     proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
     unspecified_dims = None
     if aval.sharding.mesh._any_axis_auto:
       unspecified_dims = set(range(aval.ndim))
-    return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
+    return wrap_with_sharding_op(ctx, op, aval, get_sharding_attr(proto), unspecified_dims)
 
 
-def set_sharding(op, sharding: xc.OpSharding | SdyArray | SdyArrayList):
-  if isinstance(sharding, (SdyArray, SdyArrayList)):
-    op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
+def set_sharding(op, sharding: ir.Attribute):
+  if config.use_shardy_partitioner.value:
+    op.attributes["sdy.sharding"] = sharding
   else:
-    op.attributes["mhlo.sharding"] = get_sharding_attr(sharding)
+    op.attributes["mhlo.sharding"] = sharding
 
 
 def get_sharding_attr(
     sharding: xc.OpSharding | SdyArray | SdyArrayList
 ) -> ir.Attribute:
+  """Converts an OpSharding or SdyArray(List) to a sharding attribute."""
   if isinstance(sharding, (SdyArray, SdyArrayList)):
     return sharding.build()
   else:

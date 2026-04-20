@@ -102,9 +102,10 @@ def _group_shard(
   unknown_op_sharding.shard_group_id = shard_group_id
   unknown_op_sharding.shard_group_type = xc.OpSharding.ShardGroupType.AS
 
-  x = mlir.wrap_with_sharding_op(ctx, x, x_aval_out, unknown_op_sharding,
+  attr = mlir.get_sharding_attr(unknown_op_sharding)
+  x = mlir.wrap_with_sharding_op(ctx, x, x_aval_out, attr,
                                  has_side_effect=True)
-  y = mlir.wrap_with_sharding_op(ctx, y, y_aval_out, unknown_op_sharding,
+  y = mlir.wrap_with_sharding_op(ctx, y, y_aval_out, attr,
                                  has_side_effect=True)
   return x, y
 
