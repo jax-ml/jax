@@ -2204,7 +2204,9 @@ def _t(key, df, shape, dtype) -> Array:
 def chisquare(key: ArrayLike,
               df: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2237,7 +2239,8 @@ def chisquare(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _chisquare(key, df, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "chisquare")
+  return maybe_auto_axes(_chisquare, out_sharding, shape=shape, dtype=dtype)(key, df)
 
 @jit(static_argnums=(2, 3))
 def _chisquare(key, df, shape, dtype) -> Array:
