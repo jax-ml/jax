@@ -1165,11 +1165,14 @@ def _pjit_call_impl_python(
       compiler_options_kvs=compiler_options_kvs,
   )
   compiled = computation.compile()
+  sharded_const_args = compiled.shard_const_args(computation.const_args)
 
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
+    nr_const_args = len(sharded_const_args)
     pxla.check_array_xla_sharding_layout_match(
-        args, compiled._in_shardings, compiled._in_layouts,  # pyrefly: ignore[missing-attribute]
+        args, compiled._in_shardings[nr_const_args:],
+        compiled._xla_in_layouts[nr_const_args:],
         jaxpr.jaxpr.debug_info.safe_arg_names(len(args)))
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
@@ -1186,8 +1189,8 @@ def _pjit_call_impl_python(
                           ("out_layouts", out_layouts),
                           ("abstract args", map(core.typeof, args)),
                           ("fingerprint", fingerprint))
-  return (compiled.unsafe_call(*computation.const_args, *args),
-          compiled, pgle_profiler, computation.const_args)
+  return (compiled.unsafe_call(*sharded_const_args, *args),
+          compiled, pgle_profiler, sharded_const_args)
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,

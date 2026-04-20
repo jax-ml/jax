@@ -1982,6 +1982,9 @@ class MeshExecutable(stages.Executable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
+    params = params._replace(
+        const_args=self.shard_const_args(params.const_args))
+
     def aot_cache_miss(*args, **kwargs):
       # args do not include the const args.
       # See https://docs.jax.dev/en/latest/internals/constants.html.
@@ -2018,6 +2021,14 @@ class MeshExecutable(stages.Executable):
     return xc._xla.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [],
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
+
+  def shard_const_args(self, const_args: Sequence[ArrayLike]):
+    nr_const_args = len(const_args)
+    return shard_args(
+        self._in_shardings[:nr_const_args],
+        self._xla_in_layouts[:nr_const_args],
+        [xc.ArrayCopySemantics.REUSE_INPUT] * nr_const_args,
+        const_args)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
