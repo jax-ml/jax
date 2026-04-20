@@ -620,6 +620,25 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
+  def test_gather_2d_with_col_slice(self):
+    if not self.USE_TC_TILING:
+      self.skipTest("Test only works under TC tiling.")
+    nl = self.num_lanes
+    x = jnp.arange(nl * 4096, dtype=jnp.int32).reshape(nl, 4096)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(nl))
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(nl, 1024), dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref, pl.ds(128, 1024)], o_ref)
+
+    np.testing.assert_array_equal(kernel(x, indices), x[indices, 128:1152])
+
   def test_gather_1d_with_indexed_ref(self):
     x = jnp.arange(16)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
