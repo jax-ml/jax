@@ -593,7 +593,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   return False
 
 def is_hoistable(v: Literal) -> bool:
-  return (np.shape(v.val) and
+  return (np.ndim(v.val) > 0 and
           getattr(v.val, "nbytes", 4) > config.embedded_constants_max_bytes.value)
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
