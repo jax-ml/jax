@@ -109,7 +109,7 @@ except ImportError:
     )
     if os.path.exists(libdevice_path):
       os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for solib_path in ["_solib_linux_x86_64", "_solib_linux_aarch64"]:
+    for solib_path in ["_solib_x86_64", "_solib_aarch64"]:
       if not os.path.exists(
           os.path.join(PYTHON_RUNFILES, "__main__", solib_path)
       ):
