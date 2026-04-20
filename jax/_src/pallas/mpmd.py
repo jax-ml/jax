@@ -208,9 +208,9 @@ def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
 def mpmd_map(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[_P, _T]]],
     /,
-    out_shapes: tree_util.PyTree,
+    out_types: tree_util.PyTree,
     *,
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    scratch_types: pallas_core.ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool | Any = False,
     debug: bool = False,
@@ -220,9 +220,9 @@ def mpmd_map(
 ) -> Callable[_P, _T]:
   return _mpmd_map(
       meshes_and_fns,
-      out_shapes,
+      out_types,
       input_output_aliases={},
-      scratch_shapes=scratch_shapes,
+      scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=interpret,
       debug=debug,
@@ -235,10 +235,10 @@ def mpmd_map(
 def _mpmd_map(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[_P, _T]]],
     /,
-    out_shapes: tree_util.PyTree,
+    out_types: tree_util.PyTree,
     *,
     input_output_aliases: Mapping[int, int] = {},
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    scratch_types: pallas_core.ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool | Any = False,
     debug: bool = False,
@@ -250,12 +250,12 @@ def _mpmd_map(
   if not meshes_and_fns:
     raise ValueError("At least one mesh/function pair is required")
 
-  flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(
-      out_shapes
+  flat_out_types_with_paths, out_tree = tree_util.tree_flatten_with_path(
+      out_types
   )
-  out_paths, flat_out_shapes = util.unzip2(flat_out_shapes_with_paths)
+  out_paths, flat_out_types = util.unzip2(flat_out_types_with_paths)
   flat_out_avals = tuple(
-      map(pallas_core._convert_out_shape_to_aval, flat_out_shapes)
+      map(pallas_core._convert_out_shape_to_aval, flat_out_types)
   )
   out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
 
@@ -272,7 +272,7 @@ def _mpmd_map(
     jaxprs = []
     grid_mappings = []
 
-    flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(scratch_shapes)
+    flat_scratch_types, scratch_tree = tree_util.tree_flatten(scratch_types)
     if len(meshes_and_fns) > 1:
       # TODO(rdyro): For MPMD with more than one mesh, come up with a better
       # solution for how to enforce core_type presence in scratch_shape.
@@ -281,14 +281,18 @@ def _mpmd_map(
       # core_type is inherited from the caller (we then need the core_type in
       # the caller context during tracing).
       # TODO(rdyro): Also check inputs and outputs for core type.
-      for scratch_shape in flat_scratch_shapes:
+      for scratch_type in flat_scratch_types:
         from jax._src.pallas.mosaic import core as tpu_core
-        if (not isinstance(scratch_shape.memory_space, tpu_core.CoreMemorySpace)
-            and scratch_shape.memory_space not in (
-              tpu_core.MemorySpace.HBM, tpu_core.MemorySpace.VMEM_SHARED)):
+
+        if not isinstance(
+            scratch_type.memory_space, tpu_core.CoreMemorySpace
+        ) and scratch_type.memory_space not in (
+            tpu_core.MemorySpace.HBM,
+            tpu_core.MemorySpace.VMEM_SHARED,
+        ):
           raise NotImplementedError(
-              "MPMD map with more than one mesh requires scratch_shape to have"
-              f" a `core_type` specified, but {scratch_shape=} is missing it."
+              "MPMD map with more than one mesh requires scratch_type to have"
+              f" a `core_type` specified, but {scratch_type=} is missing it."
           )
 
     # Check that meshes are compatible with each other (e.g, have a consistent
@@ -327,7 +331,7 @@ def _mpmd_map(
               )
               for aval in flat_out_avals
           ),
-          scratch_shapes=flat_scratch_shapes,
+          scratch_shapes=flat_scratch_types,
       )
       kernel_args, grid_mapping = pallas_core.get_grid_mapping(
           grid_spec,

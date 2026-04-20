@@ -263,7 +263,7 @@ class DebugPrintTest(PallasSCTest):
     def kernel(x):
       return mpmd.mpmd_map(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_shapes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
       )(x)
 
     compiled_kernel = jax.jit(
@@ -2374,7 +2374,7 @@ class MpmdMapTest(PallasSCTest):
     ):
       mpmd.mpmd_map(
           [(v_mesh, lambda *_: None), (s_mesh, lambda *_: None)],
-          out_shapes=jax.ShapeDtypeStruct([], jnp.int32),
+          out_types=jax.ShapeDtypeStruct([], jnp.int32),
       )()
 
   @parameterized.product(use_tc_tiling=[False, True],
@@ -2430,8 +2430,8 @@ class MpmdMapTest(PallasSCTest):
                         dict(vmshd=pltpu.VMEM_SHARED(x.shape, x.dtype)))
     out = mpmd.mpmd_map(
         [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-        out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
-        scratch_shapes=scratch_shapes,
+        out_types=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
+        scratch_types=scratch_shapes,
         compiler_params=pltpu.CompilerParams(
             use_tc_tiling_on_sc=use_tc_tiling,
         ),
@@ -2484,15 +2484,17 @@ class MpmdMapTest(PallasSCTest):
     def test_mpmd_map():
       _ = mpmd.mpmd_map(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_shapes=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
+          out_types=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=use_tc_tiling,
           ),
-          scratch_shapes=[
-            # SCS -> TEC
-            pltpu.SemaphoreType.REGULAR(()) @ pltpu.CoreType.SC_VECTOR_SUBCORE,
-            # TEC -> SCS
-            pltpu.SemaphoreType.REGULAR(()) @ pltpu.CoreType.SC_SCALAR_SUBCORE,
+          scratch_types=[
+              # SCS -> TEC
+              pltpu.SemaphoreType.REGULAR(())
+              @ pltpu.CoreType.SC_VECTOR_SUBCORE,
+              # TEC -> SCS
+              pltpu.SemaphoreType.REGULAR(())
+              @ pltpu.CoreType.SC_SCALAR_SUBCORE,
           ],
       )()
 
@@ -2529,8 +2531,8 @@ class MpmdMapTest(PallasSCTest):
     def test_mpmd_map():
       mpmd.mpmd_map(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_shapes=jax.ShapeDtypeStruct([8], jnp.int32),
-          scratch_shapes=[
+          out_types=jax.ShapeDtypeStruct([8], jnp.int32),
+          scratch_types=[
               pltpu.SemaphoreType.REGULAR(())
               @ pltpu.CoreType.SC_VECTOR_SUBCORE,
           ],
@@ -2993,7 +2995,7 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
     def run_mpmd(x):
       return mpmd.mpmd_map(
           [(mesh, kernel_fn)],
-          out_shapes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
           compiler_params=pltpu.CompilerParams(
               kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
           ),

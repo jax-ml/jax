@@ -1657,7 +1657,7 @@ def default_mesh_discharge_rule(
   ]
 
   scratch_avals = [v.aval for v in jaxpr.invars]
-  scratch_shapes = tuple(
+  scratch_types = tuple(
       MemoryRef(v.inner_aval, v.memory_space) for v in scratch_avals
   )
 
@@ -1670,13 +1670,14 @@ def default_mesh_discharge_rule(
     jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
 
   from jax._src.pallas import mpmd  # Avoid circular dependency.
+
   outs = mpmd._mpmd_map(
       [(mesh, body)],
-      out_shapes=tuple(_get_sds(in_avals[idx]) for idx in modified_idxs),
+      out_types=tuple(_get_sds(in_avals[idx]) for idx in modified_idxs),
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
-      scratch_shapes=scratch_shapes,
+      scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=interpret,
       debug=debug,
