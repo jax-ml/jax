@@ -242,6 +242,7 @@ _OUT_SHARDING_CASES = [
     ('rademacher',            lambda key, n, s: random.rademacher(key, shape=(n,), out_sharding=s)),
     ('maxwell',               lambda key, n, s: random.maxwell(key, shape=(n,), out_sharding=s)),
     ('double_sided_maxwell',  lambda key, n, s: random.double_sided_maxwell(key, loc=0., scale=1., shape=(n,), out_sharding=s)),
+    ('weibull_min',           lambda key, n, s: random.weibull_min(key, scale=1., concentration=2., shape=(n,), out_sharding=s)),
 ]
 
 

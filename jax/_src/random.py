@@ -2463,7 +2463,9 @@ def weibull_min(key: ArrayLike,
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Shape = (),
-                dtype: DTypeLikeFloat | None = None) -> Array:
+                dtype: DTypeLikeFloat | None = None,
+                *,
+                out_sharding=None) -> Array:
   r"""Sample from a Weibull distribution.
 
   The values are distributed according to the probability density function:
@@ -2492,7 +2494,8 @@ def weibull_min(key: ArrayLike,
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _weibull_min(key, scale, concentration, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "weibull_min", shape)
+  return maybe_auto_axes(_weibull_min, out_sharding, shape=shape, dtype=dtype)(key, scale, concentration)
 
 
 @jit(static_argnums=(3, 4))
