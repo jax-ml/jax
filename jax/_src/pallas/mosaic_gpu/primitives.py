@@ -1466,7 +1466,7 @@ def _wgmma_lowering(
     b_ref_aval = b_aval
   assert transform_treedefs[2] is not None
   b_transform_avals = transform_treedefs[2].unflatten(transform_avals_list[2])
-  b, _, b_transforms = lowering._handle_transforms(
+  b, b_ref_aval, b_transforms = lowering._handle_transforms(
       ctx, b_ref_aval, b, b_transform_avals, b_transforms,
       handle_transposes=False, handle_reshapes=False)
 
@@ -1479,6 +1479,24 @@ def _wgmma_lowering(
         state_types.TransposeTransform((1, 0)),
     ):
       rhs_transpose = True
+    # TODO(bchetioui): replace with `_handle_reshapes=True` once changes have
+    # propagated to Tokamax.
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.UntilingTransform() as untile,
+        state.types.ReshapeTransform() as reshape,
+    ):
+      assert isinstance(b_ref_aval, state.AbstractRef)
+      commuted_reshape, commuted_untile = untile.commute_reshape(
+          b_ref_aval.inner_aval, reshape  # pyrefly: ignore[bad-argument-type]
+      )
+      if len(commuted_untile.tiling) != 2 or len(commuted_reshape.shape) != 4:
+        raise ValueError("WGMMA expects 2D shapes tiled into 2D tiles.")
+      b = mgpu.memref_reshape(b, commuted_reshape.shape)
+      rhs_tiling = commuted_untile.tiling
+      rhs_transpose = False
+    # TODO(bchetioui): delete once changes have propagated to Tokamax and kernel
+    # code is updated.
     case (
         gpu_core.UnswizzleRef(rhs_swizzle),
         state_types.TransposeTransform((1, 0, 2, 3, 4)),

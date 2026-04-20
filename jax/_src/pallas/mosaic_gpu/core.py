@@ -733,6 +733,62 @@ class UntilingTransform(state_types.Transform):
     )
     return new_indexer, self
 
+  def commute_reshape(
+      self, aval: jax_core.ShapedArray, transform: state_types.ReshapeTransform
+  ) -> tuple[state_types.ReshapeTransform, UntilingTransform]:
+    if not transform.shape:
+      raise NotImplementedError
+    if not self.tiling:
+      raise NotImplementedError
+    untiled_aval = self.transform_type(aval)
+    components = [[]]
+    # We assume that we support only folds here for the moment. Therefore, we
+    # can gather a number of consecutive dimensions such that their product
+    # equals the dimension currently being processed in the reshaped shape.
+    for d in untiled_aval.shape:
+      reshaped_dim_size = transform.shape[len(components) - 1]
+      components[-1].append(d)
+      component_size = math.prod(components[-1])
+      if component_size == reshaped_dim_size:
+        components.append([])
+      elif component_size > reshaped_dim_size:
+        raise NotImplementedError("Shape unfolds")
+    assert not components[-1]
+    components.pop()
+
+    tiling_to_process = self.tiling[::-1]
+    shape_to_process = untiled_aval.shape[-len(self.tiling):][::-1]
+    new_tiling: tuple[int, ...] = ()
+    new_untiled_tiled_dims: tuple[int, ...] = ()
+    for component in components[::-1]:
+      ndim = len(component)
+      if len(tiling_to_process) < ndim:
+        raise NotImplementedError(
+            "Folding tiled dimensions into untiled dimensions is not supported"
+        )
+      new_tiling = (math.prod(tiling_to_process[:ndim]), *new_tiling)
+      new_untiled_tiled_dims = (math.prod(shape_to_process[:ndim]), *new_untiled_tiled_dims)
+      tiling_to_process = tiling_to_process[ndim:]
+      shape_to_process = shape_to_process[ndim:]
+      if not tiling_to_process:
+        break
+    assert not tiling_to_process
+    assert not shape_to_process
+
+    if any(s % t != 0 for s, t in zip(new_untiled_tiled_dims, new_tiling)):
+      raise ValueError(
+          "New untiled shape must be divisible by new tiling. Got:"
+          f" {new_untiled_tiled_dims} and {new_tiling}"
+      )
+
+    new_shape = (
+        *[math.prod(c) for c in components[:-len(new_tiling)]],
+        *[s // t for s, t in zip(new_untiled_tiled_dims, new_tiling)],
+        *new_tiling,
+    )
+
+    return state_types.ReshapeTransform(new_shape), UntilingTransform(new_tiling)
+
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{untile({list(self.tiling)})}}")
 
