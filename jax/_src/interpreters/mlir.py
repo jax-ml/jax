@@ -3028,7 +3028,7 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
-def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
+def lower_with_sharding_in_types(ctx, op, aval):
   if aval.sharding.mesh.empty:
     return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
@@ -3041,13 +3041,11 @@ def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     aval = core.physical_aval(aval)
   if config.use_shardy_partitioner.value:
-    proto = (aval.sharding._to_sdy_sharding(aval.ndim)
-             if sharding_proto is None else sharding_proto)
+    proto = aval.sharding._to_sdy_sharding(aval.ndim)
     proto = modify_sdy_sharding_wrt_axis_types(proto, aval.sharding.mesh)
     return wrap_with_sharding_op(ctx, op, aval, proto)
   else:
-    proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
-            if sharding_proto is None else sharding_proto)
+    proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
     unspecified_dims = None
     if aval.sharding.mesh._any_axis_auto:
       unspecified_dims = set(range(aval.ndim))

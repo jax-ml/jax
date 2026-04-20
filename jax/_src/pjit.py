@@ -2301,14 +2301,8 @@ def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
 ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
-  aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    aval_in = core.physical_aval(aval_in)
-  proto = (dst_sharding._to_sdy_sharding(aval_in.ndim)
-           if config.use_shardy_partitioner.value else
-           dst_sharding._to_xla_hlo_sharding(aval_in.ndim).to_proto())
-  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
+  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
