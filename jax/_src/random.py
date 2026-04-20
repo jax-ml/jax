@@ -2615,7 +2615,9 @@ def ball(
   d: int,
   p: float = 2,
   shape: Shape = (),
-  dtype: DTypeLikeFloat | None = None
+  dtype: DTypeLikeFloat | None = None,
+  *,
+  out_sharding=None,
 ):
   """Sample uniformly from the unit Lp ball.
 
@@ -2638,6 +2640,11 @@ def ball(
       float if dtype is None else dtype)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
+  out_sharding = canonicalize_sharding(out_sharding, "ball")
+  return maybe_auto_axes(_ball, out_sharding, d=d, p=p, shape=shape, dtype=dtype)(key)
+
+@jit(static_argnums=(1, 2, 3, 4))
+def _ball(key, d, p, shape, dtype):
   k1, k2 = split(key)
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)

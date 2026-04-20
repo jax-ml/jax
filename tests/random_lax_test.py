@@ -245,6 +245,7 @@ _OUT_SHARDING_CASES = [
     ('weibull_min',           lambda key, n, s: random.weibull_min(key, scale=1., concentration=2., shape=(n,), out_sharding=s)),
     ('orthogonal',            lambda key, n, s: random.orthogonal(key, n=3, shape=(n,), out_sharding=s)),
     ('generalized_normal',    lambda key, n, s: random.generalized_normal(key, p=2., shape=(n,), out_sharding=s)),
+    ('ball',                  lambda key, n, s: random.ball(key, d=3, shape=(n,), out_sharding=s)),
 ]
 
 
