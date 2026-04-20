@@ -235,6 +235,7 @@ _OUT_SHARDING_CASES = [
     ('categorical_replace',   lambda key, n, s: random.categorical(key, np.ones((n, 5)), out_sharding=s)),
     ('laplace',               lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
     ('logistic',              lambda key, n, s: random.logistic(key, shape=(n,), out_sharding=s)),
+    ('pareto',                lambda key, n, s: random.pareto(key, b=2.0, shape=(n,), out_sharding=s)),
 ]
 
 
