@@ -2710,7 +2710,9 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
 def wald(key: ArrayLike,
          mean: RealArray,
          shape: Shape | None = None,
-         dtype: DTypeLikeFloat | None = None) -> Array:
+         dtype: DTypeLikeFloat | None = None,
+         *,
+         out_sharding=None) -> Array:
   r"""Sample Wald random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2744,7 +2746,8 @@ def wald(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _wald(key, mean, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "wald")
+  return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
 def _wald(key, mean, shape, dtype) -> Array:

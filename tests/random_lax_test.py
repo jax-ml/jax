@@ -247,6 +247,7 @@ _OUT_SHARDING_CASES = [
     ('generalized_normal',    lambda key, n, s: random.generalized_normal(key, p=2., shape=(n,), out_sharding=s)),
     ('ball',                  lambda key, n, s: random.ball(key, d=3, shape=(n,), out_sharding=s)),
     ('rayleigh',              lambda key, n, s: random.rayleigh(key, scale=1.0, shape=(n,), out_sharding=s)),
+    ('wald',                  lambda key, n, s: random.wald(key, mean=1.0, shape=(n,), out_sharding=s)),
 ]
 
 
