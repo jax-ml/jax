@@ -265,5 +265,5 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
     np.nan,
-    lax.add(loc, lax.mul(scale, lax.neg(lax.log1p(lax.neg(q))))),
+    lax.sub(loc, lax.mul(scale, lax.log1p(lax.neg(q)))),
   )
