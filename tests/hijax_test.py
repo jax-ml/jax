@@ -1640,6 +1640,26 @@ class BoxTest(jtu.JaxTestCase):
     f(box, 1.0)
     self.assertAllClose(box.get(), 2.0)
 
+  def test_custom_vjp_is_high_propagation_jaxpr(self):
+    @jax.custom_vjp
+    def foo(x):
+      box = immutbox_new(x)
+      return immutbox_get(box)
+
+    def foo_fwd(x):
+      return foo(x), None
+
+    def foo_bwd(_, g):
+      return g,
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    def f(x):
+      return foo(x)
+
+    jaxpr = jax.make_jaxpr(f)(2.0)
+    self.assertTrue(jaxpr.jaxpr.is_high)
+
   @parameterized.parameters([False, True])
   def test_grad_closure_stop_gradient(self, jit):
     box = Box(0.0)

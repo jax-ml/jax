@@ -2050,7 +2050,8 @@ class DynamicJaxprTrace(core.Trace):
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
-    fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals)
+    fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
+    self.frame.is_high |= fun_jaxpr.is_high
     closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
@@ -2061,7 +2062,7 @@ class DynamicJaxprTrace(core.Trace):
       jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
       in_avals_ = (*in_avals, *nz_tangent_avals)
       jaxpr, _, out_consts = trace_to_jaxpr_dynamic(jvp_.with_unknown_names(),
-                                                    in_avals_)
+                                                    in_avals_, lower=self.requires_low)
       return jaxpr, out_consts, out_zeros()
 
     const_tracers = map(to_jaxpr_tracer, consts)
@@ -2089,7 +2090,8 @@ class DynamicJaxprTrace(core.Trace):
     to_jaxpr_tracer = partial(self.to_jaxpr_tracer, source_info=source_info)
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [core.AvalQDD(t.aval, core.cur_qdd(t)) if t.aval.has_qdd else t.aval for t in tracers]
-    fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals)
+    fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
+    self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
     closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
@@ -2098,7 +2100,7 @@ class DynamicJaxprTrace(core.Trace):
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd.with_unknown_names(), zeros)
-      jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals)
+      jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals, lower=self.requires_low)
       return jaxpr, consts
 
     def out_trees_():
