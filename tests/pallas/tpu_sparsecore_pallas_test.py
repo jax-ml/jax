@@ -1465,7 +1465,6 @@ class VectorSubcoreTest(PallasSCTest):
             pltpu.VMEM(x_pad.shape[1:], x.dtype),
             pltpu.VMEM_SHARED(x_pad.shape, jnp.int32),
         ),
-        debug=True,
     )
     def kernel(x_ref, o_ref, scratch_vmem, scratch_shared):
       subcore_id = lax.axis_index("subcore")
