@@ -65,6 +65,16 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
+
+
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
@@ -2298,7 +2308,9 @@ def _t(key, df, shape, dtype) -> Array:
 def chisquare(key: ArrayLike,
               df: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2318,6 +2330,14 @@ def chisquare(key: ArrayLike,
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2329,20 +2349,16 @@ def chisquare(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `chisquare` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _chisquare(key, df, shape, dtype)
+  shape = check_broadcast_shapes("chisquare", shape, df)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
+  return _chisquare(key, df, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _chisquare(key, df, shape, dtype) -> Array:
-  if shape is None:
-    shape = np.shape(df)
-  else:
-    _check_shape("chisquare", shape, np.shape(df))
+@jit(static_argnums=(2, 3, 4))
+def _chisquare(key, df, shape, dtype, out_sharding) -> Array:
   df = lax.convert_element_type(df, dtype)
   two = lax._const(df, 2)
   half_df = lax.div(df, two)
-  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype)
+  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, out_sharding=out_sharding)
   chi2 = lax.mul(jnp.exp(log_g), two)
   return chi2
 
@@ -2351,7 +2367,9 @@ def f(key: ArrayLike,
       dfnum: RealArray,
       dfden: RealArray,
       shape: Shape | None = None,
-      dtype: DTypeLikeFloat | None = None) -> Array:
+      dtype: DTypeLikeFloat | None = None,
+      *,
+      out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample F-distribution random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2376,6 +2394,14 @@ def f(key: ArrayLike,
       and ``dfden.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2387,24 +2413,17 @@ def f(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `f` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _f(key, dfnum, dfden, shape, dtype)
+  shape = check_broadcast_shapes("f", shape, dfnum, dfden)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "f", shape)
+  return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
-@jit(static_argnums=(3, 4))
-def _f(key, dfnum, dfden, shape, dtype) -> Array:
-  if shape is None:
-    shape =  lax.broadcast_shapes(np.shape(dfden), np.shape(dfnum))
-  else:
-    _check_shape("f", shape, np.shape(dfden), np.shape(dfnum))
+@jit(static_argnums=(3, 4, 5))
+def _f(key, dfnum, dfden, shape, dtype, out_sharding) -> Array:
   dfden = lax.convert_element_type(dfden, dtype)
   dfnum = lax.convert_element_type(dfnum, dtype)
   key_dfd, key_dfn = _split(key)
-  chi2_dfn = chisquare(key_dfn, dfnum, shape, dtype)
-  chi2_dfd = chisquare(key_dfd, dfden, shape, dtype)
-  # broadcast dfden and dfnum to do div operation
-  dfden = jnp.broadcast_to(dfden, shape)
-  dfnum = jnp.broadcast_to(dfnum, shape)
+  chi2_dfn = chisquare(key_dfn, dfnum, shape, dtype, out_sharding=out_sharding)
+  chi2_dfd = chisquare(key_dfd, dfden, shape, dtype, out_sharding=out_sharding)
   num = lax.div(chi2_dfn, dfnum)
   den = lax.div(chi2_dfd ,dfden)
   f = lax.div(num, den)
