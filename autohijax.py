@@ -247,7 +247,6 @@ def vjp(f, args, ct_right):
     ans_ft = lift_ft(f(*tracers.unflatten()))
   ct_right_ft = lift_ft(ct_right)
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
-  tape_ = tape[:]
   while tape: tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
   # TODO zeros! if an accum isnt set, it's zero!
