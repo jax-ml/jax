@@ -780,7 +780,9 @@ def choice(key: ArrayLike,
            replace: bool = True,
            p: RealArray | None = None,
            axis: int = 0,
-           mode: str | None = None) -> Array:
+           mode: str | None = None,
+           *,
+           out_sharding=None) -> Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -834,13 +836,19 @@ def choice(key: ArrayLike,
         f"Cannot take a larger sample (size {n_draws}) than "
         f"population (size {n_inputs}) when 'replace=False'")
 
+  final_shape = (shape if arr.ndim == 0 else
+                 arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "choice", final_shape)
+
   if p is None:
     if replace:
-      ind = randint(key, shape, 0, n_inputs)
-      result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+      return maybe_auto_axes(_choice_replace, out_sharding,
+                             n_inputs=n_inputs, shape=shape,
+                             final_shape=final_shape, axis=axis)(key, arr)
     else:
-      slices = (slice(None),) * axis + (slice(n_draws),)
-      result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
+      return maybe_auto_axes(_choice_no_replace, out_sharding,
+                             n_inputs=n_inputs, n_draws=n_draws,
+                             final_shape=final_shape, axis=axis)(key, arr)
   else:
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
@@ -849,17 +857,40 @@ def choice(key: ArrayLike,
           "p must be None or a 1D vector with the same size as a.shape[axis]. "
           f"p has shape {p_arr.shape} and a.shape[axis] is {n_inputs}.")
     if replace:
-      p_cuml = jnp.cumsum(p_arr)
-      r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
-      ind = jnp.searchsorted(p_cuml, r).astype(int)
+      return maybe_auto_axes(_choice_p_replace, out_sharding,
+                             shape=shape, final_shape=final_shape, axis=axis)(key, p_arr, arr)
     else:
-      # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
-      ind = lax.top_k(g, k=n_draws)[1].astype(int)
-    result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+      return maybe_auto_axes(_choice_p_no_replace, out_sharding,
+                             n_inputs=n_inputs, n_draws=n_draws,
+                             final_shape=final_shape, axis=axis, mode=mode)(key, p_arr, arr)
 
-  return result.reshape(shape if arr.ndim == 0 else
-                        arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+@jit(static_argnums=(2, 3, 4, 5))
+def _choice_replace(key, arr, n_inputs, shape, final_shape, axis):
+  ind = randint(key, shape, 0, n_inputs)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(2, 3, 4, 5))
+def _choice_no_replace(key, arr, n_inputs, n_draws, final_shape, axis):
+  slices = (slice(None),) * axis + (slice(n_draws),)
+  result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(3, 4, 5))
+def _choice_p_replace(key, p_arr, arr, shape, final_shape, axis):
+  p_cuml = jnp.cumsum(p_arr)
+  r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
+  ind = jnp.searchsorted(p_cuml, r).astype(int)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(3, 4, 5, 6, 7))
+def _choice_p_no_replace(key, p_arr, arr, n_inputs, n_draws, final_shape, axis, mode):
+  # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
+  g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
+  ind = lax.top_k(g, k=n_draws)[1].astype(int)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
 
 
 def normal(key: ArrayLike,
