@@ -10803,6 +10803,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Incompatible.*broadcasting"):
       jax.lax.broadcast_like(arr, like_arr)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_is_fully_replicated(self, mesh):
+    arr = jax.reshard(jnp.arange(8), P(unreduced={'x', 'y'}))
+    self.assertFalse(arr.sharding.is_fully_replicated)
+
+    arr = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
+    self.assertFalse(arr.sharding.is_fully_replicated)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

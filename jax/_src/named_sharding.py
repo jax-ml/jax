@@ -225,6 +225,8 @@ class NamedSharding(jsharding.Sharding):
   def is_fully_replicated(self) -> bool:
     if self.mesh.size == 1:
       return True
+    if self.spec.unreduced:
+      return False
     array_mapping = get_array_mapping(self.spec)
     mesh_shape = self.mesh.shape
     num_partitions = 1
