@@ -79,7 +79,7 @@ use_repo(
 rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
 use_repo(rocm, "local_config_rocm")
 
-python_version_ext = use_extension("@xla//third_party/extensions:python_version.bzl", "python_version_ext")
+python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
 
 ### RBE
