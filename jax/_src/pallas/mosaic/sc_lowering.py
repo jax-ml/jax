@@ -1067,6 +1067,11 @@ def _extract_indirect_offsets_from_indexer(
         isinstance(offsets_aval, state.AbstractRef) or
         (isinstance(offsets_aval, jax_core.ShapedArray) and offsets_aval.shape)
     ):  # fmt: on
+      if len(offsets_aval.shape) != 1:
+        raise NotImplementedError(
+            "Only 1D indices are supported by scatter/gather via"
+            f" `pltpu.async_copy` on SparseCore, got rank {len(offsets_aval.shape)}"
+        )
       shape = (*offsets_aval.shape, *indexer.shape[len(offsets_aval.shape) :])
       if expected_shape is not None and shape != expected_shape:
         raise NotImplementedError(
