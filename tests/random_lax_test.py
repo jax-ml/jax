@@ -229,6 +229,7 @@ _OUT_SHARDING_CASES = [
     ('dirichlet',             lambda key, n, s: random.dirichlet(key, alpha=np.ones(3), shape=(n,), out_sharding=s)),
     ('exponential',           lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('gamma',                 lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('loggamma',              lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
 ]
 
 

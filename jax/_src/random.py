@@ -1621,7 +1621,9 @@ def gamma(key: ArrayLike,
 def loggamma(key: ArrayLike,
              a: RealArray,
              shape: Shape | None = None,
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding=None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
   This function is implemented such that the following will hold for a
@@ -1657,7 +1659,8 @@ def loggamma(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _gamma(key, a, shape=shape, dtype=dtype, log_space=True)
+  out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
 
 
 @jit(static_argnames=('shape', 'dtype', 'log_space'))
