@@ -3,6 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
     "SlurmMultiNodeGpuTest: mark a test for Slurm multinode GPU nightly CI"
