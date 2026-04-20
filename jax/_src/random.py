@@ -2654,7 +2654,9 @@ def _ball(key, d, p, shape, dtype):
 def rayleigh(key: ArrayLike,
              scale: RealArray,
              shape: Shape | None = None,
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding=None) -> Array:
   r"""Sample Rayleigh random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2687,7 +2689,8 @@ def rayleigh(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _rayleigh(key, scale, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "rayleigh")
+  return maybe_auto_axes(_rayleigh, out_sharding, shape=shape, dtype=dtype)(key, scale)
 
 @jit(static_argnums=(2, 3))
 def _rayleigh(key, scale, shape, dtype) -> Array:
