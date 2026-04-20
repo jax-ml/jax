@@ -238,6 +238,7 @@ _OUT_SHARDING_CASES = [
     ('pareto',                lambda key, n, s: random.pareto(key, b=2.0, shape=(n,), out_sharding=s)),
     ('t',                     lambda key, n, s: random.t(key, df=2.0, shape=(n,), out_sharding=s)),
     ('chisquare',             lambda key, n, s: random.chisquare(key, df=2.0, shape=(n,), out_sharding=s)),
+    ('f',                     lambda key, n, s: random.f(key, dfnum=2.0, dfden=3.0, shape=(n,), out_sharding=s)),
 ]
 
 
