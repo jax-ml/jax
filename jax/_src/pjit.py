@@ -1546,8 +1546,8 @@ ad.primitive_jvps[jit_p] = _pjit_jvp
 def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings,
                     in_layouts, out_layouts, donated_invars, ctx_mesh, name,
                     keep_unused, inline, compiler_options_kvs):
-  primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res, tangent_jaxpr = \
-      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  (primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res,
+   tangent_jaxpr) = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   num_residuals_in = len(in_fwd_res)
   num_primals_out = len(primal_jaxpr.out_avals) - num_residuals_out
 
