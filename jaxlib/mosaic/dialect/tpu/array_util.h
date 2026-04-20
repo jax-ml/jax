@@ -46,6 +46,25 @@ bool incrementSliceIndex(MutableArrayRef<int64_t> idx,
 bool incrementIndex(MutableArrayRef<int64_t> idx,
                     absl::Span<const int64_t> limits);
 
+// Similar to incrementIndex, but only increments the dimensions in
+// `subsequence`, starting with the last dimension in `subsequence` (row-major
+// order).
+template <typename T>
+bool incrementIndexSubsequence(const MutableArrayRef<int64_t> idx,
+                               const ArrayRef<T> subsequence,
+                               const ArrayRef<int64_t> limits) {
+  CHECK_EQ(idx.size(), limits.size());
+  for (int64_t i = subsequence.size() - 1; i >= 0; --i) {
+    const int64_t d = subsequence[i];
+    ++idx[d];
+    if (idx[d] < limits[d]) {
+      return true;
+    }
+    idx[d] = 0;
+  }
+  return false;
+}
+
 template <typename T>
 ArrayRef<T> XlaArrayToFlatArrayRef(const xla::Array<T>& arr) {
   return ArrayRef<T>(arr.data(), arr.num_elements());
@@ -126,6 +145,31 @@ void updateSliceFromRange(xla::Array<T>& arr, Range data,
     ++data_it;
   } while (internal::incrementSliceIndex(idx, starts, limits));
   CHECK(data_it == data.end());
+}
+
+template <typename T>
+xla::Array<T> broadcast(const xla::Array<T>& arr, ArrayRef<int64_t> new_shape) {
+  CHECK_EQ(arr.num_dimensions(), new_shape.size());
+  // TODO(tlongeri): Don't default-initialize elements here
+  xla::Array<T> result(new_shape);
+  SmallVector<int64_t> idx(arr.num_dimensions());
+  SmallVector<int64_t> broadcast_dims;
+  for (int64_t i = idx.size() - 1; i >= 0; --i) {
+    if (arr.dim(i) != new_shape[i]) {
+      CHECK_EQ(arr.dim(i), 1);
+      broadcast_dims.push_back(i);
+    }
+  }
+  // TODO(tlongeri): This could be more efficient if it didn't recompute the
+  // linear offset from the idx every time and instead used a stride.
+  do {
+    const T element = arr(idx);
+    do {
+      result(idx) = element;
+    } while (incrementIndexSubsequence(idx, ArrayRef(broadcast_dims),
+                                       new_shape));
+  } while (incrementIndex(idx, arr.dimensions()));
+  return result;
 }
 
 }  // namespace mlir::tpu
