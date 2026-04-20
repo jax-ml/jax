@@ -2829,7 +2829,9 @@ def triangular(key: ArrayLike,
                mode: RealArray,
                right: RealArray,
                shape: Shape | None = None,
-               dtype: DTypeLikeFloat | None = None) -> Array:
+               dtype: DTypeLikeFloat | None = None,
+               *,
+               out_sharding=None) -> Array:
   r"""Sample Triangular random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2868,7 +2870,8 @@ def triangular(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _triangular(key, left, mode, right, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "triangular")
+  return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
 @jit(static_argnums=(4, 5), inline=True)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
