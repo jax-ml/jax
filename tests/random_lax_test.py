@@ -240,6 +240,7 @@ _OUT_SHARDING_CASES = [
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
     ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('gamma', lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('wald', lambda key, n, s: random.wald(key, mean=1.0, shape=(n,), out_sharding=s)),
 ]
 
 
