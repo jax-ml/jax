@@ -589,8 +589,12 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
     do_lit_array = False
   for t in x_type.__mro__:
     if t in literalable_types:
-      return (not np.ndim(x) or do_lit_array)
+      return (do_lit_array or not np.ndim(x))
   return False
+
+def is_hoistable(v: Literal) -> bool:
+  return (np.shape(v.val) and
+          getattr(v.val, "nbytes", 4) > config.embedded_constants_max_bytes.value)
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
 def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
@@ -602,12 +606,12 @@ def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
     return []
   consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
   for v in jaxpr.outvars:
-    if type(v) is Literal and np.shape(v.val):
+    if type(v) is Literal and is_hoistable(v):
       consts_by_id[id(v)] = (v.val, v.aval)
 
   for eqn in jaxpr.eqns:
     for v in eqn.invars:
-      if type(v) is Literal and np.shape(v.val):
+      if type(v) is Literal and is_hoistable(v):
         consts_by_id[id(v)] = (v.val, v.aval)
     consts_by_id.update({id(v_aval[0]): v_aval
                          for v_aval in eqn_params_const_args(eqn.params)})
