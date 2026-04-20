@@ -2771,7 +2771,9 @@ def _wald(key, mean, shape, dtype) -> Array:
 def geometric(key: ArrayLike,
               p: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeInt | None = None) -> Array:
+              dtype: DTypeLikeInt | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Geometric random values with given shape and float dtype.
 
   The values are returned according to the probability mass function:
@@ -2803,7 +2805,8 @@ def geometric(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _geometric(key, p, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "geometric")
+  return maybe_auto_axes(_geometric, out_sharding, shape=shape, dtype=dtype)(key, p)
 
 @jit(static_argnums=(2, 3))
 def _geometric(key, p, shape, dtype) -> Array:
