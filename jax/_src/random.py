@@ -2408,7 +2408,9 @@ def double_sided_maxwell(key: ArrayLike,
                          loc: RealArray,
                          scale: RealArray,
                          shape: Shape = (),
-                         dtype: DTypeLikeFloat | None = None) -> Array:
+                         dtype: DTypeLikeFloat | None = None,
+                         *,
+                         out_sharding=None) -> Array:
   r"""Sample from a double sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2437,7 +2439,8 @@ def double_sided_maxwell(key: ArrayLike,
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _double_sided_maxwell(key, loc, scale, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "double_sided_maxwell", shape)
+  return maybe_auto_axes(_double_sided_maxwell, out_sharding, shape=shape, dtype=dtype)(key, loc, scale)
 
 
 @jit(static_argnums=(3, 4))
