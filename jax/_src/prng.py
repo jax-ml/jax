@@ -308,6 +308,9 @@ class PRNGKeyArray(Array):
     # ShapedArray._iter when the element type is KeyTy...
     return (PRNGKeyArray(self._impl, k) for k in iter(self._base_array))
 
+  def __bool__(self):
+    raise TypeError("key array cannot be converted to boolean.")
+
   def __repr__(self):
     return (f'Array({self.shape}, dtype={self.dtype.name}) overlaying:\n'
             f'{self._base_array}')
