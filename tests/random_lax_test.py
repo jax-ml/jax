@@ -230,6 +230,7 @@ _OUT_SHARDING_CASES = [
     ('exponential',           lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('gamma',                 lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('loggamma',              lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('poisson',               lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
 ]
 
 

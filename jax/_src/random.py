@@ -1767,7 +1767,9 @@ def _poisson(key, lam, shape, dtype) -> Array:
 def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
-            dtype: DTypeLikeInt | None = None) -> Array:
+            dtype: DTypeLikeInt | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
   The values are distributed according to the probability mass function:
@@ -1804,9 +1806,10 @@ def poisson(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   else:
     shape = np.shape(lam)
+  out_sharding = canonicalize_sharding(out_sharding, "poisson")
   lam = jnp.broadcast_to(lam, shape)
   lam = lax.convert_element_type(lam, np.float32)
-  return _poisson(key, lam, shape, dtype)
+  return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
 
 def gumbel(key: ArrayLike,
