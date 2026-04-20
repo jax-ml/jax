@@ -2513,6 +2513,8 @@ def orthogonal(
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   m: int | None = None,
+  *,
+  out_sharding=None,
 ) -> Array:
   r"""Sample uniformly from the orthogonal group O(n).
 
@@ -2552,16 +2554,18 @@ def orthogonal(
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
+  out_sharding = canonicalize_sharding(out_sharding, "orthogonal")
+  return maybe_auto_axes(_orthogonal, out_sharding, n=n, _m=_m, shape=shape, dtype=dtype)(key)
 
+@jit(static_argnums=(1, 2, 3, 4))
+def _orthogonal(key, n, _m, shape, dtype):
   z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp_linalg.qr(z)
   d = jnp_linalg.diagonal(r)
   x = q * jnp.expand_dims(jnp.sign(d), -2)
-
   if n < _m:
     return x.mT
-  else:
-    return x
+  return x
 
 def generalized_normal(
   key: ArrayLike,
