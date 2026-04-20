@@ -1317,8 +1317,18 @@ use_simplified_jaxpr_constants = bool_state(
     help=('Enable a simplification of the handling of closed-over constants '
           'in Jaxpr. The value `True` enables the new behavior. '
           'This flag will exist only briefly, while we transition '
-          'users. See https://github.com/jax-ml/jax/pull/29679.'
+          'users. See https://docs.jax.dev/en/latest/internals/constants.html.'
           'DO NOT RELY ON THIS FLAG.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True)
+
+embedded_constants_max_bytes = int_state(
+    name='jax_embedded_constants_max_bytes',
+    default=32,
+    help=('Maximum size in bytes of a constant that is allowed to be '
+          'embedded in the lowered HLO. Constants larger than this '
+          'are hoisted as additional arguments to the executable. '
+          'See https://docs.jax.dev/en/latest/internals/constants.html.'),
     include_in_jit_key=True,
     include_in_trace_context=True)
 
