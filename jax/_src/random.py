@@ -1383,7 +1383,9 @@ def _dirichlet(key, alpha, shape, dtype) -> Array:
 
 def exponential(key: ArrayLike,
                 shape: Shape = (),
-                dtype: DTypeLikeFloat | None = None) -> Array:
+                dtype: DTypeLikeFloat | None = None,
+                *,
+                out_sharding=None) -> Array:
   r"""Sample Exponential random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1410,7 +1412,8 @@ def exponential(key: ArrayLike,
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _exponential(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "exponential", shape)
+  return maybe_auto_axes(_exponential, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _exponential(key, shape, dtype) -> Array:
