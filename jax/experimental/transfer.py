@@ -22,15 +22,17 @@ class TransferConnection:
   """Represents a connection to exactly one peer."""
 
   @use_cpp_method()
-  def _pull_flat(self, uuid, backend, xs_flat):
+  def _pull_flat(self, uuid, backend, xs_flat, timeout=None):
     raise NotImplementedError()
 
-  def pull(self, uuid: int, xs: Any) -> Any:
+  def pull(self, uuid: int, xs: Any, timeout: Any = None) -> Any:
     """Fetches a pytree of arrays from a remote device.
 
     Args:
        uuid: identifier for the request
        xs: A pytree of ShapeDtypeStruct.
+       timeout: absolute timeout (datetime.datetime)
+
     Returns:
        A pytree of arrays.
     """
@@ -38,7 +40,12 @@ class TransferConnection:
     if not xs_flat:
       return xs
     backend = next(iter(xs_flat[0].sharding.device_set)).client
-    return tree.unflatten(self._pull_flat(uuid, backend, xs_flat))
+    if timeout is None:
+      return tree.unflatten(self._pull_flat(uuid, backend, xs_flat))
+    else:
+      return tree.unflatten(
+          self._pull_flat(uuid, backend, xs_flat, timeout=timeout) # type: ignore
+      )
 
 
 if not TYPE_CHECKING:
@@ -53,7 +60,7 @@ class TransferServer:
     raise NotImplementedError()
 
   @use_cpp_method()
-  def _await_pull_flat(self, uuid, args: list[jax.Array]):
+  def _await_pull_flat(self, uuid, args: list[jax.Array], timeout=None):
     raise NotImplementedError()
 
   @use_cpp_method()
@@ -61,9 +68,12 @@ class TransferServer:
     """Creates a connection to a remote server."""
     raise NotImplementedError()
 
-  def await_pull(self, uuid: int, arrays: Any) -> Any:
+  def await_pull(self, uuid: int, arrays: Any, timeout: Any = None) -> Any:
     """Schedules a pytree of arrays to be fetched by a remote device."""
-    self._await_pull_flat(uuid, jax.tree.flatten(arrays)[0])
+    if timeout is None:
+      self._await_pull_flat(uuid, jax.tree.flatten(arrays)[0])
+    else:
+      self._await_pull_flat(uuid, jax.tree.flatten(arrays)[0], timeout=timeout) # type: ignore
 
 
 if not TYPE_CHECKING:
