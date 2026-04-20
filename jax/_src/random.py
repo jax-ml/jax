@@ -2894,7 +2894,9 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
 def lognormal(key: ArrayLike,
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r""" Sample lognormal random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2924,7 +2926,8 @@ def lognormal(key: ArrayLike,
                      f"got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _lognormal(key, sigma, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "lognormal")
+  return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
 @jit(static_argnums=(2, 3), inline=True)
 def _lognormal(key, sigma, shape, dtype) -> Array:
