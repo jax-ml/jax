@@ -483,6 +483,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   }
   int dce_i = 0;
   for (int i = 0; i < num_args; ++i) {
+    VLOG(2) << "XXX PrepareIfrtInputs i: " << i;
     if (!kept_args[i]) {
       continue;
     }
@@ -496,7 +497,9 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     auto transfer_guard_formatter = [] { return std::string(""); };
 
     if (arg.type().ptr() != PyArray::type().ptr()) {
+      VLOG(2) << "XXX PrepareIfrtInputs i: " << i << " not PyArray";
       if (data_device != nullptr && in_device_local_layout.is_none()) {
+        VLOG(2) << "XXX PrepareIfrtInputs i: " << i << " must transfer";
         TF_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
         TF_ASSIGN_OR_RETURN(
@@ -507,6 +510,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
         num_args_arrays.push_back(std::move(device_put_result.ifrt_array));
         continue;
       } else {
+        VLOG(2) << "XXX PrepareIfrtInputs i: " << i << " CallShardArgFallback";
         CallShardArgFallback(arg, in_shardings[dce_index],
                              in_device_local_layout, shard_arg_fallback,
                              num_args_arrays, keep_alive_objects);
