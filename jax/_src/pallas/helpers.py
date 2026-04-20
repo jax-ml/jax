@@ -179,6 +179,14 @@ def debug_check(condition, message):
   """
   return checkify.debug_check(condition, message)
 
+def _get_empty_ref(out):
+  aval = pl_core._convert_out_shape_to_aval(out)
+  mem_space = (None if isinstance(aval.memory_space, jax_core.MemorySpace)  # type: ignore
+               else aval.memory_space)  # type: ignore
+  val = lax.empty(aval.shape, aval.dtype, out_sharding=aval.sharding,  # type: ignore
+                  _manual_axis_type=aval.manual_axis_type)  # type: ignore
+  return jax_core.new_ref(val, memory_space=mem_space)
+
 
 def _make_kernel(body,
                  out_shape: object,
@@ -193,20 +201,7 @@ def _make_kernel(body,
   @api.jit
   def wrapper(*operands):
     arg_refs = tree_util.tree_map(jax_core.new_ref, operands)
-    out_refs = tree_util.tree_map(
-        lambda out: jax_core.new_ref(
-            lax.empty(out.shape, out.dtype),
-            memory_space=(
-                ms
-                if hasattr(out, "memory_space")
-                and not isinstance(
-                    ms := out.memory_space, jax_core.MemorySpace
-                )
-                else None
-            ),
-        ),
-        out_shape,
-    )
+    out_refs = tree_util.tree_map(_get_empty_ref, out_shape)
 
     @pl_core.core_map(
         mesh,

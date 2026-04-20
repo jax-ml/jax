@@ -1414,6 +1414,51 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_pl_kernel_in_shmap_explicit_mesh(self):
+    num_subcores = self.sc_info.num_subcores
+    if (self.USE_TC_TILING and num_subcores in (2, None) and
+        not jtu.is_cloud_tpu_at_least(2026, 4, 7)):
+      self.skipTest("Broken after enabling tiled DMAs by default (b/483801998)")
+
+    mesh = jax.make_mesh((jax.device_count(), 1), ('x', 'y'))
+    with jax.set_mesh(mesh):
+      np_arr = np.arange(num_subcores * self.num_lanes, dtype=jnp.int32).reshape(
+          -1, self.num_lanes
+      )
+      arr = jax.device_put(np_arr, jax.P('x', 'y'))
+
+      def k(x_ref, o_ref):
+        subcore_id = lax.axis_index("subcore")
+        pltpu.sync_copy(x_ref.at[subcore_id], o_ref.at[subcore_id])
+
+      @jax.jit
+      @jax.shard_map(in_specs=jax.P('x', 'y'), out_specs=jax.P('x', 'y'))
+      def f(arr):
+        self.assertEqual(arr.aval.mat.varying, {'x', 'y'})
+        out = pl.kernel(
+            k,
+            out_shape=jax.ShapeDtypeStruct(
+                shape=(num_subcores, self.num_lanes),
+                dtype=jnp.int32,
+                sharding=jax.typeof(arr).sharding,
+                manual_axis_type=jax.typeof(arr).manual_axis_type,
+            ),
+            mesh=plsc.VectorSubcoreMesh(
+                core_axis_name="core",
+                subcore_axis_name="subcore",
+                num_cores=1,
+                num_subcores=num_subcores,
+            ),
+            compiler_params=pltpu.CompilerParams().replace(
+                use_tc_tiling_on_sc=self.USE_TC_TILING)
+        )(arr)
+        self.assertEqual(out.aval.mat.varying, {'x', 'y'})
+        return out
+
+      out = f(arr)
+      self.assertEqual(out.shape, (num_subcores, self.num_lanes))
+      self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P('x', 'y')))
+
   @parameterized.parameters(1, 2, None)
   def test_subcore_parallel(self, num_subcores):
     if self.USE_TC_TILING and num_subcores in (2, None) and not jtu.is_cloud_tpu_at_least(2026, 4, 7):
@@ -1962,6 +2007,7 @@ class VectorSubcoreTest(PallasSCTest):
           out_shape=jax.ShapeDtypeStruct(
               x.shape,
               x.dtype,
+              sharding=jax.typeof(x).sharding,
               manual_axis_type=jax.sharding.ManualAxisType(varying={"x"}),
           ),
           mesh=plsc.VectorSubcoreMesh(
