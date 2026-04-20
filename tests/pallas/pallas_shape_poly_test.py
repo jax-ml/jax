@@ -99,7 +99,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
   def setUp(self):
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
-    if (jtu.test_device_matches(["cuda"]) and
+    if (jtu.is_device_cuda() and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
     if plgpu is None:

@@ -45,11 +45,11 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["rocm"]):
+    if jtu.is_device_rocm():
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if collective_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
-    if (not jtu.test_device_matches(["cuda"]) or
+    if (not jtu.is_device_cuda() or
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
     if not mgpu.supports_cross_device_collectives():

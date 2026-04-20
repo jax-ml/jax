@@ -311,9 +311,9 @@ class PallasBaseTest(ptu.PallasTest):
   def pallas_call(cls, *args, **kwargs):
     # Node-level skip: only triggers if a test actually tries to use pallas_call
     # while Mosaic backend is selected on ROCm.
-    if jtu.test_device_matches(["rocm"]) and use_mosaic_gpu:
+    if jtu.is_device_rocm() and use_mosaic_gpu:
       raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-    if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
+    if jtu.is_device_cuda() and use_mosaic_gpu:
       assert plgpu_mgpu is not None
       compiler_params = plgpu_mgpu.CompilerParams(
           lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
@@ -324,7 +324,7 @@ class PallasBaseTest(ptu.PallasTest):
 
   def skip_if_mosaic_gpu(self):
     if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
-      if jtu.test_device_matches(["rocm"]):
+      if jtu.is_device_rocm():
         self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
