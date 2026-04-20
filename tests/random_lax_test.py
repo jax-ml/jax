@@ -228,6 +228,7 @@ _OUT_SHARDING_CASES = [
     ('cauchy',                lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
     ('dirichlet',             lambda key, n, s: random.dirichlet(key, alpha=np.ones(3), shape=(n,), out_sharding=s)),
     ('exponential',           lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
+    ('gamma',                 lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
 ]
 
 

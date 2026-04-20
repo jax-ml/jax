@@ -1571,7 +1571,9 @@ batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 def gamma(key: ArrayLike,
           a: RealArray,
           shape: Shape | None = None,
-          dtype: DTypeLikeFloat | None = None) -> Array:
+          dtype: DTypeLikeFloat | None = None,
+          *,
+          out_sharding=None) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1612,7 +1614,8 @@ def gamma(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _gamma(key, a, shape=shape, dtype=dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "gamma")
+  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
 
 def loggamma(key: ArrayLike,
