@@ -31,7 +31,7 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.random import _safe_int_to_float
+from jax._src.random import _safe_int_to_float, _check_broadcast_shapes
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -227,6 +227,7 @@ _OUT_SHARDING_CASES = [
     ('laplace', lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
     ('loggamma', lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('logistic', lambda key, n, s: random.logistic(key, shape=(n,), out_sharding=s)),
+    ('lognormal', lambda key, n, s: random.lognormal(key, sigma=1.0, shape=(n,), out_sharding=s)),
     ('normal', lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
     ('orthogonal', lambda key, n, s: random.orthogonal(key, n=3, shape=(n,), out_sharding=s)),
     ('permutation', lambda key, n, s: random.permutation(key, n, out_sharding=s)),
@@ -1754,6 +1755,11 @@ class UnsafeRBGPRNGTest(RBGPRNGTest):
     self.assertArraysEqual(random.key_data(vmapped_keys),
                            random.key_data(ref_keys))
 
+
+class RandomUtilTest(RandomTestBase):
+  def test_check_broadcast_shapes_empty(self):
+    self.assertEqual(_check_broadcast_shapes("empty_test", (2,3)), (2,3))
+    self.assertEqual(_check_broadcast_shapes("empty_test", None), ())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
