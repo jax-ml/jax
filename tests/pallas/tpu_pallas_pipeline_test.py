@@ -1396,9 +1396,9 @@ class PipelineHijaxTest(jtu.JaxTestCase):
       def transform_ndindexer(
           self, idx: indexing.NDIndexer
       ) -> ShapedArrayTuple:
-        x0_t = idx.transform_type(self.x0)
-        x1_t = idx.transform_type(self.x1)
-        return ShapedArrayTuple(x0_t, x1_t)
+        dummy_aval = jax.core.ShapedArray(self.shape, self.dtype)
+        transformed_aval = idx.transform_type(dummy_aval)
+        return ShapedArrayTuple(transformed_aval.shape, transformed_aval.dtype)
 
       def dma_start(
           self,
