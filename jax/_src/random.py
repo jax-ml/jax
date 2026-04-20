@@ -1273,7 +1273,9 @@ def _beta(key, a, b, shape, dtype) -> Array:
 
 def cauchy(key: ArrayLike,
            shape: Shape = (),
-           dtype: DTypeLikeFloat | None = None) -> Array:
+           dtype: DTypeLikeFloat | None = None,
+           *,
+           out_sharding=None) -> Array:
   r"""Sample Cauchy random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1300,7 +1302,8 @@ def cauchy(key: ArrayLike,
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _cauchy(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "cauchy", shape)
+  return maybe_auto_axes(_cauchy, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _cauchy(key, shape, dtype) -> Array:

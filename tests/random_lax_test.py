@@ -225,6 +225,7 @@ _OUT_SHARDING_CASES = [
     ('choice_with_p',         lambda key, n, s: random.choice(key, a=jnp.ones((20, 2)), shape=(n,), p=jnp.ones(20)/20, out_sharding=s)),
     ('multivariate_normal',   lambda key, n, s: random.multivariate_normal(key, mean=np.zeros(3), cov=np.eye(3), shape=(n,), out_sharding=s)),
     ('beta',                  lambda key, n, s: random.beta(key, a=0.5, b=0.5, shape=(n,), out_sharding=s)),
+    ('cauchy',                lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
 ]
 
 
