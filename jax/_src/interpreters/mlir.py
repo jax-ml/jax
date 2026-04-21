@@ -2474,10 +2474,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
         Sequence[IrValues], kept_rules[0](ctx, *rule_args, **rule_kwargs)
     )
     flat_output = flatten_ir_values(output)
-    foreach(lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
-            [o for o in flat_output if not isinstance(o, ir.BlockArgument)])
-    foreach(lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
-            [o for o in flat_output if not isinstance(o, ir.BlockArgument)])
+    for o in flat_output:
+      if not isinstance(o, ir.BlockArgument):
+        owner = _get_owner(o)
+        wrap_compute_type_in_place(ctx, owner)
+        wrap_xla_metadata_in_place(ctx, owner)
     return flat_output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
@@ -2517,14 +2518,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      foreach(
-          lambda o: wrap_compute_type_in_place(ctx, _get_owner(o)),
-          [o for o in out_nodes if not isinstance(o, ir.BlockArgument)],
-      )
-      foreach(
-          lambda o: wrap_xla_metadata_in_place(ctx, _get_owner(o)),
-          [o for o in out_nodes if not isinstance(o, ir.BlockArgument)],
-      )
+      for o in out_nodes:
+        if not isinstance(o, ir.BlockArgument):
+          owner = _get_owner(o)
+          wrap_compute_type_in_place(ctx, owner)
+          wrap_xla_metadata_in_place(ctx, owner)
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
