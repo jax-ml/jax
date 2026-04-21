@@ -7626,11 +7626,11 @@ class ExamplesSm90ATest(PallasSm90ATest):
 
   # WGMMA
   def test_stage6(self):
-    self.skip_if_wg_semantics()  # `fa.optimization_barrier` does not support f16 arrays.
+    self.skip_if_wg_semantics()  # numerics mismatch, lot of NaNs.
 
     m_block = n_block = 64
     k_block = 32
-    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    x = jax.random.uniform(jax.random.key(42), shape=(128, 128), dtype=jnp.float16)
 
     @functools.partial(
         self.kernel, out_shape=x, grid=(2, 2), grid_names=("m", "n")
@@ -7662,7 +7662,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
           ],
       )(l_ref, r_ref, o_ref)
 
-    np.testing.assert_allclose(kernel(x, x), x @ x)
+    np.testing.assert_allclose(kernel(x, x), x @ x, rtol=2e-3)
 
   # TODO(apaszke): Clusters and multicast
 
