@@ -1824,6 +1824,9 @@ class TracingEqn:
   def invars(self):
     return self.in_tracers
 
+idxs = it.count()
+bad = None
+
 class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag", "parent_trace")
 
@@ -1877,6 +1880,11 @@ class DynamicJaxprTrace(core.Trace):
     tracer = DynamicJaxprTracer(self, aval, var, source_info)
     self.frame.invars.append(var)
     self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
+    print(f'created djt arg tracer {id(tracer)=}')
+    if next(idxs) == 3:
+      global bad
+      bad = id(tracer)
+      print('^~~~~ THIS IS THE BAD ONE ~~~~^')
     return tracer
 
   def make_eqn(self, in_tracers, out_avals, primitive, params,
@@ -1915,6 +1923,7 @@ class DynamicJaxprTrace(core.Trace):
   pure = lift = new_const
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
+    if isinstance(c, DynamicJaxprTracer): breakpoint()
     id_c = id(c)
     assert type(c) not in (int, float, complex, np.generic, np.ndarray), (
         f"non-canonical constant of type {type(c).__name__}: {c!r}")
