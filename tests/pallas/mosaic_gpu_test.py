@@ -3778,7 +3778,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )
 
   def test_wgmma_sliced_acc_flip(self):
-    self.skip_if_wg_semantics()
     dtype = jnp.float16
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)

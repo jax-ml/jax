@@ -2696,6 +2696,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_layout_for_vector_insert_strided_slice(self):
+    layout = fa.WGMMA_LAYOUT
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      dst_ty = ir.VectorType.get([128, 128], i16)
+      src_ty = ir.VectorType.get([64, 64], i16)
+      src, dst = undefs(src_ty, dst_ty)
+      dst = layout_cast(dst, layout)
+      op = vector.InsertStridedSliceOp(src, dst, [0, 64], [1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [layout, layout])
+    self.checkOutLayouts(op, [layout])
+
+  @parameterized.named_parameters(
+      (
+          "tile_shape_does_not_divide_offset",
+          mtu.RegisterLayout.WGMMA,
+          [3, 64],
+      ),
+      ("strided_layout", mtu.RegisterLayout.WG_STRIDED, [0, 64]),
+      ("splat_layout", mtu.RegisterLayout.WG_SPLAT, [0, 64]),
+  )
+  def test_infer_layout_for_vector_insert_strided_slice_fails(
+      self, layout, offsets
+  ):
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      dst_ty = ir.VectorType.get([128, 128], i16)
+      src_ty = ir.VectorType.get([64, 64], i16)
+      src, dst = undefs(src_ty, dst_ty)
+      layout_attr = layout.to_layout_attr(dst_ty.shape, dst_ty.element_type)
+      dst = mgpu.dialect.layout_cast(dst, layout_attr)
+      vector.insert_strided_slice(src, dst, offsets, [1, 1])
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_layout_for_vector_extract(self):
     layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
     with ir.InsertionPoint(self.module.body):
