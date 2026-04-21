@@ -21,15 +21,20 @@ map, unsafe_map = safe_map, map
 
 jax.config.update('jax_check_tracer_leaks', True)
 
+# principles:
+#  open-face
+#  OBBT
+#  pop pop pop (OBBBBR)
+
 # TODO
 #   [x] multiple outputs / pytrees
 #   [x] vjp (basic)
 #   [x] scan
 #   [-] grad-of-jit
-#    [ ] local residuals
-#    [ ] nonlocal accums
+#    [ ] local residuals only optimization
+#    [x] nonlocal accums
 #    [x] zeros
-#   [ ] higher-order AD
+#   [x] higher-order AD
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
 #   [ ] cond
@@ -172,26 +177,33 @@ class Val(Tracer):
 
 # === VJP ===
 
-@dataclass
-class VjpTraceCtx:
-  tape: list[Callable[[], None]]
-
 class VJPTrace(Trace):
-  ctx : list[VjpTraceCtx]
-  def __init__(self, parent):
-    self.ctx = []
-    self.parent = parent
+  tape: list[Callable[[], []]]
+  # TODO zipstar these ones
+  res: list[list[FlatTree]]  # FlatTree[Val]
+  nonlocal_accums: list[set[Accumulator]]
+  tags: list[object]
 
-  @property
-  def tape(self):
-    return self.ctx[-1].tape
+  def __init__(self, parent):
+    self.parent = parent
+    self.tape = []  # OBBT
+    self.res = [[]]  # pop pop pop
+    self.nonlocal_accums = [{}]
+    self.tags = [object()]
 
   def new_arg(self, val):
-    return VJPTracer(self, val, Accumulator(val.ty.tangent_ty()))
+    return VJPTracer(self, val, Accumulator(val.ty.tangent_ty(), self.tags[-1]))
 
   def lift(self, val):
     if val.trace is self:
-      return val  # TODO sublevels
+      if isinstance(val.accum, NullAccumulator):
+        return val
+      elif val.accum.tag is self.tags[-1]:
+        return val
+      else:
+        new_accum = Accumulator(val.ty.tangent_ty(), self.tags[-1])
+        self.nonlocal_accums[-1][new_accum] = val.accum
+        return VJPTracer(self, val.primal, new_accum)
     else:
       with ctx.set_current_trace(self.parent):
         val = lift(val)
@@ -209,13 +221,15 @@ class VJPTrace(Trace):
       return lift(ans)
     with ctx.set_current_trace(self.parent):
       res, pullbacks = unzip2(op.simple_vjp(ans, *primals))
-    right_accum = Accumulator(ans.ty.tangent_ty())
-    def bwd(res):
+    self.res[-1].append(FlatTree.flatten(res))
+    right_accum = Accumulator(ans.ty.tangent_ty(), self.tags[-1])
+    def bwd():
+      res = self.res[-1].pop().unflatten()
       ct = right_accum.finalize()
       for r, pullback, left_accum in zip(res, pullbacks, left_accums):
         if not isinstance(left_accum, NullAccumulator):
           left_accum.accum(pullback(r, ct))
-    self.tape.append(Partial(res, bwd))
+    self.tape.append(bwd)
     return VJPTracer(self, ans, right_accum)
 
 class VJPTracer(Tracer):
@@ -229,8 +243,9 @@ never_set = object()
 already_finalized = object()
 
 class Accumulator:
-  def __init__(self, ty):
+  def __init__(self, ty, tag):
     self.ty = ty
+    self.tag = tag
     self.val = never_set
 
   def accum(self, val):
@@ -260,14 +275,12 @@ def vjp(f, args, ct_right):
   # TODO: think about how to handle refs
   args_ft = lift_ft(args)
   trace = VJPTrace(ctx.cur_trace)
-  trace.ctx.append(VjpTraceCtx(tape := []))
   tracers = args_ft.map(trace.new_arg)
   with ctx.set_current_trace(trace):
     ans_ft = lift_ft(f(*tracers.unflatten()))
   ct_right_ft = lift_ft(ct_right)
   ans_ft.map2(lambda tracer, ct: tracer.accum.accum(ct), ct_right_ft)
-  tape_ = tape[:]
-  while tape: tape.pop()()  # backward pass
+  while trace.tape: trace.tape.pop()()  # backward pass
   ct_left = tracers.map(lambda tracer: tracer.accum.finalize()) 
   return ans_ft.map(lambda x: x.primal).unflatten(), ct_left.unflatten()
 
@@ -300,14 +313,22 @@ class EnterJit(Op):
     primals, left_accums = args.map(lambda x: (x.primal, x.accum)).unzip2()
     with ctx.set_current_trace(trace.parent):
       local_primals = ctx.cur_trace.bind(EnterJit(), primals)
+    trace.res.append([])
+    trace.nonlocal_accums.append(nonlocal_accums := {})
+    trace.tags.append(object())
     local_args = local_primals.map(trace.new_arg)
     local_left_accums = local_args.map(lambda x: x.accum)
-    def bwd(_):
+    def bwd():
       # TODO handle closed-over accumulators
+      nonlocal_cts = FlatTree.flatten([a.finalize() for a in nonlocal_accums])
       local_left_ct = local_left_accums.map(lambda x: x.finalize())
-      left_ct = ctx.cur_trace.bind(LeaveJit(), local_left_ct)
+      outs = FlatTree.pack((local_left_ct, nonlocal_cts))
+      outs = ctx.cur_trace.bind(LeaveJit(), outs)
+      left_ct, nonlocal_cts = outs.unpack()
       left_accums.map2(lambda a, ct: a.accum(ct), left_ct)
-    trace.tape.append(Partial((), bwd))
+      for a, ct in zip(nonlocal_accums.values(), nonlocal_cts.unflatten()):
+        a.accum(ct)
+    trace.tape.append(bwd)
     return local_args
 
 class LeaveJit(Op):
@@ -320,16 +341,20 @@ class LeaveJit(Op):
 
   def vjp(self, trace: VJPTrace, tracers_out):
     local_primals_out, local_right_accums = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
-    breakpoint()
-    # TODO get locally created residuals
+    res = trace.res.pop()  # TODO forwarding optimization
+    trace.tags.pop()
+    nonlocal_accums = trace.nonlocal_accums.pop()
+    outs = FlatTree.pack((local_primals_out, tuple(res)))
     with ctx.set_current_trace(trace.parent):
-      primals_out = ctx.cur_trace.bind(LeaveJit(), local_primals_out)
-    right_accums = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    def bwd(_):
+      outs = ctx.cur_trace.bind(LeaveJit(), outs)
+    primals_out, res = outs.unpack()
+    trace.res[-1].extend(res.unpack())
+    right_accums = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty(), trace.tags[-1]))
+    def bwd():
       right_ct = right_accums.map(lambda x: x.finalize())
       local_right_ct = ctx.cur_trace.bind(EnterJit(), right_ct)
       local_right_accums.map2(lambda a, ct: a.accum(ct), local_right_ct)
-    trace.tape.append(Partial((), bwd))
+    trace.tape.append(bwd)
     return primals_out.map2(partial(VJPTracer, trace), right_accums)
 
 # TODO: cache and curry
@@ -498,14 +523,24 @@ def scan(body, c, xs, length):
 # print(vjp(foo, (2.,), 1.0))
 
 
+# def foo(x):
+#   @jit
+#   def bar(x):
+#     z = mul(2., 2.)
+#     return mul(x, z)
+#   return bar(x)
+
+# print(vjp(foo, (2.,), 1.0))
+
+
 def foo(x):
   @jit
-  def bar(x):
-    z = mul(2., 2.)
-    return mul(x, z)
+  def bar(y):
+    return add(x, y)
   return bar(x)
 
 print(vjp(foo, (2.,), 1.0))
+
 
 
 # def scan_body(c, x):
@@ -553,7 +588,7 @@ print(vjp(foo, (2.,), 1.0))
 
 
 # def foo(x, y):
-#   return mul(add(x, y), 2.)
+#   return mul(x, mul(x, mul(y, 2.)))
 
 # def grad(f):
 #   def gradfun(*args):
