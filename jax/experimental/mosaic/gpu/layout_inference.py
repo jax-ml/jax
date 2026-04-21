@@ -69,13 +69,6 @@ class VariableType(enum.IntEnum):
   ARGUMENT = 2
 
 
-class MemorySpace(enum.Enum):
-  """The memory space of a variable."""
-  REG = enum.auto()
-  SMEM = enum.auto()
-  TMEM = enum.auto()
-
-
 _op_name_regex = re.compile(r"^(%\d+ = )?\S+")
 
 
@@ -117,16 +110,16 @@ class ValueSite:
     return tuple(self.value.type.shape)
 
   @property
-  def memory_space(self) -> MemorySpace:
+  def memory_space(self) -> cs.MemorySpace:
     """Returns the memory space associated with this value."""
     ty = self.value.type
     if isinstance(ty, ir.VectorType):
-      return MemorySpace.REG
+      return cs.MemorySpace.REG
     assert isinstance(ty, ir.MemRefType)
     if utils.is_tmem_ref(ty):
-      return MemorySpace.TMEM
+      return cs.MemorySpace.TMEM
     elif utils.is_smem_ref(ty):
-      return MemorySpace.SMEM
+      return cs.MemorySpace.SMEM
     raise ValueError(f"Unsupported memory space for: {ty}")
 
   def __str__(self):
@@ -151,7 +144,7 @@ def extract_assignment_candidates_from_reduce_equation(
     keep_dims: bool,
 ) -> Iterator[cs.RegisterLayout]:
   """Yields layout candidates for the reduce equation `small = reduce(large, reduction_dims)."""
-  large_shape = large.key.shape
+  large_shape = large.shape
 
   if isinstance(small.value, fa.WGSplatFragLayout):
     yield cs.RegisterLayout(fa.WGSplatFragLayout(large_shape))
@@ -202,8 +195,6 @@ def _strided_layout_for_variable(
 
   If the given variable cannot have a strided layout, returns `None`.
   """
-  # TODO(bchetioui): should we make variables carry a shape as well, to make
-  # things easier?
   ty = variable.key.value.type
   assert isinstance(ty, ir.VectorType)
   return fa.WGStridedFragLayout.from_shaped_type(ty)
@@ -340,8 +331,8 @@ def _extract_layout_candidates_from_smem_registers_transfer(
   assert isinstance(variable, cs.Variable)  # Satisfy type checkers.
   if isinstance(constant, cs.RegisterLayout):
     layout = constant.value
-    assert variable.key.memory_space == MemorySpace.SMEM
-    if isinstance(layout, fa.TiledLayout) and len(variable.key.shape) >= 2:
+    assert variable.memory_space == cs.MemorySpace.SMEM
+    if isinstance(layout, fa.TiledLayout) and len(variable.shape) >= 2:
       # Maintain a set of yielded tilings to avoid duplicates caused by existing
       # divides constraints.
       yielded = set()
@@ -359,7 +350,7 @@ def _extract_layout_candidates_from_smem_registers_transfer(
     return
 
   assert isinstance(constant, cs.SMEMTiling)
-  assert variable.key.memory_space == MemorySpace.REG
+  assert variable.memory_space == cs.MemorySpace.REG
   for layout in _register_layouts_for_optimized_transfer_to_smem(
       variable.key.value.type, constant, arch
   ):
@@ -381,7 +372,7 @@ def _extract_layout_candidates_from_mma_tiling(
     case _:
       return
 
-  tiled_dimensions = v.key.shape[-2:]
+  tiled_dimensions = v.shape[-2:]
   # TODO(bchetioui): we can conjure additional tilings here if
   # `allow_unswizzled` is true, but it is not clear which ones yet.
   for swizzle in (128, 64, 32):
@@ -458,7 +449,9 @@ def conjure_assignment(
       constraint_system.constraints, arch
   ):
     match constant:
-      case cs.RegisterLayout(value=value) if not isinstance(value, fa.TiledLayout):
+      case cs.RegisterLayout(value=value) if not isinstance(
+          value, fa.TiledLayout
+      ):
         low_priority_assignments.append((variable, constant))
       case _:
         yield variable, constant
@@ -477,19 +470,19 @@ def conjure_assignment(
       continue
     # Try to instantiate a single variable to a default layout and see if it
     # reduces the system.
-    match variable.key.memory_space:
-      case MemorySpace.REG:
+    match variable.memory_space:
+      case cs.MemorySpace.REG:
         layout = _strided_layout_for_variable(variable)
         if layout is not None:
           yield variable, cs.RegisterLayout(layout)
-      case MemorySpace.SMEM:
+      case cs.MemorySpace.SMEM:
         yield variable, cs.SMEMTiling(None)
-      case MemorySpace.TMEM:
+      case cs.MemorySpace.TMEM:
         layout = _default_tmem_layout_for_variable(variable)
         if layout is not None:
           yield variable, cs.TMEMLayout(layout)
-      case _:
-        raise ValueError(f"Unsupported memory space: {variable.key.memory_space}")
+      case never:
+        assert_never(never)
 
 
 def find_assignments_for(
@@ -550,7 +543,7 @@ def find_assignments_for(
       )
     variable, expr = assignment
     assert isinstance(expr, cs.Constant)
-    if not is_valid_assignment(variable.key.shape, expr):
+    if not is_valid_assignment(variable.shape, expr):
       continue
     # Trying one valid assignment consumes fuel.
     fuel -= 1
@@ -1031,12 +1024,10 @@ def _index_switch_constraint_system(
   for region in op.regions:
     [block] = region.blocks
     yield_op = _terminator(block, scf.YieldOp)
-    for value_site in value_sites_for_variable.keys():
-      assert value_site.key.type == VariableType.RESULT
-      yield_operand = ValueSite(
-          yield_op, VariableType.OPERAND, value_site.key.index
-      )
-      value_sites_for_variable[value_site].append(yield_operand)
+    for var in value_sites_for_variable.keys():
+      assert var.key.type == VariableType.RESULT
+      yield_operand = ValueSite(yield_op, VariableType.OPERAND, var.key.index)
+      value_sites_for_variable[var].append(yield_operand)
 
   return cs.ConstraintSystem(), value_sites_for_variable
 
@@ -2267,7 +2258,7 @@ def derive_relayout_constraints(
   for variable, value_sites in value_sites_for_variable.items():
     for value_site in value_sites:
       # We can only relayout variables that are in registers.
-      if value_site.memory_space != MemorySpace.REG:
+      if value_site.memory_space != cs.MemorySpace.REG:
         continue
 
       elt_bitwidth = utils.bitwidth(value_site.value.type.element_type)
@@ -2380,19 +2371,19 @@ def is_valid_assignment(shape: tuple[int, ...], layout: cs.Constant) -> bool:
 def check_layout_assignment(v: ValueSite, layout: cs.Constant) -> None:
   """Raises if the given layout can not be assigned to the given `ValueSite`."""
   match v.memory_space, layout:
-    case MemorySpace.REG, cs.RegisterLayout(value=reg_layout):
+    case cs.MemorySpace.REG, cs.RegisterLayout(value=reg_layout):
       if not is_valid_register_layout_assignment(v.shape, reg_layout):
         raise ValueError(
             f"Layout {reg_layout} is not compatible with register variable "
             f"{v.value}. This is a bug."
         )
-    case MemorySpace.TMEM, cs.TMEMLayout(value=tmem_layout):
+    case cs.MemorySpace.TMEM, cs.TMEMLayout(value=tmem_layout):
       if not is_valid_tmem_layout_assignment(v.shape, tmem_layout):
         raise ValueError(
             f"Layout {tmem_layout} is not compatible with TMEM variable "
             f"{v.value}. This is a bug."
         )
-    case MemorySpace.SMEM, cs.SMEMTiling(value=tiling_or_none):
+    case cs.MemorySpace.SMEM, cs.SMEMTiling(value=tiling_or_none):
       if tiling_or_none is None:
         return
       if not is_valid_smem_layout_assignment(v.shape, tiling_or_none):
@@ -2455,15 +2446,15 @@ def infer_layout(
     for var, sites in mapping.items():
       assert isinstance(var.key, ValueSite)
       for site in sites:
-        if site.memory_space != var.key.memory_space:
+        if site.memory_space != var.memory_space:
           raise ValueError(
               f"Memory space mismatch between variable and {site}:"
-              f" {var.key.memory_space} != {site.memory_space}."
+              f" {var.memory_space} != {site.memory_space}."
           )
-        if site.shape != var.key.shape:
+        if site.shape != var.shape:
           raise ValueError(
               f"Shape mismatch between variable and {site}:"
-              f" {var.key.shape} != {site.shape}."
+              f" {var.shape} != {site.shape}."
           )
     global_constraint_system &= constraint_system
     ctx.update(mapping)

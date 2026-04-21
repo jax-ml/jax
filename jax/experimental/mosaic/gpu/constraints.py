@@ -34,6 +34,14 @@ from . import tcgen05
 from . import utils
 
 
+class MemorySpace(enum.Enum):
+  """The memory space of a variable."""
+
+  REG = enum.auto()
+  SMEM = enum.auto()
+  TMEM = enum.auto()
+
+
 # TODO(bchetioui): consider defining an interface for variable keys that carry
 # shape and memory space information.
 VariableKey = Any
@@ -46,6 +54,14 @@ class Variable:
   `key` is supposed to be hashable.
   """
   key: VariableKey
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.key.shape
+
+  @property
+  def memory_space(self) -> MemorySpace:
+    return self.key.memory_space
 
   def __str__(self):
     return f"V({self.key})"
