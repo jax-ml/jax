@@ -694,6 +694,7 @@ for _op in [
     arith.MulFOp,
     arith.OrIOp,
     arith.FloorDivSIOp,
+    arith.DivSIOp,
     arith.DivUIOp,
     arith.DivFOp,
     arith.RemUIOp,

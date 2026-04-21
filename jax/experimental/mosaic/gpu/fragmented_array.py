@@ -1338,6 +1338,16 @@ class FragmentedArray:
     else:
       return NotImplemented
 
+  def trunc_div(self, other):
+    if not isinstance(self.mlir_dtype, ir.IntegerType):
+      raise ValueError(
+          f"trunc_div supports only integer types, got {self.mlir_dtype}"
+      )
+    if self.is_signed:
+      return self._pointwise(arith.divsi, other)
+    else:
+      return self._pointwise(arith.divui, other)
+
   def __rfloordiv__(self, other):
     if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(

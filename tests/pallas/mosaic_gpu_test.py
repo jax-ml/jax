@@ -331,6 +331,23 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     y = (jax.random.uniform(key1, [256]) * 42).astype(dtype)
     np.testing.assert_array_equal(kernel(x, y), op(x, y))
 
+  def test_lax_div_int_rounding(self):
+    dtype = jnp.int32
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], dtype)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = lax.div(x_ref[...], y_ref[...])
+
+    key = jax.random.key(0)
+    key_x, key_y, key_sign = jax.random.split(key, 3)
+    x = jax.random.randint(key_x, [256], -100, 100, dtype=dtype)
+    y = jax.random.randint(key_y, [256], 1, 10, dtype=dtype)
+    signs = jax.random.choice(key_sign, jnp.array([-1, 1], dtype=dtype), [256])
+    y = y * signs
+
+    np.testing.assert_array_equal(kernel(x, y), lax.div(x, y))
+
   @parameterized.product(
       op=[
           lax.eq,

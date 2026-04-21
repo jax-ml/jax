@@ -2449,7 +2449,7 @@ def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl, out_dtype=
 
 
 def _div(x, y):
-  return x / y if isinstance(x.mlir_dtype, ir.FloatType) else x // y
+  return x / y if isinstance(x.mlir_dtype, ir.FloatType) else x.trunc_div(y)
 
 
 for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
@@ -2502,7 +2502,7 @@ for op, si_impl, ui_impl, f_impl in [
     (lax.mul_p, arith_dialect.muli, arith_dialect.muli, arith_dialect.mulf),
     (
         lax.div_p,
-        arith_dialect.floordivsi,
+        arith_dialect.divsi,
         arith_dialect.divui,
         arith_dialect.divf,
     ),
