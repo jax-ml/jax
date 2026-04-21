@@ -209,6 +209,15 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
     # TODO: Add support for mpmd with the TensorCore mesh.
     return super().check_is_compatible_with(other_mesh)
 
+  @property
+  def supported_memory_spaces(self) -> Sequence[Any]:
+    return [
+        tpu_core.MemorySpace.VMEM_SHARED,
+        tpu_core.MemorySpace.SMEM,
+        tpu_core.MemorySpace.SEMAPHORE,
+    ]
+
+
 def _scalar_subcore_mesh_discharge_rule(
     in_avals,
     out_avals,
@@ -322,6 +331,15 @@ class VectorSubcoreMesh(pallas_core.Mesh):
                        f" of cores as the ScalarSubcoreMesh {other_mesh}.")
     # TODO: Add support for mpmd with the TensorCore mesh.
     return super().check_is_compatible_with(other_mesh)
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[Any]:
+    return [
+        tpu_core.MemorySpace.VMEM,
+        tpu_core.MemorySpace.VMEM_SHARED,
+        tpu_core.MemorySpace.SMEM,
+        tpu_core.MemorySpace.SEMAPHORE,
+    ]
 
 
 def _vector_subcore_mesh_discharge_rule(

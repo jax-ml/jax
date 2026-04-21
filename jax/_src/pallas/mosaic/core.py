@@ -195,7 +195,7 @@ class CompilerParams:
 class MemoryRef(pallas_core.MemoryRef):
 
   def __matmul__(self, other, /):
-    if not isinstance(other, CoreType):
+    if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return dataclasses.replace(self, memory_space=self.memory_space @ other)
 
@@ -223,40 +223,33 @@ class MemorySpace(enum.Enum):
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
   def __matmul__(self, other, /):
-    if not isinstance(other, CoreType):
+    if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return CoreMemorySpace(self, other)
 
 
 @dataclasses.dataclass(frozen=True)
 class CoreMemorySpace:
-  """A memory space tied to a specific core type."""
+  """A memory space tied to a Pallas mesh."""
 
   memory_space: MemorySpace
-  core_type: CoreType
+  mesh: pallas_core.Mesh
 
   def __post_init__(self):
-    match self.memory_space, self.core_type:
-      case MemorySpace.VMEM, CoreType.TC | CoreType.SC_VECTOR_SUBCORE:
-        ...
-      case MemorySpace.SMEM | MemorySpace.SEMAPHORE, _:
-        ...
-      case MemorySpace.CMEM, CoreType.TC:
-        ...
-      case _, _:
-        raise ValueError(
-            "Unsupported core memory space:"
-            f" {self.memory_space, self.core_type}"
-        )
+    if not self.memory_space in self.mesh.supported_memory_spaces:
+      raise ValueError(
+          f"Memory space {self.memory_space} is not supported by mesh"
+          f" {self.mesh}"
+      )
 
   def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
     return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
 
   def __str__(self) -> str:
-    return f"{self.memory_space}@{self.core_type}"
+    return f"{self.memory_space}@{self.mesh.core_type}"
 
   def __repr__(self) -> str:
-    return f"{self.memory_space!r}@{self.core_type!r}"
+    return f"{self.memory_space!r}@{self.mesh.core_type!r}"
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -286,7 +279,7 @@ class SemaphoreType(enum.Enum):
     return MemoryRef(jax_core.ShapedArray(shape, self.dtype), MemorySpace.SEMAPHORE)
 
   def __matmul__(self, other, /):
-    if not isinstance(other, CoreType):
+    if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return CoreMemorySpace(MemorySpace.SEMAPHORE, other)((), self.dtype)
 
@@ -372,6 +365,16 @@ class TensorCoreMesh(pallas_core.Mesh):
       raise ValueError("You can't use two different TensorCoreMeshes.")
     # TODO: Add support for mpmd with SparseCore meshes.
     return super().check_is_compatible_with(other_mesh)
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[Any]:
+    return [
+        MemorySpace.VMEM,
+        MemorySpace.SMEM,
+        MemorySpace.CMEM,
+        MemorySpace.SEMAPHORE,
+    ]
+
 
 def create_tensorcore_mesh(
     axis_name: str,
@@ -616,7 +619,7 @@ def memory_space_to_tpu_memory_space(
     case CoreMemorySpace():
       return (
           memory_space.memory_space
-          if memory_space.core_type is core_type
+          if memory_space.mesh.core_type is core_type
           else memory_space
       )
     case MemorySpace():

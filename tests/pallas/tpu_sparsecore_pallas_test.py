@@ -1406,7 +1406,7 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        scratch_shapes=(pltpu.VMEM([self.num_lanes], jnp.float32) @ pltpu.CoreType.SC_VECTOR_SUBCORE,),
+        scratch_shapes=(pltpu.VMEM([self.num_lanes], jnp.float32),),
     )
     def kernel(x_ref, o_ref, scratch_ref):
       scratch_ref[...] = x_ref[...].astype(jnp.float32)
@@ -2536,11 +2536,9 @@ class MpmdMapTest(PallasSCTest):
           ),
           scratch_types=[
               # SCS -> TEC
-              pltpu.SemaphoreType.REGULAR(())
-              @ pltpu.CoreType.SC_VECTOR_SUBCORE,
+              pltpu.SemaphoreType.REGULAR(()) @ v_mesh,
               # TEC -> SCS
-              pltpu.SemaphoreType.REGULAR(())
-              @ pltpu.CoreType.SC_SCALAR_SUBCORE,
+              pltpu.SemaphoreType.REGULAR(()) @ s_mesh,
           ],
       )()
 
@@ -2578,12 +2576,8 @@ class MpmdMapTest(PallasSCTest):
       mpmd.mpmd_map(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
           out_types=jax.ShapeDtypeStruct([8], jnp.int32),
-          scratch_types=[
-              pltpu.SemaphoreType.REGULAR(())
-              @ pltpu.CoreType.SC_VECTOR_SUBCORE,
-          ],
+          scratch_types=[pltpu.SemaphoreType.REGULAR(()) @ v_mesh],
       )()
-
     with self.assertRaisesRegex(
         ValueError,
         re.compile(
