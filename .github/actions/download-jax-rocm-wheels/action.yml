@@ -31,6 +31,7 @@ runs:
   steps:
     # Note that certain envs such as JAXCI_HERMETIC_PYTHON_VERSION are set by the calling workflow.
     - name: Set env vars for use in artifact download URL
+      id: set-vars
       shell: bash
       run: |
         os=$(uname -s | awk '{print tolower($0)}')
@@ -41,12 +42,12 @@ runs:
         # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
         python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
-        echo "OS=${os}" >> $GITHUB_ENV
-        echo "ARCH=${arch}" >> $GITHUB_ENV
+        echo "os=${os}" >> $GITHUB_OUTPUT
+        echo "arch=${arch}" >> $GITHUB_OUTPUT
         # Python wheels follow a naming convention: standard wheels use the pattern
         # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
         # `*-cp<py_version>-cp<py_version>t-*`.
-        echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+        echo "python_major_minor=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_OUTPUT
 
         # Get the ROCm major version only
         full_rocm_version="${INPUTS_ROCM_VERSION}"
@@ -56,7 +57,7 @@ runs:
         else
           rocm_wheel_version="${rocm_major_version}"
         fi
-        echo "JAXCI_ROCM_VERSION=${rocm_wheel_version}" >> $GITHUB_ENV
+        echo "jaxci_rocm_version=${rocm_wheel_version}" >> $GITHUB_OUTPUT
       env:
         INPUTS_ROCM_VERSION: ${{ inputs.rocm-version }}
     - name: Download wheels
@@ -118,6 +119,10 @@ runs:
           fi
         fi
       env:
+        OS: ${{ steps.set-vars.outputs.os }}
+        ARCH: ${{ steps.set-vars.outputs.arch }}
+        PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
+        JAXCI_ROCM_VERSION: ${{ steps.set-vars.outputs.jaxci_rocm_version }}
         INPUTS_DOWNLOAD_JAX_FROM_GCS: ${{ inputs.download-jax-from-gcs }}
         INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
         INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
