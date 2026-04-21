@@ -21,6 +21,12 @@ package(
 
 # ----- Flags, Config settings -----
 
+# Sanitizers
+config_setting(
+    name = "is_asan",
+    values = {"copt": "-DADDRESS_SANITIZER"},
+)
+
 config_setting(
     name = "is_tsan",
     values = {"copt": "-fsanitize=thread"},
@@ -52,6 +58,14 @@ selects.config_setting_group(
     match_all = [
         ":is_tsan",
         "@rules_python//python/config_settings:is_py_freethreaded",
+        ":is_rbe",
+    ],
+)
+
+selects.config_setting_group(
+    name = "is_asan_rbe",
+    match_all = [
+        ":is_asan",
         ":is_rbe",
     ],
 )

@@ -1,18 +1,53 @@
 name: CI - Address Sanitizer (nightly)
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 on:
+  workflow_dispatch: # Allows triggering a run manually
+    inputs:
+      rbe:
+        description: "Use RBE for testing (vs. local execution)"
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+      debug_profiles:
+        description: "Collect detailed Bazel profile artifacts"
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
-  workflow_dispatch: # allows triggering the workflow run manually
-  pull_request: # Automatically trigger on pull requests affecting this file
+
+  pull_request: # Trigger on pull requests affecting this file
     branches:
       - main
     paths:
-      - '**/workflows/asan.yaml'
+      - ".github/workflows/asan.yaml"
+
+# - For PRs, group by PR number and cancel stale in-progress runs.
+# - For workflow_dispatch events, group by actor+ref and cancel stale
+#   in-progress runs.
+# - For all other events, group by ref without canceling in-progress runs.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-
+    ${{
+        (github.event_name == 'pull_request'
+         && format('pr-{0}', github.event.pull_request.number))
+
+        || (github.event_name == 'workflow_dispatch'
+            && format('dispatch-{0}-{1}', github.actor, github.ref))
+
+        || format('ref-{0}', github.ref)
+    }}
+  cancel-in-progress: >-
+    ${{
+        github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    }}
+
 permissions: {}
 
 env:
@@ -20,16 +55,32 @@ env:
   CPYTHON_URL: "https://storage.googleapis.com/ml-sysroot-testing/python/cpython-3.13.x-asan-shared-linux-x86_64-llvm-18.1.8.tar.gz"
   CPYTHON_SHA256: "cc7354abad5ab5b87aae3c870e510860c9ffefcd3d8f6c3e02129aaf9d30a5bb"
   CPYTHON_PREFIX: "cpython-3.13.x-asan-shared-linux-x86_64-llvm-18.1.8"
-  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
-  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   asan:
     # Don't execute in fork due to runner type
     if: github.repository == 'jax-ml/jax'
-    runs-on: linux-x86-n4-64
+    runs-on: >-
+      ${{
+          (github.event_name == 'workflow_dispatch' && inputs.rbe == '1')
+          && 'linux-x86-n4-16'
+          || 'linux-x86-n4-64'
+      }}
+    env:
+      # TODO(belitskiy): Enable RBE once the issue is resolved.
+      # Default to local execution for now as RBE has issues with a random
+      # target hanging for 20-80 minutes before executing in 20-50 seconds.
+      USE_RBE: >-
+        ${{ (github.event_name == 'workflow_dispatch' && inputs.rbe == '1')
+            && '1' || '0' }}
+      # Enable detailed Bazel profile artifacts, if requested.
+      DEBUG_PROFILES: >-
+        ${{ (github.event_name == 'workflow_dispatch'
+              && inputs.debug_profiles == '1')
+            && '1' || '0'
+        }}
     container:
-      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:ea67e8453d8b09c2ba48853da5e79efef4b65804b4a48dfae4b4da89ffd38405 # ml-build container (based on Ubuntu 22.04)
     strategy:
       fail-fast: false
     defaults:
@@ -40,42 +91,170 @@ jobs:
         with:
           path: jax
           persist-credentials: false
-      - name: Build JAX
-        run: |
-          cd jax
-          python build/build.py build --wheels=jaxlib --verbose \
-            --bazel_options=--color=yes \
-            --bazel_options=--config=asan_shared \
-            --python_version="${PYTHON_VERSION}" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256="${CPYTHON_SHA256}" \
-            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
-
-      - name: Run tests
+      - name: >-
+          Run tests under ASAN via
+          Bazel (${{ env.USE_RBE == '1' && 'RBE' || 'local' }})
+        timeout-minutes: 240
         env:
           ASAN_OPTIONS: detect_leaks=0
           JAX_NUM_GENERATED_CASES: 1
           JAX_ENABLE_X64: true
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          echo "Download CPython with ASAN support"
-          cd "${GITHUB_WORKSPACE}"
-          wget "${CPYTHON_URL}"
-          tar -xzf "${CPYTHON_PREFIX}.tar.gz"
+          set -euo pipefail
+          set -x
 
-          echo "Install python requirements and JAX"
-          "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/bin/python3" -m venv \
-            "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv"
-          # shellcheck source=/dev/null
-          source "${GITHUB_WORKSPACE}/${CPYTHON_PREFIX}/venv/bin/activate"
-          pip install uv~=0.11.2
           cd jax
-          uv pip install -r build/test-requirements.txt
-          uv pip install dist/jaxlib-*.whl -e .
 
-          echo "Run tests"
-          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          python -m pytest -n 32 --tb=short --maxfail=20 tests
+          echo "ASAN_OPTIONS=${ASAN_OPTIONS}"
+          echo "JAX_NUM_GENERATED_CASES=${JAX_NUM_GENERATED_CASES}"
+          echo "JAX_ENABLE_X64=${JAX_ENABLE_X64}"
+          echo "JAX_SKIP_SLOW_TESTS=${JAX_SKIP_SLOW_TESTS}"
+          echo "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
+          echo "USE_RBE=${USE_RBE}"
+          echo "DEBUG_PROFILES=${DEBUG_PROFILES}"
+
+          test_targets=(
+            //tests:cpu_tests
+            //tests:backend_independent_tests
+            //tests/multiprocess:cpu_tests
+          )
+
+          # A tiny target set to run for quick iteration on changes.
+          # test_targets=(
+          #   //tests:device_test_cpu
+          #   //tests:metadata_test_cpu
+          # )
+
+          if [[ "${USE_RBE}" == "1" ]]; then
+            PLATFORM_CONFIG="rbe_linux_x86_64"
+          else
+            PLATFORM_CONFIG="ci_linux_x86_64"
+          fi
+
+          PROFILE_DIR="${PWD}/test-artifacts/bazel-profile"
+          mkdir -p "${PROFILE_DIR}"
+
+          echo "PLATFORM_CONFIG=${PLATFORM_CONFIG}"
+          echo "Selected ASAN Bazel targets:"
+          printf '  %s\n' "${test_targets[@]}"
+          echo "Bazel profile directory: ${PROFILE_DIR}"
+
+          bazel_status=0
+          bazel_args=(
+            test
+          )
+
+          # Core intent: platform, sanitizer mode, and test selection.
+          bazel_args+=(
+            --config="${PLATFORM_CONFIG}"
+            --config=asan_shared
+            --test_tag_filters=-noasan
+          )
+          if [[ "${USE_RBE}" != "1" ]]; then
+            # Publish local-execution results/logs to ResultStore.
+            bazel_args+=(--config=ci_rbe_cache)
+          fi
+
+          # Pass the custom ASAN-instrumented Python
+          # to be used as part of the hermetic toolchain.
+          bazel_args+=(
+            --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON_VERSION}"
+            --repo_env=HERMETIC_PYTHON_URL="${CPYTHON_URL}"
+            --repo_env=HERMETIC_PYTHON_SHA256="${CPYTHON_SHA256}"
+            --repo_env=HERMETIC_PYTHON_PREFIX="${CPYTHON_PREFIX}/"
+          )
+
+          # Test runtime behavior/polish.
+          bazel_args+=(
+            --test_env=ASAN_OPTIONS="${ASAN_OPTIONS}"
+            --test_env=JAX_NUM_GENERATED_CASES="${JAX_NUM_GENERATED_CASES}"
+            --test_env=JAX_ENABLE_X64="${JAX_ENABLE_X64}"
+            --test_env=JAX_SKIP_SLOW_TESTS="${JAX_SKIP_SLOW_TESTS}"
+            --test_env=PY_COLORS="${PY_COLORS}"
+          )
+
+          if [[ "${DEBUG_PROFILES}" == "1" ]]; then
+            bazel_args+=(
+              --cache_test_results=false
+            )
+          fi
+
+          # Output and failure behavior.
+          bazel_args+=(
+            --verbose_failures
+            --test_output=errors
+            --test_timeout=1800
+            # Emit progress updates less frequently
+            # to avoid spamming the logs with repetitive status lines.
+            --show_progress_rate_limit=10
+          )
+
+          # Profiling.
+          bazel_args+=(
+            --profile="${PROFILE_DIR}/command.profile.gz"
+            --experimental_announce_profile_path
+          )
+          if [[ "${DEBUG_PROFILES}" == "1" ]]; then
+            echo "Detailed Bazel profile artifacts will be output to ${PROFILE_DIR}."
+            profile_tasks=(
+              action
+              action_complete
+              critical_path
+              critical_path_component
+              remote_queue
+              remote_execution
+              remote_process_time
+              remote_cache_check
+              remote_download
+              remote_network
+              upload_time
+              wait
+            )
+            bazel_args+=(
+              --experimental_profile_include_primary_output
+              --experimental_profile_include_target_label
+              --build_event_publish_all_actions
+              --build_event_json_file="${PROFILE_DIR}/build-events.json"
+              --execution_log_json_file="${PROFILE_DIR}/execution-log.json"
+            )
+            for task in "${profile_tasks[@]}"; do
+              bazel_args+=(--experimental_profile_additional_tasks="${task}")
+            done
+          fi
+
+          # Download filter for test artifacts only.
+          bazel_args+=(
+            '--remote_download_regex=.*test\.xml$'
+          )
+
+          bazel_args+=(
+            "${test_targets[@]}"
+          )
+
+          echo "Bazel command:"
+          printf '  %q\n' "${bazel_args[@]}"
+
+          bazel "${bazel_args[@]}" || bazel_status=$?
+
+          if [[ -f "${PROFILE_DIR}/command.profile.gz" ]]; then
+            echo "Bazel analyze-profile summary:"
+            bazel analyze-profile "${PROFILE_DIR}/command.profile.gz" || true
+          fi
+          if [[ -f "${PROFILE_DIR}/execution-log.json" ]]; then
+            gzip -f "${PROFILE_DIR}/execution-log.json"
+          fi
+
+          ci/utilities/collect_bazel_test_xmls.sh test-artifacts || true
+
+          exit "${bazel_status}"
+
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./jax/.github/actions/upload-test-artifacts
+        with:
+          test-artifacts-dir: jax/test-artifacts
+          artifact-name: bazel-test-artifacts-asan-py${{ env.PYTHON_VERSION }}
