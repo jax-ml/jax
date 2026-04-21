@@ -383,7 +383,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
 
 class PytreeLeaf:
   def __repr__(self):
-    return "pytree leaf"
+    return "leaf"
 
 
 def flatten_axis_resources(what, tree, shardings, tupled_args):
