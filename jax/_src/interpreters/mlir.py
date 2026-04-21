@@ -53,6 +53,7 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
+from jax._src.lib.mlir.dialects import sdy
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
@@ -773,6 +774,7 @@ class ModuleContext:
   # Cached primitive lowerings.
   lowering_cache: dict[LoweringCacheKey, LoweringCacheValue]
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
+  sharding_attr_cache: dict[SdyArray, sdy.TensorShardingAttr]
 
   # Cached traceback information.
   traceback_caches: TracebackCaches
@@ -801,7 +803,8 @@ class ModuleContext:
       cached_primitive_lowerings: None | dict[Any, func_dialect.FuncOp] = None,
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None,
-      all_default_mem_kind: bool = True):
+      all_default_mem_kind: bool = True,
+      sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None):
 
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -823,6 +826,7 @@ class ModuleContext:
       shape_poly_state or ShapePolyLoweringState((), tuple(platforms)))
     self.all_default_mem_kind = all_default_mem_kind
     self.lowering_parameters = lowering_parameters
+    self.sharding_attr_cache = ({} if sharding_attr_cache is None else sharding_attr_cache)
 
   def get_backend(self, optional: bool = False) -> xc.Client | None:
     if len(self.platforms) > 1:
@@ -1787,9 +1791,9 @@ def lower_jaxpr_to_fun(
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           if config.use_shardy_partitioner.value:
-            attrs["sdy.sharding"] = get_sharding_attr(sharding)
+            attrs["sdy.sharding"] = get_sharding_attr(ctx, sharding)
           else:
-            attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+            attrs["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
 
     if ir_arg_memory_kinds is not None:
       for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
@@ -1861,9 +1865,9 @@ def lower_jaxpr_to_fun(
                                    unconstrained_variants):  # pyrefly: ignore[bad-argument-type]
       if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
-          attrs["sdy.sharding"] = get_sharding_attr(sharding)
+          attrs["sdy.sharding"] = get_sharding_attr(ctx, sharding)
         else:
-          attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+          attrs["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
 
   if ir_result_memory_kinds is not None:
     for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
@@ -2033,10 +2037,10 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
     physical_ndim = core.physical_aval(aval).ndim
     s = SdyArray(
         mesh_shape=None,
-        dim_shardings=[
-            sharding_impls.SdyDim(axes=[], is_open=i < aval.ndim)
+        dim_shardings=tuple(
+            sharding_impls.SdyDim(axes=(), is_open=i < aval.ndim)
             for i in range(physical_ndim)
-        ])
+        ))
     return wrap_with_sharding_op(ctx, val, aval, s)
   else:
     return wrap_with_sharding_op(
@@ -2997,7 +3001,7 @@ def _wrap_with_spmd_op(name: str,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
   if config.use_shardy_partitioner.value and allow_shardy_lowering:
-    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # pyrefly: ignore[missing-attribute]
+    return dialects.sdy.ShardingConstraintOp(x, sharding.build(ctx.module_context.sharding_attr_cache)).result  # pyrefly: ignore[missing-attribute]
 
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
@@ -3018,7 +3022,7 @@ def _wrap_with_spmd_op(name: str,
                    api_version=1,
                    result_shapes=result_shapes,
                    has_side_effect=has_side_effect)
-  set_sharding(op, sharding)
+  set_sharding(ctx.module_context, op, sharding)
   return op.result
 
 
@@ -3052,18 +3056,20 @@ def lower_with_sharding_in_types(ctx, op, aval):
     return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
-def set_sharding(op, sharding: xc.OpSharding | SdyArray | SdyArrayList):
+def set_sharding(ctx: ModuleContext, op,
+                 sharding: xc.OpSharding | SdyArray | SdyArrayList):
   if isinstance(sharding, (SdyArray, SdyArrayList)):
-    op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
+    op.attributes["sdy.sharding"] = get_sharding_attr(ctx, sharding)
   else:
-    op.attributes["mhlo.sharding"] = get_sharding_attr(sharding)
+    op.attributes["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
 
 
 def get_sharding_attr(
+    ctx: ModuleContext,
     sharding: xc.OpSharding | SdyArray | SdyArrayList
 ) -> ir.Attribute:
   if isinstance(sharding, (SdyArray, SdyArrayList)):
-    return sharding.build()
+    return sharding.build(ctx.sharding_attr_cache)
   else:
     # If there are very large numbers of devices, use the proto representation.
     # The MHLO to HLO conversion supports both, and the proto representation is

@@ -90,9 +90,9 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
 class SdyArrayList:
   shardings: Sequence[SdyArray]
 
-  def build(self) -> sdy.TensorShardingPerValueAttr:
+  def build(self, cache: dict[SdyArray, sdy.TensorShardingAttr]) -> sdy.TensorShardingPerValueAttr:
     return sdy.TensorShardingPerValueAttr.get(
-        [sharding.build() for sharding in self.shardings])
+        [sharding.build(cache) for sharding in self.shardings])
 
 
 replicated_hlo_sharding = xc.HloSharding.replicate()
@@ -169,8 +169,7 @@ class SingleDeviceSharding(jsharding.Sharding):
     return replicated_hlo_sharding
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    sdy_dim_sharding = [SdyDim(axes=[], is_open=False)
-                        for _ in range(num_dimensions)]
+    sdy_dim_sharding = (SdyDim(axes=(), is_open=False),) * num_dimensions
     return SdyArray(mesh_shape=None, dim_shardings=sdy_dim_sharding)
 
   @property

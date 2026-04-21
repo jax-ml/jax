@@ -142,7 +142,7 @@ def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyA
   return SdyArrayList([
       SdyArray(
           mesh_shape=(),
-          dim_shardings=[SdyDim(axes=[], is_open=False)] * ndim,
+          dim_shardings=(SdyDim(axes=(), is_open=False),) * ndim,
           logical_device_ids=()) for ndim in ndims])
 
 
@@ -205,7 +205,7 @@ def _callback_op_sharding(
       op_sharding = SdyArrayList(num_sdy_shardings * [
           SdyArray(
               mesh_shape=(),
-              dim_shardings=[],
+              dim_shardings=(),
               logical_device_ids=(device_index,))])
     else:
       op_sharding = xc.OpSharding()
@@ -593,6 +593,7 @@ _XLA_HOST_TRANSFER_PJRT_RENDEZVOUS_HANDLER_NAME = "pjrt_rendezvous"
 
 
 def send_to_host(
+    ctx: mlir.ModuleContext,
     channel: int,
     token: ir.Value[hlo.TokenType],
     operand: Any,
@@ -622,13 +623,14 @@ def send_to_host(
       assert len(sharding.shardings) >= 1
       sharding = SdyArrayList([
           SdyArray(
-              mesh_shape=(), dim_shardings=[],
+              mesh_shape=(), dim_shardings=(),
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
-    mlir.set_sharding(send_op, sharding)
+    mlir.set_sharding(ctx, send_op, sharding)
   return send_op.result
 
 
 def receive_from_host(
+    ctx: mlir.ModuleContext,
     channel: int,
     token: ir.Value[hlo.TokenType],
     out_aval: core.ShapedArray,
@@ -662,9 +664,9 @@ def receive_from_host(
       sharding = SdyArrayList([
           sharding.shardings[0],
           SdyArray(
-              mesh_shape=(), dim_shardings=[],
+              mesh_shape=(), dim_shardings=(),
               logical_device_ids=sharding.shardings[0].logical_device_ids)])
-    mlir.set_sharding(recv_op, sharding)
+    mlir.set_sharding(ctx, recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
@@ -719,13 +721,13 @@ def _emit_tpu_python_callback(
     dummy_send_aval = core.ShapedArray((1,), np.float32)
     dummy_send_val = mlir.ir_constant(np.zeros(1, np.float32))
     operand_shapes = [*operand_shapes, _aval_to_xla_shape(dummy_send_aval)]
-    token = send_to_host(send_channel, token, dummy_send_val,
+    token = send_to_host(ctx.module_context, send_channel, token, dummy_send_val,
                          sharding=sharding)
     send_channels.append(send_channel)
   else:
     for operand in operands:
       channel = ctx.module_context.new_channel()
-      token = send_to_host(channel, token, operand, sharding=sharding)
+      token = send_to_host(ctx.module_context, channel, token, operand, sharding=sharding)
       send_channels.append(channel)
 
   recv_channels = []
@@ -742,7 +744,7 @@ def _emit_tpu_python_callback(
     result_shapes = [_aval_to_xla_shape(dummy_recv_aval)]
     channel = ctx.module_context.new_channel()
     token, _ = receive_from_host(
-        channel, token, dummy_recv_aval, sharding=sharding
+        ctx.module_context, channel, token, dummy_recv_aval, sharding=sharding
     )
     recv_channels.append(channel)
   else:
@@ -750,7 +752,7 @@ def _emit_tpu_python_callback(
       channel = ctx.module_context.new_channel()
       assert isinstance(result_aval, core.ShapedArray)
       token, out = receive_from_host(
-          channel, token, result_aval, sharding=sharding
+          ctx.module_context, channel, token, result_aval, sharding=sharding
       )
       outputs.append(out)
       recv_channels.append(channel)
@@ -879,7 +881,7 @@ def emit_python_callback(
       sharding = SdyArrayList([
           SdyArray(
               mesh_shape=(),
-              dim_shardings=[],
+              dim_shardings=(),
               logical_device_ids=()),
           *sharding.shardings])
     ctx = dataclasses.replace(
@@ -899,7 +901,7 @@ def emit_python_callback(
   )(ctx, *operands, index=np.uint64(index))
 
   if sharding is not None:
-    mlir.set_sharding(result, sharding)
+    mlir.set_sharding(ctx.module_context, result, sharding)
 
   results = result.results
 

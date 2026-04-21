@@ -41,8 +41,7 @@ class AUTO:
     self.mesh = mesh
 
   def _to_sdy_sharding(self, ndim: int) -> SdyArray:
-    dim_shardings = [SdyDim(axes=[], is_open=True)
-                     for _ in range(ndim)]
+    dim_shardings = (SdyDim(axes=(), is_open=True),) * ndim
     return SdyArray(mesh_shape=self.mesh.shape_tuple,
                     dim_shardings=dim_shardings)
 
@@ -267,19 +266,20 @@ class NamedSharding(jsharding.Sharding):
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    dim_shardings = [SdyDim(axes=[], is_open=False)
-                     for _ in range(num_dimensions)]
-    for i, dim_spec in enumerate(self.spec):
+    dim_shardings = []
+    for dim_spec in self.spec:
       if dim_spec is PartitionSpec.UNCONSTRAINED:
-        dim_shardings[i].is_open = True
+        dim_shardings.append(SdyDim(axes=(), is_open=True))
       elif dim_spec is None:
         # Already empty and closed sharding.
-        pass
+        dim_shardings.append(SdyDim(axes=(), is_open=False))
       else:
         dim_spec = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
-        dim_shardings[i].axes = dim_spec
+        dim_shardings.append(SdyDim(axes=dim_spec, is_open=False))
+    dim_shardings.extend(
+      [SdyDim(axes=(), is_open=False)] * (num_dimensions - len(self.spec)))
     return SdyArray(mesh_shape=self.mesh.shape_tuple,
-                    dim_shardings=dim_shardings,
+                    dim_shardings=tuple(dim_shardings),
                     logical_device_ids=self._logical_device_ids,
                     unreduced_axes=self.spec.unreduced)
 
@@ -306,9 +306,9 @@ def get_array_mapping(axis_resources):
       d[axis] = i
   return d
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SdyDim:
-  axes: Sequence[str]
+  axes: tuple[str, ...]
   is_open: bool
 
   def build(self) -> sdy.DimensionShardingAttr:
@@ -334,15 +334,19 @@ def _get_axes(axes, mesh_shape):
   # McJAX.
   return tuple(n for n, _ in mesh_shape if n in axes)
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(kw_only=True, frozen=True)
 class SdyArray:
   mesh_shape: tuple[tuple[str, int], ...] | None
-  dim_shardings: Sequence[SdyDim]
+  dim_shardings: tuple[SdyDim, ...]
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: tuple[str, ...] = ()
   unreduced_axes: frozenset[str] = frozenset()
 
-  def build(self) -> sdy.TensorShardingAttr:
+  def build(self, cache: dict[SdyArray, sdy.TensorShardingAttr]) -> sdy.TensorShardingAttr:
+    attr = cache.get(self)
+    if attr is not None:
+      return attr
+
     if self.mesh_shape is None:
       mesh_attr = sdy.MeshAttr.get([])
     else:
@@ -354,11 +358,13 @@ class SdyArray:
 
     replicated_axes = _get_axes(self.replicated_axes, self.mesh_shape)
     unreduced_axes = _get_axes(self.unreduced_axes, self.mesh_shape)
-    return sdy.TensorShardingAttr.get(
+    attr = sdy.TensorShardingAttr.get(
         mesh_attr,
         [dim_sharding.build() for dim_sharding in self.dim_shardings],
         replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
         unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes])
+    cache[self] = attr
+    return attr
 
   def __repr__(self):
     dim_sharding_repr = ', '.join(
@@ -382,7 +388,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
     replicated_axes = tuple(r for r in remaining_axes
                             if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
     return SdyArray(mesh_shape=sdy_sharding.mesh_shape,
-                    dim_shardings=dim_shardings,
+                    dim_shardings=tuple(dim_shardings),
                     logical_device_ids=sdy_sharding.logical_device_ids,
                     replicated_axes=replicated_axes)
   return sdy_sharding

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence, Set
+import dataclasses
 import enum
 from functools import partial
 import inspect
@@ -914,8 +915,11 @@ def _shardy_shard_map_sharding(
     aval_in = core.physical_aval(aval_in)
   sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if len(manual_axes) < len(mesh.axis_names):
-    for dim_sharding in sdy_sharding.dim_shardings:
-      dim_sharding.is_open = True
+    new_dim_shardings = tuple(
+        dataclasses.replace(d, is_open=True) for d in sdy_sharding.dim_shardings
+    )
+    sdy_sharding = dataclasses.replace(
+      sdy_sharding, dim_shardings=new_dim_shardings)
   return sdy_sharding
 
 
@@ -984,14 +988,16 @@ def _shard_map_lowering_shardy(
   in_shardings = (
       [_get_token_sharding(ctx, mesh)] * (num_tokens + num_dim_vars) +
       const_args_shardings + in_shardings)
-  in_shardings = sharding_impls.SdyArrayList(in_shardings).build()
+  in_shardings = sharding_impls.SdyArrayList(in_shardings).build(
+    ctx.module_context.sharding_attr_cache)
 
   out_shardings = list(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           out_specs, ctx.avals_out))
   out_shardings = [
       _get_token_sharding(ctx, mesh)] * num_tokens + out_shardings
-  out_shardings = sharding_impls.SdyArrayList(out_shardings).build()
+  out_shardings = sharding_impls.SdyArrayList(out_shardings).build(
+    ctx.module_context.sharding_attr_cache)
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
                   mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)))
