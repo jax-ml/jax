@@ -2666,12 +2666,12 @@ def insert_reduced_reshard(args):
   if len(args) != 2:
     return args
   in_reduced = [aval.sharding.spec.reduced
-                if isinstance(aval := typeof(a), ShapedArray) else frozenset()
-                for a in args]
+                if isinstance(aval := shaped_abstractify(a), ShapedArray)
+                else frozenset() for a in args]
   out_reduced = frozenset.union(*in_reduced)
   out = []
   for arg, src_reduced in zip(args, in_reduced):
-    aval = typeof(arg)
+    aval = shaped_abstractify(arg)
     if (isinstance(aval, ShapedArray) and aval.ndim == 0 and out_reduced and
         (get_replicated_axes(aval.sharding.spec, cur_mesh) & out_reduced) == out_reduced):
       from jax._src.pjit import reshard  # type: ignore
