@@ -26,6 +26,7 @@ concurrency:
 permissions: {}
 jobs:
   build-cuda-artifacts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -45,7 +46,7 @@ jobs:
       upload_artifacts_to_gcs: false
 
   run-tests:
-    if: github.event.repository.fork == false
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     uses: ./.github/workflows/bazel_cuda.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:

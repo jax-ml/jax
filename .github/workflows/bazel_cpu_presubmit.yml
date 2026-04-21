@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   build-jax-artifact:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -36,6 +37,7 @@ jobs:
         upload_artifacts_to_gcs: false
 
   build-jaxlib-artifact:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -56,7 +58,7 @@ jobs:
         upload_artifacts_to_gcs: false
 
   run_tests:
-    if: github.event.repository.fork == false
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     uses: ./.github/workflows/bazel_cpu.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
