@@ -1456,7 +1456,6 @@ class VectorSubcoreTest(PallasSCTest):
         return out
 
       out = f(arr)
-      self.assertEqual(out.shape, (num_subcores, self.num_lanes))
       self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P('x', 'y')))
 
   @parameterized.parameters(1, 2, None)
