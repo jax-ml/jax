@@ -943,7 +943,6 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  print(f'sem: {sem}, sem_aval: {sem_aval}, sem_aval.shape: {sem_aval.shape}')
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
   if src_sem is not None:
     src_sem, _ = _transform_ref(src_sem, src_sem_aval, src_sem_aval.shape)
