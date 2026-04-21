@@ -546,16 +546,8 @@ def lower_jaxpr_to_func(
       ir.IntegerType.get_signless(64), num_scratch
   )
   arg_attrs = [ir.DictAttr.get({})] * num_grid
-  for arg, bm in zip(
-      func_op.arguments[num_grid : len(func_op.arguments) - num_scratch],
-      mosaic_grid_mapping.block_mappings,
-  ):
+  for bm in mosaic_grid_mapping.block_mappings:
     d: dict[str, ir.Attribute] = {}
-    if (
-        str(arg.type.memory_space) == "#tpu.memory_space<hbm>"
-        or str(arg.type.memory_space) == "#tpu.memory_space<semaphore_mem>"
-    ):
-      d["sc.persistent"] = ir.UnitAttr.get()
     if isinstance(bm, sc_core.BlockMapping) and bm.indexed_by is not None:
       d["sc.indexed_by"] = mlir.i32_attr(bm.indexed_by)
       d["sc.indexed_dim"] = mlir.i32_attr(bm.indexed_dim)
