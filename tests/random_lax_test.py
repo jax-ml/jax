@@ -400,6 +400,26 @@ class DistributionsTest(RandomTestBase):
     with self.assertRaises(core.ConcretizationTypeError):
       jax.jit(random.permutation)(key, 10)
 
+  def testPermutationDtype(self):
+    key = self.make_key(0)
+    # When x is an integer, dtype controls the arange dtype.
+    perm = random.permutation(key, 10, dtype=np.int16)
+    self.assertEqual(perm.dtype, np.dtype(np.int16))
+    self.assertArraysEqual(np.sort(perm), np.arange(10, dtype=np.int16))
+
+    # Default dtype (None) still works.
+    perm_default = random.permutation(key, 10)
+    self.assertArraysEqual(np.sort(perm_default), np.arange(10))
+
+    # When x is an array and dtype matches, no error.
+    x = np.arange(10, dtype=np.int32)
+    perm = random.permutation(key, x, dtype=np.int32)
+    self.assertEqual(perm.dtype, np.dtype(np.int32))
+
+    # When x is an array and dtype mismatches, raise TypeError.
+    with self.assertRaises(TypeError):
+      random.permutation(key, x, dtype=np.int16)
+
   @jtu.sample_product(
     p=[0.1, 0.5, 0.9],
     dtype=jtu.dtypes.floating,

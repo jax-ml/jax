@@ -700,7 +700,8 @@ def permutation(key: ArrayLike,
                 axis: int = 0,
                 independent: bool = False,
                 *,
-                out_sharding: NamedSharding | P | None = None) -> Array:
+                out_sharding: NamedSharding | P | None = None,
+                dtype: DTypeLike | None = None) -> Array:
   """Returns a randomly permuted array or range.
 
   Args:
@@ -718,6 +719,8 @@ def permutation(key: ArrayLike,
       sharding mode.
       See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
       for more details.
+    dtype: optional. If specified, determines the dtype of the np.arange used
+      when x is an integer. If x is an array, the array must have this dtype.
 
   Returns:
     A shuffled version of x or array range
@@ -730,8 +733,12 @@ def permutation(key: ArrayLike,
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
     r = core.concrete_or_error(int, x, "argument x of jax.random.permutation()")
-    return maybe_auto_axes(lambda key: _shuffle(key, jnp.arange(r), axis),
-                           out_sharding)(key)
+    return maybe_auto_axes(
+        lambda key: _shuffle(key, jnp.arange(r, dtype=dtype), axis),
+        out_sharding)(key)
+  if dtype is not None and lax.dtype(x) != np.dtype(dtype):
+    raise TypeError(
+        f"dtype argument {np.dtype(dtype)} does not match dtype of x: {lax.dtype(x)}")
   return maybe_auto_axes(
       _permutation, out_sharding, axis=axis, independent=independent)(key, x)
 
