@@ -543,7 +543,7 @@ def find_assignments_for(
       )
     variable, expr = assignment
     assert isinstance(expr, cs.Constant)
-    if not is_valid_assignment(variable.shape, expr):
+    if not cs.is_valid_assignment(variable, expr):
       continue
     # Trying one valid assignment consumes fuel.
     fuel -= 1
@@ -1043,16 +1043,16 @@ def _layout_cast_constraint_system(
   operand_var = cs.Variable(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
   result_var = cs.Variable(result)
-  out_layout = layouts_lib.from_layout_attr(op.new_layout)
-  if not is_valid_register_layout_assignment(operand.shape, out_layout):
+  out_layout = cs.RegisterLayout(layouts_lib.from_layout_attr(op.new_layout))
+  if not cs.is_valid_assignment(result_var, out_layout):
     raise ValueError(
-        f"Cannot cast to layout {out_layout}: the layout is not compatible"
-        f" with the operand shape {operand.shape} in {op}."
+        f"Cannot cast to layout {out_layout.value}: the layout is not"
+        f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
   return (
       cs.ConstraintSystem(
-          assignments={result_var: cs.RegisterLayout(out_layout)},
+          assignments={result_var: out_layout},
           constraints=[
               cs.Relayout(operand_var, result_var, bitwidth, strict=False),
           ],
@@ -1072,12 +1072,12 @@ def _wgmma_constraint_system(
   acc_out = ValueSite(op, VariableType.RESULT, 0)
   acc_in = ValueSite(op, VariableType.OPERAND, 0)
   acc_var = cs.Variable(acc_out)
-  acc_layout = fa.WGMMA_LAYOUT
-  assignments[acc_var] = cs.RegisterLayout(acc_layout)
-  if not is_valid_register_layout_assignment(acc_out.shape, acc_layout):
+  acc_layout = cs.RegisterLayout(fa.WGMMA_LAYOUT)
+  assignments[acc_var] = acc_layout
+  if not cs.is_valid_assignment(acc_var, acc_layout):
     raise ValueError(
-        f"Cannot assign layout {acc_layout} to the accumulator of a wgmma op:"
-        f" the layout is not compatible with the accumulator shape"
+        f"Cannot assign layout {acc_layout.value} to the accumulator of a wgmma"
+        f" op: the layout is not compatible with the accumulator shape"
         f" {acc_out.shape}."
     )
   value_sites_for_variable[acc_var] = [acc_in, acc_out]
@@ -1111,11 +1111,12 @@ def _wgmma_constraint_system(
       layout = fa.WGMMA_LAYOUT_8BIT
     else:
       layout = fa.WGMMA_LAYOUT
-    assignments[a_var] = cs.RegisterLayout(layout)
-    if not is_valid_register_layout_assignment(a.shape, layout):
+    layout = cs.RegisterLayout(layout)
+    assignments[a_var] = layout
+    if not cs.is_valid_assignment(a_var, layout):
       raise ValueError(
-          f"Cannot assign layout {layout} to the 'a' operand of WGMMAOp: the"
-          f" layout is not compatible with the operand shape {a.shape}."
+          f"Cannot assign layout {layout.value} to the 'a' operand of WGMMAOp: "
+          f"the layout is not compatible with the operand shape {a.shape}."
       )
 
   value_sites_for_variable[a_var] = [a]
@@ -1408,15 +1409,14 @@ def _tmem_layout_cast_constraint_system(
   operand = ValueSite(op, VariableType.OPERAND, 0)
   variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
-  tmem_layout = _tmem_layout_from_layout_attr(op.new_layout)
-  if not is_valid_tmem_layout_assignment(operand.shape, tmem_layout):
+  tmem_layout = cs.TMEMLayout(_tmem_layout_from_layout_attr(op.new_layout))
+  if not cs.is_valid_assignment(variable, tmem_layout):
     raise ValueError(
-        f"Cannot cast to TMEM layout {tmem_layout}: the layout is not"
-        f" compatible with the operand shape {operand.shape} in {op}."
+        f"Cannot cast to TMEM layout {tmem_layout.value} in {op}: the layout is"
+        f" not compatible with the operand shape {operand.shape}."
     )
-  out_layout = cs.TMEMLayout(tmem_layout)
   return (
-      cs.ConstraintSystem(assignments={variable: out_layout}),
+      cs.ConstraintSystem(assignments={variable: tmem_layout}),
       {variable: [operand, result]},
   )
 
@@ -1463,11 +1463,12 @@ def _tcgen05_mma_constraint_system(
   acc_layout = tcgen05._infer_tmem_layout(
       tuple(acc_type.shape), bool(op.collective), packing=1
   )
-  assignments[acc_variable] = cs.TMEMLayout(acc_layout)
-  acc_is_valid = is_valid_tmem_layout_assignment(acc.shape, acc_layout)
+  acc_layout = cs.TMEMLayout(acc_layout)
+  assignments[acc_variable] = acc_layout
+  acc_is_valid = cs.is_valid_assignment(acc_variable, acc_layout)
   if not acc_is_valid:
     raise ValueError(
-        f"Cannot assign TMEM layout {acc_layout} to the accumulator of"
+        f"Cannot assign TMEM layout {acc_layout.value} to the accumulator of"
         f" a tcgen05 MMA op: the layout is not compatible with the accumulator"
         f" shape {acc.shape}."
     )
@@ -1508,12 +1509,13 @@ def _tcgen05_mma_constraint_system(
     a_layout = tcgen05._infer_tmem_layout(
         tuple(a_type.shape), bool(op.collective), packing
     )
-    assignments[a_var] = cs.TMEMLayout(a_layout)
+    a_layout = cs.TMEMLayout(a_layout)
+    assignments[a_var] = a_layout
     operands_for_variable[a_var] = [a]
-    a_is_valid = is_valid_tmem_layout_assignment(a.shape, a_layout)
+    a_is_valid = cs.is_valid_assignment(a_var, a_layout)
     if not a_is_valid:
       raise ValueError(
-          f"Cannot assign TMEM layout {a_layout} to the 'a' operand of"
+          f"Cannot assign TMEM layout {a_layout.value} to the 'a' operand of"
           f" a tcgen05 MMA op: the layout is not compatible with the operand"
           f" shape {a.shape}."
       )
@@ -1533,11 +1535,11 @@ def _tcgen05_mma_constraint_system(
         op, VariableType.OPERAND, list(op.operands).index(sparse_meta_operand)
     )
     sparse_meta_var = ctx.producer_ref(sparse_meta)
-    sparse_meta_layout = tcgen05.sparse_meta_layout()
-    assignments[sparse_meta_var] = cs.TMEMLayout(sparse_meta_layout)
-    if not is_valid_tmem_layout_assignment(sparse_meta.shape, sparse_meta_layout):
+    sparse_meta_layout = cs.TMEMLayout(tcgen05.sparse_meta_layout())
+    assignments[sparse_meta_var] = sparse_meta_layout
+    if not cs.is_valid_assignment(sparse_meta_var, sparse_meta_layout):
       raise ValueError(
-          f"Cannot assign TMEM layout {sparse_meta_layout} to the"
+          f"Cannot assign TMEM layout {sparse_meta_layout.value} to the"
           f" 'a_sparse_metadata' operand of a tcgen05 MMA op: the layout is not"
           f" compatible with the operand shape {sparse_meta.shape}."
       )
@@ -1557,8 +1559,9 @@ def _tcgen05_mma_constraint_system(
       layout = tcgen05.b_scales_m64_collective_layout()
     else:
       layout = tcgen05.scales_layout()
-    assignments[scale_var] = cs.TMEMLayout(layout)
-    if not is_valid_tmem_layout_assignment(scale.shape, layout):
+    layout = cs.TMEMLayout(layout)
+    assignments[scale_var] = layout
+    if not cs.is_valid_assignment(scale_var, layout):
       raise ValueError(
           f"Cannot assign {layout} to {scale_operand=} with"
           f" shape {scale.shape}."
@@ -1604,15 +1607,15 @@ def _async_store_smem_to_tmem_constraint_system(
   destination_variable = ctx.producer_ref(destination)
   bitwidth = utils.bitwidth(op.destination.type.element_type)
   packing = 32 // bitwidth
-  tmem_layout = tcgen05.tmem_default_layout(packing)
-  if not is_valid_tmem_layout_assignment(destination.shape, tmem_layout):
+  tmem_layout = cs.TMEMLayout(tcgen05.tmem_default_layout(packing))
+  if not cs.is_valid_assignment(destination_variable, tmem_layout):
     raise ValueError(
-        f"Cannot assign TMEM layout {tmem_layout} to a TMEM ref "
+        f"Cannot assign TMEM layout {tmem_layout.value} to a TMEM ref "
         f"with shape {destination.shape}"
     )
   return (
       cs.ConstraintSystem(
-          assignments={destination_variable: cs.TMEMLayout(tmem_layout)},
+          assignments={destination_variable: tmem_layout},
           constraints=[
               cs.IsValidMmaTiling(source_variable, bitwidth, allow_unswizzled=True)
           ],
@@ -1931,7 +1934,7 @@ def _with_transforms_constraint_system(
   var = ctx.producer_ref(source)
   tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
   if tiling.value is not None:
-    if not is_valid_smem_layout_assignment(source.shape, tiling.value):
+    if not cs.is_valid_assignment(var, tiling):
       raise ValueError(
           f"Cannot apply tiling {tiling.value} to memref with shape"
           f" shape {source.shape}."
@@ -2314,89 +2317,13 @@ def traverse_op(
           traverse_op(block_op, callback)
 
 
-def is_valid_register_layout_assignment(
-    shape: tuple[int, ...], layout: fa.FragmentedLayout
-) -> bool:
-  match layout:
-    case fa.WGStridedFragLayout() as strided_layout:
-      return strided_layout.shape == shape
-    case fa.WGSplatFragLayout() as splat_layout:
-      return splat_layout.shape == shape
-    case fa.TiledLayout(tiling=tiling):
-      try:
-        # `tiling.tile_shape` will raise if the shape is not tileable.
-        _ = tiling.tile_shape(shape)
-      except ValueError:
-        return False
-      return True
-    case _:
-      assert_never(layout)
-
-
-def is_valid_smem_layout_assignment(
-    shape: tuple[int, ...], tiling: lc.TileTransform
-) -> bool:
-  try:
-    # `tiling.transform_shape` will raise if the shape is not tileable.
-    _ = tiling.transform_shape(shape)
-  except ValueError:
-    return False
-  return True
-
-
-def is_valid_tmem_layout_assignment(
-    shape: tuple[int, ...], layout: tcgen05.TMEMLayout
-) -> bool:
-  try:
-    # `layout.tiling.tile_shape` will raise if the shape is not tileable.
-    _ = layout.tiling.tile_shape(shape)
-  except ValueError:
-    return False
-  return True
-
-
-def is_valid_assignment(shape: tuple[int, ...], layout: cs.Constant) -> bool:
-  match layout:
-    case cs.RegisterLayout(value=reg_layout):
-      return is_valid_register_layout_assignment(shape, reg_layout)
-    case cs.TMEMLayout(value=tmem_layout):
-      return is_valid_tmem_layout_assignment(shape, tmem_layout)
-    case cs.SMEMTiling(value=tiling_or_none):
-      if tiling_or_none is None:
-        return True
-      return is_valid_smem_layout_assignment(shape, tiling_or_none)
-    case _:
-      raise ValueError(f"Unsupported layout type: {type(layout)}")
-
-
-def check_layout_assignment(v: ValueSite, layout: cs.Constant) -> None:
-  """Raises if the given layout can not be assigned to the given `ValueSite`."""
-  match v.memory_space, layout:
-    case cs.MemorySpace.REG, cs.RegisterLayout(value=reg_layout):
-      if not is_valid_register_layout_assignment(v.shape, reg_layout):
-        raise ValueError(
-            f"Layout {reg_layout} is not compatible with register variable "
-            f"{v.value}. This is a bug."
-        )
-    case cs.MemorySpace.TMEM, cs.TMEMLayout(value=tmem_layout):
-      if not is_valid_tmem_layout_assignment(v.shape, tmem_layout):
-        raise ValueError(
-            f"Layout {tmem_layout} is not compatible with TMEM variable "
-            f"{v.value}. This is a bug."
-        )
-    case cs.MemorySpace.SMEM, cs.SMEMTiling(value=tiling_or_none):
-      if tiling_or_none is None:
-        return
-      if not is_valid_smem_layout_assignment(v.shape, tiling_or_none):
-        raise ValueError(
-            f"Layout {tiling_or_none} is not compatible with SMEM variable "
-            f"{v.value}. This is a bug."
-        )
-    case _:
-      raise ValueError(
-          f"Variable {v.value} in memory space {v.memory_space} should not be "
-          f"assigned a layout of type {type(layout)}. This is a bug."
-      )
+def check_layout_assignment(var: cs.Variable, layout: cs.Constant) -> None:
+  """Raises if the given layout can not be assigned to the given `Variable`."""
+  if not cs.is_valid_assignment(var, layout):
+    raise ValueError(
+        f"Variable {var} in memory space {var.memory_space} should not be "
+        f"assigned a layout of type {type(layout)}. This is a bug."
+    )
 
 
 def infer_layout(
@@ -2507,11 +2434,11 @@ def infer_layout(
 
   layout_for_value_site: dict[ValueSite, cs.Constant] = {}
   for variable, value_sites in ctx.value_sites_for_variable.items():
+    layout = solution[variable]
+    # Ensure that the layout assignment is valid for the variable. This should
+    # only ever fail if our implementation is buggy.
+    check_layout_assignment(variable, layout)
     for value_site in value_sites:
-      layout = solution[variable]
-      # Ensure that the layout assignment is valid for the value site. This
-      # should only ever fail if our implementation is buggy.
-      check_layout_assignment(value_site, layout)
       layout_for_value_site[value_site] = layout
 
   # Assigns the layouts that we found to the ops.

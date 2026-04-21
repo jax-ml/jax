@@ -14,6 +14,8 @@
 # ==============================================================================
 """Tests for Mosaic GPU's `constraints` module."""
 
+import dataclasses
+
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -30,6 +32,13 @@ Eq = cs.Equals
 V = cs.Variable
 
 
+@dataclasses.dataclass(frozen=True)
+class MockVariableKey:
+  idx: int
+  shape: tuple[int, ...]
+  memory_space: cs.MemorySpace
+
+
 class ConstraintSystemTest(parameterized.TestCase):
 
   def setUp(self):
@@ -37,13 +46,22 @@ class ConstraintSystemTest(parameterized.TestCase):
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
 
+  def test_constraint_system_is_unsatisfiable_if_assignment_is_invalid(
+      self,
+  ):
+    v0 = V(MockVariableKey(0, (128, 128), cs.MemorySpace.REG))
+    layout0 = RL(mgpu.WGSplatFragLayout((64, 64)))
+    system = cs.ConstraintSystem(constraints=[Eq(v0, layout0)])
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
   def test_constraint_system_is_unsatisfiable_if_assignments_are_incompatible(
       self,
   ):
-    v0 = V(0)
-    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
+    var = V(MockVariableKey(0, (128, 128), cs.MemorySpace.REG))
+    layout0 = RL(mgpu.WGMMA_LAYOUT)
+    layout1 = RL(mgpu.WGMMA_TRANSPOSED_LAYOUT)
     system = cs.ConstraintSystem(
-        constraints=[Eq(v0, layout0), Eq(v0, layout1)],
+        constraints=[Eq(var, layout0), Eq(var, layout1)],
     )
     self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
 
@@ -130,8 +148,10 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_reduce_constraint_system_assigns_variables_with_known_constraints(
       self,
   ):
-    v0, v1 = V(0), V(1)
-    layout = RL(mgpu.WGSplatFragLayout((1, 1)))
+    shape = (1, 1)
+    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
+    v1 = V(MockVariableKey(1, shape, cs.MemorySpace.REG))
+    layout = RL(mgpu.WGSplatFragLayout(shape))
 
     with self.subTest("left-to-right-assignment"):
       system = cs.ConstraintSystem(

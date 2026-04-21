@@ -1063,6 +1063,64 @@ def merge_divides_constraints(d0: Divides, d1: Divides) -> Divides:
   return Divides(d0.expr, tuple(tiling_multiple))
 
 
+def _is_valid_register_layout_assignment(
+    shape: tuple[int, ...], layout: fa.FragmentedLayout
+) -> bool:
+  match layout:
+    case fa.WGStridedFragLayout() as strided_layout:
+      return strided_layout.shape == shape
+    case fa.WGSplatFragLayout() as splat_layout:
+      return splat_layout.shape == shape
+    case fa.TiledLayout(tiling=tiling):
+      try:
+        # `tiling.tile_shape` will raise if the shape is not tileable.
+        _ = tiling.tile_shape(shape)
+      except ValueError:
+        return False
+      return True
+    case _:
+      assert_never(layout)
+
+
+def _is_valid_smem_layout_assignment(
+    shape: tuple[int, ...], tiling: lc.TileTransform
+) -> bool:
+  try:
+    # `tiling.transform_shape` will raise if the shape is not tileable.
+    _ = tiling.transform_shape(shape)
+  except ValueError:
+    return False
+  return True
+
+
+def _is_valid_tmem_layout_assignment(
+    shape: tuple[int, ...], layout: tcgen05.TMEMLayout
+) -> bool:
+  try:
+    # `layout.tiling.tile_shape` will raise if the shape is not tileable.
+    _ = layout.tiling.tile_shape(shape)
+  except ValueError:
+    return False
+  return True
+
+
+def is_valid_assignment(var: Variable, layout: Constant) -> bool:
+  match layout:
+    case RegisterLayout(value=reg_layout):
+      assert var.memory_space == MemorySpace.REG
+      return _is_valid_register_layout_assignment(var.shape, reg_layout)
+    case TMEMLayout(value=tmem_layout):
+      assert var.memory_space == MemorySpace.TMEM
+      return _is_valid_tmem_layout_assignment(var.shape, tmem_layout)
+    case SMEMTiling(value=tiling):
+      assert var.memory_space == MemorySpace.SMEM
+      if tiling is None:
+        return True
+      return _is_valid_smem_layout_assignment(var.shape, tiling)
+    case _:
+      raise ValueError(f"Unsupported layout type: {type(layout)}")
+
+
 def _reduce_system_once(
     constraint_system: ConstraintSystem,
 ) -> ConstraintSystem | Unsatisfiable | None:
@@ -1080,6 +1138,8 @@ def _reduce_system_once(
 
   def try_assign(var: Variable, cst: Constant) -> bool:
     if var in assignments and assignments[var] != cst:
+      return False
+    if not is_valid_assignment(var, cst):
       return False
     assignments[var] = cst
     return True
