@@ -968,7 +968,7 @@ def _shard_map_lowering_shardy(
       ctx.set_tokens_out(tokens_out)
     return out_nodes
 
-  in_shardings = list(
+  in_shardings = tuple(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           in_specs, ctx.avals_in))
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
@@ -980,24 +980,24 @@ def _shard_map_lowering_shardy(
   )
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
-  const_args_shardings = [
+  const_args_shardings = tuple(
       _shardy_shard_map_sharding(ctx, mesh, manual_axes, P(), core.typeof(c))
-      for c in const_args]
+      for c in const_args)
 
   num_dim_vars = len(ctx.dim_var_values)
   in_shardings = (
-      [_get_token_sharding(ctx, mesh)] * (num_tokens + num_dim_vars) +
+      (_get_token_sharding(ctx, mesh),) * (num_tokens + num_dim_vars) +
       const_args_shardings + in_shardings)
   in_shardings = sharding_impls.SdyArrayList(in_shardings).build(
-    ctx.module_context.sharding_attr_cache)
+      ctx.module_context.sharding_attr_cache)
 
-  out_shardings = list(
+  out_shardings = tuple(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           out_specs, ctx.avals_out))
-  out_shardings = [
-      _get_token_sharding(ctx, mesh)] * num_tokens + out_shardings
+  out_shardings = (
+      _get_token_sharding(ctx, mesh),) * num_tokens + out_shardings
   out_shardings = sharding_impls.SdyArrayList(out_shardings).build(
-    ctx.module_context.sharding_attr_cache)
+      ctx.module_context.sharding_attr_cache)
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
                   mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)))

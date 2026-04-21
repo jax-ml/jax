@@ -139,11 +139,12 @@ def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyA
   ndims = [0]
   if avals:
     ndims = [x.ndim for x in avals if isinstance(x, core.ShapedArray)]
-  return SdyArrayList([
+  return SdyArrayList(tuple(
       SdyArray(
           mesh_shape=(),
           dim_shardings=(SdyDim(axes=(), is_open=False),) * ndim,
-          logical_device_ids=()) for ndim in ndims])
+          logical_device_ids=())
+      for ndim in ndims))
 
 
 def _callback_op_sharding(
@@ -202,11 +203,9 @@ def _callback_op_sharding(
       # number of result ops. If there are no result ops, we need 1 shardy
       # annotation.
       num_sdy_shardings = max(1, len(avals_out))
-      op_sharding = SdyArrayList(num_sdy_shardings * [
-          SdyArray(
-              mesh_shape=(),
-              dim_shardings=(),
-              logical_device_ids=(device_index,))])
+      op_sharding = SdyArrayList((
+          SdyArray(mesh_shape=(), dim_shardings=(),
+                   logical_device_ids=(device_index,)),) * num_sdy_shardings)
     else:
       op_sharding = xc.OpSharding()
       op_sharding.type = xc.OpSharding.Type.MAXIMAL
@@ -621,10 +620,9 @@ def send_to_host(
       # shardings should be the same.
       assert isinstance(sharding, SdyArrayList)
       assert len(sharding.shardings) >= 1
-      sharding = SdyArrayList([
-          SdyArray(
-              mesh_shape=(), dim_shardings=(),
-              logical_device_ids=sharding.shardings[0].logical_device_ids)])
+      sharding = SdyArrayList((SdyArray(
+          mesh_shape=(), dim_shardings=(),
+          logical_device_ids=sharding.shardings[0].logical_device_ids),))
     mlir.set_sharding(ctx, send_op, sharding)
   return send_op.result
 
@@ -661,11 +659,10 @@ def receive_from_host(
       # Note that even if a function returns N results, we will end up with N
       # `RecvOp`s, so we only need to get the first sharding. All shardings are
       # the same anyways, operating on the same single device ID.
-      sharding = SdyArrayList([
+      sharding = SdyArrayList((
           sharding.shardings[0],
-          SdyArray(
-              mesh_shape=(), dim_shardings=(),
-              logical_device_ids=sharding.shardings[0].logical_device_ids)])
+          SdyArray(mesh_shape=(), dim_shardings=(),
+                   logical_device_ids=sharding.shardings[0].logical_device_ids)))
     mlir.set_sharding(ctx, recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
@@ -878,12 +875,9 @@ def emit_python_callback(
       # Add a sharding annotation for the token if we have at least one
       # output. Otherwise, the single shardy annotation required of all ops
       # (even those without any results) can annotate the token.
-      sharding = SdyArrayList([
-          SdyArray(
-              mesh_shape=(),
-              dim_shardings=(),
-              logical_device_ids=()),
-          *sharding.shardings])
+      sharding = SdyArrayList((
+          SdyArray(mesh_shape=(), dim_shardings=(), logical_device_ids=()),
+          *sharding.shardings))
     ctx = dataclasses.replace(
         ctx,
         avals_in=[core.abstract_token, *ctx.avals_in],

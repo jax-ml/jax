@@ -86,11 +86,12 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SdyArrayList:
-  shardings: Sequence[SdyArray]
+  shardings: tuple[SdyArray, ...]
 
-  def build(self, cache: dict[SdyArray, sdy.TensorShardingAttr]) -> sdy.TensorShardingPerValueAttr:
+  def build(self, cache: dict[SdyArray, sdy.TensorShardingAttr]
+            ) -> sdy.TensorShardingPerValueAttr:
     return sdy.TensorShardingPerValueAttr.get(
         [sharding.build(cache) for sharding in self.shardings])
 

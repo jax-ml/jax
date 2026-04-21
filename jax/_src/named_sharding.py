@@ -266,22 +266,7 @@ class NamedSharding(jsharding.Sharding):
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
-    dim_shardings = []
-    for dim_spec in self.spec:
-      if dim_spec is PartitionSpec.UNCONSTRAINED:
-        dim_shardings.append(SdyDim(axes=(), is_open=True))
-      elif dim_spec is None:
-        # Already empty and closed sharding.
-        dim_shardings.append(SdyDim(axes=(), is_open=False))
-      else:
-        dim_spec = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
-        dim_shardings.append(SdyDim(axes=dim_spec, is_open=False))
-    dim_shardings.extend(
-      [SdyDim(axes=(), is_open=False)] * (num_dimensions - len(self.spec)))
-    return SdyArray(mesh_shape=self.mesh.shape_tuple,
-                    dim_shardings=tuple(dim_shardings),
-                    logical_device_ids=self._logical_device_ids,
-                    unreduced_axes=self.spec.unreduced)
+    return named_sharding_to_sdy_sharding(self, num_dimensions)
 
 NamedSharding.__module__ = 'jax.sharding'
 
@@ -490,6 +475,26 @@ def named_sharding_to_xla_hlo_sharding(
         np.asarray(self._logical_device_ids)
         .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
         .reshape(dims), subgroup_types=last_tile_dims)
+
+
+@cache(max_size=4096, trace_context_in_key=False)
+def named_sharding_to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
+  dim_shardings = []
+  for dim_spec in self.spec:
+    if dim_spec is PartitionSpec.UNCONSTRAINED:
+      dim_shardings.append(SdyDim(axes=(), is_open=True))
+    elif dim_spec is None:
+      # Already empty and closed sharding.
+      dim_shardings.append(SdyDim(axes=(), is_open=False))
+    else:
+      dim_spec = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
+      dim_shardings.append(SdyDim(axes=dim_spec, is_open=False))
+  dim_shardings.extend(
+      [SdyDim(axes=(), is_open=False)] * (num_dimensions - len(self.spec)))
+  return SdyArray(mesh_shape=self.mesh.shape_tuple,
+                  dim_shardings=tuple(dim_shardings),
+                  logical_device_ids=self._logical_device_ids,
+                  unreduced_axes=self.spec.unreduced)
 
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
