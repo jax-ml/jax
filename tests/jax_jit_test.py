@@ -238,7 +238,7 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertArraysEqual(v2, v2_expected)
 
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
-  def test_check_for_large_number_of_constants(self):
+  def test_check_for_large_number_of_constants_old(self):
     y = jnp.ones((128, 128))
     x = jnp.zeros((128,))
 
@@ -248,6 +248,28 @@ class JaxJitTest(jtu.JaxTestCase):
       return jax.jit(func)
 
     with self.assertWarnsRegex(UserWarning, "A large amount of constants were captured during lowering"):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        jit_maker()(x)
+
+    with self.assertNoWarnings():
+      with config.captured_constants_warn_bytes(y.nbytes + 1):
+        jit_maker()(x)
+
+      with config.captured_constants_warn_bytes(-1):
+        jit_maker()(x)
+
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
+  def test_check_for_large_number_of_constants_new(self):
+    y = np.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,))
+
+    def jit_maker(): # need to ensure we lower at each test
+      def my_func(x):
+        return x @ y
+      return jax.jit(my_func)
+
+    with self.assertWarnsRegex(UserWarning,
+        r'Closed-over constant .* float32\[128,128\] in my_func .*'):
       with config.captured_constants_warn_bytes(y.nbytes):
         jit_maker()(x)
 

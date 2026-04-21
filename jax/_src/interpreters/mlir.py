@@ -1198,8 +1198,6 @@ def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
 
 def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
   """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
-  if config.use_simplified_jaxpr_constants.value:
-    return
   if (threshold := config.captured_constants_warn_bytes.value) == -1:
     return
 
@@ -1241,6 +1239,20 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
     warnings.warn(message)
   except Exception as exc:
     warnings.warn(message + f" Exception raised while generating report: {exc}")
+
+def log_closed_over_constant(v: core.Literal, eqn: core.JaxprEqn,
+                             debug_info: core.DebugInfo):
+  if getattr(v.val, "nbytes", 4) < config.captured_constants_warn_bytes.value:
+    return
+  msg = (f"Closed-over constant {type(v.val)}: {v.aval.str_short()} "
+         f"in {debug_info.func_src_info}")
+  if (num_frames := config.captured_constants_report_frames.value) > 0:
+    eqn_si = source_info_util.summarize(eqn.source_info, num_frames)
+    msg += (" used at:\n" +
+           "  " * 2 + eqn_si.replace("\n", "\n" + "  " * 2) +
+           "\n\n")
+  warnings.warn(msg)
+
 
 # TODO(phawkins): it is my firm belief that:
 # a) channel IDs have only a vestigal function when applied to collectives, and
@@ -2115,7 +2127,14 @@ def jaxpr_subcomp(
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   outer_traceback = outer_traceback or xc.Traceback()
+  should_log_constants = (config.use_simplified_jaxpr_constants.value and
+                          config.captured_constants_warn_bytes.value >= 0)
   for eqn in jaxpr.eqns:
+    if should_log_constants:
+      for v in eqn.invars:
+        if type(v) is core.Literal and core.is_hoistable(v):
+          log_closed_over_constant(v, eqn, jaxpr._debug_info)
+
     in_nodes = tuple(map(read, eqn.invars))
     assert all(_is_ir_values(v) for v in in_nodes), (eqn, in_nodes)
 
