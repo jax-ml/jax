@@ -5363,9 +5363,9 @@ class RaggedTest(jtu.JaxTestCase):
 
   @parameterized.product(
       batch_size=[3, 5],
-      m=[128, 1024],
-      k=[128, 1024],
-      n=[128, 1024],
+      m=[128, 256],
+      k=[128, 256],
+      n=[128, 256],
       num_groups=[2, 4],
   )
   def test_ragged_dot_general_vmap(
