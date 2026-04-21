@@ -2569,6 +2569,49 @@ def _hankel(c: Array, r: Array) -> Array:
       precision=lax.Precision.HIGHEST)[0]
 
 
+def circulant(c: ArrayLike) -> Array:
+  r"""Construct a circulant matrix.
+
+  JAX implementation of :func:`scipy.linalg.circulant`.
+
+  A circulant matrix has cyclically shifted columns: :math:`A_{ij} = c_{(i - j) \bmod n}`
+  for :math:`0 \le i, j < n`, where ``c`` specifies the first column.
+
+  Args:
+    c: array of shape ``(..., N)`` specifying the first column.
+
+  Returns:
+    A circulant matrix of shape ``(..., N, N)``.
+
+  Examples:
+    >>> c = jnp.array([1, 2, 3])
+    >>> jax.scipy.linalg.circulant(c)
+    Array([[1, 3, 2],
+           [2, 1, 3],
+           [3, 2, 1]], dtype=int32)
+
+    For N-dimensional ``c``, the result is a batch of circulant matrices:
+
+    >>> c = jnp.array([[1, 2, 3], [4, 5, 6]])
+    >>> jax.scipy.linalg.circulant(c)
+    Array([[[1, 3, 2],
+            [2, 1, 3],
+            [3, 2, 1]],
+    <BLANKLINE>
+           [[4, 6, 5],
+            [5, 4, 6],
+            [6, 5, 4]]], dtype=int32)
+  """
+  check_arraylike("circulant", c)
+  return _circulant(jnp.atleast_1d(jnp.asarray(c)))
+
+@partial(jnp_vectorize.vectorize, signature="(n)->(n,n)")
+def _circulant(c: Array) -> Array:
+  n, = c.shape
+  idx = (jnp.arange(n)[:, None] - jnp.arange(n)[None, :]) % n
+  return c[idx]
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.

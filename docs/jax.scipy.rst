@@ -57,6 +57,7 @@ jax.scipy.linalg
    cho_factor
    cho_solve
    cholesky
+   circulant
    det
    eigh
    eigh_tridiagonal
