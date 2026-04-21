@@ -340,7 +340,7 @@ jobs:
           runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
           python: ["3.11"]
           rocm: [
-            {version: "7.2.0", tag: "rocm720"},
+            {version: "7.2.2", tag: "rocm722"},
           ]
     name: "Pytest ROCm (JAX artifacts version = ${{ format('{0}', 'head') }})"
     with:
