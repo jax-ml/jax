@@ -476,7 +476,9 @@ def named_sharding_to_xla_hlo_sharding(
 def named_sharding_to_sdy_sharding(self, num_dimensions: int,
                                    modify_wrt_axis_types: bool) -> SdyArray:
   dim_shardings = []
-  for dim_spec in self.spec:
+  for i, dim_spec in enumerate(self.spec):
+    if i >= num_dimensions:
+      break
     if dim_spec is PartitionSpec.UNCONSTRAINED:
       dim_shardings.append(SdyDim(axes=(), is_open=True))
     elif dim_spec is None:
@@ -486,7 +488,7 @@ def named_sharding_to_sdy_sharding(self, num_dimensions: int,
       dim_spec = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
       dim_shardings.append(SdyDim(axes=dim_spec, is_open=False))
   dim_shardings.extend(
-      [SdyDim(axes=(), is_open=False)] * (num_dimensions - len(self.spec)))
+      [SdyDim(axes=(), is_open=False)] * (num_dimensions - len(dim_shardings)))
 
   explicit_replicated_axes = frozenset()
   if modify_wrt_axis_types and self.mesh._any_axis_auto:
