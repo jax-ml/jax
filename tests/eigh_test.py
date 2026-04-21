@@ -372,7 +372,10 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
     atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
     self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
 
-    if jaxlib_version >= (0, 10) and not jtu.test_device_matches(["tpu"]):
+    # TODO: The ROCm 0.10.0 plugin is not yet released. This will be
+    # re-enabled for ROCm on the 0.10.0 ROCm plugin release.
+    if (jaxlib_version >= (0, 10) and
+        not jtu.test_device_matches(["tpu", "rocm"])):
       @jax.jit
       def solve(a, b):
         return jax.scipy.linalg.eigh_tridiagonal(a, b, eigvals_only=False)
