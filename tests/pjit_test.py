@@ -10561,10 +10561,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduced_mul_scalar_fwd(self, mesh):
     arr = jax.device_put(jnp.arange(4), P(reduced={'x'}))
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "Inputs cannot be replicated on.*same axes.*another input is reduced"):
-      jax.jit(lambda x: x * 2)(arr)
+    out = jax.jit(lambda x: x * 2)(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
 
     arr2 = jax.device_put(jnp.arange(4), P())
     with self.assertRaisesRegex(
@@ -10810,6 +10808,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     arr = jax.reshard(jnp.arange(8), P(unreduced={'x'}))
     self.assertFalse(arr.sharding.is_fully_replicated)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshard_on_scalar_reduced(self, mesh):
+    arr = jax.device_put(np.arange(4.), P(reduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec.reduced, {'x'})
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    rep_arr = jax.device_put(np.arange(4.), P())
+    ex_out = jax.jit(jax.grad(lambda x: (x * 2).sum()))(rep_arr)
+    self.assertArraysEqual(reshard(out, P()), ex_out)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

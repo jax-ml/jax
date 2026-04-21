@@ -54,7 +54,8 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            foreach, weakref_cache_key_types, set_module,
                            weak_value_interner, immutable)
 import jax._src.pretty_printer as pp
-from jax._src.named_sharding import NamedSharding, remove_size_one_mesh_axis
+from jax._src.named_sharding import (NamedSharding, remove_size_one_mesh_axis,
+                                     get_replicated_axes)
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
 from jax._src.lib import _jax
@@ -2657,11 +2658,33 @@ def check_unreduced_args(args, axes, name):
           f"{name} cannot accept args which are reduced. Got"
           f" {a.str_short(True)} and axes={axes}")
 
-def standard_insert_pvary(*args):
-  if not config._check_vma.value:
+def insert_reduced_reshard(args):
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if not cur_mesh.are_all_axes_explicit:
     return args
+  # TODO(yashkatariya): Handle >2 args too
+  if len(args) != 2:
+    return args
+  in_reduced = [aval.sharding.spec.reduced
+                if isinstance(aval := typeof(a), ShapedArray) else frozenset()
+                for a in args]
+  out_reduced = frozenset.union(*in_reduced)
+  out = []
+  for arg, src_reduced in zip(args, in_reduced):
+    aval = typeof(arg)
+    if (isinstance(aval, ShapedArray) and aval.ndim == 0 and out_reduced and
+        (get_replicated_axes(aval.sharding.spec, cur_mesh) & out_reduced) == out_reduced):
+      from jax._src.pjit import reshard  # type: ignore
+      out.append(reshard(arg, P(reduced=out_reduced)))
+    else:
+      out.append(arg)
+  return out
+
+def standard_insert_pvary(*args):
   if not args:
     return args
+  if not config._check_vma.value:
+    return insert_reduced_reshard(args)
   in_vma = [aval.mat.varying if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
   in_reduced = [aval.mat.reduced

@@ -1188,7 +1188,8 @@ def sub(x: ArrayLike, y: ArrayLike) -> Array:
   return sub_p.bind(x, y)
 
 @export
-def mul(x: ArrayLike, y: ArrayLike, *, out_dtype: DTypeLike | None = None) -> Array:
+def mul(x: ArrayLike, y: ArrayLike, *, out_dtype: DTypeLike | None = None
+        ) -> Array:
   r"""Elementwise multiplication: :math:`x \times y`.
 
   This function lowers directly to the `stablehlo.multiply`_ operation.
