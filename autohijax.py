@@ -286,12 +286,17 @@ class EnterJit(Op):
     return local_args_lo.map2(Val, arg_tys)
 
   def vjp(self, trace: VJPTrace, args):
-    primals, arg_accums = args.map(lambda x: (x.primal, x.accum)).unzip2()
+    primals, left_accums = args.map(lambda x: (x.primal, x.accum)).unzip2()
     with ctx.set_current_trace(trace.parent):
       local_primals = ctx.cur_trace.bind(EnterJit(), primals)
     local_args = local_primals.map(trace.new_arg)
-    local_left_accum = local_args.map(lambda x: x.accum)
-    trace.ctx.append(EnterJitVjpCtx([], arg_accums, local_left_accum))
+    local_left_accums = local_args.map(lambda x: x.accum)
+    def bwd(_):
+      # TODO handle closed-over accumulators
+      local_left_ct = local_left_accums.map(lambda x: x.finalize())
+      left_ct = ctx.cur_trace.bind(LeaveJit(), local_left_ct)
+      left_accums.map2(lambda a, ct: a.accum(ct), left_ct)
+    trace.tape.append(Pullback((), bwd))
     return local_args
 
 class LeaveJit(Op):
@@ -303,29 +308,17 @@ class LeaveJit(Op):
     return result.map2(lambda x, lo: Val(lo, x.ty), lo_ans)
 
   def vjp(self, trace: VJPTrace, tracers_out):
-
-    # enter_ctx = trace.ctx.pop()
-    # primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
-    # res, bwds = unzip2(enter_ctx.tape)
-    # outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
-    # # TODO forwarding
-    # # TODO env
-    # with ctx.set_current_trace(trace.parent):
-    #   outs = ctx.cur_trace.bind(LeaveJit(), outs)
-    # primals_out, res = outs.unpack()
-    # right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    # def bwd(res):
-    #   res = FlatTree.flatten(res)
-    #   right_ct = right_accum.map(lambda x: x.finalize())
-    #   res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
-    #   local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
-    #   tape = map(Pullback, res.unflatten(), bwds)
-    #   while tape: tape.pop()()
-    #   left_ct = enter_ctx.local_left_accum.map(lambda a: lift(a.finalize()))
-    #   left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
-    #   enter_ctx.left_accum.map2(lambda a, ct: a.accum(ct), left_ct)
-    # trace.tape.append(Pullback(res.unflatten(), bwd))
-    # return primals_out.map2(partial(VJPTracer, trace), right_accum)
+    local_primals_out, local_right_accums = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
+    # TODO get locally created residuals
+    with ctx.set_current_trace(trace.parent):
+      primals_out = ctx.cur_trace.bind(LeaveJit(), local_primals_out)
+    right_accums = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
+    def bwd(_):
+      right_ct = right_accums.map(lambda x: x.finalize())
+      local_right_ct = ctx.cur_trace.bind(EnterJit(), right_ct)
+      local_right_accums.map2(lambda a, ct: a.accum(ct), local_right_ct)
+    trace.tape.append(Pullback((), bwd))
+    return primals_out.map2(partial(VJPTracer, trace), right_accums)
 
 # TODO: cache and curry
 def jit_call(f, *args):
@@ -475,75 +468,82 @@ def scan(body, c, xs, length):
 
 # === user level ===
 
-def scan_body(c, x):
-  return add(c, 1), add(x, 1)
-
-print(scan(scan_body, 0, jnp.arange(4), length=4))
-
-
 @jit
 def foo(x, y):
-  return mul(add(x, y), 2.)
+  return add(add(x, x), y)
 
 print(vjp(foo, (1., 2.), 1.0))
 
-@jit
-def foo(x, y):
-  return mul(add(x, y), 2)
 
-@jit
-def bar(x, y):
-  return add(foo(x, y), y)
+# def scan_body(c, x):
+#   return add(c, 1), add(x, 1)
 
-print(foo(1, 2))
-print(bar(1, 2))
-
-print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
-
-@jit
-def baz(x):
-  return mul(call_lojax(jnp.sin, x),  x)
+# print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 
-print(baz(1.0))
-print(vjp(baz, (1.0,), 1.0))
+# @jit
+# def foo(x, y):
+#   return mul(add(x, y), 2.)
 
-@jit
-def closed_over(x, y):
-  @jit
-  def f(x):
-    return add(x, y)
-  return f(x)
+# print(vjp(foo, (1., 2.), 1.0))
 
-print(closed_over(1, 2))
+# @jit
+# def foo(x, y):
+#   return mul(add(x, y), 2)
+
+# @jit
+# def bar(x, y):
+#   return add(foo(x, y), y)
+
+# print(foo(1, 2))
+# print(bar(1, 2))
+
+# print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+
+# @jit
+# def baz(x):
+#   return mul(call_lojax(jnp.sin, x),  x)
+
+
+# print(baz(1.0))
+# print(vjp(baz, (1.0,), 1.0))
+
+# @jit
+# def closed_over(x, y):
+#   @jit
+#   def f(x):
+#     return add(x, y)
+#   return f(x)
+
+# print(closed_over(1, 2))
 
 
 
-def foo(x, y):
-  return mul(add(x, y), 2.)
+# def foo(x, y):
+#   return mul(add(x, y), 2.)
 
-def grad(f):
-  def gradfun(*args):
-    _, (g, *_) = vjp(f, args, 1.0)
-    return g
-  return gradfun
+# def grad(f):
+#   def gradfun(*args):
+#     _, (g, *_) = vjp(f, args, 1.0)
+#     return g
+#   return gradfun
 
-print(grad(foo)(1., 1.))
-print(grad(grad(lambda x: foo(x, x)))(2.0))
+# print(grad(foo)(1., 1.))
+# print(grad(grad(lambda x: foo(x, x)))(2.0))
 
-@jit
-def baz(x):
-  return mul(x, mul(x, x))
+# @jit
+# def baz(x):
+#   return mul(x, mul(x, x))
 
-print(grad(grad(baz))(1.))
+# print(grad(grad(baz))(1.))
 
-# def fun_with_nested_calls_2(x):
-#   def bar(y):
-#     def baz(w):
-#       return jit_call(lambda _: w, y)
-#     _, (t,) = vjp(baz, (1.0,), 3.0)
-#     return t
-#   return jit_call(bar, x)
+# # def fun_with_nested_calls_2(x):
+# #   def bar(y):
+# #     def baz(w):
+# #       return jit_call(lambda _: w, y)
+# #     _, (t,) = vjp(baz, (1.0,), 3.0)
+# #     return t
+# #   return jit_call(bar, x)
 
-# fun_with_nested_calls_2(2.0)
-# # grad(fun_with_nested_calls_2)(2.0)
+# # fun_with_nested_calls_2(2.0)
+# # # grad(fun_with_nested_calls_2)(2.0)
