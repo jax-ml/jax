@@ -266,6 +266,34 @@ class MemorySpace(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True)
+class CoreMemorySpace:
+  """A memory space tied to a Pallas mesh."""
+
+  memory_space: Any
+  mesh: Mesh
+
+  def __post_init__(self):
+    if not self.memory_space in self.mesh.supported_memory_spaces:
+      raise ValueError(
+          f"Memory space {self.memory_space} is not supported by mesh"
+          f" {self.mesh}"
+      )
+
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+    return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
+
+  def __str__(self) -> str:
+    return f"{self.memory_space}@{self.mesh.core_type}"
+
+  def __repr__(self) -> str:
+    return f"{self.memory_space!r}@{self.mesh.core_type!r}"
+
+  @property
+  def name(self) -> Any:
+    return f"{self.memory_space}@{self.mesh.core_type.name}"
+
+
+@dataclasses.dataclass(frozen=True)
 class PallasGridContext:
   grid: GridMappingGrid
   mapped_dims: tuple[int, ...]

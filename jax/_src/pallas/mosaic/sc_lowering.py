@@ -55,7 +55,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 
 MemorySpace = tpu_core.MemorySpace
-CoreMemorySpace = tpu_core.CoreMemorySpace
+CoreMemorySpace = pallas_core.CoreMemorySpace
 
 ShapedAbstractValue = tc_lowering.ShapedAbstractValue
 

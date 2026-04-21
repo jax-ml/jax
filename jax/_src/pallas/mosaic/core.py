@@ -225,31 +225,7 @@ class MemorySpace(enum.Enum):
   def __matmul__(self, other, /):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
-    return CoreMemorySpace(self, other)
-
-
-@dataclasses.dataclass(frozen=True)
-class CoreMemorySpace:
-  """A memory space tied to a Pallas mesh."""
-
-  memory_space: MemorySpace
-  mesh: pallas_core.Mesh
-
-  def __post_init__(self):
-    if not self.memory_space in self.mesh.supported_memory_spaces:
-      raise ValueError(
-          f"Memory space {self.memory_space} is not supported by mesh"
-          f" {self.mesh}"
-      )
-
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
-    return MemoryRef(jax_core.ShapedArray(tuple(shape), dtype), self)
-
-  def __str__(self) -> str:
-    return f"{self.memory_space}@{self.mesh.core_type}"
-
-  def __repr__(self) -> str:
-    return f"{self.memory_space!r}@{self.mesh.core_type!r}"
+    return pallas_core.CoreMemorySpace(self, other)
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -281,7 +257,9 @@ class SemaphoreType(enum.Enum):
   def __matmul__(self, other, /):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
-    return CoreMemorySpace(MemorySpace.SEMAPHORE, other)((), self.dtype)
+    return pallas_core.CoreMemorySpace(MemorySpace.SEMAPHORE, other)(
+        (), self.dtype
+    )
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
@@ -587,10 +565,13 @@ pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
 
 def memory_space_to_tpu_memory_space(
     memory_space: (
-        MemorySpace | pallas_core.MemorySpace | CoreMemorySpace | None
+        MemorySpace
+        | pallas_core.MemorySpace
+        | pallas_core.CoreMemorySpace
+        | None
     ),
     core_type: CoreType,
-) -> MemorySpace | pallas_core.MemorySpace | CoreMemorySpace:
+) -> MemorySpace | pallas_core.MemorySpace | pallas_core.CoreMemorySpace:
   match memory_space:
     case None:
       match core_type:
@@ -616,7 +597,7 @@ def memory_space_to_tpu_memory_space(
         | pallas_core.MemorySpace.KEY
     ):
       return MemorySpace.SMEM
-    case CoreMemorySpace():
+    case pallas_core.CoreMemorySpace():
       return (
           memory_space.memory_space
           if memory_space.mesh.core_type is core_type

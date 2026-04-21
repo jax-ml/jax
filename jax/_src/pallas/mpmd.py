@@ -285,7 +285,7 @@ def _mpmd_map(
         from jax._src.pallas.mosaic import core as tpu_core
 
         if not isinstance(
-            scratch_type.memory_space, tpu_core.CoreMemorySpace
+            scratch_type.memory_space, pallas_core.CoreMemorySpace
         ) and scratch_type.memory_space not in (
             tpu_core.MemorySpace.HBM,
             tpu_core.MemorySpace.VMEM_SHARED,
