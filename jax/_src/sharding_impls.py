@@ -40,8 +40,7 @@ from jax._src.named_sharding import (  # noqa: F401
     SdyArray, SdyDim, UnspecifiedValue, AUTO, flatten_spec, NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
-    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
-    modify_sdy_sharding_wrt_axis_types)
+    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
 from jax._src.op_shardings import (
     are_hlo_shardings_equal, get_num_ways_dim_sharded,
     is_hlo_sharding_replicated)

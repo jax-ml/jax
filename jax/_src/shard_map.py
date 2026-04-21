@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence, Set
-import dataclasses
 import enum
 from functools import partial
 import inspect
@@ -915,11 +914,9 @@ def _shardy_shard_map_sharding(
     aval_in = core.physical_aval(aval_in)
   sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if len(manual_axes) < len(mesh.axis_names):
-    new_dim_shardings = tuple(
-        dataclasses.replace(d, is_open=True) for d in sdy_sharding.dim_shardings
-    )
-    sdy_sharding = dataclasses.replace(
-      sdy_sharding, dim_shardings=new_dim_shardings)
+    new_dim_shardings = tuple(d.replace(is_open=True)
+                              for d in sdy_sharding.dim_shardings)
+    sdy_sharding = sdy_sharding.replace(dim_shardings=new_dim_shardings)
   return sdy_sharding
 
 

@@ -6347,7 +6347,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     if config.use_shardy_partitioner.value:
       self.assertTrue(lowered_text.count(
-          '[{"x", ?}, {?}, {?}], replicated={"y"}') == 3)
+          '[{"x", ?}, {?}, {?}], replicated={"y"}') == 2)
     else:
       self.assertTrue(lowered_text.count("unspecified_dims=[0,1,2]") == 3)
 

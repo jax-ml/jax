@@ -57,9 +57,8 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import ( AUTO, NamedSharding,
-                                     SdyArray, SdyArrayList,
-                                     modify_sdy_sharding_wrt_axis_types)
+from jax._src.sharding_impls import (
+    AUTO, NamedSharding, SdyArray, SdyArrayList)
 from jax._src.state.types import AbstractRef
 from jax._src.typing import ArrayLike
 from jax._src.util import foreach
@@ -1974,7 +1973,10 @@ def lower_jaxpr_to_fun(
         if (s is not None and uv.contains_unconstrained and
             not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
-            s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
+            # TODO(yashkatariya): clean this up. This should be done at the start
+            # in _to_physical_sharding instead of mucking with shardings here.
+            s = s.replace(dim_shardings=tuple(d.replace(is_open=True)
+                                              for d in s.dim_shardings))
             unconstrained_dims = None  # delete this after shardy is default
           else:
             unconstrained_dims = (
@@ -3043,8 +3045,7 @@ def lower_with_sharding_in_types(ctx, op, aval):
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     aval = core.physical_aval(aval)
   if config.use_shardy_partitioner.value:
-    proto = aval.sharding._to_sdy_sharding(aval.ndim)
-    proto = modify_sdy_sharding_wrt_axis_types(proto, aval.sharding.mesh)
+    proto = aval.sharding._to_sdy_sharding(aval.ndim, modify_wrt_axis_types=True)
     return wrap_with_sharding_op(ctx, op, aval, proto)
   else:
     proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
