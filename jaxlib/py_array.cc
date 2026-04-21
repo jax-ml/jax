@@ -735,7 +735,8 @@ nb::object PyArray::arrays() {
   // them later.
   if (ifrt_array() == nullptr || ifrt_array()->IsDeleted()) return nb::none();
 
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
+  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding()) &&
+      ifrt_array()->sharding().devices()->devices().front()->IsAddressable()) {
     std::vector<PyArray> py_arrays;
     py_arrays.push_back(*this);
     return nb::cast(py_arrays);
