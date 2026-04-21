@@ -32,6 +32,14 @@ mock = absltest.mock
 
 class XlaBridgeTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    # Tests in this class mutate xb._backend_factories via
+    # register_pjrt_plugin_factories_from_env(); isolate the mutation so it
+    # doesn't leak into other tests in the same xdist worker (e.g.,
+    # clear_backends_test.py, logging_test.py).
+    self.enter_context(mock.patch.dict(xb._backend_factories))
+
   def test_set_device_assignment_no_partition(self):
     compile_options = compiler.get_compile_options(
         num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
@@ -121,20 +129,18 @@ class XlaBridgeTest(jtu.JaxTestCase):
       xb.local_devices(backend="foo")
 
   def test_register_plugin(self):
-    with self.assertLogs(level="WARNING") as log_output:
-      with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
-        if platform.system() == "Windows":
-          os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
-              "name1;path1,name2;path2,name3"
-          )
-        else:
-          os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
-              "name1:path1,name2:path2,name3"
-          )
-        with mock.patch.object(
-            _profiler, "register_plugin_profiler", autospec=True
-        ):
-          xb.register_pjrt_plugin_factories_from_env()
+    env_value = (
+        "name1;path1,name2;path2,name3"
+        if platform.system() == "Windows"
+        else "name1:path1,name2:path2,name3"
+    )
+    with (
+        self.assertLogs(level="WARNING") as log_output,
+        mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True),
+        mock.patch.dict(os.environ, {"PJRT_NAMES_AND_LIBRARY_PATHS": env_value}),
+        mock.patch.object(_profiler, "register_plugin_profiler", autospec=True),
+    ):
+      xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
@@ -165,16 +171,17 @@ class XlaBridgeTest(jtu.JaxTestCase):
     test_json_file_path = os.path.join(
         os.path.dirname(__file__), "testdata/example_pjrt_plugin_config.json"
     )
-    os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
+    env_value = (
         f"name1;{test_json_file_path}"
         if platform.system() == "Windows"
         else f"name1:{test_json_file_path}"
     )
-    with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
-      with mock.patch.object(
-          _profiler, "register_plugin_profiler", autospec=True
-      ):
-        xb.register_pjrt_plugin_factories_from_env()
+    with (
+        mock.patch.dict(os.environ, {"PJRT_NAMES_AND_LIBRARY_PATHS": env_value}),
+        mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True),
+        mock.patch.object(_profiler, "register_plugin_profiler", autospec=True),
+    ):
+      xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
