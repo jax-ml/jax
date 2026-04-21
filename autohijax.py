@@ -303,28 +303,29 @@ class LeaveJit(Op):
     return result.map2(lambda x, lo: Val(lo, x.ty), lo_ans)
 
   def vjp(self, trace: VJPTrace, tracers_out):
-    enter_ctx = trace.ctx.pop()
-    primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
-    res, bwds = unzip2(enter_ctx.tape)
-    outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
-    # TODO forwarding
-    # TODO env
-    with ctx.set_current_trace(trace.parent):
-      outs = ctx.cur_trace.bind(LeaveJit(), outs)
-    primals_out, res = outs.unpack()
-    right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    def bwd(res):
-      res = FlatTree.flatten(res)
-      right_ct = right_accum.map(lambda x: x.finalize())
-      res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
-      local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
-      tape = map(Pullback, res.unflatten(), bwds)
-      while tape: tape.pop()()
-      left_ct = enter_ctx.local_left_accum.map(lambda a: lift(a.finalize()))
-      left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
-      enter_ctx.left_accum.map2(lambda a, ct: a.accum(ct), left_ct)
-    trace.tape.append(Pullback(res.unflatten(), bwd))
-    return primals_out.map2(partial(VJPTracer, trace), right_accum)
+
+    # enter_ctx = trace.ctx.pop()
+    # primals_out, local_right_accum = tracers_out.map(lambda x: (x.primal, x.accum)).unzip2()
+    # res, bwds = unzip2(enter_ctx.tape)
+    # outs = FlatTree.pack((primals_out, FlatTree.flatten(res)))
+    # # TODO forwarding
+    # # TODO env
+    # with ctx.set_current_trace(trace.parent):
+    #   outs = ctx.cur_trace.bind(LeaveJit(), outs)
+    # primals_out, res = outs.unpack()
+    # right_accum = primals_out.map(lambda x: Accumulator(x.ty.tangent_ty()))
+    # def bwd(res):
+    #   res = FlatTree.flatten(res)
+    #   right_ct = right_accum.map(lambda x: x.finalize())
+    #   res, right_ct = ctx.cur_trace.bind(EnterJit(), FlatTree.pack((res, right_ct))).unpack()
+    #   local_right_accum.map2(lambda a, ct: a.accum(ct), right_ct)
+    #   tape = map(Pullback, res.unflatten(), bwds)
+    #   while tape: tape.pop()()
+    #   left_ct = enter_ctx.local_left_accum.map(lambda a: lift(a.finalize()))
+    #   left_ct = ctx.cur_trace.bind(LeaveJit(), left_ct)
+    #   enter_ctx.left_accum.map2(lambda a, ct: a.accum(ct), left_ct)
+    # trace.tape.append(Pullback(res.unflatten(), bwd))
+    # return primals_out.map2(partial(VJPTracer, trace), right_accum)
 
 # TODO: cache and curry
 def jit_call(f, *args):
