@@ -37,8 +37,9 @@ runs:
       shell: bash
       env:
         TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
       run: |
-        printf -v padded_attempt "attempt%03d" "${{ github.run_attempt }}"
+        printf -v padded_attempt "attempt%03d" "$RUN_ATTEMPT"
         echo "padded_attempt=${padded_attempt}" >> "$GITHUB_OUTPUT"
         if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR"/*.xml 2>/dev/null)" ]]; then
           echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
@@ -90,7 +91,8 @@ runs:
         TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
         GCS_UPLOAD_URI: ${{ inputs.gcs-upload-uri }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        PADDED_ATTEMPT: ${{ steps.check-artifacts.outputs.padded_attempt }}
       run: |
-        artifact_name="$INPUT_ARTIFACT_NAME-${{ steps.check-artifacts.outputs.padded_attempt }}"
+        artifact_name="$INPUT_ARTIFACT_NAME-$PADDED_ATTEMPT"
         gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$GCS_UPLOAD_URI/$artifact_name/"
 
