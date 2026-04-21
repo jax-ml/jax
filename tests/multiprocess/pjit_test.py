@@ -146,6 +146,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
 
   # Test does not work with non-contiguous device IDs.
   @jtu.skip_on_devices("cpu")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="`with mesh:` context manager")
   def test_pjit_array_non_contiguous_mesh_2d(self):
     global_mesh = create_2d_non_contiguous_mesh()
     global_input_shape = (8, 2)
@@ -299,6 +301,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
           s.data, (input_data @ input_data.T)[s.index]
       )
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="`with mesh:` context manager")
   def test_pjit_array_eval_shape(self):
     with jtu.create_mesh((8,), "x"):
 
@@ -313,6 +317,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
       self.assertEqual(f().shape, (32, 10))
       self.assertEqual(jax.eval_shape(f).shape, (32, 10))
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="`with mesh:` context manager")
   def test_trace_with_global_avals(self):
     devices = sorted_devices()
     mesh_devices = np.array(devices[::2] + devices[1::2])
@@ -359,6 +365,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
     pjit_all(pjit_all(check_shape))(x)
     pjit_all(pjit_all(pjit_all(check_shape)))(x)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="`with mesh:` context manager")
   def test_compile_parallel(self):
     x = jnp.arange(16)
     global_mesh = jtu.create_mesh((4, 2), ("x", "y"))
@@ -415,6 +423,8 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         shard_size * len(a.global_shards), a.on_device_size_in_bytes()
     )
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="`with mesh:` context manager")
   def test_numpy_input_error_with_non_trivial_sharding(self):
     global_mesh = jtu.create_mesh((8,), "x")
     inp = np.arange(8)
