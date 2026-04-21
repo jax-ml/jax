@@ -20,20 +20,32 @@ on:
     types:
       - completed
 
+
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   upload:
     name: "Upload Workflow Metadata"
     runs-on: linux-x86-n4-16
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Fetch and Upload Metadata
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          REPO: ${{ github.repository }}
         run: |
-          run_id=${{ github.event.workflow_run.id }}
           curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id > workflow_run.json
+            "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID" > workflow_run.json
           curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id/jobs?per_page=200 > jobs.json
-          gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.event.workflow_run.name }}/${{ github.event.workflow_run.run_number }}/${{ github.event.workflow_run.run_attempt }}"
+            "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID/jobs?per_page=200" > jobs.json
+          gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/$WORKFLOW_RUN_NAME/$WORKFLOW_RUN_NUMBER/$WORKFLOW_RUN_ATTEMPT"
           gcloud storage cp workflow_run.json jobs.json "$gcs_upload_uri/"
