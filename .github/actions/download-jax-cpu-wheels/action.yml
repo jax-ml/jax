@@ -26,6 +26,7 @@ runs:
   steps:
     # Note that certain envs such as JAXCI_HERMETIC_PYTHON_VERSION are set by the calling workflow.
     - name: Set env vars for use in artifact download URL
+      id: set-vars
       shell: bash
       run: |
         os=$(uname -s | awk '{print tolower($0)}')
@@ -42,12 +43,12 @@ runs:
         # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
         python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
-        echo "OS=${os}" >> $GITHUB_ENV
-        echo "ARCH=${arch}" >> $GITHUB_ENV
+        echo "os=${os}" >> $GITHUB_OUTPUT
+        echo "arch=${arch}" >> $GITHUB_OUTPUT
         # Python wheels follow a naming convention: standard wheels use the pattern
         # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
         # `*-cp<py_version>-cp<py_version>t-*`.
-        echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+        echo "python_major_minor=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_OUTPUT
     - name: Download wheels from GCS (non-Windows runs)
       shell: bash
       id: download-wheel-artifacts-nw
@@ -74,12 +75,15 @@ runs:
           fi
         fi
       env:
+        OS: ${{ steps.set-vars.outputs.os }}
+        ARCH: ${{ steps.set-vars.outputs.arch }}
+        PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
         INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
         INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
         INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
         INPUTS_PYTHON: ${{ inputs.python }}
     - name: Download wheels from GCS (Windows runs)
-      shell: cmd
+      shell: cmd  # zizmor: ignore[misfeature]
       id: download-wheel-artifacts-w
       # Set continue-on-error to true to prevent actions from failing the workflow if this step
       # fails. Instead, we verify the outcome in step below so that we can print a more
@@ -98,6 +102,9 @@ runs:
           call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
         )
       env:
+        OS: ${{ steps.set-vars.outputs.os }}
+        ARCH: ${{ steps.set-vars.outputs.arch }}
+        PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
         INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
         INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
