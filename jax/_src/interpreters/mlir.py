@@ -440,7 +440,7 @@ def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute
         "NumPy arrays with zero strides are not supported as MLIR attributes")
   if val.dtype == dtypes.float0:
     val = np.zeros(val.shape, dtype=np.bool_)
-  if dtypes.is_python_scalar(val) or np.isscalar(val):
+  if dtypes.is_weakly_typed_scalar(val) or np.isscalar(val):
     return _numpy_scalar_attribute(val)
   else:
     return _numpy_array_attribute(val)

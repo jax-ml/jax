@@ -926,7 +926,7 @@ def is_weakly_typed(x: Any) -> bool:
   except AttributeError:
     return False
 
-def is_python_scalar(x: Any) -> bool:
+def is_weakly_typed_scalar(x: Any) -> bool:
   try:
     return x.aval.weak_type and np.ndim(x) == 0
   except AttributeError:

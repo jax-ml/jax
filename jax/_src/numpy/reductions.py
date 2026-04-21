@@ -50,7 +50,7 @@ def _isscalar(element: Any) -> bool:
   m = getattr(element, '__jax_array__', None)
   if m is not None:
     element = m()
-  return dtypes.is_python_scalar(element) or np.isscalar(element)
+  return dtypes.is_weakly_typed_scalar(element) or np.isscalar(element)
 
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:
   # simplified version of jnp.moveaxis() for local use.
