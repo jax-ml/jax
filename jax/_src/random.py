@@ -748,7 +748,9 @@ def choice(key: ArrayLike,
            replace: bool = True,
            p: RealArray | None = None,
            axis: int = 0,
-           mode: str | None = None) -> Array:
+           mode: str | None = None,
+           *,
+           dtype: DTypeLike | None = None) -> Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -777,6 +779,8 @@ def choice(key: ArrayLike,
       in float32 sampling will be biased for choices with probability less than about
       1E-7; with mode="high" this limit is pushed down to about 1E-14. mode="high"
       approximately doubles the cost of sampling.
+    dtype: optional. If specified, determines the dtype of the arange used when
+      a is an integer. If a is an array, the array must have this dtype.
 
   Returns:
     An array of shape `shape` containing samples from `a`.
@@ -787,14 +791,19 @@ def choice(key: ArrayLike,
                     f"got {shape}")
   check_arraylike("choice", a)
   arr = jnp.asarray(a)
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      arr.dtype if dtype is None else dtype)
   if arr.ndim == 0:
     n_inputs = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
   else:
     axis = canonicalize_axis(axis, arr.ndim)
     n_inputs = arr.shape[axis]
+    if arr.dtype != dtype:
+      raise TypeError(
+          f"dtype argument {dtype} does not match dtype of a: {arr.dtype}")
   n_draws = math.prod(shape)
   if n_draws == 0:
-    return jnp.zeros(shape, dtype=arr.dtype)
+    return jnp.zeros(shape, dtype=dtype)
   if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if not replace and n_draws > n_inputs:
@@ -808,7 +817,8 @@ def choice(key: ArrayLike,
       result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
     else:
       slices = (slice(None),) * axis + (slice(n_draws),)
-      result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
+      result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis,
+                           dtype=dtype)[slices]
   else:
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
@@ -819,12 +829,12 @@ def choice(key: ArrayLike,
     if replace:
       p_cuml = jnp.cumsum(p_arr)
       r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
-      ind = jnp.searchsorted(p_cuml, r).astype(int)
+      ind = jnp.searchsorted(p_cuml, r)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
-      ind = lax.top_k(g, k=n_draws)[1].astype(int)
-    result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+      ind = lax.top_k(g, k=n_draws)[1]
+    result = ind.astype(dtype) if arr.ndim == 0 else jnp.take(arr, ind.astype(int), axis)
 
   return result.reshape(shape if arr.ndim == 0 else
                         arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])

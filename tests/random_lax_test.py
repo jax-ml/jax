@@ -1153,6 +1153,25 @@ class DistributionsTest(RandomTestBase):
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
 
+  def testChoiceDtype(self):
+    key = self.make_key(0)
+    # When a is an integer and replace=False, dtype controls the arange dtype.
+    result = random.choice(key, 10, shape=(5,), replace=False, dtype=np.int16)
+    self.assertEqual(result.dtype, np.dtype(np.int16))
+
+    # Default dtype (None) still works.
+    result_default = random.choice(key, 10, shape=(5,), replace=False)
+    self.assertEqual(result_default.ndim, 1)
+
+    # When a is an array and dtype matches, no error.
+    a = np.arange(10, dtype=np.int32)
+    result = random.choice(key, a, shape=(5,), dtype=np.int32)
+    self.assertEqual(result.dtype, np.dtype(np.int32))
+
+    # When a is an array and dtype mismatches, raise TypeError.
+    with self.assertRaises(TypeError):
+      random.choice(key, a, shape=(5,), dtype=np.int16)
+
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def test_randint_bounds(self, dtype):
     min = np.iinfo(dtype).min
