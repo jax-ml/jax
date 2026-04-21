@@ -37,10 +37,10 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec
-from jax._src.pallas.fuser.fusible import fusible_p
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
+from jax._src import hijax
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -549,19 +549,10 @@ def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
   return aval_in.dtype.unpack_eval_rule(ctx, *args)  # pyrefly: ignore[missing-attribute]
 
 
-def _fusible_physicalize_rule(
-    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func
-):
-  consts, _ = util.split_list(consts_and_args, [num_consts])
-  new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
-  return fusible_p.bind(
-      *consts_and_args,
-      jaxpr=new_jaxpr.jaxpr,
-      num_consts=num_consts,
-      in_tree=in_tree,
-      out_tree=out_tree,
-      func=func,
-  )
+def _call_hi_primitive_physicalize_rule(ctx, *args, _prim):
+  if hasattr(_prim, "physicalize"):
+    return _prim.physicalize(ctx, *args)
+  raise NotImplementedError(f"Physicalization not implemented for {_prim}")
 
 
-_physicalize_rules[fusible_p] = _fusible_physicalize_rule
+_physicalize_rules[hijax.call_hi_primitive_p] = _call_hi_primitive_physicalize_rule
