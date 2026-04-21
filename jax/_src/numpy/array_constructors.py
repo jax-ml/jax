@@ -227,7 +227,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     )
 
   # For Python scalar literals, call coerce_to_array to catch any overflow
-  # errors. We don't use dtypes.is_python_scalar because we don't want this
+  # errors. We don't use dtypes.is_weakly_typed_scalar because we don't want this
   # triggering for traced values. We do this here because it matters whether or
   # not dtype is None. We don't assign the result because we want the raw object
   # to be used for type inference below.
