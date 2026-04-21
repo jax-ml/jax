@@ -485,7 +485,7 @@ def dma_start_partial_discharge_rule(
     recv_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
     recv_size = jnp.array(recv_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
     dst_sem_value = primitives._transform_semaphore(
-        dst_sem, dst_sem_transforms, dst_sem_aval
+        dst_sem, dst_sem_transforms, _get_ref(dst_sem_aval)
     )
     _, ret = state_discharge.transform_swap_array(
         dst_sem, dst_sem_transforms, dst_sem_value[...] + recv_size
@@ -496,7 +496,7 @@ def dma_start_partial_discharge_rule(
     send_size = jnp.minimum(local_src.size, pl_core.SEMAPHORE_MAX_VALUE)
     send_size = jnp.array(send_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
     src_sem_value = primitives._transform_semaphore(
-        src_sem, src_sem_transforms, src_sem_aval
+        src_sem, src_sem_transforms, _get_ref(src_sem_aval)
     )
     _, ret = state_discharge.transform_swap_array(
         src_sem, src_sem_transforms, src_sem_value[...] + send_size
@@ -620,7 +620,7 @@ def dma_wait_partial_discharge_rule(should_discharge,
   # buffers are only specified for their types and not their value so
   # it's completely irrelevant for us here if they are discharged.
   should_discharge_unflattened = _dma_unflatten(tree, should_discharge)
-  if not should_discharge_unflattened[2]:
+  if not _get_ref(should_discharge_unflattened[2]):
     return (None,) * len(in_avals), []
 
   num_sem_transforms = len(_dma_tree_leaves(dst_sem_aval)) - 1
@@ -629,7 +629,9 @@ def dma_wait_partial_discharge_rule(should_discharge,
   updates = state_discharge.transform_array(dst_ref[...], dst_ref_transforms)
   copy_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
   copy_size = jnp.array(copy_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
-  sem_value = primitives._transform_semaphore(dst_sem, dst_sem_transforms, dst_sem_aval)
+  sem_value = primitives._transform_semaphore(
+      dst_sem, dst_sem_transforms, _get_ref(dst_sem_aval)
+  )
   _, new_sem = state_discharge.transform_swap_array(
       dst_sem, dst_sem_transforms, sem_value - copy_size
   )
