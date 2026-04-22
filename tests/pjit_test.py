@@ -455,23 +455,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(y)
     self.assertDeleted(z)
 
-  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
-  def testBufferDonationMixedConstrainedness(self):
-    mesh = jtu.create_mesh((2,), 'x')
-    s = NamedSharding(mesh, P())
-    s2 = NamedSharding(mesh, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
-
-    @partial(pjit, donate_argnames=('x', 'y'), out_shardings=(s2, s))
-    def f(x, y):
-      return x * 2, y * 2
-
-    x1 = jax.device_put(np.arange(16).reshape(8, 2), s)
-    x2 = jax.device_put(np.arange(16).reshape(8, 2), s)
-    txt = f.lower(x1, x2).as_text()
-    self.assertIn("jax.buffer_donor = true", txt)
-    self.assertIn("tf.aliasing_output = 1 : i32", txt)
-    f(x1, x2)
-
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintStablehlo(self):
     @partial(pjit, in_shardings=None, out_shardings=None)
@@ -4670,31 +4653,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_jit_out_shardings_unconstrained(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
-    arr = jax.device_put(np_inp, s)
 
-    out_s = NamedSharding(mesh, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
-    @jax.jit(out_shardings=out_s)
-    def f(x):
-      return x * 2
+    with self.assertRaisesRegex(
+        ValueError, "Unconstrained dims are not allowed"):
+      @jax.jit(out_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, P.UNCONSTRAINED)))
+      def f(x):
+        return x * 2
 
-    out = f(arr)
-    self.assertEqual(out.sharding, s)
-    self.assertArraysEqual(out, np_inp * 2)
-
-    @jax.jit(out_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'y')))
-    def g(x):
-      return x * 3
-
-    out = g(arr)
-    self.assertArraysEqual(out, np_inp * 3)
-    self.assertEqual(out.sharding, s)
-    lowered_text = g.lower(arr).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {"y", ?}]>', lowered_text)
-    else:
-      self.assertIn("unspecified_dims=[0,1]", lowered_text)
+    with self.assertRaisesRegex(
+        ValueError, "Unconstrained dims are not allowed"):
+      @jax.jit(out_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'y')))
+      def g(x):
+        return x * 3
 
   def test_prng_key_wsc(self):
     mesh = jtu.create_mesh((2,), 'x')
@@ -6064,9 +6034,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.sharding, NamedSharding(mesh2, P('x',)))
       lowered_text = f.lower(arr, arr2).as_text()
       if config.use_shardy_partitioner.value:
-        self.assertTrue(lowered_text.count("{?}") == 5)
+        self.assertTrue(lowered_text.count("{?}") == 4)
       else:
-        self.assertTrue(lowered_text.count("unspecified_dims") == 5)
+        self.assertTrue(lowered_text.count("unspecified_dims") == 4)
 
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types=(mesh_lib.AxisType.Auto,
@@ -8772,10 +8742,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(arr).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertEqual(lowered_text.count("{?}"), 3)
-      self.assertEqual(lowered_text.count('{"x", ?}'), 3)
+      self.assertEqual(lowered_text.count("{?}"), 2)
+      self.assertEqual(lowered_text.count('{"x", ?}'), 2)
     else:
-      self.assertEqual(lowered_text.count('unspecified_dims=[0,1]'), 3)
+      self.assertEqual(lowered_text.count('unspecified_dims=[0,1]'), 2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
   def test_vmap_spmd_axis_name_explicit_axes_inside(self, mesh):

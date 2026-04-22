@@ -1186,15 +1186,6 @@ def all_unconstrained(s, aval):
     return all(p is PartitionSpec.UNCONSTRAINED for p in s.spec)
   return False
 
-class UnconstrainedVariants(NamedTuple):
-  contains_unconstrained: bool
-  all_unconstrained: bool
-
-def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
-  us = contains_unconstrained(s)
-  return UnconstrainedVariants(
-      contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval))
-
 
 def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
   """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
@@ -1741,14 +1732,14 @@ def lower_jaxpr_to_fun(
          for is_donated, types in zip(xla_donated_args, input_types)])
 
   ir_result_shardings = None
-  unconstrained_variants = None
+  sharding_contains_unconstrained = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
-    unconstrained_variants = util.flatten(
-        [[_get_unconstrained_variants(s, a)] * len_ir_types(types)
-         for a, s, types in zip(output_avals, result_shardings, output_types)])
+    sharding_contains_unconstrained = util.flatten(
+        [[contains_unconstrained(s)] * len_ir_types(types)
+         for s, types in zip(result_shardings, output_types)])
 
   ir_result_memory_kinds = None
   custom_call_ir_result_memory_kinds = None
@@ -1872,9 +1863,9 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,
-                                   unconstrained_variants):  # pyrefly: ignore[bad-argument-type]
-      if sharding is not None and not uv.contains_unconstrained:
+    for attrs, sharding, cu in zip(result_attrs, ir_result_shardings,
+                                   sharding_contains_unconstrained):  # type: ignore
+      if sharding is not None and not cu:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(ctx, sharding)
         else:
@@ -1977,29 +1968,6 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
-
-    if ir_result_shardings is not None:
-      temp_flat_outputs = []
-      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,
-                                  output_avals, unconstrained_variants):  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
-        if (s is not None and uv.contains_unconstrained and
-            not uv.all_unconstrained):
-          if config.use_shardy_partitioner.value:
-            # TODO(yashkatariya): clean this up. This should be done at the start
-            # in _to_physical_sharding instead of mucking with shardings here.
-            s = s.replace(dim_shardings=tuple(d.replace(is_open=True)
-                                              for d in s.dim_shardings))
-            unconstrained_dims = None  # delete this after shardy is default
-          else:
-            unconstrained_dims = (
-                set(range(o_aval.ndim)) if o_aval.sharding.mesh._any_axis_auto
-                else None)
-          temp_flat_outputs.append(wrap_with_sharding_op(
-              entry_lowering_ctx, o, o_aval, s,
-              unspecified_dims=unconstrained_dims))
-        else:
-          temp_flat_outputs.append(o)
-      flat_outputs = temp_flat_outputs
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.

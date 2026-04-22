@@ -377,8 +377,7 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
   out_layouts, out_shardings = _split_layout_and_sharding(out_shardings)
 
   in_shardings = prepare_axis_resources(in_shardings, 'in_shardings')
-  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings',
-                                         allow_unconstrained_dims=True)
+  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings')
 
   user_specified_in_shardings = (in_shardings is not None and
                                  not isinstance(in_shardings, UnspecifiedValue))
@@ -2129,8 +2128,9 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
       sharding = NamedSharding(x.sharding.mesh, sharding.spec)
 
   if layout is None:
-    # Run a jit here to raise good errors when device assignment don't match.
-    return api.jit(_identity_fn, out_shardings=sharding)(x)
+    return dispatch.apply_primitive(
+        sharding_constraint_p, x,  sharding=sharding, layout=layout,
+        context_mesh=context_mesh, unconstrained_dims=unconstrained_dims)
   else:
     return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
 
