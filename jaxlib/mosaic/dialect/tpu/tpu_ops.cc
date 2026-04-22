@@ -1389,11 +1389,6 @@ LogicalResult SemaphoreSignalOp::verify() {
                           stringifyCoreType(issuing_core_type)));
     }
   }
-  if (issuing_core_type != CoreType::kScVectorSubcore &&
-      target_core_type == CoreType::kScVectorSubcore) {
-    return emitOpError(
-        "Signalling remote SC vectore subcore is not implemented");
-  }
   return success();
 }
 
