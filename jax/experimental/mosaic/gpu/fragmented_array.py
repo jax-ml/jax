@@ -1639,6 +1639,13 @@ class FragmentedArray:
         absf = self._lift_fast_packed_instr("abs.f16x2", "abs.f16")
       elif isinstance(self.mlir_dtype, ir.BF16Type):
         absf = self._lift_fast_packed_instr("abs.bf16x2", "abs.bf16")
+      elif isinstance(self.mlir_dtype, (ir.Float8E4M3FNType, ir.Float8E5M2Type, ir.Float4E2M1FNType)):
+        bitwidth = utils.bitwidth(self.mlir_dtype)
+        itype = ir.IntegerType.get_signless(bitwidth)
+        i_arr = self.bitcast(itype, output_is_signed=False)
+        mask = (1 << (bitwidth - 1)) - 1
+        res_i = i_arr & mask
+        return res_i.bitcast(self.mlir_dtype)
       return self._pointwise(absf)
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       if self.is_signed:
@@ -1765,6 +1772,8 @@ class FragmentedArray:
 
     if elt == self.mlir_dtype:
       return self
+    if utils.bitwidth(elt) != utils.bitwidth(self.mlir_dtype):
+      raise ValueError("Only bitcast between types of the same bitwidth supported")
     reg_type = self.registers.flat[0].type
     if isinstance(reg_type, ir.VectorType):
       reg_shape = ir.VectorType(reg_type).shape
@@ -1773,7 +1782,7 @@ class FragmentedArray:
       ty = elt
 
     return self._pointwise(
-        lambda x: arith.bitcast(ty, x), output_is_signed=output_is_signed
+        lambda x: arith.bitcast(ty, x), output_is_signed=output_is_signed, restrict_bitwidth=False
     )
 
   def __getitem__(self, idx) -> FragmentedArray:

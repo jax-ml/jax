@@ -4242,17 +4242,20 @@ class FragmentedArrayTest(TestCase):
 
   @parameterized.product(
       vec_size=(4, 3, 1),
-      dtype=(jnp.float16, jnp.bfloat16),
+      dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e4m3fn, jnp.float8_e5m2, jnp.float4_e2m1fn),
   )
-  def test_abs_ptx(self, vec_size, dtype):
-      def kernel(ctx, src, dst, _):
-        src = fa.FragmentedArray.load_strided(src, vec_size=vec_size)
-        src.abs().store_untiled(dst)
-      x = self.prng.uniform(-1, 1, (12 * 128,)).astype(dtype)
-      f = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, x, ()
-      )
-      np.testing.assert_array_equal(f(x), np.abs(x))
+  def test_float_abs(self, vec_size, dtype):
+    if vec_size * bitwidth(dtype_to_ir_type(dtype)) % 8:
+      self.skipTest("Vector length must be multiple of byte size")
+    def kernel(ctx, src, dst, _):
+      src = fa.FragmentedArray.load_strided(src, vec_size=vec_size)
+      src.abs().store_untiled(dst)
+    x = jnp.asarray(self.prng.uniform(-4, 4, (12 * 128,))).astype(dtype)
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, ()
+    )
+    expected = jnp.abs(x.astype(np.float32)).astype(x.dtype)
+    np.testing.assert_array_equal(f(x), expected)
 
   def test_minimum_np_compatibility(self):
     one = np.ones((128, 128)).astype(np.float32)
