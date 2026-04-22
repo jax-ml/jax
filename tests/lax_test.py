@@ -5043,6 +5043,12 @@ class CompositeTest(jtu.JaxTestCase):
 
 class RaggedTest(jtu.JaxTestCase):
 
+  def check_wsc_in_lowered(self, text):
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', text)
+    else:
+      self.assertIn('@Sharding', text)
+
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
 
@@ -5354,6 +5360,7 @@ class RaggedTest(jtu.JaxTestCase):
           lhs, rhs, group_sizes, ragged_dot_dimension_numbers=ragged_dnums,
           precision=jax.lax.Precision.DEFAULT,
           preferred_element_type=jnp.float32,
+          group_offset=None, out_sharding=None,
       )
     else:
       actual_shape = lax.ragged_dot_general(
@@ -5412,6 +5419,50 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+  @jtu.with_explicit_mesh((1,), ("x",))
+  def test_ragged_dot_out_sharding(self, mesh):
+    args = [jnp.ones((16, 4)), jnp.ones((2, 4, 3)), jnp.array([8, 8])]
+
+    def f(lhs, rhs, gs):
+      out = lax.ragged_dot(lhs, rhs, gs, out_sharding=jax.P("x", None))
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P("x", None))
+      return out
+
+    # Eager mode
+    out = f(*args)
+    self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P("x", None)))
+
+    # JIT mode
+    f_jit = jax.jit(f)
+    out = f_jit(*args)
+    self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P("x", None)))
+
+    # HLO lowering
+    self.check_wsc_in_lowered(f_jit.lower(*args).as_text())
+
+  @jtu.with_explicit_mesh((1,), ("x",))
+  def test_ragged_dot_general_out_sharding(self, mesh):
+    args = [jnp.ones((16, 4)), jnp.ones((2, 4, 3)), jnp.array([8, 8])]
+    dnums = lax.RaggedDotDimensionNumbers((([1], [1]), ([], [])), [0], [0])
+
+    def f(lhs, rhs, gs):
+      out = lax.ragged_dot_general(lhs, rhs, gs, dnums,
+                                   out_sharding=jax.P("x", None))
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P("x", None))
+      return out
+
+    # Eager mode
+    out = f(*args)
+    self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P("x", None)))
+
+    # JIT mode
+    f_jit = jax.jit(f)
+    out = f_jit(*args)
+    self.assertEqual(out.sharding, jax.NamedSharding(mesh, jax.P("x", None)))
+
+    # HLO lowering
+    self.check_wsc_in_lowered(f_jit.lower(*args).as_text())
 
 class LaxUtilsTest(jtu.JaxTestCase):
 

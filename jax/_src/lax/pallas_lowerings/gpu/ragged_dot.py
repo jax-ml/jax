@@ -453,8 +453,12 @@ def _pallas_ragged_dot_general_impl(
                                           # precision parameter in the kernels.
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
+    out_sharding=None,
 ) -> Array:
-
+  if out_sharding is not None:
+    raise NotImplementedError(
+      "Explicit sharding is not currently supported in the pallas-triton"
+      " lowering of ragged_dot_general. You can call this op under shard_map.")
 
   if group_offset is not None:
     raise NotImplementedError("group_offset is not currently supported in the "
@@ -508,7 +512,6 @@ def _pallas_ragged_dot_general_impl(
           rd2s(r_batch) + (rags(rhs_group_dims), rags(c_or_nc), rags(nc_or_c))
       )
 
-
       # batch dimensions are handled by vmap
       fn = compose_vmap(
           partial(gmm, trans_rhs=trans_rhs, **ragged_dot_opts), len(l_batch)
@@ -520,6 +523,7 @@ def _pallas_ragged_dot_general_impl(
       out = out.reshape(
           ld2s(l_batch) + ld2s(l_noncontract) + rd2s(r_noncontract)
       )
+      # TODO(rdyro): When out_sharding is supported, ensure proper sharding.
       return out
     case lax.RaggedDotMode.RAGGED_CONTRACTING:
       r_noncontract = tuple(lax.remaining(range(rhs.ndim), r_contract, r_batch))
@@ -557,6 +561,7 @@ def _pallas_ragged_dot_general_impl(
                   + out_perm[:batch_ndims]
                   + out_perm[batch_ndims+groups_ndims:])
       out = out.transpose(out_perm)
+      # TODO(rdyro): When out_sharding is supported, ensure proper sharding.
       return out
     case lax.RaggedDotMode.RAGGED_BATCH:
       return lax.dot_general(
@@ -565,4 +570,5 @@ def _pallas_ragged_dot_general_impl(
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
           precision=precision,
           preferred_element_type=preferred_element_type,
+          out_sharding=out_sharding,
       )
