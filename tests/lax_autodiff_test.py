@@ -248,6 +248,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
+  def testIntegerPowLinearizeEliminatesIntegerPow(self):
+    x = np.float32(3.0)
+    _, f_lin = jax.linearize(lambda x: 2 * x**0 + 3 * x**1 + 4 * x**2, x)
+    jaxpr = jax.make_jaxpr(f_lin)(x)
+    prims = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    self.assertNotIn(lax.integer_pow_p, prims)
+
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(op=rec.op, tol=rec.tol)],

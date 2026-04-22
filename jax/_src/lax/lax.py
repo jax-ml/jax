@@ -4678,7 +4678,13 @@ def _integer_pow_dtype_rule(x, *, y):
   return dtype
 
 def _integer_pow_jvp(g, x, *, y):
-  return _zeros(g) if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
+  if y == 0:
+    return _zeros(g)
+  if y == 1:
+    return g
+  if y == 2:
+    return mul(g, mul(_const(x, y), x))
+  return mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
