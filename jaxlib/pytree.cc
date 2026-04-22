@@ -1916,7 +1916,7 @@ void BuildPytreeSubmodule(nb::module_& m) {
   nb::class_<DictKey> dict_key(pytree, "DictKey",
                                nb::type_slots(DictKey::slots_),
                                nb::sig("class DictKey(Hashable)"));
-  dict_key.def(nb::init<nb::object>(), nb::arg("key"));
+  dict_key.def(nb::init<nb::object>(), nb::arg("key").none());
   dict_key.def("__str__", &DictKey::ToString);
   dict_key.def("__repr__", &DictKey::ToReprString);
   dict_key.def("__eq__", &DictKey::Equals);
