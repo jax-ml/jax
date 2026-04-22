@@ -2295,11 +2295,11 @@ def _mgpu_warp_map_op_lowering_rule(
   # writes have completed.
   if ctx.auto_barriers:
     utils.warpgroup_barrier()
-  with ir.InsertionPoint.current as ip:
-    for op in op.body.operations:
-      op.detach_from_parent()
-      ip.insert(op)
-      warp_ctx.lower_op(op)
+  ip = ir.InsertionPoint.current
+  for op in op.body.operations:
+    op.detach_from_parent()
+    ip.insert(op)
+    warp_ctx.lower_op(op)
   # We need to ensure that any effects produced by one warp (e.g. async copies)
   # are observable by all other warps.
   if ctx.auto_barriers:
