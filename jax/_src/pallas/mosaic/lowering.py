@@ -4156,7 +4156,8 @@ def _dma_start_lowering_rule(
 
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                            device_id_type: primitives.DeviceIdType):
+                            device_id_type: primitives.DeviceIdType,
+                            insert_dummy_device: bool):
   src, dst, sem, _, device_id = _dma_unflatten(tree, args)
   src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
@@ -4167,11 +4168,15 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   dst, _ = _transform_ref(dst, dst_aval, block_shapes[1])
   sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
 
-  core_id = None
-  if device_id is not None:
+  if insert_dummy_device:
+    i32 = ir.IntegerType.get_signless(32)
+    device_id = core_id = arith.constant(i32, ir.IntegerAttr.get(i32, 0))
+  elif device_id is not None:
     device_id, core_id = _device_id_to_logical(
         ctx, device_id, device_id_type, device_id_aval
     )
+  else:
+    core_id = None
 
   if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 27):
     tpu.wait_dma2(sem, src, dst, core_id=core_id)
