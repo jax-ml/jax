@@ -347,13 +347,13 @@ def _arith_constant_op_lowering_rule(
 
   ty = ir.VectorType(op.result.type)
   is_signed = _default_is_signed(ty.element_type)
-
+  layout = layouts_lib.from_layout_attr(inference_utils.out_layouts(op)[0])
   return [
       fragmented_array_to_ir(
           fa.FragmentedArray.splat(
               arith.constant(ty.element_type, value.get_splat_value()),
               tuple(ty.shape),
-              layouts_lib.from_layout_attr(op.attributes["out_layouts"][0]),  # pyrefly: ignore[bad-index]
+              layout,
               is_signed=is_signed,
           ),
           op.result.type,
@@ -620,9 +620,7 @@ def _vector_broadcast_op_lowering_rule(
   fragmented_array = fa.FragmentedArray.splat(
       op.source,
       tuple(out_vec_ty.shape),
-      layouts_lib.from_layout_attr(
-          op.attributes["out_layouts"][0]  # pyrefly: ignore[bad-index]
-      ),
+      layouts_lib.from_layout_attr(inference_utils.out_layouts(op)[0]),
       is_signed=_default_is_signed(out_vec_ty.element_type),
   )
   return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
