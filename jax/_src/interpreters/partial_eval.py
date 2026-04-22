@@ -1750,7 +1750,7 @@ class JaxprStackFrame:
 
 ConstFoldRule = Callable[
     [list[Union[Any, None]], Any, list[AbstractValue]],
-    tuple[list[Union[Any, None]], Union[JaxprEqn, None]],
+    Union[list[Union[Any, None]], None],
 ]
 const_fold_rules: dict[Primitive, ConstFoldRule] = {}
 

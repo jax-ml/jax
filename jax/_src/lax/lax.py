@@ -5233,7 +5233,7 @@ stage_p.def_impl(_stage_impl)
 batching.defvectorized(stage_p)
 ad.deflinear2(stage_p, lambda ct, _: [ct])
 mlir.register_lowering(stage_p, lambda ctx, operand: [operand])
-pe.const_fold_rules[stage_p] = lambda consts, params, out_avals: consts  # pyrefly: ignore[unsupported-operation]
+pe.const_fold_rules[stage_p] = lambda consts, params, out_avals: consts
 
 def _stage_bind_with_trace(trace, args, avals, params):
   return trace.stage_value(args[0])
