@@ -57,7 +57,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
-from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
@@ -1652,7 +1651,6 @@ def _convert_element_type(
     operand = jax_array_method()
 
   old_dtype = dtypes.dtype(operand)
-  weak_type = bool(weak_type)
 
   if (isinstance(new_dtype, dtypes.ExtendedDType) or
       isinstance(old_dtype, dtypes.ExtendedDType)):
@@ -1704,40 +1702,16 @@ def _convert_element_type(
     aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
     operand = literals.TypedNdArray(arr, aval=aval)
 
-  if isinstance(operand, (bool, int, float, builtins.complex, np.generic)) and jaxlib_extension_version >= 441:
-    if sharding is None:
-      if old_dtype == new_dtype and old_weak_type == weak_type:
-        return stage(operand)  # pyrefly: ignore[bad-argument-type]
-      elif not weak_type and new_dtype != dtypes.float0 and not (
-          # TODO(phawkins): remove this block so we raise on inf/nan to int
-          # conversion. This code exists to avoid breaking users.
-          isinstance(operand, (float, builtins.complex, np.inexact))
-          and not np.isfinite(operand)
-          and dtypes.issubdtype(new_dtype, np.integer)
-      ):
-        aval = core.ShapedArray((), new_dtype, weak_type=weak_type)
-        x = literals.TypedNdArray(np.asarray(operand, dtype=new_dtype),
-                                  aval=aval)
-        return stage(x)
-  elif isinstance(operand, np.ndarray) and jaxlib_extension_version >= 441:
-    if sharding is None:
-      if old_dtype == new_dtype and old_weak_type == weak_type:
-        return stage(operand)
-      if not weak_type and new_dtype != dtypes.float0:
-        aval = core.ShapedArray(operand.shape, new_dtype, weak_type=weak_type)
-        x = literals.TypedNdArray(np.asarray(operand, dtype=new_dtype),
-                                  aval=aval)
-        return stage(x)
-  elif isinstance(operand, Array):
-    if (old_dtype == new_dtype and old_weak_type == weak_type and
-        not (isinstance(operand, core.Tracer) and core.is_concrete(operand)) and
-        (sharding is None or
-          (sharding._is_concrete and getattr(operand, 'sharding', None) == sharding))):
-      return operand
-
-  return convert_element_type_p.bind(
-      operand, new_dtype=new_dtype, weak_type=weak_type,
-      sharding=sharding)
+  if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
+      isinstance(operand, Array) and
+      not (isinstance(operand, core.Tracer) and core.is_concrete(operand)) and
+      (sharding is None or
+       (sharding._is_concrete and getattr(operand, 'sharding', None) == sharding))):
+    return operand
+  else:
+    return convert_element_type_p.bind(
+        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
+        sharding=sharding)
 
 @export
 def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:

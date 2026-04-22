@@ -22,10 +22,8 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import lib as jaxlib
-from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 
@@ -163,17 +161,6 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(signature.dtype, jax.device_put(value).dtype)
       self.assertEqual(signature.shape, (3, 4))
       self.assertFalse(signature.weak_type)
-
-    # 3. TypedNdArray
-    if jaxlib_extension_version >= 441:
-      for dtype in jtu.supported_dtypes():
-        for weak_type in [False, True]:
-          aval = core.ShapedArray((3, 4), dtype, weak_type=weak_type)
-          value = literals.TypedNdArray(np.zeros((3, 4), dtype=dtype), aval=aval)
-          signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
-          self.assertEqual(signature.dtype, dtype)
-          self.assertEqual(signature.shape, (3, 4))
-          self.assertEqual(signature.weak_type, weak_type)
 
     int_type = dtypes.default_int_dtype()
     float_type = dtypes.default_float_dtype()

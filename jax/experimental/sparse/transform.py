@@ -315,12 +315,6 @@ class SparseTrace(core.Trace):
         spvalue, = arrays_to_spvalues(self.spenv, [val])
       return SparseTracer(self, spvalue=spvalue)
 
-  def stage_value(self, val):
-    if isinstance(val, SparseTracer) and self.tag is val._trace.tag:
-      return val
-    staged_val = self.parent_trace.stage_value(val)
-    return self.to_sparse_tracer(staged_val)
-
   def process_primitive(self, primitive, tracers, params, /):
     tracers = [self.to_sparse_tracer(t) for t in tracers]
     spvalues = [t._spvalue for t in tracers]
