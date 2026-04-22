@@ -31,15 +31,18 @@ jax.config.update('jax_check_tracer_leaks', True)
 #   [x] vjp (basic)
 #   [x] scan
 #   [-] grad-of-jit
-#    [ ] local residuals only optimization
+#    [x] some zeros
 #    [x] nonlocal accums
-#    [x] zeros
+#    [ ] input and output forwarding
+#    [ ] closed over residuals forwarding
 #   [x] higher-order AD
+#   [ ] mean tests
+#   [ ] caching
+#   [ ] custom_vjp
+#   [ ] cond (or scan)
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
-#   [ ] cond
 #   [ ] system for importing existing primitives
-#   [ ] custom_vjp
 #   [ ] caching/ool functions
 
 
@@ -319,7 +322,6 @@ class EnterJit(Op):
     local_args = local_primals.map(trace.new_arg)
     local_left_accums = local_args.map(lambda x: x.accum)
     def bwd():
-      # TODO handle closed-over accumulators
       nonlocal_cts = FlatTree.flatten([a.finalize() for a in nonlocal_accums])
       local_left_ct = local_left_accums.map(lambda x: x.finalize())
       outs = FlatTree.pack((local_left_ct, nonlocal_cts))
