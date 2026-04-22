@@ -3,16 +3,16 @@
 <!--* freshness: { reviewed: '2024-08-18' } *-->
 
 ## Introduction
-This guide gives a brief overview of XLA and how XLA relates to Jax.
+This guide gives a brief overview of XLA and how XLA relates to JAX.
 For in-depth details please refer to [XLA documentation](https://openxla.org/xla). 
 
-## XLA: The Powerhouse Behind Jax
-XLA (Accelerated Linear Algebra) is a domain-specific compiler for linear algebra that plays a pivotal role in Jax's performance and flexibility. It enables Jax to generate optimized code for various hardware backends (CPUs, GPUs, TPUs) by transforming and compiling your Python/NumPy-like code into efficient machine instructions.
+## XLA: The Powerhouse Behind JAX
+XLA (Accelerated Linear Algebra) is a domain-specific compiler for linear algebra that plays a pivotal role in JAX's performance and flexibility. It enables JAX to generate optimized code for various hardware backends (CPUs, GPUs, TPUs) by transforming and compiling your Python/NumPy-like code into efficient machine instructions.
 
-Jax uses XLA's JIT compilation capabilities to transform your Python functions into optimized XLA computations at runtime.
+JAX uses XLA's JIT compilation capabilities to transform your Python functions into optimized XLA computations at runtime.
 
-## Configuring XLA in Jax:
-You can influence XLA's behavior in Jax by setting XLA_FLAGS environment variables before running your Python script or colab notebook.
+## Configuring XLA in JAX:
+You can influence XLA's behavior in JAX by setting XLA_FLAGS environment variables before running your Python script or colab notebook.
 
 For the colab notebooks:
 
@@ -36,7 +36,7 @@ XLA_FLAGS='--flag1=value1 --flag2=value2'  python3 source.py
 
 **Important Notes:**
 
-* Set `XLA_FLAGS` before importing Jax or other relevant libraries. Changing `XLA_FLAGS` after backend initialization will have no effect and given backend initialization time is not clearly defined it is usually safer to set `XLA_FLAGS` before executing any Jax code.
+* Set `XLA_FLAGS` before importing JAX or other relevant libraries. Changing `XLA_FLAGS` after backend initialization will have no effect and given backend initialization time is not clearly defined it is usually safer to set `XLA_FLAGS` before executing any JAX code.
 * Experiment with different flags to optimize performance for your specific use case.
 
 

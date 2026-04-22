@@ -411,7 +411,12 @@ reference but as a regular JAX array). This mode, however, comes with a number o
 significant drawbacks and it is very difficult to ensure sufficient synchronization to
 make this safe.
 
-TODO: Explain the conditions under which it is acceptable to do this.
+Passing `A` through registers is generally only acceptable when:
+1. The operand is small enough to fit in the warp's register file without causing excessive spilling.
+2. You can guarantee that the data is fully produced and synchronized before the `wgmma` call.
+3. You explicitly use `plgpu.wgmma_wait` to manage the pipeline if multiple `wgmma` calls are in flight.
+
+Because Mosaic GPU executes `wgmma` asynchronously, passing registers directly can lead to race conditions if the compiler reuses those registers for other purposes before the hardware has finished reading them. For most users, passing `A` through SMEM with proper tiling and swizzling is the recommended and safer approach.
 
 #### Issuing the operation
 
@@ -1480,11 +1485,41 @@ y = jax.jit(
 
 ## Inline Mosaic GPU
 
-TODO
+The `@plgpu.inline_mgpu` decorator allows for "escaping" the high-level Pallas abstractions to use lower-level Mosaic GPU operations directly. This is useful for performance-critical sections where fine-grained control over MLIR lowering or GPU-specific primitives (like those in `mgpu`) is required.
+
+Example::
+
+    layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
+
+    @plgpu.inline_mgpu(
+        arg_types=(plgpu.RefType(),),
+        return_type=plgpu.ShapeDtypeStruct(
+            (128, 128), dtype, layout=layout
+        ),
+    )
+    def add_one(ctx, smem_ref):
+      # Access lower-level Mosaic GPU FragmentedArray
+      x = mgpu.FragmentedArray.load_tiled(smem_ref)
+      y = mgpu.FragmentedArray.splat(
+          mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+      )
+      return x + y
+
+`inline_mgpu` functions receive a `ctx` (launch context) and the arguments specified in `arg_types`. The return value must match the `return_type` specification.
 
 ## Compiler parameters
 
-TODO
+The `plgpu.CompilerParams` dataclass allows for fine-tuning the compilation of Mosaic GPU kernels.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `approx_math` | `bool` | If True, allows the compiler to use faster, approximate implementations of math operations (e.g., `exp`). |
+| `dimension_semantics` | `Sequence[str]` | Specifies whether each grid dimension is `"parallel"` or `"sequential"`. |
+| `max_concurrent_steps`| `int` | The maximum number of sequential stages active concurrently in the pipeline. (Default: 1). |
+| `unsafe_no_auto_barriers`| `bool` | If True, disables automatic barrier insertion. Use with extreme caution. |
+| `reduction_scratch_bytes`| `int` | Memory reserved for cross-warp reductions. |
+| `profile_space` | `int` | Number of profiler events to collect per invocation. |
+| `profile_dir` | `str` | Directory for writing profiling traces. |
 
 ## Debugging
 

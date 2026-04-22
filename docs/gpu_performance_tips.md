@@ -59,7 +59,7 @@ os.environ['XLA_FLAGS'] = (
 ### Auto and manual PGLE
 
 The Profile Guided Latency Estimator (PGLE) workflow measures the actual running time
-of compute and collectives, the the profile information is fed back into XLA compiler
+of compute and collectives, the profile information is fed back into XLA compiler
 for a better scheduling decision.
 
 The Profile Guided Latency Estimator can be used manually or automatically. In the auto mode
