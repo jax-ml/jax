@@ -2530,24 +2530,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(test_as_i8[:256], unpack_i4_as_i8(x))
 
   def test_smem_aliasing_works_for_quantization(self):
-    # This test currently fails under WG semantics, not because of aliasing, but
-    # because of some issue with int4 types. E.g. a version of this test that
-    # has no aliasing, but simply loads int4 -> converts to bf16 -> stores
-    # also fails.
-    self.skip_if_wg_semantics()
-
     shape = (64, 256)
     large_ty, small_ty = jnp.bfloat16, jnp.uint4
-    large_swizzle = plgpu.SwizzleTransform(64 * jnp.finfo(large_ty).bits // 8)
-    small_swizzle = plgpu.SwizzleTransform(64 * jnp.iinfo(small_ty).bits // 8)
-    tiling = plgpu.TilingTransform((8, 64))
 
     def kernel(x_gmem, o_gmem):
       return pl.run_scoped(
           functools.partial(scoped_kernel, x_gmem, o_gmem),
           plgpu.RefUnion(
-              plgpu.SMEM(shape, large_ty, transforms=(tiling, large_swizzle)),
-              plgpu.SMEM(shape, small_ty, transforms=(tiling, small_swizzle))
+              plgpu.SMEM(shape, large_ty, transforms=self.default_transforms(dtype=large_ty)),
+              plgpu.SMEM(shape, small_ty, transforms=self.default_transforms(dtype=small_ty, swizzle=32))
           ),
           plgpu.Barrier(num_barriers=1),
       )
@@ -2580,7 +2571,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_subbyte_upcast(self, small_ty, large_ty):
     shape = (64, 256)
 
-    self.skip_if_wg_semantics()
     if small_ty == jnp.uint4 and large_ty == jnp.float8_e4m3fn:
       self.skipTest("uint4 -> f8_e4m3fn is unsupported")
 

@@ -2351,9 +2351,6 @@ def _convert_element_type_lowering_rule_wg(
   if cur_dtype == new_dtype:
     return x
 
-  if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
-    raise NotImplementedError("Conversion involving sub-byte types unsupported")
-
   from_float = isinstance(cur_dtype, ir.FloatType)
   to_float = isinstance(new_dtype, ir.FloatType)
   from_integer = isinstance(cur_dtype, ir.IntegerType)
