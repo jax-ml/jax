@@ -3237,6 +3237,43 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         cluster_names=("x",),
     )()
 
+  @parameterized.parameters("x", "y")
+  def test_cluster_ref_read(self, axis_name):
+    self.skip_if_wg_semantics()
+
+    def kernel(src_ref, dst_ref, scratch_ref, copy_barrier, cluster_barrier):
+      my_idx = lax.axis_index(axis_name)
+      src_slice = src_ref.at[my_idx]
+      plgpu.copy_gmem_to_smem(src_slice, scratch_ref, copy_barrier)
+      plgpu.barrier_wait(copy_barrier)
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+      peer_scratch = plgpu.cluster_ref(scratch_ref, {axis_name: 1 - my_idx})
+      dst_ref[my_idx] = peer_scratch[...]
+
+    cluster_names = ("x", "y")
+    if axis_name == "x":
+      cluster = (2, 1)
+    else:
+      cluster = (1, 2)
+
+    x = jnp.arange(2 * 256, dtype=jnp.float32).reshape(2, 256)
+
+    y = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 256), jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM((256,), jnp.float32),
+            plgpu.Barrier(),
+            plgpu.ClusterBarrier(collective_axes=(axis_name,)),
+        ],
+        cluster=cluster,
+        cluster_names=cluster_names,
+    )(x)
+
+    expected = jnp.flip(x, axis=0)
+    np.testing.assert_array_equal(y, expected)
+
   def test_replicated_layout(self):
     shape = (32,)
     @functools.partial(

@@ -858,6 +858,46 @@ def remote_ref(
   )
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class ClusterRefTransform(state_types.Transform):
+  dims: tuple[jax_core.AxisName, ...] = dataclasses.field(
+      metadata=dict(static=True)
+  )
+  idxs: tuple[Any, ...]
+
+  def __post_init__(self):
+    if len(self.dims) != len(self.idxs):
+      raise ValueError("dims and idxs must have the same length")
+
+  def transform_type(self, x):
+    return x
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    raise NotImplementedError()
+
+  def commute_ndindexer(
+      self, _: jax_core.AbstractValue, indexer: indexing.NDIndexer
+  ) -> tuple[indexing.NDIndexer, ClusterRefTransform]:
+    return indexer, self
+
+
+def cluster_ref(
+    ref: _Ref,
+    block_id: dict[jax_core.AxisName, Any],
+) -> pallas_core.TransformedRef:
+  """Translate memref to a peer memref in the cluster."""
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  dims = tuple(block_id.keys())
+  idxs = tuple(block_id.values())
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, ClusterRefTransform(dims, idxs)),
+  )
+
+
 def multicast_ref(
     ref: _Ref,
     collective_axes: Hashable | tuple[Hashable, ...],

@@ -20,6 +20,7 @@ These APIs are highly unstable and can change weekly. Use at your own risk.
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
+from jax._src.pallas.mosaic_gpu.core import cluster_ref as cluster_ref
 from jax._src.pallas.mosaic_gpu.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
 from jax._src.pallas.mosaic_gpu.core import Layout as Layout
