@@ -810,6 +810,8 @@ class FragmentedArray:
       is_signed: bool | None = None,
       vec_size: int | None = None,
   ) -> FragmentedArray:
+    index = ir.IndexType.get()
+    i64 = ir.IntegerType.get_signless(64)
     if not isinstance(ref.type, ir.MemRefType):
       raise TypeError(ref.type)
 
@@ -826,8 +828,29 @@ class FragmentedArray:
       layout = WGStridedFragLayout(shape=shape, vec_size=vec_size)
     registers = np.empty(layout.registers_shape(shape), dtype=object)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-    for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
-      update(registers, vector.load(vec_ty, ref, idx))
+
+    # vector.load lowering doesn't work for element types with < 8 bits
+    if (bitwidth := utils.bitwidth(ref_ty.element_type)) < 8:
+      total_bits = layout.vec_size * bitwidth
+      if total_bits % 8 != 0:
+        raise NotImplementedError("Vector length should be a multiple of byte size")
+      int_ty = ir.IntegerType.get_signless(bitwidth)
+      int_vec_ty = ir.VectorType.get((layout.vec_size,), int_ty)
+      for _get, update, transfer_ref, idx in cls.transfer_strided(ref, layout.vec_size):
+        base_ptr = utils.memref_ptr(transfer_ref)
+        strides, _ = transfer_ref.type.get_strides_and_offset()
+        elem_flat_idx = utils.dyn_dot(idx, [arith.constant(index, s) for s in strides])
+        vec_flat_idx = arith.divui(elem_flat_idx, arith.constant(index, layout.vec_size))
+        vec_flat_idx = arith.index_cast(i64, vec_flat_idx)
+        ptr = utils.getelementptr(base_ptr, [vec_flat_idx], int_vec_ty)
+        loaded_val = llvm.load(int_vec_ty, ptr)
+        if not isinstance(ref_ty.element_type, ir.IntegerType):
+          loaded_val = vector.bitcast(vec_ty, loaded_val)
+        update(registers, loaded_val)
+    else:
+      # We only keep this branch because it emits smaller IR.
+      for _get, update, transfer_ref, idx in cls.transfer_strided(ref, layout.vec_size):
+        update(registers, vector.load(vec_ty, transfer_ref, idx))
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
   @classmethod
@@ -3116,6 +3139,8 @@ class FragmentedArray:
       optimized: bool = True,
       atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ) -> None:
+    index = ir.IndexType.get()
+    i64 = ir.IntegerType.get_signless(64)
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(ref)
     match self.layout:
@@ -3132,10 +3157,15 @@ class FragmentedArray:
         if swizzle != 16:
           raise ValueError("Only TiledLayouts support swizzling")
         assert isinstance(self.layout, WGStridedFragLayout)
+        vec_size = self.layout.vec_size
+        bitwidth = utils.bitwidth(self.mlir_dtype)
+        total_bits = vec_size * bitwidth
+        if total_bits % 8 != 0:
+          raise NotImplementedError("Vector length should be a multiple of byte size")
         # pyrefly: ignore[bad-argument-type]
-        for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
-          if isinstance(ref, utils.MultimemRef):
-            ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
+        for get, _update, transfer_ref, idx in self.transfer_strided(ref, vec_size):
+          if isinstance(transfer_ref, utils.MultimemRef):
+            ptr = utils.memref_ptr(utils.memref_slice(transfer_ref.ref, tuple(idx)))
             if atomic is not None:
               self._store_register_atomic(
                   ptr, get(self.registers), atomic, is_smem=False, multimem=True,
@@ -3143,17 +3173,35 @@ class FragmentedArray:
             else:
               utils.multimem_store(ptr, get(self.registers))
           elif atomic is not None:
-            is_smem = utils.is_smem_ref(ref)
+            is_smem = utils.is_smem_ref(transfer_ref)
             memory_space = 3 if is_smem else None
             base_ptr = utils.memref_ptr(
-                utils.memref_slice(ref, tuple(idx)),
+                utils.memref_slice(transfer_ref, tuple(idx)),
                 memory_space=memory_space,
             )
             self._store_register_atomic(
                 base_ptr, get(self.registers), atomic, is_smem,
             )
+          elif bitwidth >= 8:
+            # vector.store lowering doesn't work for element types with < 8 bits
+            vector.store(get(self.registers), transfer_ref, idx)
           else:
-            vector.store(get(self.registers), ref, idx)
+            int_ty = ir.IntegerType.get_signless(bitwidth)
+            int_vec_ty = ir.VectorType.get((vec_size,), int_ty)
+            base_ptr = utils.memref_ptr(transfer_ref)
+            strides, _ = transfer_ref.type.get_strides_and_offset()
+            elem_flat_idx = utils.dyn_dot(
+                idx, [arith.constant(index, s) for s in strides]
+            )
+            vec_flat_idx = arith.divui(
+                elem_flat_idx, arith.constant(index, vec_size)
+            )
+            vec_flat_idx = arith.index_cast(i64, vec_flat_idx)
+            ptr = utils.getelementptr(base_ptr, [vec_flat_idx], int_vec_ty)
+            stored_val = get(self.registers)
+            if not isinstance(self.mlir_dtype, ir.IntegerType):
+              stored_val = vector.bitcast(int_vec_ty, stored_val)
+            llvm.store(stored_val, ptr)
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))

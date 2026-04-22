@@ -4618,6 +4618,22 @@ class FragmentedArrayTest(TestCase):
     x = np.arange(math.prod(in_shape.shape), dtype=jnp.int32).reshape(in_shape.shape)
     np.testing.assert_array_equal(kernel_fn(x), x[:, 1])
 
+  def test_strided_copy_noncontig_subbyte(self):
+    def kernel(ctx, src, dst, _):
+      src_slice = mgpu.memref_slice(src, (slice(None), 1))
+      mgpu.FragmentedArray.load_strided(src_slice, is_signed=True, vec_size=4).store_untiled(dst)
+
+    in_shape = jax.ShapeDtypeStruct((32, 2, 256), jnp.int4)
+    out_shape = jax.ShapeDtypeStruct((32, 256), jnp.int4)
+
+    kernel_fn = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), in_shape, out_shape, ()
+    )
+    x = jax.random.randint(
+        jax.random.key(42), in_shape.shape, -128, 127, dtype=in_shape.dtype
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x[:, 1])
+
   def test_strided_copy_noncontig_bad(self):
     def kernel(ctx, src, dst, _):
       src_slice = mgpu.memref_slice(src, (slice(None), 1))
