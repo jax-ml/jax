@@ -168,7 +168,8 @@ class SingleDeviceSharding(jsharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return replicated_hlo_sharding
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
+  def _to_sdy_sharding(self, num_dimensions: int,
+                       modify_wrt_axis_types: bool = False) -> SdyArray:
     sdy_dim_sharding = (SdyDim(axes=(), is_open=False),) * num_dimensions
     return SdyArray(mesh_shape=None, dim_shardings=sdy_dim_sharding)
 
@@ -274,14 +275,15 @@ class GSPMDSharding(jsharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return self._hlo_sharding
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArray:
+  def _to_sdy_sharding(self, num_dimensions: int,
+                       modify_wrt_axis_types: bool = False) -> SdyArray:
     if self._hlo_sharding.tuple_elements():
       raise TypeError(
           f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')
     elif self._hlo_sharding.is_replicated():
       empty_mesh = AbstractMesh((), ())
-      return NamedSharding(empty_mesh, PartitionSpec())._to_sdy_sharding(
-          num_dimensions)
+      return NamedSharding(empty_mesh, PartitionSpec()
+                           )._to_sdy_sharding(num_dimensions)
     elif self._hlo_sharding.is_tiled():
       if not self._hlo_sharding.is_tile_assignment_iota():
         raise TypeError(
@@ -289,8 +291,8 @@ class GSPMDSharding(jsharding.Sharding):
       axis_sizes = tuple(self._hlo_sharding.get_axis_sizes())
       axis_names = tuple(f'_axis_{i}' for i in range(len(axis_sizes)))
       mesh = AbstractMesh(axis_sizes, axis_names)
-      return _gspmd_to_named_sharding_via_mesh(self, mesh)._to_sdy_sharding(
-          num_dimensions)
+      return _gspmd_to_named_sharding_via_mesh(
+          self, mesh)._to_sdy_sharding(num_dimensions)
     else:
       raise TypeError(
           f'Cannot convert GSPMDSharding {self._hlo_sharding} into SdyArray.')

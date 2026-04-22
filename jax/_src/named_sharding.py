@@ -40,7 +40,8 @@ class AUTO:
   def __init__(self, mesh: mesh_lib.Mesh):
     self.mesh = mesh
 
-  def _to_sdy_sharding(self, ndim: int) -> SdyArray:
+  def _to_sdy_sharding(self, ndim: int, modify_wrt_axis_types: bool = False
+                       ) -> SdyArray:
     dim_shardings = (SdyDim(axes=(), is_open=True),) * ndim
     return SdyArray(mesh_shape=self.mesh.shape_tuple,
                     dim_shardings=dim_shardings)
@@ -269,8 +270,8 @@ class NamedSharding(jsharding.Sharding):
     `replicated_axes` in `SdyArray` if they are unused in PartitionSpec.
     This means that shardy cannot use these axes to shard any open dimensions.
     """
-    return named_sharding_to_sdy_sharding(
-        self, num_dimensions, modify_wrt_axis_types)
+    return named_sharding_to_sdy_sharding(self, num_dimensions,
+                                          modify_wrt_axis_types)
 
 NamedSharding.__module__ = 'jax.sharding'
 

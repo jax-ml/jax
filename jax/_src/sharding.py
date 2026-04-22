@@ -149,7 +149,8 @@ class Sharding:
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
-  def _to_sdy_sharding(self, num_dimensions: int):
+  def _to_sdy_sharding(self, num_dimensions: int,
+                       modify_wrt_axis_types: bool = False):
     raise NotImplementedError('Subclasses should implement this method.')
 
   #############################################################################

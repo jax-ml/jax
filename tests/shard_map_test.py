@@ -3616,27 +3616,17 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_grad_shmap_residuals_axis_names_in_mesh_order(self):
     # https://github.com/jax-ml/jax/issues/21236
     mesh = jtu.create_mesh((4, 2, 1, 1), ('i', 'j', 'k', 'a'))
+    xs = jnp.arange(16.)
 
-    @partial(
-      shard_map,
-      mesh=mesh,
-      in_specs=P(('i', 'k')),
-      out_specs=P(('i', 'k')),
-      )
+    @shard_map(mesh=mesh, in_specs=P(('i', 'k')), out_specs=P(('i', 'k')))
     def f(x):
       return jnp.sin(x)
 
-    xs = jnp.arange(16.)
-
-    ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
+    ir_text = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'out_shardings=[<@mesh, [{"i", "k"}]>]', ir.as_text()
-      )
+      self.assertIn('out_shardings=[<@mesh, [{"i", "k"}]>]', ir_text)
     else:
-      self.assertIn(
-          "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
-      )
+      self.assertIn("{jax.result_info = \"[('i', 'k')]\"}", ir_text)
 
   def test_dynamic_slice_transpose(self):
     mesh = jtu.create_mesh((2,), ('x',))

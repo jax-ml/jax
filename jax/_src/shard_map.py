@@ -912,12 +912,11 @@ def _shardy_shard_map_sharding(
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
     ns = sharding_impls.physical_sharding(aval_in, ns)
     aval_in = core.physical_aval(aval_in)
-  sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if len(manual_axes) < len(mesh.axis_names):
-    new_dim_shardings = tuple(d.replace(is_open=True)
-                              for d in sdy_sharding.dim_shardings)
-    sdy_sharding = sdy_sharding.replace(dim_shardings=new_dim_shardings)
-  return sdy_sharding
+    # In partial manual case, mark all dims as open.
+    return ns._to_sdy_sharding(aval_in.ndim, modify_wrt_axis_types=True)
+  else:
+    return ns._to_sdy_sharding(aval_in.ndim)
 
 
 def _get_token_sharding(
