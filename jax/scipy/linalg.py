@@ -20,6 +20,7 @@ from jax._src.scipy.linalg import (
   cholesky as cholesky,
   cho_factor as cho_factor,
   cho_solve as cho_solve,
+  companion as companion,
   det as det,
   eigh as eigh,
   eigh_tridiagonal as eigh_tridiagonal,
