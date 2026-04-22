@@ -219,6 +219,14 @@ class VectorLayout {
     return 2 - num_implicit_dims(implicit_dim);
   }
 
+  // Returns the ImplicitDim enum for parameters that specify whether individual
+  // dimensions of the implicit shape are implicit.
+  static ImplicitDim getImplicitDim(const bool second_minor_is_implicit,
+                                    const bool minor_is_implicit) {
+    return static_cast<ImplicitDim>((second_minor_is_implicit << 1) |
+                                    minor_is_implicit);
+  }
+
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets& offsets() const { return offsets_; }
   LayoutOffsets getCanonicalOffsets(const ArrayRef<int64_t> shape) const {
@@ -314,9 +322,12 @@ class VectorLayout {
     }
   }
 
-  static std::array<int64_t, 2> getImplicitTiledDims(
-      const ImplicitDim implicit_dim, const ArrayRef<int64_t> arr,
-      const int64_t implicit_value) {
+  // Returns the two minormost dimensions of the given array with implicit_value
+  // inserted for implicit dimensions.
+  template <typename T>
+  static std::array<T, 2> getImplicitTiledVals(const ImplicitDim implicit_dim,
+                                               const ArrayRef<T> arr,
+                                               const T implicit_value) {
     CHECK_GE(arr.size(), layout_rank(implicit_dim));
     switch (implicit_dim) {
       case ImplicitDim::kNone:
@@ -329,6 +340,13 @@ class VectorLayout {
         return {implicit_value, implicit_value};
     }
   }
+
+  static std::array<int64_t, 2> getImplicitTiledDims(
+      const ImplicitDim implicit_dim, const ArrayRef<int64_t> arr,
+      const int64_t implicit_value) {
+    return getImplicitTiledVals(implicit_dim, arr, implicit_value);
+  }
+
   // Returns the dimension of the implicit shape that corresponds to the given
   // dimension of a non-implicit shape with the given `rank`.
   static int64_t toImplicitDimension(const ImplicitDim implicit_dim,
