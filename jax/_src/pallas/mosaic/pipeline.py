@@ -880,11 +880,17 @@ class BufferedRef(BufferedRefBase):
     slot = self.current_copy_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = self._to_window_slice(dst_slice)
-    tpu_primitives.make_async_copy(
-        self._window_ref_at(slot, src_slice),
-        dst_ref.at[dst_slice],
-        self.sem_sends.at[slot],
-    ).start()
+    if self.buffer_count == 1:
+      tpu_helpers.sync_copy(
+          self._window_ref_at(slot, src_slice),
+          dst_ref.at[dst_slice],
+      )
+    else:
+      tpu_primitives.make_async_copy(
+          self._window_ref_at(slot, src_slice),
+          dst_ref.at[dst_slice],
+          self.sem_sends.at[slot],
+      ).start()
 
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
@@ -912,11 +918,13 @@ class BufferedRef(BufferedRefBase):
     wait_slot = self.current_wait_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
     src_slice = self._to_window_slice(dst_slice)
-    tpu_primitives.make_async_copy(
-        self._window_ref_at(wait_slot, src_slice),  # nb: doesn't matter
-        dst_ref.at[dst_slice],  # only dst shape is important
-        self.sem_sends.at[wait_slot],
-    ).wait()
+    # Single-buffered outputs are synchronously copied.
+    if self.buffer_count > 1:
+      tpu_primitives.make_async_copy(
+          self._window_ref_at(wait_slot, src_slice),  # nb: doesn't matter
+          dst_ref.at[dst_slice],  # only dst shape is important
+          self.sem_sends.at[wait_slot],
+      ).wait()
 
 
 def fetch_with_lookahead(buffered_ref, src_ref,

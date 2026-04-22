@@ -782,6 +782,35 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     result = fn(x, y)
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
 
+  def test_single_buffered_output(self):
+    def body(o_ref):
+      @pl.when(pl.program_id(1) == 0)
+      def _():
+        o_ref[...] = jnp.zeros_like(o_ref)
+      o_ref[...] += 1.0
+
+    spec = pl.BlockSpec(
+        (1, 8, 128),
+        lambda b, _: (b, 0, 0),
+        memory_space=pltpu.VMEM,
+        pipeline_mode=pl.Buffered(buffer_count=1),
+    )
+
+    @pl.kernel(
+        out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
+        mesh=pltpu.create_tensorcore_mesh('core'),
+    )
+    def run_kernel(o_ref):
+      pltpu.emit_pipeline(
+          body,
+          grid=(2, 3),
+          out_specs=(spec,),
+      )(o_ref)
+
+    out = run_kernel()
+    expected_out = jnp.full((2, 8, 128), 3, jnp.float32)
+    np.testing.assert_allclose(out, expected_out)
+
 
 class PallasCallCollectivePipelineTest(jtu.JaxTestCase):
 
