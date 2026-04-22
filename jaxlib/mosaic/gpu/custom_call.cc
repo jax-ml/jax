@@ -644,7 +644,8 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
           .getGlobalPrefix();
 
   lljit_builder.setObjectLinkingLayerCreator(
-      [global_prefix](llvm::orc::ExecutionSession& session)
+      [global_prefix](llvm::orc::ExecutionSession& session,
+                      llvm::jitlink::JITLinkMemoryManager& /*MemMgr*/)
           -> llvm::Expected<std::unique_ptr<llvm::orc::ObjectLayer>> {
         auto objectLayer =
             std::make_unique<llvm::orc::RTDyldObjectLinkingLayer>(
