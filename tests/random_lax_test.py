@@ -39,6 +39,8 @@ from jax._src import prng as prng_internal
 
 config.parse_flags_with_absl()
 
+jtu.request_cpu_devices(8)
+
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
@@ -206,6 +208,39 @@ class CommonRandomTest(RandomTestBase):
       # just lower, don't run, takes too long
       jax.jit(f).lower()
 
+
+
+_OUT_SHARDING_CASES = [
+    ('bernoulli',        lambda key, n, s: random.bernoulli(key, p=0.5, shape=(n,), out_sharding=s)),
+    ('bits',             lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
+    ('gumbel',           lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
+    ('normal',           lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
+    ('permutation',      lambda key, n, s: random.permutation(key, n, out_sharding=s)),
+    ('randint',          lambda key, n, s: random.randint(key, shape=(n,), minval=0, maxval=10, out_sharding=s)),
+    ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
+    ('uniform',          lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
+]
+
+
+class RandomOutShardingTest(RandomTestBase):
+  """Tests that out_sharding arguments are obeyed for jax.random functions."""
+
+  def _make_sharding(self):
+    n = min(jax.device_count(), 4)
+    mesh = jtu.create_mesh((n,), ('x',),
+                           axis_types=(jax.sharding.AxisType.Explicit,))
+    return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+
+  @parameterized.named_parameters(_OUT_SHARDING_CASES)
+  def test_out_sharding(self, fn):
+    key = random.key(0)
+    sharding = self._make_sharding()
+    n = sharding.mesh.shape['x']
+    with jax.set_mesh(sharding.mesh):
+      result = fn(key, n, sharding)
+      jit_result = jax.jit(fn, static_argnums=(1,2))(key, n, sharding)
+    self.assertTrue(result.sharding.is_equivalent_to(sharding, result.ndim))
+    self.assertTrue(result.sharding.is_equivalent_to(sharding, jit_result.ndim))
 
 class DistributionsTest(RandomTestBase):
   """
