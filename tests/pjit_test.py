@@ -6031,7 +6031,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr = jax.device_put(arr, NamedSharding(mesh2, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh2, P('y', None)))
       out = f(arr, arr2)
-      self.assertEqual(out.sharding, NamedSharding(mesh2, P('x',)))
+      self.assertEqual(out.sharding, NamedSharding(mesh2, P('x', None)))
       lowered_text = f.lower(arr, arr2).as_text()
       if config.use_shardy_partitioner.value:
         self.assertTrue(lowered_text.count("{?}") == 4)
@@ -6045,7 +6045,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr = jax.device_put(arr, NamedSharding(mesh3, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh3, P(None, 'x')))
       out = f(arr, arr2)
-      self.assertEqual(out.sharding, NamedSharding(mesh3, P('x',)))
+      self.assertEqual(out.sharding, NamedSharding(mesh3, P('x')))
       lowered_text = f.lower(arr, arr2).as_text()
       if config.use_shardy_partitioner.value:
         self.assertTrue(lowered_text.count("{?}") == 5)
@@ -6311,7 +6311,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return y
 
     out = f(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, None)))
     self.assertArraysEqual(out, np_inp * 2)
 
     lowered_text = f.lower(arr).as_text()
@@ -7309,7 +7309,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh(
         (2, 2, 2), ('x', 'y', 'z'),
         axis_types=(AxisType.Auto, AxisType.Explicit, AxisType.Explicit))
-    yz_sharding = NamedSharding(mesh, P(('y', 'z')))
+    yz_sharding = NamedSharding(mesh, P(('y', 'z'), None))
 
     @jax.jit
     def iota():
@@ -10798,6 +10798,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     rep_arr = jax.device_put(np.arange(4.), P())
     ex_out = jax.jit(jax.grad(lambda x: (x * 2).sum()))(rep_arr)
     self.assertArraysEqual(reshard(out, P()), ex_out)
+
+  @jtu.with_explicit_mesh((1, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_singleton_explicit_axis_multi_auto_axes(self, mesh):
+    a = jnp.ones((2, 2), jnp.int32, out_sharding=jax.P("x", None))
+    self.assertEqual(jax.typeof(a).sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x', None)))
+
+    @jax.jit
+    def f():
+      return jnp.ones((2, 2), jnp.int32, out_sharding=jax.P("x", None))
+    out = f()
+    self.assertEqual(jax.typeof(out).sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x', None)))
+
+    b = jnp.ones((2,), jnp.int32, out_sharding=jax.P("x"))
+    self.assertEqual(jax.typeof(b).sharding,
+                     NamedSharding(mesh.abstract_mesh, P('x')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
