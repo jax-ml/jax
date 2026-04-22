@@ -8154,7 +8154,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f_bar(x, y, a, b)  # doesn't crash
 
     grad_jaxpr = f_bar.trace(x, y, a, b).jaxpr
-    reshard_eqn = grad_jaxpr.eqns[3].params['jaxpr'].eqns[0]
+    reshard_eqn = grad_jaxpr.eqns[4].params['jaxpr'].eqns[0]
     self.assertEqual(reshard_eqn.params['dst_sharding'].spec.reduced,
                     frozenset('y'))
     self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,
@@ -9641,8 +9641,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def f(params, x):
       @jax.sharding.auto_axes(out_sharding=jax.P())
       def model(x):
-        auto_params = jax.reshard(params, P())
-        return auto_params * x
+        return params * x
 
       def body(c, _):
         return model(c), ()
