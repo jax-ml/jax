@@ -59,6 +59,7 @@ runs:
         CUSTOM_JSON: ${{ inputs.custom_json }}
         EXPLICIT_METADATA: ${{ inputs.metadata }}
         TEST_ARTIFACTS_DIR: ${{ inputs.test-artifacts-dir }}
+        GITHUB_JOB_ID: ${{ job.check_run_id }}
       run: |
         mkdir -p "$TEST_ARTIFACTS_DIR"
         python3 -c "
@@ -70,6 +71,10 @@ runs:
         explicit_str = os.environ.get('EXPLICIT_METADATA', '')
 
         merged = {**inputs, **matrix, **env_vars, **custom}
+
+        job_id = os.environ.get('GITHUB_JOB_ID')
+        if job_id:
+            merged['job_id'] = int(job_id)
 
         if explicit_str:
             try:
