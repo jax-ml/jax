@@ -1466,8 +1466,8 @@ def is_user_xla_layout_equal(ul: Layout | AutoLayout,
 
 
 def _get_layouts_from_executable(
-    xla_executable, in_layouts, out_layouts, num_ordered_effects
-) -> tuple[Sequence[Layout | None], Sequence[Layout | None]]:
+    xla_executable, in_layouts, out_layouts, num_ordered_effects, in_avals,
+    out_avals) -> tuple[Sequence[Layout | None], Sequence[Layout | None]]:
   try:
     in_layouts_xla = xla_executable.get_parameter_layouts()
     out_layouts_xla = xla_executable.get_output_layouts()
@@ -1479,23 +1479,23 @@ def _get_layouts_from_executable(
     out_layouts_xla = out_layouts_xla[num_ordered_effects:]
 
   new_in_layouts = []
-  for x, l in safe_zip(in_layouts_xla, in_layouts):
+  for x, l, aval in safe_zip(in_layouts_xla, in_layouts, in_avals):
     x = Layout.from_pjrt_layout(x)
     if isinstance(l, Layout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
           f"Unexpected XLA layout override: (XLA) {x} != {l} "
-          f"(User input layout)")
+          f"(User input layout) for type={aval.str_short()}")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_in_layouts.append(x)
 
   new_out_layouts = []
-  for x, l in safe_zip(out_layouts_xla, out_layouts):
+  for x, l, aval in safe_zip(out_layouts_xla, out_layouts, out_avals):
     x = Layout.from_pjrt_layout(x)
     if isinstance(l, Layout) and not is_user_xla_layout_equal(l, x):
       raise AssertionError(
           f"Unexpected XLA layout override: (XLA) {x} != {l} "
-          f"(User output layout)")
+          f"(User output layout) for type={aval.str_short()}")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_out_layouts.append(x)
@@ -1804,7 +1804,9 @@ class UnloadedMeshExecutable:
     # `dispatch_in_layouts` replaces default layouts with `None` to simplify
     # dispatch logic downstream.
     xla_in_layouts, xla_out_layouts = _get_layouts_from_executable(
-        xla_executable, in_layouts, out_layouts, len(ordered_effects))
+        xla_executable, in_layouts, out_layouts, len(ordered_effects),
+        global_in_avals, global_out_avals)
+
     del in_layouts, out_layouts
     dispatch_in_layouts = [
         None if is_default_layout(l, s, a) else l
