@@ -5107,6 +5107,31 @@ class RaggedTest(jtu.JaxTestCase):
             .as_text(dialect="stablehlo"),
         )
 
+  @unittest.skipIf(jaxlib_extension_version < 441,
+                   "Requires jaxlib_extension_version >= 441")
+  def test_ragged_dot_general_preserves_named_scope(self):
+    if not jtu.test_device_matches(["tpu"]):
+      raise unittest.SkipTest("Test only runs on TPU")
+
+    m, k, n = (8, 8, 8)
+    num_groups = 2
+    group_size = m // num_groups
+
+    lhs = jnp.ones((m, k), dtype=jnp.float32)
+    rhs = jnp.ones((num_groups, k, n), dtype=jnp.float32)
+    group_sizes = jnp.full((num_groups,), group_size, dtype=jnp.int32)
+
+    def run_bench():
+      with jax.named_scope("ragged_dot_test_outer"):
+        with jax.named_scope("ragged_dot_test_inner"):
+          return jax.lax.ragged_dot(lhs, rhs, group_sizes)
+
+    lowered = jax.jit(run_bench).trace().lower()
+    compiled_text = lowered.compile().as_text()
+    self.assertIsNotNone(compiled_text, "Compiled text should not be None")
+    self.assertIn("ragged_dot_test_outer", compiled_text)
+    self.assertIn("ragged_dot_test_inner", compiled_text)
+
   @parameterized.parameters(
       {"m": 5, "k": 4, "n": 3, "num_groups": 1},
       {"m": 5, "k": 4, "n": 3, "num_groups": 2},
