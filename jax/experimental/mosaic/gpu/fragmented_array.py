@@ -1942,7 +1942,7 @@ class FragmentedArray:
       if regs:
         yield indices, utils.vector_concat(regs)
 
-    if cur_dtype == i4 and new_dtype == f8e4m3fn:
+    if cur_dtype == i4 and new_dtype == f8e4m3fn and self.is_signed:
       # The algorithm here is taken from CUTLASS's `NumericArrayConverter`
       # specialization for int4 -> f8e4m3, available at
       # https://github.com/NVIDIA/cutlass/blob/5c6bca04414e06ce74458ab0a2018e2b8272701c/include/cutlass/numeric_conversion.h#L4982.

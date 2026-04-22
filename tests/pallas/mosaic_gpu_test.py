@@ -2573,6 +2573,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     expected = x * 3
     np.testing.assert_array_equal(kernel_fn(x), expected)
 
+  @parameterized.product(
+      small_ty=[jnp.int4, jnp.uint4],
+      large_ty=[jnp.float8_e4m3fn, jnp.float16, jnp.bfloat16, jnp.float32, jnp.int8, jnp.int16, jnp.int32],
+  )
+  def test_subbyte_upcast(self, small_ty, large_ty):
+    shape = (64, 256)
+
+    self.skip_if_wg_semantics()
+    if small_ty == jnp.uint4 and large_ty == jnp.float8_e4m3fn:
+      self.skipTest("uint4 -> f8_e4m3fn is unsupported")
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, large_ty),
+    )
+    def kernel(x_gmem, o_gmem):
+      o_gmem[...] = plgpu.load(x_gmem, (), layout=plgpu.Layout.WGMMA, optimized=False).astype(large_ty)
+
+    key = jax.random.key(42)
+    iinfo = dtypes.iinfo(small_ty)
+    x = jax.random.randint(key, shape, minval=iinfo.min, maxval=iinfo.max).astype(small_ty)
+    expected = x.astype(large_ty)
+    np.testing.assert_array_equal(kernel(x), expected)
+
   def test_assigning_to_ref_union_raises(self):
     @functools.partial(
         self.pallas_call,
