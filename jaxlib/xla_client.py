@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 440  # add MlirModule overload for serialize_portable_artifact
+_version = 441  # fix weak_type handling for TypedNdArray
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
