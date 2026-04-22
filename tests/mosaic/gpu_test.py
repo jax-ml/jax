@@ -5432,6 +5432,38 @@ class ProfilerTest(TestCase, jtu.JaxTestCase):
         self.assertEqual(data.count('"name": "load"'), 2)
         self.assertEqual(data.count('"name": "store"'), 2)
 
+  def test_profiler_per_warp(self):
+    def body(ctx, input, result, scratch):
+      del scratch
+      with ctx.named_region("load"):
+        reg = mgpu.FragmentedArray.load_strided(input)
+      with ctx.named_region("store"):
+        reg.store_untiled(result)
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      kernel = mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(jax_shape),
+          out_shape=jax_shape,
+          smem_scratch_shape=[],
+          prof_spec=profiler.ProfilerSpec(
+              1024, dump_path=tmpdir, trace_scope=mgpu.ThreadSubset.WARP
+          ),
+      )
+      param = self.prng.uniform(-1, 1, shape).astype(dtype)
+      self.assertArraysEqual(kernel(param), param)
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+        # 4 warps in a block of 128 threads.
+        self.assertEqual(data.count('"name": "load"'), 8)
+        self.assertEqual(data.count('"name": "store"'), 8)
+
 
 class LayoutTest(TestCase):
 

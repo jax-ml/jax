@@ -176,7 +176,12 @@ class ProfilerSpec:
   ENTER = 0
   EXIT = 1 << 31
 
-  def __init__(self, entries_per_warpgroup: int, dump_path: str = "sponge"):
+  def __init__(
+      self,
+      entries_per_warpgroup: int,
+      dump_path: str = "sponge",
+      trace_scope: ThreadSubset = ThreadSubset.WARPGROUP,
+  ):
     self.entries_per_warpgroup = entries_per_warpgroup
     self.interned_names: dict[str, int] = {}
     if dump_path == "sponge":
@@ -185,19 +190,29 @@ class ProfilerSpec:
       )
     else:
       self.dump_path = dump_path
+    if trace_scope not in (ThreadSubset.WARP, ThreadSubset.WARPGROUP):
+      raise ValueError(f"Unsupported trace scope: {trace_scope}")
+    self.trace_scope = trace_scope
 
-  def _num_warpgroups(
+  def _num_traces(
       self, grid: tuple[int, ...], block: tuple[int, ...]
   ) -> int:
-    if math.prod(block) % WARPGROUP_SIZE:
-      raise ValueError("Block size is not a multiple of warpgroup size")
-    return math.prod(grid) * math.prod(block) // WARPGROUP_SIZE
+    if self.trace_scope == ThreadSubset.WARP:
+      scope_size = WARP_SIZE
+    elif self.trace_scope == ThreadSubset.WARPGROUP:
+      scope_size = WARPGROUP_SIZE
+    else:
+      raise NotImplementedError(f"Scope {self.trace_scope} not supported")
+
+    if math.prod(block) % scope_size:
+      raise ValueError(f"Block size is not a multiple of {scope_size}")
+    return math.prod(grid) * math.prod(block) // scope_size
 
   def mlir_buffer_type(
       self, grid: tuple[int, ...], block: tuple[int, ...]
   ) -> ir.MemRefType:
     return ir.MemRefType.get(
-        (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
+        (self._num_traces(grid, block) * self.entries_per_warpgroup,),
         ir.IntegerType.get_signless(32),
     )
 
@@ -205,13 +220,13 @@ class ProfilerSpec:
       self, grid: tuple[int, ...], block: tuple[int, ...]
   ) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(
-        (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
+        (self._num_traces(grid, block) * self.entries_per_warpgroup,),
         jnp.uint32,
     )
 
   def smem_i32_elements(self, block: tuple[int, ...]):
-    num_warpgroups = self._num_warpgroups((), block)
-    return int(num_warpgroups * self.entries_per_warpgroup)
+    num_traces = self._num_traces((), block)
+    return int(num_traces * self.entries_per_warpgroup)
 
   def smem_bytes(self, block: tuple[int, ...]):
     bytes_per_entry = 4
@@ -228,9 +243,9 @@ class ProfilerSpec:
   def dump(self, buffer, f, grid: tuple[int, ...], block: tuple[int, ...]):
     buffer = np.asarray(buffer)
     num_blocks = math.prod(grid)
-    warpgroups_per_block = self._num_warpgroups((), block)
+    traces_per_block = self._num_traces((), block)
     entries = buffer.reshape(
-        num_blocks, warpgroups_per_block, self.entries_per_warpgroup
+        num_blocks, traces_per_block, self.entries_per_warpgroup
     )
     start_times = entries[..., 0]
     sm_ids = entries[..., 1]
@@ -251,16 +266,16 @@ class ProfilerSpec:
 
     unintern = {v: k for k, v in self.interned_names.items()}
     events = []
-    for block_idx, wg_idx in np.ndindex(num_blocks, warpgroups_per_block):
-      valid_entries = traces_used[block_idx, wg_idx]
+    for block_idx, trace_idx in np.ndindex(num_blocks, traces_per_block):
+      valid_entries = traces_used[block_idx, trace_idx]
       local_clock_offset = None
       assert valid_entries % 2 == 0, valid_entries
-      start_time = start_times[block_idx, wg_idx]
+      start_time = start_times[block_idx, trace_idx]
       block_events = []
       last_time = float("-inf")
       for i in range(0, valid_entries, 2):
-        tag = traces[block_idx, wg_idx, i]
-        time = traces[block_idx, wg_idx, i + 1]
+        tag = traces[block_idx, trace_idx, i]
+        time = traces[block_idx, trace_idx, i + 1]
         if local_clock_offset is None:
           local_clock_offset = time
         time -= local_clock_offset
@@ -286,8 +301,8 @@ class ProfilerSpec:
             "name": name,
             "ph": "B" if begin else "E",
             "ts": float(start_time + time) / 1e3,
-            "pid": 1 + int(sm_ids[block_idx, wg_idx]),
-            "tid": 1 + wg_idx + warpgroups_per_block * block_idx,
+            "pid": 1 + int(sm_ids[block_idx, trace_idx]),
+            "tid": 1 + trace_idx + traces_per_block * block_idx,
         })
       else:  # If we didn't break
         if block_events:
@@ -326,14 +341,21 @@ class OnDeviceProfiler:
     self.spec = spec
     self.entries_per_wg = spec.entries_per_warpgroup
     self.wrap_in_custom_primitive = wrap_in_custom_primitive
-    wg_idx = warpgroup_idx(sync=False)
-    wg_offset = arith.index_cast(
-        index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
+    if spec.trace_scope == ThreadSubset.WARP:
+      trace_idx = warp_idx(sync=False)
+      scope_size = WARP_SIZE
+    elif spec.trace_scope == ThreadSubset.WARPGROUP:
+      trace_idx = warpgroup_idx(sync=False)
+      scope_size = WARPGROUP_SIZE
+    else:
+      raise NotImplementedError(f"Scope {spec.trace_scope} not supported")
+    trace_offset = arith.index_cast(
+        index, arith.muli(trace_idx, c(self.entries_per_wg, i32))
     )
-    smem_buffer = memref_slice(smem_buffer, ds(wg_offset, self.entries_per_wg))
+    smem_buffer = memref_slice(smem_buffer, ds(trace_offset, self.entries_per_wg))
     is_profiling_thread = arith.cmpi(
         arith.CmpIPredicate.eq,
-        arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32)),
+        arith.remui(thread_idx(), c(scope_size, i32)),
         c(0, i32),
     )
     # Hopefully mem2reg will remove the allocation.
@@ -412,13 +434,19 @@ class OnDeviceProfiler:
         block_idx = arith.addi(
             arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
         )
-      wg_idx = warpgroup_idx(sync=False)
-      wg_per_block = math.prod(block) // WARPGROUP_SIZE
-      global_wg_idx = arith.addi(
-          arith.muli(block_idx, c(wg_per_block, index)),
-          arith.index_cast(index, wg_idx),
+      if self.spec.trace_scope == ThreadSubset.WARP:
+        trace_idx = warp_idx(sync=False)
+        traces_per_block = math.prod(block) // WARP_SIZE
+      elif self.spec.trace_scope == ThreadSubset.WARPGROUP:
+        trace_idx = warpgroup_idx(sync=False)
+        traces_per_block = math.prod(block) // WARPGROUP_SIZE
+      else:
+        raise NotImplementedError(f"Scope {self.spec.trace_scope} not supported")
+      global_trace_idx = arith.addi(
+          arith.muli(block_idx, c(traces_per_block, index)),
+          arith.index_cast(index, trace_idx),
       )
-      start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
+      start_offset = arith.muli(global_trace_idx, c(self.entries_per_wg, index))
       wg_gmem_buffer = memref_slice(
           ctx.gmem_buffer, ds(start_offset, self.entries_per_wg)
       )
