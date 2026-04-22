@@ -17,6 +17,12 @@ on:
       - "CI - Pytest ROCm"
       - "CI - jaxlib head with NumPy nightly"
       - "CI - Oldest Supported NumPy (presubmit)"
+      - "Mosaic GPU B200 Presubmit"
+      - "JAX Array API"
+      - "CI - with Numpy/Scipy nightly wheels (nightly)"
+      - "CI - Address Sanitizer (nightly)"
+      - "CI - Bazel CPU tests"
+      - "CI - Wheel Tests (Nightly/Release)"
     types:
       - completed
 
@@ -47,5 +53,6 @@ jobs:
             "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID" > workflow_run.json
           curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID/jobs?per_page=200" > jobs.json
-          gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/$WORKFLOW_RUN_NAME/$WORKFLOW_RUN_NUMBER/$WORKFLOW_RUN_ATTEMPT"
+          SAFE_NAME="${WORKFLOW_RUN_NAME//\//-}"
+          gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/$SAFE_NAME/$WORKFLOW_RUN_NUMBER/$WORKFLOW_RUN_ATTEMPT"
           gcloud storage cp workflow_run.json jobs.json "$gcs_upload_uri/"

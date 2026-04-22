@@ -74,7 +74,15 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          pytest -n auto --tb=short --maxfail=20 tests examples
+          mkdir -p test-artifacts
+          pytest -n auto --tb=short --maxfail=20 tests examples --junitxml=test-artifacts/pytest.xml
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          test-artifacts-dir: 'test-artifacts'
+          artifact-name: 'upstream-nightly-test-artifacts'
       - name: Notify failed build
         uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b  # v1.2.0
         if: failure() && github.event.pull_request == null

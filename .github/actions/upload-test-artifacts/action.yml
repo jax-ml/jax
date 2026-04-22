@@ -94,5 +94,8 @@ runs:
         PADDED_ATTEMPT: ${{ steps.check-artifacts.outputs.padded_attempt }}
       run: |
         artifact_name="$INPUT_ARTIFACT_NAME-$PADDED_ATTEMPT"
-        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$GCS_UPLOAD_URI/$artifact_name/"
+        WF_NAME="${{ github.workflow }}"
+        SAFE_WF_NAME="${WF_NAME//\//-}"
+        REAL_URI="${GCS_UPLOAD_URI//$WF_NAME/$SAFE_WF_NAME}"
+        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$REAL_URI/$artifact_name/"
 

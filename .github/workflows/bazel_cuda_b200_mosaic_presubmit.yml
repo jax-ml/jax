@@ -161,3 +161,10 @@ jobs:
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_TEST_TIMEOUT: '420'
         run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+      - name: Upload test artifacts
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upload-test-artifacts
+        with:
+          test-artifacts-dir: 'test-artifacts'
+          artifact-name: 'mosaic-b200-test-artifacts'

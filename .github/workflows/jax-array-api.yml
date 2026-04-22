@@ -49,4 +49,12 @@ jobs:
         JAX_ENABLE_X64: 'true'
       run: |
         cd "${GITHUB_WORKSPACE}/array-api-tests"
-        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file "${GITHUB_WORKSPACE}/tests/array_api_skips.txt"
+        mkdir -p test-artifacts
+        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file "${GITHUB_WORKSPACE}/tests/array_api_skips.txt" --junitxml=test-artifacts/pytest.xml
+    - name: Upload test artifacts
+      if: always()
+      continue-on-error: true
+      uses: ./.github/actions/upload-test-artifacts
+      with:
+        test-artifacts-dir: 'array-api-tests/test-artifacts'
+        artifact-name: 'jax-array-api-test-artifacts'
