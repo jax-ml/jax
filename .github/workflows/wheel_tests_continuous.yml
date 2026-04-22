@@ -30,7 +30,6 @@
 
 name: CI - Wheel Tests (Continuous)
 permissions:
-  id-token: write
   contents: read
   actions: read
 
@@ -331,6 +330,10 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/pytest_rocm.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
     strategy:
         fail-fast: false
         matrix:
@@ -353,6 +356,10 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
     strategy:
         fail-fast: false
         matrix:
