@@ -13,17 +13,6 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
-# Initialize Hermetic toolchains
-# Details: https://github.com/google-ml-infra/rules_ml_toolchain
-tf_http_archive(
-    name = "rules_ml_toolchain",
-    sha256 = "f2c924e85a22ba2eaa0c08657e5f5467fedbc3d0506f9cc0c69dd97ed9fbaf28",
-    strip_prefix = "rules_ml_toolchain-99c43dfe995a0e81c767d5b6d686191992672fe6",
-    urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/99c43dfe995a0e81c767d5b6d686191992672fe6.tar.gz",
-    ),
-)
-
 load("@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl", "cc_toolchain_deps")
 
 cc_toolchain_deps()
@@ -31,6 +20,8 @@ cc_toolchain_deps()
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_rocm")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
 
@@ -197,6 +188,21 @@ load(
 )
 
 cuda_configure(name = "local_config_cuda")
+
+load("@rules_ml_toolchain//cc/llvms/local:local_clang_configure.bzl", "local_clang_configure")
+
+local_clang_configure(name = "local_config_clang")
+
+load("@rules_ml_toolchain//gpu/rocm:hipcc_configure.bzl", "hipcc_configure")
+
+hipcc_configure(name = "config_rocm_hipcc")
+
+load("@xla//third_party/gpus:rocm_configure.bzl", "rocm_configure")
+
+rocm_configure(
+    name = "local_config_rocm",
+    rocm_dist = "@config_rocm_hipcc//rocm:rocm_dist",
+)
 
 load(
     "@rules_ml_toolchain//gpu/nccl:nccl_redist_init_repository.bzl",
