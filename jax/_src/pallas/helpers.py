@@ -189,23 +189,23 @@ def _get_empty_ref(out):
 
 
 def _make_kernel(body,
-                 out_shape: object,
+                 out_type: object,
                  mesh: pl_core.Mesh,
-                 scratch_shapes: pl_core.ScratchShapeTree = (),
+                 scratch_types: pl_core.ScratchShapeTree = (),
                  name: str | None = None,
                  **mesh_kwargs
                  ):
-  if unwrap_out := not isinstance(out_shape, (tuple, list)):
-    out_shape = (out_shape,)
+  if unwrap_out := not isinstance(out_type, (tuple, list)):
+    out_type = (out_type,)
 
   @api.jit
   def wrapper(*operands):
     arg_refs = tree_util.tree_map(jax_core.new_ref, operands)
-    out_refs = tree_util.tree_map(_get_empty_ref, out_shape)
+    out_refs = tree_util.tree_map(_get_empty_ref, out_type)
 
     @pl_core.core_map(
         mesh,
-        scratch_shapes=scratch_shapes,
+        scratch_shapes=scratch_types,
         **mesh_kwargs,
         name=name or util.fun_name(body),
     )
@@ -218,10 +218,10 @@ def _make_kernel(body,
 
 
 def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
-           out_shape: object | None = None,
+           out_type: object | None = None,
            *,
            mesh: pl_core.Mesh,
-           scratch_shapes: pl_core.ScratchShapeTree = (),
+           scratch_types: pl_core.ScratchShapeTree = (),
            compiler_params: pl_core.CompilerParams | None = None,
            interpret: bool = False,
            cost_estimate: pl_core.CostEstimate | None = None,
@@ -275,12 +275,12 @@ def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
   """
   # Note we default out_shape to None to allow `body` to come before it
   # in the function signature, but `body` itself is optional.
-  if out_shape is None:
-    raise ValueError('out_shape must be provided.')
+  if out_type is None:
+    raise ValueError('out_type must be provided.')
   kwds = dict(
-      out_shape=out_shape,
+      out_type=out_type,
       mesh=mesh,
-      scratch_shapes=scratch_shapes,
+      scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=interpret,
       cost_estimate=cost_estimate,

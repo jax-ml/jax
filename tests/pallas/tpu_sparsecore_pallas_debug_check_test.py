@@ -75,7 +75,7 @@ class DebugCheckTest(jtu.JaxTestCase):
     x = jnp.arange(8)
 
     @pl.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
     )
     def kernel(o_hbm_ref):

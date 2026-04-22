@@ -164,7 +164,7 @@ class TorchTest(jtu.JaxTestCase):
     )
 
   def test_torch_aliasing(self):
-    @pl.kernel(mesh=plgpu.Mesh(), out_shape=(), compiler_params=plgpu.CompilerParams())
+    @pl.kernel(mesh=plgpu.Mesh(), out_type=(), compiler_params=plgpu.CompilerParams())
     def kernel(x_ref):
       x_ref[...] = jnp.ones_like(x_ref)
 

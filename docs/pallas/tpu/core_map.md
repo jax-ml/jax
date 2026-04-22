@@ -164,9 +164,9 @@ Note that this should run inside any `jax.shard_map` you may have at the top lev
 @jax.jit
 @partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
 def swap_cores(x):
-  scratch_shapes = [pltpu.VMEM(local_vmem_shape, x.dtype)] * 3 + [pltpu.SemaphoreType.DMA] * 3
-  return pl.kernel(swap_cores_kernel, out_shape=x, mesh=tc_mesh,
-                   scratch_shapes=scratch_shapes,
+  scratch_types = [pltpu.VMEM(local_vmem_shape, x.dtype)] * 3 + [pltpu.SemaphoreType.DMA] * 3
+  return pl.kernel(swap_cores_kernel, out_type=x, mesh=tc_mesh,
+                   scratch_types=scratch_types,
                    compiler_params=pltpu.CompilerParams(collective_id=0))(x)
 
 y = swap_cores(x)
@@ -216,7 +216,7 @@ def add_one_kernel(x_hbm_ref, o_hbm_ref):
 @jax.jit
 @partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
 def add_one(x):
-  return pl.kernel(add_one_kernel, out_shape=x, mesh=tc_mesh, scratch_shapes=[])(x)
+  return pl.kernel(add_one_kernel, out_type=x, mesh=tc_mesh, scratch_types=[])(x)
 
 
 x = jax.random.normal(jax.random.key(0), input_shape, jnp.float32)
@@ -271,10 +271,10 @@ def indexed_add_one_kernel(in_refs, out_refs, i_smem_ref):
 @partial(jax.shard_map, mesh=mesh,
          in_specs=(in_spec, jax.P()), out_specs=in_spec, check_vma=False)
 def indexed_add_one(x, index):
-  out_shape = jax.ShapeDtypeStruct((x.shape[0], x.shape[1] // 2), x.dtype)
+  out_type = jax.ShapeDtypeStruct((x.shape[0], x.shape[1] // 2), x.dtype)
   return pl.kernel(indexed_add_one_kernel,
-                   out_shape=out_shape, mesh=tc_mesh,
-                   scratch_shapes=[pltpu.SMEM((1,), jnp.int32)])((x, index))
+                   out_type=out_type, mesh=tc_mesh,
+                   scratch_types=[pltpu.SMEM((1,), jnp.int32)])((x, index))
 
 
 xs = jax.random.normal(jax.random.key(0), input_shape, jnp.float32)
@@ -352,7 +352,7 @@ def sc_add_one_kernel(x_hbm_ref, o_hbm_ref):
 @jax.jit
 @partial(jax.shard_map, mesh=mesh, in_specs=in_spec, out_specs=in_spec, check_vma=False)
 def sc_add_one(x):
-  return pl.kernel(sc_add_one_kernel, out_shape=x, mesh=sc_mesh, scratch_shapes=[])(x)
+  return pl.kernel(sc_add_one_kernel, out_type=x, mesh=sc_mesh, scratch_types=[])(x)
 
 
 x = jax.random.randint(jax.random.key(0), input_shape, 0, 64, jnp.int32)

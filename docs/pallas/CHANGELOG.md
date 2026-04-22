@@ -21,6 +21,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Released with JAX 0.10.0
 
+* Changes
+
+  * Breaking change: refactored `pl.kernel` to use `out_type` instead of `out_shape` and `scratch_types` instead of `scratch_shapes`. Existing usages calling `pl.kernel` with these keyword arguments must be updated.
+ssss
 ### TPU
 
 * Deprecations

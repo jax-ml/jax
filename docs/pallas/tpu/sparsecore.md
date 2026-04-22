@@ -143,9 +143,9 @@ scalar operations.
 ```python
 @jax.jit
 def cumsum(x):
-  @pl.kernel(out_shape=x, mesh=scalar_mesh,
-             scratch_shapes=[pltpu.SMEM((x.shape[1],), x.dtype),
-                             pltpu.SemaphoreType.DMA])
+  @pl.kernel(out_type=x, mesh=scalar_mesh,
+             scratch_types=[pltpu.SMEM((x.shape[1],), x.dtype),
+                            pltpu.SemaphoreType.DMA])
   def kernel(x_ref, o_ref, tmp_ref, sem):
     idx = jax.lax.axis_index('core')
     pltpu.async_copy(x_ref.at[idx], tmp_ref, sem).wait()
@@ -175,7 +175,7 @@ dma_block = (8, 128)
 
 @jax.jit
 def sc_add_one(x):
-  @pl.kernel(out_shape=x, mesh=vector_mesh, scratch_shapes=[])
+  @pl.kernel(out_type=x, mesh=vector_mesh, scratch_types=[])
   def sc_add_one_kernel(x_hbm_ref, o_hbm_ref):
     in_shape = x_hbm_ref.shape
 
@@ -270,7 +270,7 @@ indices = jax.random.randint(jax.random.key(0), (num_indices,), 0, batch_size,
 @jax.jit
 def gather(x, indices):
   indices = indices.reshape((1, num_indices))
-  @pl.kernel(out_shape=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
+  @pl.kernel(out_type=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
              mesh=vector_mesh)
   def kernel(x_hbm, i_hbm, o_hbm):
     def body(i_vmem, o_vmem):
@@ -347,8 +347,8 @@ below.
 @jax.jit
 def scatter(x, indices):
   indices = indices.reshape((1, num_indices))
-  @pl.kernel(out_shape=jax.ShapeDtypeStruct((batch_size, value_dim), x.dtype),
-             mesh=vector_mesh, scratch_shapes=[])
+  @pl.kernel(out_type=jax.ShapeDtypeStruct((batch_size, value_dim), x.dtype),
+             mesh=vector_mesh, scratch_types=[])
   def kernel(x_hbm, i_hbm, o_hbm):
     def body(x_vmem, i_vmem):
       pltpu.sync_copy(x_vmem, o_hbm.at[i_vmem.at[0]])  # The scatter op

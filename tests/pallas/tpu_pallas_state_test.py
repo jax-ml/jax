@@ -278,10 +278,10 @@ class CoreMapTest(jtu.JaxTestCase):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with self.subTest("decorator"):
-      result = pl.kernel(body, out_shape=x, mesh=mesh)(x)
+      result = pl.kernel(body, out_type=x, mesh=mesh)(x)
       np.testing.assert_array_equal(result, x)
     with self.subTest("decorator_factory"):
-      result = pl.kernel(out_shape=x, mesh=mesh)(body)(x)
+      result = pl.kernel(out_type=x, mesh=mesh)(body)(x)
       np.testing.assert_array_equal(result, x)
 
   def test_empty_core_map_raises_error(self):
@@ -325,9 +325,9 @@ class CoreMapTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       @pl.kernel(
-          out_shape=x,
+          out_type=x,
           mesh=mesh,
-          scratch_shapes=[
+          scratch_types=[
               pltpu.VMEM((slc_size, 128), x.dtype),
               pltpu.VMEM((slc_size, 128), x.dtype),
               pltpu.SemaphoreType.DMA,
@@ -360,9 +360,9 @@ class CoreMapTest(jtu.JaxTestCase):
     def f(x):
       y = jnp.zeros_like(x)
 
-      @pl.kernel(out_shape=x,
+      @pl.kernel(out_type=x,
                  mesh=pltpu.create_tensorcore_mesh("x"),
-                 scratch_shapes=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
+                 scratch_types=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
       def kernel(x_ref, out_ref, tmp_ref):
         pltpu.sync_copy(x_ref, tmp_ref)
         tmp_ref[...] += y
@@ -393,7 +393,7 @@ class CoreMapTest(jtu.JaxTestCase):
     def f(x, i):
 
       @pl.kernel(
-          out_shape=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+          out_type=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
           mesh=mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=use_tc_tiling_on_sc,
@@ -411,7 +411,7 @@ class CoreMapTest(jtu.JaxTestCase):
 
     @jax.jit
     def g(x, i):
-      @pl.kernel(out_shape=jax.ShapeDtypeStruct((2, *x.shape[1:]), jnp.int32),
+      @pl.kernel(out_type=jax.ShapeDtypeStruct((2, *x.shape[1:]), jnp.int32),
                  mesh=mesh)
       def kernel(x_ref, out_ref):
         pltpu.sync_copy(x_ref.at[pl.ds(i, 2)], out_ref)
@@ -430,8 +430,8 @@ class CoreMapTest(jtu.JaxTestCase):
       pltpu.sync_copy(scratch_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     result = pl.kernel(
-        body, out_shape=x, mesh=mesh,
-        scratch_shapes=dict(scratch_ref=pltpu.VMEM(x.shape, x.dtype)))(x)
+        body, out_type=x, mesh=mesh,
+        scratch_types=dict(scratch_ref=pltpu.VMEM(x.shape, x.dtype)))(x)
     np.testing.assert_array_equal(result, x + 1)
 
   def test_kernel_helper_with_out_tree(self):
@@ -443,8 +443,8 @@ class CoreMapTest(jtu.JaxTestCase):
       pltpu.sync_copy(scratch_ref, o2_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     result1, result2 = pl.kernel(
-        body, out_shape=[x, x], mesh=mesh,
-        scratch_shapes=[pltpu.VMEM(x.shape, x.dtype)])(x)
+        body, out_type=[x, x], mesh=mesh,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype)])(x)
     np.testing.assert_array_equal(result1, x)
     np.testing.assert_array_equal(result2, x + 1)
 
@@ -462,7 +462,7 @@ class CoreMapTest(jtu.JaxTestCase):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     text = pl.kernel(
-        body, out_shape=memory_space(x.shape, x.dtype), mesh=mesh,
+        body, out_type=memory_space(x.shape, x.dtype), mesh=mesh,
     ).lower(x).as_text()
     custom_call = [l for l in text.split("\n") if "@tpu_custom_call" in l]
     self.assertLen(custom_call, 1)

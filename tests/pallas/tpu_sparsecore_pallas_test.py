@@ -185,7 +185,7 @@ class DebugPrintTest(PallasSCTest):
     debug_float = 12344.625
 
     @self.kernel(
-        out_shape=int32s,
+        out_type=int32s,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="x", num_cores=self.sc_info.num_cores
         ),
@@ -1437,7 +1437,7 @@ class VectorSubcoreTest(PallasSCTest):
         self.assertEqual(arr.aval.mat.varying, {'x', 'y'})
         out = pl.kernel(
             k,
-            out_shape=jax.ShapeDtypeStruct(
+            out_type=jax.ShapeDtypeStruct(
                 shape=(num_subcores, self.num_lanes),
                 dtype=jnp.int32,
                 sharding=jax.typeof(arr).sharding,
@@ -1467,7 +1467,7 @@ class VectorSubcoreTest(PallasSCTest):
       num_subcores = self.sc_info.num_subcores
 
     @self.kernel(
-        out_shape=jax.ShapeDtypeStruct(
+        out_type=jax.ShapeDtypeStruct(
             shape=(num_subcores, self.num_lanes), dtype=jnp.int32
         ),
         mesh=plsc.VectorSubcoreMesh(
@@ -1503,9 +1503,9 @@ class VectorSubcoreTest(PallasSCTest):
     x_pad = jnp.pad(x, ((0, 0), (0, n_pad - n * vec_dim)), mode="empty")
 
     @self.kernel(
-        out_shape=x_pad,
+        out_type=x_pad,
         mesh=mesh,
-        scratch_shapes=(
+        scratch_types=(
             pltpu.VMEM(x_pad.shape[1:], x.dtype),
             pltpu.VMEM_SHARED(x_pad.shape, jnp.int32),
         ),
@@ -1540,13 +1540,13 @@ class VectorSubcoreTest(PallasSCTest):
     num_subcores = self.sc_info.num_subcores
 
     @self.kernel(
-        out_shape=jax.ShapeDtypeStruct(
+        out_type=jax.ShapeDtypeStruct(
             shape=(num_subcores, self.num_lanes), dtype=jnp.float32
         ),
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        scratch_shapes=(
+        scratch_types=(
             pltpu.SMEM([1], jnp.float32),
             pltpu.VMEM([self.num_lanes], jnp.float32),
         ),
@@ -1597,11 +1597,11 @@ class VectorSubcoreTest(PallasSCTest):
     chunk_size = self.num_lanes
 
     @self.kernel(
-        out_shape=(),
+        out_type=(),
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        scratch_shapes=(pltpu.VMEM((chunk_size,), jnp.uint32),) * 3,
+        scratch_types=(pltpu.VMEM((chunk_size,), jnp.uint32),) * 3,
     )
     def _kernel(a_ref, b_ref, c_ref):
       @pl.loop(0, 4)
@@ -1809,11 +1809,11 @@ class VectorSubcoreTest(PallasSCTest):
     )
     vec_dim = self.sc_info.num_lanes
     @self.kernel(
-        out_shape=jax.ShapeDtypeStruct(
+        out_type=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
         ),
         mesh=mesh,
-        scratch_shapes=[pltpu.VMEM((mesh.num_subcores, vec_dim), jnp.uint32)],
+        scratch_types=[pltpu.VMEM((mesh.num_subcores, vec_dim), jnp.uint32)],
     )
     def kernel(o_ref, vmem_ref):
       subcore_id = lax.axis_index("subcore")
@@ -1879,11 +1879,11 @@ class VectorSubcoreTest(PallasSCTest):
       self.skipTest("Mysteriously fails in MLIR verifier (no error message) on v7x")
 
     @self.kernel(
-        out_shape=x[:, : self.num_lanes],
+        out_type=x[:, : self.num_lanes],
         mesh=plsc.VectorSubcoreMesh(
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
-        scratch_shapes=dict(
+        scratch_types=dict(
             indices_vmem=pltpu.VMEM([8], jnp.int32),
             scratch_ref=pltpu.VMEM([8, 32], dtype),
         ),
@@ -1964,9 +1964,9 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(*shape)
 
     @self.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=mesh,
-        scratch_shapes=(
+        scratch_types=(
             pltpu.VMEM_SHARED(shape[1:], jnp.int32),
             pltpu.VMEM_SHARED(shape, jnp.int32),
         ),
@@ -2003,7 +2003,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
     def f(x):
       @self.kernel(
-          out_shape=jax.ShapeDtypeStruct(
+          out_type=jax.ShapeDtypeStruct(
               x.shape,
               x.dtype,
               sharding=jax.typeof(x).sharding,
@@ -2012,7 +2012,7 @@ class VectorSubcoreTest(PallasSCTest):
           mesh=plsc.VectorSubcoreMesh(
               core_axis_name="core", subcore_axis_name="subcore", num_cores=1
           ),
-          scratch_shapes=(pltpu.VMEM(x.shape, x.dtype),),
+          scratch_types=(pltpu.VMEM(x.shape, x.dtype),),
       )
       def kernel(in_ref, o_ref, scratch_ref):
         pltpu.sync_copy(in_ref, scratch_ref)
@@ -2154,9 +2154,9 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
     @self.kernel(
-        out_shape=jax.ShapeDtypeStruct((nrows, num_lanes), jnp.int32),
+        out_type=jax.ShapeDtypeStruct((nrows, num_lanes), jnp.int32),
         mesh=mesh,
-        scratch_shapes=dict(
+        scratch_types=dict(
             in_s=pltpu.VMEM((num_lanes,), jnp.int32),
             out_s=pltpu.VMEM((nrows, num_lanes), jnp.int32),
         ),
@@ -2182,9 +2182,9 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
     @self.kernel(
-        out_shape=jax.ShapeDtypeStruct((nrows, ncols), jnp.int32),
+        out_type=jax.ShapeDtypeStruct((nrows, ncols), jnp.int32),
         mesh=mesh,
-        scratch_shapes=dict(
+        scratch_types=dict(
             in_s=pltpu.VMEM((nrows,), jnp.int32),
             out_s=pltpu.VMEM((nrows, ncols), jnp.int32),
         ),
@@ -2252,7 +2252,7 @@ class ScalarSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes)
 
     @self.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="x", num_cores=self.sc_info.num_cores
         ),
@@ -2275,7 +2275,7 @@ class ScalarSubcoreTest(PallasSCTest):
     )
 
     @self.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="x", num_cores=self.sc_info.num_cores
         ),
@@ -2294,7 +2294,7 @@ class ScalarSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes)
 
     @self.kernel(
-        out_shape=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+        out_type=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
     )
     def kernel(x_ref, o_ref):
       @functools.partial(
@@ -2328,9 +2328,9 @@ class ScalarSubcoreTest(PallasSCTest):
     )
 
     @self.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
-        scratch_shapes=(
+        scratch_types=(
             pltpu.SMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
         ),
@@ -2354,9 +2354,9 @@ class ScalarSubcoreTest(PallasSCTest):
     )
 
     @self.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
-        scratch_shapes=(
+        scratch_types=(
             pltpu.SMEM(x.shape, x.dtype),
             pltpu.SemaphoreType.DMA,
         ),
@@ -2653,7 +2653,7 @@ class PipelineTest(PallasSCTest):
       indices = indices.reshape((1, num_indices))
 
       @self.kernel(
-          out_shape=jax.ShapeDtypeStruct((num_indices, 128), x.dtype),
+          out_type=jax.ShapeDtypeStruct((num_indices, 128), x.dtype),
           mesh=sc_mesh,
       )
       def kernel(x_hbm, i_hbm, o_hbm):
@@ -2693,10 +2693,10 @@ class PipelineTest(PallasSCTest):
 
     @self.kernel(
         mesh=sc_mesh,
-        out_shape=jax.ShapeDtypeStruct(
+        out_type=jax.ShapeDtypeStruct(
             shape=(num_steps, self.num_lanes, self.num_lanes), dtype=jnp.int32
         ),
-        scratch_shapes=dict(
+        scratch_types=dict(
             indices_ref=pltpu.VMEM(indices.shape, indices.dtype),
         ),
     )
@@ -2810,9 +2810,9 @@ class PipelineTest(PallasSCTest):
 
     @jax.jit
     @pl.kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype),
+        out_type=jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype),
         mesh=sc_mesh,
-        scratch_shapes=[
+        scratch_types=[
             pltpu.VMEM((num_buffers, window_size), jnp.int32),
             pltpu.VMEM((num_buffers, window_size), jnp.int32),
             pltpu.SemaphoreType.DMA((sc_mesh.num_cores, num_buffers)),
@@ -2942,7 +2942,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       )
       sem = pl.kernel(
           lambda *_: None,
-          out_shape=pltpu.SemaphoreType.DMA(()),
+          out_type=pltpu.SemaphoreType.DMA(()),
           mesh=mesh,
           name="sem_alloc",
       )()

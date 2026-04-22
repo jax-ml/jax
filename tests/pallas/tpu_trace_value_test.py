@@ -80,9 +80,9 @@ class SparseCoreTraceValueTest(jtu.JaxTestCase):
     )
 
     @pl.kernel(
-        out_shape=x,
+        out_type=x,
         mesh=mesh,
-        scratch_shapes=(pltpu.VMEM(x.shape, x.dtype),),
+        scratch_types=(pltpu.VMEM(x.shape, x.dtype),),
         compiler_params=pltpu.CompilerParams(),
     )
     def kernel(x_hbm_ref, o_hbm_ref, tmp_ref):

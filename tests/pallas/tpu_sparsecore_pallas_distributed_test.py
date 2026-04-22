@@ -45,9 +45,9 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
     # Implements a very simple collective permute.
     @pl.kernel(
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        out_type=jax.ShapeDtypeStruct(shape, jnp.int32),
         mesh=plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1),
-        scratch_shapes=(
+        scratch_types=(
             pltpu.SemaphoreType.REGULAR,
             pltpu.SemaphoreType.DMA,
             pltpu.SemaphoreType.DMA,
@@ -95,9 +95,9 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     shape = (8, 128)
 
     @pl.kernel(
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+        out_type=jax.ShapeDtypeStruct(shape, jnp.int32),
         mesh=plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1),
-        scratch_shapes=(
+        scratch_types=(
             pltpu.SemaphoreType.REGULAR,
             pltpu.SemaphoreType.DMA,
             pltpu.SemaphoreType.DMA,
