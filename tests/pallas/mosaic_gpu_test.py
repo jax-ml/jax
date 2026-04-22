@@ -3044,7 +3044,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
 
   def test_broadcast_in_dim_size_one_dimension(self):
-    self.skip_if_wg_semantics()  # failed to infer layout.
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((2, 4, 128), jnp.float32),

@@ -116,6 +116,11 @@ class Reduce:
   # with size one.
   keep_dims: bool = False
 
+  def __post_init__(self):
+    assert self.axes
+    assert self.axes == tuple(sorted(self.axes)), "axes must be sorted."
+    assert self.axes[0] >= 0, "axes must not contain negative indices."
+
   def __str__(self):
     return (
         f"Reduce([{self.axes}], {self.expression}, rank={self.rank},"
@@ -245,12 +250,11 @@ def reduce_reduce_expression(
         return RegisterLayout(layout.reduce(reduced_tiling_axes))
       return RegisterLayout(layout)
     case RegisterLayout(value=fa.WGStridedFragLayout() as layout):
-      # We only support reducing leading dimensions.
-      if expr.axes != tuple(range(len(expr.axes))):
+      # We don't support cross-lane and non vec_size preserving reductions.
+      trailing_dims = layout.shape[expr.axes[-1] + 1 :]
+      if math.prod(trailing_dims) % (layout.vec_size * fa.WARPGROUP_SIZE):
         return default()
       shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)
-      if math.prod(shape) % (layout.vec_size * fa.WARPGROUP_SIZE) != 0:
-        return default()
       return RegisterLayout(fa.WGStridedFragLayout(shape, layout.vec_size))
     case RegisterLayout(value=fa.WGSplatFragLayout() as layout):
       shape = utils.reduce_shape(layout.shape, expr.axes, expr.keep_dims)

@@ -396,6 +396,21 @@ def _divides_per_var(
   return result
 
 
+def _extract_layout_candidates_from_broadcast(
+    src: cs.RegisterLayout,
+    dst: cs.Variable,
+    dims: tuple[int, ...],
+) -> Iterator[tuple[cs.Variable, cs.Constant]]:
+  """Yields layout candidates for a broadcast equation."""
+  match src.value:
+    case fa.WGSplatFragLayout():
+      yield dst, cs.RegisterLayout(fa.WGSplatFragLayout(dst.shape))
+    case fa.WGStridedFragLayout() as src:
+      dst_layout = fa.WGStridedFragLayout(dst.shape, src.vec_size)
+      if fa.is_supported_strided_layout_broadcast(src, dst_layout, dims):
+        yield dst, cs.RegisterLayout(dst_layout)
+
+
 # TODO(bchetioui): flatten this call hierarchy.
 def _extract_variable_assignments_from_constraints(
     constraints: Sequence[cs.Constraint], arch: tuple[int, int],
@@ -428,6 +443,8 @@ def _extract_variable_assignments_from_constraints(
         yield var, layout
       case cs.IsValidMmaTiling() as mma_tiling:
         yield from _extract_layout_candidates_from_mma_tiling(mma_tiling)
+      case cs.IsSupportedBroadcast(cs.RegisterLayout() as src, cs.Variable() as dst, dims=dims):
+        yield from _extract_layout_candidates_from_broadcast(src, dst, dims)
 
 
 def conjure_assignment(
@@ -1205,27 +1222,25 @@ def _broadcast_in_dim_constraint_system(
 
   assert kept_dims or collapsed_dims
 
-  if kept_dims and collapsed_dims:
-    raise NotImplementedError(
-        "broadcast with both size-1 and size-0 broadcasted dimensions not"
-        " supported."
-    )
+  reduce_expr = dst_variable
 
+  # 1. Apply keep_dims=True first. This keeps the rank the same,
+  # so collapsed_dims indices remain valid.
   if kept_dims:
     reduce_expr = cs.Reduce(
-        dst_variable, axes=tuple(kept_dims), rank=len(dst_shape), keep_dims=True
+        reduce_expr, axes=tuple(kept_dims), rank=len(dst_shape), keep_dims=True
     )
-  else:
+
+  # 2. Apply keep_dims=False to remove the added dimensions.
+  if collapsed_dims:
     reduce_expr = cs.Reduce(
-        dst_variable,
-        axes=tuple(collapsed_dims),
-        rank=len(dst_shape),
-        keep_dims=False,
+        reduce_expr, axes=tuple(collapsed_dims), rank=len(dst_shape), keep_dims=False
     )
 
   constraints = [
-      # TODO(allanrenucci): We may not need the `Reduce` constraint if we
-      # support conjuring variables from `IsSupportedBroadcast` constraints.
+      # We need the `src = Reduce(...)` constraint to enforce correctness.
+      # Alternatively, we could enforce it via the `IsSupportedBroadcast`
+      # constraint but currently it doesn't do the necessary checks.
       cs.Equals(src_variable, reduce_expr),
       cs.IsSupportedBroadcast(
           src_variable, dst_variable, tuple(op.broadcast_dimensions)

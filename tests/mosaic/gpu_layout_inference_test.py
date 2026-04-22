@@ -385,6 +385,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       hint_on_input=(True, False),
       src_shape_dst_shape_dims=(
           ((1, 128), (4, 128), (0, 1)),
+          ((1, 128), (2, 4, 128), (1, 2)),
           ((1, 1, 128), (2, 4, 128), (0, 1, 2)),
           ((1, 4, 128), (2, 4, 128), (0, 1, 2)),
           ((128,), (4, 128), (1,)),

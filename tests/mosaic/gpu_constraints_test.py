@@ -256,6 +256,12 @@ class ConstraintSystemTest(parameterized.TestCase):
           (0,),
           mgpu.WGStridedFragLayout(shape=(2, 128), vec_size=2),
       ),
+      (
+          mgpu.WGStridedFragLayout(shape=(2, 4, 128), vec_size=1),
+          (1,),
+          mgpu.WGStridedFragLayout(shape=(2, 1, 128), vec_size=1),
+          True,
+      ),
   )
   def test_reduce_reduce_expression_reduces_strided_layout(
       self, layout, axes, expected_layout, keep_dims=False
@@ -263,6 +269,17 @@ class ConstraintSystemTest(parameterized.TestCase):
     rank = len(layout.shape)
     expr = cs.Reduce(RL(layout), axes, rank, keep_dims)
     self.assertEqual(cs.reduce_expression(expr, {}), RL(expected_layout))
+
+  def test_reduce_expression_reduces_nested_reduce_expression(self):
+    layout = RL(mgpu.WGStridedFragLayout((2, 4, 128), vec_size=1))
+    expr = cs.Reduce(
+        cs.Reduce(layout, axes=(1,), rank=3, keep_dims=True),
+        axes=(0,),
+        rank=3,
+        keep_dims=False,
+    )
+    expected_layout = RL(mgpu.WGStridedFragLayout((1, 128), vec_size=1))
+    self.assertEqual(cs.reduce_expression(expr, {}), expected_layout)
 
   @parameterized.parameters(
       (
@@ -272,6 +289,10 @@ class ConstraintSystemTest(parameterized.TestCase):
       (
           mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=2),
           (0, 1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(128, 2, 129), vec_size=2),
+          (0,),
       ),
   )
   def test_reduce_reduce_expression_cant_reduce_unsupported_strided_layout(
