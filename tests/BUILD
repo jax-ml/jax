@@ -1254,6 +1254,9 @@ jax_multiplatform_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
     backend_tags = {
+        "gpu": [
+            "noasan",  # Times out
+        ],
         "tpu": [
             "noasan",  # Times out
             "nomsan",  # Times out
