@@ -14,99 +14,28 @@
 
 """Fusible primitive."""
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import hijax
 from jax._src.interpreters import batching
 from jax._src import linear_util as lu
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fusion as fusion_lib
-from jax._src.pallas.fuser import fusible_dtype
 
+fusible_p = jax_core.Primitive('fusible')
+fusible_p.multiple_results = True
 
-class Fusible(hijax.VJPHiPrimitive):
-  output_fusion_prefix: Any
-  func: Callable
-  jaxpr: jax_core.Jaxpr
-  num_consts: int
-  args_tree: tree_util.PyTreeDef
+def _fusible_is_high(*_, jaxpr, **params):
+  del params
+  return jaxpr.is_high
 
-  def __init__(self, jaxpr, in_avals, out_aval, output_fusion_prefix, func, num_consts, args_tree):
-    assert isinstance(jaxpr, jax_core.Jaxpr)
-
-    self.in_avals = tuple(in_avals)
-    self.out_aval = out_aval
-    self.params = {
-        "jaxpr": jaxpr,
-        "output_fusion_prefix": output_fusion_prefix,
-        "func": func,
-        "num_consts": num_consts,
-        "args_tree": args_tree,
-    }
-    self.effects = frozenset(jaxpr.effects)
-    super().__init__()
-
-  def expand(self, *consts_and_args):
-    consts, args = util.split_list(consts_and_args, [self.num_consts])
-    flat_args = tree_util.tree_leaves(args)
-    out_flat = jax_core.eval_jaxpr(self.jaxpr, consts, *flat_args)
-    return tree_util.tree_unflatten(self.out_tree, out_flat)
-
-  def vjp_fwd(self, in_nzs, *args):
-    out, vjp_fun = jax.vjp(self.expand, *args)
-    return out, vjp_fun
-
-  def vjp_bwd_retval(self, vjp_fun, outgrad):
-    return vjp_fun(outgrad)
-
-  def batch(self, axis_data, args, dims):
-    if axis_data.size != 1:
-      raise NotImplementedError("Fusible does not support non-trivial batching")
-
-    def unbatch_leaf(a, d):
-      if d is batching.not_mapped or d is None:
-        return a
-      return a[d]
-
-    unbatched_args = tree_util.tree_map(unbatch_leaf, args, dims)
-    out_unbatched = self(*unbatched_args)
-
-    def batch_leaf(o):
-      return o[None]
-
-    out = tree_util.tree_map(batch_leaf, out_unbatched)
-    out_dims = tree_util.tree_map(lambda _: 0, self.out_aval)
-
-    return out, out_dims
-
-  def physicalize(self, _, *args):
-    consts = args[:self.num_consts]
-    new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(jax_core.ClosedJaxpr(self.jaxpr, list(consts)))
-
-    const_avals = tuple(map(jax_core.typeof, new_jaxpr.consts))
-    flat_avals = tree_util.tree_map(jax_core.typeof, args[self.num_consts:])
-
-    out_avals_flat = [v.aval for v in new_jaxpr.outvars]
-    _, out_tree = tree_util.tree_flatten(self.out_aval)
-    new_out_aval = tree_util.tree_unflatten(out_tree, out_avals_flat)
-
-    new_prim = Fusible(
-        jaxpr=new_jaxpr.jaxpr,
-        in_avals=const_avals + flat_avals,
-        out_aval=new_out_aval,
-        output_fusion_prefix=self.output_fusion_prefix,
-        func=self.func,
-        num_consts=len(new_jaxpr.consts),
-        args_tree=self.args_tree,
-    )
-    out = new_prim(*new_jaxpr.consts, *args[self.num_consts:])
-    return jax.tree.leaves(out)
+fusible_p.is_high = _fusible_is_high
 
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
@@ -135,27 +64,78 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
           lu.wrap_init(wrapped, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.typeof(x) for x in flat_args]
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals, lower=True)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       out_tree = out_tree_thunk()
-      out_avals_flat = [v.aval for v in jaxpr.outvars]
-      out_aval = tree_util.tree_unflatten(out_tree, out_avals_flat)
-      const_avals = [jax_core.typeof(x) for x in consts]
-      arg_avals = [tree_util.tree_map(jax_core.typeof, x) for x in args]
-      full_in_avals = tuple(const_avals) + tuple(arg_avals)
-
-      fusible_prim = Fusible(
+      out = fusible_p.bind(
+          *consts,
+          *flat_args,
           jaxpr=jaxpr,
-          in_avals=full_in_avals,
-          out_aval=out_aval,
-          output_fusion_prefix=output_fusion_prefix,
-          func=f,
           num_consts=len(consts),
-          args_tree=in_tree,
+          in_tree=in_tree,
+          out_tree=out_tree,
+          func=f,
+          output_fusion_prefix=output_fusion_prefix,
       )
-      return fusible_prim(*consts, *args)
+      return tree_util.tree_unflatten(out_tree, out)
 
     return wrapper
 
   if f is not None:
     return decorator(f)
   return decorator
+
+
+@fusible_p.def_impl
+def _(*consts_and_args, jaxpr, num_consts, **_):
+  consts, args = util.split_list(consts_and_args, [num_consts])
+  return jax_core.eval_jaxpr(jaxpr, consts, *args)
+
+
+mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
+
+
+@fusible_p.def_effectful_abstract_eval
+def _(*args, jaxpr, **kwargs):
+  del args, kwargs
+  return [v.aval for v in jaxpr.outvars], jaxpr.effects
+
+
+def _fusible_trivial_batching_rule(axis_data, args, dims, **kwargs):
+  if axis_data.size != 1:
+    raise NotImplementedError('fusible does not support non-trivial batching')
+
+  unbatched_args = tuple(
+      a if (d is batching.not_mapped or d is None) else a[d]
+      for a, d in zip(args, dims, strict=True)
+  )
+  out_unbatched = fusible_p.bind(*unbatched_args, **kwargs)
+  out = tuple(o[None] for o in out_unbatched)
+
+  return out, (0,) * len(out)
+
+batching.fancy_primitive_batchers[fusible_p] = _fusible_trivial_batching_rule
+
+
+def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
+  const_in_avals = jaxpr.in_aval_qdds[:num_consts]
+  num_lo_consts = sum(len(aval.lo_ty()) for aval in const_in_avals)
+
+  lo_args = [
+      lo_val
+      for aval, x in util.safe_zip(jaxpr.in_aval_qdds, hi_args)
+      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
+  ]
+
+  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, lo_args[:num_lo_consts])
+
+  lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
+  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr.jaxpr, num_consts=num_lo_consts)
+
+  out_mut, lo_outs = util.split_list(all_outs, [pe.num_himuts_out(jaxpr.final_aval_qdds)])
+  for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):
+    if a.has_qdd:
+      a.aval.update_from_loval(a.qdd, x, *us)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
+
+
+fusible_p.to_lojax = _fusible_to_lojax
