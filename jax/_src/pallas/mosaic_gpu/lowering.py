@@ -3301,13 +3301,9 @@ def _run_scoped_lowering_rule(
               )
           )
         else:
-          if isinstance(dtype, ir.IntegerType):
-            zero = arith_dialect.constant(dtype, 0)
-          else:
-            zero = arith_dialect.constant(dtype, 0.0)
-          acc = vector_dialect.broadcast(
-              ir.VectorType.get(aval.shape, dtype), zero
-          )
+          zero = _ir_constant(0, dtype)
+          acc_type = ir.VectorType.get(aval.shape, dtype)
+          acc = vector_dialect.broadcast(acc_type, zero)
           acc = mgpu.dialect.optimization_barrier([acc])
           nvvm_dialect.wgmma_fence_aligned()
           input_refs.append(acc)
