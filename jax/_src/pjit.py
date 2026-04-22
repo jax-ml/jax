@@ -2128,9 +2128,8 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
       sharding = NamedSharding(x.sharding.mesh, sharding.spec)
 
   if layout is None:
-    return dispatch.apply_primitive(
-        sharding_constraint_p, x,  sharding=sharding, layout=layout,
-        context_mesh=context_mesh, unconstrained_dims=unconstrained_dims)
+    # Run a jit here to raise good errors when device assignment don't match.
+    return api.jit(_identity_fn, out_shardings=sharding)(x)
   else:
     return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
 
