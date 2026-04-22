@@ -24,6 +24,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `with mesh:` context manager has been deprecated. Please use
     `with jax.set_mesh(mesh):` instead.
 
+* Deprecations
+  * Passing the `copy`, `order`, and `ndmin` arguments to
+    {func}`jax.numpy.array` positionally is deprecated. Use keyword arguments
+    instead. This matches the signature of `numpy.array`.
+
 ## JAX 0.10.0 (April 16, 2026)
 
 * New features:
