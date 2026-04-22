@@ -163,6 +163,30 @@ class ProfilerTest(unittest.TestCase):
         self.assertIn(b"/device:TPU", proto)
       self.assertNotIn(b"pxla.py", proto)
 
+  def testProgrammaticProfilingWithSessionId(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      try:
+        options = jax.profiler.ProfileOptions()
+        options.session_id = "test_session_123"
+        jax.profiler.start_trace(tmpdir, profiler_options=options)
+        jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+            jnp.ones(jax.local_device_count())
+        )
+      finally:
+        jax.profiler.stop_trace()
+
+      expected_dir = os.path.join(tmpdir, "plugins", "profile", "test_session_123")
+      self.assertTrue(os.path.isdir(expected_dir), f"Expected directory {expected_dir} does not exist.")
+
+      proto_path = glob.glob(
+          os.path.join(expected_dir, "*.xplane.pb"), recursive=True
+      )
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host traces
+      self.assertIn(b"/host:CPU", proto)
+
   def testProgrammaticProfilingPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
       tmpdir = pathlib.Path(tmpdir_string)
