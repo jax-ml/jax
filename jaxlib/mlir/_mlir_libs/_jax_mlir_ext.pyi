@@ -29,6 +29,9 @@ def inlined_func_call(
 ) -> list[ir.Value]:
   """Makes an inlined call to a function containing a single block with a single return op."""
 
+def arith_constant(value: int | float | bool, type: ir.Type, /) -> ir.Value:
+  """Creates an arith.constant operation."""
+
 class TracebackToLocationCache:
   def __init__(
       self,

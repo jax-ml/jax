@@ -297,6 +297,7 @@ nanobind_pywrap_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:CAPIArith",
         "@llvm-project//mlir:CAPICF",
         "@llvm-project//mlir:CAPIDebug",

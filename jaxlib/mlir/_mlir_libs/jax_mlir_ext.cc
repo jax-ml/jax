@@ -16,6 +16,7 @@ limitations under the License.
 // Registers MLIR dialects used by JAX.
 // This module is called by mlir/__init__.py during initialization.
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,13 +44,16 @@ limitations under the License.
 #include "mlir-c/Dialect/Vector.h"  // IWYU pragma: keep
 #include "mlir-c/IR.h"
 #include "mlir-c/Transforms.h"
+#include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -65,6 +69,12 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
+
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyValue;
 
 namespace nb = ::nanobind;
 
@@ -96,6 +106,59 @@ void ParseLocation(mlir::Location& location, llvm::StringRef& op_type,
     }
     location = mlir::cast<mlir::NameLoc>(location).getChildLoc();
   }
+}
+
+nb::object ArithConstant(nb::object value, MlirType type) {
+  // The usual pattern for insertion points and locations is to use optional
+  // arguments that have default type casters that do the same as the following.
+  // Unfortunately they are slow, so we do the same directly.
+  PyInsertionPoint* insertion_point =
+      PyThreadContextEntry::getDefaultInsertionPoint();
+  if (insertion_point == nullptr) {
+    throw nb::value_error("No default insertion point found.");
+  }
+  mlir::Block* block = unwrap(insertion_point->getBlock().get());
+  mlir::Operation* ref_op = nullptr;
+  if (insertion_point->getRefOperation()) {
+    if (auto* py_op = insertion_point->getRefOperation()->get(); py_op) {
+      ref_op = unwrap(py_op->get());
+    }
+  }
+
+  PyLocation* location = PyThreadContextEntry::getDefaultLocation();
+  if (location == nullptr) {
+    throw nb::value_error("No default location found.");
+  }
+  mlir::Location loc = unwrap(location->get());
+
+  mlir::Type mlir_type = unwrap(type);
+
+  mlir::TypedAttr attr;
+  if (nb::isinstance<nb::bool_>(value)) {
+    attr = mlir::BoolAttr::get(loc.getContext(), nb::cast<bool>(value));
+  } else if (nb::isinstance<nb::int_>(value)) {
+    attr = mlir::IntegerAttr::get(mlir_type, nb::cast<int64_t>(value));
+  } else if (nb::isinstance<nb::float_>(value)) {
+    attr = mlir::FloatAttr::get(mlir_type, nb::cast<double>(value));
+  } else {
+    throw nb::value_error(
+        absl::StrCat("Unsupported constant type: ",
+                     nb::cast<std::string>(nb::repr(value.type())))
+            .c_str());
+  }
+
+  mlir::ImplicitLocOpBuilder builder(loc, block, block->end());
+  if (ref_op) {
+    builder.setInsertionPoint(ref_op);
+  }
+  auto op = builder.create<mlir::arith::ConstantOp>(mlir_type, attr);
+
+  // It is faster to create a PyValue directly than to use the MlirValue type
+  // caster.
+  auto context_ref = location->getContext();
+  auto op_ref = PyOperation::forOperation(context_ref, wrap(op.getOperation()));
+  PyValue py_value(op_ref, wrap(op.getOperation()->getResult(0)));
+  return py_value.maybeDownCast();
 }
 
 }  // namespace
@@ -238,6 +301,11 @@ NB_MODULE(_jax_mlir_ext, m) {
         nb::arg("loc").none() = nb::none(),
         "Makes an inlined call to a function containing a single block with a "
         "single return op.");
+
+  m.def("arith_constant", &ArithConstant, nb::arg("value"), nb::arg("type"),
+        nb::sig("def arith_constant(value: int | float | bool, type: "
+                "mlir.ir.Type, /) -> mlir.ir.Value"),
+        "Creates an arith.constant operation.");
 
   nb::class_<TracebackToLocationCache>(m, "TracebackToLocationCache")
       .def(

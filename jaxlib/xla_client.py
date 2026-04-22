@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 441  # preserve op_name metadata in GMM pass
+_version = 442  # add arith_constant to jax_mlir_ext
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

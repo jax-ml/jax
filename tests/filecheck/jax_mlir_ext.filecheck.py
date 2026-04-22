@@ -132,10 +132,28 @@ def test_traceback_to_location():
     loc = cache.get(tb)
     print(loc)
 
+def test_arith_constant():
+  # CHECK: --- test_arith_constant
+  print("--- test_arith_constant")
+  ctx = mlir.make_ir_context()
+  loc = ir.Location.unknown(context=ctx)
+  with ctx, loc:
+    module = ir.Module.create()
+    with ir.InsertionPoint(module.body):
+      # CHECK: arith.constant true
+      _jax_mlir_ext.arith_constant(True, ir.IntegerType.get_signless(1))
+      # CHECK: arith.constant 42 : i32
+      _jax_mlir_ext.arith_constant(42, ir.IntegerType.get_signless(32))
+      # CHECK: arith.constant 3.140000e+00 : f32
+      _jax_mlir_ext.arith_constant(3.14, ir.F32Type.get())
+    module.operation.verify()
+    print(module)
+
 
 def main(_):
   test_inlined_func_call()
   test_traceback_to_location()
+  test_arith_constant()
 
 
 if __name__ == "__main__":
