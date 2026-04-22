@@ -797,7 +797,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     )
 
     @pl.kernel(
-        out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
+        out_type=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
         mesh=pltpu.create_tensorcore_mesh('core'),
     )
     def run_kernel(o_ref):
