@@ -23,9 +23,9 @@ on:
       - "CI - Address Sanitizer (nightly)"
       - "CI - Bazel CPU tests"
       - "CI - Wheel Tests (Nightly/Release)"
+      - "CI - Cloud TPU (presubmit)"
     types:
       - completed
-
 
 permissions:
   actions: read
@@ -53,6 +53,15 @@ jobs:
             "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID" > workflow_run.json
           curl -f -s -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID/jobs?per_page=200" > jobs.json
+
+          # Download logs
+          curl -f -s -L -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID/logs" > logs.zip
+          unzip logs.zip -d logs
+
+          # Path sanitization
           SAFE_NAME="${WORKFLOW_RUN_NAME//\//-}"
           gcs_upload_uri="gs://general-ml-ci-transient/jax-github-actions/jax/$SAFE_NAME/$WORKFLOW_RUN_NUMBER/$WORKFLOW_RUN_ATTEMPT"
-          gcloud storage cp workflow_run.json jobs.json "$gcs_upload_uri/"
+
+          # Upload everything
+          gcloud storage cp -r workflow_run.json jobs.json logs "$gcs_upload_uri/"
