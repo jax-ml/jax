@@ -68,6 +68,7 @@ WHEEL_BUILD_TARGET_DICT = {
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
     "mosaic-gpu-cuda": "//jaxlib/tools:mosaic_gpu_wheel_cuda{cuda_major_version}",
+    "jax-oneapi-pjrt": "//jaxlib/tools:jax_oneapi_pjrt_wheel",
 }
 
 def add_global_arguments(parser: argparse.ArgumentParser):
@@ -149,7 +150,8 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
         A comma separated list of JAX wheels to build. E.g: --wheels="jaxlib",
         --wheels="jaxlib,jax-cuda-plugin", etc.
         Valid options are: jaxlib, jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,
-        jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt
+        jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,
+        jax-oneapi-pjrt or oneapi-pjrt.
         """,
   )
 
@@ -276,6 +278,21 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       type=str,
       default="",
       help="Path to the ROCm toolkit.",
+  )
+
+  oneapi_group = parser.add_argument_group('OneAPI Options')
+  oneapi_group.add_argument(
+      "--oneapi_version",
+      type=str,
+      default="2025.1",
+      help="OneAPI version to use. E.g. 2025.1",
+  )
+
+  oneapi_group.add_argument(
+      "--oneapi_intelgpu_targets",
+      type=str,
+      default="",
+      help="A comma-separated list of OneAPI intelgpu targets to support.",
   )
 
   # Compile Options
@@ -497,6 +514,7 @@ async def main():
           " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
           " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,"
           " or mosaic-gpu",
+          " jax-oneapi-pjrt or oneapi-pjrt",
           wheel,
       )
       sys.exit(1)
@@ -590,8 +608,18 @@ async def main():
   else:
     logging.debug("Using default cpu features")
 
-  if "cuda" in args.wheels and "rocm" in args.wheels:
-    logging.error("CUDA and ROCm cannot be enabled at the same time.")
+  enabled_platforms = []
+  if "cuda" in args.wheels:
+    enabled_platforms.append("CUDA")
+  if "rocm" in args.wheels:
+    enabled_platforms.append("ROCm")
+  if "oneapi" in args.wheels:
+    enabled_platforms.append("OneAPI")
+
+  if len(enabled_platforms) > 1:
+    logging.error(
+        "%s cannot be enabled at the same time.", " and ".join(sorted(enabled_platforms))
+    )
     sys.exit(1)
 
   if args.cuda_version:
@@ -651,6 +679,19 @@ async def main():
           f"--action_env=TF_ROCM_AMDGPU_TARGETS={args.rocm_amdgpu_targets}"
       )
 
+  if "oneapi" in args.wheels:
+    wheel_build_command_base.append("--config=oneapi")
+    if args.oneapi_version:
+      logging.debug("OneAPI version: %s", args.oneapi_version)
+      wheel_build_command_base.append(
+          f"--repo_env=ONEAPI_VERSION={args.oneapi_version}"
+      )
+    if args.oneapi_intelgpu_targets:
+      logging.debug("Oneapi Intel GPU targets: %s", args.oneapi_intelgpu_targets)
+      wheel_build_command_base.append(
+          f"--action_env=TF_ONEAPI_INTELGPU_TARGETS={args.oneapi_intelgpu_targets}"
+      )
+
   # Append additional build options at the end to override any options set in
   # .bazelrc or above.
   if args.bazel_options:
@@ -689,7 +730,7 @@ async def main():
       output_path = args.output_path
       logger.debug("Artifacts output directory: %s", output_path)
 
-      # Allow CUDA/ROCm wheels without the "jax-" prefix.
+      # Allow CUDA/ROCm/OneAPI wheels without the "jax-" prefix.
       if ("plugin" in wheel or "pjrt" in wheel) and "jax" not in wheel:
         wheel = "jax-" + wheel
 
@@ -749,6 +790,13 @@ async def main():
       else:
         # For non-editable builds, use wildcard pattern to match any ROCm version in glob patterns
         wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
+    elif "oneapi" in wheel:
+      if args.editable:
+        # For editable builds, use the actual oneAPI version since directory paths cannot contain wildcards
+        wheel_dir = wheel.replace("oneapi", f"oneapi{args.oneapi_version}").replace("-", "_")
+      else:
+        # For non-editable builds, use wildcard pattern to match any oneAPI version in glob patterns
+        wheel_dir = wheel.replace("oneapi", "oneapi*").replace("-", "_")
     else:
       wheel_dir = wheel
 
@@ -766,7 +814,7 @@ async def main():
           wheel_version_suffix += (
               f"+{wheel_git_hash}{custom_wheel_version_suffix}"
           )
-      if wheel in ["jax", "jax-cuda-pjrt", "jax-rocm-pjrt"]:
+      if wheel in ["jax", "jax-cuda-pjrt", "jax-rocm-pjrt", "jax-oneapi-pjrt"]:
         python_tag = "py"
       else:
         python_tag = "cp"

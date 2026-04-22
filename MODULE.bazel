@@ -82,6 +82,9 @@ use_repo(rocm, "local_config_rocm")
 python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
 
+sycl = use_extension("@rules_ml_toolchain//extensions:sycl_configure.bzl", "sycl_configure_ext")
+use_repo(sycl, "local_config_sycl")
+
 ### RBE
 rbe_config = use_extension("@xla//third_party/extensions:rbe_config.bzl", "rbe_config_ext")
 use_repo(rbe_config, "ml_build_config_platform")

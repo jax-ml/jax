@@ -36,6 +36,9 @@ class DeviceTest(jtu.JaxTestCase):
           repr(device),
           'TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0)',
       )
+    elif jtu.test_device_matches(['oneapi']):
+      self.assertEqual(device.platform, 'oneapi')
+      self.assertEqual(repr(device), 'OneapiDevice(id=0)')
     elif jtu.test_device_matches(['cpu']):
       self.assertEqual(device.platform, 'cpu')
       self.assertEqual(repr(device), 'CpuDevice(id=0)')
@@ -49,6 +52,8 @@ class DeviceTest(jtu.JaxTestCase):
       self.assertEqual(str(device), 'rocm:0')
     elif jtu.test_device_matches(['tpu']):
       self.assertEqual(str(device), 'TPU_0(process=0,(0,0,0,0))')
+    elif jtu.test_device_matches(['oneapi']):
+      self.assertEqual(str(device), 'oneapi:0')
     elif jtu.test_device_matches(['cpu']):
       # TODO(phawkins): remove TFRT_CPU_0 once jaxlib 0.10 is the minimum
       # version.

@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "if_cuda_is_configured",
+    "if_oneapi_is_configured",
     "if_rocm_is_configured",
     "py_library_providing_imports_info",
 )
@@ -37,5 +38,7 @@ py_library(
         "//jax_plugins/cuda:cuda_plugin",
     ]) + if_rocm_is_configured([
         "//jax_plugins/rocm:rocm_plugin",
+    ]) + if_oneapi_is_configured([
+        "//jax_plugins/oneapi:oneapi_plugin",
     ]),
 )

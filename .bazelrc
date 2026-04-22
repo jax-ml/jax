@@ -265,6 +265,15 @@ common:tsan_shared --config=tsan
 common:tsan_shared --copt=-shared-libsan
 common:tsan_shared --linkopt=-shared-libsan
 
+# Build with oneAPI support
+common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
+common:oneapi --repo_env=TF_NEED_SYCL=1
+common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
+
+# oneAPI Hermetic setup
+common:oneapi --repo_env=SYCL_BUILD_HERMETIC=1
+
+
 # #############################################################################
 # Cache options below.
 # #############################################################################

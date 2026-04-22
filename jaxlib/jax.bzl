@@ -22,6 +22,9 @@ load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
+
+# TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
+load("@local_config_sycl//sycl:build_defs.bzl", _if_oneapi_is_configured = "if_sycl_is_configured", _oneapi_library = "sycl_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
 load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
@@ -37,9 +40,11 @@ load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_c
 cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
+oneapi_library = _oneapi_library
 proto_library = _proto_library
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
+if_oneapi_is_configured = _if_oneapi_is_configured
 if_windows = _if_windows
 flatbuffer_cc_library = _flatbuffer_cc_library
 tf_exec_properties = _tf_exec_properties
@@ -495,6 +500,11 @@ def _jax_wheel_impl(ctx):
         if ctx.attr.platform_version == "":
             fail("platform_version must be set to a valid rocm version for rocm wheels")
         args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+    if ctx.attr.enable_oneapi:
+        args.add("--enable-oneapi", "True")
+        if ctx.attr.platform_version == "":
+            fail("platform_version must be set to a valid oneapi version for oneapi wheels")
+        args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
     if ctx.attr.skip_gpu_kernels:
         args.add("--skip_gpu_kernels")
 
@@ -536,11 +546,12 @@ _jax_wheel = rule(
         "source_files": attr.label_list(allow_files = True),
         "output_path": attr.label(default = Label("//jaxlib/tools:output_path")),
         "enable_cuda": attr.bool(default = False),
-        # A cuda/rocm version is required for gpu wheels; for cpu wheels, it can be an empty string.
+        # A cuda/rocm/oneapi version is required for gpu wheels; for cpu wheels, it can be an empty string.
         "platform_version": attr.string(),
         "skip_gpu_kernels": attr.bool(default = False),
         "enable_rocm": attr.bool(default = False),
         "reproducible": attr.bool(default = False),
+        "enable_oneapi": attr.bool(default = False),
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
         "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
         "py_freethreaded": attr.label(default = Label("@rules_python//python/config_settings:py_freethreaded")),
@@ -559,6 +570,7 @@ def jax_wheel(
         editable = False,
         enable_cuda = False,
         enable_rocm = False,
+        enable_oneapi = False,
         platform_version = "",
         reproducible = False,
         source_files = []):
@@ -575,6 +587,7 @@ def jax_wheel(
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
       enable_rocm: whether to build a rocm wheel
+      enable_oneapi: whether to build a oneapi wheel
       platform_version: the cuda version to use for the wheel
       reproducible: whether to produce a reproducible wheel by fixing timestamps
       source_files: the source files to include in the wheel
@@ -593,6 +606,7 @@ def jax_wheel(
         editable = editable,
         enable_cuda = enable_cuda,
         enable_rocm = enable_rocm,
+        enable_oneapi = enable_oneapi,
         platform_version = platform_version,
         reproducible = reproducible,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
