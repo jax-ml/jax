@@ -2526,7 +2526,6 @@ def ragged_dot(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
-    out_sharding: NamedSharding | P | None = None,
     ) -> Array:
   """Ragged matrix multiplication.
 
@@ -2549,7 +2548,6 @@ def ragged_dot(
       precision=canonicalize_precision(precision),
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
-      out_sharding=out_sharding,
   )
 
 
@@ -2607,7 +2605,6 @@ def ragged_dot_general(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
-    out_sharding: NamedSharding | P | None = None,
 ) -> Array:
   """Ragged matrix multiplication.
 
@@ -2653,7 +2650,6 @@ def ragged_dot_general(
     dimension is a contracting dimension.
   """
   lhs, rhs, group_sizes = core.standard_insert_pvary(lhs, rhs, group_sizes)
-  out_sharding = canonicalize_sharding(out_sharding, 'ragged_dot_general')
   return ragged_dot_general_p.bind(
       lhs,
       rhs,
@@ -2662,7 +2658,6 @@ def ragged_dot_general(
       precision=canonicalize_precision(precision),
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
-      out_sharding=out_sharding,
   )
 
 
@@ -6066,8 +6061,7 @@ def _ragged_dot_general_shape_rule(
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
-    out_sharding,
+    **_,
 ):
   def _check_in_range(dim, rank, dim_name, arg_name):
     if dim < 0 or dim >= rank:
@@ -6153,12 +6147,10 @@ def _ragged_dot_general_dtype_rule(
     lhs: Array,
     rhs: Array,
     group_sizes: Array,
-    *,
     ragged_dot_dimension_numbers: RaggedDotDimensionNumbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
-    out_sharding,
+    **_,
 ) -> np.dtype:
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError(
@@ -6179,7 +6171,7 @@ def _ragged_dot_general_dtype_rule(
 
 def _ragged_dot_general_jvp_rule(
     primals, tangents, ragged_dot_dimension_numbers,
-    precision, preferred_element_type, group_offset, out_sharding
+    precision, preferred_element_type, group_offset
 ):
   # note - we could ostensibly just get this by passing on the
   # value to ragged_dot below, but, this feels cleaner.
@@ -6238,7 +6230,6 @@ def _ragged_dot_general_transpose_rule(
     precision,
     preferred_element_type: DTypeLike | None,
     group_offset: Array | None,
-    out_sharding: NamedSharding | P | None = None,
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
@@ -6301,7 +6292,7 @@ def _ragged_dot_general_transpose_rule(
     ragged_dot_general_out = ragged_dot_general(
           lhs, rhs, group_sizes, dims, precision=precision,
           preferred_element_type=preferred_element_type,
-          group_offset=group_offset, out_sharding=aval.sharding)
+          group_offset=group_offset)
     result = transpose(ragged_dot_general_out, tuple(np.argsort(unsorted_axes)))
     if result.dtype != aval.dtype:
       result = _convert_element_type(result, aval.dtype, aval.weak_type)
@@ -6360,8 +6351,7 @@ def _ragged_dot_general_batch_rule(
     ragged_dot_dimension_numbers,
     precision,
     preferred_element_type: DTypeLike | None,
-    group_offset,
-    out_sharding,
+    **_,
 ):
   invoke = partial(_ragged_dot_general_invoke_prim, batched_args[2])
   batched_out, result_batch_dim = _dot_batch_rule(
@@ -6382,30 +6372,11 @@ def _ragged_dot_general_batch_rule(
   return batched_out, result_batch_dim
 
 
-def _ragged_dot_general_sharding_rule(
-    lhs, rhs, group_sizes, *, ragged_dot_dimension_numbers, precision,
-    preferred_element_type: DTypeLike | None, group_offset, out_sharding):
-  mesh_set = {x.sharding.mesh for x in [lhs, rhs, group_sizes]
-              if not x.sharding.mesh.empty}
-  if len(mesh_set) > 1:
-    raise core.ShardingTypeError(
-      'All argument meshes must be the same or unspecified, but got'
-      f' lhs mesh = {lhs.sharding.mesh}, rhs mesh = {rhs.sharding.mesh},'
-      f' group_sizes mesh = {group_sizes.sharding.mesh}')
-
-  if out_sharding is None:
-    raise NotImplementedError(
-      "Explicit sharding inference for ragged_dot_general is not currently"
-      " implemented. Please specify out_sharding.")
-  return out_sharding
-
-
 ragged_dot_general_p = standard_primitive(
     _ragged_dot_general_shape_rule,
     _ragged_dot_general_dtype_rule,
     'ragged_dot_general',
-    vma_rule=partial(core.standard_vma_rule, 'ragged_dot'),
-    sharding_rule=_ragged_dot_general_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'ragged_dot')
 )
 ad.primitive_jvps[ragged_dot_general_p] = _ragged_dot_general_jvp_rule
 ad.primitive_transposes[ragged_dot_general_p] = _ragged_dot_general_transpose_rule
@@ -6420,7 +6391,6 @@ def _ragged_dot_general_impl(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
-    out_sharding: NamedSharding | P | None = None,
     ) -> Array:
   if group_offset is not None:
     raise NotImplementedError("Unimplemented group_offset support.")
@@ -6494,7 +6464,6 @@ def _ragged_dot_general_impl(
               (incr(l_contract) + [0], list(r_contract) + [rhs_group_dims[0]]),
               (incr(l_batch), r_batch),
           ),
-          out_sharding=out_sharding,
       )
     case RaggedDotMode.RAGGED_CONTRACTING:
       rhs_ragged_dim = r_contract[l_contract.index(lhs_ragged_dim)]
@@ -6508,14 +6477,12 @@ def _ragged_dot_general_impl(
               (incr(l_contract), incr(r_contract)),
               ([0] + incr(l_batch), [0] + incr(r_batch)),
           ),
-          out_sharding=out_sharding,
       )
     case RaggedDotMode.RAGGED_BATCH:
       return _dot_general(
           lhs,
           rhs,
           dimension_numbers=ragged_dot_dimension_numbers.dot_dimension_numbers,
-          out_sharding=out_sharding,
       )
 
 
@@ -6538,21 +6505,21 @@ def _ragged_dot_general_lower(
     precision,
     preferred_element_type: np.dtype | None,
     group_offset: Array | None = None,
-    out_sharding=None,
     platform: str = 'default',
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
   if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
-    return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
+    result = mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
         precision=precision,
         preferred_element_type=preferred_element_type,
-        group_offset=group_offset,
-        out_sharding=out_sharding,
+        group_offset=group_offset
     )
+    (aval_out,) = ctx.avals_out
+    return mlir.lower_with_sharding_in_types(ctx, result, aval_out)
 
   del preferred_element_type  # Implied by the output aval
   lhs, rhs, accumulation_aval, _ = _handle_dot_precision(
