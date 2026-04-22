@@ -200,10 +200,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
 
-  if device is None and out_sharding is None and isinstance(object, core.Tracer):
-    sharding = object.aval.sharding  # pyrefly: ignore[missing-attribute]
-    sharding = None if sharding.mesh.empty else sharding
-  else:
+  sharding = None
+  if device is not None or out_sharding is not None:
     sharding = util.choose_device_or_out_sharding(device, out_sharding, "jnp.array")
 
   # Use device_put to avoid a copy for ndarray inputs.
