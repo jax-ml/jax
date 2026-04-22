@@ -20,6 +20,7 @@ import jax._src.core as _src_core
 from jax._src.core import (
   AbstractValue as AbstractValue,
   Atom as Atom,
+  Literal as Literal,
   ParamDict as ParamDict,
   ShapedArray as ShapedArray,
   Trace as Trace,
