@@ -132,8 +132,11 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
     # TODO: https://github.com/openxla/stablehlo/issues/1366
     raise NotImplementedError("Shape polymorphism for FFT with non-constant fft_length is not implemented for TPU and GPU")
   return [
-      hlo.FftOp(x, hlo.FftTypeAttr.get(fft_type.name),
-                mlir.dense_int_array(fft_lengths)).result
+      hlo.fft(
+          x,
+          hlo.FftTypeAttr.get(fft_type.name),
+          mlir.dense_int_array(fft_lengths),
+      )
   ]
 
 
@@ -154,8 +157,11 @@ def _fft_lowering_gpu(ctx, x, *, fft_type, fft_lengths):
 
     # Apply multi-dimensional IFFT on the outer axes (which are now at the end).
     outer_lengths = fft_lengths[:-1]
-    x = hlo.FftOp(x, hlo.FftTypeAttr.get(FftType.IFFT.name),
-                  mlir.dense_int_array(outer_lengths)).result
+    x = hlo.fft(
+        x,
+        hlo.FftTypeAttr.get(FftType.IFFT.name),
+        mlir.dense_int_array(outer_lengths),
+    )
 
     # Move the C2R axis back to the end.
     perm_in = list(range(rank))
@@ -163,8 +169,11 @@ def _fft_lowering_gpu(ctx, x, *, fft_type, fft_lengths):
     x = hlo.transpose(x, mlir.dense_int_array(perm_in))
 
     # Apply 1D IRFFT on the last axis.
-    x = hlo.FftOp(x, hlo.FftTypeAttr.get(FftType.IRFFT.name),
-                  mlir.dense_int_array((fft_lengths[-1],))).result
+    x = hlo.fft(
+        x,
+        hlo.FftTypeAttr.get(FftType.IRFFT.name),
+        mlir.dense_int_array((fft_lengths[-1],)),
+    )
 
     return [x]
 

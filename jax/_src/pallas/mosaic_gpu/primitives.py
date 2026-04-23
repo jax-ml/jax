@@ -3168,7 +3168,7 @@ def _populate_custom_primitive_op_block(
         value = fa.registers.item()
         ir_ret.append(value)
 
-    mgpu.dialect.ReturnOp(operands_=ir_ret)
+    mgpu.dialect.return_(ir_ret)
 
 
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Warpgroup)

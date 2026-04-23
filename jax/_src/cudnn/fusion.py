@@ -61,13 +61,12 @@ def _cudnn_fusion_stablehlo_lowering(ctx, *args, name, jaxpr):
   )
   call_op = impl[0].owner
   called_fn = call_op.attributes["callee"]
-  cudnn_fusion = hlo.CustomCallOp(
+  return hlo.CustomCallOp(
     [r.type for r in call_op.results],
     call_op.operands,
     call_target_name="__cudnn$fusion",
     called_computations=ir.ArrayAttr.get([called_fn]),
-  )
-  return cudnn_fusion.results
+  ).results
 
 
 mlir.register_lowering(

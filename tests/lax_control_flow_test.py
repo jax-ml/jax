@@ -119,9 +119,9 @@ prim_non_existent_custom_call = core.Primitive("__testing_non_existent_custom_ca
 prim_non_existent_custom_call.def_abstract_eval(lambda x_aval: x_aval)
 mlir.register_lowering(
     prim_non_existent_custom_call,
-    lambda ctx, x: mlir.hlo.CustomCallOp(
+    lambda ctx, x: mlir.hlo.custom_call(
         [x.type], [x],
-        call_target_name=mlir.ir.StringAttr.get("__testing_non_existent_custom_call")).results)
+        call_target_name=mlir.ir.StringAttr.get("__testing_non_existent_custom_call")))
 batching.primitive_batchers[prim_non_existent_custom_call] = (
     lambda batched_args, batch_dims: (prim_non_existent_custom_call.bind(batched_args[0]),
                                       batch_dims[0]))
@@ -134,7 +134,7 @@ def prim_with_lowering_error_lowering(platform: str,
                                       only_on: str):
   if platform != only_on:
     raise ValueError(f"prim_with_lowering_error with only_on={only_on} lowered for {platform}")
-  return mlir.hlo.SineOp(x).results
+  return [mlir.hlo.sine(x)]
 def prim_with_lowering_error_batch_rule(batched_args, batch_dims, **params):
   xs, = batched_args
   xs_bdim, = batch_dims

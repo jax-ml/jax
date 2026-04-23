@@ -841,7 +841,7 @@ def _conv_general_dilated_lower(
     int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pad1 = mlir.eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
-      return hlo.ReshapeOp(int2d, pad1)
+      return hlo.reshape(int2d, pad1)
     d_padding = hlo.concatenate(
         list(map(prep_one_pad, padding)), mlir.i64_attr(0)
     )
