@@ -2601,9 +2601,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_subbyte_upcast(self, small_ty, large_ty):
     shape = (64, 256)
 
-    if small_ty == jnp.uint4 and large_ty == jnp.float8_e4m3fn:
-      self.skipTest("uint4 -> f8_e4m3fn is unsupported")
-
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct(shape, large_ty),

@@ -1942,20 +1942,30 @@ class FragmentedArray:
       if regs:
         yield indices, utils.vector_concat(regs)
 
-    if cur_dtype == i4 and new_dtype == f8e4m3fn and self.is_signed:
+    if cur_dtype == i4 and new_dtype == f8e4m3fn:
       # The algorithm here is taken from CUTLASS's `NumericArrayConverter`
       # specialization for int4 -> f8e4m3, available at
-      # https://github.com/NVIDIA/cutlass/blob/5c6bca04414e06ce74458ab0a2018e2b8272701c/include/cutlass/numeric_conversion.h#L4982.
+      # https://github.com/NVIDIA/cutlass/blob/5c6bca04414e06ce74458ab0a2018e2b8272701c/include/cutlass/numeric_conversion.h#L4982
+      # and uint4 -> f8e4m3, available at
+      # https://github.com/NVIDIA/cutlass/blob/5c6bca04414e06ce74458ab0a2018e2b8272701c/include/cutlass/numeric_conversion.h#L5196.
       # Each call to the function below will upcast 4 contiguous nibbles of
       # the input 32-bit register, and whether to select the 4 low nibbles or
       # the 4 high nibbles is determined by the `part` argument.
       def upcast_to_f8e4m3fn(reg: ir.Value, part: int):
-        lut = [
-            0x44403800,  # [0, 1, 2, 3] encoded as f8e4m3fn
-            0x4E4C4A48,  # [4, 5, 6, 7] encoded as f8e4m3fn
-            0xCACCCED0,  # [-8, -7, -6, -5] encoded as f8e4m3fn
-            0xB8C0C4C8,  # [-4, -3, -2, -1] encoded as f8e4m3fn
-        ]
+        if self.is_signed:
+          lut = [
+              0x44403800,  # [0, 1, 2, 3] encoded as f8e4m3fn
+              0x4E4C4A48,  # [4, 5, 6, 7] encoded as f8e4m3fn
+              0xCACCCED0,  # [-8, -7, -6, -5] encoded as f8e4m3fn
+              0xB8C0C4C8,  # [-4, -3, -2, -1] encoded as f8e4m3fn
+          ]
+        else:
+          lut = [
+              0x44403800,  # [0, 1, 2, 3] encoded as f8e4m3fn
+              0x4E4C4A48,  # [4, 5, 6, 7] encoded as f8e4m3fn
+              0x53525150,  # [8, 9, 10, 11] encoded as f8e4m3fn
+              0x57565554,  # [12, 13, 14, 15] encoded as f8e4m3fn
+          ]
 
         sign = arith.shrui(arith.andi(reg, c(0x88888888, i32)), c(1, i32))
         # Ignore the sign when indexing into the LUT.
