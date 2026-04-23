@@ -1449,6 +1449,38 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_async_sc_tc_test",
+    srcs = ["tpu_async_sc_tc_test.py"],
+    args = [
+        "--xla_msa_enable=false",
+        "--xla_tpu_vmem_scavenging_mode=NONE",
+        "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
+    ],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v6e",
+        "tpu_7x",
+    ],
+    deps = [
+        "//jax/_src/pallas",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_debug_check_test",
     srcs = ["tpu_sparsecore_pallas_debug_check_test.py"],
     backend_variant_args = {

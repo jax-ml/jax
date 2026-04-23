@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import contextlib
 import functools
+import itertools as it
 from typing import cast, Any, ParamSpec, TypeVar
 
 from jax._src import api
@@ -81,11 +82,6 @@ def _mpmd_map_abstract_eval(
       in_avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
       for out_idx, a in enumerate(out_avals)
   ]
-  # Make sure we don't return ShapedArray with pallas memory space to the
-  # outside world.
-  out_avals = tuple(a.update(memory_space=jax_core.MemorySpace.Device)
-                    if isinstance(a, jax_core.ShapedArray) else a
-                    for a in out_avals)
   return out_avals, effs
 
 
@@ -117,6 +113,7 @@ def _mpmd_map_tpu_lowering(
     out_avals,
     metadata,
     name,
+    external_meshes,
 ):
   try:
     from jax._src.pallas.mosaic import pallas_call_registration
@@ -137,6 +134,7 @@ def _mpmd_map_tpu_lowering(
       out_avals=out_avals,
       metadata=metadata,
       name=name,
+      external_meshes=external_meshes,
   )
 
 
@@ -154,10 +152,15 @@ def _mpmd_map_fallback_lowering(
     cost_estimate,
     metadata,
     name,
+    external_meshes,
 ):
   if len(jaxprs) != 1:
     raise NotImplementedError(
         "Lowering multiple mesh/function pairs is not currently supported"
+    )
+  if external_meshes:
+    raise NotImplementedError(
+        "Extra meshes are not currently supported in fallback lowering"
     )
   [jaxpr] = jaxprs
   [mesh] = meshes
@@ -268,6 +271,7 @@ def _mpmd_map(
 
     # NOTE: ``grid_mapping`` are only needed for us to reuse the ``pallas_call``
     # lowering machinery.
+    external_meshes = []
     meshes = []
     jaxprs = []
     grid_mappings = []
@@ -295,14 +299,23 @@ def _mpmd_map(
               f" a `core_type` specified, but {scratch_type=} is missing it."
           )
 
+    for mesh, _ in meshes_and_fns:
+      meshes.append(mesh)
+    for aval in [*flat_avals, *flat_out_avals, *flat_scratch_types]:
+      if isinstance(aval, jax_core.ShapedArray):
+        if isinstance(aval.memory_space, pallas_core.CoreMemorySpace):
+          if aval.memory_space.mesh not in it.chain(meshes, external_meshes):
+            external_meshes.append(aval.memory_space.mesh)
+
+    all_meshes = [*meshes, *external_meshes]
     # Check that meshes are compatible with each other (e.g, have a consistent
     # core axis name in the sparsecore).
-    for i, (mesh, _) in enumerate(meshes_and_fns):
-      for other_mesh, _ in list(meshes_and_fns)[i+1:]:
+    for i, mesh in enumerate(all_meshes):
+      for other_mesh in list(all_meshes)[i + 1 :]:
         mesh.check_is_compatible_with(other_mesh)
 
     super_mesh_shape = {}
-    for mesh, _ in meshes_and_fns:
+    for mesh in all_meshes:
       for k, v in mesh.shape.items():
         # An extra check since `check_is_compatible_with` should catch it.
         assert k not in super_mesh_shape or super_mesh_shape[k] == v, (
@@ -375,7 +388,6 @@ def _mpmd_map(
       if consts:
         raise NotImplementedError("MPMD kernels cannot close over constants")
 
-      meshes.append(mesh)
       jaxprs.append(jaxpr)
       grid_mappings.append(grid_mapping)
 
@@ -388,6 +400,7 @@ def _mpmd_map(
           *flat_args,
           meshes=tuple(meshes),
           jaxprs=tuple(jaxprs),
+          external_meshes=tuple(external_meshes),
           grid_mappings=tuple(grid_mappings),
           out_avals=flat_out_avals,
           input_output_aliases=FrozenDict(input_output_aliases),
