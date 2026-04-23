@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mlir.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -146,7 +147,8 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
     std::string_view mlir_module, std::string_view target,
-    bool use_mixed_serialization) {
+    bool use_mixed_serialization,
+    std::optional<std::string> sdy_version = std::nullopt) {
   mlir::MLIRContext context;
   context.loadDialect<mlir::mpmd::MpmdDialect>();
   if (VLOG_IS_ON(3)) context.disableMultithreading();
@@ -154,22 +156,21 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
                       xla::ParseMlirModuleString(mlir_module, context));
 
   // Serialize portable artifact
-  TF_ASSIGN_OR_RETURN(
-      std::string bytecode,
-      xla::SerializeUsingVersionedStablehlo(*module, target, /*inplace=*/true,
-                                            /*allow_mixed_serialization*/
-                                            use_mixed_serialization));
+  TF_ASSIGN_OR_RETURN(std::string bytecode,
+                      xla::SerializeUsingVersionedStablehlo(
+                          *module, target, /*inplace=*/true,
+                          use_mixed_serialization, sdy_version));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
-    MlirModule module, std::string_view target, bool use_mixed_serialization) {
+    MlirModule module, std::string_view target, bool use_mixed_serialization,
+    std::optional<std::string> sdy_version = std::nullopt) {
   mlir::ModuleOp module_op = unwrap(module);
   TF_ASSIGN_OR_RETURN(std::string bytecode,
                       xla::SerializeUsingVersionedStablehlo(
                           module_op, target, /*inplace=*/false,
-                          /*allow_mixed_serialization*/
-                          use_mixed_serialization));
+                          use_mixed_serialization, sdy_version));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -245,28 +246,30 @@ void BuildMlirSubmodule(nb::module_& m) {
   mlir_module.def(
       "serialize_portable_artifact",
       [](nb::any mlir_module, std::string_view target,
-         bool use_mixed_serialization) {
+         bool use_mixed_serialization, std::optional<std::string> sdy_version) {
         if (MlirModule module; nb::try_cast<MlirModule>(mlir_module, module)) {
           return xla::ValueOrThrow(PySerializePortableArtifact(
-              module, target, use_mixed_serialization));
+              module, target, use_mixed_serialization, sdy_version));
         }
         if (nb::bytes bytecode;
             nb::try_cast<nb::bytes>(mlir_module, bytecode)) {
           return xla::ValueOrThrow(PySerializePortableArtifact(
               std::string_view(bytecode.c_str(), bytecode.size()), target,
-              use_mixed_serialization));
+              use_mixed_serialization, sdy_version));
         }
         if (std::string str_module;
             nb::try_cast<std::string>(mlir_module, str_module)) {
           return xla::ValueOrThrow(PySerializePortableArtifact(
-              str_module, target, use_mixed_serialization));
+              str_module, target, use_mixed_serialization, sdy_version));
         }
         throw nb::type_error("mlir_module must be bytes, str, or MlirModule");
       },
       nb::arg("mlir_module"), nb::arg("target"),
       nb::arg("use_mixed_serialization") = false,
+      nb::arg("sdy_version") = nb::none(),
       nb::sig("def serialize_portable_artifact(mlir_module: typing.Any, "
-              "target: str, use_mixed_serialization: bool = False) -> bytes"));
+              "target: str, use_mixed_serialization: bool = False, "
+              "sdy_version: str | None = None) -> bytes"));
   mlir_module.def("deserialize_portable_artifact",
                   xla::ValueOrThrowWrapper(PyDeserializePortableArtifact),
                   nb::arg("mlir_module"), nb::arg("context") = nb::none(),

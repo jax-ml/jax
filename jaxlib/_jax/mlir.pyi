@@ -33,7 +33,10 @@ def mhlo_to_stablehlo(mlir_module: bytes) -> bytes: ...
 @overload
 def mhlo_to_stablehlo(mlir_module: str) -> bytes: ...
 def serialize_portable_artifact(
-    mlir_module: Any, target: str, use_mixed_serialization: bool = False
+    mlir_module: Any,
+    target: str,
+    use_mixed_serialization: bool = False,
+    sdy_version: str | None = None,
 ) -> bytes: ...
 def deserialize_portable_artifact(
     mlir_module: bytes, context: Any = None
