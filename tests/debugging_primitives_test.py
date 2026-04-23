@@ -1350,7 +1350,6 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     jax_logger.removeHandler(record_handler)
     self.assertEqual(record_handler.records[0].msg, "x=4")
 
-
   def test_debug_print_with_nested_vmap(self):
     @jax.vmap
     @jax.vmap
@@ -1384,6 +1383,39 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     }
 
     self.assertEqual(_get_output_set(output, 1), expected)
+
+
+class TwoCallPatternTest(jtu.JaxTestCase):
+
+  def test_debug_print_two_call_form(self):
+    def f(x):
+      jax.debug.print(ordered=True)("x: {x}", x=x)
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 42\n")
+
+  def test_debug_callback_two_call_form(self):
+    results = []
+
+    def cb(val):
+      results.append(val)
+
+    def f(x):
+      jax.debug.callback(ordered=True)(cb, x)
+
+    f(100)
+    jax.effects_barrier()
+    self.assertEqual(results, [100])
+
+  def test_option_as_regular_kwarg_in_second_call(self):
+    # partitioned=True is treated purely as a formatting parameter, so it raises ValueError since it's unused.
+    with self.assertRaisesRegex(
+        ValueError,
+        "Unused keyword arguments to `jax.debug.print`: \\['partitioned'\\]",
+    ):
+      jax.debug.print(ordered=True)("hello {a}", a=42, partitioned=True)
 
 
 if not rich:
