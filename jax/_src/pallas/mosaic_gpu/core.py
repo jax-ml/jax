@@ -75,6 +75,11 @@ def is_trivial_index(idx, shape) -> bool:
   return idx is ... or (len(shape) == 1 and idx in _slices(shape[0]))
 
 
+class TraceScope(enum.Enum):
+  WARP = "warp"
+  WARPGROUP = "warpgroup"
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class CompilerParams:
   """Mosaic GPU compiler parameters.
@@ -111,6 +116,7 @@ class CompilerParams:
       single invocation. It is undefined behavior if a thread collects more
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
+    profile_trace_scope: The scope at which traces are collected (WARP or WARPGROUP).
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -119,6 +125,7 @@ class CompilerParams:
   reduction_scratch_bytes: int = 128 * 4 * 4
   profile_space: int = 0
   profile_dir: str = ""
+  profile_trace_scope: TraceScope = TraceScope.WARPGROUP
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
 
   def __post_init__(self):

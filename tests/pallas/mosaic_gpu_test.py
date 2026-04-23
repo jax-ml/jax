@@ -2300,6 +2300,36 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         self.assertEqual(data.count('"name": "store"'), 2)
       np.testing.assert_array_equal(y, x + x)
 
+  def test_profiler_warp_scope(self):
+    def kernel(x_ref, o_ref):
+      with jax.named_scope("add"):
+        with jax.named_scope("load"):
+          x = x_ref[...]
+        o = x + x
+      with jax.named_scope("store"):
+        o_ref[...] = o
+    with tempfile.TemporaryDirectory() as tmpdir:
+      x = jnp.arange(256).astype(jnp.float32)
+      y = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              profile_space=16,
+              profile_dir=tmpdir,
+              profile_trace_scope=plgpu.TraceScope.WARP,
+          ),
+      )(x)
+      jax.block_until_ready(y)
+      jax.effects_barrier()
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+        # 4 warps in a block of 128 threads.
+        self.assertEqual(data.count('"name": "add"'), 8)
+        self.assertEqual(data.count('"name": "load"'), 8)
+        self.assertEqual(data.count('"name": "store"'), 8)
+      np.testing.assert_array_equal(y, x + x)
+
   def test_profiler_computes_correct_allocation_size(self):
     def kernel(x_ref, o_ref):
       with jax.named_scope("copy"):

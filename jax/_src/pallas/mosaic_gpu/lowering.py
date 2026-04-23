@@ -1044,8 +1044,15 @@ def lower_jaxpr_to_module(
   prof_spec = None
   if params.profile_space:
     # Each range is 2 events, each event costs 2 entries.
+    if params.profile_trace_scope == gpu_core.TraceScope.WARP:
+      trace_scope = mgpu.ThreadSubset.WARP
+    elif params.profile_trace_scope == gpu_core.TraceScope.WARPGROUP:
+      trace_scope = mgpu.ThreadSubset.WARPGROUP
+    else:
+      raise ValueError(f"Unsupported trace scope: {params.profile_trace_scope}")
     prof_spec = mgpu_profiler.ProfilerSpec(
-        params.profile_space * 2 * 2, dump_path=params.profile_dir
+        params.profile_space * 2 * 2, dump_path=params.profile_dir,
+        trace_scope=trace_scope
     )
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
