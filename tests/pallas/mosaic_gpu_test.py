@@ -7706,8 +7706,6 @@ class ExamplesSm90ATest(PallasSm90ATest):
 
   # WGMMA
   def test_stage6(self):
-    self.skip_if_wg_semantics()  # numerics mismatch, lot of NaNs.
-
     m_block = n_block = 64
     k_block = 32
     x = jax.random.uniform(jax.random.key(42), shape=(128, 128), dtype=jnp.float16)
@@ -7716,11 +7714,17 @@ class ExamplesSm90ATest(PallasSm90ATest):
         self.kernel, out_shape=x, grid=(2, 2), grid_names=("m", "n")
     )
     def kernel(l_ref, r_ref, o_ref):
-      def compute(_, l_smem, r_smem, o_smem):
+      def compute(idxs, l_smem, r_smem, o_smem):
         def do_wgmma(acc_ref):
           plgpu.wgmma(acc_ref, l_smem, r_smem)
           return acc_ref[...]
-        o_smem[...] += pl.run_scoped(do_wgmma, plgpu.ACC((m_block, n_block), jnp.float16))
+        acc = pl.run_scoped(do_wgmma, plgpu.ACC((m_block, n_block), jnp.float16))
+        def _store():
+          o_smem[...] = acc
+        def _acc():
+          o_smem[...] += acc
+        step, = idxs
+        lax.cond(step == 0, _store, _acc)
       m = lax.axis_index("m")
       n = lax.axis_index("n")
       transforms = self.default_transforms(swizzle=64, dtype=jnp.float16)
