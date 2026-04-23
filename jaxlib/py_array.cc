@@ -598,6 +598,18 @@ PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
   auto aval = MakeShapedArrayCached(key);
   auto dtype =
       xla::IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
+  // Fast path known safe to skip.
+  if (!skip_checks) {
+    if (ifrt_array->IsDeleted()) {
+      ifrt_array = ifrt::ArrayRef();
+      skip_checks = true;
+    } else {
+      if (*xla::ValueOrThrow(GetIfrtHloSharding(
+              sharding, ifrt_array->shape())) == ifrt_array->sharding()) {
+        skip_checks = true;
+      }
+    }
+  }
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
                  std::move(ifrt_array), committed, skip_checks);
