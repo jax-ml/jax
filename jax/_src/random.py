@@ -931,7 +931,9 @@ def multivariate_normal(key: ArrayLike,
                         cov: RealArray,
                         shape: Shape | None = None,
                         dtype: DTypeLikeFloat | None = None,
-                        method: str = 'cholesky') -> Array:
+                        method: str = 'cholesky',
+                        *,
+                        out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample multivariate normal random values with given mean and covariance.
 
   The values are returned according to the probability density function:
@@ -957,6 +959,15 @@ def multivariate_normal(key: ArrayLike,
     method: optional, a method to compute the factor of ``cov``.
       Must be one of 'svd', 'eigh', and 'cholesky'. Default 'cholesky'. For
       singular covariance matrices, use 'svd' or 'eigh'.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
+
   Returns:
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
@@ -975,7 +986,9 @@ def multivariate_normal(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype, method)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "multivariate_normal", shape)
+  return maybe_auto_axes(_multivariate_normal, out_sharding,
+                         shape=shape, dtype=dtype)(key, mean, cov, method=method)
 
 @jit(static_argnums=(3, 4, 5))
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:

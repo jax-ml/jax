@@ -211,18 +211,19 @@ class CommonRandomTest(RandomTestBase):
 
 
 _OUT_SHARDING_CASES = [
-    ('bernoulli',        lambda key, n, s: random.bernoulli(key, p=0.5, shape=(n,), out_sharding=s)),
-    ('beta',             lambda key, n, s: random.beta(key, 0.2, 5.0, shape=(n,), out_sharding=s)),
-    ('bits',             lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
-    ('cauchy',           lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
-    ('gumbel',           lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
-    ('normal',           lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
-    ('permutation',      lambda key, n, s: random.permutation(key, n, out_sharding=s)),
-    ('randint',          lambda key, n, s: random.randint(key, shape=(n,), minval=0, maxval=10, out_sharding=s)),
+    ('bernoulli', lambda key, n, s: random.bernoulli(key, p=0.5, shape=(n,), out_sharding=s)),
+    ('beta', lambda key, n, s: random.beta(key, 0.2, 5.0, shape=(n,), out_sharding=s)),
+    ('bits', lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
+    ('cauchy', lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
+    ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
+    ('multivariate_normal', lambda key, n, s: random.multivariate_normal(key, mean=jnp.zeros((n,)), cov=jnp.eye(n), shape=(n,), out_sharding=s)),
+    ('loggamma', lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('normal', lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
+    ('permutation', lambda key, n, s: random.permutation(key, n, out_sharding=s)),
+    ('poisson', lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
+    ('randint', lambda key, n, s: random.randint(key, shape=(n,), minval=0, maxval=10, out_sharding=s)),
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
-    ('uniform',          lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
-    ('loggamma',         lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
-    ('poisson',          lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
+    ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
 ]
 
 
