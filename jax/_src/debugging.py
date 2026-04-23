@@ -22,7 +22,7 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union
+from typing import Any, Union, overload
 
 import numpy as np
 
@@ -404,9 +404,29 @@ def _debug_print_state_discharge_rule(in_avals, out_avals, *args, **kwargs):
   return args, out
 
 
+@overload
+def debug_callback(
+    callback: Callable[..., None],
+    *args: Any,
+    ordered: bool = False,
+    partitioned: bool = False,
+    **kwargs: Any,
+) -> None:
+  ...
+
+@overload
+def debug_callback(
+    *,
+    ordered: bool = False,
+    partitioned: bool = False,
+) -> Callable[..., None]:
+  ...
+
 def debug_callback(
     callback: Callable[..., None] | None = None,
     *args: Any,
+    ordered: bool = False,
+    partitioned: bool = False,
     **kwargs: Any,
 ) -> Callable[..., None] | None:
   """Calls a stageable Python callback.
@@ -461,9 +481,6 @@ def debug_callback(
   .. _External Callbacks:
      https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
-  ordered = kwargs.pop("ordered", False)
-  partitioned = kwargs.pop("partitioned", False)
-
   def _debug_callback(
       callback: Callable[..., None], *c_args: Any, **c_kwargs: Any
   ):
@@ -495,13 +512,14 @@ def debug_callback(
         partitioned=partitioned,
     )
 
-  if callback:
+  if callback is not None:
     _debug_callback(callback, *args, **kwargs)
     return None
 
-  if args:
+  if args or kwargs:
     raise TypeError(
-        "debug_callback cannot receive *args using the two-call form"
+        "debug_callback received unexpected arguments in the two-call form:"
+        f" {args=} {kwargs=}"
     )
   return _debug_callback
 
@@ -558,10 +576,35 @@ def _make_logging_record(level):
       logger.name, level, file_name, line_no, "", args, None
   )
 
+@overload
+def debug_print(
+    fmt: str,
+    *args: Any,
+    ordered: bool = False,
+    partitioned: bool = False,
+    skip_format_check: bool = False,
+    _use_logging: bool = False,
+    **kwargs: Any,
+) -> None:
+  ...
+
+@overload
+def debug_print(
+    *,
+    ordered: bool = False,
+    partitioned: bool = False,
+    skip_format_check: bool = False,
+    _use_logging: bool = False,
+) -> Callable[..., None]:
+  ...
 
 def debug_print(
     fmt: str | None = None,
     *args,
+    ordered: bool = False,
+    partitioned: bool = False,
+    skip_format_check: bool = False,
+    _use_logging: bool = False,
     **kwargs,
 ) -> Callable[..., None] | None:
   """Prints values and works in staged out JAX functions.
@@ -603,11 +646,6 @@ def debug_print(
     **kwargs: Additional keyword arguments to be formatted, as if passed to
       ``fmt.format``.
   """
-  ordered = kwargs.pop("ordered", False)
-  partitioned = kwargs.pop("partitioned", False)
-  skip_format_check = kwargs.pop("skip_format_check", False)
-  _use_logging = kwargs.pop("_use_logging", False)
-
   def _debug_print(fmt: str, *c_args, **c_kwargs):
     if not skip_format_check:
       # Check that we provide the correct arguments to be formatted.
@@ -637,9 +675,10 @@ def debug_print(
   if fmt is not None:
     _debug_print(fmt, *args, **kwargs)
     return None
-  if args:
+  if args or kwargs:
     raise TypeError(
-        "debug_print cannot receive *args when using the two-call form."
+        "debug_print received unexpected arguments in the two-call form:"
+        f" {args=} {kwargs=}"
     )
   return _debug_print
 

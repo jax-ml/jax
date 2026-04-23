@@ -1417,6 +1417,32 @@ class TwoCallPatternTest(jtu.JaxTestCase):
     ):
       jax.debug.print(ordered=True)("hello {a}", a=42, partitioned=True)
 
+  def test_debug_callback_unexpected_arguments(self):
+    with self.assertRaisesRegex(
+        TypeError,
+        "debug_callback received unexpected arguments in the two-call form",
+    ):
+      jax.debug.callback(ordered=True, a=42)(lambda x, a: x * a)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        "debug_callback received unexpected arguments in the two-call form",
+    ):
+      jax.debug.callback(None, 42, ordered=True)(lambda x, a: x * a)
+
+  def test_debug_print_unexpected_arguments(self):
+    with self.assertRaisesRegex(
+        TypeError,
+        "debug_print received unexpected arguments in the two-call form",
+    ):
+      jax.debug.print(ordered=True, a=42)("hello {a}")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        "debug_print received unexpected arguments in the two-call form",
+    ):
+      jax.debug.print(None, 42, ordered=True)("hello {a}")
+
 
 if not rich:
   del VisualizeShardingTest
