@@ -96,6 +96,13 @@ Operation* TPUDialect::materializeConstant(OpBuilder& builder, Attribute value,
     Operation* op) {
   Attribute attr = op->getAttr(GetCoreTypeKey());
   if (attr == nullptr) {
+    // For backwards compatibility we assume that the "main" function without
+    // an explicit core type belongs to TensorCore.
+    // TODO(b/505757864): Remove this in 6 months.
+    if (auto func_op = mlir::dyn_cast<mlir::func::FuncOp>(op);
+        func_op && func_op.getName() == "main") {
+      return CoreType::kTc;
+    }
     return std::nullopt;
   }
   if (!mlir::isa<CoreTypeAttr>(attr)) {
