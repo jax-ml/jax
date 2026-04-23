@@ -5113,6 +5113,9 @@ class RaggedTest(jtu.JaxTestCase):
   def test_ragged_dot_general_preserves_named_scope(self):
     if not jtu.test_device_matches(["tpu"]):
       raise unittest.SkipTest("Test only runs on TPU")
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 23):
+      raise unittest.SkipTest("Requires a newer libtpu")
+
 
     m, k, n = (8, 8, 8)
     num_groups = 2
