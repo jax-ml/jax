@@ -23,6 +23,10 @@ if _cuda_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _cuda_triton.get_custom_call(),
       platform='CUDA')
+  for name, value in _cuda_triton.registrations().items():
+    xla_client.register_custom_call_target(
+        name, value, platform="CUDA", api_version=1
+    )
   TritonKernelCall = _cuda_triton.TritonKernelCall
   TritonAutotunedKernelCall = _cuda_triton.TritonAutotunedKernelCall
   TritonKernel = _cuda_triton.TritonKernel
@@ -37,6 +41,10 @@ if _hip_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _hip_triton.get_custom_call(),
       platform='ROCM')
+  for name, value in _hip_triton.registrations().items():
+    xla_client.register_custom_call_target(
+        name, value, platform="ROCM", api_version=1
+    )
   TritonKernelCall = _hip_triton.TritonKernelCall
   TritonAutotunedKernelCall = _hip_triton.TritonAutotunedKernelCall
   TritonKernel = _hip_triton.TritonKernel

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -42,6 +43,12 @@ limitations under the License.
 namespace nb = nanobind;
 
 namespace jax::JAX_GPU_NAMESPACE {
+
+nb::dict Registrations() {
+  nb::dict dict;
+  dict["triton_kernel_call_ffi"] = EncapsulateFfiHandler(kTritonKernelCallFfi);
+  return dict;
+}
 
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
@@ -168,6 +175,8 @@ NB_MODULE(_triton, m) {
                   std::string_view(opaque.c_str(), opaque.size())));
           return nb::bytes(metadata.c_str(), metadata.size());
         }));
+
+  m.def("registrations", &Registrations);
 }
 
 }  // namespace jax::JAX_GPU_NAMESPACE

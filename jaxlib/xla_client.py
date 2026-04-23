@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 443  # update inlined_func_call signature
+_version = 444  # migrate triton_kernel_call to FFI
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

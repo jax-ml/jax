@@ -31,6 +31,9 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "jaxlib/gpu/ffi_wrapper.h"
+#include "xla/ffi/api/ffi.h"
+
 // Required for absl::c_find_if.
 // NOLINTNEXTLINE(misc-include-cleaner)
 #include "absl/algorithm/container.h"
@@ -799,5 +802,30 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }
+
+::xla::ffi::Error TritonKernelCallFfi(gpuStream_t stream,
+                                      std::string_view opaque,
+                                      ::xla::ffi::RemainingArgs args,
+                                      ::xla::ffi::RemainingRets rets) {
+  std::vector<void*> buffers = CombineBuffers(args, rets);
+  auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
+  if (!kernel_call_or.ok()) {
+    return ::xla::ffi::Error::InvalidArgument(
+        std::string(kernel_call_or.status().message()));
+  }
+  absl::Status status = (*kernel_call_or)->Launch(stream, buffers.data());
+  if (!status.ok()) {
+    return ::xla::ffi::Error::Internal(std::string(status.message()));
+  }
+  return ::xla::ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kTritonKernelCallFfi, TritonKernelCallFfi,
+    ::xla::ffi::Ffi::Bind()
+        .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
+        .Attr<std::string_view>("opaque")
+        .RemainingArgs()
+        .RemainingRets());
 
 }  // namespace jax::JAX_GPU_NAMESPACE
