@@ -1352,7 +1352,7 @@ def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   _set_attr(
       x,
       "tt.divisibility",
-      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),  # pyrefly: ignore[no-matching-overload]
+      ir.DenseIntElementsAttr.get(np.asarray(values, dtype=np.int32)),
   )
   return x
 

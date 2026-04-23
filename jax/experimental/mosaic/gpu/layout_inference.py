@@ -1726,7 +1726,7 @@ def _slice_tmem_constraint_system(
   # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
   if "alias_id" in op.attributes:
     alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)  # pyrefly: ignore[missing-attribute]
+    alias_key = _AliasKey(None, op.offset.value, alias_id)
     if (cached_variable := ctx.slice_tmem_aliases.get(alias_key)) is not None:
       result_variable = cached_variable
     else:
@@ -1769,7 +1769,7 @@ def _slice_smem_constraint_system(
   result = ValueSite(op, VariableType.RESULT, 0)
   if "alias_id" in op.attributes:
     alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)  # pyrefly: ignore[missing-attribute]
+    alias_key = _AliasKey(None, op.offset.value, alias_id)
     if (cached_variable := ctx.slice_smem_aliases.get(alias_key)) is not None:
       result_variable = cached_variable
     else:
