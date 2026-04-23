@@ -24,7 +24,6 @@ def exit_multi_threaded_execution(arg: ir.Context, /) -> None: ...
 def inlined_func_call(
     callee: ir.Operation,
     args: Sequence[ir.Value],
-    block: ir.Block,
     loc: ir.Location | None = ...,
 ) -> list[ir.Value]:
   """Makes an inlined call to a function containing a single block with a single return op."""

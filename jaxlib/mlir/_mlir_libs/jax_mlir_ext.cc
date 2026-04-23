@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "absl/log/log.h"
@@ -72,7 +73,9 @@ limitations under the License.
 
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContextRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperationRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyValue;
 
@@ -108,10 +111,29 @@ void ParseLocation(mlir::Location& location, llvm::StringRef& op_type,
   }
 }
 
-nb::object ArithConstant(nb::object value, MlirType type) {
-  // The usual pattern for insertion points and locations is to use optional
-  // arguments that have default type casters that do the same as the following.
-  // Unfortunately they are slow, so we do the same directly.
+// Converts an mlir::Value to a PyValue python object.
+// It is faster to create a PyValue directly than to use the MlirValue type
+// caster.
+nb::object WrapMlirValue(PyMlirContextRef context_ref, mlir::Value value) {
+  mlir::Operation* defining_op = value.getDefiningOp();
+  PyOperationRef op_ref = [&]() {
+    if (defining_op) {
+      return PyOperation::forOperation(context_ref, wrap(defining_op));
+    } else {
+      auto block_arg = llvm::cast<mlir::BlockArgument>(value);
+      mlir::Operation* parent_op = block_arg.getOwner()->getParentOp();
+      if (!parent_op) {
+        throw nb::value_error("Block argument has no parent operation.");
+      }
+      return PyOperation::forOperation(context_ref, wrap(parent_op));
+    }
+  }();
+  PyValue py_value(op_ref, wrap(value));
+  return py_value.maybeDownCast();
+}
+
+// Get the block/operation of the current Python insertion point.
+std::pair<mlir::Block*, mlir::Operation*> GetInsertionPoint() {
   PyInsertionPoint* insertion_point =
       PyThreadContextEntry::getDefaultInsertionPoint();
   if (insertion_point == nullptr) {
@@ -124,6 +146,15 @@ nb::object ArithConstant(nb::object value, MlirType type) {
       ref_op = unwrap(py_op->get());
     }
   }
+  return {block, ref_op};
+}
+
+// Optimized version of arith.constant.
+nb::object ArithConstant(nb::object value, MlirType type) {
+  // The usual pattern for insertion points and locations is to use optional
+  // arguments that have default type casters that do the same as the following.
+  // Unfortunately they are slow, so we do the same directly.
+  auto [block, ref_op] = GetInsertionPoint();
 
   PyLocation* location = PyThreadContextEntry::getDefaultLocation();
   if (location == nullptr) {
@@ -153,54 +184,76 @@ nb::object ArithConstant(nb::object value, MlirType type) {
   }
   auto op = builder.create<mlir::arith::ConstantOp>(mlir_type, attr);
 
-  // It is faster to create a PyValue directly than to use the MlirValue type
-  // caster.
-  auto context_ref = location->getContext();
-  auto op_ref = PyOperation::forOperation(context_ref, wrap(op.getOperation()));
-  PyValue py_value(op_ref, wrap(op.getOperation()->getResult(0)));
-  return py_value.maybeDownCast();
+  return WrapMlirValue(location->getContext(), op.getOperation()->getResult(0));
 }
 
 }  // namespace
 
-absl::StatusOr<std::vector<MlirValue>> InlinedCall(
-    MlirOperation c_callee, absl::Span<MlirValue const> c_args, MlirBlock block,
-    MlirLocation loc) {
-  mlir::Operation* callee = unwrap(c_callee);
+nb::object InlinedCall(nb::object callee_obj, nb::sequence args,
+                       nb::object loc_obj) {
+  PyOperation& py_callee = nb::cast<PyOperation&>(callee_obj);
+  mlir::Operation* callee = unwrap(py_callee.get());
   mlir::func::FuncOp func = llvm::cast<mlir::func::FuncOp>(callee);
   mlir::Region& body = func.getBody();
   if (body.getBlocks().size() != 1) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("expected function to have exactly one block, got %d",
-                        body.getBlocks().size()));
+    throw nb::value_error("expected function to have exactly one block");
   }
   mlir::Block& body_block = body.getBlocks().front();
 
-  mlir::OpBuilder op_builder = mlir::OpBuilder::atBlockEnd(unwrap(block));
-  mlir::IRMapping mapping;
-  if (body_block.getNumArguments() != c_args.size()) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("expected callee to have %d arguments, got %d",
-                        c_args.size(), body_block.getNumArguments()));
-  }
-  for (auto [arg_value, arg] : llvm::zip(body_block.getArguments(), c_args)) {
-    mapping.map(arg_value, unwrap(arg));
+  auto [block, ref_op] = GetInsertionPoint();
+
+  mlir::OpBuilder op_builder = mlir::OpBuilder::atBlockEnd(block);
+  if (ref_op != nullptr) {
+    op_builder.setInsertionPoint(ref_op);
   }
 
-  mlir::Location parent_base_loc = unwrap(loc);
+  std::vector<mlir::Value> unwrapped_args;
+  unwrapped_args.reserve(nb::len(args));
+  for (nb::handle arg : args) {
+    unwrapped_args.push_back(unwrap(nb::cast<PyValue&>(arg).get()));
+  }
+
+  if (body_block.getNumArguments() != unwrapped_args.size()) {
+    throw nb::value_error(
+        absl::StrFormat("expected callee to have %zu arguments, got %zu",
+                        unwrapped_args.size(), body_block.getNumArguments())
+            .c_str());
+  }
+
+  mlir::IRMapping mapping;
+  for (auto [arg_value, arg] :
+       llvm::zip(body_block.getArguments(), unwrapped_args)) {
+    mapping.map(arg_value, arg);
+  }
+
+  mlir::Location parent_base_loc = [&]() {
+    if (loc_obj.is_none()) {
+      PyLocation* default_loc = PyThreadContextEntry::getDefaultLocation();
+      if (default_loc == nullptr) {
+        throw nb::value_error("No default location found.");
+      }
+      return unwrap(default_loc->get());
+    }
+    return unwrap(nb::cast<PyLocation&>(loc_obj).get());
+  }();
+
   llvm::StringRef parent_op_type, parent_op_name;
   ParseLocation(parent_base_loc, parent_op_type, parent_op_name);
 
-  std::optional<std::vector<MlirValue>> results;
+  std::optional<nb::list> return_values;
+  PyLocation* default_loc = PyThreadContextEntry::getDefaultLocation();
+  PyMlirContextRef context_ref = default_loc->getContext();
+
   for (mlir::Operation& op : body_block.getOperations()) {
     if (llvm::isa<mlir::func::ReturnOp>(op)) {
-      if (results.has_value()) {
-        return absl::InternalError(
+      if (return_values.has_value()) {
+        throw nb::value_error(
             "expected function to have exactly one return op");
       }
-      results.emplace();
+      return_values.emplace();
       for (mlir::Value result : op.getOperands()) {
-        results->push_back(wrap(mapping.lookup(result)));
+        mlir::Value mapped_result = mapping.lookup(result);
+        return_values->append(WrapMlirValue(context_ref, mapped_result));
       }
     } else {
       mlir::Operation* cloned_op = op_builder.clone(op, mapping);
@@ -247,11 +300,10 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
       });
     }
   }
-  if (!results.has_value()) {
-    return absl::InternalError(
-        "expected function to have exactly one return op");
+  if (!return_values.has_value()) {
+    throw nb::value_error("expected function to have exactly one return op");
   }
-  return *results;
+  return *return_values;
 }
 
 NB_MODULE(_jax_mlir_ext, m) {
@@ -296,9 +348,11 @@ NB_MODULE(_jax_mlir_ext, m) {
     unwrap(context)->exitMultiThreadedExecution();
   });
 
-  m.def("inlined_func_call", xla::ValueOrThrowWrapper(InlinedCall),
-        nb::arg("callee"), nb::arg("args"), nb::arg("block"),
-        nb::arg("loc").none() = nb::none(),
+  m.def("inlined_func_call", &jax::InlinedCall, nb::arg("callee"),
+        nb::arg("args"), nb::arg("loc").none() = nb::none(),
+        nb::sig("def inlined_func_call(callee: mlir.ir.Operation, args: "
+                "collections.abc.Sequence[mlir.ir.Value], loc: "
+                "mlir.ir.Location | None = ...) -> list[mlir.ir.Value]"),
         "Makes an inlined call to a function containing a single block with a "
         "single return op.");
 
@@ -307,7 +361,7 @@ NB_MODULE(_jax_mlir_ext, m) {
                 "mlir.ir.Type, /) -> mlir.ir.Value"),
         "Creates an arith.constant operation.");
 
-  nb::class_<TracebackToLocationCache>(m, "TracebackToLocationCache")
+  nb::class_<jax::TracebackToLocationCache>(m, "TracebackToLocationCache")
       .def(
           "__init__",
           [](TracebackToLocationCache* self, nb::callable code_to_filename,

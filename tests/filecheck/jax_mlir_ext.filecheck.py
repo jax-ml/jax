@@ -17,6 +17,7 @@
 from absl import app
 import jax
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -89,7 +90,11 @@ def test_inlined_func_call():
     with ir.InsertionPoint(entry_block):
       x, y = entry_block.arguments
       with caller_loc:
-        x, y = _jax_mlir_ext.inlined_func_call(callee, [y, x], entry_block)
+        if jaxlib_extension_version >= 443:
+          x, y = _jax_mlir_ext.inlined_func_call(callee.operation, [y, x])
+        else:
+          x, y = _jax_mlir_ext.inlined_func_call(
+            callee, [y, x], ir.InsertionPoint.current.block)
       func_dialect.ReturnOp([x, y])
     module.operation.verify()
     pipeline = passmanager.PassManager.parse("builtin.module(symbol-dce)")
