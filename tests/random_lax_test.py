@@ -214,6 +214,7 @@ _OUT_SHARDING_CASES = [
     ('bernoulli',        lambda key, n, s: random.bernoulli(key, p=0.5, shape=(n,), out_sharding=s)),
     ('beta',             lambda key, n, s: random.beta(key, 0.2, 5.0, shape=(n,), out_sharding=s)),
     ('bits',             lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
+    ('cauchy',           lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
     ('gumbel',           lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
     ('normal',           lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
     ('permutation',      lambda key, n, s: random.permutation(key, n, out_sharding=s)),
