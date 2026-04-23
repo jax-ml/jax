@@ -1425,10 +1425,10 @@ class SemaphoreRef:
       predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
     semantics = "relaxed" if relaxed else "release"
     llvm.inline_asm(
-        i32,
+        ir.Type.parse("!llvm.void"),
         [self.ptr, value, predicate],
-        f"@$3 atom.add.{semantics}.sys.global.u32 $0, [$1], $2;",
-        "=r,l,r,b",
+        f"@$2 red.{semantics}.sys.global.add.u32 [$0], $1;",
+        "l,r,b",
         has_side_effects=True,
     )
 
