@@ -31,6 +31,7 @@ from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas import utils as pl_utils
+from jax._src.state import types as state_types
 
 
 empty = api.named_call(lax.empty)
@@ -333,3 +334,22 @@ def with_scoped(
       )
     return inner
   return decorator
+
+
+def select_ref(idx: jax_typing.Array, *refs):
+  """Selects a ref from a list of refs based on the runtime value of a scalar index.
+
+  This is currently only supported for DMA operations and at the top level of a
+  ref. It can wrap other ref operations like `at` underneath.
+
+  Example::
+
+    x_ref = pl.select_ref(idx, x0_ref.at[...], x1_ref)
+    pltpu.async_copy(x_ref, y_ref, sem).wait()
+
+  """
+  assert len(refs) > 1, "At least two refs are required for pl.select_ref()."
+  return state_types.TransformedRef(
+      ref=refs,
+      transforms=(state_types.SelectTransform(idx, len(refs)),),
+  )
