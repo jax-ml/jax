@@ -490,7 +490,8 @@ def correlate2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str
   return result
 
 
-def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
+def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear',
+            bp: int | Sequence[int] | np.ndarray = 0,
             overwrite_data: None = None) -> Array:
   """
   Remove linear or piecewise linear trends from data.
