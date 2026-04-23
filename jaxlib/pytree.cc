@@ -739,6 +739,32 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       }
       default:
         DCHECK(node.kind == PyTreeKind::kLeaf);
+        if (PyObject_TypeCheck(handle.ptr(), &PyDictValues_Type) ||
+            (PyIter_Check(handle.ptr()) &&
+             (PyGen_Check(handle.ptr()) ||
+              PyObject_TypeCheck(handle.ptr(), &PyZip_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyListIter_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PySetIter_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyMap_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyFilter_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyEnum_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyReversed_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyTupleIter_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyDictIterKey_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyDictIterValue_Type) ||
+              PyObject_TypeCheck(handle.ptr(), &PyDictIterItem_Type)))) {
+          const char* type_name = Py_TYPE(handle.ptr())->tp_name;
+          std::string msg = absl::StrFormat(
+              "Python iterable type '%s' is treated as a leaf in PyTree. "
+              "Use is_leaf to suppress this warning if you want this "
+              "behavior. In a future version of JAX, this will become an "
+              "error.",
+              type_name);
+
+          if (PyErr_WarnEx(PyExc_DeprecationWarning, msg.c_str(), 1) < 0) {
+            throw nb::python_error();
+          }
+        }
         auto value = nb::borrow<nb::object>(handle);
         if (keypath.has_value()) {
           auto kp_tuple = MakeKeyPathTuple(keypath.value());

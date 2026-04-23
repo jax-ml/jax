@@ -36,6 +36,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Passing the `copy`, `order`, and `ndmin` arguments to
     {func}`jax.numpy.array` positionally is deprecated. Use keyword arguments
     instead. This matches the signature of `numpy.array`.
+  * Python `dict_values`, generators, zip return type and iterators generally
+    are deprecated by default when used as leaves in pytrees. In a future
+    version of JAX, this will become an error, if you depend on using them as
+    leaves, pass `is_leaf` to `jax.tree.*` methods.
 
 ## JAX 0.10.0 (April 16, 2026)
 
