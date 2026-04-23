@@ -215,6 +215,7 @@ _OUT_SHARDING_CASES = [
     ('beta', lambda key, n, s: random.beta(key, 0.2, 5.0, shape=(n,), out_sharding=s)),
     ('bits', lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
     ('cauchy', lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
+    ('dirichlet', lambda key, n, s: random.dirichlet(key, jnp.ones(3), shape=(n,), out_sharding=s)),
     ('exponential', lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
     ('multivariate_normal', lambda key, n, s: random.multivariate_normal(key, mean=jnp.zeros((n,)), cov=jnp.eye(n), shape=(n,), out_sharding=s)),
