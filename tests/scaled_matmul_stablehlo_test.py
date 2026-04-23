@@ -387,7 +387,7 @@ def get_hlo_text(in_shardings, block_scale_configs):
       2, 512, 1024, 512, block_scale_configs,
   )
 
-  with mesh:
+  with jax.set_mesh(mesh):
     a_q, b_q, a_scales, b_scales, in_shardings = shard_and_device_put(
         mesh, in_shardings[0], in_shardings[1], a_q, b_q, a_scales, b_scales
     )
@@ -591,7 +591,8 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     devices = devices.reshape((2, 2))
     expected_output_spec = sharding_configs[in_shardings][1]
 
-    with Mesh(devices, ("dp", "tp")) as mesh:
+    mesh = Mesh(devices, ("dp", "tp"))
+    with jax.set_mesh(mesh):
       a_q, b_q, a_scales, b_scales, input_shardings = (
           shard_and_device_put(
               mesh,
@@ -939,7 +940,8 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
-    with Mesh(devices, ("dp", "tp")) as mesh:
+    mesh = Mesh(devices, ("dp", "tp"))
+    with jax.set_mesh(mesh):
       a, b, input_shardings = (
           shard_and_device_put(
               mesh,
