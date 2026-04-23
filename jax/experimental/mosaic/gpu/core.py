@@ -420,7 +420,7 @@ def _slice_smem(
     lowering_semantics: LoweringSemantics,
 ) -> ir.Value:
   if lowering_semantics == LoweringSemantics.Warpgroup:
-    return dialect.slice_smem(result, offset)  # pyrefly: ignore[bad-argument-type]
+    return dialect.slice_smem(result, offset)
   else:
     ir_offset = arith.constant(ir.IndexType.get(), offset)
     return memref.view(result, smem_base, ir_offset, [])

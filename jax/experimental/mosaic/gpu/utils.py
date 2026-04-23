@@ -53,7 +53,7 @@ def nvvm_shfl_sync(ty, *args):
   if first_param != "thread_mask":
     return nvvm.shfl_sync(ty, *args)
   else:
-    return nvvm.shfl_sync(*args, results=[ty])  # pyrefly: ignore=[unexpected-keyword]
+    return nvvm.shfl_sync(*args, results=[ty])
 
 
 def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:

@@ -2013,7 +2013,7 @@ class LaunchContext:
       parameter_uses_multimem = np.zeros(self.num_params, dtype=np.int64)
 
     parameter_uses_multimem[parameter_id] = 1
-    module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(  # pyrefly: ignore[no-matching-overload]
+    module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
         parameter_uses_multimem
     )
 

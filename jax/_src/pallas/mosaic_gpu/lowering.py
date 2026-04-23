@@ -568,7 +568,7 @@ class ModuleContext:
       assert smem_base is not None
       view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
     else:
-      view = mgpu.dialect.slice_smem(scratch_ty, off)  # pyrefly: ignore[bad-argument-type]
+      view = mgpu.dialect.slice_smem(scratch_ty, off)
 
     off += gpu_core.align_to(
         math.prod(struct.shape)
@@ -1487,7 +1487,7 @@ def _extract_aliased_ref(
                   "The base ref for aliases must come from a slice_smem op."
               )
 
-            base_offset = ref.owner.offset.value  # pyrefly: ignore[missing-attribute]
+            base_offset = ref.owner.offset.value
             total_offset = base_offset + offset
 
             ref_ty = ir.MemRefType.get(

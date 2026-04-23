@@ -41,7 +41,7 @@ doctest_optionflags = [
 addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
 
 [tool.pyrefly]
-python-version = "3.11"
+python-version = "3.13"
 project-includes = [
     "jax/**/*.py*",
 ]
