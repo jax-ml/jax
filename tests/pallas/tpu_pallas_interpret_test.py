@@ -199,6 +199,27 @@ class InterpretTest(jtu.JaxTestCase):
         run(0, 2)
       pltpu.reset_tpu_interpret_mode_state()
 
+  def test_inputs_and_outputs_not_evenly_divisible_by_block_shape(self):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] + 1.0
+
+    shape = (7, 768, 640)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec((2, 512, 256), lambda i, j, k: (i, j, k)),],
+          out_specs=pl.BlockSpec((2, 512, 256), lambda i, j, k: (i, j, k)),
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+          grid=(4, 2, 3),
+          interpret=pltpu.InterpretParams(),
+      )(x)
+
+    y = f(x)
+    np.testing.assert_array_equal(y, x + 1.0)
+
   @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_index(self, out_of_bounds_reads):
     def kernel(s_ref, x_ref, o_ref):
