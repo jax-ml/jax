@@ -260,7 +260,8 @@ class JaxJitTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
   def test_check_for_large_number_of_constants_new(self):
-    y = np.ones((128, 128), dtype=np.float32)
+    self.enter_context(config.embedded_constants_max_bytes(4))
+    y = np.ones((128, 128))
     x = jnp.zeros((128,))
 
     def jit_maker(): # need to ensure we lower at each test
@@ -269,7 +270,7 @@ class JaxJitTest(jtu.JaxTestCase):
       return jax.jit(my_func)
 
     with self.assertWarnsRegex(UserWarning,
-        r'Closed-over constant .* float32\[128,128\] in my_func .*'):
+        r'Closed-over constant .* float..\[128,128\] in my_func .*'):
       with config.captured_constants_warn_bytes(y.nbytes):
         jit_maker()(x)
 

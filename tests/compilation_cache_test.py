@@ -199,6 +199,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     # TODO: create a test for calling pmap with the same input more than once
 
   def test_pmap_with_consts(self):
+    self.enter_context(config.embedded_constants_max_bytes(4))
     const = jnp.array([42, 43], dtype=np.int32)
     clear_cache()
     f = pmap(lambda x: x - lax.psum(x, "i") + const[0], axis_name="i")
@@ -242,6 +243,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertEqual(count_cache_items(), 2)
 
   def test_jit_with_constants(self):
+    self.enter_context(config.embedded_constants_max_bytes(4))
     const = jnp.array([42, 43])  #  A distinctive shape
     clear_cache()
     f = jit(lambda x: x * const[0])

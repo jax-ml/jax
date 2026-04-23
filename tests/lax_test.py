@@ -5004,6 +5004,7 @@ class CompositeTest(jtu.JaxTestCase):
       grad(my_square)(1.0)
 
   def test_composite_with_array_consts(self):
+    self.enter_context(config.embedded_constants_max_bytes(4))
     @partial(lax.composite, name="my.consts")
     def my_consts(x, /, *, scale):
       return jnp.round(x / scale)
