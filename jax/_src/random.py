@@ -1741,7 +1741,9 @@ def _poisson(key, lam, shape, dtype) -> Array:
 def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
-            dtype: DTypeLikeInt | None = None) -> Array:
+            dtype: DTypeLikeInt | None = None,
+            *,
+            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
   The values are distributed according to the probability mass function:
@@ -1758,6 +1760,14 @@ def poisson(key: ArrayLike,
       shape. Default (None) produces a result shape equal to ``lam.shape``.
     dtype: optional, a integer dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -1778,9 +1788,10 @@ def poisson(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   else:
     shape = np.shape(lam)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
   lam = jnp.broadcast_to(lam, shape)
   lam = lax.convert_element_type(lam, np.float32)
-  return _poisson(key, lam, shape, dtype)
+  return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
 
 def gumbel(key: ArrayLike,

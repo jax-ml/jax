@@ -222,6 +222,7 @@ _OUT_SHARDING_CASES = [
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
     ('uniform',          lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('loggamma',         lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('poisson',          lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
 ]
 
 
