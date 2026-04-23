@@ -227,6 +227,13 @@ class VectorLayout {
                                     minor_is_implicit);
   }
 
+  static std::array<bool, 2> getImplicitDimArray(
+      const ImplicitDim implicit_dim) {
+    const auto underlying = static_cast<unsigned>(implicit_dim);
+    return {static_cast<bool>(underlying & 2),
+            static_cast<bool>(underlying & 1)};
+  }
+
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets& offsets() const { return offsets_; }
   LayoutOffsets getCanonicalOffsets(const ArrayRef<int64_t> shape) const {
@@ -243,6 +250,9 @@ class VectorLayout {
   int packing() const { return 32 / bitwidth_; }
   int num_implicit_dims() const { return num_implicit_dims(implicit_dim_); }
   int layout_rank() const { return layout_rank(implicit_dim_); }
+  std::array<bool, 2> getImplicitDimArray() const {
+    return getImplicitDimArray(implicit_dim_);
+  }
 
   bool operator==(const VectorLayout& other) const;
   bool operator!=(const VectorLayout& other) const { return !(*this == other); }
