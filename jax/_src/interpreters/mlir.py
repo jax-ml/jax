@@ -57,8 +57,7 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import (
-    AUTO, NamedSharding, SdyArray, SdyArrayList)
+from jax._src.sharding_impls import NamedSharding, SdyArray, SdyArrayList
 from jax._src.state.types import AbstractRef
 from jax._src.typing import ArrayLike
 from jax._src.util import foreach
@@ -1023,11 +1022,9 @@ def sanitize_name(name: str) -> str:
 
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: JSharding | AUTO | None) -> core.AbstractValue:
+                 sharding: JSharding | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
-    return aval
-  if isinstance(sharding, AUTO):
     return aval
   if isinstance(aval, core.AbstractToken):
     return aval
@@ -1126,15 +1123,11 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 
 def _to_physical_op_sharding(
     ctx: ModuleContext,
-    aval: core.AbstractValue, sharding: JSharding | AUTO | None,
+    aval: core.AbstractValue, sharding: JSharding | None,
 ) -> xc.OpSharding | SdyArray | None:
   if sharding is None:
     return None
   if all_unconstrained(sharding, aval):
-    return None
-  if isinstance(sharding, AUTO):
-    if config.use_shardy_partitioner.value:
-      return sharding._to_sdy_sharding(aval.ndim)  # pyrefly: ignore[missing-attribute]
     return None
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
@@ -1163,10 +1156,8 @@ def _to_xla_layout(layout: Layout | None | AutoLayout,
   return str(layout._to_xla_layout(aval.dtype))  # pyrefly: ignore[missing-attribute]
 
 
-def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
+def _get_mem_kind(s: JSharding | None) -> str | None:
   if s is None:
-    return None
-  if isinstance(s, AUTO):
     return None
   assert isinstance(s, JSharding)
   return s.memory_kind
@@ -1263,8 +1254,8 @@ def lower_jaxpr_to_module(
     axis_context: AxisContext,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
-    result_shardings: Sequence[JSharding | AUTO | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     in_layouts: Sequence[Layout | None | AutoLayout] | None = None,
     out_layouts: Sequence[Layout | None | AutoLayout] | None = None,
     arg_names: Sequence[str] | None = None,
@@ -1315,8 +1306,7 @@ def lower_jaxpr_to_module(
         result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
         (result_shardings is None or
-         any(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
-             for s in result_shardings))):
+         any(s is None or contains_unconstrained(s) for s in result_shardings))):
       if xla_donated_args is None:
         xla_donated_args = [False] * len(donated_args)
       for input_id in range(len(donated_args)):
@@ -1480,8 +1470,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
       if (in_layouts is None or out_layouts is None or
           in_layouts[input_id] == out_layouts[i]) and (
               result_shardings is None or not (
-              (s := result_shardings[i]) is None or
-              isinstance(s, AUTO) or contains_unconstrained(s))):
+              (s := result_shardings[i]) is None or contains_unconstrained(s))):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1580,8 +1569,8 @@ def lower_jaxpr_to_fun(
     main_function: bool = False,
     replicated_args: Sequence[bool] | None = None,
     in_avals: Sequence[core.AbstractValue],
-    arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
-    result_shardings: Sequence[JSharding | AUTO | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
@@ -3028,7 +3017,7 @@ def lower_with_sharding_in_types(ctx, op, aval):
     return op
   if aval.sharding.mesh.are_all_axes_auto:
     return op
-  # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
+  # TODO(yashkatariya): If all the axes in pspec are AUTO or Manual,
   # `return op` early and avoid bloating HLO size.
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     aval = core.physical_aval(aval)

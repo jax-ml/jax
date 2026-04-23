@@ -47,7 +47,7 @@ from jax._src import util
 from jax._src.typing import ArrayLike
 from jax._src.interpreters import mlir
 from jax._src.layout import Format, Layout, AutoLayout
-from jax._src.sharding_impls import UnspecifiedValue, AUTO
+from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
@@ -571,7 +571,7 @@ class Lowered(Stage):
     out_layouts = self._lowering.compile_args["out_layouts"]
     outs = []
     for o, l, s in zip(out_avals, out_layouts, out_shardings):
-      s = None if isinstance(s, (UnspecifiedValue, AUTO)) else s
+      s = None if isinstance(s, UnspecifiedValue) else s
       l = None if isinstance(l, AutoLayout) else l
       format = Format(l, s)
       outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))

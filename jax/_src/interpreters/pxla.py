@@ -60,7 +60,7 @@ from jax._src.sharding import (Sharding as JSharding, IndivisibleError,
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.sharding_impls import (
-    ArrayMapping, AUTO, UnspecifiedValue, SingleDeviceSharding,
+    ArrayMapping, UnspecifiedValue, SingleDeviceSharding,
     make_single_device_sharding, GSPMDSharding,
     NamedSharding, PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list,
@@ -497,16 +497,8 @@ def manual_proto(
   return proto
 
 
-def check_if_any_auto(
-    shardings: Iterable[(JSharding | AUTO | UnspecifiedValue)]) -> bool:
-  for s in shardings:
-    if isinstance(s, AUTO):
-      return True
-  return False
-
-
 ShardingInfo = tuple[
-    Union[JSharding, UnspecifiedValue, AUTO],
+    Union[JSharding, UnspecifiedValue],
     stages.MismatchType,
     Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
 ]
@@ -602,15 +594,14 @@ def prune_unused_inputs(
 
 
 @weakref_lru_cache
-def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering):
+def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars):
   assert isinstance(closed_jaxpr, core.ClosedJaxpr)
   jaxpr = closed_jaxpr.jaxpr
   consts = closed_jaxpr.consts
   in_avals = closed_jaxpr.in_avals
 
-  if (keep_unused or auto_spmd_lowering or
-      any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
-          for a in in_avals)):
+  if (keep_unused or any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
+                         for a in in_avals)):
     kept_var_idx = set(range(len(in_avals)))
   else:
     jaxpr, kept_const_idx, kept_var_idx = prune_unused_inputs(jaxpr)
@@ -675,16 +666,16 @@ class SemanticallyEqualShardings:
     self.avals = avals
 
   def __hash__(self):
-    return hash(tuple(s if isinstance(s, (UnspecifiedValue, AUTO)) else
+    return hash(tuple(s if isinstance(s, UnspecifiedValue) else
                       (s._to_xla_hlo_sharding(a.ndim), s.memory_kind)
                       for s, a in zip(self.shardings, self.avals)))
 
   def __eq__(self, other):
     if not isinstance(other, SemanticallyEqualShardings):
       return False
-    is_ua = lambda x: isinstance(x, (UnspecifiedValue, AUTO))
+    is_u = lambda x: isinstance(x, UnspecifiedValue)
     return all(common_is_equivalent_to(s, o, a.ndim, check_devices=False)
-               if not is_ua(s) and not is_ua(o) else s == o
+               if not is_u(s) and not is_u(o) else s == o
                for s, o, a in zip(self.shardings, other.shardings, self.avals))
 
 
@@ -791,7 +782,7 @@ def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
 
 def are_all_shardings_default_mem_kind(shardings):
   for i in shardings:
-    if isinstance(i, (UnspecifiedValue, AUTO)):
+    if isinstance(i, UnspecifiedValue):
       continue
     mem_kind = (core.mem_space_to_kind(i) if isinstance(i, core.MemorySpace)
                 else i.memory_kind)
@@ -965,18 +956,10 @@ def lower_sharding_computation(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None,
 ) -> MeshComputation:
-  """Lowers a computation to XLA. It can take arbitrary shardings as input.
-
-  The caller of this code can pass in a singleton UNSPECIFIED because the
-  number of out_avals might not be known at that time and
-  lower_sharding_computation calculates the number of out_avals so it can apply
-  the singleton UNSPECIFIED to all out_avals."""
-  auto_spmd_lowering = check_if_any_auto(it.chain(in_shardings, out_shardings))
-
   all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
 
   closed_jaxpr, donated_invars, kept_var_idx = _dce_jaxpr(
-      closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering)
+      closed_jaxpr, keep_unused, donated_invars)
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
@@ -1153,7 +1136,6 @@ def lower_sharding_computation(
       in_shardings=in_shardings,
       out_shardings=out_shardings,
       tuple_args=tuple_args,
-      auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
@@ -1173,12 +1155,10 @@ def lower_sharding_computation(
 
 
 def _to_logical_sharding(
-    aval: core.AbstractValue, sharding: MaybeSharding | AUTO
-) -> JSharding | AUTO | None:
+    aval: core.AbstractValue, sharding: MaybeSharding
+) -> JSharding | None:
   if isinstance(sharding, UnspecifiedValue):
     return None
-  if isinstance(sharding, AUTO):
-    return sharding
   elif isinstance(aval, (ShapedArray, AbstractRef)):
     assert isinstance(sharding, JSharding)
     return sharding
@@ -1276,20 +1256,6 @@ def get_op_sharding_from_executable(
   return in_op_shardings, out_op_shardings
 
 
-def get_pspec_from_executable(
-    executable, mesh: Mesh
-) -> tuple[tuple[PartitionSpec, ...], tuple[PartitionSpec, ...]]:
-  input_op_s, output_op_s = get_op_sharding_from_executable(executable)
-  in_pspec: list[PartitionSpec] = []
-  for s in input_op_s:
-    in_pspec.extend(sharding_impls.parse_flatten_op_sharding(s, mesh))
-
-  out_pspec: list[PartitionSpec] = []
-  for s in output_op_s:
-    out_pspec.extend(sharding_impls.parse_flatten_op_sharding(s, mesh))
-  return tuple(in_pspec), tuple(out_pspec)
-
-
 def get_out_shardings_from_executable(
     xla_executable,
     device_list: xc.DeviceList,
@@ -1362,16 +1328,6 @@ def _get_in_shardings_from_xla(
       len(in_op_shardings), num_in_avals)
 
   return [GSPMDSharding(device_list, os) for os in in_op_shardings]
-
-
-# TODO(yashkatariya): Remove this function after `AUTO` can return shardings
-# without mesh.
-def _get_mesh_pspec_shardings_from_executable(
-    xla_executable, mesh: Mesh
-) -> tuple[Sequence[NamedSharding], Sequence[NamedSharding]]:
-  in_pspec, out_pspec = get_pspec_from_executable(xla_executable, mesh)
-  return ([NamedSharding(mesh, i) for i in in_pspec],
-          [NamedSharding(mesh, o) for o in out_pspec])
 
 
 _orig_out_sharding_handlers: dict[Any, Any] = {}
@@ -1510,9 +1466,8 @@ def get_logical_mesh_ids(mesh_shape):
 
 
 def create_compile_options(
-    computation, mesh, tuple_args, auto_spmd_lowering,
-    allow_prop_to_inputs, allow_prop_to_outputs, backend,
-    np_dev, compiler_options):
+    computation, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
+    backend, np_dev, compiler_options):
   num_replicas, num_partitions = 1, np_dev.size
   xla_device_assignment = np_dev.reshape((num_replicas, num_partitions))
   fdo_profile = compiler_options.pop("fdo_profile", None)
@@ -1520,20 +1475,12 @@ def create_compile_options(
       num_replicas=num_replicas,
       num_partitions=num_partitions,
       device_assignment=xla_device_assignment,
-      use_spmd_partitioning=True,
-      use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
       fdo_profile=fdo_profile,
       detailed_logging=compiler.use_detailed_logging(computation),
       backend=backend,
   )
   opts = compile_options.executable_build_options
-  if auto_spmd_lowering:
-    assert mesh is not None
-    opts.auto_spmd_partitioning_mesh_shape = list(mesh.shape.values())
-    opts.auto_spmd_partitioning_mesh_ids = (
-        get_logical_mesh_ids(list(mesh.shape.values()))
-        .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
   opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
   opts.allow_spmd_sharding_propagation_to_output = list(allow_prop_to_outputs)
@@ -1541,8 +1488,8 @@ def create_compile_options(
 
 
 @weakref_lru_cache
-def _cached_compilation(computation, name, mesh,
-                        tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
+def _cached_compilation(computation, name,
+                        tuple_args, allow_prop_to_inputs,
                         allow_prop_to_outputs, host_callbacks, backend,
                         da, compiler_options_kvs, pgle_profiler):
   # One would normally just write: dev = np.array(device_assignment)
@@ -1551,9 +1498,8 @@ def _cached_compilation(computation, name, mesh,
   compiler_options = dict(compiler_options_kvs)
 
   compile_options = create_compile_options(
-      computation, mesh, tuple_args, auto_spmd_lowering,
-      allow_prop_to_inputs, allow_prop_to_outputs, backend,
-      dev, compiler_options)
+      computation, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
+      backend, dev, compiler_options)
 
   with dispatch.log_elapsed_time(
       "Finished XLA compilation of {fun_name} in {elapsed_time:.9f} sec",
@@ -1667,9 +1613,9 @@ def finalize_shardings(shardings, device_assignment):
 def get_prop_to_input_output(in_shardings, out_shardings,
                              num_ordered_effects):
   allow_prop_to_inputs = (False,) * num_ordered_effects + tuple(
-      isinstance(i, (UnspecifiedValue, AUTO)) for i in in_shardings)
+      isinstance(i, UnspecifiedValue) for i in in_shardings)
   allow_prop_to_outputs = (False,) * num_ordered_effects + tuple(
-      isinstance(o, (UnspecifiedValue, AUTO)) or mlir.contains_unconstrained(o)
+      isinstance(o, UnspecifiedValue) or mlir.contains_unconstrained(o)
       for o in out_shardings)
   return allow_prop_to_inputs, allow_prop_to_outputs
 
@@ -1702,7 +1648,6 @@ class UnloadedMeshExecutable:
   host_callbacks: Sequence[Any]
   kept_var_idx: set[int]
   mut: MutationData | None
-  auto_spmd_lowering: bool
   xla_in_layouts: Sequence[Layout | None]
   dispatch_in_layouts: Sequence[Layout | None]
   xla_out_layouts: Sequence[Layout | None]
@@ -1725,20 +1670,18 @@ class UnloadedMeshExecutable:
     return MeshExecutable(self.xla_executable, self.build_unsafe_call,
                           self.input_avals, self.output_avals,
                           self.input_shardings, self.output_shardings,
-                          self.auto_spmd_lowering, self.kept_var_idx,
-                          self.xla_in_layouts, self.dispatch_in_layouts,
-                          self.xla_out_layouts, self.mut, self.all_args_info,
-                          self)
+                          self.kept_var_idx, self.xla_in_layouts,
+                          self.dispatch_in_layouts, self.xla_out_layouts,
+                          self.mut, self.all_args_info, self)
 
   @staticmethod
   def from_hlo(name: str,
                hlo: ir.Module,
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_shardings: Sequence[JSharding | AUTO],
-               out_shardings: Sequence[(JSharding | AUTO | UnspecifiedValue)],
+               in_shardings: Sequence[JSharding],
+               out_shardings: Sequence[(JSharding | UnspecifiedValue)],
                tuple_args: bool,
-               auto_spmd_lowering: bool,
                unordered_effects: list[core.Effect],
                ordered_effects: list[core.Effect],
                host_callbacks: list[Any],
@@ -1777,35 +1720,18 @@ class UnloadedMeshExecutable:
     allow_prop_to_inputs, allow_prop_to_outputs = get_prop_to_input_output(
         in_shardings, out_shardings, len(ordered_effects))
 
-    mesh = None
-    if auto_spmd_lowering:
-      for i in it.chain(in_shardings, out_shardings):
-        if isinstance(i, AUTO):
-          mesh = i.mesh
-          break
-
     util.test_event("pxla_cached_compilation")
     xla_executable = _cached_compilation(
-        hlo, name, mesh, tuple_args, auto_spmd_lowering,
-        allow_prop_to_inputs, allow_prop_to_outputs, tuple(host_callbacks),
-        backend, device_list, compiler_options_kvs, pgle_profiler)
+        hlo, name, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
+        tuple(host_callbacks), backend, device_list, compiler_options_kvs,
+        pgle_profiler)
 
-    if auto_spmd_lowering:
-      assert mesh is not None
-      in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
-          xla_executable, mesh)
-      in_shardings = [x if isinstance(i, AUTO) else i
-                      for x, i in safe_zip(in_shardings_xla, in_shardings)]
-      out_shardings = [x if isinstance(o, AUTO) else o
-                       for x, o in safe_zip(out_shardings_xla, out_shardings)]
-    else:
-      assert mesh is None
-      in_shardings = _maybe_get_and_check_in_shardings(
-          xla_executable, in_shardings, device_list, global_in_avals,
-          len(ordered_effects))
-      out_shardings = _maybe_get_and_check_out_shardings(
-          xla_executable, out_shardings, device_list, global_out_avals,
-          len(ordered_effects))
+    in_shardings = _maybe_get_and_check_in_shardings(
+        xla_executable, in_shardings, device_list, global_in_avals,
+        len(ordered_effects))
+    out_shardings = _maybe_get_and_check_out_shardings(
+        xla_executable, out_shardings, device_list, global_out_avals,
+        len(ordered_effects))
 
     # xla_in_layouts are all either None or Layout. Even default
     # layout are concrete layouts and they are used in `compiled.input_formats`
@@ -1845,7 +1771,6 @@ class UnloadedMeshExecutable:
         host_callbacks=host_callbacks,
         kept_var_idx=kept_var_idx,
         mut=mut,
-        auto_spmd_lowering=auto_spmd_lowering,
         xla_in_layouts=xla_in_layouts,
         dispatch_in_layouts=dispatch_in_layouts,
         xla_out_layouts=xla_out_layouts,
@@ -1914,13 +1839,13 @@ def reflatten_outputs_for_dispatch(out_tree, out_flat):
 class MeshExecutable(stages.Executable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
-      "out_avals", "_in_shardings", "_out_shardings", "_auto_spmd_lowering",
+      "out_avals", "_in_shardings", "_out_shardings",
       "_kept_var_idx", "_xla_in_layouts", "_dispatch_in_layouts",
       "_xla_out_layouts", "_mut", "_all_args_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, out_avals,
-               in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx,
+               in_shardings, out_shardings, kept_var_idx,
                xla_in_layouts, dispatch_in_layouts, xla_out_layouts, mut,
                all_args_info: AllArgsInfo | None = None,
                unloaded_executable=None):
@@ -1933,7 +1858,6 @@ class MeshExecutable(stages.Executable):
     self._unsafe_call = None
     self._in_shardings = in_shardings  # has const_args, but not dead args
     self._out_shardings = out_shardings
-    self._auto_spmd_lowering = auto_spmd_lowering
     # indices include const_args and dead args
     self._kept_var_idx = kept_var_idx
     self._xla_in_layouts = xla_in_layouts  # has const_args, but not dead args
@@ -2080,7 +2004,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
 
 def check_device_backend_on_shardings(shardings) -> bool:
   for i in shardings:
-    if isinstance(i, (UnspecifiedValue, AUTO)):
+    if isinstance(i, UnspecifiedValue):
       continue
     if getattr(i, '_device_backend', False):
       return True
@@ -2098,7 +2022,7 @@ def check_array_xla_sharding_layout_match(
   for arg, xs, xl, name in zip(args, in_shardings, in_layouts, arg_names):
     if not isinstance(arg, array.ArrayImpl):
       continue
-    if isinstance(xs, (UnspecifiedValue, AUTO)):
+    if isinstance(xs, UnspecifiedValue):
       continue
 
     db_xs = check_device_backend_on_shardings([xs])

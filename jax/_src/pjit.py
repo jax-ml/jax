@@ -64,7 +64,7 @@ from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
-    make_single_device_sharding, AUTO, UNSPECIFIED, UnspecifiedValue,
+    make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
 from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
@@ -84,10 +84,7 @@ zip, unsafe_zip = safe_zip, zip
 
 traceback_util.register_exclusion(__file__)
 
-PjitSharding = Union[GSPMDSharding, UnspecifiedValue, AUTO]
-PjitShardingMinusUnspecified = Union[GSPMDSharding, AUTO]
-MeshSharding = Union[NamedSharding, UnspecifiedValue, AUTO]
-MeshShardingMinusUnspecified = Union[NamedSharding, AUTO]
+PjitSharding = Union[GSPMDSharding, UnspecifiedValue]
 
 
 class PjitInfo(NamedTuple):
@@ -706,7 +703,7 @@ def _create_sharding_for_array(mesh, x, name, api_name):
     if api_name == 'jit' or mesh.empty:
       return UNSPECIFIED
     return sharding_impls.cached_named_sharding(mesh, PartitionSpec())
-  if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
+  if isinstance(x, (UnspecifiedValue, Sharding)):
     return x
   if mesh.empty:
     raise RuntimeError(
@@ -743,8 +740,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
     in_tree, _ = treedef_children(in_avals.tree_without_statics)
 
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
-  # Only do this if original in_shardings are unspecified. If it is AUTO, go
-  # via flatten_axis_resources.
+  # Only do this if original in_shardings are unspecified.
   if isinstance(orig_in_shardings, UnspecifiedValue):
     in_shardings_flat = (orig_in_shardings,) * len(in_avals)
   else:
@@ -833,7 +829,7 @@ def pjit_check_aval_sharding(
     shardings, flat_avals, names: Sequence[str],
     what_aval: str, allow_uneven_sharding: bool):
   for aval, s, name in zip(flat_avals, shardings, names):
-    if isinstance(s, (UnspecifiedValue, AUTO)):
+    if isinstance(s, UnspecifiedValue):
       continue
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
@@ -1166,28 +1162,18 @@ def _pjit_call_impl_python(
   compiled = computation.compile()
   sharded_const_args = compiled.shard_const_args(computation.const_args)
 
-  # This check is expensive so only do it if enable_checks is on.
-  if compiled._auto_spmd_lowering and config.enable_checks.value:
-    nr_const_args = len(sharded_const_args)
-    pxla.check_array_xla_sharding_layout_match(
-        args, compiled._in_shardings[nr_const_args:],
-        compiled._xla_in_layouts[nr_const_args:],
-        jaxpr.jaxpr.debug_info.safe_arg_names(len(args)))
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
-    # NOTE(skyewm): I didn't benchmark this
     fingerprint = None
     if hasattr(compiled.runtime_executable(), "fingerprint"):
       fingerprint = compiled.runtime_executable().fingerprint
     if fingerprint is not None:
       fingerprint = fingerprint.hex()
-    distributed_debug_log(("Running pjit'd function", name),
-                          ("in_shardings", in_shardings),
-                          ("out_shardings", out_shardings),
-                          ("in_layouts", in_layouts),
-                          ("out_layouts", out_layouts),
-                          ("abstract args", map(core.typeof, args)),
-                          ("fingerprint", fingerprint))
+    distributed_debug_log(
+        ("Running pjit'd function", name), ("in_shardings", in_shardings),
+        ("out_shardings", out_shardings), ("in_layouts", in_layouts),
+        ("out_layouts", out_layouts), ("abstract args", map(core.typeof, args)),
+        ("fingerprint", fingerprint))
   return (compiled.unsafe_call(*sharded_const_args, *args),
           compiled, pgle_profiler, sharded_const_args)
 
@@ -2063,7 +2049,7 @@ def with_sharding_constraint(x, shardings):
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
   for s, u in zip(shardings_flat, user_shardings_flat):
-    if isinstance(s, (UnspecifiedValue, AUTO)):
+    if isinstance(s, UnspecifiedValue):
       raise ValueError(
           f'One of with_sharding_constraint arguments got sharding {u} which is'
           ' not allowed. Please only pass `jax.sharding.Sharding` instances.')

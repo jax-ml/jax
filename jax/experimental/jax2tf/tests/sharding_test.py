@@ -107,12 +107,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       backend = xla_bridge.get_backend()
       device_assignment = np.arange(num_partitions * num_replicas)
       device_assignment = np.reshape(device_assignment, (-1, num_partitions))
-      use_spmd_partitioning = num_partitions > 1
       compile_options = compiler.get_compile_options(
           num_replicas=num_replicas,
           num_partitions=num_partitions,
           device_assignment=device_assignment,
-          use_spmd_partitioning=use_spmd_partitioning,
       )
       executable = backend.compile_and_load(
           jax_hlo, xc.DeviceList(tuple(self.devices.flat)), compile_options)

@@ -35,22 +35,6 @@ Index = tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
-class AUTO:
-
-  def __init__(self, mesh: mesh_lib.Mesh):
-    self.mesh = mesh
-
-  def _to_sdy_sharding(self, ndim: int, modify_wrt_axis_types: bool = False
-                       ) -> SdyArray:
-    dim_shardings = (SdyDim(axes=(), is_open=True),) * ndim
-    return SdyArray(mesh_shape=self.mesh.shape_tuple,
-                    dim_shardings=dim_shardings)
-
-  @property
-  def _device_assignment(self):
-    return self.mesh._flat_devices_tuple
-
-
 class UnspecifiedValue:
   def __repr__(self):
     return "UnspecifiedValue"
@@ -75,7 +59,7 @@ mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
 ArrayMapping = collections.OrderedDict[MeshAxisName, int]
-ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
+ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, UnspecifiedValue]
 
 
 def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):
@@ -292,7 +276,7 @@ def flatten_spec(spec):
   return out
 
 def get_array_mapping(axis_resources):
-  if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
+  if isinstance(axis_resources, UnspecifiedValue):
     return axis_resources
   d = collections.OrderedDict()
   for i, axes in enumerate(axis_resources):

@@ -14,12 +14,7 @@
 
 # ruff: noqa
 
-from jax._src.pjit import (
-  pjit as _deprecated_pjit,
-)
-from jax._src.sharding_impls import (
-  AUTO as AUTO,
-)
+from jax._src.pjit import pjit as _deprecated_pjit
 
 _deprecations = {
     # Added Oct 13, 2025

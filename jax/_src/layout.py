@@ -19,7 +19,6 @@ from typing import Union
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
-from jax._src.named_sharding import AUTO as AutoSharding
 from jax._src.util import tuple_insert
 from jax._src.lib import xla_client as xc
 
@@ -102,7 +101,7 @@ class Layout:
 
 
 LayoutOptions = Union[Layout, None, AutoLayout]
-ShardingOptions = Union[Sharding, None, AutoSharding]
+ShardingOptions = Union[Sharding, None]
 
 
 class Format:
@@ -111,8 +110,7 @@ class Format:
   def __init__(self, layout: LayoutOptions = None,
                sharding: ShardingOptions = None):
     # If layout is concrete and sharding is not, error.
-    if (isinstance(layout, Layout) and
-        (sharding is None or isinstance(sharding, AutoSharding))):
+    if isinstance(layout, Layout) and sharding is None:
       raise ValueError(
           'Sharding has to be concrete when layout is of type'
           f' {type(layout)}. Please pass a'
@@ -128,11 +126,10 @@ class Format:
           f' instance of `Layout`. Got {layout} of'
           f' type {type(layout)}'
       )
-    if not isinstance(
-        sharding, (Sharding, type(None), AutoSharding)):
+    if not isinstance(sharding, (Sharding, type(None))):
       raise TypeError(
           'Invalid value received for the sharding argument. Expected values'
-          ' are `None`, `pjit.AUTO` or an instance of `jax.Sharding`. Got'
+          ' are `None` or an instance of `jax.Sharding`. Got'
           f' {sharding} of type {type(sharding)}')
 
     self.layout = layout

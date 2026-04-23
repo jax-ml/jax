@@ -37,7 +37,7 @@ from jax._src.mesh import (
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, AUTO, flatten_spec, NamedSharding,
+    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
@@ -322,7 +322,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 
   new_entries: list[Any] = []
   for entry in entries:
-    if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
+    if isinstance(entry, UnspecifiedValue) or entry is None:
       new_entries.append(entry)
     elif isinstance(entry, jsharding.Sharding):
       if isinstance(entry, NamedSharding) and entry.mesh.empty:
