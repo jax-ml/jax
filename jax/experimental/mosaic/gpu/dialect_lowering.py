@@ -303,8 +303,6 @@ def _initialize_barrier_op_lowering_rule(
         utils.c(arrival_count, i32),
         predicate=ctx.single_thread_per_block_predicate,
     )
-
-  gpu.barrier()
   return []
 
 
