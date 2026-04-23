@@ -23,12 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/log/log.h"
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
@@ -54,7 +50,6 @@ limitations under the License.
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -67,7 +62,6 @@ limitations under the License.
 #include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 #include "stablehlo/dialect/VhloOps.h"
-#include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
 
@@ -77,6 +71,7 @@ using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContextRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperationRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyType;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyValue;
 
 namespace nb = ::nanobind;
@@ -150,7 +145,7 @@ std::pair<mlir::Block*, mlir::Operation*> GetInsertionPoint() {
 }
 
 // Optimized version of arith.constant.
-nb::object ArithConstant(nb::object value, MlirType type) {
+nb::object ArithConstant(nb::object value, const PyType& type) {
   // The usual pattern for insertion points and locations is to use optional
   // arguments that have default type casters that do the same as the following.
   // Unfortunately they are slow, so we do the same directly.
@@ -162,7 +157,7 @@ nb::object ArithConstant(nb::object value, MlirType type) {
   }
   mlir::Location loc = unwrap(location->get());
 
-  mlir::Type mlir_type = unwrap(type);
+  mlir::Type mlir_type = unwrap(type.get());
 
   mlir::TypedAttr attr;
   if (nb::isinstance<nb::bool_>(value)) {
@@ -189,11 +184,10 @@ nb::object ArithConstant(nb::object value, MlirType type) {
 
 }  // namespace
 
-nb::object InlinedCall(nb::object callee_obj, nb::sequence args,
-                       nb::object loc_obj) {
-  PyOperation& py_callee = nb::cast<PyOperation&>(callee_obj);
-  mlir::Operation* callee = unwrap(py_callee.get());
-  mlir::func::FuncOp func = llvm::cast<mlir::func::FuncOp>(callee);
+nb::object InlinedCall(PyOperation& callee, nb::sequence args,
+                       PyLocation* loc) {
+  mlir::func::FuncOp func =
+      llvm::cast<mlir::func::FuncOp>(unwrap(callee.get()));
   mlir::Region& body = func.getBody();
   if (body.getBlocks().size() != 1) {
     throw nb::value_error("expected function to have exactly one block");
@@ -227,14 +221,14 @@ nb::object InlinedCall(nb::object callee_obj, nb::sequence args,
   }
 
   mlir::Location parent_base_loc = [&]() {
-    if (loc_obj.is_none()) {
+    if (loc == nullptr) {
       PyLocation* default_loc = PyThreadContextEntry::getDefaultLocation();
       if (default_loc == nullptr) {
         throw nb::value_error("No default location found.");
       }
       return unwrap(default_loc->get());
     }
-    return unwrap(nb::cast<PyLocation&>(loc_obj).get());
+    return unwrap(loc->get());
   }();
 
   llvm::StringRef parent_op_type, parent_op_name;
