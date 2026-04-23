@@ -197,7 +197,7 @@ class Jaxpr:
       self, source_info=source_info, print_shapes=print_shapes,
       custom_pp_eqn_rules=custom_pp_eqn_rules, name_stack=name_stack,
       print_effects=print_effects)
-    return doc.format(**kwargs)
+    return doc.format(**kwargs)  # pyrefly: ignore[missing-attribute]
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
@@ -582,7 +582,7 @@ def is_literalable(x: Any, for_ad: bool = False) -> bool:
   # See https://docs.jax.dev/en/latest/internals/constants.html
   # for_ad: we want to preserve under AD
   if config.use_simplified_jaxpr_constants.value:
-    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
+    from jax._src.array import ArrayImpl  # type: ignore
     do_lit_array = not for_ad
     if isinstance(x, ArrayImpl):
       return do_lit_array
@@ -640,9 +640,6 @@ class Primitive:
   skip_canonicalization: bool = False
   # hook for converting a hijax primitive to a lojax primitive
   to_lojax: Callable[..., Any] | None = None
-  # set for primitives that allocate references
-  ref_allocating: bool = False
-
 
   is_effectful = None
 
@@ -673,7 +670,7 @@ class Primitive:
   def bind_with_trace(self, trace, args, avals, params, /):
     if self.is_high(*avals, **params) and trace.requires_low:
       with set_current_trace(trace):
-        return self.to_lojax(*args, **params)  # pyrefly: ignore[not-callable]
+        return self.to_lojax(*args, **params)  # type: ignore
     return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
@@ -1148,7 +1145,7 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
     return base
 
   def __repr__(self):
-    return self._pretty_print(verbose=False).format()
+    return self._pretty_print(verbose=False).format()  # pyrefly: ignore[missing-attribute]
 
   def _contents(self):
     try:
@@ -1791,10 +1788,10 @@ class AbstractValue:
     return add_jaxvals(x, y)
 
   def raise_val2(self, lo_vals_ft):
-    return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
+    return self.raise_val(*lo_vals_ft.unflatten())  # type: ignore
 
   def lower_val2(self, hi_val):
-    return FlatTree.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
+    return FlatTree.flatten(self.lower_val(hi_val))  # type: ignore
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
@@ -1975,19 +1972,19 @@ class AvalQDD:
     return self.aval.lo_ty_qdd(self.qdd)
 
   def read_loval(self, val):
-    return self.aval.read_loval(self.qdd, val)  # pyrefly: ignore[missing-attribute]
+    return self.aval.read_loval(self.qdd, val)  # type: ignore
 
   def read_loval_in(self, val):
-    return self.aval.read_loval_in(self.qdd, val)  # pyrefly: ignore[missing-attribute]
+    return self.aval.read_loval_in(self.qdd, val)  # type: ignore
 
   def read_loval_out(self, val):
-    return self.aval.read_loval_out(self.qdd, val)  # pyrefly: ignore[missing-attribute]
+    return self.aval.read_loval_out(self.qdd, val)  # type: ignore
 
   def new_from_loval(self, *lovals):
-    return self.aval.new_from_loval(self.qdd, *lovals)  # pyrefly: ignore[missing-attribute]
+    return self.aval.new_from_loval(self.qdd, *lovals)  # type: ignore
 
   def to_tangent_aval(self):
-    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # pyrefly: ignore[missing-attribute]
+    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # type: ignore
 
 @dataclass(frozen=True)
 class AvalMutableQDD:
@@ -2486,16 +2483,18 @@ class ShapedArray(AbstractValue):
     return f'{wt_str}{self.str_short()}'
 
   def to_tangent_aval(self):
-    return ShapedArray._create(
+    return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, self.sharding, self.mat, self.memory_space)
+        self.weak_type, sharding=self.sharding, manual_axis_type=self.mat,
+        memory_space=self.memory_space)
 
   def to_ct_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     ct_mat = self.mat.to_ct_mat()
-    return ShapedArray._create(
-        self.shape, dtype, self.weak_type, sharding, ct_mat, self.memory_space)
+    return ShapedArray(
+        self.shape, dtype, self.weak_type, sharding=sharding,
+        manual_axis_type=ct_mat, memory_space=self.memory_space)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
@@ -2830,7 +2829,6 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
-ref_p.ref_allocating = True
 
 ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
 def _ref_to_lojax(init_val, *, memory_space, kind):
@@ -2863,7 +2861,6 @@ def empty_ref(ty, memory_space=None):
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
-empty_ref_p.ref_allocating = True
 
 
 @empty_ref_p.def_effectful_abstract_eval
@@ -3212,7 +3209,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
       return operator.index(d)
     except:
       # Is a _DimExpr
-      return d._evaluate(env)  # pyrefly: ignore[missing-attribute]
+      return d._evaluate(env)  # type: ignore
   return tuple(eval_one_dim(d) for d in shape)
 
 def dim_value_dtype():
@@ -3278,7 +3275,7 @@ closed_call_p.def_effectful_abstract_eval(
 def mapped_aval(size: AxisSize, axis, aval: AbstractValue) -> AbstractValue:
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
-    return aval.dec_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
+    return aval.dec_rank(size, axis)  # type: ignore
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
@@ -3293,7 +3290,7 @@ def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):
-    return aval.inc_rank(size, axis)  # pyrefly: ignore[bad-argument-type]
+    return aval.inc_rank(size, axis)  # type: ignore
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, explicit_mesh_axis, aval)
@@ -3517,7 +3514,7 @@ class MutableTypecheckVal:
   mutable_qdd : MutableQuasiDynamicData
 
 
-
+_ref_allocating_primitives = {ref_p, empty_ref_p}
 
 
 def _check_jaxpr(
@@ -3583,9 +3580,7 @@ def _check_jaxpr(
 
   # Check each eqn.
   sentinel = object()
-  in_idx: dict[Var, int | None] = {
-      v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))
-  }
+  in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
   mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
@@ -3608,9 +3603,9 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim.ref_allocating:
+        if prim in _ref_allocating_primitives:
           outvar, = eqn.outvars
-          in_idx[outvar] = None
+          in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
