@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import math
 import textwrap
 from typing import overload, Any, Literal
 import warnings
@@ -34,7 +35,7 @@ from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
 from jax._src.tpu.linalg import qdwh
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
 _no_chkfinite_doc = textwrap.dedent("""
@@ -2660,6 +2661,41 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+@partial(jit, static_argnames=("n", "dtype"))
+def hadamard(n: int, dtype: DTypeLike = int) -> Array:
+  r"""Construct an n-by-n Hadamard matrix.
+
+  JAX implementation of :func:`scipy.linalg.hadamard`.
+
+  For ``n`` a positive power of 2, the Hadamard matrix :math:`H_n` satisfies
+  :math:`H_n H_n^T = n I`. It is defined recursively by the Sylvester
+  construction: :math:`H_1 = [[1]]`, and
+  :math:`H_{2m} = \begin{bmatrix} H_m & H_m \\ H_m & -H_m \end{bmatrix}`.
+
+  Args:
+    n: size of the matrix. Must be a positive power of 2.
+    dtype: output dtype. Defaults to ``int``.
+
+  Returns:
+    A Hadamard matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.hadamard(4)
+    Array([[ 1,  1,  1,  1],
+           [ 1, -1,  1, -1],
+           [ 1,  1, -1, -1],
+           [ 1, -1, -1,  1]], dtype=int32)
+  """
+  if n < 1 or not math.log2(n).is_integer():
+    raise ValueError(
+        f"n must be a positive power of 2; got {n}.")
+  lg2 = int(math.log2(n))
+  H = jnp.ones((1, 1), dtype=dtype)
+  for _ in range(lg2):
+    H = jnp.block([[H, H], [H, -H]])
+  return H
 
 
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:

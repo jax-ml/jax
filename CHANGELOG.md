@@ -19,6 +19,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features
   * Added `ResizeMethod.AREA` to {func}`jax.image.resize`, which matches
     TensorFlow's AREA resizing ({jax-issue}`#20098`).
+  * Added {func}`jax.scipy.linalg.hadamard` for constructing Hadamard
+    matrices ({jax-issue}`#10144`).
 
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use

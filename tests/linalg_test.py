@@ -2595,6 +2595,22 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
+    n=[1, 2, 4, 8, 16],
+    dtype=int_types + float_types,
+  )
+  def testHadamard(self, n, dtype):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.hadamard, n=n, dtype=dtype)
+    jsp_fun = partial(jsp.linalg.hadamard, n=n, dtype=dtype)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(n=[0, -1, 3, 5, 7])
+  def testHadamardInvalidN(self, n):
+    with self.assertRaisesRegex(ValueError, "positive power of 2"):
+      jsp.linalg.hadamard(n)
+
+  @jtu.sample_product(
       shape=[(5, 1), (10, 4), (128, 12)],
       dtype=float_types,
       symmetrize_output=[True, False],
