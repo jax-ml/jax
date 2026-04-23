@@ -315,7 +315,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return jnp.sin(x)
 
     def my_lowering_rule(ctx, arg, **_):
-      return mlir.hlo.CosineOp(arg).results
+      return [mlir.hlo.cosine(arg)]
 
     exp = get_exported(f, _override_lowering_rules=(
         (lax.sin_p, my_lowering_rule),))(42.)
@@ -565,7 +565,7 @@ class JaxExportTest(jtu.JaxTestCase):
       context["for_export"] = ctx.module_context.lowering_parameters.for_export
       context["hoist_constants_as_args"] = ctx.module_context.lowering_parameters.hoist_constants_as_args
       context["export_ignore_forward_compatibility"] = ctx.module_context.lowering_parameters.export_ignore_forward_compatibility
-      return mlir.hlo.AddOp(arg, arg).results
+      return [mlir.hlo.add(arg, arg)]
 
     mlir.register_lowering(test_primitive, test_primitive_lowering)
     test_primitive.def_impl(functools.partial(dispatch.apply_primitive,
@@ -1881,8 +1881,8 @@ class JaxExportTest(jtu.JaxTestCase):
       # Lowering n * x
       res = x
       for i in range(n - 1):
-        res = mlir.hlo.AddOp(res, x)
-      return res.results
+        res = mlir.hlo.add(res, x)
+      return [res]
 
     times_2 = core.Primitive("__testing_times_2")  # x2 for cpu
     times_2.def_abstract_eval(lambda x: x)

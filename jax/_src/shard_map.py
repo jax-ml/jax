@@ -1027,7 +1027,7 @@ def _shard_map_lowering_shardy(
             for c, aval, ca in zip(const_args, const_avals, const_arg_values)
         },
         outer_traceback=_jax.Traceback())
-    sdy.ReturnOp(
+    sdy.return_(
         mlir.flatten_ir_values(
             it.chain((v for _, v in tokens_out.items()), out_nodes_)
         )

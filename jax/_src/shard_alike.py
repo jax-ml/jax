@@ -92,8 +92,8 @@ def _group_shard(
   shard_group_id = next(_next_shard_group_id)
 
   if config.use_shardy_partitioner.value:
-    dialects.sdy.ShardingGroupOp(x, shard_group_id)
-    dialects.sdy.ShardingGroupOp(y, shard_group_id)
+    dialects.sdy.sharding_group(x, shard_group_id)
+    dialects.sdy.sharding_group(y, shard_group_id)
     return x, y
 
   unknown_op_sharding = xc.OpSharding()

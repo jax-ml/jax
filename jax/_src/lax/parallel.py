@@ -3073,4 +3073,4 @@ def _done_abstract_eval(aval):
 
 for p in _dones_p:
   p.def_abstract_eval(_done_abstract_eval)
-  mlir.register_lowering(p, lambda ctx, x: hlo.AsyncDoneOp(x).results)
+  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])

@@ -2758,7 +2758,7 @@ def _triangular_solve_lowering(
     ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   out_aval, = ctx.avals_out
   if conjugate_a and not transpose_a:
-    a = chlo.ConjOp(a)
+    a = chlo.conj(a)
     conjugate_a = False
   if not transpose_a:
     transpose = "NO_TRANSPOSE"

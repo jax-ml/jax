@@ -2426,7 +2426,7 @@ def _pred_bcast_select_hlo(ctx,
     bcast_pred = mlir.broadcast_in_dim(
         ctx, pred, core.ShapedArray(x_y_aval.shape, np.dtype(np.bool_)),
         broadcast_dimensions=list(range(len(pred_aval.shape))))
-    return hlo.SelectOp(bcast_pred, x, y).results
+    return [hlo.select(bcast_pred, x, y)]
 
 ### fori_loop
 
