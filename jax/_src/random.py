@@ -780,7 +780,9 @@ def choice(key: ArrayLike,
            replace: bool = True,
            p: RealArray | None = None,
            axis: int = 0,
-           mode: str | None = None) -> Array:
+           mode: str | None = None,
+           *,
+           out_sharding=None) -> Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -834,13 +836,19 @@ def choice(key: ArrayLike,
         f"Cannot take a larger sample (size {n_draws}) than "
         f"population (size {n_inputs}) when 'replace=False'")
 
+  final_shape = (shape if arr.ndim == 0 else
+                 arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "choice", final_shape)
+
   if p is None:
     if replace:
-      ind = randint(key, shape, 0, n_inputs)
-      result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+      return maybe_auto_axes(_choice_replace, out_sharding,
+                             n_inputs=n_inputs, shape=shape,
+                             final_shape=final_shape, axis=axis)(key, arr)
     else:
-      slices = (slice(None),) * axis + (slice(n_draws),)
-      result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
+      return maybe_auto_axes(_choice_no_replace, out_sharding,
+                             n_inputs=n_inputs, n_draws=n_draws,
+                             final_shape=final_shape, axis=axis)(key, arr)
   else:
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
@@ -849,17 +857,40 @@ def choice(key: ArrayLike,
           "p must be None or a 1D vector with the same size as a.shape[axis]. "
           f"p has shape {p_arr.shape} and a.shape[axis] is {n_inputs}.")
     if replace:
-      p_cuml = jnp.cumsum(p_arr)
-      r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
-      ind = jnp.searchsorted(p_cuml, r).astype(int)
+      return maybe_auto_axes(_choice_p_replace, out_sharding,
+                             shape=shape, final_shape=final_shape, axis=axis)(key, p_arr, arr)
     else:
-      # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
-      ind = lax.top_k(g, k=n_draws)[1].astype(int)
-    result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+      return maybe_auto_axes(_choice_p_no_replace, out_sharding,
+                             n_inputs=n_inputs, n_draws=n_draws,
+                             final_shape=final_shape, axis=axis, mode=mode)(key, p_arr, arr)
 
-  return result.reshape(shape if arr.ndim == 0 else
-                        arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+@jit(static_argnums=(2, 3, 4, 5))
+def _choice_replace(key, arr, n_inputs, shape, final_shape, axis):
+  ind = randint(key, shape, 0, n_inputs)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(2, 3, 4, 5))
+def _choice_no_replace(key, arr, n_inputs, n_draws, final_shape, axis):
+  slices = (slice(None),) * axis + (slice(n_draws),)
+  result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(3, 4, 5))
+def _choice_p_replace(key, p_arr, arr, shape, final_shape, axis):
+  p_cuml = jnp.cumsum(p_arr)
+  r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
+  ind = jnp.searchsorted(p_cuml, r).astype(int)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
+
+@jit(static_argnums=(3, 4, 5, 6, 7))
+def _choice_p_no_replace(key, p_arr, arr, n_inputs, n_draws, final_shape, axis, mode):
+  # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
+  g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
+  ind = lax.top_k(g, k=n_draws)[1].astype(int)
+  result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
+  return result.reshape(final_shape)
 
 
 def normal(key: ArrayLike,
@@ -931,7 +962,9 @@ def multivariate_normal(key: ArrayLike,
                         cov: RealArray,
                         shape: Shape | None = None,
                         dtype: DTypeLikeFloat | None = None,
-                        method: str = 'cholesky') -> Array:
+                        method: str = 'cholesky',
+                        *,
+                        out_sharding=None) -> Array:
   r"""Sample multivariate normal random values with given mean and covariance.
 
   The values are returned according to the probability density function:
@@ -975,7 +1008,8 @@ def multivariate_normal(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype, method)
+  out_sharding = canonicalize_sharding(out_sharding, "multivariate_normal")
+  return maybe_auto_axes(_multivariate_normal, out_sharding, shape=shape, dtype=dtype, method=method)(key, mean, cov)
 
 @jit(static_argnums=(3, 4, 5))
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
@@ -1239,7 +1273,9 @@ def _beta(key, a, b, shape, dtype) -> Array:
 
 def cauchy(key: ArrayLike,
            shape: Shape = (),
-           dtype: DTypeLikeFloat | None = None) -> Array:
+           dtype: DTypeLikeFloat | None = None,
+           *,
+           out_sharding=None) -> Array:
   r"""Sample Cauchy random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1266,7 +1302,8 @@ def cauchy(key: ArrayLike,
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _cauchy(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "cauchy", shape)
+  return maybe_auto_axes(_cauchy, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _cauchy(key, shape, dtype) -> Array:
@@ -1279,7 +1316,9 @@ def _cauchy(key, shape, dtype) -> Array:
 def dirichlet(key: ArrayLike,
               alpha: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Dirichlet random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1319,7 +1358,8 @@ def dirichlet(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _dirichlet(key, alpha, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "dirichlet")
+  return maybe_auto_axes(_dirichlet, out_sharding, shape=shape, dtype=dtype)(key, alpha)
 
 @jit(static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
@@ -1343,7 +1383,9 @@ def _dirichlet(key, alpha, shape, dtype) -> Array:
 
 def exponential(key: ArrayLike,
                 shape: Shape = (),
-                dtype: DTypeLikeFloat | None = None) -> Array:
+                dtype: DTypeLikeFloat | None = None,
+                *,
+                out_sharding=None) -> Array:
   r"""Sample Exponential random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1370,7 +1412,8 @@ def exponential(key: ArrayLike,
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _exponential(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "exponential", shape)
+  return maybe_auto_axes(_exponential, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _exponential(key, shape, dtype) -> Array:
@@ -1528,7 +1571,9 @@ batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 def gamma(key: ArrayLike,
           a: RealArray,
           shape: Shape | None = None,
-          dtype: DTypeLikeFloat | None = None) -> Array:
+          dtype: DTypeLikeFloat | None = None,
+          *,
+          out_sharding=None) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1569,13 +1614,16 @@ def gamma(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _gamma(key, a, shape=shape, dtype=dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "gamma")
+  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
 
 def loggamma(key: ArrayLike,
              a: RealArray,
              shape: Shape | None = None,
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding=None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
   This function is implemented such that the following will hold for a
@@ -1611,7 +1659,8 @@ def loggamma(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _gamma(key, a, shape=shape, dtype=dtype, log_space=True)
+  out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
 
 
 @jit(static_argnames=('shape', 'dtype', 'log_space'))
@@ -1718,7 +1767,9 @@ def _poisson(key, lam, shape, dtype) -> Array:
 def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
-            dtype: DTypeLikeInt | None = None) -> Array:
+            dtype: DTypeLikeInt | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
   The values are distributed according to the probability mass function:
@@ -1755,9 +1806,10 @@ def poisson(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   else:
     shape = np.shape(lam)
+  out_sharding = canonicalize_sharding(out_sharding, "poisson")
   lam = jnp.broadcast_to(lam, shape)
   lam = lax.convert_element_type(lam, np.float32)
-  return _poisson(key, lam, shape, dtype)
+  return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
 
 def gumbel(key: ArrayLike,
@@ -1876,6 +1928,8 @@ def categorical(
   shape: Shape | None = None,
   replace: bool = True,
   mode: str | None = None,
+  *,
+  out_sharding=None,
 ) -> Array:
   """Sample random values from categorical distributions.
 
@@ -1920,38 +1974,52 @@ def categorical(
     _check_shape("categorical", shape, batch_shape)
   shape_prefix = shape[:len(shape)-len(batch_shape)]
 
+  out_sharding = canonicalize_sharding(out_sharding, "categorical")
+
   if replace:
     if axis >= 0:
       axis -= len(logits_arr.shape)
 
-    logits_shape = list(shape[len(shape) - len(batch_shape):])
-    logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
-    return jnp.argmax(
-        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
-        lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
-        axis=axis)
+    logits_shape = tuple(shape[len(shape) - len(batch_shape):])
+    logits_shape = logits_shape[:axis % len(logits_arr.shape)] + (logits_arr.shape[axis],) + logits_shape[axis % len(logits_arr.shape):]
+    return maybe_auto_axes(_categorical_replace, out_sharding,
+                           shape_prefix=shape_prefix, logits_shape=logits_shape,
+                           axis=axis, mode=mode)(key, logits_arr)
   else:
-    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
     k = math.prod(shape_prefix)
     if k > logits_arr.shape[axis]:
       raise ValueError(
         f"Number of samples without replacement ({k}) cannot exceed number of "
         f"categories ({logits_arr.shape[axis]})."
       )
+    return maybe_auto_axes(_categorical_no_replace, out_sharding,
+                           batch_shape=batch_shape, k=k, axis=axis,
+                           shape=shape, shape_prefix=shape_prefix, mode=mode)(key, logits_arr)
 
-    _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
-    assert indices.shape == batch_shape + (k,)
-    assert shape == shape_prefix + batch_shape
+@jit(static_argnums=(2, 3, 4, 5))
+def _categorical_replace(key, logits_arr, shape_prefix, logits_shape, axis, mode):
+  return jnp.argmax(
+      gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
+      lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
+      axis=axis)
 
-    dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
-    indices = lax.reshape(indices, shape, dimensions)
-    assert indices.shape == shape
-    return indices
+@jit(static_argnums=(2, 3, 4, 5, 6, 7))
+def _categorical_no_replace(key, logits_arr, batch_shape, k, axis, shape, shape_prefix, mode):
+  logits_arr = logits_arr + gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
+  _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
+  assert indices.shape == batch_shape + (k,)
+  assert shape == shape_prefix + batch_shape
+  dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
+  indices = lax.reshape(indices, shape, dimensions)
+  assert indices.shape == shape
+  return indices
 
 
 def laplace(key: ArrayLike,
             shape: Shape = (),
-            dtype: DTypeLikeFloat | None = None) -> Array:
+            dtype: DTypeLikeFloat | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample Laplace random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1976,7 +2044,8 @@ def laplace(key: ArrayLike,
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _laplace(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "laplace", shape)
+  return maybe_auto_axes(_laplace, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _laplace(key, shape, dtype) -> Array:
@@ -1988,7 +2057,9 @@ def _laplace(key, shape, dtype) -> Array:
 
 def logistic(key: ArrayLike,
              shape: Shape = (),
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding=None) -> Array:
   r"""Sample logistic random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2013,7 +2084,8 @@ def logistic(key: ArrayLike,
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _logistic(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "logistic", shape)
+  return maybe_auto_axes(_logistic, out_sharding, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
@@ -2025,7 +2097,9 @@ def _logistic(key, shape, dtype):
 def pareto(key: ArrayLike,
            b: RealArray,
            shape: Shape | None = None,
-           dtype: DTypeLikeFloat | None = None) -> Array:
+           dtype: DTypeLikeFloat | None = None,
+           *,
+           out_sharding=None) -> Array:
   r"""Sample Pareto random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2057,7 +2131,8 @@ def pareto(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _pareto(key, b, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "pareto")
+  return maybe_auto_axes(_pareto, out_sharding, shape=shape, dtype=dtype)(key, b)
 
 @jit(static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype) -> Array:
@@ -2074,7 +2149,9 @@ def _pareto(key, b, shape, dtype) -> Array:
 def t(key: ArrayLike,
       df: RealArray,
       shape: Shape = (),
-      dtype: DTypeLikeFloat | None = None) -> Array:
+      dtype: DTypeLikeFloat | None = None,
+      *,
+      out_sharding=None) -> Array:
   r"""Sample Student's t random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2105,7 +2182,8 @@ def t(key: ArrayLike,
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _t(key, df, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "t", shape)
+  return maybe_auto_axes(_t, out_sharding, shape=shape, dtype=dtype)(key, df)
 
 @jit(static_argnums=(2, 3))
 def _t(key, df, shape, dtype) -> Array:
@@ -2126,7 +2204,9 @@ def _t(key, df, shape, dtype) -> Array:
 def chisquare(key: ArrayLike,
               df: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2159,7 +2239,8 @@ def chisquare(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _chisquare(key, df, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "chisquare")
+  return maybe_auto_axes(_chisquare, out_sharding, shape=shape, dtype=dtype)(key, df)
 
 @jit(static_argnums=(2, 3))
 def _chisquare(key, df, shape, dtype) -> Array:
@@ -2179,7 +2260,9 @@ def f(key: ArrayLike,
       dfnum: RealArray,
       dfden: RealArray,
       shape: Shape | None = None,
-      dtype: DTypeLikeFloat | None = None) -> Array:
+      dtype: DTypeLikeFloat | None = None,
+      *,
+      out_sharding=None) -> Array:
   r"""Sample F-distribution random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2217,7 +2300,8 @@ def f(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _f(key, dfnum, dfden, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "f")
+  return maybe_auto_axes(_f, out_sharding, shape=shape, dtype=dtype)(key, dfnum, dfden)
 
 @jit(static_argnums=(3, 4))
 def _f(key, dfnum, dfden, shape, dtype) -> Array:
@@ -2241,7 +2325,9 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 def rademacher(key: ArrayLike,
                shape: Shape = (),
-               dtype: DTypeLikeInt | None = None) -> Array:
+               dtype: DTypeLikeInt | None = None,
+               *,
+               out_sharding=None) -> Array:
   r"""Sample from a Rademacher distribution.
 
   The values are distributed according to the probability mass function:
@@ -2265,7 +2351,8 @@ def rademacher(key: ArrayLike,
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  return _rademacher(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rademacher", shape)
+  return maybe_auto_axes(_rademacher, out_sharding, shape=shape, dtype=dtype)(key)
 
 
 @jit(static_argnums=(1, 2))
@@ -2276,7 +2363,9 @@ def _rademacher(key, shape, dtype) -> Array:
 
 def maxwell(key: ArrayLike,
             shape: Shape = (),
-            dtype: DTypeLikeFloat | None = None) -> Array:
+            dtype: DTypeLikeFloat | None = None,
+            *,
+            out_sharding=None) -> Array:
   r"""Sample from a one sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2304,7 +2393,8 @@ def maxwell(key: ArrayLike,
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _maxwell(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "maxwell", shape)
+  return maybe_auto_axes(_maxwell, out_sharding, shape=shape, dtype=dtype)(key)
 
 
 @jit(static_argnums=(1, 2))
@@ -2318,7 +2408,9 @@ def double_sided_maxwell(key: ArrayLike,
                          loc: RealArray,
                          scale: RealArray,
                          shape: Shape = (),
-                         dtype: DTypeLikeFloat | None = None) -> Array:
+                         dtype: DTypeLikeFloat | None = None,
+                         *,
+                         out_sharding=None) -> Array:
   r"""Sample from a double sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2347,7 +2439,8 @@ def double_sided_maxwell(key: ArrayLike,
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _double_sided_maxwell(key, loc, scale, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "double_sided_maxwell", shape)
+  return maybe_auto_axes(_double_sided_maxwell, out_sharding, shape=shape, dtype=dtype)(key, loc, scale)
 
 
 @jit(static_argnums=(3, 4))
@@ -2370,7 +2463,9 @@ def weibull_min(key: ArrayLike,
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Shape = (),
-                dtype: DTypeLikeFloat | None = None) -> Array:
+                dtype: DTypeLikeFloat | None = None,
+                *,
+                out_sharding=None) -> Array:
   r"""Sample from a Weibull distribution.
 
   The values are distributed according to the probability density function:
@@ -2399,7 +2494,8 @@ def weibull_min(key: ArrayLike,
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _weibull_min(key, scale, concentration, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "weibull_min", shape)
+  return maybe_auto_axes(_weibull_min, out_sharding, shape=shape, dtype=dtype)(key, scale, concentration)
 
 
 @jit(static_argnums=(3, 4))
@@ -2417,6 +2513,8 @@ def orthogonal(
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   m: int | None = None,
+  *,
+  out_sharding=None,
 ) -> Array:
   r"""Sample uniformly from the orthogonal group O(n).
 
@@ -2456,22 +2554,26 @@ def orthogonal(
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
+  out_sharding = canonicalize_sharding(out_sharding, "orthogonal")
+  return maybe_auto_axes(_orthogonal, out_sharding, n=n, _m=_m, shape=shape, dtype=dtype)(key)
 
+@jit(static_argnums=(1, 2, 3, 4))
+def _orthogonal(key, n, _m, shape, dtype):
   z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp_linalg.qr(z)
   d = jnp_linalg.diagonal(r)
   x = q * jnp.expand_dims(jnp.sign(d), -2)
-
   if n < _m:
     return x.mT
-  else:
-    return x
+  return x
 
 def generalized_normal(
   key: ArrayLike,
   p: float,
   shape: Shape = (),
-  dtype: DTypeLikeFloat | None = None
+  dtype: DTypeLikeFloat | None = None,
+  *,
+  out_sharding=None,
 ) -> Array:
   r"""Sample from the generalized normal distribution.
 
@@ -2498,6 +2600,11 @@ def generalized_normal(
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   _check_shape("generalized_normal", shape)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "generalized_normal", shape)
+  return maybe_auto_axes(_generalized_normal, out_sharding, p=p, shape=shape, dtype=dtype)(key)
+
+@jit(static_argnums=(1, 2, 3))
+def _generalized_normal(key, p, shape, dtype):
   keys = split(key)
   g = gamma(keys[0], 1/p, shape, dtype)
   r = rademacher(keys[1], shape, dtype)
@@ -2508,7 +2615,9 @@ def ball(
   d: int,
   p: float = 2,
   shape: Shape = (),
-  dtype: DTypeLikeFloat | None = None
+  dtype: DTypeLikeFloat | None = None,
+  *,
+  out_sharding=None,
 ):
   """Sample uniformly from the unit Lp ball.
 
@@ -2531,6 +2640,11 @@ def ball(
       float if dtype is None else dtype)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
+  out_sharding = canonicalize_sharding(out_sharding, "ball")
+  return maybe_auto_axes(_ball, out_sharding, d=d, p=p, shape=shape, dtype=dtype)(key)
+
+@jit(static_argnums=(1, 2, 3, 4))
+def _ball(key, d, p, shape, dtype):
   k1, k2 = split(key)
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)
@@ -2540,7 +2654,9 @@ def ball(
 def rayleigh(key: ArrayLike,
              scale: RealArray,
              shape: Shape | None = None,
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding=None) -> Array:
   r"""Sample Rayleigh random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2573,7 +2689,8 @@ def rayleigh(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _rayleigh(key, scale, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "rayleigh")
+  return maybe_auto_axes(_rayleigh, out_sharding, shape=shape, dtype=dtype)(key, scale)
 
 @jit(static_argnums=(2, 3))
 def _rayleigh(key, scale, shape, dtype) -> Array:
@@ -2593,7 +2710,9 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
 def wald(key: ArrayLike,
          mean: RealArray,
          shape: Shape | None = None,
-         dtype: DTypeLikeFloat | None = None) -> Array:
+         dtype: DTypeLikeFloat | None = None,
+         *,
+         out_sharding=None) -> Array:
   r"""Sample Wald random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2627,7 +2746,8 @@ def wald(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _wald(key, mean, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "wald")
+  return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
 def _wald(key, mean, shape, dtype) -> Array:
@@ -2651,7 +2771,9 @@ def _wald(key, mean, shape, dtype) -> Array:
 def geometric(key: ArrayLike,
               p: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeInt | None = None) -> Array:
+              dtype: DTypeLikeInt | None = None,
+              *,
+              out_sharding=None) -> Array:
   r"""Sample Geometric random values with given shape and float dtype.
 
   The values are returned according to the probability mass function:
@@ -2683,7 +2805,8 @@ def geometric(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _geometric(key, p, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "geometric")
+  return maybe_auto_axes(_geometric, out_sharding, shape=shape, dtype=dtype)(key, p)
 
 @jit(static_argnums=(2, 3))
 def _geometric(key, p, shape, dtype) -> Array:
@@ -2706,7 +2829,9 @@ def triangular(key: ArrayLike,
                mode: RealArray,
                right: RealArray,
                shape: Shape | None = None,
-               dtype: DTypeLikeFloat | None = None) -> Array:
+               dtype: DTypeLikeFloat | None = None,
+               *,
+               out_sharding=None) -> Array:
   r"""Sample Triangular random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2745,7 +2870,8 @@ def triangular(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _triangular(key, left, mode, right, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "triangular")
+  return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
 @jit(static_argnums=(4, 5), inline=True)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
@@ -2768,7 +2894,9 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
 def lognormal(key: ArrayLike,
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None) -> Array:
+              dtype: DTypeLikeFloat | None = None,
+              *,
+              out_sharding=None) -> Array:
   r""" Sample lognormal random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2798,7 +2926,8 @@ def lognormal(key: ArrayLike,
                      f"got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _lognormal(key, sigma, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "lognormal")
+  return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
 @jit(static_argnums=(2, 3), inline=True)
 def _lognormal(key, sigma, shape, dtype) -> Array:
@@ -2976,6 +3105,8 @@ def binomial(
     p: RealArray,
     shape: Shape | None = None,
     dtype: DTypeLikeFloat | None = None,
+    *,
+    out_sharding=None,
 ) -> Array:
   r"""Sample Binomial random values with given shape and float dtype.
 
@@ -3014,7 +3145,8 @@ def binomial(
       )
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _binomial(key, n, p, shape, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "binomial")
+  return maybe_auto_axes(_binomial, out_sharding, shape=shape, dtype=dtype)(key, n, p)
 
 
 # Functions related to key reuse checking
@@ -3033,6 +3165,7 @@ def multinomial(
     shape: Shape | None = None,
     dtype: DTypeLikeFloat | None = None,
     unroll: int | bool = 1,
+    out_sharding=None,
 ):
   r"""Sample from a multinomial distribution.
 
@@ -3067,21 +3200,22 @@ def multinomial(
     shape = p.shape
   n = jnp.broadcast_to(n, shape[:-1])
   p = jnp.broadcast_to(p, shape)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "multinomial", shape)
+  return maybe_auto_axes(_multinomial, out_sharding, dtype=dtype, unroll=unroll)(key, n, p)
 
+@jit(static_argnums=(3, 4))
+def _multinomial(key, n, p, dtype, unroll):
   def f(remainder, ratio_key):
     ratio, key = ratio_key
     count = binomial(key, remainder, ratio.clip(0, 1), dtype=remainder.dtype)
     return remainder - count, count
 
   p = jnp.moveaxis(p, -1, 0)
-
   remaining_probs = lax_control_flow.cumsum(p, 0, reverse=True)
   ratios = p / jnp.where(remaining_probs == 0, 1, remaining_probs)
-
   keys = split(key, ratios.shape[0])
   remainder, counts = lax_control_flow.scan(f, n, (ratios, keys), unroll=unroll)
   # final remainder should be zero
-
   return jnp.moveaxis(counts, 0, -1).astype(dtype)
 
 
