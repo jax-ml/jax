@@ -3393,7 +3393,7 @@ def _clamp(min, operand, max):
   return jnp.minimum(res, max)
 
 
-@register_lowering_rule(lax.clamp_p)
+@register_lowering_rule(lax.clamp_p, kernel_types=[*tpu_core.CoreType])
 def _clamp_lowering_rule(ctx: LoweringRuleContext, min, operand, max):
   """Compute minimum_p(maximum_p(min, operand), max)."""
   return lower_fun(_clamp)(ctx, min, operand, max)
