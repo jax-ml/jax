@@ -35,6 +35,7 @@ class Fusion(Generic[A, K]):
   func: Callable[A, K]
   in_type: tuple[tuple[Any, ...], dict[str, Any]]
   out_type: Any
+  strict_mode: bool = True
 
   def __call__(self, *args: A.args, **kwargs: A.kwargs) -> K:
     return self.func(*args, **kwargs)

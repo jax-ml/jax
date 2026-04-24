@@ -1364,6 +1364,29 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "fuser_utils_test",
+    srcs = [
+        "fuser_utils_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+    ],
+    enable_backends = ["cpu"],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/_src/pallas/fuser",
+        "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "fusion_test",
     srcs = [
         "fusion_test.py",
