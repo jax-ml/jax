@@ -219,6 +219,7 @@ _OUT_SHARDING_CASES = [
     ('categorical_3', lambda key, n, s: random.categorical(key, jnp.ones((n, 3), out_sharding=s), shape=(n,), out_sharding=s, replace=True)),
     ('categorical_4', lambda key, n, s: random.categorical(key, jnp.ones((n, 3), out_sharding=s), shape=(n,), out_sharding=s, replace=False)),
     ('cauchy', lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
+    ('dirichlet', lambda key, n, s: random.dirichlet(key, jnp.ones(3), shape=(n,), out_sharding=s)),
     ('exponential', lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
     ('multivariate_normal', lambda key, n, s: random.multivariate_normal(key, mean=jnp.zeros((n,)), cov=jnp.eye(n), shape=(n,), out_sharding=s)),
