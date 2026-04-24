@@ -214,6 +214,10 @@ _OUT_SHARDING_CASES = [
     ('bernoulli', lambda key, n, s: random.bernoulli(key, p=0.5, shape=(n,), out_sharding=s)),
     ('beta', lambda key, n, s: random.beta(key, 0.2, 5.0, shape=(n,), out_sharding=s)),
     ('bits', lambda key, n, s: random.bits(key, shape=(n,), out_sharding=s)),
+    ('categorical_1', lambda key, n, s: random.categorical(key, jnp.asarray([0.0, 1.0, 2.0]), shape=(n,), out_sharding=s, replace=True)),
+    ('categorical_2', lambda key, n, s: random.categorical(key, jnp.ones((n,)), shape=(n,), out_sharding=s, replace=False)),
+    ('categorical_3', lambda key, n, s: random.categorical(key, jnp.ones((n, 3), out_sharding=s), shape=(n,), out_sharding=s, replace=True)),
+    ('categorical_4', lambda key, n, s: random.categorical(key, jnp.ones((n, 3), out_sharding=s), shape=(n,), out_sharding=s, replace=False)),
     ('cauchy', lambda key, n, s: random.cauchy(key, shape=(n,), out_sharding=s)),
     ('exponential', lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
@@ -248,7 +252,7 @@ class RandomOutShardingTest(RandomTestBase):
     n = sharding.mesh.shape['x']
     with jax.set_mesh(sharding.mesh):
       result = fn(key, n, sharding)
-      jit_result = jax.jit(fn, static_argnums=(1,2))(key, n, sharding)
+      jit_result = jax.jit(fn, static_argnums=(1, 2))(key, n, sharding)
     self.assertTrue(result.sharding.is_equivalent_to(sharding, result.ndim))
     self.assertTrue(result.sharding.is_equivalent_to(sharding, jit_result.ndim))
 

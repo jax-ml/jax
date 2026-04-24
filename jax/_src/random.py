@@ -1962,6 +1962,8 @@ def categorical(
   shape: Shape | None = None,
   replace: bool = True,
   mode: str | None = None,
+  *,
+  out_sharding: NamedSharding | P | None = None
 ) -> Array:
   """Sample random values from categorical distributions.
 
@@ -1984,6 +1986,14 @@ def categorical(
       for events with probability less than about 1E-7; with mode="high" this limit
       is pushed down to about 1E-14. mode="high" approximately doubles the cost of
       sampling.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
@@ -2004,8 +2014,13 @@ def categorical(
   else:
     shape = core.canonicalize_shape(shape)
     _check_shape("categorical", shape, batch_shape)
-  shape_prefix = shape[:len(shape)-len(batch_shape)]
+  out_sharding = canonicalize_sharding(out_sharding, "categorical")
+  return maybe_auto_axes(_categorical, out_sharding, shape=shape,
+                         batch_shape=batch_shape, axis=axis,
+                         replace=replace, mode=mode)(key, logits_arr)
 
+def _categorical(key, logits_arr, shape, batch_shape, axis, replace, mode) -> Array:
+  shape_prefix = shape[:len(shape)-len(batch_shape)]
   if replace:
     if axis >= 0:
       axis -= len(logits_arr.shape)
