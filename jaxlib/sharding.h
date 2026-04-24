@@ -28,7 +28,6 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "jaxlib/cached_py_object.h"
 #include "jaxlib/nb_class_ptr.h"
-#include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -71,12 +70,12 @@ nanobind::object CheckAndCanonicalizeMemoryKind(
 
 class NamedSharding : public Sharding {
  public:
-  NamedSharding(nanobind::object mesh, nb_class_ptr<PartitionSpec> spec,
+  NamedSharding(nanobind::object mesh, nanobind::object spec,
                 nanobind::object memory_kind,
                 nanobind::object logical_device_ids);
 
   const nanobind::object& mesh() const { return mesh_; }
-  const nb_class_ptr<PartitionSpec>& spec() const { return spec_; }
+  const nanobind::object& spec() const { return spec_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
   const nanobind::object& logical_device_ids() const {
     return logical_device_ids_;
@@ -101,7 +100,7 @@ class NamedSharding : public Sharding {
 
  private:
   nanobind::object mesh_;
-  nb_class_ptr<PartitionSpec> spec_;
+  nanobind::object spec_;
   nanobind::object memory_kind_;
   nanobind::object logical_device_ids_;
   std::optional<nb_class_ptr<PyDeviceList>> internal_device_list_;

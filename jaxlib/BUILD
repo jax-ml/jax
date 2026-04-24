@@ -953,7 +953,6 @@ cc_library(
 cc_library(
     name = "py_client",
     srcs = [
-        "partition_spec.cc",
         "py_array.cc",
         "py_client.cc",
         "py_compile_only_client.cc",
@@ -967,7 +966,6 @@ cc_library(
         "to_ifrt_sharding.cc",
     ],
     hdrs = [
-        "partition_spec.h",
         "py_array.h",
         "py_client.h",
         "py_compile_only_client.h",
