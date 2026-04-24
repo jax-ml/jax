@@ -2611,6 +2611,22 @@ class LaxLinalgTest(jtu.JaxTestCase):
       jsp.linalg.hadamard(n)
 
   @jtu.sample_product(
+    n=[0, 1, 2, 3, 5, 8, 16],
+    scale=[None, 'sqrtn', 'n'],
+  )
+  def testDft(self, n, scale):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.dft, n=n, scale=scale)
+    jsp_fun = partial(jsp.linalg.dft, n=n, scale=scale)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-5, rtol=1e-5, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testDftInvalidScale(self):
+    with self.assertRaisesRegex(ValueError, "scale must be"):
+      jsp.linalg.dft(4, scale='bad')
+
+  @jtu.sample_product(
       shape=[(5, 1), (10, 4), (128, 12)],
       dtype=float_types,
       symmetrize_output=[True, False],
