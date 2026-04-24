@@ -52,6 +52,7 @@ project-excludes = [
 ]
 ignore-missing-imports = [
     "absl.*",
+    "cloudpickle.*",
     "filelock.*",
     "flatbuffers.*",
     "flax.*",
