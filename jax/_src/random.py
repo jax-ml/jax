@@ -2123,7 +2123,9 @@ def _logistic(key, shape, dtype):
 def pareto(key: ArrayLike,
            b: RealArray,
            shape: Shape | None = None,
-           dtype: DTypeLikeFloat | None = None) -> Array:
+           dtype: DTypeLikeFloat | None = None,
+           *,
+           out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Pareto random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2142,6 +2144,14 @@ def pareto(key: ArrayLike,
       produces a result shape equal to ``b.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2155,7 +2165,9 @@ def pareto(key: ArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _pareto(key, b, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "pareto", shape)
+  return maybe_auto_axes(_pareto, out_sharding,
+                         shape=shape, dtype=dtype)(key, b)
 
 @jit(static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype) -> Array:
