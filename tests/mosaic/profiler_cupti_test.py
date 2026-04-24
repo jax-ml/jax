@@ -25,10 +25,11 @@ from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
 import jax.numpy as jnp
 try:
-  import jax._src.lib.mosaic_gpu  # noqa: F401
+  from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
   HAS_MOSAIC_GPU = True
 except ImportError:
   HAS_MOSAIC_GPU = False
+  mosaic_gpu_lib = None
 else:
   from jax.experimental.compilation_cache import compilation_cache as cc
   from jax.experimental.mosaic.gpu import profiler
@@ -95,6 +96,25 @@ class ProfilerCuptiTest(parameterized.TestCase):
     self.assertEqual(len(timings), 5)
     self.assertTrue(all(isinstance(t, float) for t in timings))
 
+  def test_measure_double_subscription(self):
+    ext = mosaic_gpu_lib._mosaic_gpu_ext
+    ext._cupti_init()
+    self.addCleanup(ext._cupti_get_timings, False)
+
+    cupti_version = (
+        None if cuda_versions is None else cuda_versions.cupti_get_version()
+    )
+    if cupti_version is not None and cupti_version >= 130200:
+      _, timings = profiler.measure(self.f, aggregate=False)(self.x)
+      self.assertLen(timings, 1)
+      return
+
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "Attempted to subscribe to CUPTI while another subscriber, such as "
+        "Nsight Systems or Nsight Compute, is active."):
+      profiler.measure(self.f, aggregate=False)(self.x)
+
 
 class _CuptiV2TestBase(jtu.JaxTestCase):
   """Base for V2 multi-subscriber tests."""
@@ -104,10 +124,6 @@ class _CuptiV2TestBase(jtu.JaxTestCase):
       self.skipTest("jaxlib built without Mosaic GPU")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Only runs on NVIDIA GPUs")
-    super().setUp()
-    self.x = jnp.ones((512, 512), dtype=jnp.float32)
-
-  def _skip_unless_cupti_v2(self):
     if cuda_versions is None:
       self.skipTest("cuda_versions is unavailable")
     cupti_version = cuda_versions.cupti_get_version()
@@ -115,6 +131,8 @@ class _CuptiV2TestBase(jtu.JaxTestCase):
       self.skipTest(
           f"Requires CUPTI >= 13.2 for multi-subscriber V2 APIs; "
           f"found {cupti_version}")
+    super().setUp()
+    self.x = jnp.ones((512, 512), dtype=jnp.float32)
 
   def _run_mosaic_profile(self):
     result, runtime_ms = profiler.measure(lambda x: x @ x)(self.x)
@@ -123,26 +141,16 @@ class _CuptiV2TestBase(jtu.JaxTestCase):
     self.assertGreater(runtime_ms, 0.0)
     return runtime_ms
 
+
+class ProfilerCuptiMultiSubscriberTest(_CuptiV2TestBase):
+  """jax.profiler + mosaic_gpu.profiler coexistence via CUPTI V2."""
+
   def _run_jax_trace(self):
     with tempfile.TemporaryDirectory() as trace_dir:
       with jax.profiler.trace(trace_dir):
         jax.block_until_ready(jax.jit(lambda x: x @ x)(self.x))
       trace_files = list(os.scandir(trace_dir))
       self.assertTrue(trace_files, "No trace files written")
-
-  def _run_pgle_trace(self):
-    runner = jax_profiler_src.PGLEProfiler(retries=1, percentile=90)
-    with jax_profiler_src.PGLEProfiler.trace(runner):
-      jax.block_until_ready(jax.jit(lambda x: x @ x)(self.x))
-    self.assertEqual(runner.called_times, 1)
-
-
-class ProfilerCuptiMultiSubscriberTest(_CuptiV2TestBase):
-  """jax.profiler + mosaic_gpu.profiler coexistence via CUPTI V2."""
-
-  def setUp(self):
-    super().setUp()
-    self._skip_unless_cupti_v2()
 
   def test_mosaic_profiler_inside_jax_trace(self):
     """mosaic profiler inside a jax.profiler trace (both V2 subscribers)."""
@@ -171,9 +179,11 @@ class ProfilerCuptiMultiSubscriberTest(_CuptiV2TestBase):
 
     result_true, runtime_ms1 = profiler.Cupti(finalize=True).measure(f)(self.x)
     jax.block_until_ready(result_true)
+    self._run_jax_trace()
 
-    result_false, runtime_ms2 = profiler.Cupti(finalize=False).measure(f)(self.x)
-    jax.block_until_ready(result_false)
+    result_true_again, runtime_ms2 = profiler.Cupti(
+        finalize=True).measure(f)(self.x)
+    jax.block_until_ready(result_true_again)
 
     self.assertIsInstance(runtime_ms1, float)
     self.assertGreater(runtime_ms1, 0.0)
@@ -205,9 +215,11 @@ class ProfilerCuptiMultiSubscriberTest(_CuptiV2TestBase):
 class ProfilerCuptiPgleTest(_CuptiV2TestBase):
   """PGLE + mosaic_gpu.profiler coexistence via CUPTI V2."""
 
-  def setUp(self):
-    super().setUp()
-    self._skip_unless_cupti_v2()
+  def _run_pgle_trace(self):
+    runner = jax_profiler_src.PGLEProfiler(retries=1, percentile=90)
+    with jax_profiler_src.PGLEProfiler.trace(runner):
+      jax.block_until_ready(jax.jit(lambda x: x @ x)(self.x))
+    self.assertEqual(runner.called_times, 1)
 
   def test_mosaic_profiler_inside_pgle_trace(self):
     """mosaic profiler inside an active PGLE trace (both as V2 subscribers)."""
@@ -263,10 +275,6 @@ class ProfilerCuptiPgleTest(_CuptiV2TestBase):
 
 class ProfilerCuptiXplaneTest(_CuptiV2TestBase):
   """XPlane (jax.profiler.trace) + mosaic profiler coexistence via CUPTI V2."""
-
-  def setUp(self):
-    super().setUp()
-    self._skip_unless_cupti_v2()
 
   def test_xplane_trace_written_while_mosaic_active(self):
     """jax.profiler.trace writes trace files with mosaic profiler active."""
