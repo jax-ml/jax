@@ -4261,8 +4261,9 @@ def _wrap_in_custom_primitive_if_wg(
   """Wraps the body in a CustomPrimitiveOp for warpgroup semantics.
 
   For warpgroup lowering semantics, yields remapped block arguments that
-  should be used instead of the original operands. For lane semantics,
-  yields the original operands unchanged.
+  should be used instead of the original operands, and temporarily switches
+  the lowering semantics to Lane for the duration of the context. For lane
+  semantics, yields the original operands unchanged.
   """
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     custom_op = mgpu.dialect.CustomPrimitiveOp(
@@ -4274,14 +4275,20 @@ def _wrap_in_custom_primitive_if_wg(
     )
     block = custom_op.body.blocks.append(*[o.type for o in operands])
     with ir.InsertionPoint(block):
-      yield list(block.arguments)
+      ctx.module_ctx.lowering_semantics = mgpu.LoweringSemantics.Lane
+      try:
+        yield list(block.arguments)
+      finally:
+        ctx.module_ctx.lowering_semantics = mgpu.LoweringSemantics.Warpgroup
       mgpu.dialect.ReturnOp(operands_=[])
   else:
     yield list(operands)
 
 
 @register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_signal_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(primitives.semaphore_signal_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(primitives.semaphore_signal_p, *gpu_core.WGxWARP_SEMANTICS)
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -4321,9 +4328,13 @@ def _semaphore_signal_lowering_rule(
     # might still be e.g. reading memory that someone will overwrite once they
     # receive a signal).
     if ctx.module_ctx.auto_barriers:
-      mgpu.utils.warpgroup_barrier()
+      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+        mgpu_utils.warp_barrier()
+      else:
+        mgpu_utils.warpgroup_barrier()
+
     mgpu_utils.SemaphoreRef(sem_ptr).signal(
-        val, predicate=ctx.module_ctx.single_wg_lane_predicate
+        val, predicate=ctx.module_ctx.single_lane_predicate
     )
   return ()
 

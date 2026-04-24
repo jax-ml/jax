@@ -7587,21 +7587,16 @@ class SemaphoreTest(PallasTest):
 
   def test_global_semaphore_with_multiple_warps(self):
     def body(out_ref):
-      wg_idx = lax.axis_index("wg")
       sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      @plgpu.warp_map
+      def _per_warp(warp_idx):
+        @pl.when(warp_idx == 0)
+        def _():
+          pl.semaphore_signal(sem_ref)
 
-      @pl.when(wg_idx == 0)
-      def _():
-        pl.semaphore_signal(sem_ref)
-
-      @pl.when(wg_idx == 1)
-      def _():
-
-        @plgpu.warp_map
-        def _per_warp(warp_idx):
-          @pl.when(warp_idx == 0)
-          def _():
-            pl.semaphore_wait(sem_ref, decrement=True)
+        @pl.when(warp_idx == 1)
+        def _():
+          pl.semaphore_wait(sem_ref, decrement=True)
 
       out_ref[0] = pl.semaphore_read(sem_ref)
 
@@ -7609,8 +7604,6 @@ class SemaphoreTest(PallasTest):
         body,
         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
         compiler_params=plgpu.CompilerParams(),
-        num_threads=2,
-        thread_name="wg",
     )
     result = kernel()
     np.testing.assert_array_equal(result, jnp.full((1,), 0, jnp.int32))
