@@ -5,28 +5,28 @@ description: Upload test artifacts (JUnit XML) to GitHub Actions.
 inputs:
   test-artifacts-dir:
     description: "Directory containing test artifact files"
-    default: 'test-artifacts'
+    default: "test-artifacts"
   artifact-name:
     description: "Name for the GitHub Actions artifact upload"
-    default: 'test-artifacts-${{ github.job }}'
+    default: "test-artifacts-${{ github.job }}"
   gcs-upload-uri:
     description: "GCS location prefix where the test artifacts should be uploaded"
-    default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+    default: "gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}"
   metadata:
     description: "JSON string containing job-level metadata"
-    default: ''
+    default: ""
   inputs_json:
     description: "JSON string of workflow inputs"
-    default: '{}'
+    default: "{}"
   matrix_json:
     description: "JSON string of matrix parameters"
-    default: '{}'
+    default: "{}"
   env_json:
     description: "JSON string of environment variables"
-    default: '{}'
+    default: "{}"
   custom_json:
     description: "JSON string of custom metadata"
-    default: '{}'
+    default: "{}"
 
 runs:
   using: "composite"
@@ -102,5 +102,11 @@ runs:
         WF_NAME="${{ github.workflow }}"
         SAFE_WF_NAME="${WF_NAME//\//-}"
         REAL_URI="${GCS_UPLOAD_URI//$WF_NAME/$SAFE_WF_NAME}"
-        gcloud storage cp -r "$TEST_ARTIFACTS_DIR"/* "$REAL_URI/$artifact_name/"
 
+        # Zip the artifacts locally first
+        cd "$TEST_ARTIFACTS_DIR"
+        zip -r "$GITHUB_WORKSPACE/test-artifacts.zip" .
+        cd -
+
+        # Upload the single zip file instead of many small files
+        gcloud storage cp "$GITHUB_WORKSPACE/test-artifacts.zip" "$REAL_URI/$artifact_name/test-artifacts.zip"
