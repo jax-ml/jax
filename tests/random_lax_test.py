@@ -220,6 +220,7 @@ _OUT_SHARDING_CASES = [
     ('loggamma', lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
     ('normal', lambda key, n, s: random.normal(key, shape=(n,), out_sharding=s)),
     ('permutation', lambda key, n, s: random.permutation(key, n, out_sharding=s)),
+    ('pareto', lambda key, n, s: random.pareto(key, b=3.0, shape=(n,), out_sharding=s)),
     ('poisson', lambda key, n, s: random.poisson(key, lam=3.0, shape=(n,), out_sharding=s)),
     ('randint', lambda key, n, s: random.randint(key, shape=(n,), minval=0, maxval=10, out_sharding=s)),
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
