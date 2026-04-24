@@ -152,6 +152,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     params.structSize = CUpti_SubscriberParams_STRUCT_SIZE;
     params.subscriberName = "MosaicGpuProfiler";
     params.allowMultipleSubscribers = 1;
+    // Ok to pass nullptr for the callback here because we don't register any
+    // callbacks through cuptiEnableCallback.
     THROW_IF_CUPTI_ERROR(cuptiSubscribe_v2(&profiler_state.subscriber,
                                            /*callback=*/nullptr,
                                            /*userdata=*/nullptr, &params),
@@ -203,6 +205,9 @@ NB_MODULE(_mosaic_gpu_ext, m) {
             "failed to flush CUPTI activity buffers");
         // The legacy dropped-record query is process-global, so in the V2
         // path it could attribute another subscriber's drops to Mosaic.
+        // TODO: In the V2 path, plumb enough context/stream information to
+        // query dropped activity records safely with
+        // cuptiActivityGetNumDroppedRecords().
         // cuptiUnsubscribe() is sufficient here; cuptiFinalize() tears down
         // global CUPTI state and breaks later V2 re-initialization.
 #else
