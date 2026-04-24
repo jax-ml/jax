@@ -224,6 +224,8 @@ wheel_sources(
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
         "//jaxlib/rocm:rocm_plugin_extension",
+    ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_plugin_extension",
     ]),
     py_srcs = [":version"] + if_cuda([
         "//jaxlib/cuda:cuda_gpu_support",
@@ -239,6 +241,9 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",
+    ]) + if_sycl([
+        "//jax_plugins/oneapi:plugin_pyproject.toml",
+        "//jax_plugins/oneapi:plugin_setup.py",
     ]),
 )
 
@@ -305,6 +310,26 @@ jax_wheel(
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
     wheel_name = "jax_rocm{}_plugin".format(ROCM_MAJOR_VERSION),
+)
+
+jax_wheel(
+    name = "jax_oneapi_plugin_wheel",
+    enable_oneapi = True,
+    no_abi = False,
+    platform_version = "2025.1",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_oneapi2025_1_plugin",
+)
+
+jax_wheel(
+    name = "jax_oneapi_plugin_wheel_editable",
+    editable = True,
+    enable_oneapi = True,
+    platform_version = "2025.1",
+    source_files = [":jax_plugin_sources"],
+    wheel_binary = ":build_gpu_kernels_wheel_tool",
+    wheel_name = "jax_oneapi2025_1_plugin",
 )
 
 # JAX PJRT wheel targets.
