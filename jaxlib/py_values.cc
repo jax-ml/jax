@@ -965,10 +965,21 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = numpy_handler;
 
         ToPyArgSignatureHandler typed_ndarray_handler =
-            [numpy_handler](
-                nb::handle h,
-                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
-          return numpy_handler(h.attr("val"), /*jax_enable_x64=*/true);
+            [](nb::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
+          bool weak_type = nb::cast<bool>(h.attr("weak_type"));
+          xla::nb_numpy_ndarray numpy_array =
+              nb::cast<xla::nb_numpy_ndarray>(h.attr("val"));
+          TF_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
+                              DtypeToPrimitiveType(numpy_array.dtype()));
+          static_assert(sizeof(int64_t) == sizeof(ssize_t),
+                        "Code assumes ssize_t is the same as int64_t");
+          return PyArgSignature(
+              dtype,
+              absl::MakeConstSpan(
+                  reinterpret_cast<const int64_t*>(numpy_array.shape()),
+                  numpy_array.ndim()),
+              weak_type);
         };
         if (typed_ndarray_type.ptr() != nullptr) {
           (*p)[typed_ndarray_type.ptr()] = typed_ndarray_handler;

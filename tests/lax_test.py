@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import lax_reference
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
@@ -200,6 +201,14 @@ class LaxTest(jtu.JaxTestCase):
   def testConvertElementTypeOOB(self):
     out = lax.convert_element_type(2 ** 32, 'int32')
     self.assertEqual(out, 0)
+
+  def testConvertElementTypeNanToInt(self):
+    # TODO(phawkins): raise a ValueError in the future
+    lax.convert_element_type(np.nan, np.int32)
+    lax.convert_element_type(jnp.bfloat16(np.nan), np.int32)
+    with jtu.ignore_warning(category=np.exceptions.ComplexWarning):
+      for re, im in [(np.nan, 0.0), (0.0, np.nan), (np.nan, np.nan)]:
+        lax.convert_element_type(complex(re, im), np.int32)
 
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
@@ -3869,6 +3878,13 @@ class LaxTest(jtu.JaxTestCase):
       return x
     hlo = jax.jit(g).lower(x).compile().as_text()
     self.assertNotIn("add", hlo)
+
+  @unittest.skipIf(jaxlib_extension_version < 441, "requires jaxlib 0.10.1")
+  def testStagePreservesWeakType(self):
+    aval = core.ShapedArray((), np.float32, weak_type=True)
+    x = literals.TypedNdArray(np.array(1.0, dtype=np.float32), aval=aval)
+    y = lax_internal.stage(x)
+    self.assertTrue(dtypes.is_weakly_typed(y))
 
 
 class LazyConstantTest(jtu.JaxTestCase):
