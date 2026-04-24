@@ -269,7 +269,9 @@ def _mosaic_gpu_lowering_rule(
       ),
   )
 
-  if is_multi_device_module and is_single_process_multi_device_topology():
+  if is_multi_device_module and (
+      is_single_process_multi_device_topology() or not is_nvshmem_available()
+  ):
     backend_config["xla_replica_ids"] = ir.StringAttr.get(
         ",".join(map(str, replica_ids))
     )
@@ -877,11 +879,15 @@ def _lower_as_gpu_kernel(
       num_params = 0
 
       # Collective metadata parameter is used to lower collective operations
-      # in a single-process setup.
+      # in a single-process setup or in multi-process when nvshmem is not
+      # available.
       if (
           jax_mesh is not None
           and jax_mesh.size > 1
-          and is_single_process_multi_device_topology()
+          and (
+              is_single_process_multi_device_topology()
+              or not is_nvshmem_available()
+          )
       ):
         num_params = len(arg_refs)
         num_peers = jax_mesh.size
