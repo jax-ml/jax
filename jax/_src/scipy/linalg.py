@@ -2741,6 +2741,54 @@ def hadamard(n: int, dtype: DTypeLike = int) -> Array:
   return H
 
 
+@partial(jit, static_argnames=("n", "scale", "dtype"))
+def dft(n: int, scale: str | None = None, *,
+        dtype: DTypeLike | None = None) -> Array:
+  r"""Construct an n-by-n discrete Fourier transform matrix.
+
+  JAX implementation of :func:`scipy.linalg.dft`.
+
+  The DFT matrix :math:`W_n` has entries :math:`W_{ij} = \omega^{ij}`, where
+  :math:`\omega = e^{-2\pi i / n}` is the primitive n-th root of unity, for
+  :math:`0 \le i, j < n`.
+
+  Args:
+    n: size of the matrix.
+    scale: (optional) ``None`` (default, unscaled), ``'sqrtn'`` (scale by
+      :math:`1/\sqrt{n}`, making the matrix unitary), or ``'n'`` (scale by
+      :math:`1/n`).
+    dtype: (optional) complex floating-point dtype for the output. Defaults to
+      JAX's default complex dtype.
+
+  Returns:
+    A DFT matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.dft(4).round(3)
+    Array([[ 1.+0.j,  1.+0.j,  1.+0.j,  1.+0.j],
+           [ 1.+0.j, -0.-1.j, -1.+0.j,  0.+1.j],
+           [ 1.+0.j, -1.+0.j,  1.-0.j, -1.+0.j],
+           [ 1.+0.j,  0.+1.j, -1.+0.j, -0.-1.j]], dtype=complex64)
+  """
+  if scale is not None and scale not in ('sqrtn', 'n'):
+    raise ValueError(
+        f"scale must be None, 'sqrtn', or 'n'; got {scale!r}.")
+  if dtype is None:
+    dtype = dtypes.default_complex_dtype()
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "dft")
+    if not dtypes.issubdtype(dtype, np.complexfloating):
+      raise ValueError(
+          f"dtype must be a complex floating-point type; got {dtype}.")
+  a = jnp.arange(n, dtype=dtype)
+  omegas = jnp.exp(-2j * np.pi * a[:, None] * a[None, :] / n)
+  if scale == 'sqrtn':
+    omegas = omegas / jnp.sqrt(n)
+  elif scale == 'n':
+    omegas = omegas / n
+  return omegas
+
+
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
   """
   Solves the Sylvester equation using Bartels-Stewart algorithm
