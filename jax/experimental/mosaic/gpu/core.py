@@ -137,6 +137,24 @@ else:
     )
 
 
+# Auto-detect NCCL device-side bitcode from Bazel runfiles.
+# Tests that declare `data = ["//third_party/nccl_device_bitcode:libnccl_device"]`
+# get the .bc file placed under $PYTHON_RUNFILES/__main__/... by Bazel.
+# When found, we set MOSAIC_GPU_NCCL_BC_PATH so the MLIR compilation pipeline
+# can link it without the test needing to pass the env var explicitly.
+_NCCL_BC_RUNFILES_PATH = os.path.join(
+    "third_party", "nccl_device_bitcode", "libnccl_device.bc"
+)
+
+if os.environ.get("MOSAIC_GPU_NCCL_BC_PATH") is None:
+  if BAZEL_TEST == "1" and PYTHON_RUNFILES:
+    _nccl_bc_candidate = os.path.join(
+        PYTHON_RUNFILES, "__main__", _NCCL_BC_RUNFILES_PATH
+    )
+    if os.path.exists(_nccl_bc_candidate):
+      os.environ["MOSAIC_GPU_NCCL_BC_PATH"] = _nccl_bc_candidate
+
+
 def is_nvshmem_available():
   try:
     nvshmem_bc_path = os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"]
@@ -156,6 +174,12 @@ def is_nvshmem_available():
   )
 
 
+def is_nccl_device_available():
+  """Returns True if NCCL device-side bitcode is available for linking."""
+  nccl_bc_path = os.environ.get("MOSAIC_GPU_NCCL_BC_PATH")
+  return nccl_bc_path is not None and os.path.exists(nccl_bc_path)
+
+
 def is_single_process_multi_device_topology():
   return (jax.device_count() > 1
           and jax.device_count() == jax.local_device_count())
@@ -163,6 +187,7 @@ def is_single_process_multi_device_topology():
 
 def supports_cross_device_collectives():
   return ((is_nvshmem_available() and jax.local_device_count() == 1)
+          or is_nccl_device_available()
           or is_single_process_multi_device_topology())
 
 
@@ -185,6 +210,14 @@ def _has_communication(module, **_):
   empty_str_attr = ir.StringAttr.get("")
   for op in module.body:
     if "nvshmem" in getattr(op, "sym_name", empty_str_attr).value:
+      return True
+  return False
+
+
+def _module_uses_nccl(module) -> bool:
+  empty_str_attr = ir.StringAttr.get("")
+  for op in module.body:
+    if getattr(op, "sym_name", empty_str_attr).value.startswith("nccl"):
       return True
   return False
 
@@ -242,6 +275,13 @@ def _mosaic_gpu_lowering_rule(
     )
   assert len(ctx.avals_in) == len(args)
   assert len(ctx.avals_out) == len(out_types) + len(inout_types)
+  is_nccl_module = is_multi_device_module and _module_uses_nccl(module)
+  if is_nccl_module and launch_context.SYMMETRIC_ARGS_ATTR in module.operation.attributes:
+    symmetric_args = np.array(
+        module.operation.attributes[launch_context.SYMMETRIC_ARGS_ATTR]
+    )
+  else:
+    symmetric_args = None
   module = _run_serde_pass(
       module,
       serialize=True,
@@ -282,7 +322,12 @@ def _mosaic_gpu_lowering_rule(
           ",".join(map(str, multimem_args))
       )
 
-  return mlir.custom_call(
+    if symmetric_args is not None:
+      backend_config["symmetric_parameters"] = ir.StringAttr.get(
+          ",".join(map(str, symmetric_args))
+      )
+
+  op = mlir.custom_call(
       call_target_name="mosaic_gpu_v2",
       result_types=mlir.flatten_ir_types(
           mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
@@ -293,7 +338,19 @@ def _mosaic_gpu_lowering_rule(
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
-  ).results
+  )
+
+  if symmetric_args is not None:
+    num_operands = len(ctx.avals_in)
+    num_results = len(ctx.avals_out)
+    operands_mem = ",".join(f"{i}:1" for i in range(num_operands))
+    results_mem = ",".join(f"{i}:1" for i in range(num_results))
+    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get({
+        "operands_memory_spaces": ir.StringAttr.get("{" + operands_mem + "}"),
+        "results_memory_spaces": ir.StringAttr.get("{" + results_mem + "}"),
+    })
+
+  return op.results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -605,6 +662,7 @@ def _launch(
     inout_buffers_ptr: ir.Value,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
+    device_nccl_metadata: ir.Value | None = None,
     device_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
     num_params: int = 0,
@@ -710,6 +768,7 @@ def _launch(
         device_collective_metadata=device_collective_metadata,
         num_peers=num_peers,
         num_params=num_params,
+        device_nccl_metadata=device_nccl_metadata,
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
@@ -870,6 +929,7 @@ def _lower_as_gpu_kernel(
         arg_refs.append(arg_memref)
 
       collective_metadata = None
+      nccl_metadata = None
       num_peers = 0
       num_params = 0
 
@@ -892,6 +952,22 @@ def _lower_as_gpu_kernel(
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
+        # Load NCCL metadata pointer in HOST code so the GPU kernel doesn't
+        # need to dereference the host-stack `buffers` array asynchronously.
+        if os.environ.get("MOSAIC_GPU_NCCL_BC_PATH"):
+          nccl_metadata_ptr = llvm.load(
+              ptr_ty,
+              utils.getelementptr(buffers, [num_params + 2], ptr_ty),
+          )
+          nccl_entries = num_params * 2 + 2
+          nccl_metadata_ty = ir.MemRefType.get(
+              (nccl_entries,),
+              ir.IntegerType.get_signless(64),
+          )
+          nccl_metadata = utils.ptr_as_memref(
+              nccl_metadata_ptr, nccl_metadata_ty
+          )
+
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
       with _launch(
@@ -905,6 +981,7 @@ def _lower_as_gpu_kernel(
           buffers,
           prof_spec,
           prof_buffer,
+          nccl_metadata,
           collective_metadata,
           num_peers,
           num_params,

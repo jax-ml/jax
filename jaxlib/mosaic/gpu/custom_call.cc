@@ -213,12 +213,12 @@ void EnsureLLVMisInitialized() {
   });
 }
 
-mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
-    mlir::MLIRContext* ctx,
-    const se::cuda::CompilationProvider* compilation_provider,
-    const se::CudaComputeCapability& cc, const std::string& sm,
-    const std::string& ptx_isa, const std::string& nvshmem_path,
-    bool verify_target) {
+mlir::FailureOr<mlir::OpPassManager>
+GetPassPipeline(mlir::MLIRContext *ctx,
+                const se::cuda::CompilationProvider *compilation_provider,
+                const se::CudaComputeCapability &cc, const std::string &sm,
+                const std::string &ptx_isa, const std::string &nvshmem_path,
+                const std::string &nccl_path, bool verify_target) {
   static absl::once_flag register_passes_flag;
   absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
     mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
@@ -261,6 +261,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
       ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
+  }
+  if (!nccl_path.empty()) {
+    libraries_to_link.push_back(nccl_path);
   }
   return mlir::parsePassPipeline(absl::StrFormat(
       R"(
@@ -363,15 +366,20 @@ void InitContext(mlir::MLIRContext* context) {
   context->loadAllAvailableDialects();
 }
 
-bool is_nvshmem_used(mlir::ModuleOp module) {
-  constexpr std::string_view prefix1 = "nvshmem_";
-  constexpr std::string_view prefix2 = "nvshmemx_";
+bool module_uses_symbols_with_prefixes(
+    mlir::ModuleOp module, const std::vector<std::string_view> &prefixes) {
   for (mlir::LLVM::LLVMFuncOp llvm_func :
        module.getOps<mlir::LLVM::LLVMFuncOp>()) {
     const auto& func_name = llvm_func.getName();
-    if (!func_name.starts_with(prefix1) && !func_name.starts_with(prefix2)) {
-      continue;
+    bool matches = false;
+    for (std::string_view prefix : prefixes) {
+      if (func_name.starts_with(prefix)) {
+        matches = true;
+        break;
+      }
     }
+    if (!matches)
+      continue;
     auto uses =
         mlir::SymbolTable::getSymbolUses(llvm_func, module.getOperation());
     if (uses && !uses->empty()) {
@@ -381,15 +389,23 @@ bool is_nvshmem_used(mlir::ModuleOp module) {
   return false;
 }
 
+bool is_nvshmem_used(mlir::ModuleOp module) {
+  return module_uses_symbols_with_prefixes(module, {"nvshmem_", "nvshmemx_"});
+}
+
+bool is_nccl_used(mlir::ModuleOp module) {
+  return module_uses_symbols_with_prefixes(module, {"nccl"});
+}
+
 bool is_multimem_used(mlir::ModuleOp mod) {
   return static_cast<bool>(mod->getAttr("mosaic_gpu.multimem_used"));
 }
 
-absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
-  const char* nvshmem_path_ptr = getenv("MOSAIC_GPU_NVSHMEM_BC_PATH");
-  if (!nvshmem_path_ptr)
-    return absl::InternalError("Failed to get MOSAIC_GPU_NVSHMEM_BC_PATH");
-  return nvshmem_path_ptr;
+absl::StatusOr<std::string> get_llvm_lib_path(const char *env_var) {
+  const char *path = getenv(env_var);
+  if (!path)
+    return absl::InternalError(absl::StrFormat("Failed to get %s", env_var));
+  return path;
 }
 
 absl::StatusOr<se::cuda::CompilationProvider*>
@@ -497,16 +513,13 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
 
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
-                 MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, bool is_multimem_used,
+                 MosaicHostFunc *host_launch, MosaicInitFunc *init,
+                 bool is_nvshmem_used, bool is_nccl_used, bool is_multimem_used,
                  std::string object_file, std::string host_func_name,
                  std::string init_func_name)
-      : lljit(std::move(lljit)),
-        host_launch(host_launch),
-        init(init),
-        is_nvshmem_used(is_nvshmem_used),
-        is_multimem_used(is_multimem_used),
-        object_file(std::move(object_file)),
+      : lljit(std::move(lljit)), host_launch(host_launch), init(init),
+        is_nvshmem_used(is_nvshmem_used), is_nccl_used(is_nccl_used),
+        is_multimem_used(is_multimem_used), object_file(std::move(object_file)),
         host_func_name(std::move(host_func_name)),
         init_func_name(std::move(init_func_name)) {}
 
@@ -519,6 +532,7 @@ struct CompiledKernel {
   MosaicHostFunc* host_launch = nullptr;
   MosaicInitFunc* init = nullptr;
   bool is_nvshmem_used = false;
+  bool is_nccl_used = false;
   bool is_multimem_used = false;
   // The following fields are used for de/serialization of CompiledKernel.
   std::string object_file;
@@ -527,8 +541,8 @@ struct CompiledKernel {
 };
 
 absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
-                           bool is_nvshmem_used,
-                           const mosaic::gpu::DumpOptions& dump_opts) {
+                           bool is_nvshmem_used, bool is_nccl_used,
+                           const mosaic::gpu::DumpOptions &dump_opts) {
   TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
                       GetAssemblyToBinaryCompilationProvider());
   TF_ASSIGN_OR_RETURN(std::string sm,
@@ -543,13 +557,20 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
                       GetPtxIsaVersion(*compilation_provider));
   std::string nvshmem_path = "";
   if (is_nvshmem_used) {
-    TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
+    TF_ASSIGN_OR_RETURN(nvshmem_path,
+                        get_llvm_lib_path("MOSAIC_GPU_NVSHMEM_BC_PATH"));
+  }
+  std::string nccl_path = "";
+  if (is_nccl_used) {
+    TF_ASSIGN_OR_RETURN(nccl_path,
+                        get_llvm_lib_path("MOSAIC_GPU_NCCL_BC_PATH"));
   }
   // nvbug/5809460: spurious LLVM/MLIR errors with tcgen05+sm_103a; disable
   // verification on sm_103a, sm_110a etc. where we see spurious failures.
   bool verify_target = !((cc.major == 10 && cc.minor > 0) || cc.major == 11);
-  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
-                                sm, llvm_ptx_isa, nvshmem_path, verify_target);
+  auto passes =
+      GetPassPipeline(module.getContext(), compilation_provider, cc, sm,
+                      llvm_ptx_isa, nvshmem_path, nccl_path, verify_target);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
@@ -625,9 +646,11 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
   return llvm::MemoryBuffer::getMemBufferCopy(result, "kernel");
 }
 
-absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
-    std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    std::string init_func_name, bool is_nvshmem_used, bool is_multimem_used) {
+absl::StatusOr<std::unique_ptr<CompiledKernel>>
+CreateAndInitJIT(std::unique_ptr<llvm::MemoryBuffer> object_file,
+                 std::string host_func_name, std::string init_func_name,
+                 bool is_nvshmem_used, bool is_nccl_used,
+                 bool is_multimem_used) {
   EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -745,9 +768,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
 
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(),
-      init_sym->toPtr<MosaicInitFunc*>(), is_nvshmem_used, is_multimem_used,
-      std::move(object_file_str), std::move(host_func_name),
+      std::move(lljit), host_sym->toPtr<MosaicHostFunc *>(),
+      init_sym->toPtr<MosaicInitFunc *>(), is_nvshmem_used, is_nccl_used,
+      is_multimem_used, std::move(object_file_str), std::move(host_func_name),
       std::move(init_func_name));
 }
 
@@ -814,10 +837,12 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
   bool use_nvshmem = is_nvshmem_used(*module);
+  bool use_nccl = is_nccl_used(*module);
   bool multimem_used = is_multimem_used(*module);
   mosaic::gpu::DumpOptions dump_opts =
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
-  TF_RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
+  TF_RETURN_IF_ERROR(
+      RunMlirPasses(*module, cc, use_nvshmem, use_nccl, dump_opts));
 
   TF_ASSIGN_OR_RETURN(
       auto object_file,
@@ -833,9 +858,10 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   TF_ASSIGN_OR_RETURN(auto host_and_init_func_names,
                       GetHostAndInitFuncNames(*module));
 
-  return CreateAndInitJIT(
-      std::move(object_file), std::move(host_and_init_func_names.first),
-      std::move(host_and_init_func_names.second), use_nvshmem, multimem_used);
+  return CreateAndInitJIT(std::move(object_file),
+                          std::move(host_and_init_func_names.first),
+                          std::move(host_and_init_func_names.second),
+                          use_nvshmem, use_nccl, multimem_used);
 }
 
 struct KernelCache {
@@ -965,6 +991,15 @@ struct DeviceState {
 
   // Pointer (CUmodule) to the kernel loaded on the GPU.
   void* kernel_handle = nullptr;
+
+  // NCCL device API.
+  //
+  // Per-parameter ncclWindow_t pointers and byte offsets within symmetric
+  // memory, laid out as: [window_0, offset_0, window_1, offset_1, ...,
+  //                       rank, num_peers]
+  // Stored on the host and copied to GPU memory for kernel access.
+  std::vector<uint64_t> nccl_metadata;
+  se::DeviceAddressHandle nccl_metadata_handle;
 };
 
 constexpr int kMaxLocalDevices = 8;
@@ -996,6 +1031,7 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
   kernel_proto.set_version(1);
   kernel_proto.set_object_file(kernel->object_file);
   kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
+  kernel_proto.set_is_nccl_used(kernel->is_nccl_used);
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
@@ -1029,12 +1065,12 @@ CustomCallResources::Deserialize(absl::string_view data) {
       GetOrCreateKernel(
           resources->hash,
           [&]() -> absl::StatusOr<std::unique_ptr<CompiledKernel>> {
-            return CreateAndInitJIT(llvm::MemoryBuffer::getMemBuffer(
-                                        kernel_proto.object_file(), "kernel"),
-                                    std::move(host_func_name),
-                                    std::move(init_func_name),
-                                    kernel_proto.is_nvshmem_used(),
-                                    kernel_proto.is_multimem_used());
+            return CreateAndInitJIT(
+                llvm::MemoryBuffer::getMemBuffer(kernel_proto.object_file(),
+                                                 "kernel"),
+                std::move(host_func_name), std::move(init_func_name),
+                kernel_proto.is_nvshmem_used(), kernel_proto.is_nccl_used(),
+                kernel_proto.is_multimem_used());
           }));
   return resources;
 }
@@ -1140,24 +1176,22 @@ absl::StatusOr<std::vector<int64_t>> GetReplicaIds(
 
 // Returns the vector of booleans indicating whether the corresponding buffer
 // used with multimem instruction.
-absl::StatusOr<std::vector<bool>> ParseMultimemArgs(
-    xla::ffi::Dictionary attributes, size_t num_buffers) {
-  std::string_view multimem_args =
-      attributes.get<std::string_view>("multimem_parameters").value_or("");
-  if (multimem_args.empty()) {
+absl::StatusOr<std::vector<bool>>
+ParseFlaggedArgs(xla::ffi::Dictionary attributes, std::string_view key,
+                 size_t num_buffers) {
+  std::string_view args = attributes.get<std::string_view>(key).value_or("");
+  if (args.empty()) {
     return std::vector<bool>(num_buffers, false);
   }
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> parameters_uses_multimem,
-                      ParseInts(multimem_args));
-  if (parameters_uses_multimem.size() != num_buffers) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "Multimem arguments list size %d is not equal to number "
-        "of buffers %d",
-        parameters_uses_multimem.size(), num_buffers));
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> flags, ParseInts(args));
+  if (flags.size() != num_buffers) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("%s list size %d is not equal to number of buffers %d",
+                        key, flags.size(), num_buffers));
   }
   std::vector<bool> result(num_buffers, false);
   for (int64_t arg = 0; arg < num_buffers; ++arg) {
-    if (parameters_uses_multimem[arg] == 1) {
+    if (flags[arg] == 1) {
       result[arg] = true;
     }
   }
@@ -1258,15 +1292,36 @@ absl::Status MosaicGpuPrepare(
 
   TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                       GetBuffers(inputs, results));
-  TF_ASSIGN_OR_RETURN(std::vector<bool> parameter_uses_multimem,
-                      ParseMultimemArgs(attributes, buffers.size()));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<bool> parameter_uses_multimem,
+      ParseFlaggedArgs(attributes, "multimem_parameters", buffers.size()));
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
   TF_ASSIGN_OR_RETURN(
       std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
       GetCliqueDeviceGroups(*collective_params, attributes));
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
+  if (resources->kernel->is_nccl_used) {
+    TF_ASSIGN_OR_RETURN(
+        std::vector<bool> parameter_uses_symmetric,
+        ParseFlaggedArgs(attributes, "symmetric_parameters", buffers.size()));
+    TF_RETURN_IF_ERROR(
+        clique_requests->RequestClique(clique_key, device_groups));
+    int nccl_sym_count = 0;
+    for (int i = 0; i < buffers.size(); ++i) {
+      if (!parameter_uses_symmetric[i])
+        continue;
+      TF_RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
+          clique_key, buffers[i].device_memory()));
+      ++nccl_sym_count;
+    }
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "MosaicGpuPrepare requested NCCL symmetric memory for "
+        << nccl_sym_count << " of " << buffers.size() << " buffers";
+  } else {
+    TF_RETURN_IF_ERROR(
+        clique_requests->RequestClique(clique_key, device_groups));
+  }
   for (int i = 0; i < buffers.size(); ++i) {
     if (!parameter_uses_multimem[i]) {
       continue;
@@ -1310,8 +1365,9 @@ absl::Status MosaicGpuInitialize(
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
 
-  TF_ASSIGN_OR_RETURN(std::vector<bool> parameter_uses_multimem,
-                      ParseMultimemArgs(attributes, buffers.size()));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<bool> parameter_uses_multimem,
+      ParseFlaggedArgs(attributes, "multimem_parameters", buffers.size()));
 
   for (int i = 0; i < buffers.size(); ++i) {
     XLA_VLOG_DEVICE(6, device_ordinal)
@@ -1469,6 +1525,57 @@ absl::Status MosaicGpuInitialize(
                        DeviceAddressFormatter{})
       << "), copied metadata to the device with address: "
       << metadata_address.opaque() << "}";
+
+  // Build NCCL device API metadata if the kernel uses NCCL bitcode.
+  // Layout: [window_0, offset_0, window_1, offset_1, ..., rank, num_peers]
+  // Each entry is a uint64_t. Windows are ncclWindow_t (pointers cast to u64).
+  if (resources->kernel->is_nccl_used) {
+    TF_ASSIGN_OR_RETURN(
+        std::vector<bool> parameter_uses_symmetric,
+        ParseFlaggedArgs(attributes, "symmetric_parameters", buffers.size()));
+    const size_t num_buffers = buffers.size();
+    const size_t nccl_metadata_entries = num_buffers * 2 + 2;
+    device_state.nccl_metadata.resize(nccl_metadata_entries, 0);
+
+    for (size_t i = 0; i < num_buffers; ++i) {
+      if (!parameter_uses_symmetric[i])
+        continue;
+
+      auto [sym_mem, sym_offset] = collective_memory->FindSymmetricMemory(
+          clique_key, buffers[i].device_memory());
+      if (sym_mem == nullptr) {
+        return absl::InternalError(absl::StrFormat(
+            "Failed to find symmetric memory for buffer %d", i));
+      }
+      void *window = sym_mem->PackKernelArg();
+      device_state.nccl_metadata[i * 2] = reinterpret_cast<uint64_t>(window);
+      device_state.nccl_metadata[i * 2 + 1] = static_cast<uint64_t>(sym_offset);
+      XLA_VLOG_DEVICE(6, device_ordinal)
+          << "  NCCL buffer " << i << ": window=" << window
+          << " offset=" << sym_offset;
+    }
+
+    device_state.nccl_metadata[num_buffers * 2] =
+        static_cast<uint64_t>(rank.value());
+    device_state.nccl_metadata[num_buffers * 2 + 1] =
+        static_cast<uint64_t>(clique_key.num_devices());
+
+    const size_t nccl_metadata_size_bytes =
+        nccl_metadata_entries * sizeof(uint64_t);
+    device_state.nccl_metadata_handle = se::DeviceAddressHandle{
+        collective_params->executor,
+        collective_params->executor->Allocate(nccl_metadata_size_bytes)};
+    se::DeviceAddressBase nccl_metadata_address =
+        device_state.nccl_metadata_handle.address();
+    TF_RETURN_IF_ERROR(stream->Memcpy(&nccl_metadata_address,
+                                      device_state.nccl_metadata.data(),
+                                      nccl_metadata_size_bytes));
+
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "[" << rank << "] Built NCCL metadata with " << num_buffers
+        << " windows at device address: " << nccl_metadata_address.opaque();
+  }
+
   return absl::OkStatus();
 }
 
@@ -1520,6 +1627,16 @@ absl::Status MosaicGpuExecute(
         << "Finished multi-GPU barrier with key: " << clique_key;
   } else if (kernel->is_nvshmem_used) {
     NvshmemApi::Default().barrier_all_on_stream(cuda_stream);
+  }
+
+  // Append NCCL metadata pointer when NCCL device bitcode is available.
+  // The pointer is always pushed when NCCL is available and collective
+  // metadata is in use, so the kernel IR can load it at a fixed index.
+  if (uses_collective_metadata &&
+      !device_state.nccl_metadata_handle.address().is_null()) {
+    buffer_ptrs.push_back(device_state.nccl_metadata_handle.address().opaque());
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Appended NCCL metadata at buffer index: " << buffer_ptrs.size() - 1;
   }
 
   void** buffers_data = buffer_ptrs.data();

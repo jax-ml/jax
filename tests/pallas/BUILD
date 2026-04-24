@@ -521,6 +521,30 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_pallas_distributed_nccl_test",
+    srcs = ["gpu_pallas_distributed_test.py"],
+    data = ["//third_party/nccl_device_bitcode:libnccl_device"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100x2_full",
+        "gpu_b200x2",
+    ],
+    tags = [
+        "mosaic_gpu_test",
+        "multiaccelerator",
+    ],
+    deps = [
+        "//jax/_src:test_multiprocess",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/extend",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_ops_test",
     srcs = [
         "tpu_ops_test.py",

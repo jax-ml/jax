@@ -1,0 +1,62 @@
+# Copyright 2025 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])
+
+exports_files(["LICENSE.txt"])
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+expand_template(
+    name = "nccl_header_version",
+    out = "src/nccl.h",
+    substitutions = {
+        "${nccl:Major}": "%{major}",
+        "${nccl:Minor}": "%{minor}",
+        "${nccl:Patch}": "%{patch}",
+        "${nccl:Suffix}": "\"\"",
+        "${nccl:Version}": "%{version_code}",
+    },
+    template = "src/nccl.h.in",
+)
+
+cc_library(
+    name = "doca_hdrs",
+    hdrs = glob(["src/transport/net_ib/gdaki/doca-gpunetio/include/**"]),
+    strip_include_prefix = "src/transport/net_ib/gdaki/doca-gpunetio/include",
+    include_prefix = "doca_gpunetio",
+)
+
+cc_library(
+    name = "nccl_generated_h",
+    hdrs = [":nccl_header_version"],
+    strip_include_prefix = "src",
+)
+
+cc_library(
+    name = "nccl_hdrs",
+    hdrs = glob(
+        include = ["src/include/**"],
+        exclude = ["src/include/plugin/**"],
+    ),
+    strip_include_prefix = "src/include",
+    deps = [":nccl_generated_h", ":doca_hdrs"],
+)
+
+filegroup(
+    name = "ir_wrapper_srcs",
+    srcs = glob(["bindings/ir/*.h"]),
+)
