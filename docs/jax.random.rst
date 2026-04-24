@@ -13,6 +13,7 @@ Key Creation & Manipulation
   :toctree: _autosummary
 
   key
+  key_dtype
   key_data
   wrap_key_data
   fold_in

@@ -227,6 +227,7 @@ from jax._src.random import (
   gumbel as gumbel,
   key as key,
   key_data as key_data,
+  key_dtype as key_dtype,
   key_impl as key_impl,
   laplace as laplace,
   logistic as logistic,

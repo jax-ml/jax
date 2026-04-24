@@ -162,9 +162,12 @@ class PRNGSpec:
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
 PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
+KeyDTypeLike = Union[str, prng.KeyTy]
 
 
-def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
+def resolve_prng_impl(
+    impl_spec: PRNGSpecDesc | KeyDTypeLike | None,
+) -> PRNGImpl:
   if impl_spec is None:
     return default_prng_impl()
   if type(impl_spec) is PRNGImpl:
@@ -175,6 +178,8 @@ def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
     return impl_spec
   if type(impl_spec) is PRNGSpec:
     return impl_spec._impl
+  if isinstance(impl_spec, prng.KeyTy):
+    return impl_spec._impl
   if type(impl_spec) is str:
     if impl_spec in prng.prngs:
       return prng.prngs[impl_spec]
@@ -184,7 +189,12 @@ def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
                      f'Did you mean one of: {keys_fmt}?')
 
   t = type(impl_spec)
-  raise TypeError(f'unrecognized type {t} for specifying PRNG implementation.')
+  raise TypeError(f"unrecognized type {t} for specifying PRNG implementation.")
+
+
+def key_dtype(impl_spec: PRNGSpecDesc | None = None) -> prng.KeyTy:
+  """Get the dtype corresponding to a PRNG implementation."""
+  return prng.KeyTy(resolve_prng_impl(impl_spec))
 
 
 def _key(ctor_name: str, seed: int | ArrayLike,
@@ -200,23 +210,31 @@ def _key(ctor_name: str, seed: int | ArrayLike,
   return prng.random_seed(seed, impl=impl)
 
 def key(seed: int | ArrayLike, *,
-        impl: PRNGSpecDesc | None = None) -> Array:
+        impl: PRNGSpecDesc | None = None,
+        dtype: KeyDTypeLike | None = None) -> Array:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array containing a key, whose dtype indicates
   the default PRNG implementation, as determined by the optional
-  ``impl`` argument or, otherwise, by the ``jax_default_prng_impl``
+  ``dtype`` or ``impl`` argument or, otherwise, by the ``jax_default_prng_impl``
   config flag at the time when this function is called.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
     impl: optional string specifying the PRNG implementation (e.g.
-      ``'threefry2x32'``)
+      ``'threefry2x32'``). Deprecated in favor of ``dtype``.
+    dtype: optional dtype or string name specifying the PRNG implementation
+      (e.g. ``jax.random.key_dtype('threefry2x32')`` or ``'threefry2x32'``).
 
   Returns:
     A scalar PRNG key array, consumable by random functions as well as ``split``
     and ``fold_in``.
   """
+  if dtype is not None:
+    if impl is not None:
+      raise ValueError(
+          "Cannot specify both `impl` and `dtype` arguments to jax.random.key")
+    impl = dtype
   return _key('key', seed, impl)
 
 def PRNGKey(seed: int | ArrayLike, *,
@@ -318,13 +336,16 @@ def key_data(keys: ArrayLike) -> Array:
 
 
 def wrap_key_data(key_bits_array: Array, *,
-                  impl: PRNGSpecDesc | None = None):
+                  impl: PRNGSpecDesc | None = None,
+                  dtype: KeyDTypeLike | None = None):
   """Wrap an array of key data bits into a PRNG key array.
 
   Args:
     key_bits_array: a ``uint32`` array with trailing shape corresponding to
       the key shape of the PRNG implementation specified by ``impl``.
     impl: optional, specifies a PRNG implementation, as in ``random.key``.
+    dtype: optional dtype or string name specifying the PRNG implementation
+      (e.g. ``jax.random.key_dtype('threefry2x32')`` or ``'threefry2x32'``).
 
   Returns:
     A PRNG key array, whose dtype is a subdtype of ``jax.dtypes.prng_key``
@@ -332,19 +353,25 @@ def wrap_key_data(key_bits_array: Array, *,
       of ``key_bits_array.shape`` up to the key bit dimensions.
 
   Examples:
-    Construct a key, and extract its data and impl:
+    Construct a key, and extract its data and dtype:
 
     >>> import jax
     >>> key = jax.random.key(42)
     >>> data = jax.random.key_data(key)
-    >>> impl = jax.random.key_impl(key)
+    >>> dtype = key.dtype
 
     Reconstruct an equivalent key with :func:`wrap_key_data`:
 
-    >>> new_key = jax.random.wrap_key_data(data, impl=impl)
+    >>> new_key = jax.random.wrap_key_data(data, dtype=dtype)
     >>> key == new_key
     Array(True, dtype=bool)
   """
+  if dtype is not None:
+    if impl is not None:
+      raise ValueError(
+          "Cannot specify both `impl` and `dtype` arguments to"
+          " jax.random.wrap_key_data")
+    impl = dtype
   impl_obj = resolve_prng_impl(impl)
   return prng.random_wrap(key_bits_array, impl=impl_obj)
 

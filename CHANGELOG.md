@@ -21,6 +21,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     TensorFlow's AREA resizing ({jax-issue}`#20098`).
   * Added {func}`jax.scipy.linalg.hadamard` for constructing Hadamard
     matrices ({jax-issue}`#10144`).
+  * Moved RNG APIs from "implementations" to dtypes ({jax-issue}`#27854`):
+    * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
+      implementation name.
+    * `jax.random.key` and `wrap_key_data` now accept a `dtype` argument.
 
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use

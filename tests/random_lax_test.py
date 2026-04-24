@@ -1483,7 +1483,7 @@ class DistributionsTest(RandomTestBase):
     # Shouldn't error or warn:
     with self.assertNoWarnings():
       jax.random.key_data(keys())
-      jax.random.key_impl(keys())
+      keys().dtype
 
   @jtu.sample_product(
     dtype=['int8', 'uint8', 'int16', 'uint16']
