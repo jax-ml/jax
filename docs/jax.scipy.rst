@@ -58,6 +58,7 @@ jax.scipy.linalg
    cho_solve
    cholesky
    det
+   dft
    eigh
    eigh_tridiagonal
    expm

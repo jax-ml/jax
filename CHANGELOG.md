@@ -21,6 +21,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     TensorFlow's AREA resizing ({jax-issue}`#20098`).
   * Added {func}`jax.scipy.linalg.hadamard` for constructing Hadamard
     matrices ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.dft` for constructing discrete Fourier
+    transform matrices ({jax-issue}`#10144`).
 
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use
