@@ -2086,7 +2086,9 @@ def _laplace(key, shape, dtype) -> Array:
 
 def logistic(key: ArrayLike,
              shape: Shape = (),
-             dtype: DTypeLikeFloat | None = None) -> Array:
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample logistic random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2100,6 +2102,14 @@ def logistic(key: ArrayLike,
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified shape and dtype.
@@ -2111,7 +2121,9 @@ def logistic(key: ArrayLike,
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _logistic(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "logistic", shape)
+  return maybe_auto_axes(_logistic, out_sharding,
+                         shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
