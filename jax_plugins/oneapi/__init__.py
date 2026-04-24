@@ -12,12 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+import importlib
 import logging
 import os
 import pathlib
 
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
+
+# oneapi_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
+# preinstalled jax oneapi plugin packages.
+for pkg_name in ['jax_oneapi2025_1_plugin', 'jaxlib.oneapi']:
+  try:
+    oneapi_plugin_extension = importlib.import_module(
+        f'{pkg_name}.oneapi_plugin_extension'
+    )
+  except ImportError:
+    oneapi_plugin_extension = None
+  else:
+    break
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +81,29 @@ def initialize():
     return
   options = xla_client.generate_pjrt_gpu_plugin_options()
   options["platform_name"] = "SYCL"
-  xb.register_plugin(
+  c_api = xb.register_plugin(
       'oneapi', priority=500, library_path=str(path), options=options
   )
+  if oneapi_plugin_extension:
+    xla_client.register_custom_type_handler(
+        "ONEAPI",
+        functools.partial(
+            oneapi_plugin_extension.register_custom_type, c_api
+        ),
+    )
+    xla_client.register_custom_call_handler(
+        "ONEAPI",
+        functools.partial(
+            oneapi_plugin_extension.register_custom_call_target, c_api
+        ),
+    )
+    for _name, _value in oneapi_plugin_extension.ffi_types().items():
+      xla_client.register_custom_type(
+          _name, _value, platform='ONEAPI'
+      )
+    for _name, _value in oneapi_plugin_extension.ffi_handlers().items():
+      xla_client.register_custom_call_target(
+          _name, _value, platform='ONEAPI', api_version=1
+      )
+  else:
+    logger.warning('oneapi_plugin_extension is not found.')

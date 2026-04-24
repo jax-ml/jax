@@ -68,6 +68,7 @@ WHEEL_BUILD_TARGET_DICT = {
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
     "mosaic-gpu-cuda": "//jaxlib/tools:mosaic_gpu_wheel_cuda{cuda_major_version}",
+    "jax-oneapi-plugin": "//jaxlib/tools:jax_oneapi_plugin_wheel",
     "jax-oneapi-pjrt": "//jaxlib/tools:jax_oneapi_pjrt_wheel",
 }
 
@@ -151,7 +152,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
         --wheels="jaxlib,jax-cuda-plugin", etc.
         Valid options are: jaxlib, jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,
         jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,
-        jax-oneapi-pjrt or oneapi-pjrt.
+        jax-oneapi-pjrt or oneapi-pjrt, jax-oneapi-plugin or oneapi-plugin.
         """,
   )
 
@@ -514,7 +515,7 @@ async def main():
           " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
           " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,"
           " or mosaic-gpu",
-          " jax-oneapi-pjrt or oneapi-pjrt",
+          " jax-oneapi-plugin or oneapi-plugin, jax-oneapi-pjrt or oneapi-pjrt",
           wheel,
       )
       sys.exit(1)
