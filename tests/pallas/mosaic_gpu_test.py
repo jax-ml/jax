@@ -1750,18 +1750,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_load_scalar(self):
-
+  def test_scalar_load_store(self):
     @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
-        in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
     )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = jnp.broadcast_to(x_ref[10], (128,))
+    def kernel(src_ref, dst_ref):
+      dst_ref[...] = plgpu.load(src_ref, (), layout=plgpu.Layout.WG_SPLAT)
 
-    np.testing.assert_array_equal(kernel(jnp.arange(11, dtype=jnp.int32)),
-                                  jnp.full((128,), 10, dtype=jnp.int32))
+    src = jnp.array(42, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(src), src)
+
+  def test_scalar_broadcast(self):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.broadcast_to(jnp.array(42, dtype=jnp.int32), (128,))
+
+    np.testing.assert_array_equal(kernel(), jnp.full((128,), 42, dtype=jnp.int32))
 
   def test_run_scoped(self):
     @functools.partial(
