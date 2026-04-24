@@ -2853,7 +2853,9 @@ class WeirdTupleTy(hijax.HiType):
   def dtype(self) -> jnp.dtype:
     return self.x0_aval.dtype
 
-  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+  def update(self, *, shape: tuple[int, ...] | None = None, **kwargs) -> WeirdTupleTy:
+    if shape is None:
+      return self
     return dataclasses.replace(
         self, x0_aval=self.x0_aval.update(shape=shape),
         x1_aval=self.x1_aval.update(shape=shape[1:])
@@ -2904,7 +2906,9 @@ class SlicedArrayTy(hijax.HiType):
   def dtype(self) -> jnp.dtype:
     return self.pre_sliced_aval.dtype
 
-  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+  def update(self, *, shape: tuple[int, ...] | None = None, **kwargs) -> SlicedArrayTy:
+    if shape is None:
+      return self
     return dataclasses.replace(
         self,
         pre_sliced_aval=self.pre_sliced_aval.update(

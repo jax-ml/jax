@@ -360,6 +360,19 @@ class AbstractRef(core.AbstractValue):
   def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None,
                kind: Any = None):
     self.inner_aval = inner_aval
+    # TODO(sharadmv,mattjj,yashkatariya): merge memory spaces
+    if isinstance(inner_aval, core.ShapedArray):
+      if (
+          inner_aval.memory_space is not None
+          and inner_aval.memory_space != core.MemorySpace.Device
+          and inner_aval.memory_space != memory_space
+      ):
+        raise ValueError(
+            f"Aval memory space {inner_aval.memory_space} does not match the "
+            f"requested memory space {memory_space}."
+        )
+      # Hide the inner_aval memory space.
+      self.inner_aval = inner_aval.update(memory_space=core.MemorySpace.Device)
     self.memory_space = memory_space
     self.kind = kind
 

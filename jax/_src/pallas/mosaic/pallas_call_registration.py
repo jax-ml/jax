@@ -441,7 +441,7 @@ def pallas_call_tpu_lowering_rule(
 
   match kernel_type:
     case tpu_core.CoreType.TC:
-      lower_jaxpr_to_module = lowering.lower_jaxpr_to_module
+      lower_jaxpr_to_module = lowering.lower_jaxpr_to_pipelined_module
     case (
         tpu_core.CoreType.SC_SCALAR_SUBCORE
         | tpu_core.CoreType.SC_VECTOR_SUBCORE
@@ -493,7 +493,6 @@ def mpmd_map_tpu_lowering_rule(
     *in_nodes,
     meshes,
     jaxprs,
-    grid_mappings,
     out_avals,
     input_output_aliases,
     compiler_params,
@@ -503,6 +502,7 @@ def mpmd_map_tpu_lowering_rule(
     metadata,
     name,
     external_meshes,
+    num_scratch,
 ):
   del interpret  # Unused.
 
@@ -541,9 +541,7 @@ def mpmd_map_tpu_lowering_rule(
 
   with mlir_ctx, ir.Location.unknown(mlir_ctx):
     mosaic_module = ir.Module.create()
-    for mesh, jaxpr, grid_mapping in zip(
-        meshes, jaxprs, grid_mappings, strict=True
-    ):
+    for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
 
       _check_sparsecore_availability(mesh.core_type)
 
@@ -563,13 +561,13 @@ def mpmd_map_tpu_lowering_rule(
             raise NotImplementedError(
                 "mpmd_map does not support TC kernels yet."
             )
-          lower_fn = lowering.lower_jaxpr_into_module
+          lower_fn = lowering.lower_jaxpr_into_unpipelined_module
         case (
             tpu_core.CoreType.SC_SCALAR_SUBCORE
             | tpu_core.CoreType.SC_VECTOR_SUBCORE
         ):
           lower_fn = functools.partial(
-              sc_lowering.lower_jaxpr_into_module,
+              lowering.lower_jaxpr_into_unpipelined_module,
               needs_layout_passes=mosaic_params.needs_layout_passes,
           )
         case _:
@@ -580,14 +578,13 @@ def mpmd_map_tpu_lowering_rule(
       lower_fn(
           ctx,
           mosaic_module,
-          grid_mapping,
           jaxpr,
-          dimension_semantics=mesh.dimension_semantics,
-          kernel_type=kernel_type,
-          mesh=jax_mesh,
+          jax_mesh=jax_mesh,
+          pallas_mesh=mesh,
           name=mlir.sanitize_name(jaxpr.debug_info.func_name),
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
           mpmd_meshes=mpmd_meshes_map,
+          num_scratch=num_scratch,
       )
 
   if debug:

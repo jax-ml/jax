@@ -331,8 +331,8 @@ class TensorCoreMesh(pallas_core.Mesh):
     return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
 
   @property
-  def dimension_semantics(self) -> Sequence[str]:
-    return ["parallel"]
+  def dimension_semantics(self) -> Sequence[DimensionSemantics]:
+    return [GridDimensionSemantics.PARALLEL]
 
   def discharges_effect(self, effect: jax_core.Effect) -> Literal[False]:
     del effect

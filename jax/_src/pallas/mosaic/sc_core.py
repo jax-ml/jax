@@ -57,8 +57,6 @@ class MemoryRef(pallas_core.MemoryRef):
     object.__setattr__(self, "tiling", tiling)
 
   def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
-    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
-    # try to apply JAX ops to it.
     return AbstractRef(self.inner_aval, self.memory_space, tiling=self.tiling)
 
 
@@ -190,8 +188,8 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
     return self.num_cores
 
   @property
-  def dimension_semantics(self) -> Sequence[str]:
-    return ["core_parallel"]
+  def dimension_semantics(self) -> Sequence[tpu_core.DimensionSemantics]:
+    return [tpu_core.GridDimensionSemantics.CORE_PARALLEL]
 
   def discharges_effect(self, effect):
     del effect  # Unused.
@@ -321,8 +319,11 @@ class VectorSubcoreMesh(pallas_core.Mesh):
     return self.num_cores * self.num_subcores
 
   @property
-  def dimension_semantics(self) -> Sequence[str]:
-    return ["core_parallel", "subcore_parallel"]
+  def dimension_semantics(self) -> Sequence[tpu_core.DimensionSemantics]:
+    return [
+        tpu_core.GridDimensionSemantics.CORE_PARALLEL,
+        tpu_core.GridDimensionSemantics.SUBCORE_PARALLEL,
+    ]
 
   def discharges_effect(self, effect):
     del effect  # Unused.

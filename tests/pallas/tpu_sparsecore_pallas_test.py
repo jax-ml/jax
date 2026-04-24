@@ -27,7 +27,6 @@ import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
-from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
@@ -57,7 +56,7 @@ class PallasSCMeshTest(jtu.JaxTestCase):
     self.assertEqual(
         mesh.shape, collections.OrderedDict({"x": sc_info.num_cores})
     )
-    self.assertEqual(mesh.dimension_semantics, ["core_parallel"])
+    self.assertEqual(mesh.dimension_semantics, [pltpu.CORE_PARALLEL])
     self.assertEqual(mesh.default_memory_space, pltpu.MemorySpace.HBM)
 
   def test_vector_subcore_mesh(self):
@@ -74,7 +73,7 @@ class PallasSCMeshTest(jtu.JaxTestCase):
         collections.OrderedDict({"x": num_cores, "y": 1}),
     )
     self.assertEqual(
-        mesh.dimension_semantics, ["core_parallel", "subcore_parallel"]
+        mesh.dimension_semantics, [pltpu.CORE_PARALLEL, pltpu.SUBCORE_PARALLEL]
     )
     self.assertEqual(mesh.default_memory_space, pltpu.MemorySpace.HBM)
 
@@ -3018,7 +3017,7 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
         kernel.lower(x).compile()
 
   def test_mpmd_map_sparsecore_availability_check(self):
-    mesh = mock.MagicMock(spec=mesh_lib.AbstractMesh)
+    mesh = mock.MagicMock()
     mesh.devices = tuple(jax.devices()[:1])
     mesh.axis_names = ("x",)
     mesh.axis_sizes = {"x": 1}

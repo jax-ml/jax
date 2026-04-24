@@ -59,9 +59,7 @@ CoreMemorySpace = pallas_core.CoreMemorySpace
 
 ShapedAbstractValue = tc_lowering.ShapedAbstractValue
 
-@dataclasses.dataclass
-class LoweringContext(tc_lowering.LoweringContext):
-  needs_layout_passes: bool
+LoweringContext = tc_lowering.LoweringContext
 
 LoweringRuleContext = tc_lowering.LoweringRuleContext
 

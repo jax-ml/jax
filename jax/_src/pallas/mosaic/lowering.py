@@ -208,6 +208,7 @@ class LoweringContext:
   # TODO(rdyro): remove this once the ref mesh is available at trace time.
   # Meshes for devices this lowering can address.
   mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh]
+  needs_layout_passes: bool = False
 
   replace = dataclasses.replace
 
@@ -228,6 +229,99 @@ class LoweringContext:
     grid_env = zip(grid_names, valid_grid_sizes)
     with jax_core.extend_axis_env_nd(grid_env):
       yield
+
+  def get_program_id(self, axis: int) -> ir.Value:
+    if self.user_grid_indices is None:
+      raise ValueError("program id was requested but no grid was provided.")
+    return self.user_grid_indices[axis]
+
+  def get_num_programs(self, axis: int) -> ir.Value:
+    vmapped_axes = set(self.vmapped_dims)
+    seen_user_axes = 0
+    for i in range(self.grid_rank):
+      seen_user_axes += int(i not in vmapped_axes)
+      if seen_user_axes == axis + 1:
+        break
+    else:
+      raise ValueError(f"Invalid axis {axis} for num_programs")
+    return tpu.iteration_bound(i)
+
+
+@dataclasses.dataclass
+class PipelinedLoweringContext(LoweringContext):
+
+  @classmethod
+  def from_mosaic_grid_mapping(
+      cls,
+      mgm: MosaicGridMapping,
+      jaxpr_indices: Sequence[ir.Value],
+      kernel_type: tpu_core.CoreType,
+      forward_compatible: bool,
+      backend: Any | None,
+      dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
+  ):
+    arg_block_shapes = [
+        *mgm.scalar_prefetch_block_shapes,
+        *mgm.operand_block_shapes,
+        *mgm.scratch_block_shapes,
+    ]
+    return cls(
+        grid_sizes=cast(tuple[int, ...], mgm.grid),
+        grid_names=mgm.grid_names,
+        vmapped_dims=mgm.vmapped_dims,
+        user_grid_indices=jaxpr_indices,
+        block_shapes=arg_block_shapes,
+        name_stack=source_info_util.NameStack(),
+        jax_mesh_context=mgm.mesh_info,
+        kernel_type=kernel_type,
+        traceback_caches=mlir.TracebackCaches(),
+        forward_compatible=forward_compatible,
+        backend=backend,
+        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        mpmd_meshes=mgm.mpmd_meshes,
+    )
+
+
+@dataclasses.dataclass
+class UnpipelinedLoweringContext(LoweringContext):
+
+  @classmethod
+  def from_mesh(
+      cls,
+      mesh_shape: Sequence[tuple[jax_core.AxisName, int]],
+      jaxpr: jax_core.Jaxpr,
+      jax_mesh: mesh_lib.Mesh | None,
+      core_type: tpu_core.CoreType,
+      forward_compatible: bool,
+      backend: Any | None,
+      mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
+      needs_layout_passes: bool = False,
+      mesh_indices: Sequence[ir.Value] = (),
+  ):
+    mesh_size = tuple(mesh_shape[i][1] for i in range(len(mesh_shape)))
+    mesh_names = tuple(mesh_shape[i][0] for i in range(len(mesh_shape)))
+    arg_block_shapes = tuple(v.aval.shape for v in jaxpr.invars)  # pyrefly: ignore[missing-attribute]
+    jax_mesh_context = (
+        pallas_utils.MeshInfo.from_mesh(jax_mesh)
+        if jax_mesh is not None
+        else None
+    )
+    return cls(
+        grid_sizes=mesh_size,
+        grid_names=mesh_names,
+        vmapped_dims=(),
+        user_grid_indices=mesh_indices,
+        block_shapes=arg_block_shapes,
+        name_stack=source_info_util.NameStack(),
+        jax_mesh_context=jax_mesh_context,
+        kernel_type=core_type,
+        traceback_caches=mlir.TracebackCaches(),
+        forward_compatible=forward_compatible,
+        backend=backend,
+        dynamic_shape_replacement_fn=lambda x: x,
+        mpmd_meshes=mpmd_meshes,
+        needs_layout_passes=needs_layout_passes,
+    )
 
 
 # This is morally ``ShapedArray | state.AbstractRef``, but pytype does not
@@ -652,18 +746,24 @@ class MosaicGridMapping:
     return bool(nonlocal_axis_names)
 
   def get_dimension_semantics(self) -> ir.ArrayAttr:
+    return _get_dimension_semantics(self._dimension_semantics)
 
-    def _get_semantics(s: str | None) -> str:
-      if s is None:
-        return "#tpu.dimension_semantics<arbitrary>"
-      return f"#tpu.dimension_semantics<{s}>"
 
-    return ir.ArrayAttr.get(
-        map(
-            ir.Attribute.parse,
-            map(_get_semantics, self._dimension_semantics),
-        )
-    )
+def _get_dimension_semantics(
+    dimension_semantics: Sequence[str],
+) -> ir.ArrayAttr:
+
+  def _get_semantics(s: str | None) -> str:
+    if s is None:
+      return "#tpu.dimension_semantics<arbitrary>"
+    return f"#tpu.dimension_semantics<{s}>"
+
+  return ir.ArrayAttr.get(
+      map(
+          ir.Attribute.parse,
+          map(_get_semantics, dimension_semantics),
+      )
+  )
 
 
 def _check_block_mappings(
@@ -781,7 +881,7 @@ def _check_block_mappings(
         )
 
 
-def lower_jaxpr_to_module(
+def lower_jaxpr_to_pipelined_module(
     lowering_context: mlir.LoweringRuleContext,
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
@@ -793,7 +893,7 @@ def lower_jaxpr_to_module(
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> ir.Module:
   module = ir.Module.create()
-  lower_jaxpr_into_module(
+  lower_jaxpr_into_pipelined_module(
       lowering_context,
       module,
       grid_mapping,
@@ -808,7 +908,7 @@ def lower_jaxpr_to_module(
   return module
 
 
-def lower_jaxpr_into_module(
+def lower_jaxpr_into_pipelined_module(
     lowering_context: mlir.LoweringRuleContext,
     module: ir.Module,
     grid_mapping: pallas_core.GridMapping,
@@ -864,15 +964,37 @@ def lower_jaxpr_into_module(
   )
   mosaic_grid_mapping.maybe_compress_grid()
   sym_tab = ir.SymbolTable(module.operation)
-  func_op = lower_jaxpr_to_func(
+  num_grid = len(mosaic_grid_mapping.grid_types)
+  arg_types = [
+      *mosaic_grid_mapping.grid_types,
+      *mosaic_grid_mapping.scalar_prefetch_types,
+      *mosaic_grid_mapping.operand_types,
+      *mosaic_grid_mapping.scratch_types,
+  ]
+
+  def get_jaxpr_indices(grid_indices):
+    return mosaic_grid_mapping.get_grid_indices(
+        grid_indices, maybe_include_mapped_dims=False
+    )
+
+  def ctx_factory(jaxpr_indices):
+    return PipelinedLoweringContext.from_mosaic_grid_mapping(
+        mosaic_grid_mapping,
+        jaxpr_indices,
+        kernel_type=kernel_type,
+        forward_compatible=lowering_context.is_forward_compat(),
+        backend=backend,
+        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+      )
+
+  func_op = _lower_jaxpr_to_func_common(
       jaxpr,
-      mosaic_grid_mapping=mosaic_grid_mapping,
       name=name,
-      kernel_type=kernel_type,
-      forward_compatible=lowering_context.is_forward_compat(),
-      dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+      arg_types=arg_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=get_jaxpr_indices,
+      ctx_factory=ctx_factory,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
-      backend=backend,
   )
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type}>"
@@ -1115,6 +1237,171 @@ def lower_jaxpr_into_module(
         ] = ir.ArrayAttr.get(arg_locs_attr)
 
 
+def _get_mesh_shape_and_semantics(
+    mesh: pallas_core.Mesh,
+) -> tuple[tuple[tuple[jax_core.AxisName, int], ...], tuple[str, ...]]:
+  match mesh:
+    case (
+        tpu_core.TensorCoreMesh()
+        | sc_core.ScalarSubcoreMesh()
+        | sc_core.VectorSubcoreMesh()
+    ):
+      if isinstance(mesh, tpu_core.TensorCoreMesh) and len(mesh.shape) > 1:
+        raise NotImplementedError(
+            "TensorCoreMesh with more than one dimension is not supported."
+        )
+      dimension_semantics = tuple(
+          _canonicalize_dimension_semantic(s) for s in mesh.dimension_semantics
+      )
+      mesh_shape = tuple(mesh.shape.items())
+    case _:
+      # Do some duck-typing to get the mesh shape and dimension semantics.
+      if hasattr(mesh, "shape") and hasattr(mesh, "dimension_semantics"):
+        dimension_semantics = tuple(
+            _canonicalize_dimension_semantic(s)
+            for s in mesh.dimension_semantics
+        )
+        mesh_shape = tuple(mesh.shape.items())
+      else:
+        raise ValueError(f"Unsupported mesh type: {mesh}")
+  return mesh_shape, dimension_semantics
+
+
+def lower_jaxpr_into_unpipelined_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    pallas_mesh: pallas_core.Mesh,
+    jax_mesh: mesh_lib.Mesh | None,
+    dynamic_shape_replacement_enabled: bool = False,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
+    num_scratch: int,
+    needs_layout_passes: bool = False,
+) -> None:
+  if pallas_mesh is None:
+    raise ValueError("Mesh must be provided.")
+  if dynamic_shape_replacement_enabled:
+    raise NotImplementedError(
+        "Dynamic shape replacement is not supported for unpipelined lowering."
+    )
+  backend = lowering_context.module_context.get_backend(optional=True)
+  # NOTE: We should bump this periodically
+  if backend is not None and is_cloud_tpu_older_than(2025, 8, 1, backend):
+    platform_version = xla_bridge.get_backend().platform_version
+    raise RuntimeError(
+        "Pallas TPU requires a libtpu version that's at most a month old. Found"
+        f" version string:\n{platform_version}"
+    )
+  sym_tab = ir.SymbolTable(module.operation)
+  mesh_shape, dimension_semantics = _get_mesh_shape_and_semantics(pallas_mesh)
+  num_grid = len(mesh_shape)
+  mesh_index_types = [jax_core.ShapedArray((), jnp.int32)] * len(mesh_shape)
+  arg_jax_types = [*mesh_index_types, *[v.aval for v in jaxpr.invars]]
+  arg_mlir_types = [
+      aval_to_ir_type(lambda x: x, v, kernel_type=pallas_mesh.core_type)
+      for v in arg_jax_types
+  ]
+
+  def ctx_factory(mesh_indices):
+    return UnpipelinedLoweringContext.from_mesh(
+        mesh_shape,
+        jaxpr,
+        jax_mesh,
+        core_type=pallas_mesh.core_type,
+        forward_compatible=lowering_context.is_forward_compat(),
+        backend=backend,
+        mpmd_meshes=mpmd_meshes,
+        needs_layout_passes=needs_layout_passes,
+        mesh_indices=mesh_indices,
+    )
+
+  func_op = _lower_jaxpr_to_func_common(
+      jaxpr,
+      name=name,
+      arg_types=arg_mlir_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=lambda idx: idx,
+      ctx_factory=ctx_factory,
+      dynamic_shape_replacement_enabled=False,
+      core_type=pallas_mesh.core_type,
+  )
+
+  if pallas_mesh.core_type in (
+      tpu_core.CoreType.SC_SCALAR_SUBCORE,
+      tpu_core.CoreType.SC_VECTOR_SUBCORE,
+  ):
+    arg_attrs = [ir.DictAttr.get({})] * num_grid
+    for arg in func_op.arguments[
+        num_grid : len(func_op.arguments) - num_scratch
+    ]:
+      d: dict[str, ir.Attribute] = {}
+      if (
+          str(arg.type.memory_space) == "#tpu.memory_space<hbm>"
+          or str(arg.type.memory_space) == "#tpu.memory_space<semaphore_mem>"
+      ):
+        d["sc.persistent"] = ir.UnitAttr.get()
+      arg_attrs.append(ir.DictAttr.get(d))
+    arg_attrs.extend([ir.DictAttr.get({})] * num_scratch)
+    func_op.arg_attrs = ir.ArrayAttr.get(arg_attrs)
+  func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
+      f"#tpu.core_type<{pallas_mesh.core_type}>"
+  )
+  module.body.append(func_op)
+  assert name not in sym_tab
+  sym_tab.insert(func_op)
+  grid = tuple(m[1] for m in mesh_shape)
+  func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(grid)
+  func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
+      ir.IntegerType.get_signless(64), 0)
+  func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(
+      ir.IntegerType.get_signless(64), num_scratch)
+  func_op.attributes["dimension_semantics"] = _get_dimension_semantics(
+      dimension_semantics
+  )
+
+  # TODO(sharadmv): Relax compiler checks to allow for no windowing.
+  # Set up trivial windowing.
+  window_params = []
+  for v in jaxpr.invars[:-num_scratch] if num_scratch > 0 else jaxpr.invars:
+    aval = v.aval
+    tpu_memory_space = None
+    if isinstance(aval, state.AbstractRef):
+      block_memory_space = aval.memory_space
+      if block_memory_space is None:
+        block_memory_space = pallas_core.MemorySpace.ANY
+      tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+          block_memory_space, pallas_mesh.core_type
+      )
+
+    if not isinstance(aval, state.AbstractRef):
+      window_params.append(ir.DictAttr.get())
+      assert False
+      continue
+
+    is_sc = pallas_mesh.core_type in (
+        tpu_core.CoreType.SC_SCALAR_SUBCORE,
+        tpu_core.CoreType.SC_VECTOR_SUBCORE,
+    )
+    if not is_sc and (
+        tpu_memory_space is ANY
+        or tpu_memory_space == tpu_core.MemorySpace.HBM
+        or tpu_memory_space == SEMAPHORE
+    ):
+      window_params.append(ir.DictAttr.get())
+      continue
+
+    rank = len(aval.shape)  # pyrefly: ignore[missing-attribute]
+    exprs = [ir.AffineConstantExpr.get(0)] * rank
+    affine_map = ir.AffineMap.get(len(grid), 0, exprs)
+    block_params = dict[str, ir.Attribute](
+        transform_indices=ir.AffineMapAttr.get(affine_map),
+    )
+    window_params.append(ir.DictAttr.get(block_params))
+  func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
+
+
 def lower_jaxpr_to_transform_func(
     jaxpr: jax_core.Jaxpr,
     aval: jax_core.AbstractValue,
@@ -1176,56 +1463,35 @@ def lower_jaxpr_to_transform_func(
   return body.func_op
 
 
-def lower_jaxpr_to_func(
+def _lower_jaxpr_to_func_common(
     jaxpr: jax_core.Jaxpr,
     *,
-    mosaic_grid_mapping: MosaicGridMapping,
     name: str,
-    kernel_type: tpu_core.CoreType,
-    forward_compatible: bool,
-    backend: Any | None,
-    dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
-    dynamic_shape_replacement_enabled: bool,
+    arg_types: list[ir.Type],
+    num_grid: int,
+    get_jaxpr_indices: Callable[[list[ir.Value]], list[ir.Value]],
+    ctx_factory: Callable[[list[ir.Value]], LoweringContext],
+    dynamic_shape_replacement_enabled: bool = False,
+    core_type: tpu_core.CoreType | None = None,
 ) -> func.FuncOp:
-  num_grid = len(mosaic_grid_mapping.grid_types)
-  num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
-  arg_types = [
-      *mosaic_grid_mapping.grid_types,
-      *mosaic_grid_mapping.scalar_prefetch_types,
-      *mosaic_grid_mapping.operand_types,
-      *mosaic_grid_mapping.scratch_types,
-  ]
-  arg_block_shapes = [
-      *mosaic_grid_mapping.scalar_prefetch_block_shapes,
-      *mosaic_grid_mapping.operand_block_shapes,
-      *mosaic_grid_mapping.scratch_block_shapes,
-  ]
   def body_func(*args):
-    grid_indices, scalar_prefetch, operands_and_scratch = split_list(
-        args, [num_grid, num_scalar_prefetch])
-    jaxpr_indices = mosaic_grid_mapping.get_grid_indices(
-        grid_indices, maybe_include_mapped_dims=False
-    )
-    lowering_context = LoweringContext(
-        cast(tuple[int, ...], mosaic_grid_mapping.grid),
-        mosaic_grid_mapping.grid_names,
-        mosaic_grid_mapping.vmapped_dims,
-        jaxpr_indices,
-        arg_block_shapes,
-        source_info_util.NameStack(),
-        jax_mesh_context=mosaic_grid_mapping.mesh_info,
-        kernel_type=kernel_type,
-        traceback_caches=mlir.TracebackCaches(),
-        forward_compatible=forward_compatible,
-        backend=backend,
-        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        mpmd_meshes=mosaic_grid_mapping.mpmd_meshes,
-    )
-    return jaxpr_subcomp(
-        lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
-    )
+    grid_indices = list(args[:num_grid])
+    other_args = list(args[num_grid:])
+
+    jaxpr_indices = get_jaxpr_indices(grid_indices)
+    lowering_context = ctx_factory(jaxpr_indices)
+
+    return jaxpr_subcomp(lowering_context, jaxpr, *other_args)
+
   body_func.__name__ = name
   body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
+  func_op = cast(func.FuncOp, body.func_op)
+
+  if core_type is not None:
+    func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
+        f"#tpu.core_type<{core_type}>"
+    )
+
   if dynamic_shape_replacement_enabled:
     # Skip verification for dynamic shape replacement - you can potentially
     # produce ir like ex: add(x[placeholder_0, placeholder_1], y[128, 128])
@@ -1233,10 +1499,10 @@ def lower_jaxpr_to_func(
     # after the dynamic shape replacement pass.
     return body.func_op
   try:
-    body.func_op.verify()
+    func_op.verify()
   except ir.MLIRError as e:
     raise error_handling.mlir_error_to_verification_error(e) from e
-  return body.func_op
+  return func_op
 
 
 def lower_fun(

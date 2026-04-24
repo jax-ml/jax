@@ -1352,7 +1352,11 @@ class PipelineHijaxTest(jtu.JaxTestCase):
       shape: tuple[int, ...]
       dtype: jnp.dtype
 
-      update = dataclasses.replace
+      def update(self, *, shape=None, dtype=None, **kwargs):
+        changes = {}
+        if shape is not None: changes['shape'] = shape
+        if dtype is not None: changes['dtype'] = dtype
+        return dataclasses.replace(self, **changes)
 
       def lo_ty(self) -> list[hijax.ShapedArray]:
         return [hijax.ShapedArray(self.shape, self.dtype)] * 2

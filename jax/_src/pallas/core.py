@@ -224,8 +224,6 @@ class MemoryRef:
     return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
-    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
-    # try to apply JAX ops to it.
     return state.AbstractRef(self.inner_aval, self.memory_space)
 
   @property
