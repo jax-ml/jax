@@ -23,6 +23,7 @@ from typing import NamedTuple
 
 import jax
 from jax._src import util as jax_util
+from jax.core import Tracer
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np
@@ -161,6 +162,10 @@ class _HashableNDArray:
     self.array = array
 
   def __hash__(self):
+    if isinstance(self.array, Tracer):
+      # Content hashing on tracers leads to materialization errors
+      # Fall back to identity hashing.
+      return hash(id(self.array))
     return hash(self.array.tobytes())
 
   def __eq__(self, other: object) -> bool:
@@ -582,7 +587,25 @@ def _process_mask(
   if mod != 0:
     raise ValueError(f'{head_shards=} should divide {head_count=}.')
 
+  def _is_numpy_mask_with_traced_arrays(mask):
+    """Check if mask is a MultiHeadMask of NumpyMasks with traced arrays."""
+    if not isinstance(mask, mask_lib.MultiHeadMask):
+      return False
+    return any(isinstance(m, mask_lib.NumpyMask)
+           and isinstance(m.array, Tracer)
+            for m in mask.masks)
 
+  if _is_numpy_mask_with_traced_arrays(mask):
+    jax_mask = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
+    return _process_dynamic_mask(
+          jax_mask,
+          block_shape,
+          is_dkv,
+          downcast_smem_data=downcast_smem_data,
+          head_shards=head_shards,
+          q_seq_shards=q_seq_shards,
+          shrink_grid=shrink_grid,
+      )
   # Uniquify the masks.
   # Create a collection of the unique head masks in the input multi-head mask.
   # This avoids processing the same mask multiple times and it enables

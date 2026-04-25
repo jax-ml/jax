@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 from typing import Any
 import numpy as np
-
+from jax.core import Tracer
 
 class Mask:
   """A base class for splash attention masks."""
@@ -512,6 +512,10 @@ class NumpyMask(Mask):
     return np.array_equal(self.array, other.array, equal_nan=True)
 
   def __hash__(self):
+    if isinstance(self.array, Tracer):
+      # Content hashing on tracers leads to materialization errors
+      # Fall back to identity hashing.
+      return hash(id(self.array))
     return hash((type(self), self.array.tobytes()))
 
 
