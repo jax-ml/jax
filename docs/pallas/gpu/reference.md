@@ -1489,12 +1489,14 @@ The `@plgpu.inline_mgpu` decorator allows for "escaping" the high-level Pallas a
 
 Example::
 
+    import jax.numpy as jnp
+    from jax.experimental.mosaic import gpu as mgpu
     layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
 
     @plgpu.inline_mgpu(
         arg_types=(plgpu.RefType(),),
         return_type=plgpu.ShapeDtypeStruct(
-            (128, 128), dtype, layout=layout
+            (128, 128), jnp.float32, layout=layout
         ),
     )
     def add_one(ctx, smem_ref):
