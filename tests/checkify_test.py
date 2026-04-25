@@ -32,6 +32,7 @@ from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OO
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
@@ -485,6 +486,17 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     x = jax.device_put(jnp.zeros(64, dtype="int32"), NamedSharding(mesh, P()))
     err, y = f(x)
     err, z = f(y)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_auto_axes_explicit_top_level(self, mesh):
+    x = jnp.ones((4,), out_sharding=jax.P("x"))
+
+    @jax.jit
+    @checkify.checkify
+    def my_func(x):
+      return x.at[:].set(2.0, out_sharding=jax.P("x"))
+
+    my_func(x)
 
   @jtu.skip_on_devices("tpu")
   def test_while_loop_body_and_cond_error(self):

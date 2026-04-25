@@ -408,8 +408,9 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
     checkify_rule = error_checks.get(
         eqn.primitive, functools.partial(default_checkify_rule, eqn.primitive))
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    with source_info_util.user_context(eqn.source_info.traceback,
-                                       name_stack=name_stack):
+    with (source_info_util.user_context(eqn.source_info.traceback,
+                                        name_stack=name_stack),
+          eqn.ctx.manager):
       error, outvals = checkify_rule(error, enabled_errors,
                                      *invals, **eqn.params)
     if eqn.primitive.multiple_results:
