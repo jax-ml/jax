@@ -3966,47 +3966,59 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         result, np.transpose(x.reshape(mid_shape), axes=(1, 0, 2))
     )
 
-  # (m, n) -> (n, m), n % m == 0, n <= 128
-  @parameterized.parameters(
-      (m, n, dtype)
-      for (m, n), dtype in itertools.product(
-          [
-              (2, 16),
-              (9, 63),
-              (8, 128),
-              (16, 64),
-              (17, 51),
-              (33, 99),
-          ],
-          [
-              jnp.float32,
-              jnp.int32,
-              jnp.bfloat16,
-              jnp.int8,
-              jnp.float8_e5m2,
-              jnp.float8_e4m3fn,
-              jnp.float8_e4m3b11fnuz,
-          ],
-      )
+  # (src_major_dims, m, n) -> (dst_major_dims, n, m), n % m == 0, n <= 128
+  @parameterized.product(
+      input_output_major_dims=[
+          ((), ()),
+          ((9,), (9,)),
+          ((1, 8), (8,)),
+          ((8,), (1, 8)),
+          ((4, 4), (2, 2, 4)),
+          ((2, 2, 4), (4, 4)),
+      ],
+      input_minor_dims=[
+          (2, 16),
+          (9, 63),
+          (8, 128),
+          (16, 64),
+          (17, 51),
+          (33, 99),
+      ],
+      dtype=[
+          jnp.float32,
+          jnp.int32,
+          jnp.bfloat16,
+          jnp.int8,
+          jnp.float8_e5m2,
+          jnp.float8_e4m3fn,
+          jnp.float8_e4m3b11fnuz,
+      ],
   )
-  def test_reshape_small_last_two_dims(self, m, n, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 4, 29):
+  def test_reshape_small_last_two_dims(
+      self, input_output_major_dims, input_minor_dims, dtype
+  ):
+    if not jtu.is_cloud_tpu_at_least(2026, 4, 30):
       self.skipTest('Requires a newer libTPU.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('TPU v5+ required.')
 
+    input_major_dims, output_major_dims = input_output_major_dims
+    output_minor_dims = (input_minor_dims[1], input_minor_dims[0])
+    input_shape = input_major_dims + input_minor_dims
+    output_shape = output_major_dims + output_minor_dims
+
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[...].reshape(y_ref.shape)
+      y_ref[...] = x_ref[...].reshape(output_shape)
 
     key = jax.random.key(42)
-    x = jax.random.uniform(key, shape=(m, n), minval=-10.0, maxval=10.0).astype(
-        dtype
-    )
+    x = jax.random.uniform(
+        key, shape=input_shape, minval=-10.0, maxval=10.0
+    ).astype(dtype)
     out = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((n, m), dtype),
+        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
     )(x)
-    np.testing.assert_array_equal(out, x.reshape([n, m]))
+    np.testing.assert_array_equal(out, x.reshape(output_shape))
 
   # (m*n) -> (m, n)
   @parameterized.parameters(
