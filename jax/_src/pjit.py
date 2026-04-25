@@ -129,15 +129,23 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
   for arg in args_flat:
     dispatch.check_arg(arg)
 
+  assert not p.params['jaxpr'].is_high
+  params = dict(p.params)
+  in_avals, out_avals = params.pop('in_avals'), params.pop('out_avals')
+  hi_inout = any(a.is_high for a in it.chain(in_avals, out_avals))
+
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
-        and not p.params['jaxpr'].jaxpr.is_high):
+        and not hi_inout):
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
-          *args_flat, **p.params)
+          *args_flat, **params)
     else:
-      out_flat = jit_p.bind(*args_flat, **p.params)
+      if hi_inout:
+        out_flat = bind_lo_to_hi(*args_flat, **p.params)
+      else:
+        out_flat = jit_p.bind(*args_flat, **params)
       compiled = None
       profiler = None
       const_args = []
@@ -519,7 +527,10 @@ def _trace_for_jit(
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
         jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      # TODO in addition to requires_low=True, we probably need to read qdds and
+      # all that
+      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token,
+                                           requires_low=core.trace_ctx.trace.requires_low)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -558,6 +569,7 @@ def _trace_for_jit(
 
   params = dict(
       jaxpr=jaxpr,
+      in_avals=avals_ft, out_avals=out_avals,  # maybe hi avals even if jaxpr lo
       in_shardings=in_shardings_flat,
       out_shardings=out_shardings_flat,
       in_layouts=in_layouts_flat,
@@ -618,7 +630,7 @@ def _infer_params(
     return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  if p.params['jaxpr'].jaxpr.is_high:
+  if any(a.is_high for a in it.chain(avals, p.params['out_avals'])):
     return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
@@ -869,7 +881,7 @@ def _is_high(*_, jaxpr, **__) -> bool:
 jit_p.is_high = _is_high
 
 def _to_lojax(*hi_args, jaxpr, **params):
-  # convert closed-over boxes to explicit args
+  assert jaxpr.is_high
   jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
   hi_args = [*closed_over_himutables, *hi_args]
   params = _converted_mutables_add_params(len(closed_over_himutables), **params)
@@ -889,6 +901,30 @@ def _to_lojax(*hi_args, jaxpr, **params):
       a.aval.update_from_loval2(a.qdd, x, u)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 jit_p.to_lojax = _to_lojax
+
+def bind_lo_to_hi(*hi_args, jaxpr, in_avals, out_avals, **params):
+  assert not jaxpr.is_high
+  # TODO closure, qdds
+  # jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
+  # hi_args = [*closed_over_himutables, *hi_args]
+  # params = _converted_mutables_add_params(len(closed_over_himutables), **params)
+
+  lo_args_lol = [aval.read_loval_in(x) if aval.has_qdd else aval.lower_val(x)
+                 for aval, x in zip(in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+
+  in_avals_ = FlatTree.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  mut_outs = [FlatTree.flatten(())] * len(out_avals)  # TODO
+  lo_outs = [FlatTree.flatten(a.lo_ty()) for a in out_avals]
+  out_avals_ = FlatTree.pack((tuple(mut_outs), tuple(lo_outs)))
+  params = _lojax_expand_params(in_avals_, out_avals_, **params)
+
+  all_outs = jit_p.bind(*lo_args, jaxpr=jaxpr, **params)
+  out_mut, lo_outs = out_avals_.update(all_outs).unpack()
+  for a, x, u in zip(out_avals, hi_args, out_mut.unpack()):
+    if a.has_qdd:
+      a.aval.update_from_loval2(a.qdd, x, u)
+  return [a.raise_val2(y) for a, y in zip(out_avals, lo_outs.unpack())]
 
 def _converted_mutables_add_params(
     n, *, donated_invars, in_shardings, in_layouts, **params):
@@ -1129,6 +1165,7 @@ def _pjit_call_impl_python(
     compiler_options_kvs):
   util.test_event("jit_cpp_cache_miss")
   pgle_compile_options, pgle_profiler = {}, None
+  assert not jaxpr.is_high
   if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
     compilation_target_key = jaxpr
     pgle_profiler = _pgle_profiler_dict.get(compilation_target_key)
