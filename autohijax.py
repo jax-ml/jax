@@ -444,18 +444,18 @@ class CallLojax(Op):
     primals = args_ft.map(lambda x: x.primal)
     with ctx.set_current_trace(trace.parent):
       ans_ft, f_vjp_ft = ctx.cur_trace.bind(CallLojax(partial(jax.vjp, self.f)), primals).unpack()
+    trace.res[-1].append(f_vjp_ft)
     left_accums = args_ft.map(lambda x: x.accum)
-    right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty()))
-    def bwd(f_vjp_):
-      res, treedef = jax.tree.flatten(f_vjp_)
-      res = FlatTree.flatten(res)
-      def f_vjp(res, right_ct):
-        return jax.tree.unflatten(treedef, res)(right_ct)
+    right_accum = ans_ft.map(lambda x: Accumulator(x.ty.tangent_ty(), trace.tags[-1]))
+    def bwd():
       right_ct = right_accum.map(lambda x: x.finalize())
-      left_cts = ctx.cur_trace.bind(CallLojax(f_vjp), FlatTree.pack((res, right_ct)))
+      vjp_args = FlatTree.pack((trace.res[-1].pop(), right_ct))
+      left_cts = ctx.cur_trace.bind(CallLojax(apply), vjp_args)
       return left_accums.map2(lambda acc, ct: acc.accum(ct), left_cts)
-    trace.tape.append(Partial(f_vjp_ft.unflatten(), bwd))
+    trace.tape.append(bwd)
     return ans_ft.map2(partial(VJPTracer, trace), right_accum)
+
+def apply(f, x): return f(x)
 
 def call_lojax(f, *args):
   args_ft = lift_ft(args)
@@ -507,32 +507,32 @@ def scan(body, c, xs, length):
 
 # === user level ===
 
-# @jit
-# def foo(x, y):
-#   return add(add(x, x), y)
+@jit
+def foo(x, y):
+  return add(add(x, x), y)
 
-# print(vjp(foo, (1., 2.), 1.0))
-
-
-# def foo(x):
-#   z = mul(2., 2.)
-
-#   @jit
-#   def bar(x):
-#     return mul(x, z)
-#   return bar(x)
-
-# print(vjp(foo, (2.,), 1.0))
+print(vjp(foo, (1., 2.), 1.0))
 
 
-# def foo(x):
-#   @jit
-#   def bar(x):
-#     z = mul(2., 2.)
-#     return mul(x, z)
-#   return bar(x)
+def foo(x):
+  z = mul(2., 2.)
 
-# print(vjp(foo, (2.,), 1.0))
+  @jit
+  def bar(x):
+    return mul(x, z)
+  return bar(x)
+
+print(vjp(foo, (2.,), 1.0))
+
+
+def foo(x):
+  @jit
+  def bar(x):
+    z = mul(2., 2.)
+    return mul(x, z)
+  return bar(x)
+
+print(vjp(foo, (2.,), 1.0))
 
 
 def foo(x):
@@ -545,75 +545,75 @@ print(vjp(foo, (2.,), 1.0))
 
 
 
-# def scan_body(c, x):
-#   return add(c, 1), add(x, 1)
+def scan_body(c, x):
+  return add(c, 1), add(x, 1)
 
-# print(scan(scan_body, 0, jnp.arange(4), length=4))
-
-
-# @jit
-# def foo(x, y):
-#   return mul(add(x, y), 2.)
-
-# print(vjp(foo, (1., 2.), 1.0))
-
-# @jit
-# def foo(x, y):
-#   return mul(add(x, y), 2)
-
-# @jit
-# def bar(x, y):
-#   return add(foo(x, y), y)
-
-# print(foo(1, 2))
-# print(bar(1, 2))
-
-# print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
-
-# @jit
-# def baz(x):
-#   return mul(call_lojax(jnp.sin, x),  x)
+print(scan(scan_body, 0, jnp.arange(4), length=4))
 
 
-# print(baz(1.0))
-# print(vjp(baz, (1.0,), 1.0))
+@jit
+def foo(x, y):
+  return mul(add(x, y), 2.)
 
-# @jit
-# def closed_over(x, y):
-#   @jit
-#   def f(x):
-#     return add(x, y)
-#   return f(x)
+print(vjp(foo, (1., 2.), 1.0))
 
-# print(closed_over(1, 2))
+@jit
+def foo(x, y):
+  return mul(add(x, y), 2)
+
+@jit
+def bar(x, y):
+  return add(foo(x, y), y)
+
+print(foo(1, 2))
+print(bar(1, 2))
+
+print(vjp(lambda x: mul(mul(x, x), x), (2.0, ), 1.0))
+
+@jit
+def baz(x):
+  return mul(call_lojax(jnp.sin, x),  x)
+
+
+print(baz(1.0))
+print(vjp(baz, (1.0,), 1.0))
+
+@jit
+def closed_over(x, y):
+  @jit
+  def f(x):
+    return add(x, y)
+  return f(x)
+
+print(closed_over(1, 2))
 
 
 
-# def foo(x, y):
-#   return mul(x, mul(x, mul(y, 2.)))
+def foo(x, y):
+  return mul(x, mul(x, mul(y, 2.)))
 
-# def grad(f):
-#   def gradfun(*args):
-#     _, (g, *_) = vjp(f, args, 1.0)
-#     return g
-#   return gradfun
+def grad(f):
+  def gradfun(*args):
+    _, (g, *_) = vjp(f, args, 1.0)
+    return g
+  return gradfun
 
-# print(grad(foo)(1., 1.))
-# print(grad(grad(lambda x: foo(x, x)))(2.0))
+print(grad(foo)(1., 1.))
+print(grad(grad(lambda x: foo(x, x)))(2.0))
 
-# @jit
-# def baz(x):
-#   return mul(x, mul(x, x))
+@jit
+def baz(x):
+  return mul(x, mul(x, x))
 
-# print(grad(grad(baz))(1.))
+print(grad(grad(baz))(1.))
 
-# # def fun_with_nested_calls_2(x):
-# #   def bar(y):
-# #     def baz(w):
-# #       return jit_call(lambda _: w, y)
-# #     _, (t,) = vjp(baz, (1.0,), 3.0)
-# #     return t
-# #   return jit_call(bar, x)
+def fun_with_nested_calls_2(x):
+  def bar(y):
+    def baz(w):
+      return jit_call(lambda _: w, y)
+    _, (t,) = vjp(baz, (1.0,), 3.0)
+    return t
+  return jit_call(bar, x)
 
-# # fun_with_nested_calls_2(2.0)
-# # # grad(fun_with_nested_calls_2)(2.0)
+fun_with_nested_calls_2(2.0)
+# grad(fun_with_nested_calls_2)(2.0)  # TODO
