@@ -3445,9 +3445,14 @@ def _dynamic_slice_indices(
         result.append(i)
       continue
     if allow_negative_index:
-      d_arr = lax.convert_element_type(d, _dtype(i))
-      # pyrefly: ignore[unsupported-operation]
-      result.append(lax.select(i < 0, i + d_arr, i))
+      # Prefer a numpy wrap when possible: staging lax.select promotes the
+      # index to a tracer, breaking later numpy ops on it under transforms.
+      if isinstance(i, np.ndarray) and core.is_constant_dim(d):
+        result.append(np.where(i < 0, i + d, i).astype(_dtype(i)))
+      else:
+        d_arr = lax.convert_element_type(d, _dtype(i))
+        # pyrefly: ignore[unsupported-operation]
+        result.append(lax.select(i < 0, i + d_arr, i))
     else:
       result.append(i)
   return result
