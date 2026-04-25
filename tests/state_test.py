@@ -844,7 +844,7 @@ def index_params(draw):
   indexed_dims = draw(hps.lists(hps.booleans(),
                                 min_size=len(ref_shape),
                                 max_size=len(ref_shape)))
-  idx_shape = draw(hnp.array_shapes(max_dims=3, max_side=5))
+  idx_shape = draw(hnp.array_shapes(min_dims=0, max_dims=3, max_side=5))
   if not any(indexed_dims):
     slice_shape = ref_shape
   else:
@@ -1031,7 +1031,6 @@ class StateHypothesisTest(jtu.JaxTestCase):
 
     self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
                         check_dtypes=False)
-
 
   @hp.given(set_vmap_params())
   @hp.settings(deadline=None, print_blob=True,

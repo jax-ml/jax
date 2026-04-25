@@ -760,11 +760,7 @@ def _batch_indexer(
       else:
         # Check if we are indexing with a scalar or not. If we are indexing
         # with a scalar and we are not batched, we can avoid broadcasting it.
-        assert hasattr(idx, "shape")
-        if not idx.shape:
-          if dim is not batching.not_mapped:
-            assert idx.shape == (axis_size,)
-            idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape, (0,))
+        if not shapeof(idx):
           new_indices.append(idx)
         else:
           if dim is batching.not_mapped:
@@ -777,24 +773,30 @@ def _batch_indexer(
     else:
       if ref_dim is not batching.not_mapped:
         if not isinstance(idx, indexing.Slice):
-          assert hasattr(idx, "shape")
-          if idx.shape:
-            bcast_dims = tuple(range(1, np.ndim(idx) + 1))
+          if shapeof(idx):
+            bcast_dims = tuple(range(1, core.typeof(idx).ndim + 1))
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
-                                      bcast_dims)
+                                       bcast_dims)
       new_indices.append(idx)
-  if ref_dim is not batching.not_mapped:
-    if indexer.int_indexer_shape:
-      batch_idx = lax.broadcasted_iota(
-          np.dtype('int32'), new_integer_indexer_shape, 0)
-    else:
+
+  # if the ref is batched, we must insert an indexer for that new axis
+  if ref_dim is not None:
+    # sometimes can optimize to generate a slice(None) on the batch axis.
+    # NOTE this optimization has caused much pain. if in doubt, try removing.
+    if not idx_is_batched and not indexer.int_indexer_shape:
       batch_idx = indexing.Slice(0, axis_size)
       new_integer_indexer_shape = ()
-
+    else:
+      batch_idx = lax.broadcasted_iota(
+          np.dtype('int32'), new_integer_indexer_shape, 0)
     new_indices.insert(ref_dim, batch_idx)
+
   return indexing.NDIndexer(
       tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
   )
+
+def shapeof(x):
+  return x.shape if isinstance(x, TransformedRef) else core.typeof(x).shape
 
 def _get_vmap(batched_args, batched_dims, *, tree):
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
@@ -823,7 +825,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   )
   # Note: _batch_indexer will add a slice for the batch dim if the int_indexer
   # shape is empty, else it will use advanced/int indexing.
-  will_add_int_batcher = bool(indexers[0].int_indexer_shape)
+  will_add_int_batcher = ref_dim is not None and (idx_is_batched or indexers[0].int_indexer_shape)
 
   is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
   new_int_indexers_contiguous = bool(
@@ -859,14 +861,12 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       else:
         # We only trigger this case when the int_indexer shape is empty,
         # so we don't need to account for int_indexer_shape.
-        int_indexers_before_ref_dim = int(np.sum(is_new_int_indexing[:ref_dim]))
+        int_indexers_before_ref_dim = sum(is_new_int_indexing[:ref_dim])
         out_bdim = ref_dim - int_indexers_before_ref_dim
     else:
       out_bdim = 0
-      if any(is_int_indexing):
-        # The batch dim is the indexer's batch dim.
-        original_pos = is_int_indexing.index(True)
-        out_bdim = original_pos
+      if new_int_indexers_contiguous:
+        out_bdim = is_new_int_indexing.index(True)
   return out, out_bdim
 batching.primitive_batchers[get_p] = _get_vmap
 
@@ -895,8 +895,8 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
   new_indexers = tuple(_batch_indexer(indexer, dims, axis_data.size,
-                                  ref.shape, ref_dim, idx_is_batched)
-                     for indexer, dims in zip(indexers, indexers_dims))
+                                      ref.shape, ref_dim, idx_is_batched)
+                       for indexer, dims in zip(indexers, indexers_dims))
   flat_indexers, tree = tree_util.tree_flatten(new_indexers)
 
   is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
@@ -908,26 +908,34 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
       np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
   )
 
-  if not new_int_indexers_contiguous:  # will be moved to the front
-    batched_dim_in_result = 0
+  # Note: _batch_indexer will add a slice for the batch dim if the int_indexer
+  # shape is empty, else it will use advanced/int indexing.
+  will_add_int_batcher = idx_is_batched or indexers[0].int_indexer_shape
+
+  if not new_int_indexers_contiguous and will_add_int_batcher:
+    batched_dim_in_result = 0  # will be moved to the front
+  elif any(is_new_int_indexing):
+    if will_add_int_batcher:
+      # _batch_indexer ensures the bdim in the int indexers is at the front
+      batched_dim_in_result = is_new_int_indexing.index(True)
+    else:
+      # all int indices are scalars, so the ones before ref_dim disappear
+      assert ref_dim is not None
+      batched_dim_in_result = ref_dim - sum(is_new_int_indexing[:ref_dim])
   else:
-    try:
-      batched_dim_in_result = is_new_int_indexing.index(True) + 0
-    except ValueError:
-      batched_dim_in_result = ref_dim
+    batched_dim_in_result = ref_dim
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
       val = batching.broadcast(val, axis_data.size, batched_dim_in_result,
                                axis_data.explicit_mesh_axis)
   else:
+    assert batched_dim_in_result is not None
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 
+  # Originally not going to be moved to front, but now will be moved to front.
   transpose_order_inversed = None
-
-  # Originally not going to be moved to the front, but now going to be moved to
-  # the front.
-  if int_indexers_contiguous and not new_int_indexers_contiguous:
+  if int_indexers_contiguous and not new_int_indexers_contiguous and will_add_int_batcher:
     original_pos = is_int_indexing.index(True)
     array_indexer_shape = new_indexers[0].int_indexer_shape
     array_indexer_len = len(array_indexer_shape)
@@ -978,8 +986,8 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
 
   # TODO(sharadmv): handle vmap of multiple indexers
   new_indexers = tuple(_batch_indexer(indexer, dims, axis_data.size,
-                                  ref.shape, ref_dim, idx_is_batched)
-                     for indexer, dims in zip(indexers, indexers_dims))
+                                      ref.shape, ref_dim, idx_is_batched)
+                       for indexer, dims in zip(indexers, indexers_dims))
   flat_indexers, tree = tree_util.tree_flatten(new_indexers)
 
   is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
@@ -991,24 +999,34 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
       np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
   )
 
-  if not new_int_indexers_contiguous:  # will be moved to the front
-    batched_dim_in_result = 0
-  else:
-    try:
+  # Note: _batch_indexer will add a slice for the batch dim if the int_indexer
+  # shape is empty, else it will use advanced/int indexing.
+  will_add_int_batcher = idx_is_batched or indexers[0].int_indexer_shape
+
+  if not new_int_indexers_contiguous and will_add_int_batcher:
+    batched_dim_in_result = 0  # will be moved to the front
+  elif any(is_new_int_indexing):
+    if will_add_int_batcher:
+      # _batch_indexer ensures the bdim in the int indexers is at the front
       batched_dim_in_result = is_new_int_indexing.index(True)
-    except ValueError:
-      batched_dim_in_result = ref_dim
+    else:
+      # all int indices are scalars, so the ones before ref_dim disappear
+      assert ref_dim is not None
+      batched_dim_in_result = ref_dim - sum(is_new_int_indexing[:ref_dim])
+  else:
+    batched_dim_in_result = ref_dim
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
       val = batching.broadcast(val, axis_data.size, batched_dim_in_result,
                                axis_data.explicit_mesh_axis)
   else:
+    assert batched_dim_in_result is not None
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 
   # Originally not going to be moved to the front, but now going to be moved to
   # the front.
-  if int_indexers_contiguous and not new_int_indexers_contiguous:
+  if int_indexers_contiguous and not new_int_indexers_contiguous and will_add_int_batcher:
     original_pos = is_int_indexing.index(True)
     array_indexer_shape = new_indexers[0].int_indexer_shape
     array_indexer_len = len(array_indexer_shape)
