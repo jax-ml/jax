@@ -88,6 +88,15 @@ else
     TEST_STRATEGY=""
 fi
 
+# For ft + prebuilt jaxlib jobs, enforce atomic local-wheel handling for
+# jaxlib/jax-cuda${cuda_major_version}-plugin/jax-cuda${cuda_major_version}-pjrt.
+HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS_ARG=()
+if [[ "$FREETHREADED_FLAG_VALUE" == "yes" && "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
+  HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS_ARG=(
+      "--repo_env=HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS=jaxlib,jax-cuda${cuda_major_version}-plugin,jax-cuda${cuda_major_version}-pjrt"
+  )
+fi
+
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
 set +e
@@ -99,6 +108,7 @@ set +e
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      "${HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS_ARG[@]}" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       $OVERRIDE_XLA_REPO \
       --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
@@ -131,6 +141,7 @@ echo "Running multi-accelerator tests (without RBE)..."
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      "${HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS_ARG[@]}" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
       $OVERRIDE_XLA_REPO \
