@@ -37,6 +37,43 @@ function clone_main_xla() {
   export JAXCI_XLA_GIT_DIR=$(pwd)/xla
 }
 
+function maybe_override_xla_cublaslt_default() {
+  local override_mode="${JAXCI_XLA_CUBLASLT_DEFAULT:-default}"
+  if [[ "$override_mode" == "default" || -z "$override_mode" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${JAXCI_XLA_GIT_DIR:-}" ]]; then
+    clone_main_xla
+  fi
+
+  local debug_options_file="${JAXCI_XLA_GIT_DIR}/xla/debug_options_flags.cc"
+  if [[ ! -f "$debug_options_file" ]]; then
+    echo "Expected XLA debug options file not found: $debug_options_file"
+    return 1
+  fi
+
+  case "$override_mode" in
+    off)
+      if grep -q 'opts.set_xla_gpu_enable_cublaslt(false);' "$debug_options_file"; then
+        echo "XLA cuBLASLt default is already disabled in $debug_options_file"
+      elif grep -q 'opts.set_xla_gpu_enable_cublaslt(true);' "$debug_options_file"; then
+        sed -i 's/opts\.set_xla_gpu_enable_cublaslt(true);/opts.set_xla_gpu_enable_cublaslt(false);/' "$debug_options_file"
+        echo "Disabled XLA cuBLASLt default in $debug_options_file"
+      else
+        echo "Could not find xla_gpu_enable_cublaslt default line in $debug_options_file"
+        return 1
+      fi
+      ;;
+    *)
+      echo "Unsupported JAXCI_XLA_CUBLASLT_DEFAULT value: $override_mode"
+      return 1
+      ;;
+  esac
+
+  grep -n 'xla_gpu_enable_cublaslt' "$debug_options_file"
+}
+
 # Clone XLA at HEAD if required.
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   # Clone only if $(pwd)/xla does not exist to avoid failure on re-runs.
@@ -63,6 +100,8 @@ if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
 
   popd
 fi
+
+maybe_override_xla_cublaslt_default
 
 if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
   echo "INFO: Overriding XLA to be read from $JAXCI_XLA_GIT_DIR instead of the"
