@@ -351,6 +351,44 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
     raise NotImplementedError  # Unused
 
 
+@dataclasses.dataclass(frozen=True)
+class DropUnitDimsTransform(MemRefTransform):
+  """Drops unit dimensions at the given positions."""
+  unit_dims: tuple[int, ...]
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, offset = ref_ty.get_strides_and_offset()
+    rank = len(ref_ty.shape)
+    # This will assert that all the relevant dimensions are indeed trivial.
+    new_shape = self.transform_shape(ref_ty.shape)
+    new_strides = [strides[i] for i in range(rank) if i not in self.unit_dims]
+    new_layout = ir.StridedLayoutAttr.get(offset, new_strides)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, ref_ty.element_type, new_layout, ref_ty.memory_space
+    )
+    return memref.reinterpret_cast(
+        new_ref_ty, ref, [], [], [],
+        static_offsets=[offset],
+        static_sizes=new_shape,
+        static_strides=new_strides,
+    )
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    return tuple(v for i, v in enumerate(idx) if i not in self.unit_dims)
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    for d in self.unit_dims:
+      if shape[d] != 1:
+        raise ValueError(
+            f"Expected dimension {d} to have size 1 in shape {shape}, but got"
+            f" {shape[d]}"
+        )
+    return tuple(v for i, v in enumerate(shape) if i not in self.unit_dims)
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    raise NotImplementedError  # Unused
+
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
@@ -1002,18 +1040,45 @@ class LaunchContext:
     # We don't need to do this for gather TMAs, because we'll unroll the
     # transfers ourselves anyway.
     num_squeezed_dims = len(squeezed_dims)
-    if len(slice_shape) > 5 and gather_indices is None:
-      # We can try to collapse all squeezed dims into one.
-      if len(slice_shape) - num_squeezed_dims + 1 > 5:
-        raise ValueError(
-            "Async copies only support striding up to 5 dimensions"
-        )
-      squeezed_dim_strides = tuple(gmem_strides[d] for d in squeezed_dims)
-      collapse = CollapseLeadingIndicesTransform(squeezed_dim_strides)
-      gmem_transform = (*gmem_transform, collapse)
-      dyn_base_indices = collapse.transform_index(dyn_base_indices)
-      slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
-      num_squeezed_dims = 1
+    if gather_indices is None:
+      # Drop all unit-sized dimensions from the transformed shape, except for
+      # the dimensions corresponding to the collapsed squeezed dimensions in
+      # the general case. If all the squeezed dimensions mapped to trivial
+      # dimensions in the original GMEM shape (or there was no squeezed
+      # dimension), then we can also drop that dimension.
+      transformed_gmem_shape = gmem_ref_ty.shape
+      for t in gmem_transform:
+        transformed_gmem_shape = t.transform_shape(transformed_gmem_shape)
+      assert len(transformed_gmem_shape) == len(slice_shape)
+      unit_dims = tuple(
+          i for i, s in enumerate(transformed_gmem_shape) if s == 1
+      )
+      drop = DropUnitDimsTransform(unit_dims)
+      gmem_transform = (*gmem_transform, drop)
+      dyn_base_indices = drop.transform_index(dyn_base_indices)
+      slice_shape = list(drop.transform_shape(slice_shape))
+      # After _prepare_async_copy, squeezed dims have been permuted to the
+      # front (via a TransposeTransform in gmem_transform). So in the
+      # transformed shape, they occupy the first `num_squeezed_dims`
+      # positions.
+      # TODO(bchetioui): move the creation of the `TransposeTransform`
+      # here instead of in _prepare_async_copy.
+      squeezed_dims = tuple(
+          d for d, s in zip(squeezed_dims, transformed_gmem_shape)
+          if s != 1
+      )
+      num_squeezed_dims = len(squeezed_dims)
+      if len(slice_shape) > 5 and squeezed_dims:
+        # We can try to collapse all squeezed dims into one.
+        squeezed_dim_strides = tuple(gmem_strides[d] for d in squeezed_dims)
+        collapse = CollapseLeadingIndicesTransform(squeezed_dim_strides)
+        gmem_transform = (*gmem_transform, collapse)
+        dyn_base_indices = collapse.transform_index(dyn_base_indices)
+        slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
+        num_squeezed_dims = 1
+      if len(slice_shape) > 5:
+        raise ValueError("Async copies only support striding up to 5 dimensions")
+    del squeezed_dims
 
     # pyrefly: ignore[redefinition]
     dyn_base_indices: list[ir.Value] = list(dyn_base_indices)
