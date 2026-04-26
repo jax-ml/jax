@@ -646,13 +646,8 @@ def request_cpu_devices(nr_devices: int):
   themselves if that number is not met.
   """
   if xla_bridge.num_cpu_devices.value < nr_devices:
-    xla_bridge.get_backend.cache_clear()
-    # Don't raise an error for `request_cpu_devices` because we initialize the
-    # backend in OSS during collecting tests in pytest via `device_under_test`.
-    try:
-      config.update("jax_num_cpu_devices", nr_devices)
-    except RuntimeError:
-      pass
+    xla_bridge._clear_backends()
+    config.update("jax_num_cpu_devices", nr_devices)
 
 
 def skip_on_flag(flag_name, skip_value):
