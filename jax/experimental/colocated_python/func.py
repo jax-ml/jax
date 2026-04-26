@@ -26,10 +26,12 @@ import weakref
 
 import jax
 from jax._src import api
+from jax._src import dtypes
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.sharding_impls import physical_sharding
 from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
 from jax.experimental.colocated_python import func_backend
@@ -140,6 +142,125 @@ def _infer_devices_from_args(args: Sequence[Any]) -> xc.DeviceList | None:
   return device_list_set.pop()
 
 
+def is_prng_key_dtype(dtype: jax.numpy.dtype | None) -> bool:
+  """Returns True if the dtype is a PRNG key dtype (e.g. key<threefry2x32>)."""
+  return dtype is not None and dtypes.issubdtype(dtype, dtypes.prng_key)
+
+
+def _prng_key_spec_to_physical_spec(
+    spec: api.ShapeDtypeStruct,
+) -> api.ShapeDtypeStruct:
+  """Converts a PRNG key spec to its physical representation."""
+  phys = jax.eval_shape(jax.random.key_data, spec)
+  return api.ShapeDtypeStruct(
+      shape=phys.shape,
+      dtype=phys.dtype,
+      sharding=physical_sharding(spec, spec.sharding),
+  )
+
+
+def _get_prng_key_info(
+    specs: Sequence[api.ShapeDtypeStruct],
+) -> dict[int, str]:
+  """Returns a mapping from index to PRNG key impl for specs with PRNG dtypes.
+
+  Args:
+    specs: Sequence of ShapeDtypeStruct specs.
+
+  Returns:
+    A dict of integer index in `specs` to the PRNG impl for that spec. If a spec
+    does not have a PRNG key dtype, it is not included in the dict.
+  """
+  return {
+      # NOTE: Accessing the internal `_impl.name` attribute is necessary here to
+      # get the PRNG key implementation name, e.g. "threefry2x32" or "rbg". The
+      # `_impl` object itself contains callables that interact poorly with
+      # `cloudpickle`.
+      i: spec.dtype._impl.name  # pylint: disable=protected-access
+      for i, spec in enumerate(specs)
+      if is_prng_key_dtype(spec.dtype)
+  }
+
+
+def _convert_specs_to_physical(
+    specs: Sequence[api.ShapeDtypeStruct],
+    prng_info: dict[int, str],
+) -> tuple[api.ShapeDtypeStruct, ...]:
+  """Converts PRNG key specs to physical specs, leaving others unchanged."""
+  if not prng_info:
+    return tuple(specs)
+  specs = list(specs)
+  for i in prng_info:
+    specs[i] = _prng_key_spec_to_physical_spec(specs[i])
+  return tuple(specs)
+
+
+def _unwrap_prng_keys(
+    args_leaves: Sequence[Any],
+    prng_info: dict[int, str],
+) -> list[Any]:
+  """Converts PRNG key arrays to their physical representation."""
+  result = list(args_leaves)
+  if not prng_info:
+    return result
+  for i in prng_info:
+    if is_prng_key_dtype(result[i].dtype):
+      result[i] = jax.random.key_data(result[i])
+  return result
+
+
+def _wrap_prng_keys(
+    results: Sequence[Any],
+    prng_info: dict[int, str],
+) -> list[Any]:
+  """Wraps physical output arrays back into PRNG key arrays."""
+  result = list(results)
+  if not prng_info:
+    return result
+  for i, impl in prng_info.items():
+    if not is_prng_key_dtype(result[i].dtype):
+      result[i] = jax.random.wrap_key_data(result[i], impl=impl)
+  return result
+
+
+def _make_prng_wrapped_fun(
+    fun: Callable[..., Any],
+    prng_in_info: dict[int, str],
+    prng_out_info: dict[int, str],
+) -> Callable[..., Any]:
+  """Wraps a function to handle PRNG key conversion on the worker side.
+
+  On the worker, IFRT passes physical arrays for PRNG key inputs.  This wrapper
+  converts them back to PRNG key arrays before calling the user function, and
+  converts any PRNG key outputs back to physical arrays before returning them to
+  IFRT.
+
+  Args:
+    fun: The original user function.
+    prng_in_info: Mapping from input leaf index to PRNG impl.
+    prng_out_info: Mapping from output leaf index to PRNG impl.
+
+  Returns:
+    A wrapped function that handles PRNG conversion transparently.
+  """
+
+  @wraps(fun)
+  def wrapped_fun(*args, **kwargs):
+    # Wrap physical inputs to PRNG keys before calling the user function.
+    args_leaves, treedef = tree_util.tree_flatten((args, kwargs))
+    args_leaves = _wrap_prng_keys(args_leaves, prng_in_info)
+    args, kwargs = tree_util.tree_unflatten(treedef, args_leaves)
+
+    result = fun(*args, **kwargs)
+
+    # Unwrap PRNG key outputs to physical before returning to IFRT.
+    result_leaves, out_treedef = tree_util.tree_flatten(result)
+    result_leaves = _unwrap_prng_keys(result_leaves, prng_out_info)
+    return tree_util.tree_unflatten(out_treedef, result_leaves)
+
+  return wrapped_fun
+
+
 def _compile_to_executable(
     name: str,
     fun: Callable[..., Any],
@@ -150,6 +271,18 @@ def _compile_to_executable(
     devices: xc.DeviceList,
 ) -> Callable[..., Any]:
   """Compiles a Python function into a runtime executable."""
+  # PRNG key dtypes are not supported by IFRT's colocated python programs.
+  # Convert them to their physical representation for compilation, and
+  # wrap/unwrap at the function boundary.
+  prng_in_info = _get_prng_key_info(in_specs_leaves)
+  prng_out_info = _get_prng_key_info(out_specs_leaves)
+  in_specs_leaves = _convert_specs_to_physical(in_specs_leaves, prng_in_info)
+  out_specs_leaves = _convert_specs_to_physical(out_specs_leaves, prng_out_info)
+
+  # Wrap the user function to handle PRNG key conversion on the worker side.
+  if prng_in_info or prng_out_info:
+    fun = _make_prng_wrapped_fun(fun, prng_in_info, prng_out_info)
+
   fun_and_specialization = (
       fun,
       in_specs_treedef,
@@ -178,10 +311,14 @@ def _compile_to_executable(
 
     def call(*args, **kwargs):
       args_leaves = tree_util.tree_leaves((args, kwargs))
+      # Unwrap PRNG key inputs to physical before passing to IFRT.
+      args_leaves = _unwrap_prng_keys(args_leaves, prng_in_info)
       execute_result = loaded_executable.execute_sharded(
           args_leaves, with_tokens=False
       )
       results = execute_result.consume_with_handlers(out_handlers)
+      # Wrap physical outputs back to PRNG key arrays.
+      results = _wrap_prng_keys(results, prng_out_info)
       return tree_util.tree_unflatten(out_specs_treedef, results)
 
     return call
@@ -189,7 +326,23 @@ def _compile_to_executable(
     # TODO(hyeontaek): Implement colocated Python support in McJAX and remove
     # this fallback path.
     if "PjRtCompiler requires an HloProgram" in str(e):
-      return _deserialize(pickled_function)[0]
+      deserialized_fun = _deserialize(pickled_function)[0]
+
+      @wraps(deserialized_fun)
+      def fallback_call(*args, __deserialized_fun=deserialized_fun, **kwargs):
+        # Unwrap PRNG key inputs to physical before calling the user function.
+        args_leaves, in_treedef = tree_util.tree_flatten((args, kwargs))
+        args_leaves = _unwrap_prng_keys(args_leaves, prng_in_info)
+        args, kwargs = tree_util.tree_unflatten(in_treedef, args_leaves)
+
+        results = __deserialized_fun(*args, **kwargs)
+
+        # Wrap physical outputs back to PRNG key arrays.
+        results_leaves, out_treedef = tree_util.tree_flatten(results)
+        results_leaves = _wrap_prng_keys(results_leaves, prng_out_info)
+        return tree_util.tree_unflatten(out_treedef, results_leaves)
+
+      return fallback_call
     raise
 
 
