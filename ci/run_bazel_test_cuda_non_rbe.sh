@@ -88,6 +88,36 @@ else
     TEST_STRATEGY=""
 fi
 
+nightly_binary_smoke_retval=0
+
+# Extract expected version and packages from local wheels if available.
+# This prevents passing data opaquely via CI environments.
+JAXCI_EXPECTED_BINARY_VERSION="${JAXCI_EXPECTED_BINARY_VERSION:-$(python ci/parse_wheel_metadata.py --wheel-dir=dist --get-version)}"
+JAXCI_EXPECTED_BINARY_PACKAGES="${JAXCI_EXPECTED_BINARY_PACKAGES:-$(python ci/parse_wheel_metadata.py --wheel-dir=dist --get-packages)}"
+
+if [[ -n "${JAXCI_EXPECTED_BINARY_VERSION:-}" ]]; then
+  echo "Running nightly binary smoke test..."
+  bazel test 
+        --config=$TEST_CONFIG \
+        --config=cuda_libraries_from_stubs \
+        --config=hermetic_cuda_umd \
+        $CACHE_OPTION \
+        --test_env=JAXCI_EXPECTED_BINARY_VERSION="$JAXCI_EXPECTED_BINARY_VERSION" \
+        --test_env=JAXCI_EXPECTED_BINARY_PACKAGES="$JAXCI_EXPECTED_BINARY_PACKAGES" \
+        --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
+        --action_env=NCCL_DEBUG=WARN \
+        --test_output=all \
+        --color=yes \
+        --local_test_jobs=1 \
+        //tests:nightly_binary_smoke_test_gpu
+
+  nightly_binary_smoke_retval=$?
+fi
+
+if [[ $nightly_binary_smoke_retval -ne 0 ]]; then
+  exit $nightly_binary_smoke_retval
+fi
+
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
 set +e
