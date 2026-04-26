@@ -259,9 +259,10 @@ class Accumulator:
 
   def finalize(self):
     val = self.val 
-    del self.val
     assert val is not already_finalized
-    return self.ty.zero() if val is never_set else val
+    # del self.val
+    # self.val = already_finalized
+    return lift(self.ty.zero()) if val is never_set else val
 
 class NullAccumulator:
   def __init__(self, ty):
@@ -616,4 +617,4 @@ def fun_with_nested_calls_2(x):
   return jit_call(bar, x)
 
 fun_with_nested_calls_2(2.0)
-# grad(fun_with_nested_calls_2)(2.0)  # TODO
+grad(fun_with_nested_calls_2)(2.0)  # TODO
