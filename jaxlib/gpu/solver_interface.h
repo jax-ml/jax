@@ -117,21 +117,6 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, OrgqrBufferSize);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Orgqr);
 #undef JAX_GPU_SOLVER_Orgqr_ARGS
 
-// Householder multiply: ormqr/unmqr
-
-#define JAX_GPU_SOLVER_OrmqrBufferSize_ARGS(Type, ...) \
-  gpusolverDnHandle_t handle, gpublasSideMode_t side,  \
-      gpublasOperation_t trans, int m, int n, int k
-JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, OrmqrBufferSize);
-#undef JAX_GPU_SOLVER_OrmqrBufferSize_ARGS
-
-#define JAX_GPU_SOLVER_Ormqr_ARGS(Type, ...)                           \
-  gpusolverDnHandle_t handle, gpublasSideMode_t side,                  \
-      gpublasOperation_t trans, int m, int n, int k, Type *a, int lda, \
-      Type *tau, Type *c, int ldc, Type *workspace, int lwork, int *info
-JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Ormqr);
-#undef JAX_GPU_SOLVER_Ormqr_ARGS
-
 // Cholesky decomposition: potrf
 
 #define JAX_GPU_SOLVER_PotrfBufferSize_ARGS(Type, ...) \

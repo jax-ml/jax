@@ -22,13 +22,6 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 template <typename T>
-gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
-                                         int n, int k, int lda,
-                                         int64_t a_stride, const T* a,
-                                         const T* tau, T* out, bool left,
-                                         bool transpose);
-
-template <typename T>
 gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
                                          int n, int k, int lda,
                                          int64_t a_stride, const T* a,
