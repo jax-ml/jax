@@ -141,6 +141,10 @@ import jaxlib.gpu_linalg as gpu_linalg  # noqa: F401
 
 import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton  # noqa: F401
+try:
+  import jaxlib.gpu_aiter as gpu_aiter  # noqa: F401
+except Exception:
+  gpu_aiter = None  # type: ignore
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
 

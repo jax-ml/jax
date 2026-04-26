@@ -103,6 +103,7 @@ pytype_library(
     name = "jaxlib_files",
     srcs = [
         "cpu_sparse.py",
+        "gpu_aiter.py",
         "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
