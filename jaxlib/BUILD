@@ -1394,7 +1394,9 @@ nanobind_pywrap_extension(
         "@xla//xla/python/ifrt/ir:ifrt_ir_program",
         "@xla//xla/python/ifrt/ir:program_memory_tracer",
         "@xla//xla/python/ifrt/ir/conversions/mpmd:lower_to_ifrt",
+        "@xla//xla/python/ifrt/ir/transforms:ifrt_create_compile_options_pass",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
+        "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:statusor",
     ],
 )

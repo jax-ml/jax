@@ -64,11 +64,13 @@ limitations under the License.
 #include "xla/python/ifrt/ir/conversions/mpmd/lower_to_ifrt.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
+#include "xla/python/ifrt/ir/transforms/ifrt_create_compile_options_pass.h"
 #include "xla/python/ifrt/mpmd_executable.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/version.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -95,9 +97,8 @@ using ::mlir::mpmd::PartitioningResult;
 using ::mlir::mpmd::SplitFragmentType;
 using ::mlir::mpmd::SpmdTensorPartitionSpec;
 using ::mlir::mpmd::UserAssignmentMap;
-using ::xla::ifrt::mpmd::EnvOptionsOverride;
-using ::xla::ifrt::mpmd::GetCompileOptions;
-using ::xla::ifrt::mpmd::LowerToIfrt;
+
+static constexpr int kDefaultThresholdForParameterTupling = 2000;
 
 // Wrapper of PartitioningResult, which stores MlirModules instead of ModuleOps.
 struct PartitioningResultWrapper {
@@ -145,6 +146,38 @@ absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
     unwrapped_devices.push_back(d->device());
   }
   return py_client->ifrt_client()->MakeDeviceList(unwrapped_devices);
+}
+
+#if JAX_IFRT_VERSION_NUMBER >= 54
+absl::StatusOr<nb::dict> GetCompileOptions(
+    MlirModule module,
+    const absl::flat_hash_map<std::string, const xla::ifrt::EnvOptionsOverride>&
+        compile_options_overrides,
+    std::optional<int> threshold_for_parameter_tupling) {
+  auto module_op = unwrap(module);
+  TF_ASSIGN_OR_RETURN(
+      auto compile_options_map,
+      xla::ifrt::GetCompileOptions(module_op, compile_options_overrides,
+                                   threshold_for_parameter_tupling.value_or(
+                                       kDefaultThresholdForParameterTupling)));
+#else
+absl::StatusOr<nb::dict> GetCompileOptions(
+    MlirModule module,
+    const absl::flat_hash_map<std::string,
+                              const xla::ifrt::mpmd::EnvOptionsOverride>&
+        compile_options_overrides,
+    std::optional<int> threshold_for_parameter_tupling) {
+  auto module_op = unwrap(module);
+  TF_ASSIGN_OR_RETURN(
+      auto compile_options_map,
+      xla::ifrt::mpmd::GetCompileOptions(module_op, compile_options_overrides));
+#endif
+  nb::dict out;
+  for (const auto& [name, options] : compile_options_map) {
+    out[nb::cast(name)] =
+        nb::steal<nb::object>(nanobind::cast(options).release().ptr());
+  }
+  return out;
 }
 
 // Calls `Compiler::CompileAndLoad()` and returns
@@ -400,24 +433,13 @@ NB_MODULE(_sdy_mpmd, m) {
   m.def(
       "lower_to_ifrt",
       [](MlirModule module) -> void {
-        return xla::ThrowIfError(LowerToIfrt(unwrap(module)));
+        return xla::ThrowIfError(xla::ifrt::mpmd::LowerToIfrt(unwrap(module)));
       },
       nb::arg("module"));
 
-  m.def("get_compile_options",
-        [](MlirModule c_module,
-           const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-               compile_options_overrides) -> nb::dict {
-          auto module = unwrap(c_module);
-          auto compile_options_map = ValueOrThrow(
-              GetCompileOptions(module, compile_options_overrides));
-          nb::dict out;
-          for (const auto& [name, options] : compile_options_map) {
-            out[nb::cast(name)] =
-                nb::steal<nb::object>(nanobind::cast(options).release().ptr());
-          }
-          return out;
-        });
+  m.def("get_compile_options", xla::ValueOrThrowWrapper(GetCompileOptions),
+        nb::arg("module"), nb::arg("compile_options_overrides"),
+        nb::arg("threshold_for_parameter_tupling").none() = std::nullopt);
 
   m.def("compile_mpmd", xla::ValueOrThrowWrapper(CompileMpmd),
         nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
