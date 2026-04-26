@@ -393,6 +393,7 @@ rediraffe_redirects = {
   "jax.extend.ffi.rst": "jax.ffi.rst",
   "Custom_Operation_for_GPUs.md": "ffi.md",
   "notebooks/quickstart.md": "quickstart.md",
+  "gradient-checkpointing.md": "notebooks/autodiff_remat.md",
   "quickstart.md": "notebooks/thinking_in_jax.md",
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
