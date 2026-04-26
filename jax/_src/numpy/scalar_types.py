@@ -57,13 +57,19 @@ class _ScalarMeta(type):
   def __instancecheck__(self, instance: Any) -> bool:
     return isinstance(instance, self.dtype.type)
 
+  def __subclasscheck__(self, subclass: type) -> bool:
+    return issubclass(subclass, self.dtype.type)
+
 def _abstractify_scalar_meta(x):
   raise TypeError(f"JAX scalar type {x} cannot be interpreted as a JAX array.")
 core.pytype_aval_mappings[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
-  meta = _ScalarMeta(np_scalar_type.__name__, (object,),
-                     {"dtype": np.dtype(np_scalar_type)})
+  meta = _ScalarMeta(
+    np_scalar_type.__name__,
+    (np_scalar_type.__mro__[0],),
+    {"dtype": np.dtype(np_scalar_type)},
+  )
   meta.__module__ = _PUBLIC_MODULE_NAME
   meta.__doc__ =\
   f"""A JAX scalar constructor of type {np_scalar_type.__name__}.
