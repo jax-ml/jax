@@ -69,9 +69,12 @@ def clean_dist_directory():
         sys.exit(1)
 
 
-def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
+def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path, local_aiter_path=""):
     bazel_options = (
         f"--bazel_options=--override_repository=xla={xla_path}" if xla_path else ""
+    )
+    aiter_option = (
+        f"--bazel_options=--repo_env=LOCAL_AITER_PATH={local_aiter_path}" if local_aiter_path else ""
     )
     clang_option = f"--clang_path={clang_path}" if clang_path else ""
     build_command = [
@@ -84,6 +87,7 @@ def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
         "--rocm_version=60",
         f"--rocm_amdgpu_targets={rocm_target}",
         bazel_options,
+        aiter_option,
         "--verbose"
     ]
 
@@ -128,12 +132,20 @@ def main():
     parser.add_argument(
         "--xla-path", type=str, default="", help="Specify the XLA repository path"
     )
+    parser.add_argument(
+        "--local-aiter-path", type=str, default="",
+        help="Path to locally-built AITER shared libraries and headers",
+    )
 
     args = parser.parse_args()
 
     if args.xla_path:
         args.xla_path = os.path.abspath(args.xla_path)
         print(f"Converted XLA path to absolute: {args.xla_path}")
+
+    if args.local_aiter_path:
+        args.local_aiter_path = os.path.abspath(args.local_aiter_path)
+        print(f"Converted local AITER path to absolute: {args.local_aiter_path}")
 
     rocm_version = get_rocm_version()
     if not rocm_version:
@@ -156,7 +168,8 @@ def main():
         f"Building JAX and XLA with ROCm version: {rocm_version}, Target: {rocm_target}"
     )
     build_jax_xla(
-        args.xla_path, rocm_version, rocm_target, args.use_clang, args.clang_path
+        args.xla_path, rocm_version, rocm_target, args.use_clang, args.clang_path,
+        args.local_aiter_path,
     )
 
     install_wheel()

@@ -21,6 +21,7 @@ import argparse
 import functools
 import os
 import pathlib
+import shutil
 import tempfile
 
 from python.runfiles import runfiles
@@ -189,6 +190,7 @@ def prepare_wheel_rocm(
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/rocm/_aiter.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_linalg.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_solver.{pyext}",
@@ -201,6 +203,27 @@ def prepare_wheel_rocm(
       ],
   )
 
+  required_aiter_libs = {"libmha_fwd.so", "libmha_bwd.so"}
+  if wheel_sources:
+    found = set()
+    for src in wheel_sources:
+        basename = os.path.basename(src)
+        if basename in required_aiter_libs:
+            shutil.copy(src, plugin_dir / basename)
+            found.add(basename)
+
+    missing = required_aiter_libs - found
+    if missing:
+        raise RuntimeError(
+            f"AITER shared libraries missing from wheel sources: "
+            f"{', '.join(sorted(missing))}. "
+            f"The ROCm plugin wheel will not work without them."
+        )
+  else:
+    raise RuntimeError(
+        "wheel_sources is empty; cannot build ROCm plugin wheel "
+        "without AITER shared libraries (libmha_fwd.so, libmha_bwd.so)"
+    )
 
 # Build wheel for cuda kernels
 if args.enable_rocm:

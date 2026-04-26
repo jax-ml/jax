@@ -239,6 +239,7 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",
+        "//third_party/aiter:aiter_runtime_sos",
     ]),
 )
 
