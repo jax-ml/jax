@@ -326,6 +326,7 @@ def _run_scoped_resource_estimator(
           barrier_counts=collections.Counter(
               [mgpu.ClusterBarrier(
                   collective_dims, aval.dtype.num_arrivals, num_barriers,
+                  orders_tensor_core=aval.dtype.orders_tensor_core,
                   leader_tracked=aval.dtype.leader_tracked,
               )]
           )
@@ -3361,6 +3362,7 @@ def _run_scoped_lowering_rule(
             ctx.module_ctx.reserve_barrier(
                 mgpu.ClusterBarrier(
                     collective_dims, aval.dtype.num_arrivals, num_barriers,
+                    orders_tensor_core=aval.dtype.orders_tensor_core,
                     leader_tracked=aval.dtype.leader_tracked,
                 )
             )

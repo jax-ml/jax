@@ -332,6 +332,8 @@ class ClusterBarrier:
   collective_dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]]
   arrival_count: int = 1
   num_barriers: int = 1
+  _: dataclasses.KW_ONLY
+  orders_tensor_core: bool = False
   leader_tracked: bool = False
 
 @dataclasses.dataclass(frozen=True)
@@ -501,10 +503,10 @@ def _construct_smem_reftree(
             else utils.BarrierRef.initialize
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
-      case ClusterBarrier(collective_dims, arrival_count, num_barriers, leader_tracked):
+      case ClusterBarrier(collective_dims, arrival_count, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
             barrier_memref(num_barriers), arrival_count, collective_dims,
-            cluster_shape, leader_tracked=leader_tracked
+            cluster_shape, leader_tracked=ref_ty.leader_tracked
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
