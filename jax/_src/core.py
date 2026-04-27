@@ -664,6 +664,8 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
+    if prev_trace is not eval_trace:
+      prev_trace.bind_count_ref[0] += 1
     trace_ctx.set_trace(eval_trace)
     try:
       return self.bind_with_trace(prev_trace, args, avals, params)
@@ -783,13 +785,14 @@ def check_avals_context_mesh(avals, prim_name):
 TraceType = TypeVar('TraceType', bound='Trace')
 
 class Trace:
-  __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low")
+  __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low", "bind_count_ref")
 
   def __init__(self):
     self._invalidated = False
     # We frequently need a weakref to a trace, so let's precompute one.
     self._weakref = weakref.ref(self)
     self.requires_low = True
+    self.bind_count_ref = [0]
 
   def stage_value(self, val):
     """Lifts a value into a trace.

@@ -17,6 +17,8 @@ Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
 from absl.testing import absltest
+import jax
+from jax import lax
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
 
@@ -86,6 +88,24 @@ class MonitoringTest(absltest.TestCase):
         observed_values,
         [1, 2.5, 5e5],
     )
+
+  def test_bind_calls_metric(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      scalars.append((key, value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    def f(x):
+      return lax.sin(x) + lax.cos(x)
+
+    jax.make_jaxpr(f)(1.0)
+
+    bind_calls = [s for s in scalars if s[0] == "/jax/core/bind_calls"]
+    self.assertNotEmpty(bind_calls)
+    self.assertEqual(bind_calls[0][1], 3)
+    self.assertIn("fun_name", bind_calls[0][2])
 
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
