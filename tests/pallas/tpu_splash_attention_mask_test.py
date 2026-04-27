@@ -2384,8 +2384,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
   @parameterized.product(
     shape=[(128, 128), (256, 256), (256, 512),(512, 256), (512, 512)],
     seed=[0, 1, 2],
-    mask_type=['causal', 'random', 'full'],
-            )
+    mask_type=['causal', 'random', 'full'],)
   def test_numpy_mask_jit_vs_eager(self, shape, seed,mask_type):
     q_len, kv_len = shape
     batch_size = 2
@@ -2396,12 +2395,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     k = jax.random.normal(jax.random.key(seed + 1), (batch_size, num_heads, kv_len, head_dim))
     v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
 
-    if mask_type == 'causal':
-        dense_mask = np.tril(np.ones((q_len, kv_len), dtype=np.bool_))
-    elif mask_type == 'random':
-        dense_mask = mask_lib.make_random_mask((q_len, kv_len), 0.5, seed=seed)
-    elif mask_type == 'full':
-        dense_mask = np.ones((q_len, kv_len), dtype=np.bool_)
+    mask_factories = {
+        'causal': lambda: np.tril(np.ones((q_len, kv_len), dtype=np.bool_)),
+        'random': lambda: mask_lib.make_random_mask((q_len, kv_len), 0.5, seed=seed),
+        'full': lambda: np.ones((q_len, kv_len), dtype=np.bool_),
+    }
+    dense_mask = mask_factories[mask_type]()
 
     def run_attention(query, key, value, mask_array):
         mask = mask_lib.NumpyMask(array=mask_array)

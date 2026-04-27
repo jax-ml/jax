@@ -77,40 +77,42 @@ def make_jitted_mask_splash_attention_fn_and_args():
   block_sizes = splash.BlockSizes.get_default()
 
   @jax.jit
-  def fn(q, k, v):
+  def fn(q, k, v,mask_array):
     mask = mask_lib.NumpyMask(
-        mask_lib.make_random_mask((q_seq_len, kv_seq_len), sparsity=0.5, seed=0)
+        mask_array
     )
     mask = mask_lib.MultiHeadMask(tuple(mask for _ in range(num_q_heads)))
     attn_fn = splash.make_splash_mqa_single_device(mask, block_sizes=block_sizes)
     return attn_fn(q, k, v)
 
-  return fn, (q, k, v)
+  mask_array = mask_lib.make_random_mask((q_seq_len, kv_seq_len), sparsity=0.5, seed=0)
+
+  return fn, (q, k, v, mask_array)
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def test_pallas_mask_mqa_splash_attention_trace(state):
-  attn, (q, k, v) = make_jitted_mask_splash_attention_fn_and_args()
+  attn, (q, k, v, mask_array) = make_jitted_mask_splash_attention_fn_and_args()
 
   while state:
-    _ = attn.trace(q, k, v)
+    _ = attn.trace(q, k, v, mask_array)
     clear_caches(state)
 
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def test_pallas_mask_mqa_splash_attention_trace_no_cache_clear(state):
-  attn, (q, k, v) = make_jitted_mask_splash_attention_fn_and_args()
+  attn, (q, k, v, mask_array) = make_jitted_mask_splash_attention_fn_and_args()
 
   while state:
-    _ = attn.trace(q, k, v)
+    _ = attn.trace(q, k, v, mask_array)
 
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def test_pallas_mask_mqa_splash_attention_lower(state):
-  attn, (q, k, v) = make_jitted_mask_splash_attention_fn_and_args()
-  traced = attn.trace(q, k, v)
+  attn, (q, k, v, mask_array) = make_jitted_mask_splash_attention_fn_and_args()
+  traced = attn.trace(q, k, v, mask_array)
 
   while state:
     _ = traced.lower(lowering_platforms=("tpu",))
@@ -120,8 +122,8 @@ def test_pallas_mask_mqa_splash_attention_lower(state):
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def test_pallas_mask_mqa_splash_attention_lower_no_cache_clear(state):
-  attn, (q, k, v) = make_jitted_mask_splash_attention_fn_and_args()
-  traced = attn.trace(q, k, v)
+  attn, (q, k, v, mask_array) = make_jitted_mask_splash_attention_fn_and_args()
+  traced = attn.trace(q, k, v, mask_array)
 
   while state:
     _ = traced.lower(lowering_platforms=("tpu",))
