@@ -1659,7 +1659,7 @@ class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
   constvar_to_val: dict[Var, Any]
-  tracing_eqns: list[ReferenceType[TracingEqn] | Callable[[], TracingEqn]]
+  tracing_eqns: list[ReferenceType[TracingEqn] | TracingEqn]
   invars: list[Var]
   effects: core.Effects
   debug_info: core.DebugInfo | None
@@ -1681,13 +1681,13 @@ class JaxprStackFrame:
 
   def add_eqn(self, eqn: TracingEqn):
     assert isinstance(eqn, TracingEqn)
-    r = (lambda: eqn) if (eqn.effects or not self.auto_dce) else ref(eqn)
+    r = eqn if (eqn.effects or not self.auto_dce) else ref(eqn)
     self.tracing_eqns.append(r)
 
   def get_eqns(self):
     eqns = []
     for tracing_eqn in self.tracing_eqns:
-      e = tracing_eqn()
+      e = tracing_eqn() if isinstance(tracing_eqn, ReferenceType) else tracing_eqn
       if e is None: continue
       eqns.append(JaxprEqn(
           [t.val for t in e.in_tracers],
