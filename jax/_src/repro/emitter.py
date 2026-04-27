@@ -426,6 +426,7 @@ def _():
 @dataclasses.dataclass
 class EmittedFunction:
 
+  # The source, including the def line.
   lines: list[str]
   # The immediate externals are those referenced in the `lines`, using
   # global variable names
@@ -481,7 +482,7 @@ class EmitGlobalContext:
   var_for_val: dict[int, str] # id(val) -> var_name
   var_index: Iterator[int]
 
-  # Cache here the emitted function body, for user functions
+  # Cache here the emitted function body, for user functions, by fun.id
   emitted_functions: dict[int, EmittedFunction]
 
   # Dumped functions. TODO: emit above means that we generated the source
@@ -498,7 +499,7 @@ class EmitGlobalContext:
     self.var_name_for_val_dict: dict[int, str] = {}
     self.var_name_index = itertools.count()
     self.emit_reduction_strategy = strategy
-    self.emitted_functions = {}
+    self.emitted_functions: dict[int, EmittedFunction] = {}  # By fun_def.id
     self.dumped_functions = {}
     self.current_traverse_value_context = None
 
@@ -526,16 +527,6 @@ class EmitGlobalContext:
       self.var_name_for_val_dict[v_id] = vn
     return vn
 
-  def emit_function_def(self, fun_def: FunctionDef,
-                        parent_ctx: Union["EmitFunctionDefContext", None],
-                        ) -> EmittedFunction:
-    res = self.emitted_functions.get(fun_def.id)
-    if res is None:
-      emit_ctx = EmitFunctionDefContext(self, parent_ctx)
-      res = self.emitted_functions[fun_def.id] = emit_ctx.emitted_function
-      emit_ctx.norm_context = fun_def.normalizer_ctx
-      emit_ctx.emit_function_def(fun_def)
-    return res
 
 # A Path is a string representation of an indexer into a pytree value.
 Path = str
@@ -554,12 +545,12 @@ class EmitFunctionDefContext:
 
     # We map some value definitions to a value name
     self.named_values: dict[str, str] = {}
-    self.indent: int = 0
     self.current_traceback: Union["Traceback", None] = None  # type: ignore  # noqa: F821
 
-  def emit_line(self, l: str):
-    the_line = " " * self.indent + l
-    self.emitted_function.lines.append(the_line)
+  def emit_line(self, l: str, indent: bool = True):
+    if indent:
+      l = "  " + l
+    self.emitted_function.lines.append(l)
 
   def new_local_name(self, *, prefix="v") -> str:
     return f"{prefix}_{next(self.local_name_index)}"
@@ -673,7 +664,8 @@ class EmitFunctionDefContext:
 
     from jax._src import literals
     if isinstance(v, (int, float, bool, str, complex)):
-      if not isinstance(v, (enum.IntEnum, literals.TypedFloat, literals.TypedComplex, literals.TypedInt)):
+      if not isinstance(v, (enum.IntEnum, literals.TypedFloat,
+                            literals.TypedComplex, literals.TypedInt)):
         return v_is_leaf(repr(v))
 
     # Look up the exact value in the definitions. This is useful, e.g., in
@@ -723,7 +715,15 @@ class EmitFunctionDefContext:
         self.emitted_function.immediate_externals[id(f)] = f
         self.emitted_function.all_externals[id(f)] = f
       return
-    f_emitted = self.global_ctx.emit_function_def(f.function_def, self)
+
+    f_emitted = self.global_ctx.emitted_functions.get(f.function_def.id)
+    if f_emitted is None:
+      emit_ctx = EmitFunctionDefContext(self.global_ctx, self)
+      f_emitted = emit_ctx.emitted_function
+      self.global_ctx.emitted_functions[f.function_def.id] = f_emitted
+      emit_ctx.norm_context = f.function_def.normalizer_ctx
+      emit_ctx.emit_function_def(f.function_def)
+
     # We emit f here if we are in the main function, or if
     # any of f's externals are defined here. Otherwise, we will emit these
     # externals in some enclosing function.
@@ -746,6 +746,7 @@ class EmitFunctionDefContext:
         )
       else:
         self.global_ctx.dumped_functions[f.python_name()] = f.fun_info
+      self.emit_line("", indent=False)
       for bl in f_emitted.lines:
         self.emit_line(bl)
       return
@@ -762,8 +763,12 @@ class EmitFunctionDefContext:
     """
     self.global_ctx.set_current_traverse_value_context(fun_def, True)
     self.current_traceback = fun_def.traceback
-    self.emit_line("")
-    self.emit_line(f"# body from invocation {fun_def} for {fun_def.func.fun_info}")
+    assert not self.emitted_function.lines
+    if not tracker._thread_local_state.flags.dedup:
+      comment = f" from invocation {fun_def}"
+    else:
+      comment = ""
+    self.emit_line(f"# body{comment} for {fun_def.func.fun_info}", indent=False)
 
     arg_names = [self.new_local_name() for _ in fun_def.args]  # type: ignore
     args_str = ", ".join(arg_names)
@@ -772,8 +777,8 @@ class EmitFunctionDefContext:
         args_str += ", "
       args_str += "*, " + ", ".join(fun_def.kwargs.keys())
 
-    self.emit_line(f"def {self.global_ctx.var_name_for_val(fun_def.func)}({args_str}):")
-    self.indent += 2
+    func_name = self.global_ctx.var_name_for_val(fun_def.func)
+    self.emit_line(f"def {func_name}({args_str}):", indent=False)
 
     paths: list[tuple[Path, Any]] = []
     safe_map(lambda an, a: self.traverse_value(a, an, paths), arg_names, fun_def.args)  # type: ignore
@@ -813,11 +818,15 @@ class EmitFunctionDefContext:
     self.traverse_value(result, "", result_paths)
 
     overall_res_name = self.new_local_name()
+    if not tracker._thread_local_state.flags.dedup:
+      comment = f"  # {stmt}"
+    else:
+      comment = ""
     if tracker.func_api_name(stmt.func) == "jax_repro_collect":
       # We introduced jax_repro_collect ourselves, for explicit collection
-      self.emit_line(f"{overall_res_name} = {args_str}()  # {stmt}")
+      self.emit_line(f"{overall_res_name} = {args_str}(){comment}")
     else:
-      self.emit_line(f"{overall_res_name} = {callee_str}({args_str})  # {stmt}")
+      self.emit_line(f"{overall_res_name} = {callee_str}({args_str}){comment}")
     for pth, r in result_paths:
       self.define_value(r, overall_res_name + pth)
     return overall_res_name
@@ -1003,6 +1012,7 @@ def collect(fn: Callable, repro_name: str | None) -> Callable:
   return _fn_with_repro_collection
 
 
+# TODO: fix this for dedup
 _loc_re = re.compile(r"# body from invocation .* USER\[(?P<name>.*?)\] for (?P<func_info>.*)")
 
 def load(repro_source: str, repro_path: pathlib.Path) -> Callable[[], Any]:

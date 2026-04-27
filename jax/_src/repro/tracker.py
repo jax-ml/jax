@@ -126,6 +126,8 @@ class ReproFlags:
           self.check_repro_emit = fvalue_to_bool()
         elif f == "inline_runtime":
           self.inline_runtime = fvalue_to_bool()
+        elif f == "dedup":
+          self.dedup = fvalue_to_bool()
         else:
           raise NotImplementedError(f"--jax_repro_flags: {f}")
 
@@ -1449,4 +1451,6 @@ TODO:
   we get collision on ids because the collector reset the tracker state
 * I want to compress the stack trace, there are now 4 frames added for each
   transition from USER to JAX.
+* we don't handle xla_metadata.set_xla_metadata() context manager
+* finish implementing the deduplication of user functions
 """

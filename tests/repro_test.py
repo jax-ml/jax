@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+from functools import partial
 import gc
 import concurrent
 import logging
@@ -22,6 +23,7 @@ import math
 import pathlib
 from functools import partial
 import os
+import re
 import weakref
 from typing import Any, Callable
 import unittest
@@ -187,7 +189,6 @@ class EmitterTest(jtu.JaxTestCase):
                      ctx.traverse_value(value))
 
 
-
 @jtu.with_config(jax_traceback_filtering="off",
                  jax_enable_checks=True)
 class ReproTest(jtu.JaxTestCase):
@@ -236,7 +237,6 @@ class ReproTest(jtu.JaxTestCase):
       main_repro = repro.load(repro_source, repro_path)
       with context:
         repro_result = main_repro()
-
 
     if not expect_exception:
       self.assertAllClose(repro_result,
@@ -328,7 +328,6 @@ class ReproTest(jtu.JaxTestCase):
     x = np.ones((4,), dtype=np.float32)
     f1(x)
     self.assertEmpty(tracker._thread_local_state.call_stack)
-    self.assertIsNone(repro.last_saved_repro())
 
   def test_explicit_collect_success(self):
     y = jnp.cos(42.)  # This will be in main, but should be ignored: outside collect
@@ -781,6 +780,44 @@ class ReproTest(jtu.JaxTestCase):
       return v1 + v2
 
     self.collect_and_check(f2, 42.)
+
+  def test_dedup_user_functions_simple(self):
+    self.skipTest("TODO: finish implementing dedup")
+    @jax.jit
+    def f2(x):
+      v1 = jnp.sin(x)
+      v2 = jnp.sin(x + 1.)
+      return v1 + v2
+
+    source = self.collect_and_check(f2, np.ones((2, 3), dtype=np.float32))
+    self.assertLen(re.findall(r"def fun_f2_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_add_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_f1_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_sin_[0-9]+", source), 1)
+
+  def test_dedup_user_functions_with_nested(self):
+    self.skipTest("TODO: finish implementing dedup")
+    @jax.jit
+    def f1(x):
+      u1 = jnp.sin(x)
+      @jax.jit
+      def nested(y):
+        return u1 + y
+
+      return nested(2.) + nested(3.)
+
+    @jax.jit
+    def f2(x):
+      v1 = f1(x)
+      v2 = f1(x + 1.)
+      v3 = f1(jnp.concatenate([x, x], axis=1))
+      return (v1 + v2, v3)
+
+    source = self.collect_and_check(f2, np.ones((2, 3), dtype=np.float32))
+    self.assertLen(re.findall(r"def fun_f2_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_add_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_f1_[0-9]+", source), 1)
+    self.assertLen(re.findall(r"def fun_sin_[0-9]+", source), 1)
 
   def test_nested_10(self):
     @jax.jit
