@@ -724,7 +724,8 @@ def cos(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   return cos_p.bind(x, accuracy=accuracy)
 
 @export
-def atan2(x: ArrayLike, y: ArrayLike) -> Array:
+def atan2(x: ArrayLike, y: ArrayLike, *,
+          accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise two-term arc tangent: :math:`\mathrm{atan}({x \over y})`.
 
   This function lowers directly to the `stablehlo.atan2`_ operation.
@@ -733,6 +734,12 @@ def atan2(x: ArrayLike, y: ArrayLike) -> Array:
     x, y: input arrays. Must have a matching floating-point or complex dtypes. If
       neither is a scalar, the two arrays must have the same number of dimensions
       and be broadcast-compatible.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
 
   Returns:
     Array of the same shape and dtype as ``x`` and ``y`` containing the element-wise
@@ -746,7 +753,7 @@ def atan2(x: ArrayLike, y: ArrayLike) -> Array:
   .. _stablehlo.atan2: https://openxla.org/stablehlo/spec#atan2
   """
   x, y = core.standard_insert_pvary(x, y)
-  return atan2_p.bind(x, y)
+  return atan2_p.bind(x, y, accuracy=accuracy)
 
 @export
 def real(x: ArrayLike) -> Array:
@@ -4515,9 +4522,10 @@ mlir.register_lowering(atan_p, partial(_nary_lower_hlo, chlo.atan))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
-          lambda g, x, y: mul(g, div(y, add(square(x), square(y)))),
-          lambda g, x, y: mul(g, div(neg(x), add(square(x), square(y)))))
+          lambda g, x, y, **kwargs: mul(g, div(y, add(square(x), square(y)))),
+          lambda g, x, y, **kwargs: mul(g, div(neg(x), add(square(x), square(y)))))
 mlir.register_lowering(atan2_p, partial(_nary_lower_hlo, hlo.atan2))
+core.pp_eqn_rules[atan2_p] = _unary_with_accuracy_pp_rule
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))

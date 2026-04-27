@@ -22,14 +22,16 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
+from jax._src.lax.lax import (AccuracyMode, Tolerance,
+                              add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
                               gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
                               reduce, select, sign, sqrt, square,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan)
+                              _float, _nary_lower_hlo, _ones, _isnan,
+                              _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
@@ -113,9 +115,23 @@ def bessel_i1e(x: ArrayLike) -> Array:
   """
   return bessel_i1e_p.bind(x)
 
-def erf(x: ArrayLike) -> Array:
-  r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
-  return erf_p.bind(x)
+def erf(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
+  r"""Elementwise error function: :math:`\mathrm{erf}(x)`.
+
+  Args:
+    x: input array. Must have floating-point type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    error function.
+  """
+  return erf_p.bind(x, accuracy=accuracy)
 
 def erfc(x: ArrayLike) -> Array:
   r"""Elementwise complementary error function:
@@ -719,9 +735,10 @@ def _bessel_i1e_jvp(g, y, x):
 ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 
 erf_p = standard_unop(_float, 'erf')
-ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
-                                  mul(g, exp(neg(square(x))))))
+ad.defjvp(erf_p, lambda g, x, **kwargs: mul(_const(x, 2. / np.sqrt(np.pi)),
+                                            mul(g, exp(neg(square(x))))))
 mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.erf))
+core.pp_eqn_rules[erf_p] = _unary_with_accuracy_pp_rule
 
 erfc_p = standard_unop(_float, 'erfc')
 ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
