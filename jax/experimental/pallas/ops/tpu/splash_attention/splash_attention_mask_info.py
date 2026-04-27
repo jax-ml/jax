@@ -591,7 +591,7 @@ def _process_mask(
     """Check if mask is a MultiHeadMask of NumpyMasks with traced arrays."""
     if not isinstance(mask, mask_lib.MultiHeadMask):
       return False
-    return any(isinstance(m, mask_lib.NumpyMask)
+    return all(isinstance(m, mask_lib.NumpyMask)
            and isinstance(m.array, Tracer)
             for m in mask.masks)
 
