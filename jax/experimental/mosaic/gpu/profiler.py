@@ -269,7 +269,12 @@ class ProfilerSpec:
     for block_idx, trace_idx in np.ndindex(num_blocks, traces_per_block):
       valid_entries = traces_used[block_idx, trace_idx]
       local_clock_offset = None
-      assert valid_entries % 2 == 0, valid_entries
+      if valid_entries % 2:
+        raise RuntimeError(
+            "Profiler collected an odd number of trace events. This likely "
+            "indicates memory corruption due to insufficient profiling space. "
+            "Try again with a larger profiling space."
+        )
       start_time = start_times[block_idx, trace_idx]
       block_events = []
       last_time = float("-inf")
