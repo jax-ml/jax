@@ -42,7 +42,6 @@ limitations under the License.
 #include "mlir-c/IR.h"
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/IRCore.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -65,8 +64,10 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
 
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyDialectRegistry;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContext;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContextRef;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
 using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperationRef;
@@ -303,44 +304,60 @@ nb::object InlinedCall(PyOperation& callee, nb::sequence args,
 NB_MODULE(_jax_mlir_ext, m) {
   m.doc() = "Registers upstream MLIR dialects used by JAX.";
 
-  m.def("register_dialects", [](MlirDialectRegistry registry) {
+  m.def(
+      "register_dialects",
+      [](PyDialectRegistry& registry) {
+        MlirDialectRegistry c_registry = registry.get();
 #define REGISTER_DIALECT(name)                                           \
   MlirDialectHandle name##_dialect = mlirGetDialectHandle__##name##__(); \
-  mlirDialectHandleInsertDialect(name##_dialect, registry)
-    REGISTER_DIALECT(arith);
-    REGISTER_DIALECT(func);
-    REGISTER_DIALECT(math);
-    REGISTER_DIALECT(memref);
-    REGISTER_DIALECT(scf);
-    REGISTER_DIALECT(vector);
-    // TODO(jpienaar): these don't seem to have C API targets known to Bazel
-    unwrap(registry)->insert<mlir::shape::ShapeDialect>();
-    unwrap(registry)->insert<mlir::tensor::TensorDialect>();
-    unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
+  mlirDialectHandleInsertDialect(name##_dialect, c_registry)
+        REGISTER_DIALECT(arith);
+        REGISTER_DIALECT(func);
+        REGISTER_DIALECT(math);
+        REGISTER_DIALECT(memref);
+        REGISTER_DIALECT(scf);
+        REGISTER_DIALECT(vector);
+        // TODO(jpienaar): these don't seem to have C API targets known to Bazel
+        unwrap(c_registry)->insert<mlir::shape::ShapeDialect>();
+        unwrap(c_registry)->insert<mlir::tensor::TensorDialect>();
+        unwrap(c_registry)->insert<mlir::vhlo::VhloDialect>();
 
-    // For Mosaic GPU
-    REGISTER_DIALECT(cf);
-    REGISTER_DIALECT(gpu);
-    REGISTER_DIALECT(nvgpu);
-    REGISTER_DIALECT(nvvm);
-    REGISTER_DIALECT(llvm);
+        // For Mosaic GPU
+        REGISTER_DIALECT(cf);
+        REGISTER_DIALECT(gpu);
+        REGISTER_DIALECT(nvgpu);
+        REGISTER_DIALECT(nvvm);
+        REGISTER_DIALECT(llvm);
 #undef REGISTER_DIALECT
 
-    mlirMosaicGpuRegisterSerdePass();
-    mlirRegisterTransformsPasses();
-    // For Shardy
-    mlirRegisterAllSdyPassesAndPipelines();
-    mlirRegisterAllXlaSdyPassesAndPipelines();
-    // Transforms used by JAX.
-    mlirRegisterTransformsStripDebugInfoPass();
-  });
+        mlirMosaicGpuRegisterSerdePass();
+        mlirRegisterTransformsPasses();
+        // For Shardy
+        mlirRegisterAllSdyPassesAndPipelines();
+        mlirRegisterAllXlaSdyPassesAndPipelines();
+        // Transforms used by JAX.
+        mlirRegisterTransformsStripDebugInfoPass();
+      },
+      nb::arg("arg"),
+      nb::sig(
+          "def register_dialects(arg: mlir.ir.DialectRegistry, /) -> None"));
 
-  m.def("enter_multi_threaded_execution", [](MlirContext context) {
-    unwrap(context)->enterMultiThreadedExecution();
-  });
-  m.def("exit_multi_threaded_execution", [](MlirContext context) {
-    unwrap(context)->exitMultiThreadedExecution();
-  });
+  m.def(
+      "enter_multi_threaded_execution",
+      [](PyMlirContext& context) {
+        unwrap(context.get())->enterMultiThreadedExecution();
+      },
+      nb::arg("arg"),
+      nb::sig("def enter_multi_threaded_execution(arg: mlir.ir.Context, /) -> "
+              "None"));
+  m.def(
+      "exit_multi_threaded_execution",
+      [](PyMlirContext& context) {
+        unwrap(context.get())->exitMultiThreadedExecution();
+      },
+      nb::arg("arg"),
+      nb::sig("def exit_multi_threaded_execution(arg: mlir.ir.Context, /) -> "
+              "None"));
 
   m.def("inlined_func_call", &jax::InlinedCall, nb::arg("callee"),
         nb::arg("args"), nb::arg("loc").none() = nb::none(),

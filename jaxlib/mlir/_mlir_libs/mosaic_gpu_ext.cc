@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/Block.h"  // IWYU pragma: keep
 #include "mlir/IR/Builders.h"
@@ -45,14 +44,18 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/transfer_plan.h"
 #include "jaxlib/mosaic/gpu/transforms.h"
 
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyAttribute;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyType;
+
 namespace nb = nanobind;
 namespace mgpu = jax::mosaic::gpu;
 
 namespace {
-
-using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyInsertionPoint;
-using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
-using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyThreadContextEntry;
 
 // Returns an `ImplicitLocOpBuilder` with the current loc location and ip
 // insertion point extracted from the `MlirIrModule`. Returns invalid argument
@@ -140,6 +143,211 @@ mlir::Value SelectIfGroup(const mgpu::TransferPlan& plan, int64_t group_idx,
   return *result;
 }
 
+#define DEFINE_CONCRETE_ATTR(ClassName, IsAFunc, GetTypeIdFunc, BaseClass)     \
+  struct Py##ClassName                                                         \
+      : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteAttribute< \
+            Py##ClassName, BaseClass> {                                        \
+    static constexpr const char* pyClassName = #ClassName;                     \
+    static bool isaFunction(MlirAttribute a) { return IsAFunc(a); }            \
+    static constexpr MlirTypeID (*getTypeIdFunction)() = GetTypeIdFunc;        \
+    using Base::Base;                                                          \
+    static void bindDerived(ClassTy& cls);                                     \
+  };                                                                           \
+  void Py##ClassName::bindDerived(Py##ClassName::ClassTy& cls)
+
+struct PyBarrierType
+    : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteType<
+          PyBarrierType> {
+  static constexpr const char* pyClassName = "BarrierType";
+  static bool isaFunction(MlirType t) { return mlirMosaicGpuIsABarrierType(t); }
+  static constexpr MlirTypeID (*getTypeIdFunction)() =
+      mlirMosaicGpuBarrierTypeGetTypeID;
+  using Base::Base;
+  static void bindDerived(ClassTy& cls) {
+    cls.def_static(
+        "get",
+        [](bool orders_tensor_core, DefaultingPyMlirContext ctx) {
+          return PyBarrierType(ctx.resolve().getRef(),
+                               mlirMosaicGpuBarrierTypeGet(ctx.resolve().get(),
+                                                           orders_tensor_core));
+        },
+        nb::arg("orders_tensor_core") = false, nb::arg("ctx") = nb::none());
+    cls.def_prop_ro("orders_tensor_core", [](PyBarrierType& self) {
+      return mlirMosaicGpuBarrierTypeGetOrdersTensorCore(self.get());
+    });
+  }
+};
+
+DEFINE_CONCRETE_ATTR(TileTransformAttr, mlirMosaicGpuIsATileTransformAttr,
+                     mlirMosaicGpuTileTransformAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](std::vector<int32_t>& tiling, DefaultingPyMlirContext ctx) {
+        return PyTileTransformAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuTileTransformAttrGet(ctx.resolve().get(),
+                                              tiling.data(), tiling.size()));
+      },
+      nb::arg("tiling"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("tiling", [](PyTileTransformAttr& self) {
+    return mlirMosaicGpuTileTransformAttrGetTiling(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(TransposeTransformAttr,
+                     mlirMosaicGpuIsATransposeTransformAttr,
+                     mlirMosaicGpuTransposeTransformAttrGetTypeID,
+                     PyAttribute) {
+  cls.def_static(
+      "get",
+      [](std::vector<int32_t>& permutation, DefaultingPyMlirContext ctx) {
+        return PyTransposeTransformAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuTransposeTransformAttrGet(
+                ctx.resolve().get(), permutation.data(), permutation.size()));
+      },
+      nb::arg("permutation"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("permutation", [](PyTransposeTransformAttr& self) {
+    return mlirMosaicGpuTransposeTransformAttrGetPermutation(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(SwizzleTransformAttr, mlirMosaicGpuIsASwizzleTransformAttr,
+                     mlirMosaicGpuSwizzleTransformAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](int32_t swizzle, DefaultingPyMlirContext ctx) {
+        return PySwizzleTransformAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuSwizzleTransformAttrGet(ctx.resolve().get(), swizzle));
+      },
+      nb::arg("swizzle"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("swizzle", [](PySwizzleTransformAttr& self) {
+    return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(WGSplatFragLayoutAttr,
+                     mlirMosaicGpuIsAWGSplatFragLayoutAttr,
+                     mlirMosaicGpuWGSplatFragLayoutAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](MlirAttribute shape, DefaultingPyMlirContext ctx) {
+        return PyWGSplatFragLayoutAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuWGSplatFragLayoutAttrGet(ctx.resolve().get(), shape));
+      },
+      nb::arg("shape"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("shape", [](PyWGSplatFragLayoutAttr& self) {
+    return mlirMosaicGpuWGSplatFragLayoutAttrGetShape(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(WGStridedFragLayoutAttr,
+                     mlirMosaicGpuIsAWGStridedFragLayoutAttr,
+                     mlirMosaicGpuWGStridedFragLayoutAttrGetTypeID,
+                     PyAttribute) {
+  cls.def_static(
+      "get",
+      [](MlirAttribute shape, int32_t vector_size,
+         DefaultingPyMlirContext ctx) {
+        return PyWGStridedFragLayoutAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuWGStridedFragLayoutAttrGet(ctx.resolve().get(), shape,
+                                                    vector_size));
+      },
+      nb::arg("shape"), nb::arg("vector_size"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("shape", [](PyWGStridedFragLayoutAttr& self) {
+    return mlirMosaicGpuWGStridedFragLayoutAttrGetShape(self.get());
+  });
+  cls.def_prop_ro("vector_size", [](PyWGStridedFragLayoutAttr& self) {
+    return mlirMosaicGpuWGStridedFragLayoutAttrGetVectorSize(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(ReplicatedAttr, mlirMosaicGpuIsAReplicatedAttr,
+                     mlirMosaicGpuReplicatedAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](int32_t times, DefaultingPyMlirContext ctx) {
+        return PyReplicatedAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuReplicatedAttrGet(ctx.resolve().get(), times));
+      },
+      nb::arg("times"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("times", [](PyReplicatedAttr& self) {
+    return mlirMosaicGpuReplicatedAttrGetTimes(self.get());
+  });
+}
+
+DEFINE_CONCRETE_ATTR(TiledLayoutAttr, mlirMosaicGpuIsATiledLayoutAttr,
+                     mlirMosaicGpuTiledLayoutAttrGetTypeID, PyAttribute) {
+  cls.def_static(
+      "get",
+      [](MlirAttribute tiling, MlirAttribute warp_dims, MlirAttribute lane_dims,
+         int32_t vector_dim, DefaultingPyMlirContext ctx) {
+        return PyTiledLayoutAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuTiledLayoutAttrGet(ctx.resolve().get(), tiling,
+                                            warp_dims, lane_dims, vector_dim));
+      },
+      nb::arg("tiling"), nb::arg("warp_dims"), nb::arg("lane_dims"),
+      nb::arg("vector_dim"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("tiling", [](PyTiledLayoutAttr& self) {
+    return mlirMosaicGpuTiledLayoutAttrGetTiling(self.get());
+  });
+  cls.def_prop_ro("warp_dims", [](PyTiledLayoutAttr& self) {
+    return mlirMosaicGpuTiledLayoutAttrGetWarpDims(self.get());
+  });
+  cls.def_prop_ro("lane_dims", [](PyTiledLayoutAttr& self) {
+    return mlirMosaicGpuTiledLayoutAttrGetLaneDims(self.get());
+  });
+  cls.def_prop_ro("vector_dim", [](PyTiledLayoutAttr& self) {
+    return mlirMosaicGpuTiledLayoutAttrGetVectorDim(self.get());
+  });
+}
+
+struct PyCopyPartitionAttrInterface
+    : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteAttribute<
+          PyCopyPartitionAttrInterface> {
+  static constexpr const char* pyClassName = "CopyPartitionAttrInterface";
+  static bool isaFunction(MlirAttribute a) {
+    return mlirMosaicGpuIsACopyPartitionAttr(a);
+  }
+  using Base::Base;
+};
+
+DEFINE_CONCRETE_ATTR(CopyReplicatedAttr, mlirMosaicGpuIsACopyReplicatedAttr,
+                     mlirMosaicGpuCopyReplicatedAttrGetTypeID,
+                     PyCopyPartitionAttrInterface) {
+  cls.def_static(
+      "get",
+      [](DefaultingPyMlirContext ctx) {
+        return PyCopyReplicatedAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuCopyReplicatedAttrGet(ctx.resolve().get()));
+      },
+      nb::arg("ctx") = nb::none());
+}
+
+DEFINE_CONCRETE_ATTR(CopyPartitionedAttr, mlirMosaicGpuIsACopyPartitionedAttr,
+                     mlirMosaicGpuCopyPartitionedAttrGetTypeID,
+                     PyCopyPartitionAttrInterface) {
+  cls.def_static(
+      "get",
+      [](int32_t axis, DefaultingPyMlirContext ctx) {
+        return PyCopyPartitionedAttr(
+            ctx.resolve().getRef(),
+            mlirMosaicGpuCopyPartitionedAttrGet(ctx.resolve().get(), axis));
+      },
+      nb::arg("axis"), nb::arg("ctx") = nb::none());
+  cls.def_prop_ro("axis", [](PyCopyPartitionedAttr& self) {
+    return mlirMosaicGpuCopyPartitionedAttrGetAxis(self.get());
+  });
+}
+
+#undef DEFINE_CONCRETE_ATTR
+
 }  // namespace
 
 NB_MODULE(_mosaic_gpu_ext, m) {
@@ -161,269 +369,17 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     mlirDialectRegistryDestroy(registry);
   });
 
-  auto barrier_type =
-      mlir::python::nanobind_adaptors::mlir_type_subclass(
-          m, "BarrierType", mlirMosaicGpuIsABarrierType,
-          mlirMosaicGpuBarrierTypeGetTypeID);
-  barrier_type
-      .def_staticmethod(
-          "get",
-          [cls = barrier_type.get_class()](bool orders_tensor_core,
-                                           MlirContext ctx) {
-            return cls(mlirMosaicGpuBarrierTypeGet(ctx, orders_tensor_core));
-          },
-          nb::arg("orders_tensor_core") = false,
-          nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "orders_tensor_core: bool = False, "
-              "context: mlir.ir.Context | None = None"
-              ") -> BarrierType"
-              // clang-format: on
-              ),
-          "Creates a BarrierType.")
-      .def_property_readonly("orders_tensor_core",
-                             mlirMosaicGpuBarrierTypeGetOrdersTensorCore);
-
-  auto tile_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr,
-          mlirMosaicGpuTileTransformAttrGetTypeID);
-  tile_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = tile_transform_attr.get_class()](std::vector<int32_t>& tiling,
-                                                  MlirContext ctx) {
-            return cls(mlirMosaicGpuTileTransformAttrGet(ctx, tiling.data(),
-                                                         tiling.size()));
-          },
-          nb::arg("tiling"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "tiling: Sequence[int], "
-              "context: mlir.ir.Context | None = None"
-              ") -> TileTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a TileTransformAttr with the given tiling.")
-      .def_property_readonly(
-          "tiling", mlirMosaicGpuTileTransformAttrGetTiling,
-          nb::sig("def tiling(self) -> mlir.ir.DenseI32ArrayAttr"));
-
-  auto transpose_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr,
-          mlirMosaicGpuTransposeTransformAttrGetTypeID);
-  transpose_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = transpose_transform_attr.get_class()](
-              std::vector<int32_t>& permutation, MlirContext ctx) {
-            return cls(mlirMosaicGpuTransposeTransformAttrGet(
-                ctx, permutation.data(), permutation.size()));
-          },
-          nb::arg("permutation"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "permutation: Sequence[int], "
-              "context: mlir.ir.Context | None = None"
-              ") -> TransposeTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a TransposeTransformAttr with the given permutation.")
-      .def_property_readonly(
-          "permutation", mlirMosaicGpuTransposeTransformAttrGetPermutation,
-          nb::sig("def permutation(self) -> mlir.ir.DenseI32ArrayAttr"));
-
-  auto swizzle_transform_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr,
-          mlirMosaicGpuSwizzleTransformAttrGetTypeID);
-  swizzle_transform_attr
-      .def_staticmethod(
-          "get",
-          [cls = swizzle_transform_attr.get_class()](int32_t swizzle,
-                                                     MlirContext ctx) {
-            return cls(mlirMosaicGpuSwizzleTransformAttrGet(ctx, swizzle));
-          },
-          nb::arg("swizzle"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "swizzle: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> SwizzleTransformAttr"
-              // clang-format: on
-              ),
-          "Creates a SwizzleTransformAttr with the given swizzle.")
-      .def_property_readonly("swizzle",
-                             mlirMosaicGpuSwizzleTransformAttrGetSwizzle);
-
-  auto splat_fragmented_layout_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "WGSplatFragLayoutAttr", mlirMosaicGpuIsAWGSplatFragLayoutAttr,
-          mlirMosaicGpuWGSplatFragLayoutAttrGetTypeID);
-  splat_fragmented_layout_attr
-      .def_staticmethod(
-          "get",
-          [cls = splat_fragmented_layout_attr.get_class()](MlirAttribute shape,
-                                                           MlirContext ctx) {
-            return cls(mlirMosaicGpuWGSplatFragLayoutAttrGet(ctx, shape));
-          },
-          nb::arg("shape"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "shape: mlir.ir.DenseI64ArrayAttr, "
-              "context: mlir.ir.Context | None = None"
-              ") -> WGSplatFragLayoutAttr"
-              // clang-format: on
-              ),
-          "Creates a WGSplatFragLayoutAttr with the given shape.")
-      .def_property_readonly(
-          "shape", mlirMosaicGpuWGSplatFragLayoutAttrGetShape,
-          nb::sig("def shape(self) -> mlir.ir.DenseI64ArrayAttr"));
-
-  auto strided_fragmented_layout_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "WGStridedFragLayoutAttr", mlirMosaicGpuIsAWGStridedFragLayoutAttr,
-          mlirMosaicGpuWGStridedFragLayoutAttrGetTypeID);
-  strided_fragmented_layout_attr
-      .def_staticmethod(
-          "get",
-          [cls = strided_fragmented_layout_attr.get_class()](
-              MlirAttribute shape, int32_t vector_size, MlirContext ctx) {
-            return cls(mlirMosaicGpuWGStridedFragLayoutAttrGet(ctx, shape,
-                                                               vector_size));
-          },
-          nb::arg("shape"), nb::arg("vector_size"),
-          nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "shape: mlir.ir.DenseI64ArrayAttr, "
-              "vector_size: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> WGStridedFragLayoutAttr"
-              // clang-format: on
-              ),
-          "Creates a WGStridedFragLayoutAttr.")
-      .def_property_readonly(
-          "shape", mlirMosaicGpuWGStridedFragLayoutAttrGetShape,
-          nb::sig("def shape(self) -> mlir.ir.DenseI64ArrayAttr"))
-      .def_property_readonly("vector_size",
-                             mlirMosaicGpuWGStridedFragLayoutAttrGetVectorSize);
-
-  auto replicated_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "ReplicatedAttr", mlirMosaicGpuIsAReplicatedAttr,
-          mlirMosaicGpuReplicatedAttrGetTypeID);
-  replicated_attr
-      .def_staticmethod(
-          "get",
-          [cls = replicated_attr.get_class()](int32_t times, MlirContext ctx) {
-            return cls(mlirMosaicGpuReplicatedAttrGet(ctx, times));
-          },
-          nb::arg("times"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "times: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> ReplicatedAttr"
-              // clang-format: on
-              ),
-          "Creates a ReplicatedAttr.")
-      .def_property_readonly("times", mlirMosaicGpuReplicatedAttrGetTimes);
-
-  auto tiled_layout_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "TiledLayoutAttr", mlirMosaicGpuIsATiledLayoutAttr,
-          mlirMosaicGpuTiledLayoutAttrGetTypeID);
-  tiled_layout_attr
-      .def_staticmethod(
-          "get",
-          [cls = tiled_layout_attr.get_class()](
-              MlirAttribute tiling, MlirAttribute warp_dims,
-              MlirAttribute lane_dims, int32_t vector_dim, MlirContext ctx) {
-            return cls(mlirMosaicGpuTiledLayoutAttrGet(ctx, tiling, warp_dims,
-                                                       lane_dims, vector_dim));
-          },
-          nb::arg("tiling"), nb::arg("warp_dims"), nb::arg("lane_dims"),
-          nb::arg("vector_dim"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "tiling: mlir.ir.ArrayAttr, "
-              "warp_dims: mlir.ir.ArrayAttr, "
-              "lane_dims: mlir.ir.ArrayAttr, "
-              "vector_dim: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> TiledLayoutAttr"
-              // clang-format: on
-              ),
-          "Creates a TiledLayoutAttr.")
-      .def_property_readonly("tiling", mlirMosaicGpuTiledLayoutAttrGetTiling,
-                             nb::sig("def tiling(self) -> mlir.ir.ArrayAttr"))
-      .def_property_readonly(
-          "warp_dims", mlirMosaicGpuTiledLayoutAttrGetWarpDims,
-          nb::sig("def warp_dims(self) -> mlir.ir.ArrayAttr"))
-      .def_property_readonly(
-          "lane_dims", mlirMosaicGpuTiledLayoutAttrGetLaneDims,
-          nb::sig("def lane_dims(self) -> mlir.ir.ArrayAttr"))
-      .def_property_readonly("vector_dim",
-                             mlirMosaicGpuTiledLayoutAttrGetVectorDim);
-
-  auto copy_partition_attr_interface =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "CopyPartitionAttrInterface", mlirMosaicGpuIsACopyPartitionAttr);
-
-  auto copy_replicated_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "CopyReplicatedAttr", mlirMosaicGpuIsACopyReplicatedAttr,
-          copy_partition_attr_interface.get_class(),
-          mlirMosaicGpuCopyReplicatedAttrGetTypeID);
-  copy_replicated_attr.def_staticmethod(
-      "get",
-      [cls = copy_replicated_attr.get_class()](MlirContext ctx) {
-        return cls(mlirMosaicGpuCopyReplicatedAttrGet(ctx));
-      },
-      nb::arg("context").none() = nb::none(),
-      nb::sig(
-          // clang-format: off
-          "def get("
-          "context: mlir.ir.Context | None = None"
-          ") -> CopyReplicatedAttr"
-          // clang-format: on
-          ),
-      "Creates a CopyReplicatedAttr.");
-
-  auto copy_partitioned_attr =
-      mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-          m, "CopyPartitionedAttr", mlirMosaicGpuIsACopyPartitionedAttr,
-          copy_partition_attr_interface.get_class(),
-          mlirMosaicGpuCopyPartitionedAttrGetTypeID);
-  copy_partitioned_attr
-      .def_staticmethod(
-          "get",
-          [cls = copy_partitioned_attr.get_class()](int32_t axis,
-                                                    MlirContext ctx) {
-            return cls(mlirMosaicGpuCopyPartitionedAttrGet(ctx, axis));
-          },
-          nb::arg("axis"), nb::arg("context").none() = nb::none(),
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "axis: int, "
-              "context: mlir.ir.Context | None = None"
-              ") -> CopyPartitionedAttr"
-              // clang-format: on
-              ),
-          "Creates a CopyPartitionedAttr.")
-      .def_property_readonly("axis", mlirMosaicGpuCopyPartitionedAttrGetAxis);
+  PyBarrierType::bind(m);
+  PyTileTransformAttr::bind(m);
+  PyTransposeTransformAttr::bind(m);
+  PySwizzleTransformAttr::bind(m);
+  PyWGSplatFragLayoutAttr::bind(m);
+  PyWGStridedFragLayoutAttr::bind(m);
+  PyReplicatedAttr::bind(m);
+  PyTiledLayoutAttr::bind(m);
+  PyCopyPartitionAttrInterface::bind(m);
+  PyCopyReplicatedAttr::bind(m);
+  PyCopyPartitionedAttr::bind(m);
 
   nb::class_<mgpu::Tiling>(m, "Tiling")
       .def(

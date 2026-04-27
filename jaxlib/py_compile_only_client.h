@@ -21,6 +21,7 @@ limitations under the License.
 // placeholder for index annotation headers
 #include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
+#include "mlir/Bindings/Python/IRCore.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
@@ -28,6 +29,8 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/xla_data.pb.h"
+
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyModule;
 
 namespace jax {
 class PyExecutable;
@@ -49,7 +52,7 @@ class CompileOnlyPyClient : public PyClient {
       std::shared_ptr<xla::ifrt::PjRtTopology> topology);
 
   absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
-      MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
+      PyModule& mlir_module, xla::ifrt::DeviceListRef executable_devices,
       xla::CompileOptions options);
 
   static void Register(nanobind::module_& m);

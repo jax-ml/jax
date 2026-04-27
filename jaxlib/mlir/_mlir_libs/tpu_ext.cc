@@ -19,60 +19,77 @@ limitations under the License.
 #include "mlir-c/Dialect/Func.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/Bindings/Python/IRCore.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 
 namespace nb = nanobind;
+
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyAttribute;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyOperationBase;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyType;
+
+namespace jax {
+
+struct PyFloat8EXMYType
+    : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteType<
+          PyFloat8EXMYType> {
+  static constexpr const char* pyClassName = "Float8EXMYType";
+  static bool isaFunction(MlirType t) { return mlirTpuIsAFloat8EXMYType(t); }
+  using Base::Base;
+  static void bindDerived(ClassTy& cls) {
+    cls.def_static(
+        "get",
+        [](nb::object exmy_type_py, DefaultingPyMlirContext ctx) {
+          MlirType exmy_type = {nullptr};
+          if (!exmy_type_py.is_none()) {
+            exmy_type = nb::cast<PyType&>(exmy_type_py).get();
+          }
+          return PyFloat8EXMYType(
+              ctx.resolve().getRef(),
+              mlirTpuFloat8EXMYTypeGet(ctx.resolve().get(), exmy_type));
+        },
+        nb::arg("exmy_type") = nb::none(), nb::arg("ctx") = nb::none());
+    cls.def_prop_ro("underlying_type", [](PyFloat8EXMYType& self) {
+      return mlirTpuFloat8EXMYTypeGetUnderlyingType(self.get());
+    });
+  }
+};
 
 NB_MODULE(_tpu_ext, m) {
   mlirTpuRegisterMosaicSerdePass();
 
   m.def(
       "register_dialect",
-      [](MlirContext context, bool load) {
+      [](PyMlirContext& context, bool load) {
         MlirDialectHandle dialect = mlirGetDialectHandle__tpu__();
-        mlirDialectHandleRegisterDialect(dialect, context);
+        mlirDialectHandleRegisterDialect(dialect, context.get());
         if (load) {
-          mlirDialectHandleLoadDialect(dialect, context);
+          mlirDialectHandleLoadDialect(dialect, context.get());
         }
       },
       nb::arg("context"), nb::arg("load") = true);
 
-  m.def("private_has_communication", [](MlirOperation op) {
+  m.def("private_has_communication", [](PyOperation& op) {
     bool has_communication;
     bool has_custom_barrier;
-    mlirTPUAnalyzePotentialCommunication(op, &has_communication,
+    mlirTPUAnalyzePotentialCommunication(op.get(), &has_communication,
                                          &has_custom_barrier);
     return std::make_pair(has_communication, has_custom_barrier);
   });
 
   // TODO(apaszke): All of those should be upstreamed to MLIR Python bindings.
-  m.def("private_set_arg_attr",
-        [](MlirOperation op, unsigned i, std::string name, MlirAttribute attr) {
-          mlirFuncSetArgAttr(
-              op, i, mlirStringRefCreateFromCString(name.c_str()), attr);
-        });
+  m.def("private_set_arg_attr", [](PyOperationBase& op, unsigned i,
+                                   std::string name, PyAttribute& attr) {
+    mlirFuncSetArgAttr(op.getOperation().get(), i,
+                       mlirStringRefCreateFromCString(name.c_str()),
+                       attr.get());
+  });
 
-  auto float8_exmy_type = mlir::python::nanobind_adaptors::mlir_type_subclass(
-      m, "Float8EXMYType", mlirTpuIsAFloat8EXMYType);
-  float8_exmy_type
-      .def_staticmethod(
-          "get",
-          [cls = float8_exmy_type.get_class()](MlirType exmy_type,
-                                               MlirContext ctx) {
-            return cls(mlirTpuFloat8EXMYTypeGet(ctx, exmy_type));
-          },
-          nb::arg("exmy_type") = nullptr, nb::arg("ctx") = nullptr,
-          nb::sig(
-              // clang-format: off
-              "def get("
-              "exmy_type: jaxlib.mlir.ir.Type | None = None, "
-              "ctx: jaxlib.mlir.ir.Context | None = None"
-              ") -> Float8EXMYType"
-              // clang-format: on
-              ))
-      .def_property_readonly("underlying_type", [](MlirType self) {
-        return mlirTpuFloat8EXMYTypeGetUnderlyingType(self);
-      });
+  PyFloat8EXMYType::bind(m);
 }
+
+}  // namespace jax

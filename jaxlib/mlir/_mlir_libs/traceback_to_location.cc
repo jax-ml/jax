@@ -25,7 +25,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir-c/IR.h"
+#include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Location.h"
@@ -34,6 +35,9 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/traceback.h"
+
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyLocation;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyMlirContext;
 
 namespace nb = ::nanobind;
 
@@ -100,8 +104,10 @@ nb::object TracebackToLocationCache::Get(const Traceback& traceback) {
         loc = *it;
       }
     }
-    traceback_cache_entry = nb::cast(
-        wrap(loc.has_value() ? *loc : mlir::UnknownLoc::get(context_)));
+    MlirLocation c_loc =
+        wrap(loc.has_value() ? *loc : mlir::UnknownLoc::get(context_));
+    auto ctx_ref = PyMlirContext::forContext(wrap(context_));
+    traceback_cache_entry = nb::cast(PyLocation(ctx_ref, c_loc));
   }
   return traceback_cache_entry;
 }

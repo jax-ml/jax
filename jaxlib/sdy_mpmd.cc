@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
+#include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/CAPI/IR.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -72,10 +72,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
-namespace nb = nanobind;
-
-namespace jax::mpmd {
-namespace {
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyModule;
 
 using ::mlir::Builder;
 using ::mlir::ModuleOp;
@@ -99,9 +96,14 @@ using ::xla::ifrt::mpmd::EnvOptionsOverride;
 using ::xla::ifrt::mpmd::GetCompileOptions;
 using ::xla::ifrt::mpmd::LowerToIfrt;
 
-// Wrapper of PartitioningResult, which stores MlirModules instead of ModuleOps.
+namespace nb = nanobind;
+
+namespace jax::mpmd {
+namespace {
+
+// Wrapper of PartitioningResult, which stores PyModule objects.
 struct PartitioningResultWrapper {
-  MlirModule mpmd_module;
+  nb::object mpmd_module;
   mlir::mpmd::FunctionIOShardingSpecsAndMeshes
       module_io_sharding_specs_and_meshes;
 };
@@ -152,7 +154,7 @@ absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
 //
 // Requires GIL.
 absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
-    nb::object backend_py, MlirModule c_module, nb::sequence devices_py,
+    nb::object backend_py, PyModule& c_module, nb::sequence devices_py,
     const std::vector<nb::object> out_avals,
     std::optional<const std::vector<nb::object>> out_shardings,
     std::optional<const absl::flat_hash_map<std::string, nb::object>>&
@@ -213,9 +215,9 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
     TF_ASSIGN_OR_RETURN(
         loaded_executable,
         client->GetDefaultCompiler()
-            ->CompileAndLoad(
-                std::make_unique<xla::ifrt::IfrtIRProgram>(unwrap(c_module)),
-                std::move(ifrt_compile_options))
+            ->CompileAndLoad(std::make_unique<xla::ifrt::IfrtIRProgram>(
+                                 unwrap(c_module.get())),
+                             std::move(ifrt_compile_options))
             .Await());
   }
   if (!llvm::isa<xla::ifrt::MpmdLoadedExecutable>(loaded_executable.get())) {
@@ -293,13 +295,16 @@ NB_MODULE(_sdy_mpmd, m) {
       .def_ro("target", &FragmentMergeRule::target);
 
   nb::class_<PartitioningResultWrapper>(m, "PartitioningResult")
-      .def_ro("mpmd_module", &PartitioningResultWrapper::mpmd_module)
+      .def_prop_ro(
+          "mpmd_module",
+          [](PartitioningResultWrapper& self) { return self.mpmd_module; },
+          nb::sig("def mpmd_module(self) -> mlir.ir.Module"))
       .def_ro("module_io_sharding_specs_and_meshes",
               &PartitioningResultWrapper::module_io_sharding_specs_and_meshes);
 
   m.def(
       "apply_mpmd_partitioning",
-      [](MlirModule c_module, std::string func_name,
+      [](PyModule& c_module, std::string func_name,
          const std::vector<std::pair<std::string, FlatMesh>>& named_meshes,
          const mpmd::PyUserAssignmentMap& assignment,
          const std::vector<std::optional<std::string>>& input_meshes,
@@ -315,7 +320,7 @@ NB_MODULE(_sdy_mpmd, m) {
         if (partitioning_options) {
           options = mlir::mpmd::ParsePartitioningOptions(*partitioning_options);
         }
-        MpmdProgram program{.module = unwrap(c_module),
+        MpmdProgram program{.module = unwrap(c_module.get()),
                             .func_name = func_name,
                             .options = std::move(options),
                             .named_meshes = named_meshes,
@@ -330,28 +335,45 @@ NB_MODULE(_sdy_mpmd, m) {
             program.ApplyPartitioning(phases);
 
         return PartitioningResultWrapper{
-            wrap(partitioning_result.mpmd_module),
+            PyModule::forModule(wrap(partitioning_result.mpmd_module))
+                .releaseObject(),
             std::move(partitioning_result.module_io_sharding_specs_and_meshes),
         };
       },
       nb::arg("module"), nb::arg("func_name"), nb::arg("named_meshes"),
       nb::arg("assignment"), nb::arg("input_meshes"), nb::arg("output_meshes"),
-      nb::arg("donate_argnums"),
-      nb::kw_only(),
+      nb::arg("donate_argnums"), nb::kw_only(),
       nb::arg("partitioning_options").none() = std::nullopt,
       nb::arg("fragment_merge_rules"), nb::arg("fragment_schedule_rules"),
-      nb::arg("phases"));
+      nb::arg("phases"),
+      nb::sig(
+          "def apply_mpmd_partitioning(module: mlir.ir.Module, func_name: str, "
+          "named_meshes: collections.abc.Sequence[tuple[str, "
+          "collections.abc.Sequence[tuple[str, int]]]], assignment: "
+          "collections.abc.Mapping[str, str | tuple[str, int]], input_meshes: "
+          "collections.abc.Sequence[str | None], output_meshes: "
+          "collections.abc.Sequence[str | None], donate_argnums: "
+          "collections.abc.Sequence[int], *, partitioning_options: "
+          "collections.abc.Mapping[str, str | bool] | None = ..., "
+          "fragment_merge_rules: collections.abc.Sequence[FragmentMergeRule], "
+          "fragment_schedule_rules: "
+          "collections.abc.Sequence[FragmentScheduleRule], phases: "
+          "PartitioningPhase) -> PartitioningResult"));
 
-  m.def("get_fragment_info",
-        [](MlirModule c_module) -> std::vector<FragmentInfo> {
-          std::vector<FragmentInfo> fragment_info;
-          auto module = unwrap(c_module);
-          // Walk module and get info for each fragment
-          module.walk([&fragment_info](mlir::mpmd::FragmentOp fragment) {
-            fragment_info.push_back(mlir::mpmd::GetFragmentInfo(fragment));
-          });
-          return fragment_info;
+  m.def(
+      "get_fragment_info",
+      [](PyModule& c_module) -> std::vector<FragmentInfo> {
+        std::vector<FragmentInfo> fragment_info;
+        auto module = unwrap(c_module.get());
+        // Walk module and get info for each fragment
+        module.walk([&fragment_info](mlir::mpmd::FragmentOp fragment) {
+          fragment_info.push_back(mlir::mpmd::GetFragmentInfo(fragment));
         });
+        return fragment_info;
+      },
+      nb::arg("arg"),
+      nb::sig("def get_fragment_info(arg: mlir.ir.Module, /) -> "
+              "list[FragmentInfo]"));
 
   nb::class_<NamedSpmdShardingSpec>(m, "NamedSpmdShardingSpec")
 #if SHARDY_MPMD_JAXLIB_VERSION >= 2
@@ -381,50 +403,70 @@ NB_MODULE(_sdy_mpmd, m) {
 
   m.def(
       "clone_mlir_module",
-      [](MlirModule c_module, const std::vector<std::string>& unit_attributes) {
-        MlirOperation op = mlirModuleGetOperation(c_module);
+      [](PyModule& c_module,
+         const std::vector<std::string>& unit_attributes) -> nb::object {
+        MlirOperation op = mlirModuleGetOperation(c_module.get());
         MlirModule module = mlirModuleFromOperation(mlirOperationClone(op));
         if (unit_attributes.empty()) {
-          return module;
+          return PyModule::forModule(module).releaseObject();
         }
 
         ModuleOp module_op = unwrap(module);
         for (const std::string& attr_name : unit_attributes) {
           module_op->setAttr(attr_name, Builder(module_op).getUnitAttr());
         }
-        return wrap(module_op);
+        return PyModule::forModule(wrap(module_op)).releaseObject();
       },
       nb::arg("c_module"),
-      nb::arg("unit_attributes") = std::vector<std::string>());
+      nb::arg("unit_attributes") = std::vector<std::string>(),
+      nb::sig(
+          "def clone_mlir_module(c_module: mlir.ir.Module, unit_attributes: "
+          "collections.abc.Sequence[str] = ...) -> mlir.ir.Module"));
 
   m.def(
       "lower_to_ifrt",
-      [](MlirModule module) -> void {
-        return xla::ThrowIfError(LowerToIfrt(unwrap(module)));
+      [](PyModule& module) -> void {
+        return xla::ThrowIfError(LowerToIfrt(unwrap(module.get())));
       },
-      nb::arg("module"));
+      nb::arg("module"),
+      nb::sig("def lower_to_ifrt(module: mlir.ir.Module) -> None"));
 
-  m.def("get_compile_options",
-        [](MlirModule c_module,
-           const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-               compile_options_overrides) -> nb::dict {
-          auto module = unwrap(c_module);
-          auto compile_options_map = ValueOrThrow(
-              GetCompileOptions(module, compile_options_overrides));
-          nb::dict out;
-          for (const auto& [name, options] : compile_options_map) {
-            out[nb::cast(name)] =
-                nb::steal<nb::object>(nanobind::cast(options).release().ptr());
-          }
-          return out;
-        });
+  m.def(
+      "get_compile_options",
+      [](PyModule& c_module,
+         const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
+             compile_options_overrides) -> nb::dict {
+        auto module = unwrap(c_module.get());
+        auto compile_options_map =
+            ValueOrThrow(GetCompileOptions(module, compile_options_overrides));
+        nb::dict out;
+        for (const auto& [name, options] : compile_options_map) {
+          out[nb::cast(name)] =
+              nb::steal<nb::object>(nanobind::cast(options).release().ptr());
+        }
+        return out;
+      },
+      nb::arg("arg0"), nb::arg("arg1"),
+      nb::sig(
+          "def get_compile_options(arg0: mlir.ir.Module, arg1: "
+          "collections.abc.Mapping[str, collections.abc.Sequence[tuple[str, "
+          "str | bool | int | float]]], /) -> dict"));
 
   m.def("compile_mpmd", xla::ValueOrThrowWrapper(CompileMpmd),
         nb::arg("backend"), nb::arg("ifrt_mlir_module"), nb::arg("devices"),
         nb::arg("out_avals"), nb::arg("out_shardings"),
         nb::arg("xla_compile_options").none() = std::nullopt,
         nb::arg("ifrt_ir_compile_options").none() = std::nullopt,
-        nb::arg("loaded_executable_bindings").none() = std::nullopt);
+        nb::arg("loaded_executable_bindings").none() = std::nullopt,
+        nb::sig("def compile_mpmd(backend: object, ifrt_mlir_module: "
+                "mlir.ir.Module, devices: collections.abc.Sequence, out_avals: "
+                "collections.abc.Sequence[object], out_shardings: "
+                "collections.abc.Sequence[object] | None, xla_compile_options: "
+                "collections.abc.Mapping[str, object] | None = ..., "
+                "ifrt_ir_compile_options: collections.abc.Mapping[str, str | "
+                "bool | int | float] | None = ..., loaded_executable_bindings: "
+                "collections.abc.Mapping[str, object] | None = ...) -> "
+                "MpmdLoadedExecutable"));
 
   nb::class_<xla::ifrt::IfrtIrProgramMemoryStats>(m, "IfrtIrProgramMemoryStats")
       .def_ro("argument_size_in_bytes",

@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -50,6 +50,8 @@ limitations under the License.
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/xla_data.pb.h"
 
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyModule;
+
 namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 
@@ -65,9 +67,9 @@ nb_class_ptr<PyClient> CompileOnlyPyClient::Make(
 }
 
 absl::StatusOr<nb_class_ptr<PyExecutable>> CompileOnlyPyClient::CompileUnloaded(
-    MlirModule mlir_module, xla::ifrt::DeviceListRef executable_devices,
+    PyModule& mlir_module, xla::ifrt::DeviceListRef executable_devices,
     xla::CompileOptions options) {
-  mlir::ModuleOp module = unwrap(mlir_module);
+  mlir::ModuleOp module = unwrap(mlir_module.get());
   mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
   module = *clone;
   ifrt::ExecutableRef ifrt_executable;
@@ -107,7 +109,7 @@ void CompileOnlyPyClient::Register(nb::module_& m) {
   nb::class_<CompileOnlyPyClient, PyClient>(m, "CompileOnlyPyClient")
       .def(
           "compile",
-          [](CompileOnlyPyClient& self, MlirModule mlir_module,
+          [](CompileOnlyPyClient& self, PyModule& mlir_module,
              PyDeviceList& py_executable_devices, xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =

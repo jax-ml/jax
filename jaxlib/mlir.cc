@@ -24,7 +24,6 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -53,11 +52,13 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
+using ::mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyModule;
+
 namespace nb = nanobind;
 
 namespace jax {
 namespace {
-using mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::DefaultingPyMlirContext;
 
 std::string PrintModule(mlir::ModuleOp module) {
   std::string s;
@@ -163,8 +164,8 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
 }
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
-    MlirModule module, std::string_view target, bool use_mixed_serialization) {
-  mlir::ModuleOp module_op = unwrap(module);
+    PyModule& module, std::string_view target, bool use_mixed_serialization) {
+  mlir::ModuleOp module_op = unwrap(module.get());
   TF_ASSIGN_OR_RETURN(std::string bytecode,
                       xla::SerializeUsingVersionedStablehlo(
                           module_op, target, /*inplace=*/false,
@@ -173,7 +174,7 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
-absl::StatusOr<MlirModule> PyDeserializePortableArtifact(
+absl::StatusOr<nb::object> PyDeserializePortableArtifact(
     const nb::bytes& bytecode_str, DefaultingPyMlirContext ctx) {
   MlirContext c_context = ctx->get();
   mlir::MLIRContext* context = unwrap(c_context);
@@ -183,7 +184,7 @@ absl::StatusOr<MlirModule> PyDeserializePortableArtifact(
           std::string_view(bytecode_str.c_str(), bytecode_str.size()), context);
   if (!module)
     return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
-  return wrap(module.release());
+  return PyModule::forModule(wrap(module.release())).releaseObject();
 }
 
 }  // namespace
@@ -246,7 +247,8 @@ void BuildMlirSubmodule(nb::module_& m) {
       "serialize_portable_artifact",
       [](nb::any mlir_module, std::string_view target,
          bool use_mixed_serialization) {
-        if (MlirModule module; nb::try_cast<MlirModule>(mlir_module, module)) {
+        if (nb::isinstance<PyModule>(mlir_module)) {
+          PyModule& module = nb::cast<PyModule&>(mlir_module);
           return xla::ValueOrThrow(PySerializePortableArtifact(
               module, target, use_mixed_serialization));
         }
