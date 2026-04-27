@@ -109,6 +109,7 @@ jobs:
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/rocm-dev-infra/build_tools/rocm/execute_ci_build_upstream_jax.sh
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
@@ -157,18 +158,21 @@ jobs:
             grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
           echo "RBE image: ${IMAGE}@${DIGEST}"
           echo "rbe_image=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+      - name: Fetch ROCm Jax Upstream Script from ROCm/xla
+        run: |
+          wget -O ci/execute_ci_build_upstream.sh "${EXECUTE_CI_BUILD_URL}"
+          chmod +x ci/execute_ci_build_upstream.sh
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
         run: |
-          ./ci/run_bazel_test_rocm_rbe.sh  \
+          ./ci/execute_ci_build_upstream.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
             --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
             --//jax:build_jax="${{ inputs.build_jax }}" \
             --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
             --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}" \
-            "${JAXCI_ROCM_LOCK_FLAG:-}"
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}"
       - name: Upload test artifacts
         if: always()
         continue-on-error: true
