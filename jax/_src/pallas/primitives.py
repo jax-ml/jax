@@ -579,7 +579,7 @@ def _reciprocal_lowering_rule(
 
   def _reciprocal(x, *, approx=False):
     if approx:
-      return jnp.reciprocal(x.astype(jnp.bfloat16)).astype(jnp.float32)
+      return jnp.reciprocal(x.astype(jnp.bfloat16)).astype(x.dtype)
     return jnp.reciprocal(x)
 
   return mlir.lower_fun(_reciprocal, multiple_results=False)(
