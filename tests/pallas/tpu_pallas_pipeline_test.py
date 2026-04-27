@@ -478,6 +478,22 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, expected_out, atol=5e-5)
 
+  def test_unaligned_slice_hbm_3d(self):
+    M, N = 32, 5  # not aligned with 128.
+
+    def kernel(x_hbm, out_hbm):
+      hbm_slice = x_hbm.at[0, :, :]
+      pltpu.sync_copy(hbm_slice, out_hbm)
+
+    x = jnp.arange(2 * M * N, dtype=jnp.float32).reshape(2, M, N)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((M, N), jnp.float32),
+        grid=(),
+    )(x)
+
+    np.testing.assert_allclose(out, x[0])
+
 
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
