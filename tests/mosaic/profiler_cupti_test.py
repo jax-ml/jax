@@ -37,6 +37,7 @@ else:
 # ruff: noqa: F405
 config.parse_flags_with_absl()
 
+@jtu.thread_unsafe_test_class()
 class ProfilerCuptiTest(parameterized.TestCase):
 
   def setUp(self):
@@ -97,17 +98,15 @@ class ProfilerCuptiTest(parameterized.TestCase):
     self.assertTrue(all(isinstance(t, float) for t in timings))
 
   def test_measure_double_subscription(self):
+    assert cuda_versions is not None
+    cupti_version = cuda_versions.cupti_get_version()
+    if cupti_version >= 130200:
+      self.skipTest(
+          "Legacy single-subscriber behavior only applies before CUPTI 13.2.")
+
     ext = mosaic_gpu_lib._mosaic_gpu_ext
     ext._cupti_init()
-    self.addCleanup(ext._cupti_get_timings, False)
-
-    cupti_version = (
-        None if cuda_versions is None else cuda_versions.cupti_get_version()
-    )
-    if cupti_version is not None and cupti_version >= 130200:
-      _, timings = profiler.measure(self.f, aggregate=False)(self.x)
-      self.assertLen(timings, 1)
-      return
+    self.addCleanup(ext._cupti_get_timings, True)
 
     with self.assertRaisesRegex(
         RuntimeError,
@@ -116,6 +115,7 @@ class ProfilerCuptiTest(parameterized.TestCase):
       profiler.measure(self.f, aggregate=False)(self.x)
 
 
+@jtu.thread_unsafe_test_class()
 class _CuptiV2TestBase(jtu.JaxTestCase):
   """Base for V2 multi-subscriber tests."""
 
@@ -173,8 +173,8 @@ class ProfilerCuptiMultiSubscriberTest(_CuptiV2TestBase):
     self._run_mosaic_profile()
     self._run_jax_trace()
 
-  def test_finalize_flag_ignored_on_cupti_v2(self):
-    """finalize has no effect on the CUPTI V2 multi-subscriber path."""
+  def test_finalize_true_allows_cupti_v2_reuse(self):
+    """finalize=True does not break later CUPTI V2 subscribers."""
     f = lambda x: x @ x
 
     result_true, runtime_ms1 = profiler.Cupti(finalize=True).measure(f)(self.x)
