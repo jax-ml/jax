@@ -820,12 +820,36 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   return ::xla::ffi::Error::Success();
 }
 
+// For command buffer support, make sure that the kernel cache is populated during initialization.
+::xla::ffi::Error TritonKernelCallFfiInitialize(gpuStream_t stream,
+                                      std::string_view opaque,
+                                      ::xla::ffi::RemainingArgs args,
+                                      ::xla::ffi::RemainingRets rets) {
+  std::vector<void*> buffers = CombineBuffers(args, rets);
+  auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
+  if (!kernel_call_or.ok()) {
+    return ::xla::ffi::Error::InvalidArgument(
+        std::string(kernel_call_or.status().message()));
+  }
+  return ::xla::ffi::Error::Success();
+}
+
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfi, TritonKernelCallFfi,
     ::xla::ffi::Ffi::Bind()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
         .Attr<std::string_view>("opaque")
         .RemainingArgs()
-        .RemainingRets());
+        .RemainingRets(),
+    {::xla::ffi::Traits::kCmdBufferCompatible});
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kTritonKernelCallFfiInitialize, TritonKernelCallFfiInitialize,
+    ::xla::ffi::Ffi::BindInitialize()
+        .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
+        .Attr<std::string_view>("opaque")
+        .RemainingArgs()
+        .RemainingRets(),
+    {::xla::ffi::Traits::kCmdBufferCompatible});
 
 }  // namespace jax::JAX_GPU_NAMESPACE
