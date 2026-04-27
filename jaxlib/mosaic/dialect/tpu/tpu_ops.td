@@ -1695,8 +1695,7 @@ def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync", [DefaultMemRead, Defaul
     `$indices` must match the rank of the `$base` memref. The `$base` memref
     must be in SMEM. The update is synchronous.
 
-    The `$core_type` and `$core_id` specify the core on which the increment is
-    performed.
+    The `$core_id` specify the core on which the increment is performed.
 
     Example:
 

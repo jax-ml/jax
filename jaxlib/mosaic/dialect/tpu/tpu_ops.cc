@@ -2459,8 +2459,7 @@ LogicalResult FetchAndAddSyncOp::verify() {
     case CoreType::kScScalarSubcore:
       return emitOpError("SC scalar subcore target not supported yet");
     default:
-      return emitOpError(
-                 "Only SC scalar and vector subcores are supported, got ")
+      return emitOpError("Only SC vector subcore is supported, got ")
              << target_core;
   }
   MemRefType base_type = getBase().getType();
