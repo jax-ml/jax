@@ -119,6 +119,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
+  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
 
   # Run multi-accelerator across all chips
   bazel test \
@@ -147,6 +148,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
+  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
 else
 
   # Run single-accelerator tests in parallel
@@ -195,6 +197,7 @@ else
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
+  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
 
   # Run multi-accelerator across all chips
   bazel test \
@@ -227,9 +230,23 @@ else
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
+  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
 fi
 
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+# Merge results with prefixes to avoid overwriting
+mkdir -p test-artifacts
+if [[ -d test-artifacts-single ]]; then
+  for f in test-artifacts-single/*; do
+    [[ -e "$f" ]] || continue
+    cp "$f" "test-artifacts/single_$(basename "$f")"
+  done
+fi
+if [[ -d test-artifacts-multi ]]; then
+  for f in test-artifacts-multi/*; do
+    [[ -e "$f" ]] || continue
+    cp "$f" "test-artifacts/multi_$(basename "$f")"
+  done
+fi
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then

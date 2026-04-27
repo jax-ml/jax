@@ -41,7 +41,7 @@ runs:
       run: |
         printf -v padded_attempt "attempt%03d" "$RUN_ATTEMPT"
         echo "padded_attempt=${padded_attempt}" >> "$GITHUB_OUTPUT"
-        if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR"/*.xml 2>/dev/null)" ]]; then
+        if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR" 2>/dev/null)" ]]; then
           echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
           echo "Found test artifacts in $TEST_ARTIFACTS_DIR/"
           ls -la "$TEST_ARTIFACTS_DIR"/*.xml

@@ -125,6 +125,7 @@ bazel test --config=$TEST_CONFIG \
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
 
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
@@ -153,8 +154,22 @@ bazel test --config=$TEST_CONFIG \
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
+ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
 
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+# Merge results with prefixes to avoid overwriting
+mkdir -p test-artifacts
+if [[ -d test-artifacts-single ]]; then
+  for f in test-artifacts-single/*; do
+    [[ -e "$f" ]] || continue
+    cp "$f" "test-artifacts/single_$(basename "$f")"
+  done
+fi
+if [[ -d test-artifacts-multi ]]; then
+  for f in test-artifacts-multi/*; do
+    [[ -e "$f" ]] || continue
+    cp "$f" "test-artifacts/multi_$(basename "$f")"
+  done
+fi
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
