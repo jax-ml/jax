@@ -20,7 +20,7 @@ import functools
 import itertools
 import math
 import threading
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import jax
 from jax import lax
@@ -30,38 +30,36 @@ from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src import pjit
 from jax._src import source_info_util
+from jax._src import state
 from jax._src.interpreters import mlir
-from jax._src.tree_util import FlatTree
+from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.params import InterpretParams
-from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.tree_util import FlatTree
 from jax._src.typing import Array
 from jax._src.util import (
     safe_map,
     safe_zip,
     split_list
 )
-from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
 
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
-
-
 
 
 @contextlib.contextmanager
@@ -87,6 +85,7 @@ def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
   finally:
     config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
 
+
 def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
   config.pallas_tpu_interpret_mode_context_manager.set_global(params)
 
@@ -97,6 +96,7 @@ _shared_memory: memory.SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 races: RaceDetectionState | None = None
 dma_id_counter: interpret_utils.Counter | None = None
+
 
 def reset_tpu_interpret_mode_state():
   """Resets all global, shared state used by TPU interpret mode.
@@ -147,6 +147,7 @@ def _initialize_shared_memory(
           num_devices=num_devices,
           num_cores_per_device=num_cores_per_device,
           out_of_bounds_reads=interpret_params.out_of_bounds_reads,
+          buffer_bounds=interpret_params.buffer_bounds,
           dma_execution_mode=interpret_params.dma_execution_mode,
           uninitialized_memory=interpret_params.uninitialized_memory,
           detect_races=interpret_params.detect_races,
@@ -247,6 +248,42 @@ def _validate(device_id):
     )
 
 
+def _get_padded_shape(
+    logical_shape: tuple[int, ...], dtype: jnp.dtype
+) -> tuple[int, ...]:
+  # Do not pad scalars.
+  if logical_shape == ():
+    return ()
+
+  # TODO(nrink): Replace this assertion with raising an exception early if
+  # dtype `float64` is used in TPU interpret mode. (`float64` has itemsize
+  # of 8, and an itemsize > 4 will cause infinite looping in `infer_tiling`.)
+  assert dtype.itemsize <= 4
+  tile_shape = tpu_info.infer_tiling(
+      jax.core.ShapedArray(shape=logical_shape, dtype=dtype)
+  )
+
+  result = []
+  for dim, tile_dim in zip(logical_shape, tile_shape):
+    # `tpu_info.infer_tiling` returns a tuple of `None` if its argument has no
+    # `dtype` attribute (but we did pass a `dtype` above).
+    assert tile_dim is not None
+    result.append(((dim + tile_dim - 1) // tile_dim) * tile_dim)
+  return tuple(result)
+
+
+def _get_with_padding(
+    x: np.ndarray, uninitialized_memory: Literal['nan', 'zero']
+) -> np.ndarray:
+  padded_shape = _get_padded_shape(x.shape, x.dtype)
+  uninitialized_value = interpret_utils.get_uninitialized_value(
+      x.dtype, uninitialized_memory
+  )
+  result = np.full(padded_shape, uninitialized_value, x.dtype)
+  result[tuple(slice(0, dim) for dim in x.shape)] = x
+  return result
+
+
 def _allocate_buffer(
     device_id: Array,
     local_core_id: Array | None,
@@ -273,9 +310,17 @@ def _allocate_buffer(
   """
   device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
   memory_space_str = TPU_MEMORY_SPACE_NAMES[int(memory_space)]
-  del memory_space
+  value = np.array(val)
+  del memory_space, val
 
   shared_memory = _get_shared_memory()
+
+  logical_shape = value.shape
+  if (
+      shared_memory.buffer_bounds == 'padded'
+      and memory_space_str != mosaic_core.MemorySpace.SMEM.value
+  ):
+    value = _get_with_padding(value, shared_memory.uninitialized_memory)
 
   if local_core_id is None:
     local_core_id_int = 0
@@ -304,12 +349,13 @@ def _allocate_buffer(
       if len(local_core_id_to_buffer_id) > 0:
         # If we are allocating more than one buffer, we must make additional
         # copies of `val` so that each buffer is a distinct ndarray.
-        val = val.copy()
+        value = value.copy()
 
     shared_memory.allocate_buffer(
         key,
         ref_count=ref_count,
-        value=np.array(val),
+        value=value,
+        logical_shape=logical_shape,
         logging_info=interpret_utils.TPULoggingInfo(
             device_id=device_id,
             local_core_id=lci,

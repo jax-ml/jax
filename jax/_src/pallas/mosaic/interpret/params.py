@@ -159,7 +159,21 @@ class InterpretParams(SharedInterpretParams):
       allocating HBM buffers with `run_scoped` is not supported when executing
       Pallas kernels on a real TPU.
       Default: `False`.
+    buffer_bounds: If "padded", reads and writes of a buffer are only considered
+      out-of-bounds when they go beyond the 'padded shape' of a buffer. The
+      amount of padding is determined by the TPU device kind that is being
+      simulated by TPU interpret mode (to be set with
+      `jax.sharding.use_abstract_mesh` in the context from where the interpreter
+      Pallas kernel is called). Any part of a read that is outside of the
+      buffer's shape but inside the padded shape returns uninitialized values
+      (see the "uninitialized_memory" attribute of the superclass
+      `SharedInterpretParams`). Any part of a write that is outside of the
+      buffer's shape but inside the padded shape is ignored. If "logical", reads
+      and writes are considered out-of-bounds when outside of the buffer's
+      logical shape.
+      Default: "logical".
   """
+  # TODO(nrink): Add an attribute for specifying the TPU device kind.
 
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   random_seed: int | None = None
@@ -167,6 +181,7 @@ class InterpretParams(SharedInterpretParams):
       Callable[[tuple[np.int32, ...], np.int32], None] | None
   ) = None
   allow_hbm_allocation_in_run_scoped: bool = False
+  buffer_bounds: Literal["logical", "padded"] = "logical"
 
   @property
   def num_cores_per_device(self) -> int:
