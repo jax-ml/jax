@@ -1736,6 +1736,66 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(kernel(), jnp.array(42, jnp.int32))
 
+  def test_swizzled_dimension_dynamic_slice(self):
+    shape = (64, 64)
+    dtype = jnp.int32
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        ],
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((64, swizzle_elems), dtype),
+    )
+    def kernel(src_ref, offset_ref, dst_ref):
+      dyn_idx = offset_ref[...] * swizzle_elems
+      sliced_ref = src_ref.at[:, pl.ds(dyn_idx, swizzle_elems)]
+      dst_ref[...] = sliced_ref[...]
+
+    src = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    offset = np.array(1, dtype=np.int32)
+    expected = src[:, swizzle_elems:swizzle_elems*2]
+    np.testing.assert_array_equal(kernel(src, offset), expected)
+
+  def test_swizzled_dimension_dynamic_slice_raises_for_non_divisible_offset(
+      self,
+  ):
+    # TODO(allanrenucci): `UntilingTransform.commute_ndindexer` does not do
+    # divisibility checks on dynamic offsets.
+    if self.LOWERING_SEMANTICS == mgpu.LoweringSemantics.Lane:
+      self.skipTest("Divisibility check missing.")
+    shape = (64, 64)
+    dtype = jnp.int32
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        ],
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((64, swizzle_elems), dtype),
+    )
+    def kernel(src_ref, offset_ref, dst_ref):
+      dyn_idx = offset_ref[...]
+      sliced_ref = src_ref.at[:, pl.ds(dyn_idx, swizzle_elems)]
+      dst_ref[...] = sliced_ref[...]
+
+    src = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    offset = np.array(1, dtype=np.int32)
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      jax.block_until_ready(kernel(src, offset))
+
   def test_check(self):
     self.enter_context(pl.enable_debug_checks(True))
 
