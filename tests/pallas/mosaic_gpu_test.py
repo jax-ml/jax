@@ -1425,9 +1425,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_smem_gmem_transposed_copies(self, tiling):
     shape = (2, 2, 64)
     transforms = (tiling,) if tiling is not None else ()
-    if transforms:
-      # NotImplementedError: Only 2D tilings are supported, got 1
-      self.skip_if_wg_semantics()
 
     @functools.partial(
         self.kernel,
