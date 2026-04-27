@@ -1364,16 +1364,12 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
 
   def test_lower_preserves_arg_names_for_shaped_arrays(self):
-    """When all inputs/outputs are ShapedArray, arg_names should be preserved
-    even when the jaxpr is_high due to containing hi-primitives internally."""
     x = jnp.array(1.0)
     lowered = jax.jit(square).lower(x)
     debug_info = lowered._lowering.compile_args['all_args_info'].debug_info
     self.assertEqual(debug_info.arg_names, ('x',))
 
   def test_lower_replicates_arg_names_for_hitypes(self):
-    """When inputs are HiType, arg_names should be replicated to match
-    the expanded lo-args (e.g. QArrayTy expands to 2 lo-args)."""
     def f(x):
       return from_qarray(x)
 
