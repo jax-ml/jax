@@ -3491,7 +3491,7 @@ def _run_state_lowering_rule(
     )
   assert not new_consts
   outs = lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]
+      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
   )
   # Await the accumulators and extract their final values.
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
