@@ -40,6 +40,9 @@ try:
 except ImportError:
   pallas_primitives = None  # type: ignore
 
+from jax import export
+from jax.experimental import layout
+
 # The following imports are references by the emitter rules
 from jax._src import ad_checkpoint  # type: ignore  # noqa: F401
 from jax._src import config

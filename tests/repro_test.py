@@ -37,6 +37,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import checkpoint as new_checkpoint
 from jax.experimental import hijax
+from jax.experimental import layout
 from jax.experimental import pallas as pl
 from jax.experimental import pjit
 from jax.experimental.pallas import fuser
@@ -1122,6 +1123,22 @@ class ReproTest(jtu.JaxTestCase):
 
     def run_export(x):
       exported = export.export(f)(x)
+      return exported.call(x)
+
+    self.collect_and_check(run_export,
+                           np.ones((8,), dtype=np.float32))
+
+  def test_export_disabled_checks(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    disabled_checks = [
+      export.DisabledSafetyCheck.custom_call("my_custom_call"),
+      export.DisabledSafetyCheck.platform(),
+    ]
+    def run_export(x):
+      exported = export.export(f, disabled_checks=disabled_checks)(x)
       return exported.call(x)
 
     self.collect_and_check(run_export,
@@ -2230,6 +2247,15 @@ class ReproTest(jtu.JaxTestCase):
     a = jnp.arange(4 * 4, dtype=np.float32).reshape((4, 4))
     self.collect_and_check(f, a)
 
+  def test_layout_constraint(self):
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Enforce a specific layout on `y`
+      y = layout.with_layout_constraint(y, layout.Layout(major_to_minor=(0, 1)))
+      return y * 2
+
+    self.collect_and_check(f, jnp.ones((4, 4)))
 
   def test_named_call_0(self):
     @jax.jit

@@ -260,6 +260,11 @@ def initialize_operand_emitter():
     return f"lax.Tolerance({v.atol}, {v.rtol}, {v.ulps})"
   _operand_emitter_by_type[lax.Tolerance] = emit_Tolerance
 
+  from jax.experimental import layout
+  @partial(register_emitter_by_type, layout.Layout)
+  def emit_Layout(ctx: "EmitFunctionDefContext", v: layout.Layout) -> str:
+    return f"layout.Layout({v.major_to_minor}, {v.tiling}, sub_byte_element_size_in_bits={v.sub_byte_element_size_in_bits})"
+
   from jax._src import random  # type: ignore
   def emit_PRNGImpl(ctx: "EmitFunctionDefContext", v: random.PRNGImpl) -> str:
     return f"resolve_prng_impl(\"{v.name}\")"
@@ -272,6 +277,15 @@ def initialize_operand_emitter():
     return ctx.named_value(res, prefix="key")
 
   _operand_emitter_by_type[xla_client.ArrayCopySemantics] = emit_enum("xla_client.ArrayCopySemantics")
+
+  from jax import export
+  @partial(register_emitter_by_type, export.DisabledSafetyCheck)
+  def emit_DisabledSafetyCheck(ctx: "EmitFunctionDefContext", v: export.DisabledSafetyCheck):
+    if v._impl == export.DisabledSafetyCheck.platform()._impl:
+      return "export.DisabledSafetyCheck.platform()"
+    if (cc := v.is_custom_call()) is not None:
+      return f"export.DisabledSafetyCheck.custom_call(\"{cc}\")"
+    raise NotImplementedError(v)
 
   from jax._src.state import indexing  # type: ignore
   @partial(register_emitter_by_type, indexing.Slice)
