@@ -160,7 +160,17 @@ def TPU_TiledLayoutAttr
   let extraClassDeclaration = [{
     static ::llvm::SmallVector<int64_t> getDefaultTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
     static TiledLayoutAttr getContiguous(::mlir::MLIRContext* context, ::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
-    bool tilesAreKnownContiguous(::llvm::ArrayRef<int64_t> shape) const;
+
+    // Returns the number of trailing dimensions where tiles can be statically
+    // determined to be contiguous (there are no gaps or overlap between tiles).
+    // NOTE: Tiles being contiguous does not imply the _data_ is contiguous
+    //   since the tiles may contain padding. This means this function is
+    //   different from MemRefType::getNumContiguousTrailingDims.
+    int64_t getNumTrailingDimsWithContiguousTiles(
+        ::llvm::ArrayRef<int64_t> shape) const;
+    bool tilesAreKnownContiguous(const ::llvm::ArrayRef<int64_t> shape) const {
+      return getNumTrailingDimsWithContiguousTiles(shape) == getRank();
+    }
 
     int64_t getRank() const {
       return getTileStrides().size();

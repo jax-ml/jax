@@ -279,6 +279,18 @@ cc_library(
 )
 
 cc_test(
+    name = "tiled_layout_test",
+    srcs = ["dialect/tpu/tiled_layout_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "//testing/base/public:gunit_main",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@xla//xla:shape_util",
+    ],
+)
+
+cc_test(
     name = "vreg_util_test",
     srcs = ["dialect/tpu/vreg_util_test.cc"],
     deps = [

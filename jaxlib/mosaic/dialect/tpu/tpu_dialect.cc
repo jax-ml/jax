@@ -432,7 +432,7 @@ TiledLayoutAttr TiledLayoutAttr::getContiguous(MLIRContext* context,
       context, tiles, TiledLayoutAttr::getDefaultTileStrides(tiles, shape));
 }
 
-bool TiledLayoutAttr::tilesAreKnownContiguous(
+int64_t TiledLayoutAttr::getNumTrailingDimsWithContiguousTiles(
     const ArrayRef<int64_t> shape) const {
   const ArrayRef<xla::Tile> tiles = getTiles();
   const ArrayRef<int64_t> tile_strides = getTileStrides();
@@ -440,7 +440,8 @@ bool TiledLayoutAttr::tilesAreKnownContiguous(
   const xla::Tile* const first_tile = tiles.empty() ? nullptr : &tiles.front();
   const int64_t first_tile_rank =
       first_tile == nullptr ? 0 : first_tile->dimensions().size();
-  for (int64_t d = shape.size() - 1; d >= 0; --d) {
+  int64_t d = shape.size() - 1;
+  for (; d >= 0; --d) {
     int64_t size_tiles;
     if (d >= shape.size() - first_tile_rank &&
         shape[d] != ShapedType::kDynamic) {
@@ -450,21 +451,18 @@ bool TiledLayoutAttr::tilesAreKnownContiguous(
     } else {
       size_tiles = shape[d];
     }
+    assert(tile_strides[d] != ShapedType::kDynamic);
     // Dimensions with only one element/tile can have any stride.
     if (stride != tile_strides[d] && size_tiles != 1) {
-      return false;
-    }
-    if (d == 0) {
       break;
     }
-    // When any dimension other than the leading one has a dynamic size, we
-    // cannot guarantee that there are no gaps.
-    if (size_tiles == ShapedType::kDynamic) {
-      return false;
+    if (stride == ShapedType::kDynamic || size_tiles == ShapedType::kDynamic) {
+      stride = ShapedType::kDynamic;
+    } else {
+      stride *= size_tiles;
     }
-    stride *= size_tiles;
   }
-  return true;
+  return shape.size() - 1 - d;
 }
 
 SmallVector<int64_t> TiledLayoutAttr::getExpandedShape(
