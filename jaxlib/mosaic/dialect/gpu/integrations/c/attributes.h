@@ -31,8 +31,8 @@ extern "C" {
 
 MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATileTransformAttr(MlirAttribute attr);
 
-MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTileTransformAttrGet(
-    MlirContext ctx, int32_t* tiling, int32_t tiling_size);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuTileTransformAttrGet(MlirContext ctx, MlirAttribute tiling);
 
 MLIR_CAPI_EXPORTED MlirAttribute
 mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr);
@@ -47,7 +47,7 @@ MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATransposeTransformAttr(
     MlirAttribute attr);
 
 MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(
-    MlirContext ctx, int32_t* permutation, int32_t permutation_size);
+    MlirContext ctx, MlirAttribute permutation);
 
 MLIR_CAPI_EXPORTED MlirAttribute
 mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr);

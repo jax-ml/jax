@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/CAPI/IR.h"
@@ -182,11 +183,12 @@ DEFINE_CONCRETE_ATTR(TileTransformAttr, mlirMosaicGpuIsATileTransformAttr,
                      mlirMosaicGpuTileTransformAttrGetTypeID, PyAttribute) {
   cls.def_static(
       "get",
-      [](std::vector<int32_t>& tiling, DefaultingPyMlirContext ctx) {
-        return PyTileTransformAttr(
-            ctx.resolve().getRef(),
-            mlirMosaicGpuTileTransformAttrGet(ctx.resolve().get(),
-                                              tiling.data(), tiling.size()));
+      [](const std::vector<int32_t>& tiling, DefaultingPyMlirContext ctx) {
+        MlirAttribute tiling_attr = mlirDenseI32ArrayGet(
+            ctx.resolve().get(), tiling.size(), tiling.data());
+        MlirAttribute transform_attr =
+            mlirMosaicGpuTileTransformAttrGet(ctx.resolve().get(), tiling_attr);
+        return PyTileTransformAttr(ctx.resolve().getRef(), transform_attr);
       },
       nb::arg("tiling"), nb::arg("ctx") = nb::none());
   cls.def_prop_ro("tiling", [](PyTileTransformAttr& self) {
@@ -200,11 +202,12 @@ DEFINE_CONCRETE_ATTR(TransposeTransformAttr,
                      PyAttribute) {
   cls.def_static(
       "get",
-      [](std::vector<int32_t>& permutation, DefaultingPyMlirContext ctx) {
-        return PyTransposeTransformAttr(
-            ctx.resolve().getRef(),
-            mlirMosaicGpuTransposeTransformAttrGet(
-                ctx.resolve().get(), permutation.data(), permutation.size()));
+      [](const std::vector<int32_t>& permutation, DefaultingPyMlirContext ctx) {
+        MlirAttribute permutation_attr = mlirDenseI32ArrayGet(
+            ctx.resolve().get(), permutation.size(), permutation.data());
+        MlirAttribute transform_attr = mlirMosaicGpuTransposeTransformAttrGet(
+            ctx.resolve().get(), permutation_attr);
+        return PyTransposeTransformAttr(ctx.resolve().getRef(), transform_attr);
       },
       nb::arg("permutation"), nb::arg("ctx") = nb::none());
   cls.def_prop_ro("permutation", [](PyTransposeTransformAttr& self) {

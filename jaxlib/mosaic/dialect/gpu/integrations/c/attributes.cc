@@ -35,10 +35,8 @@ bool mlirMosaicGpuIsATileTransformAttr(MlirAttribute attr) {
 }
 
 MlirAttribute mlirMosaicGpuTileTransformAttrGet(MlirContext ctx,
-                                                int32_t* tiling,
-                                                int32_t tiling_size) {
-  mlir::DenseI32ArrayAttr tiling_attr = mlir::DenseI32ArrayAttr::get(
-      unwrap(ctx), llvm::ArrayRef<int32_t>(tiling, tiling_size));
+                                                MlirAttribute tiling) {
+  auto tiling_attr = mlir::cast<mlir::DenseI32ArrayAttr>(unwrap(tiling));
   return wrap(mosaic_gpu::TileTransformAttr::get(unwrap(ctx), tiling_attr));
 }
 
@@ -59,11 +57,10 @@ bool mlirMosaicGpuIsATransposeTransformAttr(MlirAttribute attr) {
   return mlir::isa<mosaic_gpu::TransposeTransformAttr>(unwrap(attr));
 }
 
-MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(MlirContext ctx,
-                                                     int32_t* permutation,
-                                                     int32_t permutation_size) {
-  mlir::DenseI32ArrayAttr permutation_attr = mlir::DenseI32ArrayAttr::get(
-      unwrap(ctx), llvm::ArrayRef<int32_t>(permutation, permutation_size));
+MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(
+    MlirContext ctx, MlirAttribute permutation) {
+  auto permutation_attr =
+      mlir::cast<mlir::DenseI32ArrayAttr>(unwrap(permutation));
   return wrap(
       mosaic_gpu::TransposeTransformAttr::get(unwrap(ctx), permutation_attr));
 }
