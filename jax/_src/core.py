@@ -74,6 +74,45 @@ map, unsafe_map = safe_map, map
 
 config_ext = _jax.config
 
+
+if hasattr(config_ext, "increment_bind_count"):
+  increment_bind_count = config_ext.increment_bind_count
+  add_frame_tracing_stats = config_ext.add_frame_tracing_stats
+  get_tracing_counts = config_ext.get_tracing_counts
+else:
+  _bind_counter = config_ext.Config("jax_bind_counter", 0)
+  _frame_stats_counter = config_ext.Config(
+      "jax_frame_stats_counter", (0, 0, 0, 0)
+  )
+
+  def increment_bind_count() -> None:
+    cur = _bind_counter.get_local()
+    _bind_counter.set_local(1 if cur is config_ext.unset else cur + 1)
+
+  def add_frame_tracing_stats(
+      emitted_eqns: int, surviving_eqns: int, vars_allocated: int
+  ) -> None:
+    cur = _frame_stats_counter.get_local()
+    if cur is config_ext.unset:
+      _frame_stats_counter.set_local(
+          (1, emitted_eqns, surviving_eqns, vars_allocated)
+      )
+    else:
+      f, e, s, v = cur
+      _frame_stats_counter.set_local(
+          (f + 1, e + emitted_eqns, s + surviving_eqns, v + vars_allocated)
+      )
+
+  def get_tracing_counts() -> tuple[int, int, int, int, int]:
+    b = _bind_counter.get_local()
+    b_val = 0 if b is config_ext.unset else b
+    cur = _frame_stats_counter.get_local()
+    if cur is config_ext.unset:
+      return (b_val, 0, 0, 0, 0)
+    f, e, s, v = cur
+    return (b_val, f, e, s, v)
+
+
 PyTree = Any
 
 
@@ -717,6 +756,8 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
+    if prev_trace is not eval_trace:
+      increment_bind_count()
     trace_ctx.set_trace(None)
     try:
       return self.bind_with_trace(prev_trace, args, avals, params)

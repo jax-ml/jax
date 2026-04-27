@@ -40,6 +40,7 @@ from jax._src import effects as effects_lib
 from jax._src import hashable_array
 from jax._src import jaxpr_util
 from jax._src import literals
+from jax._src import monitoring
 from jax._src import path
 from jax._src import sharding_impls
 from jax._src import source_info_util
@@ -1472,7 +1473,6 @@ def lower_jaxpr_to_module(
   dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
                                            all_dim_poly, set())))
 
-
   ctx = ModuleContext(backend=backend,
                       platforms=platforms, axis_context=axis_context,
                       keepalives=keepalives,
@@ -1537,6 +1537,11 @@ def lower_jaxpr_to_module(
           'builtin.module(sdy-lift-inlined-meshes)')
       pipeline.run(ctx.module.operation)
 
+  monitoring.record_scalar(
+      "/jax/core/mlir_lowering/unique_rules",
+      len(ctx.lowering_cache),
+      fun_name=module_name,
+  )
   util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
@@ -1724,7 +1729,6 @@ def _get_res_shardings(result_shardings, out_avals, num_tokens):
     if all(s is None for s in result_shardings):
       return None
   return [*token_shardings, *result_shardings]
-
 
 
 def lower_jaxpr_to_fun(
