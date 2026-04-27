@@ -1257,56 +1257,6 @@ def _sort_lowering_rule(
 
 
 @register_lowering_rule(
-    lax.gather_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE]
-)
-def _gather_lowering_rule(
-    ctx: LoweringRuleContext,
-    x,
-    indices,
-    *,
-    dimension_numbers,
-    slice_sizes,
-    unique_indices,
-    indices_are_sorted,
-    mode,
-    fill_value,
-):
-
-  in_aval, indices_aval = ctx.avals_in
-  out_aval, = ctx.avals_out
-
-  if len(in_aval.shape) != 1:
-    raise NotImplementedError("Only 1D gather is supported")
-  if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
-    raise ValueError(
-        "Shape mismatch in input, indices and output:"
-        f" {in_aval.shape}, {indices_aval.shape[:-1]}, {out_aval.shape}"
-    )
-
-  # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
-  # to the end of the indices array. We should reshape it back to the original
-  # shape before lowering to Mosaic and rely on MLIR canonicalization to remove
-  # the reshapes.
-  assert indices_aval.shape == in_aval.shape + (1,)
-  recovered_indices = vector.shape_cast(
-      ir.VectorType.get(in_aval.shape, indices.type.element_type),
-      indices,
-  )
-  # Note: current support for lax.gather is still very limited.
-  del fill_value
-  if slice_sizes == (1,) and mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS:
-    if dimension_numbers == lax.GatherDimensionNumbers(
-        offset_dims=(),
-        collapsed_slice_dims=(0,),
-        start_index_map=(0,),
-        operand_batching_dims=(),
-        start_indices_batching_dims=(),
-    ):
-      return tpu.dynamic_gather(x, recovered_indices, [0])
-  raise NotImplementedError("Unsupported gather")
-
-
-@register_lowering_rule(
     lax.rev_p, kernel_types=[tpu_core.CoreType.SC_VECTOR_SUBCORE]
 )
 def _rev_lowering_rule(ctx: LoweringRuleContext, x, dimensions):

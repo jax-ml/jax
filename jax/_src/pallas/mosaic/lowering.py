@@ -2873,7 +2873,7 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
   return tpu.iota(out_type, dimensions=[dimension])
 
 
-@register_lowering_rule(lax.gather_p)
+@register_lowering_rule(lax.gather_p, kernel_types=[*tpu_core.CoreType])
 def _gather_lowering_rule(
     ctx: LoweringRuleContext,
     x,
@@ -2912,25 +2912,35 @@ def _gather_lowering_rule(
   # Note: current support for lax.gather is still very limited.
   del fill_value
 
-  def get_dimension_numbers(axis):
-    """Get the dimension numbers for a gather along the given axis."""
-    batch_dims = tuple(i for i in range(rank) if i != axis)
-    return lax.GatherDimensionNumbers(
-        offset_dims=(),
-        collapsed_slice_dims=(axis,),
-        start_index_map=(axis,),
-        operand_batching_dims=batch_dims,
-        start_indices_batching_dims=batch_dims,
-    )
-
-  if slice_sizes == (1,) * rank and mode in (
-      lax.GatherScatterMode.FILL_OR_DROP,
-      lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+  (
+      offset_dims,
+      collapsed_slice_dims,
+      start_index_map,
+      operand_batching_dims,
+      start_indices_batching_dims,
+  ) = dimension_numbers
+  if (
+      slice_sizes == (1,) * rank
+      and mode
+      in (
+          lax.GatherScatterMode.FILL_OR_DROP,
+          lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+      )
+      and not offset_dims
+      and collapsed_slice_dims == start_index_map
+      and operand_batching_dims == start_indices_batching_dims
+      and len(collapsed_slice_dims) == 1
+      and len(operand_batching_dims) == rank - 1
   ):
-    if dimension_numbers == get_dimension_numbers(rank - 2):
-      return tpu.dynamic_gather(x, recovered_indices, [rank - 2])
-    if dimension_numbers == get_dimension_numbers(rank - 1):
-      return tpu.dynamic_gather(x, recovered_indices, [rank - 1])
+    (axis,) = collapsed_slice_dims
+    if (
+        ctx.lowering_context.kernel_type == tpu_core.CoreType.TC
+        and axis < rank - 2
+    ):
+      raise NotImplementedError(
+          "Only gathers along the two minormost dimensions supported on TC"
+      )
+    return tpu.dynamic_gather(x, recovered_indices, [axis])
   raise NotImplementedError("Unsupported gather")
 
 
