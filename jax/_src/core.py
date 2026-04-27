@@ -72,6 +72,9 @@ map, unsafe_map = safe_map, map
 
 config_ext = xla_client._xla.config
 
+
+bind_counter = config_ext.Config("jax_bind_counter", 0)
+
 PyTree = Any
 
 
@@ -636,6 +639,8 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
+    if prev_trace is not eval_trace:
+      bind_counter.set_local(bind_counter.get_local() + 1)
     trace_ctx.set_trace(eval_trace)
     try:
       return self.bind_with_trace(prev_trace, args, avals, params)
@@ -762,6 +767,8 @@ class Trace:
     # We frequently need a weakref to a trace, so let's precompute one.
     self._weakref = weakref.ref(self)
     self.requires_low = True
+    if bind_counter.get_local() is config_ext.unset:
+      bind_counter.set_local(0)
 
   def stage_value(self, val):
     """Lifts a value into a trace.

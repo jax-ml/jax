@@ -33,6 +33,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import monitoring
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import tree_util
@@ -2317,6 +2318,7 @@ def trace_to_jaxpr(
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace,
                             lower=requires_low)
+  start_bind_count = core.bind_counter.get_local()
   # Name stack and the traceback scope are reset because the metadata on jaxpr
   # equations should be rooted at the enclosing jaxpr and not contain any
   # context from the callsite. Otherwise metadata from one caller would bleed
@@ -2360,6 +2362,12 @@ def trace_to_jaxpr(
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
+    current_count = core.bind_counter.get_local()
+    monitoring.record_scalar(
+        "/jax/core/jaxpr_trace/bind_count",
+        current_count - start_bind_count,
+        fun_name=debug_info.func_name
+    )
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return ClosedJaxpr(jaxpr, consts), out_avals
