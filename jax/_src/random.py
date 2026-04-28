@@ -2680,7 +2680,9 @@ def ball(
   d: int,
   p: float = 2,
   shape: Shape = (),
-  dtype: DTypeLikeFloat | None = None
+  dtype: DTypeLikeFloat | None = None,
+  *,
+  out_sharding: NamedSharding | P | None = None,
 ):
   """Sample uniformly from the unit Lp ball.
 
@@ -2693,6 +2695,14 @@ def ball(
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array of shape `(*shape, d)` and specified dtype.
@@ -2703,6 +2713,11 @@ def ball(
       float if dtype is None else dtype)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
+  out_sharding = canonicalize_sharding(out_sharding, "ball")
+  return maybe_auto_axes(_ball, out_sharding, d=d,  shape=shape, dtype=dtype)(key, p)
+
+@jit(static_argnums=(2, 3, 4))
+def _ball(key, p, d, shape, dtype):
   k1, k2 = split(key)
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)
