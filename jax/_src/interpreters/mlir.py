@@ -2080,7 +2080,6 @@ def jaxpr_subcomp(
     (ctx.shape_poly_state.dim_vars, dim_var_values)
   foreach(write, jaxpr.constvars, consts_for_constvars)
   foreach(write, jaxpr.invars, args)
-  last_used = core.last_used(jaxpr)
   outer_traceback = outer_traceback or xc.Traceback()
   should_log_constants = (config.use_simplified_jaxpr_constants.value and
                           config.captured_constants_warn_bytes.value >= 0)
@@ -2136,7 +2135,6 @@ def jaxpr_subcomp(
         tokens = tokens.update_tokens(tokens_out)
 
     foreach(write, eqn.outvars, out_nodes)
-    core.clean_up_dead_vars(eqn, env, last_used)
   return tuple(read(v) for v in jaxpr.outvars), tokens
 
 
