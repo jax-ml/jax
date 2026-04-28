@@ -1945,6 +1945,8 @@ class MeshExecutable(stages.Executable):
             else s
             for s, a in zip(self._in_shardings, self.in_avals)
         ]
+        logging.info("XXX MeshExecutable.aot_cache_miss nr_const_args[%d] in_shardings[%d]: %s",
+                     len(params.const_args), len(in_shardings), in_shardings)
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
@@ -1966,6 +1968,8 @@ class MeshExecutable(stages.Executable):
         const_args)
 
 def cc_shard_arg(x, sharding, layout):
+  logging.info("XXX cc_shard_arg type(x): %s, shape: %s, sharding: %s, layout: %s",
+               type(x), x.shape, sharding, layout)
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
                     [x])[0]
 
