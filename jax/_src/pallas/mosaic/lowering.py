@@ -1952,13 +1952,15 @@ def _reshape_memref(
   )
 
 
-def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
+def _transform_ref(ref, ref_ty, ref_block_shape=None, transforms=()):
   # Unwrap the refs if they are TransformedRefs.
   if transforms == () and isinstance(ref, state.TransformedRef):
     ref, transforms = _get_ref_and_transforms(ref)
   if isinstance(ref_ty, state.TransformedRef):
     ref_ty, _ = _get_ref_and_transforms(ref_ty)
-  if isinstance(ref_block_shape, state.TransformedRef):
+  if ref_block_shape is None:
+    ref_block_shape = ref_ty.shape
+  elif isinstance(ref_block_shape, state.TransformedRef):
     ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
   for transform in transforms:
     match transform:
@@ -4434,12 +4436,11 @@ def _dma_start_lowering_rule(
   )
   if _get_ref_and_transforms(src_ref_aval)[0].dtype == jnp.bool_:
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
-  block_shapes = _dma_unflatten(tree, ctx.block_shapes)
-  src_ref, _ = _transform_ref(src_ref, src_ref_aval, block_shapes[0])
+  src_ref, _ = _transform_ref(src_ref, src_ref_aval)
   if src_sem is not None:
-    src_sem, _ = _transform_ref(src_sem, src_sem_aval, block_shapes[3])
-  dst_ref, _ = _transform_ref(dst_ref, dst_ref_aval, block_shapes[1])
-  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
+    src_sem, _ = _transform_ref(src_sem, src_sem_aval)
+  dst_ref, _ = _transform_ref(dst_ref, dst_ref_aval)
+  sem, _ = _transform_ref(sem, sem_aval)
   kernel_type = ctx.lowering_context.kernel_type
   if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
     dest_kernel_type = sem_aval.memory_space.mesh.core_type
@@ -4475,11 +4476,9 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
   )
-  block_shapes = _dma_unflatten(tree, ctx.block_shapes)
-  block_shapes = [_get_ref_and_transforms(r)[0] for r in block_shapes]
-  src, _ = _transform_ref(src, src_aval, block_shapes[0])
-  dst, _ = _transform_ref(dst, dst_aval, block_shapes[1])
-  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
+  src, _ = _transform_ref(src, src_aval)
+  dst, _ = _transform_ref(dst, dst_aval)
+  sem, _ = _transform_ref(sem, sem_aval)
 
   if insert_dummy_device:
     i32 = ir.IntegerType.get_signless(32)
