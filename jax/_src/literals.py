@@ -30,6 +30,12 @@ _weak_float64_aval = ShapedArray((), np.dtype(np.float64), weak_type=True)
 _weak_complex64_aval = ShapedArray((), np.dtype(np.complex64), weak_type=True)
 _weak_complex128_aval = ShapedArray((), np.dtype(np.complex128), weak_type=True)
 
+_int32_dtype = np.dtype(np.int32)
+_int64_dtype = np.dtype(np.int64)
+_float32_dtype = np.dtype(np.float32)
+_float64_dtype = np.dtype(np.float64)
+_complex64_dtype = np.dtype(np.complex64)
+_complex128_dtype = np.dtype(np.complex128)
 
 class TypedInt(int):
   dtype: np.dtype
@@ -38,9 +44,9 @@ class TypedInt(int):
   def __new__(cls, value: int, dtype: np.dtype):
     v = super().__new__(cls, value)
     v.dtype = dtype
-    if dtype == np.dtype(np.int32):
+    if dtype == _int32_dtype:
       v.aval = _weak_int32_aval
-    elif dtype == np.dtype(np.int64):
+    elif dtype == _int64_dtype:
       v.aval = _weak_int64_aval
     else:
       v.aval = ShapedArray((), dtype, weak_type=True)
@@ -54,15 +60,17 @@ class TypedInt(int):
 
 
 class TypedFloat(float):
+  __slots__ = ('dtype', 'aval')
+
   dtype: np.dtype
   aval: ShapedArray
 
   def __new__(cls, value: float, dtype: np.dtype):
     v = super().__new__(cls, value)
     v.dtype = dtype
-    if dtype == np.dtype(np.float32):
+    if dtype == _float32_dtype:
       v.aval = _weak_float32_aval
-    elif dtype == np.dtype(np.float64):
+    elif dtype == _float64_dtype:
       v.aval = _weak_float64_aval
     else:
       v.aval = ShapedArray((), dtype, weak_type=True)
@@ -79,15 +87,17 @@ class TypedFloat(float):
 
 
 class TypedComplex(complex):
+  __slots__ = ('dtype', 'aval')
+
   dtype: np.dtype
   aval: ShapedArray
 
   def __new__(cls, value: complex, dtype: np.dtype):
     v = super().__new__(cls, value)
     v.dtype = dtype
-    if dtype == np.dtype(np.complex64):
+    if dtype == _complex64_dtype:
       v.aval = _weak_complex64_aval
-    elif dtype == np.dtype(np.complex128):
+    elif dtype == _complex128_dtype:
       v.aval = _weak_complex128_aval
     else:
       v.aval = ShapedArray((), dtype, weak_type=True)
