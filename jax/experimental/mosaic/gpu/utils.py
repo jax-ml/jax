@@ -1166,6 +1166,12 @@ class BarrierRef:
     )
 
   def get_ptr(self):
+    if self.num_barriers != 1:
+      raise ValueError(
+          f"Operation is only valid for a single barrier, but barrier ref "
+          f"contains {self.num_barriers}. Individual barriers can be accessed "
+          f"by indexing into the ref."
+      )
     i64 = ir.IntegerType.get_signless(64)
     return getelementptr(self.base_address, [self.offset], i64)
 

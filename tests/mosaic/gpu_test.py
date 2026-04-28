@@ -3510,6 +3510,23 @@ class BarrierTest(TestCase):
 
     np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
 
+  def test_multiple_barriers_requires_explicit_indexing(self):
+    def kernel(ctx, out, barrier):
+      del ctx, out
+      barrier.arrive()
+
+    with self.assertRaisesRegex(
+        ValueError, "Operation is only valid for a single barrier"
+    ):
+      mgpu.as_gpu_kernel(
+          kernel,
+          (1, 1, 1),
+          (128, 1, 1),
+          (),
+          jax.ShapeDtypeStruct((), jnp.int32),
+          mgpu.Barrier(arrival_count=1, num_barriers=3),
+      )()
+
 
 class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
