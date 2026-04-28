@@ -1347,6 +1347,25 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(x_ref[...], 4., check_dtypes=False)
     self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
 
+  def test_jit_lowering_is_eager_internal_hitypes(self):
+    def f(x):
+      return get_tuple_element(make_tup(x), 0)
+    traced = jax.jit(f).trace(1.)
+    assert not traced.jaxpr.is_high
+    self.assertEqual(jax.jit(f)(1.), 1.)
+    self.assertEqual(traced.lower().compile()(1.), 1.)
+    jaxpr = jax.jit(jax.jit(f)).trace(1.).jaxpr
+    assert not jaxpr.is_high
+    del f
+
+  def test_jit_lowering_is_eager_inout_hitypes(self):
+    tup = make_tup(1.)
+    def f(tup):
+      return make_tup(get_tuple_element(tup, 0))
+    traced = jax.jit(f).trace(tup)
+    assert not traced.jaxpr.is_high
+    self.assertEqual(jax.jit(f)(tup), tup)
+    # self.assertEqual(traced.lower().compile()(tup), tup)  # TODO
 
 class BoxTest(jtu.JaxTestCase):
 

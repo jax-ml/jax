@@ -440,8 +440,12 @@ class Traced(Stage):
       return self._lojax
 
     if not self.jaxpr.is_high:
+      params = dict(self._params)
+      in_avals, out_avals = params.pop('in_avals'), params.pop('out_avals')
+      if any(a.is_high for a in it.chain(in_avals, out_avals)):
+        raise NotImplementedError  # TODO(mattjj,dougalm)
       self._lojax = LoJax(
-          self._meta_tys_flat, self._params, self._in_tree, self.out_tree,
+          self._meta_tys_flat, params, self._in_tree, self.out_tree,
           (self._in_tree, self.jaxpr.in_avals),
           (self.out_tree, self.jaxpr.out_avals),
           self._consts)

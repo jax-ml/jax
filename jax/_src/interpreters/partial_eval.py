@@ -1836,7 +1836,8 @@ class DynamicJaxprTrace(core.Trace):
 
   def __init__(self, debug_info: core.DebugInfo | None,
                parent_trace: core.Trace | None = None,
-               lower: bool = False, auto_dce: bool =False):
+               *,
+               lower: bool, auto_dce: bool = False):
     super().__init__()
     self.requires_low = lower
     self.frame = JaxprStackFrame(debug_info, auto_dce)
@@ -2264,7 +2265,7 @@ def trace_to_jaxpr(
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     fun_returns_flat_tree=False,
-    requires_low=False,
+    requires_low,
 ) -> tuple[ClosedJaxpr, FlatTree]:
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
