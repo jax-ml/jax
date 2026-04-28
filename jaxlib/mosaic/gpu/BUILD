@@ -96,7 +96,7 @@ cc_test(
     srcs = ["dump_test.cc"],
     deps = [
         ":dump",
-        "//testing/base/public:gunit_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -107,8 +107,8 @@ cc_test(
     deps = [
         ":passes",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:BufferizationInterfaces",
@@ -394,7 +394,6 @@ cc_test(
     tags = ["requires-gpu-sm90"],
     deps = [
         ":mosaic_gpu_support",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/log:scoped_mock_log",
@@ -402,6 +401,7 @@ cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/parser:hlo_parser",
         "@xla//xla/pjrt:pjrt_client",

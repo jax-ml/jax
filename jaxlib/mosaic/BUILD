@@ -283,7 +283,7 @@ cc_test(
     srcs = ["dialect/tpu/tiled_layout_test.cc"],
     deps = [
         ":tpu_dialect",
-        "//testing/base/public:gunit_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@xla//xla:shape_util",
@@ -295,7 +295,7 @@ cc_test(
     srcs = ["dialect/tpu/vreg_util_test.cc"],
     deps = [
         ":tpu_dialect",
-        "//testing/base/public:gunit_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
@@ -309,7 +309,7 @@ cc_test(
     srcs = ["dialect/tpu/array_util_test.cc"],
     deps = [
         ":tpu_dialect",
-        "//testing/base/public:gunit_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:Support",
         "@xla//xla:array",
     ],
@@ -320,8 +320,8 @@ cc_test(
     srcs = ["dialect/tpu/tpu_ops_verification_test.cc"],
     deps = [
         ":tpu_dialect",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
