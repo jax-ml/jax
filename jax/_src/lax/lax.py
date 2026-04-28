@@ -9200,12 +9200,7 @@ def _eq_meet(a, b):
   return eq(a, b)
 
 
-# TODO(yashkatariya): `_manual_axis_type` is used in pl.kernel to create refs
-# with correct sharding and mat. But maybe we can lift this into `empty_ref`
-# and then remove `_manual_axis_type` from here? Unless there is a use case to
-# use `jax.lax.empty` inside shmap without pallas.
-def empty(shape, dtype, *, out_sharding=None,
-          _manual_axis_type=core.ManualAxisType()):
+def empty(shape, dtype, *, out_sharding=None):
   """Create an empty array of possibly uninitialized values.
 
   This initialization is backend dependent.
@@ -9227,24 +9222,20 @@ def empty(shape, dtype, *, out_sharding=None,
   .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
-  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding,
-                      mat=_manual_axis_type)
+  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
 
 empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
-def _empty_abstract_eval(*, shape, dtype, out_sharding, mat):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding,
-                          manual_axis_type=mat)
+def _empty_abstract_eval(*, shape, dtype, out_sharding):
+  return core.ShapedArray(shape, dtype, sharding=out_sharding)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
-def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding, mat):
+def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
-    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding,
-                        mat=mat)
+    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding,
-                              manual_axis_type=mat)
+  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
   custom_call_op = hlo.CustomCallOp(
       [mlir.ir.RankedTensorType.get(
@@ -9259,24 +9250,22 @@ def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding, mat):
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
-def _empty_lower(ctx, *, shape, dtype, out_sharding, mat):
+def _empty_lower(ctx, *, shape, dtype, out_sharding):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding,
-                              manual_axis_type=mat)
+  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
   out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
   return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
 mlir.register_lowering(empty_p, _empty_lower)
 
-def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding,
-                   mat):
+def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding):
   batched_shape = tuple_insert(shape, 0, axis_data.size)
   batched_out_sharding = (
       None if out_sharding is None else
       batching.get_sharding_for_vmap(axis_data, out_sharding, 0))
   y = empty_p.bind(shape=batched_shape, dtype=dtype,
-                   out_sharding=batched_out_sharding, mat=mat)
+                   out_sharding=batched_out_sharding)
   return y, 0
 batching.fancy_primitive_batchers[empty_p] = _empty_batcher
 
