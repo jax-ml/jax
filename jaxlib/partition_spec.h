@@ -16,37 +16,11 @@ limitations under the License.
 #ifndef JAX_JAXLIB_PARTITION_SPEC_H_
 #define JAX_JAXLIB_PARTITION_SPEC_H_
 
-#include <vector>
-
 #include "nanobind/nanobind.h"
 
 namespace jax {
 
-struct UnconstrainedSingleton {};
-
-class PartitionSpec {
- public:
-  PartitionSpec(nanobind::tuple partitions, nanobind::frozenset unreduced,
-                nanobind::frozenset reduced);
-
-  nanobind::tuple partitions() const { return partitions_; }
-  nanobind::frozenset unreduced() const { return unreduced_; }
-  nanobind::frozenset reduced() const { return reduced_; }
-
-  bool operator==(const PartitionSpec& other) const;
-
-  bool Eq(const nanobind::object& other) const;  // Python __eq__
-  Py_hash_t Hash() const;                        // Python __hash__
-
-  static void Register(nanobind::module_& m);
-
- private:
-  nanobind::tuple partitions_;
-  nanobind::frozenset unreduced_;
-  nanobind::frozenset reduced_;
-
-  static nanobind::object* unconstrained_singleton_;
-};
+void RegisterPartitionSpec(nanobind::module_& m);
 
 }  // namespace jax
 
