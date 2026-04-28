@@ -38,22 +38,19 @@ def _check(partitions, unreduced, reduced):
         "`unreduced` and `reduced` argument to PartitionSpec cannot overlap. "
         f"Got unreduced: {unreduced} and reduced: {reduced}")
 
-  def check_overlap(partition):
-    if partition in unreduced:
-      raise ValueError(
-          "partitions cannot overlap with unreduced axes passed to "
-          f"PartitionSpec. Got partitions: {partitions} and unreduced axes: {unreduced}")
-    if partition in reduced:
-      raise ValueError(
-          "partitions cannot overlap with reduced axes passed to "
-          f"PartitionSpec. Got partitions: {partitions} and reduced axes: {reduced}")
-
   for partition in partitions:
-    if isinstance(partition, tuple):
-      for p in partition:
-        check_overlap(p)
-    else:
-      check_overlap(partition)
+    partition = partition if isinstance(partition, tuple) else (partition,)
+    for p in partition:
+      if p in unreduced:
+        raise ValueError(
+            "partitions cannot overlap with unreduced axes passed to"
+            f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
+            f" {unreduced}")
+      if p in reduced:
+        raise ValueError(
+            "partitions cannot overlap with reduced axes passed to"
+            f" PartitionSpec. Got partitions: {partitions} and reduced axes:"
+            f" {reduced}")
 
 def _get_ur_str(unreduced, reduced):
   if unreduced and reduced:
@@ -65,7 +62,6 @@ def _get_ur_str(unreduced, reduced):
   assert False  # unreachable
 
 if jaxlib_extension_version >= 446:
-  _canonicalize_partition = _jax.canonicalize_partition  # type: ignore
   _canonicalize_partitions = _jax.canonicalize_partitions  # type: ignore
 
   def _get_default_unconstrained(): return _UNCONSTRAINED_PARTITION
@@ -181,10 +177,12 @@ if jaxlib_extension_version >= 446:
       return P(*other, *self)
 
     def index(self, value):
-      return self._partitions.index(_canonicalize_partition(value))
+      value, = _canonicalize_partitions((value,))
+      return self._partitions.index(value)
 
     def count(self, value):
-      return self._partitions.count(_canonicalize_partition(value))
+      value, = _canonicalize_partitions((value,))
+      return self._partitions.count(value)
 
     def update(self, partitions=None, unreduced=None, reduced=None):
       p = self._partitions if partitions is None else partitions
