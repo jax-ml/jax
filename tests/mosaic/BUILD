@@ -172,7 +172,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    shard_count = 5,
+    shard_count = 10,
     tags = [
         "noasan",
     ],
