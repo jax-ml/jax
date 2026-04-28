@@ -964,6 +964,9 @@ class LogTy(MutableHiType):
   def to_tangent_aval(self):
     return LogTy()
 
+  def lo_ty_qdd(self, qdd: QDD, /) -> list[core.AbstractValue]:
+    return []
+
   def read_loval_in(self, qdd, log):
     () = qdd
     return []

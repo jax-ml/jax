@@ -2257,6 +2257,21 @@ def _canonicalize_dtype(x):
     return dtypes.canonicalize_value(x)
   return x
 
+def _lower_debug_info(debug_info, *, in_avals=None, out_avals=None):
+  if in_avals is not None and debug_info.arg_names is not None:
+    lo_arg_names = tuple(
+        name for aval, name in zip(in_avals, debug_info.arg_names)
+        for _ in aval.lo_ty()
+    )
+    debug_info = debug_info._replace(arg_names=lo_arg_names)
+  if out_avals is not None and debug_info.result_paths is not None:
+    lo_result_paths = tuple(
+        path for aval, path in zip(out_avals, debug_info.result_paths)
+        for _ in aval.lo_ty()
+    )
+    debug_info = debug_info._replace(result_paths=lo_result_paths)
+  return debug_info
+
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
@@ -2287,6 +2302,7 @@ def trace_to_jaxpr(
         lo_tracers = [trace.new_arg(lo_aval, source_info=source_info) for lo_aval in aval.lo_ty()]  # noqa: F821
         return aval.raise_val(*lo_tracers)
       in_tracers = in_avals.map(new_arg)
+      debug_info = _lower_debug_info(debug_info, in_avals=in_avals)
     else:
       in_tracers = in_avals.map(partial(trace.new_arg, source_info=source_info))
 
@@ -2309,7 +2325,7 @@ def trace_to_jaxpr(
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
                           for aval, hi_val in zip(out_avals, ans)
                           for x in aval.lower_val(hi_val)]
-      debug_info = debug_info.with_unknown_names()
+      debug_info = _lower_debug_info(debug_info, out_avals=out_avals)
     else:
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
                           for x in ans]
@@ -2459,7 +2475,8 @@ def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
 
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
-  dbg = hi_jaxpr.jaxpr.debug_info.with_unknown_names()
+  dbg = hi_jaxpr.jaxpr.debug_info
+  dbg = _lower_debug_info(dbg, in_avals=hi_jaxpr.in_aval_qdds)
   return trace_to_jaxpr(partial(lower_traceable, hi_jaxpr), lo_avals,
                         dbg, requires_low=True, fun_returns_flat_tree=True)
 
