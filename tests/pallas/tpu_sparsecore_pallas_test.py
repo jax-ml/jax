@@ -2646,6 +2646,59 @@ class MpmdMapTest(PallasSCTest):
     np.testing.assert_array_equal(out[:x.size], x + 2 * x)
     np.testing.assert_array_equal(out[x.size:], x + 3 * x)
 
+  @parameterized.product(use_tc_tiling=[False, True])
+  def test_parallel_subkernels_with_kernel(self, use_tc_tiling):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
+      self.skipTest("Needs a newer libtpu")
+
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="s_core",
+        subcore_axis_name="subcore",
+        num_cores=self.sc_info.num_cores,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="s_core", num_cores=self.sc_info.num_cores
+    )
+
+    x = jnp.arange(128 if use_tc_tiling else self.num_lanes, dtype=jnp.int32)
+
+    def vector_subcore_fn(x_hbm_ref, out_hbm_ref, scratch_vmem_shd_ref):
+      pltpu.sync_copy(x_hbm_ref, scratch_vmem_shd_ref)
+      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
+      pltpu.sync_copy(scratch_vmem_shd_ref, scratch_ref)
+
+      @pl.loop(0, x.size, step=self.num_lanes)
+      def _(i):
+        s = pl.ds(i, self.num_lanes)
+        scratch_ref[s] += 2 * scratch_ref[s]
+
+      pltpu.sync_copy(scratch_ref, out_hbm_ref.at[:x.size])
+
+    def scalar_subcore_fn(x_hbm_ref, out_hbm_ref, scratch_vmem_shd_ref):
+      del scratch_vmem_shd_ref
+      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.SMEM)
+      pltpu.sync_copy(x_hbm_ref, scratch_ref)
+
+      @pl.loop(0, x.size)
+      def _(i):
+        scratch_ref[i] += 3 * scratch_ref[i]
+
+      pltpu.sync_copy(scratch_ref, out_hbm_ref.at[x.size:])
+
+    scratch_shapes = (pltpu.VMEM_SHARED(x.shape, x.dtype),)
+
+    out = pl.kernel(
+        body=[vector_subcore_fn, scalar_subcore_fn],
+        mesh=[v_mesh, s_mesh],
+        out_type=jax.ShapeDtypeStruct([x.size * 2], x.dtype),
+        scratch_types=scratch_shapes,
+        compiler_params=pltpu.CompilerParams(
+            use_tc_tiling_on_sc=use_tc_tiling,
+        ),
+    )(x)
+    np.testing.assert_array_equal(out[:x.size], x + 2 * x)
+    np.testing.assert_array_equal(out[x.size:], x + 3 * x)
+
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_refs(self, core_type):
     mesh = self.from_core_type(core_type)
