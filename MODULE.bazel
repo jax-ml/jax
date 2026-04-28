@@ -48,6 +48,7 @@ single_version_override(
 single_version_override(
     module_name = "curl",
     patches = ["//third_party/curl:remove_linker_script.patch"],
+    version = "8.11.0",
 )
 
 ##############################################################
