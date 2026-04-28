@@ -1108,6 +1108,32 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.jaxpr.eqns, 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
+  def testStaticNumpyIndicesNotStaged(self):
+    # Negative-index wrapping for static numpy indices should fold in numpy
+    # rather than staging lax.add/lax.select into the jaxpr (which would
+    # promote the index to a tracer and break later numpy ops on it).
+
+    # Wrapped indices remain numpy arrays under tracing, so a numpy op on the
+    # wrapped result does not raise TracerArrayConversionError.
+    from jax._src.numpy.indexing import _normalize_index
+    @jax.jit
+    def f(x):
+      wrapped = _normalize_index(np.array([-1, 0, 1]), 5)
+      np.asarray(wrapped)  # would raise if `wrapped` were a tracer
+      return x[wrapped]
+    self.assertArraysEqual(f(jnp.arange(5.)), jnp.array([4., 0., 1.]))
+
+    # And no spurious add/select_n in the lowered jaxpr.
+    jaxpr = jax.make_jaxpr(lambda x: x[np.array([-1, 0, 1])])(jnp.arange(5.))
+    eqns_str = str(jaxpr)
+    self.assertNotIn('add', eqns_str)
+    self.assertNotIn('select_n', eqns_str)
+
+    jaxpr = jax.make_jaxpr(
+        lambda x: lax.dynamic_slice(x, [np.array(-1)], [1]))(jnp.arange(5.))
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.dynamic_slice_p)
+
   def testOOBEmptySlice(self):
     x = jnp.arange(4, dtype='float32')
     self.assertArraysEqual(x[1:0], jnp.empty(0, dtype='float32'))

@@ -343,6 +343,12 @@ class NDIndexer:
         axis, = idx.consumed_axes
         if dtypes.issubdtype(idx.index.dtype, np.unsignedinteger):
           normed_index = idx.index
+        # Prefer a numpy wrap when possible: staging lax.select promotes the
+        # index to a tracer, breaking later numpy ops on it under transforms.
+        elif isinstance(idx.index, np.ndarray) and core.is_constant_dim(self.shape[axis]):
+          size = self.shape[axis]
+          normed_index = np.where(idx.index < 0,
+                                  idx.index + size, idx.index).astype(idx.index.dtype)
         else:
           size = self.shape[axis]
           if core.is_constant_dim(size):
@@ -751,8 +757,9 @@ def _normalize_index(index, axis_size):
                                              dtypes.dtype(index))
   if isinstance(index, (int, np.integer)):
     return lax.add(index, axis_size_val) if index < 0 else index
-  else:
-    return lax.select(index < 0, lax.add(index, axis_size_val), index)
+  if isinstance(index, np.ndarray) and core.is_constant_dim(axis_size):
+    return np.where(index < 0, index + axis_size, index).astype(index.dtype)
+  return lax.select(index < 0, lax.add(index, axis_size_val), index)
 
 
 @export
