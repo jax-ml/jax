@@ -78,11 +78,6 @@ void RegisterPartitionSpec(nb::module_& m) {
   m.def("set_pspec_unconstrained", &SetPspecUnconstrained);
 
   m.def(
-      "canonicalize_partition",
-      [](nb::object partition) { return CanonicalizePartition(partition); },
-      nb::arg("partition").none());
-
-  m.def(
       "canonicalize_partitions",
       [](nb::tuple partitions_arg) {
         nb::tuple partitions =
