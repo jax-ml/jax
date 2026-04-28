@@ -6546,15 +6546,6 @@ def _ragged_dot_general_impl(
       )
 
 
-# TODO(rdyro): Remove this flag and the python transpose once the C++ transpose
-# is available in a released jaxlib.
-ALLOW_RAGGED_DOT_TPU_EXPLICIT_TRANSPOSE = config.bool_state(
-    'allow_ragged_dot_tpu_explicit_transpose',
-    True,
-    'Whether to use the Python explicit transpose for ragged_dot on TPU.'
-)
-
-
 def _ragged_dot_general_lower(
     ctx,
     lhs,
@@ -6589,17 +6580,6 @@ def _ragged_dot_general_lower(
       ragged_dot_dimension_numbers.dot_dimension_numbers
   )
   rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
-  if platform == 'tpu':
-    # TPU lowering uses a fusion which requires explicitly transposing the RHS.
-    # TODO(rdyro): Revert this once these changes are moved into the TPU
-    # lowering directly.
-    if (ALLOW_RAGGED_DOT_TPU_EXPLICIT_TRANSPOSE.value and
-        rhs_contracting == (2,) and rhs_group_dims == (0,) and not rhs_batch):
-      _, rhs_aval, _ = ctx.avals_in
-      perm = list(range(rhs_aval.ndim))
-      perm[-2], perm[-1] = perm[-1], perm[-2]
-      rhs = hlo.transpose(rhs, mlir.dense_int_array(perm))
-      rhs_contracting = (1,)
   ragged_dot_dnums = chlo.RaggedDotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
       rhs_batching_dimensions=list(rhs_batch),
