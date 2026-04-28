@@ -150,11 +150,8 @@ limitations under the License.
 #include "xla/ffi/type_registry.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
-#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
-#include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
@@ -175,9 +172,6 @@ namespace se = stream_executor;
 using MosaicInitFunc = void(void**, void**);
 using MosaicHostFunc = void(void*, void*, void**);
 using KernelHash = std::array<uint64_t, 4>;
-
-// Mirrors `--xla_gpu_cuda_data_dir`'s default value.
-constexpr std::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
 
 // Returns the latest PTX ISA version supported by both LLVM and the underlying
 // PTX compiler.
@@ -258,7 +252,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     return mlir::failure();
   }
   std::vector<std::string> libraries_to_link{
-      ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
+      ::xla::gpu::nvptx::LibDevicePath(mosaic::gpu::kDefaultCudaDataDir)};
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
@@ -392,38 +386,6 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
   return nvshmem_path_ptr;
 }
 
-absl::StatusOr<se::cuda::CompilationProvider*>
-GetAssemblyToBinaryCompilationProvider() {
-  auto create_provider = []() {
-    // Defaults mirror those used in `xla/debug_options_flags.cc`.
-    constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode
-        nvjitlink_mode =
-            se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto;
-    constexpr bool enable_llvm_module_compilation_parallelism = false;
-#ifdef PLATFORM_GOOGLE
-    constexpr bool enable_driver_compilation = true;
-#else
-    constexpr bool enable_driver_compilation = false;
-#endif
-    bool enable_libnvptxcompiler = se::IsLibNvPtxCompilerSupported();
-
-    se::cuda::CompilationProviderOptions opts(
-        nvjitlink_mode, enable_libnvptxcompiler,
-        enable_llvm_module_compilation_parallelism, enable_driver_compilation,
-        std::string(kDefaultCudaDataDir));
-
-    return absl::NoDestructor(se::cuda::AssembleCompilationProvider(opts));
-  };
-  static absl::NoDestructor<
-      absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
-      compilation_provider = create_provider();
-
-  if (!compilation_provider->ok()) {
-    return compilation_provider->status();
-  }
-  return (*compilation_provider)->get();
-}
-
 std::string CUDAErrorString(CUresult result) {
   const char* error;
   cuGetErrorString(result, &error);
@@ -530,7 +492,7 @@ absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
                            bool is_nvshmem_used,
                            const mosaic::gpu::DumpOptions& dump_opts) {
   TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider * compilation_provider,
-                      GetAssemblyToBinaryCompilationProvider());
+                      mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
   TF_ASSIGN_OR_RETURN(std::string sm,
                       mosaic::gpu::GetSmVersion(cc.major, cc.minor));
   // Here, it is important to use a PTX ISA version that is supported by both

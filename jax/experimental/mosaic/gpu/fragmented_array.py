@@ -38,6 +38,11 @@ import numpy as np
 
 from . import utils
 
+try:
+  from jax._src.lib import mosaic_gpu as mgpu_lib
+except ImportError:
+  mgpu_lib = None
+
 
 T = TypeVar("T")
 WARPGROUP_SIZE = utils.WARPGROUP_SIZE
@@ -2249,37 +2254,68 @@ class FragmentedArray:
       # extracted part and so there are no ops that can be shared across packed
       # parts.
       for indices, reg in packed_registers(2, if_not_sliced=True):
-        # The algorithm here is largely the same as CUTLASS's
-        # NumericArrayConverter specialization for int4 -> bf16 casts.
-        # We modify it slightly, because we only extract 2 values.
-        # We first shift the value by 4 bits, to put the high int4 in low bits.
-        # The prmt then blends the two values together, by putting them into the
-        # low bits of each 16-bit subword of our register. Then, we use the lop3
-        # to zero any bits that don't belong to our int4s, and finally use the
-        # XOR to: (1) set the exponent bits to 0x43 (at which point the mantissa
-        # represents integer increments) and (2) flip the sign bit. If we
-        # interpret the 4 bits as uint4 after the flip, then we'll see that
-        # positive int4s will end up larger than negative int4s, with a bias of
-        # 8. Use use the sub to subtract the base (our initial exponent) and the
-        # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
-        def upcast_i4_to_bf16(reg: ir.Value, reg_shr: ir.Value, part: int):
+
+        def upcast_i4_to_bf16(reg: ir.Value, part: int):
           assert 0 <= part < 4
-          int_reg = llvm.inline_asm(
-              i32,
-              [reg, reg_shr],
-              f"""
-              {{
-              .reg .b32 s<4>;
-              prmt.b32 s1, $1, $2, 0xF{part + 4}F{part};
-              lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
-              mov.b32 s3, 0x43084308;
-              sub.bf16x2 $0, s2, s3;
-              }}
-              """,
-              "=r,r,r",
-          )
+
+          # `cvt` with `.s2f6x2` instruction type introduced in PTX ISA v9.1
+          if (
+              utils.get_arch().major >= 10
+              and mgpu_lib is not None
+              and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 91  # pylint: disable=protected-access
+          ):
+            int_reg = llvm.inline_asm(
+                i32,
+                [reg],
+                f"""
+                {{
+                .reg .b32 evens, odds, lo, hi;
+                .reg .b16 part<4>;
+                .reg .b16 scale;
+                and.b32 evens, $1, 0x0F0F0F0F;
+                and.b32 odds, $1, 0xF0F0F0F0;
+                shl.b32 evens, evens, 4;
+                prmt.b32 lo, evens, odds, 0x5140;
+                prmt.b32 hi, evens, odds, 0x7362;
+                mov.b32 {{part0, part1}}, lo;
+                mov.b32 {{part2, part3}}, hi;
+                mov.b16 scale, 0x8181;
+                cvt.rn.scaled::n2::ue8m0.bf16x2.s2f6x2 $0, part{part}, scale;
+                }}
+                """,
+                "=r,r",
+            )
+          else:
+            # The algorithm here is largely the same as CUTLASS's
+            # NumericArrayConverter specialization for int4 -> bf16 casts.
+            # We modify it slightly, because we only extract 2 values.
+            # We first shift the value by 4 bits, to put the high int4 in low bits.
+            # The prmt then blends the two values together, by putting them into the
+            # low bits of each 16-bit subword of our register. Then, we use the lop3
+            # to zero any bits that don't belong to our int4s, and finally use the
+            # XOR to: (1) set the exponent bits to 0x43 (at which point the mantissa
+            # represents integer increments) and (2) flip the sign bit. If we
+            # interpret the 4 bits as uint4 after the flip, then we'll see that
+            # positive int4s will end up larger than negative int4s, with a bias of
+            # 8. Use use the sub to subtract the base (our initial exponent) and the
+            # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
+            int_reg = llvm.inline_asm(
+                i32,
+                [reg, arith.shrui(reg, c(4, i32))],
+                f"""
+                {{
+                .reg .b32 s<4>;
+                prmt.b32 s1, $1, $2, 0xF{part + 4}F{part};
+                lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
+                mov.b32 s3, 0x43084308;
+                sub.bf16x2 $0, s2, s3;
+                }}
+                """,
+                "=r,r,r",
+            )
           assert isinstance(int_reg, ir.Value)
           return utils.bitcast(int_reg, ir.VectorType.get((2,), bf16))
+
         [group_size] = ir.VectorType(reg.type).shape
         assert group_size % vector_len == 0
         assert group_size * 4 <= 32
@@ -2293,19 +2329,17 @@ class FragmentedArray:
           slice_op: Any = reg.owner
           slice_offset = slice_op.offsets[0].value
           reg_int = utils.bitcast(slice_op.source, i32)
-          reg_int_shr = arith.shrui(reg_int, c(4, i32))
           assert slice_offset % 2 == 0
           out_int_regs.extend(
-              upcast_i4_to_bf16(reg_int, reg_int_shr, part=slice_offset // 2 + part)
+              upcast_i4_to_bf16(reg_int, part=slice_offset // 2 + part)
               for part in range(group_size // 2)
           )
         else:
           reg_slice_int = utils.bitcast(reg, int_ty)
           if int_ty != i32:
             reg_slice_int = arith.extsi(i32, reg_slice_int)
-          reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
           out_int_regs.extend(
-              upcast_i4_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
+              upcast_i4_to_bf16(reg_slice_int, part=part)
               for part in range(group_size // 2)
           )
         out_reg = utils.vector_concat(out_int_regs)

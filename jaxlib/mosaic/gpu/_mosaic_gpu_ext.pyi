@@ -17,3 +17,10 @@
 def _sync_all_devices() -> None: ...
 def _cupti_init() -> None: ...
 def _cupti_get_timings(finalize: bool = ...) -> list[tuple[str, float]]: ...
+def _get_ptxas_isa_version() -> int:
+  """Returns the latest PTX ISA version supported by `ptxas`.
+
+  NOTE: This PTX ISA version may not be supported by the LLVM compiler. LLVM's
+  PTX ISA support should also be checked, unless using inline asm (which
+  bypasses LLVM).
+  """

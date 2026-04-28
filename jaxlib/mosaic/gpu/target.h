@@ -16,14 +16,21 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_GPU_TARGET_H_
 
 #include <string>
-#include <utility>
+#include <string_view>
 
 #include "absl/status/statusor.h"
+#include "xla/stream_executor/cuda/compilation_provider.h"
 
 namespace mosaic::gpu {
 
+// Mirrors `--xla_gpu_cuda_data_dir`'s default value.
+constexpr std::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
+
 absl::StatusOr<std::string> GetSmVersion(int major, int minor);
 absl::StatusOr<int> GetLatestLlvmPtxIsaVersion();
+
+absl::StatusOr<stream_executor::cuda::CompilationProvider*>
+GetAssemblyToBinaryCompilationProvider();
 
 }  // namespace mosaic::gpu
 

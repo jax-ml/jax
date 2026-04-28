@@ -18,6 +18,7 @@ limitations under the License.
 #include <string>
 #include <string_view>
 
+#include "absl/base/no_destructor.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -28,8 +29,14 @@ limitations under the License.
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/TargetParser/Triple.h"
+#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
+#include "xla/stream_executor/cuda/compilation_provider.h"
+#include "xla/stream_executor/cuda/compilation_provider_options.h"
+#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 
 namespace mosaic::gpu {
+
+namespace se = stream_executor;
 
 absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   // "base" compute capability as reported by the driver.
@@ -103,6 +110,31 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
     }
   }
   return llvm_latest_version;
+}
+
+absl::StatusOr<se::cuda::CompilationProvider*>
+GetAssemblyToBinaryCompilationProvider() {
+  static absl::NoDestructor<
+      absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
+      compilation_provider([]() {
+#ifdef PLATFORM_GOOGLE
+        constexpr bool enable_driver_compilation = true;
+#else
+        constexpr bool enable_driver_compilation = false;
+#endif
+        // Defaults mirror those used in `xla/debug_options_flags.cc`.
+        se::cuda::CompilationProviderOptions opts(
+            se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto,
+            /*enable_libnvptxcompiler=*/se::IsLibNvPtxCompilerSupported(),
+            /*enable_llvm_module_compilation_parallelism=*/false,
+            enable_driver_compilation, std::string(kDefaultCudaDataDir));
+        return se::cuda::AssembleCompilationProvider(opts);
+      }());
+
+  if (!compilation_provider->ok()) {
+    return compilation_provider->status();
+  }
+  return (*compilation_provider)->get();
 }
 
 }  // namespace mosaic::gpu
