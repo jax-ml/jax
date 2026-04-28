@@ -1464,6 +1464,8 @@ def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
 core_map_p.to_lojax = _core_map_to_lojax
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.experimental.pallas.core_map")
 def core_map(
     mesh,
     *,

@@ -236,6 +236,19 @@ def jax_pallas_call(kernel: Callable, out_shape, pl_call_kwargs, *args):
   return repro_bypass_wrapper(pallas_call.pallas_call)(kernel, out_shape, **pl_call_kwargs)(*args)
 
 
+@partial(repro_boundary, api_name="jax_pallas_core_map")
+def jax_pallas_core_map(f: Callable, mesh, core_map_kwargs):
+  from jax._src.pallas import core as pallas_core  # type: ignore
+  return repro_bypass_wrapper(pallas_core.core_map)(mesh, **core_map_kwargs)(f)
+
+
+@partial(repro_boundary, api_name="jax_pallas_run_state_call")
+def jax_pallas_run_state_call(f: Callable, trans_args: tuple[Any, ...],
+                              trans_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.state import discharge  # type: ignore
+  return repro_bypass_wrapper(discharge.run_state)(f, *trans_args, **trans_kwargs)(*args, **kwargs)
+
+
 @partial(repro_boundary, api_name="jax_fuser_fuse")
 def jax_fuser_fuse(fun: Callable, trans_kwargs: dict[str, Any],
                   *args):

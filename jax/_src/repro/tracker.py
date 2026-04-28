@@ -1292,6 +1292,19 @@ def pallas_call_trampoline(real_boundary_fun: Callable):
 
 boundary_trampolines["jax.experimental.pallas.pallas_call"] = pallas_call_trampoline
 
+def core_map_trampoline(real_boundary_fun: Callable):
+  from jax._src.repro.repro_api import jax_pallas_core_map
+
+  def jax_pallas_core_map_trampoline(mesh, **core_map_kwargs):
+    def jax_pallas_core_map_decorator(f):
+      return jax_pallas_core_map(f, mesh, core_map_kwargs)
+    return jax_pallas_core_map_decorator
+  jax_pallas_core_map_trampoline.real_boundary_fun = real_boundary_fun
+  return jax_pallas_core_map_trampoline
+
+boundary_trampolines["jax.experimental.pallas.core_map"] = core_map_trampoline
+
+boundary_trampolines["jax.experimental.pallas.run_state"] = partial(generic_trampoline, "pallas_run_state")
 
 def fuser_fuse_trampoline(real_boundary_fun: Callable) -> Callable:
   from jax._src.repro.repro_api import jax_fuser_fuse
