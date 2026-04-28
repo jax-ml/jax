@@ -13,12 +13,11 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 import functools
 import itertools
 from typing import Any, cast, NoReturn
-from collections.abc import Callable, Mapping
 
 from jax._src import api_util
 from jax._src import core as jax_core
@@ -966,7 +965,21 @@ def _dma_start_lowering_rule(
         " not supported"
     )
   del priority  # Unused by indirect DMAs.
-  tpu.enqueue_indirect_dma(src_ref, dst_ref, indirect_offsets, sem, add=add)
+
+  offset_filter = None
+  if indirect_offsets.ignored_value is not None:
+    offset_filter = tc_lowering._ensure_mlir_value(
+        indirect_offsets.ignored_value, jax_core.ShapedArray((), jnp.int32)
+    )
+
+  tpu.enqueue_indirect_dma(
+      src_ref,
+      dst_ref,
+      indirect_offsets.values,
+      sem,
+      add=add,
+      offset_filter=offset_filter,
+  )
   return []
 
 
@@ -1026,18 +1039,35 @@ def _dma_wait_lowering_rule(
   return []
 
 
-def _extract_indirect_offsets_from_indexer(
-    indexer: indexing.NDIndexer,
-    indexer_aval: indexing.NDIndexer,
+def _extract_indirect_offsets_from_indices(
+    indices: Sequence[Any],
+    indices_aval: Sequence[Any],
     core_type: tpu_core.CoreType,
+    indexer_shape: tuple[int | Any, ...],
     expected_shape: tuple[int, ...] | None = None,
-) -> ir.Value | None:
-  """Extracts the indirect offsets from an indexer, if it has any.
+) -> sc_core.Indices | None:
+  """Extracts the indirect offsets from the indices, if there are any.
 
-  Note that it ignores any dimensions other than major. The indexer might
+  Note that it ignores any dimensions other than major. The indices might
   need to be split further to deal with slicing of minor dimensions.
   """
-  match indexer_aval.indices:
+  match indices_aval:
+    case [sc_core.Indices(offsets_aval), *_]:
+      offsets = indices[0]
+      assert isinstance(offsets, sc_core.Indices)
+      extracted = _extract_indirect_offsets_from_indices(
+          [offsets.values, *indices[1:]],
+          [offsets_aval, *indices_aval[1:]],
+          core_type,
+          indexer_shape,
+          expected_shape,
+      )
+      if extracted is None:
+        return None
+      return sc_core.Indices(
+          extracted.values, ignored_value=offsets.ignored_value
+      )
+
     case [jax_core.AbstractValue() as offsets_aval, *_] if (
         # fmt: off
         isinstance(offsets_aval, state.AbstractRef) or
@@ -1049,17 +1079,14 @@ def _extract_indirect_offsets_from_indexer(
             " `pltpu.async_copy` on SparseCore, got rank"
             f" {len(offsets_aval.shape)}"
         )
-      shape = (
-          *offsets_aval.shape,
-          *indexer.get_indexer_shape()[len(offsets_aval.shape) :],
-      )
+      shape = (*offsets_aval.shape, *indexer_shape[len(offsets_aval.shape) :])
       if expected_shape is not None and shape != expected_shape:
         raise NotImplementedError(
             "The indexer shape in scatter/gather via `pltpu.async_copy` does"
             f" not match the expected shape. Want: {expected_shape}, got:"
             f" {shape}."
         )
-      offsets = indexer.indices[0]
+      offsets = indices[0]
       assert isinstance(offsets, ir.Value)
     case [state.TransformedRef() as offsets_aval, *_]:
       if offsets_aval.dtype != jnp.dtype("int32"):
@@ -1067,7 +1094,7 @@ def _extract_indirect_offsets_from_indexer(
             "Only int32 indices are supported by scatter/gather via"
             " `pltpu.async_copy` with a dynamically-shaped indexer"
         )
-      offsets_ref = indexer.indices[0]
+      offsets_ref = indices[0]
       assert isinstance(offsets_ref, state.TransformedRef)
       offsets, _ = _transform_ref(
           offsets_ref.ref,
@@ -1090,7 +1117,7 @@ def _extract_indirect_offsets_from_indexer(
           "Indices for scatter/gather via `pltpu.async_copy` must be in VMEM,"
           f" got {offsets_memory_space!r}"
       )
-  return offsets
+  return sc_core.Indices(offsets)
 
 
 def _extract_indirect_offsets(
@@ -1098,13 +1125,17 @@ def _extract_indirect_offsets(
     expected_shape: tuple[int, ...],
     transforms_aval: Sequence[state.Transform],
     core_type: tpu_core.CoreType,
-) -> tuple[ir.Value | None, Sequence[state.Transform]]:
+) -> tuple[sc_core.Indices | None, Sequence[state.Transform]]:
   for i, (indexer, indexer_aval) in enumerate(zip(transforms, transforms_aval)):
     if not isinstance(indexer, indexing.NDIndexer):
       continue
     assert isinstance(indexer_aval, indexing.NDIndexer)
-    offsets = _extract_indirect_offsets_from_indexer(
-        indexer, indexer_aval, core_type, expected_shape
+    offsets = _extract_indirect_offsets_from_indices(
+        indexer.indices,
+        indexer_aval.indices,
+        core_type,
+        indexer.get_indexer_shape(),
+        expected_shape,
     )
     if offsets is None:
       continue
@@ -1128,7 +1159,13 @@ def _has_indirect_offsets(
     core_type: tpu_core.CoreType,
 ) -> bool:
   return any(
-      _extract_indirect_offsets_from_indexer(indexer, indexer_aval, core_type) is not None  # pyrefly: ignore[bad-argument-type]
+      _extract_indirect_offsets_from_indices(
+          indexer.indices,
+          indexer_aval.indices,  # pyrefly: ignore[missing-attribute]
+          core_type,
+          indexer.get_indexer_shape(),
+      )
+      is not None
       for indexer, indexer_aval in zip(transforms, transforms_aval)
       if isinstance(indexer, indexing.NDIndexer)
   )

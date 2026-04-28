@@ -402,3 +402,29 @@ def supported_shapes(dtype: jax.typing.DTypeLike) -> Sequence[tuple[int, ...]]:
   if packing_factor == 1:
     return [(num_lanes,)]
   return [(num_lanes * packing_factor,), (packing_factor, num_lanes)]
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Indices:
+  """Indices for a gather or a scatter on SparseCore.
+
+  Attributes:
+    values: The values of the indices. Can be an array or a ref.
+    ignored_value: If not None, the indices with this value will be ignored.
+  """
+
+  values: Any
+  ignored_value: int | None = dataclasses.field(
+      default=None, metadata=dict(static=True)
+  )
+
+  def pretty_print(
+      self, context: jax_core.JaxprPpContext, *, print_dtype: bool = True
+  ) -> str:
+    values = jax_core.pp_var(
+        self.values, context, print_literal_dtype=print_dtype
+    )
+    if self.ignored_value is None:
+      return values
+    return f"{values}~{self.ignored_value}"

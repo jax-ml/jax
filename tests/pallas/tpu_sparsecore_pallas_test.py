@@ -548,6 +548,26 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
+  def test_gather_1d_with_filter(self):
+    x = jnp.arange(self.num_lanes)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      o_ref[...] = lax.broadcast(-100_000, o_ref.shape)
+      pltpu.sync_copy(
+          x_hbm_ref.at[plsc.Indices(indices_ref, ignored_value=4)], o_ref
+      )
+
+    expected = x[indices].at[indices == 4].set(-100_000)
+    np.testing.assert_array_equal(kernel(x, indices), expected)
+
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d_to_transformed_dst(self, kind):
     if not jtu.is_cloud_tpu_at_least(2026, 4, 20):

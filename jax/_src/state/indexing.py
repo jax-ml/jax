@@ -56,8 +56,7 @@ def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
       end_str = "" if end == dim else str(end)
       return f"{start_str}:{end_str}"
 
-
-IntIndexer = Union[int, Array]
+IntIndexer = Union[int, Array, Any]
 DimIndexer = Union[IntIndexer, Slice]
 
 def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
@@ -111,10 +110,18 @@ class NDIndexer(state_types.Transform):
         continue
       # The shape of indexer integers should be broadcastable up to the
       # int_indexer_shape of the whole NDIndexer
+      try:
+        [flat_idx] = tree_util.tree_leaves(idx)
+      except TypeError:
+        # TODO(slebedev): Find a proper way to support custom indexer types.
+        raise NotImplementedError(
+            "Custom indexer types are only supported if they are a pytree with"
+            " a single leaf, got {idx}"
+        )
       idx_shape = (
-          idx.shape
-          if isinstance(idx, state_types.TransformedRef)
-          else core.typeof(idx).shape
+          flat_idx.shape
+          if isinstance(flat_idx, state_types.TransformedRef)
+          else core.typeof(flat_idx).shape
       )
       if not idx_shape:
         if (value := _maybe_concretize(idx)) and value >= s:
@@ -190,6 +197,10 @@ class NDIndexer(state_types.Transform):
       return cls(indices, shape, (), validate=True)
 
     other_indexers, slice_indexers = partition_list(is_slice_indexing, indices)
+    flat_other_indexers, other_indexers_tree = tree_util.tree_flatten(
+        other_indexers
+    )
+    del other_indexers  # We will unflatten it below.
     validate = True
 
     # We treat refs differently from scalars and arrays, because refs can have
@@ -198,7 +209,7 @@ class NDIndexer(state_types.Transform):
     from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
     if ref_indexers := [
         i
-        for i in other_indexers
+        for i in flat_other_indexers
         if not isinstance(i, Slice)
         if isinstance(i, state_types.TransformedRef)
         or isinstance(core.typeof(i), state_types.AbstractRef)
@@ -206,18 +217,22 @@ class NDIndexer(state_types.Transform):
       # TODO(slebedev): Consider pushing these checks to lowering time.
       if len(ref_indexers) > 1:
         raise NotImplementedError("Multiple Ref indexers are not supported")
-      if len(ref_indexers) != len(other_indexers):
+      if len(ref_indexers) != len(flat_other_indexers):
         raise NotImplementedError(
             "Ref cannot be mixed with other non-slice indexers"
         )
       [ref_indexer] = ref_indexers
-      indexer_shape = ref_indexer.shape
+      indexer_shape = (
+          ref_indexer.shape
+          if isinstance(ref_indexer, state_types.TransformedRef)
+          else core.typeof(ref_indexer).shape
+      )
       try:
         core.canonicalize_shape(indexer_shape)
       except TypeError:
         validate = False  # The shape is dynamic.
     else:
-      indexer_shapes = [core.typeof(i).shape for i in other_indexers]
+      indexer_shapes = [core.typeof(i).shape for i in flat_other_indexers]
       try:
         indexer_shape = np.broadcast_shapes(*indexer_shapes)
       except ValueError as e:
@@ -233,9 +248,13 @@ class NDIndexer(state_types.Transform):
       # The local import avoids a circular dependency between primitives
       # and this module.
       from jax._src.state import primitives as sp  # pyrefly: ignore[missing-module-attribute]
-      other_indexers = [
-          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # pyrefly: ignore[bad-argument-type]
+
+      flat_other_indexers = [
+          sp.broadcast_to(i, indexer_shape) for i in flat_other_indexers  # pyrefly: ignore[bad-argument-type]
       ]
+      other_indexers = tree_util.tree_unflatten(
+          other_indexers_tree, flat_other_indexers
+      )
       indices = tuple(
           merge_lists(is_slice_indexing, other_indexers, slice_indexers)
        )

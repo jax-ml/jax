@@ -411,7 +411,7 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
       raise ValueError
     return i - n_int_indexers + len(int_indexer_shape)
 
-  arrs = []
+  arrs: list[Any] = []
   for i, idxer in enumerate(indexer.indices):
     if isinstance(idxer, indexing.Slice):
       idx_in_shape_after_indexing = get_idx_in_shape_after_indexing(i)
