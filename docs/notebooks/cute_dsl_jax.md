@@ -12,6 +12,9 @@ kernelspec:
   name: python3
 ---
 
+---
+orphan: true
+---
 <!--* freshness: { reviewed: "2026-04-28" } *-->
 
 # Writing High-Performance GPU Kernels with CuTe DSL and JAX
