@@ -597,6 +597,7 @@ NB_MODULE(_jax, m) {
   TF_CHECK_OK(PyArray::Register(m));
   PyDeviceList::Register(m);
   RegisterSharding(m);
+  RegisterPartitionSpec(m);
 
   nb::class_<xla::CompiledMemoryStats>(m, "CompiledMemoryStats")
       .def_rw("generated_code_size_in_bytes",
@@ -1056,8 +1057,6 @@ NB_MODULE(_jax, m) {
 
   m.def("get_internal_device_put_info",
         []() { return DevicePutInfo::GetInfo(); });
-
-  PartitionSpec::Register(m);
 
   m.def("set_typed_int_type", &SetTypedIntType);
   m.def("set_typed_float_type", &SetTypedFloatType);
