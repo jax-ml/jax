@@ -379,6 +379,12 @@ class VectorLayout {
     }
   }
 
+  template <typename T>
+  std::array<T, 2> getImplicitTiledVals(const ArrayRef<T> arr,
+                                        const T implicit_value) const {
+    return getImplicitTiledVals(implicit_dim_, arr, implicit_value);
+  }
+
   // Returns the value of the tiled (2 minormost) dimensions of the given array
   // with implicit dims inserted.
   //
