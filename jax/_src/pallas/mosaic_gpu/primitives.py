@@ -38,6 +38,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
@@ -2722,6 +2723,66 @@ class ShapeDtypeStruct:
   shape: tuple[int, ...]
   dtype: jnp.dtype
   layout: SomeLayout
+
+
+griddepcontrol_wait_p = jax_core.Primitive("griddepcontrol_wait")
+griddepcontrol_wait_p.multiple_results = True
+
+
+@griddepcontrol_wait_p.def_effectful_abstract_eval
+def _griddepcontrol_wait_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(
+    griddepcontrol_wait_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_wait_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _griddepcontrol_wait_lowering(ctx: lowering.LoweringRuleContext):
+  void = ir.Type.parse("!llvm.void")
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, []):
+    llvm_dialect.inline_asm(
+        void, [], "griddepcontrol.wait;", "", has_side_effects=True
+    )
+  return ()
+
+
+def griddepcontrol_wait():
+  """Wait for dependent grids to finish."""
+  griddepcontrol_wait_p.bind()
+
+
+griddepcontrol_launch_dependents_p = jax_core.Primitive(
+    "griddepcontrol_launch_dependents"
+)
+griddepcontrol_launch_dependents_p.multiple_results = True
+
+
+@griddepcontrol_launch_dependents_p.def_effectful_abstract_eval
+def _griddepcontrol_launch_dependents_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(
+    griddepcontrol_launch_dependents_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_launch_dependents_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _griddepcontrol_launch_dependents_lowering(ctx: lowering.LoweringRuleContext):
+  void = ir.Type.parse("!llvm.void")
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, []):
+    llvm_dialect.inline_asm(
+        void, [], "griddepcontrol.launch_dependents;", "", has_side_effects=True
+    )
+  return ()
+
+
+def griddepcontrol_launch_dependents():
+  """Signal that dependents can be launched."""
+  griddepcontrol_launch_dependents_p.bind()
 
 
 inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
