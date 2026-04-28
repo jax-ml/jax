@@ -419,7 +419,7 @@ class Mul(SimpleOp):
     return x_ty
 
   def simple_vjp(self, _ans, x, y):
-    return Partial(y, mul), Partial((), lambda _, g: g)
+    return Partial(y, mul), Partial(x, mul)
 
   def simple_lower(self, x, y): 
     return jax.lax.mul(x, y)
