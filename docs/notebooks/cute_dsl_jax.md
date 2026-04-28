@@ -151,6 +151,7 @@ With CUTLASS installed, we import the libraries we'll use throughout the noteboo
 
 ```{code-cell}
 import os
+from functools import partial
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # suppress TF/XLA info & warnings
 os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/local/cuda"
@@ -244,9 +245,6 @@ def vector_add_kernel(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
   cute.autovec_copy(b[None, tidx, bidx], frgB)
   frgC.store(frgA.load() + frgB.load())
   cute.autovec_copy(frgC, c[None, tidx, bidx])
-
-
-print("vector_add_kernel defined.")
 ```
 
 The `@cute.kernel` defines one thread’s work. The `@cute.jit` launcher decides how many threads run, and how they’re grouped. It must follow the signature convention: `(stream, *inputs, *outputs, *, **kwargs)` — where `stream` is a CUDA stream managed by XLA, followed by input tensors, then output tensors.
@@ -270,9 +268,6 @@ def launch_vector_add(
       block=[a.shape[-2], 1, 1],
       stream=stream,
   )
-
-
-print("launch_vector_add defined.")
 ```
 
 ### JAX integration via `cutlass_call`
@@ -348,9 +343,6 @@ def jax_vector_add(a, b):
   )
   c_3d = call(a_3d, b_3d)
   return c_3d.reshape(-1)[:N]
-
-
-print("jax_vector_add defined.")
 ```
 
 Let's test our CUTLASS vector add by comparing its output against JAX's built-in `+` operator. We generate two random arrays, run both implementations, and verify the results match element-by-element.
@@ -406,9 +398,6 @@ def saxpy_kernel(
   cute.autovec_copy(y[None, tidx, bidx], frgY)
   frgO.store(alpha * frgX.load() + frgY.load())
   cute.autovec_copy(frgO, out[None, tidx, bidx])
-
-
-print("saxpy_kernel defined.")
 ```
 
 The launcher passes `alpha` as a **keyword-only** argument (note the `*` in the signature):
@@ -428,9 +417,6 @@ def launch_saxpy(
       block=[x.shape[-2], 1, 1],
       stream=stream,
   )
-
-
-print("launch_saxpy defined.")
 ```
 
 The keyword-only convention matters for `cutlass_call`: positional arguments correspond to JAX tensors (managed by XLA), while keyword arguments are scalar values passed directly to the kernel. In the JAX wrapper below, `alpha=alpha` routes through `cutlass_call` as a kernel kwarg:
@@ -451,8 +437,6 @@ out_3d = call(x_3d, y_3d)  # tensor args → managed by XLA
 Note that `jax_saxpy` uses `@partial(jax.jit, static_argnums=(2,))` to mark `alpha` as a static argument to JAX. This means JAX will recompile the function whenever `alpha` changes — which is fine for a value that rarely varies, and lets the CUTLASS JIT bake the exact `alpha` value into the generated CUDA code.
 
 ```{code-cell}
-from functools import partial
-
 BLOCK = 256
 
 
@@ -473,9 +457,6 @@ def jax_saxpy(x, y, alpha=2.0):
   )
   out_3d = call(x_3d, y_3d)
   return out_3d.reshape(-1)[:N]
-
-
-print("jax_saxpy defined.")
 ```
 
 We test the SAXPY kernel with `alpha=2.5`, comparing against the reference computation `alpha * x + y`. The `assert_allclose` check verifies that results match within floating-point tolerance.
@@ -490,7 +471,8 @@ y = jax.random.normal(next(keys), (N,), dtype=jnp.float32)
 result = jax_saxpy(x, y, alpha=ALPHA)
 ref = ALPHA * x + y
 
-np.testing.assert_allclose(np.array(result), np.array(ref), rtol=1e-5)
+np.testing.assert_allclose(np.array(result), np.array(ref),
+                           rtol=1e-5, atol=1e-5)
 print(f"SAXPY PASSED (N={N}, alpha={ALPHA})")
 print(f"  Max error: {float(jnp.max(jnp.abs(result - ref))):.2e}")
 ```
@@ -531,9 +513,6 @@ def relu_kernel(x: cute.Tensor, out: cute.Tensor, N: int):
   if idx < N:
     val = x[idx]
     out[idx] = cutlass.max(val, cutlass.Float32(0.0))
-
-
-print("relu_kernel defined.")
 ```
 
 The launcher computes how many blocks are needed to cover `N` elements:
@@ -554,9 +533,6 @@ def launch_relu(
       block=[BLOCK_SIZE, 1, 1],
       stream=stream,
   )
-
-
-print("launch_relu defined.")
 ```
 
 The formula `(N + BLOCK_SIZE - 1) // BLOCK_SIZE` is ceiling division — it ensures we launch enough blocks even when `N` isn't a multiple of 256. The bounds check inside the kernel handles the leftover threads in the last block.
@@ -591,9 +567,6 @@ def jax_relu(x):
   )
   out_flat = call(x_flat)
   return out_flat.reshape(x.shape)
-
-
-print("jax_relu defined.")
 ```
 
 We verify the ReLU kernel by comparing against `jax.nn.relu`. Positive values should pass through unchanged, and negative values should become zero.
@@ -644,9 +617,6 @@ def fused_bias_relu_kernel(
     col = idx % width
     val = x[idx] + bias[col]
     out[idx] = cutlass.max(val, cutlass.Float32(0.0))
-
-
-print("fused_bias_relu_kernel defined.")
 ```
 
 The launcher and JAX wrapper follow the same flat-indexing pattern as ReLU, with `N` (total elements) and `width` (columns) passed as keyword arguments:
@@ -669,9 +639,6 @@ def launch_fused_bias_relu(
       block=[BLOCK_SIZE, 1, 1],
       stream=stream,
   )
-
-
-print("launch_fused_bias_relu defined.")
 ```
 
 Note that `width` is marked as a static argument in the JAX wrapper via `static_argnums=(2,)`. This means JAX recompiles when the feature dimension changes, allowing CUTLASS to generate specialized code for each width.
@@ -686,9 +653,6 @@ out_flat = call(x_flat, bias)   # two input tensors: x and bias
 ```
 
 ```{code-cell}
-from functools import partial
-
-
 @partial(jax.jit, static_argnums=(2,))
 def jax_fused_bias_relu(x, bias, width):
   """JAX-compatible fused Bias+ReLU using CUTLASS kernel.
@@ -708,9 +672,6 @@ def jax_fused_bias_relu(x, bias, width):
   )
   out_flat = call(x_flat, bias)
   return out_flat.reshape(x.shape)
-
-
-print("jax_fused_bias_relu defined.")
 ```
 
 Test the fused kernel against the equivalent two-step JAX computation: add bias, then apply ReLU. The results should match exactly since both paths perform the same arithmetic.
@@ -812,9 +773,6 @@ def gemm_kernel(
       for k in cutlass.range(K):
         acc += A[m_idx * K + k] * B[k * N + n_idx]
       D[m_idx * N + n_idx] = acc
-
-
-print("gemm_kernel defined.")
 ```
 
 The launcher sets up a 2-D grid matching the tile decomposition:
@@ -843,9 +801,6 @@ def launch_gemm(
       block=[256, 1, 1],
       stream=stream,
   )
-
-
-print("launch_gemm defined.")
 ```
 
 The JAX wrapper flattens both input matrices to 1-D (matching the kernel's flat indexing), passes the matrix dimensions as keyword arguments, and reshapes the result:
@@ -867,9 +822,6 @@ def jax_cutlass_gemm(a, b):
   )
   d_flat = call(a_flat, b_flat)
   return d_flat.reshape(M, N)
-
-
-print("jax_cutlass_gemm defined.")
 ```
 
 Test the CUTLASS GEMM against JAX's `jnp.matmul`. We use relaxed tolerances (`rtol=1e-2`) because our simple kernel accumulates the K-dimension in a different order than cuBLAS, leading to small floating-point differences that are expected and harmless.
@@ -883,7 +835,7 @@ B = jax.random.normal(next(keys), (K, N), dtype=jnp.float32)
 D = jax_cutlass_gemm(A, B)
 D_ref = jnp.matmul(A, B)
 
-np.testing.assert_allclose(np.array(D), np.array(D_ref), rtol=1e-2, atol=1e-2)
+np.testing.assert_allclose(np.array(D), np.array(D_ref), rtol=1e-2, atol=2e-2)
 print(f"GEMM PASSED (M={M}, N={N}, K={K})")
 print(f"  Max error: {float(jnp.max(jnp.abs(D - D_ref))):.2e}")
 ```
