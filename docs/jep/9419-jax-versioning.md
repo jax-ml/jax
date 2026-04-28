@@ -1,4 +1,4 @@
-# Jax and Jaxlib versioning
+# JAX and jaxlib versioning
 
 ## Why are `jax` and `jaxlib` separate packages?
 
