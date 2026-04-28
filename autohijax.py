@@ -39,11 +39,13 @@ jax.config.update('jax_check_tracer_leaks', True)
 #   [ ] mean tests
 #   [ ] caching
 #   [ ] custom_vjp
-#   [ ] cond (or scan)
+#   [ ] cond
 #   [ ] AD zeros, polymorhpism of +
 #   [ ] zero or many lo types from lo_ty()
-#   [ ] system for importing existing primitives
+#   [ ] system for importing existing primitives -- call_lojax?
 #   [ ] caching/ool functions
+#   [ ] shit?
+#   [ ] shmap?
 
 
 # TODO eventually
