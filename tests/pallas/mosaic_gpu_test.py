@@ -1336,50 +1336,37 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(f(x), x * 2)
 
   def test_copy_with_transforms_and_indexing(self):
-    # TransposeTransform is not supported in WG semantics.
+    # TODO(olechwierowicz): handle nD transposes correctly.
     self.skip_if_wg_semantics()
-
-    def kernel(x_ref, o_ref, barrier_ref):
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      transposed_scratch = plgpu.transpose_ref(scratch_ref, (1, 0, 2, 3))
       for i in range(2):
-        plgpu.copy_gmem_to_smem(x_ref, o_ref.at[i], barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, transposed_scratch.at[:, i], barrier_ref)
         plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(transposed_scratch, o_ref)
+      plgpu.wait_smem_to_gmem(0)
 
-    in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    out_spec = plgpu.BlockSpec(
-        transforms=(
-            plgpu.TilingTransform((8, 32)),
-            plgpu.TransposeTransform((0, 2, 1, 3, 4)),
-            plgpu.SwizzleTransform(128),
-        ),
-        memory_space=plgpu.SMEM,
-    )
-    f = self.pallas_call(
+    f = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct([2, 64, 128], jnp.float32),
-        in_specs=(in_spec,),
-        out_specs=out_spec,
-        scratch_shapes=[plgpu.Barrier()],
+        out_shape=jax.ShapeDtypeStruct([1, 2, 64, 64], jnp.float32),
+        scratch_shapes=(
+            plgpu.SMEM((2, 1, 64, 64), jnp.float32,
+                       transforms=self.default_transforms(dtype=jnp.float32)),
+            plgpu.Barrier()
+        ),
     )
-    x = jnp.arange(64 * 128, dtype=jnp.float32).reshape(64, 128)
-    np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
+    x = jnp.arange(64 * 64, dtype=jnp.float32).reshape(1, 64, 64)
+    np.testing.assert_array_equal(f(x), np.stack([x, x], axis=1))
 
   @parameterized.parameters(
       ((),),
       ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
-      (
-          (
-              plgpu.TilingTransform((8, 32)),
-              plgpu.TransposeTransform((1, 0, 2, 3)),
-              plgpu.SwizzleTransform(128),
-          ),
-      ),
   )
   def test_copy_gmem_to_smem_gather(self, transforms):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
     if transforms:
-      # 1. Failed to infer a possible set of layouts.
-      # 2. TransposeTransform is not supported in WG semantics.
+      # Failed to infer a possible set of layouts.
       self.skip_if_wg_semantics()
     dtype = jnp.int32
     out_shape = (64, 128)
@@ -1673,38 +1660,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       jax.block_until_ready(kernel(x))
 
     self.assertIn("x: WGMMA_ROW\n", output())
-
-  def test_scratch_ref_with_transforms_regression(self):
-    # TODO(bchetioui): revisit the transpose transform story.
-    self.skip_if_wg_semantics()
-    # Tests that scratch shapes with transforms (e.g. Tiling + Transpose)
-    # can be allocated and used without triggering rank mismatch errors.
-    def body(x_ref, o_ref, scratch_ref, barrier):
-      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier)
-      plgpu.barrier_wait(barrier)
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
-      plgpu.wait_smem_to_gmem(0)
-
-    shape = (128, 2, 128)
-    dtype = jnp.bfloat16
-    swizzle = 128
-    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
-    transforms = (
-        plgpu.TransposeTransform((1, 0, 2)),
-        plgpu.TilingTransform((8, swizzle_elems)),
-        plgpu.TransposeTransform((1, 0, 2, 3, 4)),
-        plgpu.SwizzleTransform(swizzle),
-    )
-
-    kernel = self.kernel(
-        body,
-        out_shape=jax.ShapeDtypeStruct(shape, dtype),
-        scratch_shapes=[plgpu.SMEM(shape, dtype, transforms=transforms),
-                        plgpu.Barrier()]
-    )
-    x = jnp.ones(shape, dtype=dtype)
-    np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.parameters(False, True)
   def test_fp8_relayout(self, from_narrow):

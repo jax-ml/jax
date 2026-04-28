@@ -17,7 +17,6 @@ Classes
    SemaphoreType
    SwizzleTransform
    TilingTransform
-   TransposeTransform
    WGMMAAccumulatorRef
 
 Functions

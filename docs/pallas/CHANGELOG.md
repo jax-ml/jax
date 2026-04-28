@@ -19,6 +19,10 @@ Remember to align the itemized text with the first line of an item within a list
 
   * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`.
 
+* Changes
+
+  * Breaking change: removed `plgpu.TransposeTransform`.
+
 ## Released with JAX 0.10.0
 
 * Changes
