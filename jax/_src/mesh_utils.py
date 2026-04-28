@@ -249,6 +249,7 @@ def _create_device_mesh_for_nd_torus(
     mesh_shape: Sequence[int],
     *,
     allow_split_physical_axes: bool = False,
+    physical_axis_priority: Sequence[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
   """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
@@ -283,6 +284,12 @@ def _create_device_mesh_for_nd_torus(
       parallelism axes), with axes ordered by increasing network intensity.
     allow_split_physical_axes: If True, we would split physical axes if
       necessary to fit the desired mesh shape.
+    physical_axis_priority: Optional sequence of physical axis indices ordered
+      by decreasing priority (higher priority first). For example, [3, 0, 1, 2]
+      means physical axis 3 has highest priority, followed by 0, 1, 2. This is
+      useful for hardware where certain physical axes have higher bandwidth
+      (e.g., TPU v7 where the core axis has higher bandwidth than x/y/z axes).
+      If None (default), all physical axes are treated with equal priority.
 
   Returns:
     An np.ndarray of devices in the shape of the logical mesh (mesh_shape), with
@@ -297,6 +304,14 @@ def _create_device_mesh_for_nd_torus(
   # Map each logical axis to a subset of physical axes.
   assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
+  # Build priority map for faster lookup. Lower value = higher priority.
+  if physical_axis_priority is not None:
+    priority_map = {
+        axis: rank for rank, axis in enumerate(physical_axis_priority)
+    }
+  else:
+    priority_map = None
+
   # Assign logical axes from highest network intensity to lowest.
   # `mesh_shape` is assumed to ordered by lowest network intensity first, so
   # reverse it first.
@@ -306,10 +321,25 @@ def _create_device_mesh_for_nd_torus(
     # Preferentially map to more physical axes first for higher bandwidth.
     for num_axes in range(len(physical_mesh.shape), 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
-      indices_and_axes = itertools.combinations(
-          enumerate(assignable_physical_mesh), num_axes
+      candidates = list(
+          itertools.combinations(enumerate(assignable_physical_mesh), num_axes)
       )
-      for elem in indices_and_axes:
+
+      # Sort candidates by priority if provided, so that candidates containing
+      # higher priority physical axes are tried first. This ensures high network
+      # intensity logical axes get assigned to high bandwidth physical axes.
+      if priority_map is not None:
+        def _candidate_priority(candidate):
+          # Lower rank = higher priority. Sort by best (lowest) priority
+          # among all axes in the candidate, then by sum of priorities
+          # as a tie-breaker.
+          indices = tuple(c[0] for c in candidate)
+          best_priority = min(priority_map[i] for i in indices)
+          total_priority = sum(priority_map[i] for i in indices)
+          return (best_priority, total_priority)
+        candidates.sort(key=_candidate_priority)
+
+      for elem in candidates:
         c_indices, c_axes = zip(*elem)
         # TODO(zhangqiaorjc): Due to limitations in XLA, 2D collectives only
         # implemented for square 2D plane. Mapping a physical axis to two
@@ -838,10 +868,21 @@ def create_device_mesh(
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, new_mesh_shape)
+
+    # For TPU v7/v7x, the core axis (last axis) has higher bandwidth than x/y/z
+    # axes. Set physical_axis_priority to [core, x, y, z] so that high network
+    # intensity logical axes are preferentially mapped to the core axis.
+    physical_axis_priority = None
+    if last_device.device_kind in (_TPU_7X, _TPU_7):
+      if len(physical_mesh.shape) == 4:
+        # 4D mesh: (x, y, z, core) -> priority: core(3), x(0), y(1), z(2)
+        physical_axis_priority = (3, 0, 1, 2)
+
     device_mesh, _ = _create_device_mesh_for_nd_torus(
         physical_mesh,
         new_mesh_shape,
         allow_split_physical_axes=allow_split_physical_axes,
+        physical_axis_priority=physical_axis_priority,
     )
     return device_mesh
   else:
