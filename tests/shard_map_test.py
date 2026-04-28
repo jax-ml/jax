@@ -5318,6 +5318,64 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f(arr1, arr2)  # doesn't crash
 
+  def test_all_reduce_rgv3_lowering(self):
+    with config.jax_use_rgv3(True):
+      mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+
+      @jax.jit
+      @shard_map(mesh=mesh, in_specs=P('x', 'y'), out_specs=P('x', 'y'))
+      def f(x):
+        return lax.psum(x, 'x')
+
+      x = jnp.ones((2, 2))
+      mlir = str(f.lower(x).compiler_ir())
+      self.assertIn('replica_group_mesh_axes', mlir)
+      self.assertIn('axes = [#stablehlo.axis_ref<name = "x">]', mlir)
+      # The mesh should be cited by symbol (lifted) or inlined.
+      self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
+
+  def test_all_reduce_rgv3_multiple_meshes_lowering(self):
+    with config.jax_use_rgv3(True):
+      mesh1 = jtu.create_mesh((2, 2), ('x1', 'y1'))
+      mesh2 = jtu.create_mesh((2, 2), ('x2', 'y2'))
+
+      @jax.jit
+      def f(x):
+        @partial(
+            shard_map, mesh=mesh1, in_specs=P('x1', 'y1'), out_specs=P('x1', 'y1')
+        )
+        def inner1(a):
+          return jax.lax.psum(a, 'x1')
+
+        @partial(
+            shard_map, mesh=mesh2, in_specs=P('x2', 'y2'), out_specs=P('x2', 'y2')
+        )
+        def inner2(a):
+          return jax.lax.psum(a, 'x2')
+
+        return inner2(inner1(x))
+
+      x = jnp.ones((4, 4))
+      mlir = str(f.lower(x).compiler_ir())
+
+      # Assert there are at least two meshes defined
+      self.assertRegex(mlir, r'sdy\.mesh @mesh(_[0-9]+)? = ')
+      self.assertRegex(mlir, r'sdy\.mesh @mesh_[0-9]+ = ')
+
+      # Assert that the replica_group_mesh_axes correctly point to these meshes
+      self.assertRegex(
+          mlir,
+          r'replica_groups = #stablehlo\.replica_group_mesh_axes<mesh ='
+          r' @mesh(_[0-9]+)?, axes'
+          r' = \[#stablehlo\.axis_ref<name = "x1">\]>',
+      )
+      self.assertRegex(
+          mlir,
+          r'replica_groups = #stablehlo\.replica_group_mesh_axes<mesh ='
+          r' @mesh_[0-9]+, axes'
+          r' = \[#stablehlo\.axis_ref<name = "x2">\]>',
+      )
+
 
 class FunSpec(NamedTuple):
   name: str
