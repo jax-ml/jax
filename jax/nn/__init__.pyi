@@ -35,10 +35,11 @@ def dot_product_attention(
     *,
     scale: float | None = ...,
     is_causal: bool = ...,
+    attn_logits_soft_cap: Any | None = ...,
     query_seq_lengths: ArrayLike | None = ...,
     key_value_seq_lengths: ArrayLike | None = ...,
     local_window_size: int | tuple[int, int] | None = ...,
-    implementation: Literal['xla', 'cudnn'] | None = ...,
+    implementation: Literal['xla', 'cudnn', 'cpu_fused_attention'] | None = ...,
     return_residual: Literal[False] = ...,
   ) -> Array: ...
 @overload
