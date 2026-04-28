@@ -45,7 +45,9 @@ logger = logging.getLogger(__name__)
 
 _THREADING_SAVE_LOCK = threading.Lock()
 
-_REMOTE_URL_PREFIXES = ['gs://', 's3://']
+_SUPPORTED_SCHEMES = ('gs', 's3', 'file')
+_REMOTE_SCHEMES = ('gs', 's3')
+
 _PYTREEDEF_FILE = "pytreedef.json"
 _ARCHIVE_NAME = "archive.zip"
 _USE_OCDBT = True  # a lot of the code relies on this being True
@@ -123,15 +125,19 @@ def _desc_to_leaf(leaf_desc: str | None) -> str | None | jax.ShapeDtypeStruct:
   return jax.ShapeDtypeStruct(shape, jax.numpy.dtype(dtype_str))
 
 
-def _is_remote_path(path: str | PathLike[str]):
+def _is_remote_path(path: str | PathLike[str]) -> bool:
   """Check whether a path is remote by examining the prefix."""
-  # we need to truncate e.g., gs:// to gs:/ because pathlib.Path collapses //
-  return any(str(path).startswith(prefix[:-1])
-             for prefix in _REMOTE_URL_PREFIXES)
+  scheme, _, _ = ts_impl.parse_path(str(path))
+  if scheme and scheme not in _SUPPORTED_SCHEMES:
+    raise ValueError(f"Unsupported remote scheme: {scheme}")
+  return scheme in _REMOTE_SCHEMES
 
 
 def _norm_path(path: str | PathLike[str]) -> Any:
-  if _is_remote_path(path):
+  scheme, _, path_component = ts_impl.parse_path(str(path))
+  if scheme == 'file':
+    return pathlib.Path(path_component)
+  if scheme:
     return pathlib.Path(path)
   return pathlib.Path(path).expanduser().resolve()
 
