@@ -624,6 +624,28 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     for shard in arr.addressable_shards:
       np.testing.assert_array_equal(shard.data, global_data[shard.index])
 
+  def test_make_array_from_callback_no_eval_on_nonaddressable(self):
+    n_local = jax.local_device_count()
+    pid = 1
+
+    mesh = jax.make_mesh(
+        (n_local,),
+        ("x",),
+        devices=jax.local_devices(process_index=pid),
+        axis_types=(jax.sharding.AxisType.Explicit,),
+    )
+    s = jax.sharding.NamedSharding(mesh, P())
+
+    def cb(idx):
+      del idx
+      raise RuntimeError(
+          "Callback should not be called on non-addressable devices!"
+      )
+
+    if jax.process_index() != pid:
+      arr = jax.make_array_from_callback((8, 2), s, cb, dtype=np.float32)
+      self.assertEmpty(arr.addressable_shards)
+
   def test_make_array_from_callback_prngkey(self):
     n_local = jax.local_device_count()
     pid = 1
