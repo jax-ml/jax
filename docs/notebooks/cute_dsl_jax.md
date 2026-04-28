@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.20.0
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3 (ipykernel)
   language: python
@@ -105,13 +105,13 @@ In the following examples, you won’t see `make_layout` because the kernels ope
 
 First, let's check which GPUs are available in this environment. The `nvidia-smi` command shows the GPU model, driver version, CUDA toolkit version, and current memory usage.
 
-```{code-cell} ipython3
+```{code-cell}
 !nvidia-smi
 ```
 
 We programmatically query the GPU's **compute capability** using `nvidia-smi`. This two-digit number (e.g., 9.0 for Hopper) tells us which hardware features are available. CuTe DSL requires SM 8.0 (Ampere) or newer.
 
-```{code-cell} ipython3
+```{code-cell}
 import subprocess
 
 
@@ -141,13 +141,13 @@ The `nvidia-cutlass-dsl` package bundles CuTe DSL together with its JAX integrat
 
 Refer to the [official documentation](https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/quick_start.html) for a more comprehensive installation guide.
 
-```{code-cell} ipython3
+```{code-cell}
 %pip install "nvidia-cutlass-dsl[cu13]" --quiet
 ```
 
 With CUTLASS installed, we import the libraries we'll use throughout the notebook: `cutlass` for kernel definitions, `jax` and `jnp` for array computation and JIT compilation, and `numpy` for result validation.
 
-```{code-cell} ipython3
+```{code-cell}
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # suppress TF/XLA info & warnings
@@ -185,7 +185,7 @@ We show the executable kernel definitions inline in the notebook. At the same ti
 
 Here, we import the pre-written kernel launch functions from [cute_dsl_jax_kernels.py](cute_dsl_jax/cute_dsl_jax_kernels.py).
 
-```{code-cell} ipython3
+```{code-cell}
 # Optional, if you execute the equivalent kernel definitions further in the notebook
 
 # from cute_dsl_jax.cute_dsl_jax_kernels import (
@@ -196,7 +196,7 @@ Here, we import the pre-written kernel launch functions from [cute_dsl_jax_kerne
 # print("Imported: launch_vector_add, launch_saxpy, launch_gemm, launch_relu, launch_fused_bias_relu, launch_elementwise_add")
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 def split_keys(seed=0):
   key = jax.random.key(seed)
   while True:
@@ -227,7 +227,7 @@ Data movement between global and register memory is explicit: fragments are read
 >
 > A CuTe **Tensor** pairs a pointer to GPU memory with a **Layout** that describes how to navigate it. When the kernel receives `a: cute.Tensor`, it gets both the raw data and the index mapping. In this example, our tensors have shape `(1, BLOCK, num_blocks)` — one element per thread, `BLOCK=256` (defined in the example below) threads per block, spread across blocks. The layout maps a `(elems_per_thread, threads_per_block, num_blocks)` coordinate to the flat memory offset where that element lives. The kernel never computes offsets manually — it just indexes the tensor with `a[None, tidx, bidx]` and CuTe's layout handles the rest.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.kernel
 def vector_add_kernel(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
   """Per-thread kernel: each thread adds one element."""
@@ -255,7 +255,7 @@ We launch `a.shape[-2]` threads per block and `a.shape[-1]` blocks, directly mat
 >
 > The vector add kernel expects 3-D tensors with shape `(elems_per_thread, threads_per_block, num_blocks)`, but our data is a flat 1-D array. The JAX wrapper reshapes from 1-D to 3-D before calling the kernel, and back afterward. In CuTe terms, this reshape is a **layout composition** — combining the original 1-D layout with a new layout that splits the single dimension into three. CuTe performs this algebraically: the composed layout maps 3-D coordinates directly to the original flat offsets, with no data movement. Reshaping is free — it's just a change of layout, not a copy.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.jit
 def launch_vector_add(
     stream: cuda.CUstream,
@@ -322,7 +322,7 @@ c_3d = call(a_3d, b_3d)
 return c_3d.reshape(-1)[:N]
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 BLOCK = 256  # threads per block for vector add: 256 is a practical default:
 # large enough to expose parallelism, small enough to scale
 # well across different GPUs, and aligned with the hardware’s
@@ -353,7 +353,7 @@ print("jax_vector_add defined.")
 
 Let's test our CUTLASS vector add by comparing its output against JAX's built-in `+` operator. We generate two random arrays, run both implementations, and verify the results match element-by-element.
 
-```{code-cell} ipython3
+```{code-cell}
 # Test vector add
 N = 1024
 a = jax.random.normal(next(keys), (N,), dtype=jnp.float32)
@@ -387,7 +387,7 @@ frgO.store(alpha * frgX.load() + frgY.load())
 
 Each thread loads its element of `x` and `y` into register fragments, multiplies `x` by `alpha`, adds `y`, and writes the result to `out`.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.kernel
 def saxpy_kernel(
     x: cute.Tensor, y: cute.Tensor, out: cute.Tensor, alpha: float
@@ -411,7 +411,7 @@ print("saxpy_kernel defined.")
 
 The launcher passes `alpha` as a **keyword-only** argument (note the `*` in the signature):
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.jit
 def launch_saxpy(
     stream: cuda.CUstream,
@@ -448,7 +448,7 @@ out_3d = call(x_3d, y_3d)  # tensor args → managed by XLA
 
 Note that `jax_saxpy` uses `@partial(jax.jit, static_argnums=(2,))` to mark `alpha` as a static argument to JAX. This means JAX will recompile the function whenever `alpha` changes — which is fine for a value that rarely varies, and lets the CUTLASS JIT bake the exact `alpha` value into the generated CUDA code.
 
-```{code-cell} ipython3
+```{code-cell}
 from functools import partial
 
 BLOCK = 256
@@ -478,7 +478,7 @@ print("jax_saxpy defined.")
 
 We test the SAXPY kernel with `alpha=2.5`, comparing against the reference computation `alpha * x + y`. The `assert_allclose` check verifies that results match within floating-point tolerance.
 
-```{code-cell} ipython3
+```{code-cell}
 # Test SAXPY
 N = 2048
 ALPHA = 2.5
@@ -517,7 +517,7 @@ For example, if we launch 256 threads per block: thread 3 in block 2 gets `idx =
 
 Here we index the tensors directly with `x[idx]` — no register fragments or `autovec_copy`. For simple elementwise operations this flat approach is cleaner. `cutlass.max` is CuTe DSL's built-in max function, and `cutlass.Float32(0.0)` creates a typed zero constant that matches the tensor's element type.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.kernel
 def relu_kernel(x: cute.Tensor, out: cute.Tensor, N: int):
   """Per-thread kernel: each thread computes ReLU of one element."""
@@ -536,7 +536,7 @@ print("relu_kernel defined.")
 
 The launcher computes how many blocks are needed to cover `N` elements:
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.jit
 def launch_relu(
     stream: cuda.CUstream,
@@ -576,7 +576,7 @@ return out_flat.reshape(x.shape)  # restore original shape
 
 `N` is passed as a keyword argument so the kernel knows how many elements are valid. The output is reshaped back to match the input's original shape (works for any dimensionality).
 
-```{code-cell} ipython3
+```{code-cell}
 @jax.jit
 def jax_relu(x):
   """JAX-compatible ReLU using CUTLASS kernel."""
@@ -596,7 +596,7 @@ print("jax_relu defined.")
 
 We verify the ReLU kernel by comparing against `jax.nn.relu`. Positive values should pass through unchanged, and negative values should become zero.
 
-```{code-cell} ipython3
+```{code-cell}
 # Test ReLU
 N = 2048
 x = jax.random.normal(next(keys), (N,), dtype=jnp.float32)
@@ -623,7 +623,7 @@ The kernel extends the ReLU pattern with a bias lookup.
 
 The input `x` is a flattened `(batch, width)` matrix. `idx` is the global flat index, and `col = idx % width` recovers which column (feature) this element belongs to, so we can look up the correct bias. This modular indexing pattern is common in fused kernels that combine elementwise and broadcast operations.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.kernel
 def fused_bias_relu_kernel(
     x: cute.Tensor,
@@ -649,7 +649,7 @@ print("fused_bias_relu_kernel defined.")
 
 The launcher and JAX wrapper follow the same flat-indexing pattern as ReLU, with `N` (total elements) and `width` (columns) passed as keyword arguments:
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.jit
 def launch_fused_bias_relu(
     stream: cuda.CUstream,
@@ -683,7 +683,7 @@ call = cjax.cutlass_call(
 out_flat = call(x_flat, bias)   # two input tensors: x and bias
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 from functools import partial
 
 
@@ -713,7 +713,7 @@ print("jax_fused_bias_relu defined.")
 
 Test the fused kernel against the equivalent two-step JAX computation: add bias, then apply ReLU. The results should match exactly since both paths perform the same arithmetic.
 
-```{code-cell} ipython3
+```{code-cell}
 # Test Fused Bias+ReLU
 BATCH, WIDTH = 64, 512
 x = jax.random.normal(next(keys), (BATCH, WIDTH), dtype=jnp.float32)
@@ -783,7 +783,7 @@ The inner loop accumulates the dot product over the K dimension:
 
 Here we use **manual row-major indexing**: `A[m_idx * K + k]` computes the offset into the flattened 1-D tensor for element `(m_idx, k)` of a row-major matrix with K columns. Similarly, `B[k * N + n_idx]` indexes element `(k, n_idx)`. Production CUTLASS kernels use multi-dimensional CuTe tensor indexing instead, but explicit indexing makes the memory layout visible for learning.
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.kernel
 def gemm_kernel(
     A: cute.Tensor,
@@ -821,7 +821,7 @@ The launcher sets up a 2-D grid matching the tile decomposition:
 - `block=[256, 1, 1]` — 256 threads per block, each handling multiple elements via the stride loop
 - `M, N, K, BLOCK_M, BLOCK_N` are all passed as compile-time constants to the kernel
 
-```{code-cell} ipython3
+```{code-cell}
 @cute.jit
 def launch_gemm(
     stream: cuda.CUstream,
@@ -848,7 +848,7 @@ print("launch_gemm defined.")
 
 The JAX wrapper flattens both input matrices to 1-D (matching the kernel's flat indexing), passes the matrix dimensions as keyword arguments, and reshapes the result:
 
-```{code-cell} ipython3
+```{code-cell}
 @jax.jit
 def jax_cutlass_gemm(a, b):
   """JAX wrapper for the CUTLASS GEMM kernel."""
@@ -872,7 +872,7 @@ print("jax_cutlass_gemm defined.")
 
 Test the CUTLASS GEMM against JAX's `jnp.matmul`. We use relaxed tolerances (`rtol=1e-2`) because our simple kernel accumulates the K-dimension in a different order than cuBLAS, leading to small floating-point differences that are expected and harmless.
 
-```{code-cell} ipython3
+```{code-cell}
 # Test GEMM
 M, N, K = 256, 256, 128
 A = jax.random.normal(next(keys), (M, K), dtype=jnp.float32)
@@ -896,7 +896,7 @@ CuTe DSL's real value shows up when you need kernels that cuBLAS doesn't provide
 
 The benchmark below runs each implementation 20 times (after a warmup pass to trigger JIT compilation) and reports the average wall-clock time. `block_until_ready()` ensures we time the actual GPU execution, not just the asynchronous launch.
 
-```{code-cell} ipython3
+```{code-cell}
 import time
 
 M, N, K = 512, 512, 512
@@ -1016,7 +1016,7 @@ def sharded_vector_add(a_shard, b_shard):
 
 Inside `sharded_vector_add`, the code is identical to single-GPU — it sees a regular tensor and calls the same CUTLASS kernel. The kernel has no idea it's running on multiple GPUs. JAX handles splitting inputs before the kernel and reassembling outputs afterward.
 
-```{code-cell} ipython3
+```{code-cell}
 from jax.sharding import PartitionSpec as P
 
 num_devices = len(jax.devices())
@@ -1116,7 +1116,7 @@ result = rehydrated.call(a, b)
 
 The following example is adapted from [NVIDIA's official export example](https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/jax/cutlass_call_export.py). It exports a function that adds two matrices with a CUTLASS kernel and applies `sigmoid`, then serializes, deserializes, and verifies the result.
 
-```{code-cell} ipython3
+```{code-cell}
 from cutlass.jax import get_export_disabled_safety_checks
 from jax import export
 
@@ -1214,7 +1214,7 @@ With concrete shapes, the exported artifact only works for the exact dimensions 
 
 `export.symbolic_shape("a, b")` creates symbolic dimension variables. The exported function is parameterized over these variables, so the same serialized blob works for `(512, 256)`, `(1024, 1024)`, or any other shape.
 
-```{code-cell} ipython3
+```{code-cell}
 # --- Export with symbolic shapes ---
 a_sym, b_sym = export.symbolic_shape("a, b")
 symbolic_shape_dtype = jax.ShapeDtypeStruct((a_sym, b_sym), jnp.float32)
