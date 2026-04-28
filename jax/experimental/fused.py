@@ -61,8 +61,8 @@ dispatch.simple_impl(fused_p)
 def _fused_lowering(ctx, *args, out_spaces, jaxpr):
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_arg_avals = unzip2(const_args_and_avals)
-  const_arg_values = mlir.flatten_ir_values(
-      mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
+  const_arg_values = tuple(
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
   )
   in_avals = [*const_arg_avals, *ctx.avals_in]
