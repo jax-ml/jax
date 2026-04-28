@@ -128,6 +128,8 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:api_util",
         "//jax/_src:config",
+        "//jax/_src:dtypes",
+        "//jax/_src:sharding_impls",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
         "//jax/_src:util",

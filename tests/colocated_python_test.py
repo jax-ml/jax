@@ -100,6 +100,46 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(
         serialization._deserialize(serialization._serialize(func))(1), func(1))
 
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_key_dtype_serialization(self, impl_name: str):
+    key = jax.random.key(0, impl=impl_name)
+    dtype = key.dtype
+    serialized = serialization._serialize(dtype)
+    deserialized = serialization._deserialize(serialized)
+    self.assertTrue(
+        jnp.issubdtype(deserialized, jax.dtypes.prng_key),
+        msg=f"Expected prng_key, got {deserialized}",
+    )
+    self.assertEqual(deserialized, dtype)
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_key_shaped_dtype_struct_serialization(self, impl_name: str):
+    key = jax.random.key(0, impl=impl_name)
+    sds = jax.ShapeDtypeStruct(key.shape, key.dtype)
+    serialized = serialization._serialize(sds)
+    deserialized = serialization._deserialize(serialized)
+    self.assertTrue(
+        jnp.issubdtype(deserialized.dtype, jax.dtypes.prng_key),
+        msg=f"Expected prng_key, got {deserialized.dtype}",
+    )
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_impl_serialization(self, impl_name: str):
+    key = jax.random.key(0, impl=impl_name)
+    impl = key.dtype._impl
+    serialized = serialization._serialize(impl)
+    deserialized = serialization._deserialize(serialized)
+    self.assertEqual(deserialized, impl)
+
   def test_make_colocated_python_program(self):
     def add_one(x):
       return x + 1
@@ -773,6 +813,95 @@ class ColocatedPythonTest(jtu.JaxTestCase):
             shape=(), dtype=np.int32, sharding=sharding))
     out = obj.fetch_with_output_spec()
     self.assertArraysEqual(out, np.array(1, dtype=np.int32))
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_key_input(self, key_impl):
+    @colocated_python.colocated_python
+    def is_valid_key(key):
+      return jnp.array(jnp.issubdtype(key.dtype, jax.dtypes.prng_key))
+
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
+    key = jax.random.key(0, impl=key_impl)
+    key = jax.device_put(key, cpu_devices[0])
+
+    out = is_valid_key(key)
+    self.assertTrue(jax.device_get(out))
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_key_output(self, key_impl):
+    @colocated_python.colocated_python
+    def make_key():
+      return jax.random.key(42, impl=key_impl)
+
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
+    make_key = make_key.specialize(devices=cpu_devices[:1])
+
+    out = make_key()
+    self.assertTrue(
+        jnp.issubdtype(out.dtype, jax.dtypes.prng_key),
+        msg=f"Expected prng_key, got {out.dtype}",
+    )
+    # Verify we can use it
+    k1, k2 = jax.random.split(out)
+    self.assertTrue(jnp.issubdtype(k1.dtype, jax.dtypes.prng_key))
+    self.assertTrue(jnp.issubdtype(k2.dtype, jax.dtypes.prng_key))
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_prng_key_roundtrip(self, key_impl):
+    @colocated_python.colocated_python
+    def split_key(x):
+      return jax.random.split(x)
+
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
+    key = jax.random.key(7, impl=key_impl)
+    key = jax.device_put(key, cpu_devices[0])
+
+    out = split_key(key)
+    self.assertTrue(
+        jnp.issubdtype(out.dtype, jax.dtypes.prng_key),
+        msg=f"Expected prng_key, got {out.dtype}",
+    )
+    self.assertEqual(out.sharding, key.sharding)
+
+  @parameterized.named_parameters(
+      ("threefry2x32", "threefry2x32"),
+      ("rbg", "rbg"),
+  )
+  def test_mixed_tree_with_prng_keys(self, key_impl):
+    @colocated_python.colocated_python
+    def process_tree(tree):
+      return jax.tree.map(
+          lambda x: x + 1
+          if not jnp.issubdtype(x.dtype, jax.dtypes.prng_key)
+          else x,
+          tree,
+      )
+
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
+    key = jax.random.key(99, impl=key_impl)
+    arr = jnp.array([1, 2, 3])
+
+    tree = {"key": key, "arr": arr}
+    tree = jax.device_put(tree, make_single_device_sharding(cpu_devices[0]))
+
+    out = process_tree(tree)
+    self.assertTrue(
+        jnp.issubdtype(out["key"].dtype, jax.dtypes.prng_key),
+        msg=f"Expected prng_key, got {out['key'].dtype}",
+    )
+    self.assertArraysEqual(
+        jax.random.key_data(out["key"]), jax.random.key_data(key)
+    )
+    self.assertArraysEqual(out["arr"], arr + 1)
 
 
 if __name__ == "__main__":
