@@ -7742,18 +7742,25 @@ class SemaphoreTest(PallasTest):
     result = kernel()
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
-  def test_global_semaphore_with_multiple_warps(self):
+  @parameterized.parameters("sys", "gpu")
+  def test_global_semaphore_with_multiple_warps(self, memory_scope):
     def body(out_ref):
       sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
       @plgpu.warp_map
       def _per_warp(warp_idx):
         @pl.when(warp_idx == 0)
         def _():
-          pl.semaphore_signal(sem_ref)
+          if memory_scope == "sys":
+            pl.semaphore_signal(sem_ref)
+            plgpu.semaphore_signal(sem_ref, memory_scope="sys")
+          else:
+            plgpu.semaphore_signal(sem_ref, 2, memory_scope="gpu")
 
         @pl.when(warp_idx == 1)
         def _():
-          pl.semaphore_wait(sem_ref, decrement=True)
+          plgpu.semaphore_wait(
+              sem_ref, 2, memory_scope=memory_scope, decrement=True
+          )
 
       out_ref[0] = pl.semaphore_read(sem_ref)
 

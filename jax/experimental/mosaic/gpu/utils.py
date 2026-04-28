@@ -1421,6 +1421,7 @@ class SemaphoreRef:
       value: ir.Value | int,
       predicate: ir.Value | None = None,
       relaxed: bool = False,
+      memory_scope: Literal["sys", "gpu"] = "sys",
   ):
     i32 = ir.IntegerType.get_signless(32)
     if not isinstance(value, ir.Value):
@@ -1429,11 +1430,14 @@ class SemaphoreRef:
       raise ValueError(f"Expected a i32 value, got {value.type}")
     if predicate is None:
       predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
+    if memory_scope not in ("sys", "gpu"):
+      raise ValueError(f"Unsupported memory_scope: {memory_scope}")
+
     semantics = "relaxed" if relaxed else "release"
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
         [self.ptr, value, predicate],
-        f"@$2 red.{semantics}.sys.global.add.u32 [$0], $1;",
+        f"@$2 red.{semantics}.{memory_scope}.global.add.u32 [$0], $1;",
         "l,r,b",
         has_side_effects=True,
     )
@@ -1465,15 +1469,17 @@ class SemaphoreRef:
       *,
       decrement: bool = True,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
+      memory_scope: Literal["sys", "gpu"] = "sys",
   ):
     i32 = ir.IntegerType.get_signless(32)
     if not isinstance(value, ir.Value):
       value = c(value, i32)
     elif value.type != i32:
       raise ValueError(f"Expected a i32 value, got {value.type}")
+    if memory_scope not in ("sys", "gpu"):
+      raise ValueError(f"Unsupported memory_scope: {memory_scope}")
 
     with single_thread(scope=scope):
-      # Create the while loop for busy waiting
       while_op = scf.WhileOp([i32], [value])
       before_block = while_op.before.blocks.append(i32)
       with ir.InsertionPoint.at_block_begin(before_block):
@@ -1483,7 +1489,7 @@ class SemaphoreRef:
           in_memory = llvm.inline_asm(
               i32,
               [self.ptr, expected_in_memory, new_val],
-              "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
+              f"atom.acquire.{memory_scope}.global.cas.b32 $0, [$1], $2, $3;",
               "=r,l,r,r",
               has_side_effects=True,
           )
@@ -1495,7 +1501,7 @@ class SemaphoreRef:
           in_memory = llvm.inline_asm(
               i32,
               [self.ptr],
-              "ld.relaxed.sys.global.b32 $0, [$1];",
+              f"ld.relaxed.{memory_scope}.global.b32 $0, [$1];",
               "=r,l",
               has_side_effects=True,
           )
@@ -1510,7 +1516,7 @@ class SemaphoreRef:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [],
-          "fence.acquire.sys;",
+          f"fence.acquire.{memory_scope};",
           "",
           has_side_effects=True,
       )
