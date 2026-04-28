@@ -119,14 +119,13 @@ class _Ogrid:
     Multiple slices can be used to create sparse grids of indices:
 
     >>> jnp.ogrid[:2, :3]
-    [Array([[0],
-            [1]], dtype=int32),
-     Array([[0, 1, 2]], dtype=int32)]
+    (Array([[0],
+           [1]], dtype=int32), Array([[0, 1, 2]], dtype=int32))
   """
 
   def __getitem__(
       self, key: slice | tuple[slice, ...]
-  ) -> Array | list[Array]:
+  ) -> Array | tuple[Array, ...]:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
