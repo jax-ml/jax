@@ -33,6 +33,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import monitoring
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import tree_util
@@ -1841,6 +1842,8 @@ class DynamicJaxprTrace(core.Trace):
     self.requires_low = lower
     self.frame = JaxprStackFrame(debug_info, auto_dce)
     self.parent_trace = parent_trace
+    if parent_trace and parent_trace is not core.eval_trace:
+      self.bind_count_ref = parent_trace.bind_count_ref
 
   def invalidate(self):
     # TODO(mattjj): exposed existing tracer leaks; fix them and re-enable!
@@ -2333,6 +2336,11 @@ def trace_to_jaxpr(
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
+    monitoring.record_scalar(
+        "/jax/core/bind_calls",
+        trace.bind_count_ref[0],
+        fun_name=debug_info.func_name
+    )
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return ClosedJaxpr(jaxpr, consts), out_avals
