@@ -807,7 +807,9 @@ def choice(key: ArrayLike,
            replace: bool = True,
            p: RealArray | None = None,
            axis: int = 0,
-           mode: str | None = None) -> Array:
+           mode: str | None = None,
+           *,
+           out_sharding: NamedSharding | P | None = None) -> Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -820,9 +822,10 @@ def choice(key: ArrayLike,
     a : array or int. If an ndarray, a random sample is generated from
       its elements. If an int, the random sample is generated as if a were
       arange(a).
-    shape : tuple of ints, optional. Output shape.  If the given shape is,
-      e.g., ``(m, n)``, then ``m * n`` samples are drawn.  Default is (),
-      in which case a single value is returned.
+    shape : tuple of ints, optional. Output shape, excluding non-axis dimensions of ``a``.
+      If the given shape is, e.g., ``(m, n)``, then ``m * n`` samples are drawn from ``a``.
+      If ``a`` has shape e.g. ``(a, d, b)`` and `axis=1`, the overall output will have shape
+      ``(a, m, n, b)``. Default is ().
     replace : boolean.  Whether the sample is with or without replacement.
       Default is True.
     p : 1-D array-like, The probabilities associated with each entry in a.
@@ -836,6 +839,14 @@ def choice(key: ArrayLike,
       in float32 sampling will be biased for choices with probability less than about
       1E-7; with mode="high" this limit is pushed down to about 1E-14. mode="high"
       approximately doubles the cost of sampling.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     An array of shape `shape` containing samples from `a`.
@@ -861,6 +872,15 @@ def choice(key: ArrayLike,
         f"Cannot take a larger sample (size {n_draws}) than "
         f"population (size {n_inputs}) when 'replace=False'")
 
+  final_shape = (shape if arr.ndim == 0 else
+                 arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "choice", final_shape)
+  return maybe_auto_axes(_choice, out_sharding,
+                          n_inputs=n_inputs, shape=shape, n_draws=n_draws,
+                          replace=replace, axis=axis, mode=mode)(key, arr, p)
+
+@jit(static_argnums=(3, 4, 5, 6, 7, 8))
+def _choice(key, arr, p, n_inputs, shape, n_draws, replace, axis, mode):
   if p is None:
     if replace:
       ind = randint(key, shape, 0, n_inputs)
