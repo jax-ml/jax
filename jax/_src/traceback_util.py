@@ -226,8 +226,8 @@ def api_boundary(
         raise
       finally:
         del mode, tb
-  if (repro_api_name or repro_user_func) and repro:
-    reraise_with_filtered_traceback = repro.boundary(
+  if repro and (repro_api_name or repro_user_func):
+    reraise_with_filtered_traceback = repro.boundary(  # pyrefly: ignore [missing-attribute]
         reraise_with_filtered_traceback, api_name=repro_api_name,
         is_user=repro_user_func)
   return cast(C, reraise_with_filtered_traceback)
@@ -236,7 +236,6 @@ try:
   # TODO: import from the final location
   from jax._src import repro  # pyrefly: ignore[missing-module-attribute]
   repro_is_enabled = repro.is_enabled
-
-except ImportError:
+except (ImportError, AttributeError):
   repro = None
-  def repro_is_enabled(): return False
+  repro_is_enabled = lambda: False
