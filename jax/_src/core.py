@@ -2403,6 +2403,8 @@ class ShapedArray(AbstractValue):
   manual_axis_type: Any
   memory_space: Any
 
+  # TODO(yashkatariya): remove "cls" from _create and uses of type(self) below
+  # after removing ShapedArrayWithMemorySpace from Pallas.
   @staticmethod
   @weak_value_interner
   def _create(shape, dtype, weak_type, sharding, manual_axis_type,
