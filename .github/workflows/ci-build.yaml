@@ -192,8 +192,13 @@ jobs:
       run: |
         $PYTHON_BIN build/portserver.py &
         SERVER_PID=$!
+        # Stop the background portserver even if Sphinx exits with an error.
+        cleanup_portserver() {
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+        }
+        trap cleanup_portserver EXIT
         PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
-        kill $SERVER_PID
 
   ffi:
     name: FFI example
