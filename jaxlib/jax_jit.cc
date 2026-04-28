@@ -243,7 +243,7 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
     auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
     auto* b_named_sharding = nb::inst_ptr<const NamedSharding>(b);
     return a_named_sharding->mesh().ptr() == b_named_sharding->mesh().ptr() &&
-           *a_named_sharding->spec() == *b_named_sharding->spec() &&
+           a_named_sharding->spec().equal(b_named_sharding->spec()) &&
            a_named_sharding->memory_kind().equal(
                b_named_sharding->memory_kind()) &&
            a_named_sharding->logical_device_ids().equal(

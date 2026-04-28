@@ -37,7 +37,6 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/hash_util.h"
 #include "jaxlib/nb_class_ptr.h"
-#include "jaxlib/partition_spec.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "jaxlib/py_device_list.h"
@@ -130,7 +129,7 @@ static const std::array<std::string_view, 3> valid_memory_kinds = {
     "unpinned_host",
 };
 
-NamedSharding::NamedSharding(nb::object mesh, nb_class_ptr<PartitionSpec> spec,
+NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
                              nb::object memory_kind,
                              nb::object logical_device_ids)
     : Sharding(/*num_devices=*/[&mesh]() {
@@ -183,7 +182,7 @@ NamedSharding::NamedSharding(nb::object mesh, nb_class_ptr<PartitionSpec> spec,
 
 bool NamedSharding::operator==(const NamedSharding& other) const {
   // Caution: you may need to update EqualShardingsForJit in jax_jit.cc as well.
-  return mesh().equal(other.mesh()) && *spec() == *other.spec() &&
+  return mesh().equal(other.mesh()) && spec().equal(other.spec()) &&
          memory_kind().equal(other.memory_kind()) &&
          logical_device_ids().equal(other.logical_device_ids());
 }
@@ -203,7 +202,7 @@ nb::int_ NamedSharding::Hash() const {
   // Caution: you may need to update HashShardingForJit in jax_jit.cc as well.
   return nb::cast<nb::int_>(hash_.Get([&]() {
     size_t h =
-        absl::HashOf(nb::hash(mesh_), spec_->Hash(), nb::hash(memory_kind_),
+        absl::HashOf(nb::hash(mesh_), nb::hash(spec_), nb::hash(memory_kind_),
                      nb::hash(logical_device_ids_));
     return nb::cast(jax::AbslHashToPythonHash(h));
   }));
@@ -284,8 +283,7 @@ void RegisterSharding(nb::module_& m) {
   nb::class_<Sharding>(m, "Sharding").def(nb::init<>());
 
   nb::class_<NamedSharding, Sharding>(m, "NamedSharding", nb::dynamic_attr())
-      .def(nb::init<nb::object, nb_class_ptr<PartitionSpec>, nb::object,
-                    nb::object>(),
+      .def(nb::init<nb::object, nb::object, nb::object, nb::object>(),
            nb::arg("mesh"), nb::arg("spec"),
            nb::arg("memory_kind").none() = nb::none(),
            nb::arg("_logical_device_ids").none() = nb::none())
