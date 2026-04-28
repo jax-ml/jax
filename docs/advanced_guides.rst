@@ -81,6 +81,11 @@ operations.
    :maxdepth: 1
 
    ffi
+
+.. toctree::
+   :caption: GPU kernel authoring tools
+   :maxdepth: 1
+
    notebooks/cute_dsl_jax
 
 .. toctree::
