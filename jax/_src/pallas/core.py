@@ -1226,7 +1226,7 @@ def get_grid_mapping(
   else:
     dim_check: Any = jax_core.is_constant_dim
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
-  grid_mapping_grid: GridMappingGrid = tuple(
+  grid_mapping_grid: GridMappingGrid = tuple(  # pyrefly: ignore[bad-assignment]
       dynamic_grid_dim if (  # pyrefly: ignore[bad-argument-type]
           d is None or (not jax_core.is_constant_dim(d) and not dynamic_shapes_export_enabled())
       ) else d

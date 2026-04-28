@@ -67,7 +67,7 @@ def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
   is_int_indexing = [not isinstance(i, Slice) for i in indexer.indices]
   slice_indexers, int_indexers = partition_list(
       is_int_indexing, indexer.indices)
-  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # pyrefly: ignore[bad-argument-type]
+  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # pyrefly: ignore[bad-argument-type, bad-return]
 
 def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
