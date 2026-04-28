@@ -44,6 +44,7 @@ jobs:
             -//jaxlib/mosaic/gpu:transforms_test
             -//jaxlib/mosaic/gpu:utils_test
             -//jaxlib/mosaic:array_util_test
+            -//jaxlib/mosaic:tiled_layout_test
             -//jaxlib/mosaic:tpu_ops_verification_test
             -//jaxlib/mosaic:vreg_util_test
             # Targets dependent on missing TEST dependencies
