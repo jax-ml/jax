@@ -18,7 +18,9 @@ concurrency:
 
 jobs:
   bazel-dependency-violations:
+    # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: Bazel dependency violations
+    # End Presubmit Naming Check github-bazel-nobuild
     runs-on: linux-x86-n4-16
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     defaults:
