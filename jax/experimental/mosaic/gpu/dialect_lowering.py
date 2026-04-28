@@ -252,7 +252,6 @@ def unwrap_transformed_memref(
     ref: ir.Value[ir.MemRefType], expected_transforms: ir.ArrayAttr
 ) -> ir.Value:
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
-
   _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
   transformed_type = transform_type(ref.type, transforms)
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
@@ -388,6 +387,14 @@ def _vector_load_op_lowering_rule(
   element_type = ir.VectorType(op.result.type).element_type
   is_signed = _default_is_signed(element_type)
 
+  orig_ref_ty = op.source.type
+  if utils.is_smem_ref(orig_ref_ty):
+    [transforms_attr] = inference_utils.in_transforms(op)
+    transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
+  else:
+    transforms_attr = None
+    transformed_ref = op.source
+
   def _fragmented_array_to_ir(
       fragmented_array: fa.FragmentedArray,
   ) -> ir.Value:
@@ -396,7 +403,7 @@ def _vector_load_op_lowering_rule(
   if isinstance(out_layout, fa.WGStridedFragLayout):
     # TODO(bchetioui): Process transforms.
     fragmented_array = fa.FragmentedArray.load_strided(
-        op.source,
+        transformed_ref,
         is_signed=is_signed,
         vec_size=out_layout.vec_size,
     )
@@ -406,26 +413,23 @@ def _vector_load_op_lowering_rule(
     raise ValueError(f"{op} has an unsupported layout: {out_layout_attr}")
 
   optimized = op.optimized.value if op.optimized is not None else None
-  ref_ty = ir.MemRefType(op.source.type)
-  if ref_ty.memory_space is None:  # GMEM
+  if transformed_ref.type.memory_space is None:  # GMEM
     fragmented_array = fa.FragmentedArray.load_untiled(
-        op.source,
+        transformed_ref,
         layout=out_layout,
         is_signed=is_signed,
         optimized=bool(optimized),
     )
     return [_fragmented_array_to_ir(fragmented_array)]
 
-  if ref_ty.memory_space != utils.smem():
-    raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
+  if transforms_attr is None:
+    raise ValueError(f"Unsupported memory space: {orig_ref_ty.memory_space}")
 
-  transforms_attr = inference_utils.in_transforms(op)[0]
   swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
       transforms_attr
   )
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
-    transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
     [tiling_transform] = transforms
     assert isinstance(tiling_transform, lc.TileTransform)
 
@@ -444,7 +448,7 @@ def _vector_load_op_lowering_rule(
 
     def load_untiled(optimized: bool) -> fa.FragmentedArray:
       return fa.FragmentedArray.load_untiled(
-          op.source,
+          transformed_ref,
           layout=out_layout,
           is_signed=is_signed,
           optimized=optimized,
@@ -461,6 +465,7 @@ def _multimem_load_reduce_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   [out_layout_attr] = inference_utils.out_layouts(op)
   out_layout = layouts_lib.from_layout_attr(out_layout_attr)
+  # TODO(apaszke): DO NOT IGNORE TRANSFORMS.
 
   assert ctx.launch_context is not None
 
