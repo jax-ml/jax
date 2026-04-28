@@ -1003,10 +1003,13 @@ class BarrierRef:
   offset: ir.Value
   phases: ir.Value
   num_barriers: int
+  orders_tensor_core: bool
 
   @staticmethod
   def initialize(
-      barrier_memref: ir.Value, arrival_count: int = 1
+      barrier_memref: ir.Value,
+      arrival_count: int = 1,
+      orders_tensor_core: bool = False,
   ) -> "BarrierRef":
     barrier_ty = ir.MemRefType(barrier_memref.type)
     [num_barriers] = barrier_ty.shape
@@ -1026,7 +1029,9 @@ class BarrierRef:
           c(arrival_count, i32),
           predicate=predicate,
       )
-    return BarrierRef(address, c(0, i32), phases, num_barriers)
+    return BarrierRef(
+        address, c(0, i32), phases, num_barriers, orders_tensor_core
+    )
 
   def __iter__(self) -> Iterator["BarrierRef"]:
     if self.num_barriers == 1:
@@ -1050,9 +1055,11 @@ class BarrierRef:
         arith.addi(self.offset, offset),
         self.phases,
         1,
+        self.orders_tensor_core,
     )
 
   def test_parity(self, parity, orders_tensor_core=False) -> ir.Value:
+    assert self.orders_tensor_core == orders_tensor_core
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
     wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
@@ -1070,6 +1077,7 @@ class BarrierRef:
     return wait_complete
 
   def wait_parity(self, parity, orders_tensor_core=False):
+    assert self.orders_tensor_core == orders_tensor_core
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
@@ -1099,6 +1107,7 @@ class BarrierRef:
       predicate: ir.Value | None = None,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
+    assert self.orders_tensor_core == orders_tensor_core
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
       if predicate is not None:
@@ -1179,7 +1188,6 @@ class BarrierRef:
 @dataclasses.dataclass(frozen=True)
 class DialectBarrierRef:
   barrier_ref: BarrierRef
-  orders_tensor_core: bool
 
   @staticmethod
   def initialize(
@@ -1202,8 +1210,7 @@ class DialectBarrierRef:
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     return DialectBarrierRef(
-        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers),
-        orders_tensor_core=orders_tensor_core,
+        BarrierRef(address, c(0, i32), phases, num_barriers, orders_tensor_core)
     )
 
   def __iter__(self) -> Iterator["DialectBarrierRef"]:
@@ -1214,23 +1221,19 @@ class DialectBarrierRef:
         yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
-    return DialectBarrierRef(self.barrier_ref[offset], self.orders_tensor_core)
+    return DialectBarrierRef(self.barrier_ref[offset])
 
   def test_parity(self, parity, orders_tensor_core=False) -> ir.Value:
-    assert self.orders_tensor_core == orders_tensor_core
     return self.barrier_ref.test_parity(parity, orders_tensor_core)
 
   def test(self, orders_tensor_core: bool = False) -> ir.Value:
-    assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
     return self.barrier_ref.test(orders_tensor_core)
 
   def wait_parity(self, parity, orders_tensor_core=False):
-    assert self.orders_tensor_core == orders_tensor_core
     self.barrier_ref.wait_parity(parity, orders_tensor_core)
 
   def wait(self, orders_tensor_core: bool = False):
-    assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
     self.barrier_ref.wait(orders_tensor_core)
 
@@ -1238,7 +1241,6 @@ class DialectBarrierRef:
     return self.barrier_ref.update_parities(parities)
 
   def arrive(self, orders_tensor_core: bool = False):
-    assert self.orders_tensor_core == orders_tensor_core
     dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
@@ -1251,7 +1253,7 @@ class DialectBarrierRef:
   def as_barrier_memref(self) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    barrier_type = dialect.BarrierType.get(self.orders_tensor_core)
+    barrier_type = dialect.BarrierType.get(self.barrier_ref.orders_tensor_core)
     memref_type = ir.MemRefType.get(shape, barrier_type)
     result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
     assert isinstance(result, ir.Value)
@@ -1273,14 +1275,14 @@ class DialectBarrierRef:
     addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     assert isinstance(addr, ir.Value)
     return cls(
-        barrier_ref=BarrierRef(
+        BarrierRef(
             base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             # TODO(slebedev): Why is it safe to use None here?
             phases=None,  # pyrefly: ignore[bad-argument-type]
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
+            orders_tensor_core=memref_type.element_type.orders_tensor_core,
         ),
-        orders_tensor_core=memref_type.element_type.orders_tensor_core,
     )
 
 
@@ -1288,7 +1290,7 @@ class DialectBarrierRef:
 class CollectiveBarrierRef:
   barrier: BarrierRef
   cluster_mask: ir.Value | None
-  leader_tracked: bool = False
+  leader_tracked: bool
 
   @staticmethod
   def initialize(
@@ -1296,6 +1298,8 @@ class CollectiveBarrierRef:
       arrival_count: int,
       dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
       cluster_shape: tuple[int, int, int],
+      *,
+      orders_tensor_core: bool = False,
       leader_tracked: bool = False,
   ) -> "CollectiveBarrierRef":
     if leader_tracked:
@@ -1336,7 +1340,9 @@ class CollectiveBarrierRef:
             cluster_mask, cluster_collective_mask(cluster_shape, d, leader_tracked)
         )
     barrier = BarrierRef.initialize(
-        barrier_memref, arrival_count=arrival_count * cluster_arrival_count
+        barrier_memref,
+        arrival_count=arrival_count * cluster_arrival_count,
+        orders_tensor_core=orders_tensor_core,
     )
     return CollectiveBarrierRef(barrier, cluster_mask, leader_tracked)
 
@@ -1369,6 +1375,8 @@ class CollectiveBarrierRef:
           predicate=single_thread_predicate(ThreadSubset.WARPGROUP),
           orders_tensor_core=orders_tensor_core,
       )
+
+    assert self.barrier.orders_tensor_core == orders_tensor_core
 
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)

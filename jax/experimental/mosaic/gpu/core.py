@@ -494,19 +494,26 @@ def _construct_smem_reftree(
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers, orders_tensor_core):
-        init_fn = (
-            functools.partial(
-                utils.DialectBarrierRef.initialize,
-                orders_tensor_core=orders_tensor_core,
-            )
-            if lowering_semantics == LoweringSemantics.Warpgroup
-            else utils.BarrierRef.initialize
-        )
-        ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
+        if lowering_semantics == LoweringSemantics.Warpgroup:
+          ref = utils.DialectBarrierRef.initialize(
+              barrier_memref(num_barriers),
+              arrival_count=arrival_count,
+              orders_tensor_core=orders_tensor_core,
+          )
+        else:
+          ref = utils.BarrierRef.initialize(
+              barrier_memref(num_barriers),
+              arrival_count=arrival_count,
+              orders_tensor_core=orders_tensor_core,
+          )
       case ClusterBarrier(collective_dims, arrival_count, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
-            barrier_memref(num_barriers), arrival_count, collective_dims,
-            cluster_shape, leader_tracked=ref_ty.leader_tracked
+            barrier_memref(num_barriers),
+            arrival_count,
+            collective_dims,
+            cluster_shape,
+            orders_tensor_core=ref_ty.orders_tensor_core,
+            leader_tracked=ref_ty.leader_tracked,
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
