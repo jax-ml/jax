@@ -1000,7 +1000,7 @@ def lower_jaxpr_into_pipelined_module(
       f"#tpu.core_type<{kernel_type}>"
   )
   module.body.append(func_op)
-  assert name not in sym_tab
+  assert name not in sym_tab, f"Function name {name} already exists in symbol table."
   sym_tab.insert(func_op)
   window_params = []
   static_grid = None
@@ -1349,7 +1349,7 @@ def lower_jaxpr_into_unpipelined_module(
       f"#tpu.core_type<{pallas_mesh.core_type}>"
   )
   module.body.append(func_op)
-  assert name not in sym_tab
+  assert name not in sym_tab, f"Function name {name} already exists in symbol table."
   sym_tab.insert(func_op)
   grid = tuple(m[1] for m in mesh_shape)
   func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(grid)

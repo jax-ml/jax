@@ -2468,6 +2468,102 @@ class MpmdMapTest(PallasSCTest):
           out_types=jax.ShapeDtypeStruct([], jnp.int32),
       )()
 
+  @parameterized.parameters(
+      [
+          pltpu.CoreType.TC,
+          pltpu.CoreType.SC_SCALAR_SUBCORE,
+          pltpu.CoreType.SC_VECTOR_SUBCORE,
+      ]
+  )
+  def test_mpmd_capture_scalar(self, core_type):
+    match core_type:
+      case pltpu.CoreType.TC:
+        mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+      case pltpu.CoreType.SC_SCALAR_SUBCORE:
+        if pltpu.get_tpu_info().sparse_core is None:
+          self.skipTest("Sparsecore not supported on this device.")
+        mesh = plsc.ScalarSubcoreMesh(axis_name="x", num_cores=1)
+      case pltpu.CoreType.SC_VECTOR_SUBCORE:
+        if pltpu.get_tpu_info().sparse_core is None:
+          self.skipTest("Sparsecore not supported on this device.")
+        mesh = plsc.VectorSubcoreMesh(
+            core_axis_name="x", subcore_axis_name="subcore", num_cores=1
+        )
+      case _:
+        raise ValueError(f"Unsupported core type: {core_type}")
+
+    def f(x, i):
+      def body(x_ref, out_ref):
+        idx = jax.lax.axis_index("x")
+        pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
+
+      return mpmd.mpmd_map(
+          [(mesh, body)],
+          out_types=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    for i in range(x.shape[0]):
+      out = jax.jit(f)(x, i)
+      np.testing.assert_array_equal(out[0], x[i])
+
+  def test_mpmd_capture_multiple_scalars(self):
+    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+
+    def f(x, i, j):
+      def body(x_ref, out_ref):
+        idx = jax.lax.axis_index("x")
+        pltpu.sync_copy(x_ref.at[i + j], out_ref.at[idx])
+
+      return mpmd.mpmd_map(
+          [(mesh, body)],
+          out_types=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    out = jax.jit(f)(x, 1, 2)
+    np.testing.assert_array_equal(out[0], x[3])
+
+  def test_mpmd_capture_scalar_indexing(self):
+    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    def f(x, i):
+      def body(x_ref, out_ref):
+        idx = jax.lax.axis_index("x")
+        pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
+
+      return mpmd.mpmd_map(
+          [(mesh, body)],
+          out_types=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    out = f(x, 1)
+    np.testing.assert_array_equal(out[0], x[1])
+
+  def test_mpmd_capture_scalar_and_ref(self):
+    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    @jax.jit
+    def f(x, i):
+      y = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+      y_ref = jax.new_ref(y, memory_space=pl.ANY)
+      def body(x_ref, out_ref):
+        idx = jax.lax.axis_index("x")
+        pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
+        vmem_buf = jax.empty_ref(
+            jax.typeof(y_ref).inner_aval, memory_space=pltpu.MemorySpace.VMEM
+        )
+        pltpu.sync_copy(y_ref, vmem_buf)
+
+      return mpmd.mpmd_map(
+          [(mesh, body)],
+          debug=True,
+          out_types=jax.ShapeDtypeStruct((1, *x.shape[1:]), jnp.int32),
+      )(x)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    out = f(x, 1)
+    np.testing.assert_array_equal(out[0], x[1])
+
   @parameterized.product(use_tc_tiling=[False, True],
                          scratch_structure=[tuple, dict])
   def test_parallel_subkernels(self, use_tc_tiling, scratch_structure):
@@ -2659,6 +2755,49 @@ class MpmdMapTest(PallasSCTest):
         "Cannot pass the same ref into a mpmd map multiple times",
     ):
       f(x)
+
+  @parameterized.parameters([TC, SCS, SCV])
+  def test_closed_over_refs(self, core_type):
+    mesh = self.from_core_type(core_type)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(x)
+      o_ref = jax.empty_ref(jax.typeof(x))
+
+      def fn():
+        pltpu.sync_copy(x_ref, o_ref)
+
+      mpmd.mpmd_map(
+          [(mesh, fn)],
+      )()
+      return jax.freeze(o_ref)
+
+    np.testing.assert_array_equal(x, f(x))
+
+  @parameterized.parameters([TC, SCS, SCV])
+  def test_closed_over_refs_with_scratch(self, core_type):
+    mesh = self.from_core_type(core_type)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(x)
+      o_ref = jax.empty_ref(jax.typeof(x))
+
+      def fn(scratch_ref):
+        pltpu.sync_copy(x_ref, scratch_ref)
+        pltpu.sync_copy(scratch_ref, o_ref)
+
+      mem_type = pltpu.SMEM if core_type == SCS else pltpu.VMEM
+      mpmd.mpmd_map(
+          [(mesh, fn)],
+          scratch_types=(mem_type(x.shape, x.dtype),),
+      )()
+      return jax.freeze(o_ref)
+
+    np.testing.assert_array_equal(x, f(x))
 
   @parameterized.product(
       use_tc_tiling=(False, True), full_core_spec=(True, False),

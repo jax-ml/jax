@@ -207,8 +207,18 @@ class Buffered:
   revisit: RevisitMode | None = None
 
 
+@runtime_checkable
+class MemoryRefBase(Protocol):
+
+  def get_array_aval(self) -> jax_core.ShapedArray:
+    ...
+
+  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
+    ...
+
+
 @dataclasses.dataclass(frozen=True)
-class MemoryRef:
+class MemoryRef(MemoryRefBase):
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   inner_aval: jax_core.AbstractValue
   # TODO(b/368122763): Unify memory space types across backends
@@ -1721,7 +1731,7 @@ def default_mesh_discharge_rule(
   )(*args)
 
   # ``outs`` lacks the unmodified inputs. Add them back in.
-  all_outs = [None] * len(args)
+  all_outs = [None] * len(args)  # pyrefly: ignore[unsupported-assignment]
   for out_idx, in_idx in enumerate(modified_idxs):
     all_outs[in_idx] = outs[out_idx]
   return all_outs, ()

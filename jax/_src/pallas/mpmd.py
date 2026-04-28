@@ -37,6 +37,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
+from jax._src.typing import Array
 
 
 _T = TypeVar("_T")
@@ -98,10 +99,6 @@ def _mpmd_map_abstract_eval(
     # ``jax_core.GenericEffect(pallas_call_p)`` here.
     effs = jax_core.no_effects
 
-  for jaxpr in jaxprs:
-    if not all(isinstance(aval, state.AbstractRef) for aval in jaxpr.in_avals):
-      raise TypeError("MPMD kernels must only have Ref inputs")
-
   # TODO(slebedev): Handle pinned buffers as in ``pallas_call``.
   outin_aliases = {
       out_idx: in_idx for in_idx, out_idx in input_output_aliases.items()
@@ -157,7 +154,7 @@ def _mpmd_map_discharge_rule(
   num_out_new = len(write_indices)
 
   new_jaxprs = []
-  super_mesh_shape = _get_super_mesh_shape(it.chain(meshes, external_meshes))
+  super_mesh_shape = get_super_mesh_shape(it.chain(meshes, external_meshes))
 
   def _rewrite_to_include_new_outputs(jaxpr):
 
@@ -166,7 +163,9 @@ def _mpmd_map_discharge_rule(
           args, [num_in, num_out_orig, num_out_new]
       )
       del new_out_refs
-      jax_core.eval_jaxpr(jaxpr, (), *(in_refs + orig_out_refs + scratch_refs))
+      jax_core.eval_jaxpr(
+          jaxpr, (), *(in_refs + orig_out_refs + scratch_refs)
+      )
       return ()
 
     all_in_avals = [v.aval for v in jaxpr.invars]
@@ -416,7 +415,7 @@ def mpmd_map(
 
 
 def _aval_to_ref_aval(
-    aval: jax_core.AbstractValue | pallas_core.MemoryRef,
+    aval: Any,
     meshes: Sequence[pallas_core.Mesh],
 ) -> state.AbstractRef:
   match aval:
@@ -432,7 +431,7 @@ def _aval_to_ref_aval(
           )
         memory_space = list(defaults)[0]
       return state.AbstractRef(aval, memory_space=memory_space)
-    case pallas_core.MemoryRef():
+    case _ if hasattr(aval, "get_ref_aval"):
       ref_aval = aval.get_ref_aval()
       assert isinstance(ref_aval, state.AbstractRef)
       return ref_aval
@@ -440,7 +439,127 @@ def _aval_to_ref_aval(
       raise ValueError(f"Unsupported abstract value type: {type(aval), aval}")
 
 
-def _get_super_mesh_shape(
+def _error_if_non_ref_consts(consts, debug_info):
+  consts_avals = [
+      aval
+      for c in consts
+      if not isinstance(aval := jax_core.typeof(c), state.AbstractRef)
+  ]
+  non_scalar_consts_avals = [
+      aval
+      for aval in consts_avals
+      if not (isinstance(aval, jax_core.ShapedArray) and not aval.shape)
+  ]
+  if non_scalar_consts_avals:
+    ctx = jax_core.JaxprPpContext()
+    pp_consts_avals = ", ".join(
+        jax_core.pp_aval(aval, ctx) for aval in non_scalar_consts_avals
+    )
+    raise ValueError(
+        "The kernel function in the mpmd_map"
+        f" {debug_info.func_src_info} captures non-Ref constants"
+        f" [{pp_consts_avals}]. You should pass them as inputs."
+    )
+
+
+def _get_unique_consts(
+    consts: Sequence[Sequence[Any]],
+) -> tuple[list[Array], set[int]]:
+  unique_consts = []
+  unique_const_ids = set()
+  for cs in consts:
+    for c in cs:
+      if id(c) not in unique_const_ids:
+        unique_consts.append(c)
+        unique_const_ids.add(id(c))
+  return unique_consts, unique_const_ids
+
+
+def _dedup_consts_and_unify_jaxpr_signatures(
+    jaxprs: Sequence[jax_core.Jaxpr],
+    consts_per_fn: Sequence[Sequence[Any]],
+    flat_args: Sequence[Any],
+    unflat_in_avals: Sequence[jax_core.AbstractValue],
+    unflat_out_avals: Sequence[jax_core.AbstractValue],
+    flat_kernel_avals: Sequence[jax_core.AbstractValue],
+    super_mesh_shape: Mapping[str, int],
+) -> tuple[list[jax_core.Jaxpr], list[Array]]:
+  # Example:
+  #   c1, c2, c3 are closed-over refs.
+  #   fn1 closes over [c1, c2] -> traced jaxpr1 has constvars for [c1, c2]
+  #   fn2 closes over [c2, c3] -> traced jaxpr2 has constvars for [c2, c3]
+  #
+  #   `_dedup_consts_and_unify_jaxpr_signatures` will:
+  #     1. Deduplicate constants to `unique_consts` = [c1, c2, c3].
+  #     2. Rewrite jaxprs to take all `unique_consts` as explicit inputs instead
+  #        of constvars:
+  #        new_jaxpr1: (in_args, c1, c2, c3, out_args, scratch_args) -> ()
+  #        new_jaxpr2: (in_args, c1, c2, c3, out_args, scratch_args) -> ()
+  #     3. Return the new jaxprs (with empty constvars) and `unique_consts`.
+
+  unique_consts, const_ids = _get_unique_consts(consts_per_fn)
+
+  arg_ids = {id(arg) for arg in flat_args}
+  if any(const_id in arg_ids for const_id in const_ids):
+    raise NotImplementedError(
+        "Closed-over ref aliases with a passed-in ref is not supported."
+    )
+
+  unique_const_avals = [jax_core.typeof(c) for c in unique_consts]
+
+  num_inputs = len(tree_util.tree_leaves(unflat_in_avals))
+  num_outputs = len(tree_util.tree_leaves(unflat_out_avals))
+
+  in_avals_flat, out_avals_flat, scratch_avals_flat = util.split_list(
+      flat_kernel_avals, [num_inputs, num_outputs]
+  )
+
+  def make_rewritten_body(original_jaxpr, original_consts):
+    def _rewritten_body(*args):
+      in_args, unique_const_args, out_args, scratch_args = util.split_list(
+          args, [num_inputs, len(unique_consts), num_outputs]
+      )
+
+      # Extract only the consts used by this jaxpr.
+      c_map = {
+          id(uc): arg for uc, arg in zip(unique_consts, unique_const_args)
+      }
+      mapped_consts = [c_map[id(c)] for c in original_consts]
+
+      eval_args = in_args + out_args + scratch_args
+      jax_core.eval_jaxpr(original_jaxpr, mapped_consts, *eval_args)
+      return []
+
+    return _rewritten_body
+
+  new_jaxprs = []
+  tracing_avals = (
+      in_avals_flat
+      + unique_const_avals
+      + out_avals_flat
+      + scratch_avals_flat
+  )
+  for jaxpr, consts in zip(jaxprs, consts_per_fn):
+    debug_info = api_util.debug_info(
+        "mpmd_map_closed_over",
+        make_rewritten_body(jaxpr, consts),
+        tracing_avals,
+        {},
+    )
+    wrapped_fun = lu.wrap_init(
+        make_rewritten_body(jaxpr, consts), debug_info=debug_info
+    )
+    with (jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+          config._check_vma(False)):
+      new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
+          wrapped_fun, tracing_avals
+      )
+    assert not new_consts
+    new_jaxprs.append(new_jaxpr)
+  return new_jaxprs, unique_consts
+
+
+def get_super_mesh_shape(
     meshes: Iterable[pallas_core.Mesh],
 ) -> Mapping[str, int]:
   super_mesh_shape = {}
@@ -545,7 +664,7 @@ def _mpmd_map(
       for other_mesh in list(all_meshes)[i + 1 :]:
         mesh.check_is_compatible_with(other_mesh)
 
-    super_mesh_shape = _get_super_mesh_shape(all_meshes)
+    super_mesh_shape = get_super_mesh_shape(all_meshes)
     unflat_in_avals = in_tree.unflatten(flat_avals)
     unflat_out_avals = out_tree.unflatten(flat_out_avals)
     unflat_scratch_types = scratch_tree.unflatten(flat_scratch_types)
@@ -568,8 +687,9 @@ def _mpmd_map(
         unflat_kernel_avals
     )
 
-    jaxprs = []
-    for mesh, fn in meshes_and_fns:
+    jaxprs: list[jax_core.Jaxpr] = []
+    consts_per_fn = []
+    for _, fn in meshes_and_fns:
       debug_info = api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
@@ -588,10 +708,22 @@ def _mpmd_map(
             f" should return None. It returns a PyTree: {fun_out_tree}."
         )
       if consts:
-        raise NotImplementedError("MPMD kernels cannot close over constants")
-
+        _error_if_non_ref_consts(consts, debug_info)
       jaxprs.append(jaxpr)
-      if debug:
+      consts_per_fn.append(consts)
+
+    if any(consts_per_fn):
+      # If we close over any constants in the kernel functions, we need to
+      # deduplicate them and then unify the jaxpr signatures.
+      jaxprs, consts = _dedup_consts_and_unify_jaxpr_signatures(
+          jaxprs, consts_per_fn, flat_args, unflat_in_avals, unflat_out_avals,
+          flat_kernel_avals, super_mesh_shape
+      )
+    else:
+      consts: list[Array] = []
+
+    if debug:
+      for mesh, jaxpr in zip(meshes, jaxprs):
         print(f"jaxpr for {mesh.core_type}")
         print(jaxpr)
 
@@ -602,6 +734,7 @@ def _mpmd_map(
     with ctx:
       flat_outs = mpmd_map_p.bind(
           *flat_args,
+          *consts,
           meshes=tuple(meshes),
           jaxprs=tuple(jaxprs),
           external_meshes=tuple(external_meshes),
