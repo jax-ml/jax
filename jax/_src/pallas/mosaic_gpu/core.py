@@ -740,6 +740,95 @@ class UntilingTransform(state_types.Transform):
     )
     return new_indexer, self
 
+  def commute_reshape(
+      self, aval: jax_core.ShapedArray, transform: state_types.ReshapeTransform
+  ) -> tuple[state_types.ReshapeTransform, UntilingTransform]:
+    if not transform.shape:
+      raise NotImplementedError(
+          "Commuting a `UntilingTransform` with a `ReshapeTransform` is not "
+          "supported when the target shape has 0 dimensions"
+      )
+    if not self.tiling:
+      raise NotImplementedError(
+          "Commuting a `UntilingTransform` with a `ReshapeTransform` is not "
+          "supported when the tiling is empty"
+      )
+    untiled_aval = self.transform_type(aval)
+    assert isinstance(untiled_aval, jax_core.ShapedArray)
+    components = [[]]
+    # We assume that we support only folds here for the moment. Therefore, we
+    # can gather a number of consecutive dimensions such that their product
+    # equals the dimension currently being processed in the reshaped shape.
+    for d in untiled_aval.shape:
+      reshaped_dim_size = transform.shape[len(components) - 1]
+      components[-1].append(d)
+      component_size = math.prod(components[-1])
+      if component_size == reshaped_dim_size:
+        components.append([])
+      elif component_size > reshaped_dim_size:
+        raise NotImplementedError(
+            "Unfolding dimensions is not supported when commuting an "
+            " `UntilingTransform` with a `ReshapeTransform`"
+        )
+    assert not components[-1]
+    components.pop()
+    assert len(components) == len(transform.shape)
+
+    rev_tiling_to_process = list(self.tiling)[::-1]
+    rev_shape_to_process = untiled_aval.shape[-len(self.tiling):][::-1]
+    rev_new_tiling: list[int] = []
+    rev_new_tiled_dims: list[int] = []
+    for component in components[::-1]:
+      # The construction above should guarantee that there is never an empty
+      # component, which simplifies indexing below.
+      assert component
+      ndim = len(component)
+      if len(rev_tiling_to_process) < ndim:
+        raise NotImplementedError(
+            "Folding tiled dimensions into untiled dimensions is not supported"
+        )
+      rev_tiling_slice = rev_tiling_to_process[:ndim]
+      rev_shape_slice = rev_shape_to_process[:ndim]
+      new_tiling_dim = math.prod(rev_tiling_slice)
+      num_elems = math.prod(rev_shape_slice)
+      assert num_elems % new_tiling_dim == 0
+      new_tiled_dim = num_elems // new_tiling_dim
+      # If any other dimension than the minormost one has non-unit tiling, then
+      # we cannot commute the reshape and untile transforms.
+      #
+      # Note that we could also support the case where we are collapsing
+      # trailing tiled dimensions where the tile size is the dimension size
+      # (i.e. there is a single tile).
+      if any(t != 1 for t in rev_tiling_slice[1:]):
+        before = (
+            *[s // t for s, t in zip(rev_shape_slice, rev_tiling_slice)],
+            *rev_tiling_slice,
+        )
+        after = (new_tiled_dim, new_tiling_dim)
+        raise ValueError(
+            "Cannot commute `UntilingTransform` with `ReshapeTransform` when "
+            "any of the dimensions being collapsed other than the minormost "
+            "one has non-unit tiling. Attempted to reshape tiled slice of "
+            f"shape {before} into shape {after}"
+        )
+      rev_new_tiling.append(new_tiling_dim)
+      rev_new_tiled_dims.append(new_tiled_dim)
+      rev_tiling_to_process = rev_tiling_to_process[ndim:]
+      rev_shape_to_process = rev_shape_to_process[ndim:]
+      if not rev_tiling_to_process:
+        break
+    assert not rev_tiling_to_process
+    assert not rev_shape_to_process
+    new_tiling = tuple(rev_new_tiling[::-1])
+    new_tiled_dims = tuple(rev_new_tiled_dims[::-1])
+    new_shape = (
+        *transform.shape[:len(components) - len(rev_new_tiling)],
+        *new_tiled_dims,
+        *new_tiling,
+    )
+
+    return state_types.ReshapeTransform(new_shape), UntilingTransform(new_tiling)
+
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{untile({list(self.tiling)})}}")
 

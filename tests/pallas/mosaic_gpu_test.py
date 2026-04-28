@@ -4115,6 +4115,60 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
+  def test_collapsing_several_non_unit_tiled_dimensions_raises(self):
+    # TODO(bchetioui): in warpgroup semantics, we are not attempting to commute
+    # transforms before lowering, so fail with a different error. We should
+    # try to bubble up all the transforms as well, just in order to fail with
+    # a nice readable error.
+    self.skip_if_wg_semantics()
+    def kernel(out, smem):
+      out[...] = smem.reshape(128, 128)[...]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "any of the dimensions being collapsed other than the minormost one "
+        "has non-unit tiling"
+    ):
+      self.kernel(
+          kernel,
+          scratch_shapes=[
+              plgpu.SMEM((128, 4, 32), jnp.float16,
+                         transforms=(plgpu.TilingTransform((2, 16)),)),
+          ],
+          out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float16),
+      )()
+
+  def test_wgmma_reshaped_rhs_unit_tiling(self):
+    # NotImplementedError: No layout inference rule defined
+    # for %collapse_shape = memref.collapse_shape
+    self.skip_if_wg_semantics()
+    def kernel(lhs_ref, rhs_ref, out_ref, lhs_smem, rhs_smem, barrier_ref):
+      plgpu.copy_gmem_to_smem(lhs_ref, lhs_smem, barrier_ref)
+      plgpu.copy_gmem_to_smem(rhs_ref, rhs_smem, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, lhs_smem, rhs_smem.reshape(128, 128))
+        return acc_ref[...]
+      out_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 2, 64), dtype=jnp.float16)
+
+    lhs_transforms = self.default_transforms(dtype=jnp.float16)
+    rhs_transforms = (plgpu.TilingTransform((8, 1, 64)), plgpu.SwizzleTransform(128))
+
+    res = self.kernel(
+        kernel,
+        scratch_shapes=[
+            plgpu.SMEM((64, 128), jnp.float16, transforms=lhs_transforms),
+            plgpu.SMEM((128, 2, 64), jnp.float16, transforms=rhs_transforms),
+            plgpu.Barrier(num_arrivals=2),
+        ],
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b.reshape(128, 128), rtol=1e-3)
+
   def test_wgmma_sliced_acc_read(self):
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
