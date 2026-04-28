@@ -16,7 +16,7 @@
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.pallas import mpmd
+from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
@@ -41,35 +41,34 @@ class TpuAsyncScTcPrefetchVmemTest(jtu.JaxTestCase):
     )
     tc_mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
 
-    def scalar_subcore_fn(x_ref, _, out_tc_vmem_ref, tc_sem, sem):
+    def scalar_subcore_fn(x_ref, out_tc_vmem_ref, tc_sem, sem):
       pltpu.async_remote_copy(
           x_ref, out_tc_vmem_ref, sem, tc_sem, device_id={"tc": 0}
       ).wait_send()
 
-    def tc_fn(x_ref, out_tc_vmem_ref, tc_sem, _):
+    def tc_fn(x_ref, out_tc_vmem_ref, tc_sem):
       pltpu.make_async_copy(x_ref, out_tc_vmem_ref, tc_sem).wait()
       out_tc_vmem_ref[...] += 1
 
     @jax.jit
     def f(x):
-      x, out, sem = mpmd._mpmd_map(
-          [(s_mesh, scalar_subcore_fn)],
-          out_types=(
-              jax.typeof(x),
+      x_ref = jax.new_ref(x)
+      out, sem = pl.kernel(
+          mesh=s_mesh,
+          out_type=(
               pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
-              pltpu.SemaphoreType.DMA @ tc_mesh,
+              pltpu.SemaphoreType.DMA(()) @ tc_mesh,
           ),
-          scratch_types=[pltpu.SemaphoreType.DMA],
+          scratch_types=[pltpu.SemaphoreType.DMA(())],
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=True,
           ),
-          input_output_aliases={0: 0},
-      )(x)
-      out = mpmd._mpmd_map(
-          [(tc_mesh, tc_fn)],
-          out_types=jax.typeof(out),
-          input_output_aliases={1: 0},
-      )(x, out, sem)
+      )(scalar_subcore_fn)(x_ref)
+      out_ref = jax.new_ref(out)
+      sem_ref = jax.new_ref(sem)
+      pl.kernel(
+          mesh=tc_mesh,
+      )(tc_fn)(x_ref, out_ref, sem_ref)
       return out
 
     x = jnp.arange(8 * 128).reshape(8, 128)
