@@ -81,6 +81,7 @@ operations.
    :maxdepth: 1
 
    ffi
+   notebooks/cute_dsl_jax
 
 .. toctree::
    :caption: Modeling workflows

@@ -249,6 +249,7 @@ nb_execution_excludepatterns = [
     'pallas/tpu/sparsecore.*',
     'distributed_data_loading.*',
     'notebooks/host-offloading.*',
+    'notebooks/cute_dsl_jax.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
