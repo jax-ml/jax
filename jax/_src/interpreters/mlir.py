@@ -46,7 +46,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
-from jax._src.layout import AutoLayout, Layout
+from jax._src.layout import AutoLayoutSingleton, Layout
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import jaxlib_extension_version
@@ -1145,11 +1145,11 @@ def _to_physical_op_sharding(
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
 
 
-def _to_xla_layout(layout: Layout | None | AutoLayout,
+def _to_xla_layout(layout: Layout | None | AutoLayoutSingleton,
                    aval: core.AbstractValue) -> str | None:
   if layout is None:
     return None
-  if isinstance(layout, AutoLayout):
+  if isinstance(layout, AutoLayoutSingleton):
     return "auto"
   if aval is core.abstract_token:
     return None
@@ -1256,8 +1256,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[JSharding | None] | None = None,
     result_shardings: Sequence[JSharding | None] | None = None,
-    in_layouts: Sequence[Layout | None | AutoLayout] | None = None,
-    out_layouts: Sequence[Layout | None | AutoLayout] | None = None,
+    in_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
+    out_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     arg_names: Sequence[str] | None = None,
     result_names: Sequence[str] | None = None,
     num_partitions: int = 1,
@@ -1450,8 +1450,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
       input_id = donations[key].popleft()
       out_donated_args[input_id] = False
       if (in_out_layout_not_none and
-          isinstance(in_layouts[input_id], AutoLayout) and
-          not isinstance(out_layouts[i], AutoLayout)):
+          isinstance(in_layouts[input_id], AutoLayoutSingleton) and
+          not isinstance(out_layouts[i], AutoLayoutSingleton)):
         raise ValueError(
             f"Input layout being donated was {in_layouts[input_id]} while"
             f" output layout was {out_layouts[i]}. Did you mean to set the"
@@ -1459,8 +1459,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
             " allow for the input and output layout to be chosen by XLA and"
             " not the layout of the output which might not be optimal.")
       if (in_out_layout_not_none and
-          not isinstance(in_layouts[input_id], AutoLayout) and
-          isinstance(out_layouts[i], AutoLayout)):
+          not isinstance(in_layouts[input_id], AutoLayoutSingleton) and
+          isinstance(out_layouts[i], AutoLayoutSingleton)):
         raise ValueError(
             f"Input layout being donated was {in_layouts[input_id]} while"
             f" output layout was {out_layouts[i]}. Did you mean to set the"
@@ -1578,8 +1578,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
-    arg_layouts: Sequence[Layout | None | AutoLayout] | None = None,
-    result_layouts: Sequence[Layout | None | AutoLayout] | None = None,
+    arg_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
+    result_layouts: Sequence[Layout | None | AutoLayoutSingleton] | None = None,
     propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.

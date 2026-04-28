@@ -67,7 +67,7 @@ from jax._src.sharding_impls import (
     make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
     _internal_use_concrete_mesh)
-from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
+from jax._src.layout import Format, Layout, AutoLayoutSingleton, get_layout_for_vmap
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
@@ -315,7 +315,7 @@ def _split_layout_and_sharding(entries):
     if isinstance(e, Format):
       layouts.append(e.layout)
       shardings.append(e.sharding)
-    elif isinstance(e, (Layout, AutoLayout)):
+    elif isinstance(e, (Layout, AutoLayoutSingleton)):
       raise ValueError(
           '`jax.jit` does not accept device-local layouts directly. Create '
           'a `Format` instance wrapping this device-local layout and pass '
@@ -846,7 +846,7 @@ def pjit_check_aval_sharding(
 def check_aval_layout_compatibility(
     layouts, flat_avals, names: Sequence[str], what_aval: str):
   for aval, l, name in zip(flat_avals, layouts, names):
-    if l is None or isinstance(l, AutoLayout):
+    if l is None or isinstance(l, AutoLayoutSingleton):
       continue
     name_str = f' with pytree key path {name}' if name else ''
     try:
@@ -929,7 +929,7 @@ def _lojax_expand_params(
 
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
-                        in_avals) -> Sequence[Layout | AutoLayout | None]:
+                        in_avals) -> Sequence[Layout | AutoLayoutSingleton | None]:
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
   # which causes error checks to fail. Returning the default layout allows
@@ -937,7 +937,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
   if pxla.check_device_backend_on_shardings(resolved_in_shardings):
     return (None,) * len(jit_in_layouts)
 
-  resolved_in_layouts: list[Layout | AutoLayout | None] = []
+  resolved_in_layouts: list[Layout | AutoLayoutSingleton | None] = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
     committed = arg.committed
@@ -968,7 +968,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
           and arg_layout is not None
           and not pxla.is_user_xla_layout_equal(jit_in_l, arg_layout)):
         extra_msg = ''
-        if isinstance(jit_in_l, AutoLayout):
+        if isinstance(jit_in_l, AutoLayoutSingleton):
           extra_msg = (
               ' The layout given to `jax.jit` is `Layout.AUTO` but'
               ' the corresponding argument passed is a `jax.Array` with a'
@@ -1412,7 +1412,7 @@ def const_args_layouts(
     const_args: Sequence[ArrayLike],
     avals: Sequence[core.AbstractValue],
     shardings: Sequence[PjitSharding]
-    ) -> Sequence[Layout | AutoLayout | None]:
+    ) -> Sequence[Layout | AutoLayoutSingleton | None]:
   const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_layouts(
       const_args_types, (None,) * len(const_args), shardings, avals)

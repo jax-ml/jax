@@ -50,7 +50,7 @@ from jax._src.abstract_arrays import array_types
 from jax._src.core import ShapedArray
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
-from jax._src.layout import Layout, AutoLayout, Format
+from jax._src.layout import Layout, AutoLayoutSingleton, Format
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -143,7 +143,7 @@ def is_default_layout(curr_layout, sharding, aval):
   if (aval is core.abstract_token or aval.dtype == dtypes.float0 or
       dtypes.issubdtype(aval.dtype, dtypes.extended)):
     return True
-  if isinstance(curr_layout, AutoLayout):
+  if isinstance(curr_layout, AutoLayoutSingleton):
     return False
   d = sharding._device_assignment[0]
   shard_shape = sharding.shard_shape(aval.shape)
@@ -821,7 +821,7 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
   return tuple(safe_map(read, jaxpr.outvars))
 
 
-MaybeLayout = Sequence[Union[Layout, AutoLayout, None]]
+MaybeLayout = Sequence[Union[Layout, AutoLayoutSingleton, None]]
 
 
 class AllArgsInfo(NamedTuple):
@@ -1413,7 +1413,7 @@ def maybe_recover_user_shardings(
 
   return new_shardings
 
-def is_user_xla_layout_equal(ul: Layout | AutoLayout,
+def is_user_xla_layout_equal(ul: Layout | AutoLayoutSingleton,
                              xl: Layout) -> bool:
   if isinstance(ul, Layout) and not ul.tiling:
     return ul.major_to_minor == xl.major_to_minor

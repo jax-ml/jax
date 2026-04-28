@@ -24,18 +24,19 @@ from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
 
-class AutoLayout:
+class AutoLayoutSingleton:
 
   def __repr__(self):
     return "AUTO"
 
+AutoLayout = AutoLayoutSingleton()
 
 class Layout:
   major_to_minor: tuple[int, ...]
   tiling: tuple[tuple[int, ...], ...] | None
   sub_byte_element_size_in_bits: int
 
-  AUTO = AutoLayout()
+  AUTO = AutoLayout
 
   def __init__(self, major_to_minor: tuple[int, ...],
                 tiling: tuple[tuple[int, ...], ...] | None = None,
@@ -100,7 +101,7 @@ class Layout:
           f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
 
 
-LayoutOptions = Union[Layout, None, AutoLayout]
+LayoutOptions = Union[Layout, None, AutoLayoutSingleton]
 ShardingOptions = Union[Sharding, None]
 
 
@@ -119,7 +120,7 @@ class Format:
           f' sharding {sharding}'
       )
     if not isinstance(
-        layout, (Layout, type(None), AutoLayout)):
+        layout, (Layout, type(None), AutoLayoutSingleton)):
       raise TypeError(
           'Invalid value received for the layout argument.'
           ' Expected values are `None`, `Layout.AUTO` or an'

@@ -46,7 +46,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.typing import ArrayLike
 from jax._src.interpreters import mlir
-from jax._src.layout import Format, Layout, AutoLayout
+from jax._src.layout import Format, Layout, AutoLayoutSingleton
 from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
@@ -381,7 +381,7 @@ def _traced_args_info(self):
 def _traced_out_info(self):
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                    for s in self._params['out_shardings']]
-  out_layouts = [None if isinstance(l, AutoLayout) else l
+  out_layouts = [None if isinstance(l, AutoLayoutSingleton) else l
                  for l in self._params['out_layouts']]
   out = []
   for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
@@ -572,7 +572,7 @@ class Lowered(Stage):
     outs = []
     for o, l, s in zip(out_avals, out_layouts, out_shardings):
       s = None if isinstance(s, UnspecifiedValue) else s
-      l = None if isinstance(l, AutoLayout) else l
+      l = None if isinstance(l, AutoLayoutSingleton) else l
       format = Format(l, s)
       outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
     return self.out_tree.unflatten(outs)

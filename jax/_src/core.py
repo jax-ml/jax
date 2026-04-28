@@ -57,7 +57,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import (NamedSharding, remove_size_one_mesh_axis,
                                      get_replicated_axes)
 from jax._src.sharding import Sharding
-from jax._src.layout import Format, AutoLayout
+from jax._src.layout import Format, AutoLayoutSingleton
 from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src import traceback_util
@@ -3764,7 +3764,7 @@ class ShapeDtypeStruct:
           f" `jax.experimental.layout.Format`. Got {sharding} of type"
           f" {type(sharding)}.")
     if (isinstance(sharding, Format) and
-        isinstance(sharding.layout, AutoLayout)):
+        isinstance(sharding.layout, AutoLayoutSingleton)):
       raise TypeError(
           "`Layout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")

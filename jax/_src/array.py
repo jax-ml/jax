@@ -36,7 +36,7 @@ from jax._src import xla_bridge
 from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.layout import AutoLayout, Format, Layout
+from jax._src.layout import AutoLayoutSingleton, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
@@ -724,7 +724,7 @@ def make_array_from_callback(
   """
   # pyformat: enable
   dll = sharding.layout if isinstance(sharding, Format) else None
-  if isinstance(dll, AutoLayout):
+  if isinstance(dll, AutoLayoutSingleton):
     raise TypeError(
         "`Layout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
