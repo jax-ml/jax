@@ -571,7 +571,7 @@ def _convert_and_clip_integer(val: Array, dtype: DType) -> Array:
 
 
 def randint(key: ArrayLike,
-            shape: Shape,
+            shape: None | Shape = None,
             minval: IntegerArray,
             maxval: IntegerArray,
             dtype: DTypeLikeInt | None = None,
@@ -581,7 +581,7 @@ def randint(key: ArrayLike,
 
   Args:
     key: a PRNG key used as the random key.
-    shape: a tuple of nonnegative integers representing the shape.
+    shape: optional, a tuple of nonnegative integers representing the shape.
     minval: int or array of ints broadcast-compatible with ``shape``, a minimum
       (inclusive) value for the range.
     maxval: int or array of ints broadcast-compatible with ``shape``, a maximum
@@ -624,7 +624,7 @@ def randint(key: ArrayLike,
   key, _ = _check_prng_key("randint", key)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
-  shape = core.canonicalize_shape(shape)
+  shape = check_broadcast_shapes("randint", shape, minval, maxval)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
 
   if not dtypes.issubdtype(dtype, np.integer):
@@ -661,7 +661,6 @@ def _randint(key, minval, maxval, shape, dtype) -> Array:
   # sample 2 * nbits bits per value, because it is efficient and works well in most cases
   # of interest. To help users avoid inadvertently producing biased results, we always
   # generate samples in at least 32 bits.
-  _check_shape("randint", shape, np.shape(minval), np.shape(maxval))
   if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
@@ -1200,6 +1199,14 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
   else:
     return uniform(key, shape, lax.dtype(p)) < p
 
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
 
 def beta(key: ArrayLike,
          a: RealArray,
