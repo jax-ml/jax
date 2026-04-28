@@ -1266,6 +1266,34 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
 
+  def test_copy_7d_tiling_with_unit_middle_dims(self):
+    # 7D GMEM/SMEM refs with a 7D TilingTransform results in a 14D physical
+    # shape once tiling is applied.  The unit-sized dimensions are dropped
+    # when lowering async copies, in order to bring the shape within TMA's
+    # 5-dimension limit.
+    shape = (2, 64, 1, 1, 1, 1, 128)
+    dtype = jnp.float32
+    transforms = (
+        plgpu.TilingTransform((2, 1, 1, 1, 1, 1, 32)),
+    )
+
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=(
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.Barrier()
+        ),
+    )
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(f(x), x, strict=True)
+
   def test_scoped_copy_with_transforms(self):
     ts = self.default_transforms(dtype=jnp.float32)
     def kernel(x_ref, o_ref, barrier_ref):

@@ -3533,6 +3533,25 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_load_oob_over_trivial_gmem_dimension(self):
+    src_shape = (64, 1, 64)
+    dst_shape = (64, 2, 64)
+    i1 = ir.IntegerType.get_signless(1)
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      tmp, barrier = smem
+      ctx.async_copy(
+          src_ref=src, dst_ref=tmp, swizzle=None, barrier=barrier,
+          # Deliberately use a `gmem_slice` that is larger than the source GMEM.
+          gmem_slice=(slice(None), slice(0, 2), slice(None)))
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=None)
+    x = np.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
+    out_shape = jax.ShapeDtypeStruct(dst_shape, jnp.float32)
+    smem = (out_shape, mgpu.TMABarrier())
+    y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)(x)
+    np.testing.assert_array_equal(y[:, 0, :], x[:, 0, :])
+    np.testing.assert_array_equal(y[:, 1, :], 0.0)
+
   @parameterized.product(
       swizzle=(None, 32, 64, 128),
       shape=((64, None), (5, None), (2, 3, 5, None)),

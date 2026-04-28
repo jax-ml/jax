@@ -126,6 +126,14 @@ class MemRefTransform:
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    """Applies the shape transformation to the given GMEM shape.
+
+    This function is intended to mirror the behavior of the `apply` method on
+    GMEM shapes.
+    """
+    raise NotImplementedError("Subclasses should override this method")
+
   def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
@@ -160,6 +168,37 @@ class TileTransform(MemRefTransform):
   """
   tiling: tuple[int, ...]
   rounding: Rounding | None = None
+
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    untiled_rank = len(shape)
+    tiling_rank = len(self.tiling)
+    tiled_rank = untiled_rank + tiling_rank
+    shape = list(shape)
+    for t, d in zip(self.tiling[::-1], range(untiled_rank)[::-1]):
+      s = shape[d]
+      if s > t:
+        if s % t:
+          match self.rounding:
+            case None:
+              raise ValueError(
+                  f"When no rounding mode is specified, dimension {d} must have"
+                  f" size smaller or a multiple of its tiling {t}, but got {s}"
+              )
+            case Rounding.UP:
+              raise NotImplementedError
+            case Rounding.DOWN:
+              s = s // t * t
+            case _:
+              raise ValueError(f"Unknown rounding mode: {self.rounding}")
+      else:
+        t = s
+      shape[d : d + 1] = (s // t, t)
+    permutation = (
+        *range(untiled_rank - tiling_rank),
+        *range(untiled_rank - tiling_rank, tiled_rank, 2),
+        *range(untiled_rank - tiling_rank + 1, tiled_rank, 2),
+    )
+    return TransposeTransform(permutation).transform_shape(shape)
 
   def apply(self, ref: ir.Value) -> ir.Value:
     untiled_rank = ir.MemRefType(ref.type).rank
@@ -256,6 +295,9 @@ class TransposeTransform(MemRefTransform):
   def apply(self, ref: ir.Value) -> ir.Value:
     return utils.memref_transpose(ref, self.permutation)
 
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return self.transform_shape(shape)
+
   def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
     return tuple(idx[p] for p in self.permutation)
 
@@ -306,6 +348,9 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
         static_strides=new_strides,
     )
 
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    raise NotImplementedError  # Unused
+
   def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
     index = ir.IndexType.get()
     flat_idx = c(0, index)
@@ -319,6 +364,54 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
     if any(s != 1 for s in shape[:len(self.strides)]):
       raise ValueError("Expected leading indices to be squeezed")
     return (1, *shape[len(self.strides):])
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    raise NotImplementedError  # Unused
+
+
+@dataclasses.dataclass(frozen=True)
+class DropUnitDimsTransform(MemRefTransform):
+  """Drops unit dimensions at the given positions."""
+  unit_dims: tuple[int, ...]
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, offset = ref_ty.get_strides_and_offset()
+    rank = len(ref_ty.shape)
+    # This will assert that all the relevant dimensions are indeed trivial.
+    new_shape = self.transform_shape(ref_ty.shape)
+    new_strides = [strides[i] for i in range(rank) if i not in self.unit_dims]
+    # Not propagating offset, as it is folded into the ref by `memref_ptr`.
+    new_layout = ir.StridedLayoutAttr.get(offset, new_strides)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, ref_ty.element_type, new_layout, ref_ty.memory_space
+    )
+    if offset == ir.ShapedType.get_dynamic_stride_or_offset():
+      _, dyn_offset, *_ = memref.extract_strided_metadata(ref)  # pyrefly: ignore[not-iterable]
+      offsets = [dyn_offset]
+    else:
+      offsets = []
+    return memref.reinterpret_cast(
+        new_ref_ty, ref, offsets, [], [],
+        static_offsets=[offset],
+        static_sizes=new_shape,
+        static_strides=new_strides,
+    )
+
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return self.transform_shape(shape)
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    return tuple(v for i, v in enumerate(idx) if i not in self.unit_dims)
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    for d in self.unit_dims:
+      if shape[d] != 1:
+        raise ValueError(
+            f"Expected dimension {d} to have size 1 in shape {shape}, but got"
+            f" {shape[d]}"
+        )
+    return tuple(v for i, v in enumerate(shape) if i not in self.unit_dims)
 
   def batch(self, leading_rank: int) -> MemRefTransform:
     raise NotImplementedError  # Unused
@@ -975,18 +1068,51 @@ class LaunchContext:
     # We don't need to do this for gather TMAs, because we'll unroll the
     # transfers ourselves anyway.
     num_squeezed_dims = len(squeezed_dims)
-    if len(slice_shape) > 5 and gather_indices is None:
-      # We can try to collapse all squeezed dims into one.
-      if len(slice_shape) - num_squeezed_dims + 1 > 5:
-        raise ValueError(
-            "Async copies only support striding up to 5 dimensions"
+    if gather_indices is None:
+      # Drop as many unit-sized dimensions from the transformed shape as we can.
+      gmem_shape = tuple(gmem_ref_ty.shape)
+      for t in gmem_transform:
+        gmem_shape = t.transform_gmem_shape(gmem_shape)
+      # The slice shape may pad along 1-sized dimensions. In that case, we do
+      # not drop them.
+      unit_dims = tuple(
+          i for i, (gs, ss) in enumerate(zip(gmem_shape, slice_shape, strict=True))
+          if gs == 1 and ss == 1
+      )
+      # When issuing an `async_prefetch`, there is no SMEM reference to
+      # transform.
+      if smem_ref is not None:
+        # We need to apply this transform to the SMEM ref as well. The SMEM ref
+        # is expected to have the same shape as the transformed slice shape,
+        # without squeezed dimensions.
+        assert ir.MemRefType(smem_ref.type).shape == slice_shape[num_squeezed_dims:]
+        smem_unit_dims = tuple(
+            i - num_squeezed_dims for i in unit_dims if i - num_squeezed_dims >= 0
         )
-      squeezed_dim_strides = tuple(gmem_strides[d] for d in squeezed_dims)
-      collapse = CollapseLeadingIndicesTransform(squeezed_dim_strides)
-      gmem_transform = (*gmem_transform, collapse)
-      dyn_base_indices = collapse.transform_index(dyn_base_indices)
-      slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
-      num_squeezed_dims = 1
+        smem_ref = DropUnitDimsTransform(smem_unit_dims).apply(smem_ref)
+      drop = DropUnitDimsTransform(unit_dims)
+      gmem_transform = (*gmem_transform, drop)
+      dyn_base_indices = drop.transform_index(dyn_base_indices)
+      slice_shape = list(drop.transform_shape(slice_shape))
+      # After _prepare_async_copy, squeezed dims have been permuted to the
+      # front (via a TransposeTransform in gmem_transform). So in the
+      # transformed shape, they occupy the first `num_squeezed_dims`
+      # positions.
+      # TODO(bchetioui): move the creation of the `TransposeTransform`
+      # here instead of in _prepare_async_copy.
+      squeezed_dims = tuple(d for i, d in enumerate(squeezed_dims) if i not in unit_dims)
+      num_squeezed_dims = len(squeezed_dims)
+      if len(slice_shape) > 5 and squeezed_dims:
+        # We can try to collapse all squeezed dims into one.
+        squeezed_dim_strides = tuple(gmem_strides[d] for d in squeezed_dims)
+        collapse = CollapseLeadingIndicesTransform(squeezed_dim_strides)
+        gmem_transform = (*gmem_transform, collapse)
+        dyn_base_indices = collapse.transform_index(dyn_base_indices)
+        slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
+        num_squeezed_dims = 1
+      if len(slice_shape) > 5:
+        raise ValueError("Async copies only support striding up to 5 dimensions")
+    del squeezed_dims
 
     # pyrefly: ignore[redefinition]
     dyn_base_indices: list[ir.Value] = list(dyn_base_indices)
@@ -1304,6 +1430,7 @@ class LaunchContext:
       return
 
     assert implementation == AsyncCopyImplementation.TMA
+    del smem_ref_ty
 
     (smem_ref, slice_shape, dyn_base_indices, gmem_transform) = (
         self._prepare_tma(
@@ -1320,8 +1447,8 @@ class LaunchContext:
         )
     )
     assert smem_ref is not None  # For type checkers.
-
-    smem_strides, _ = ir.MemRefType(smem_ref.type).get_strides_and_offset()
+    smem_ref_ty = ir.MemRefType(smem_ref.type)
+    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
     if any(
         s != cs and d != 1  # Strides don't matter for dims of size 1.
         for s, cs, d in zip(
