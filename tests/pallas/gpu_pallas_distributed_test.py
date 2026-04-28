@@ -1108,8 +1108,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
   """
 
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     super().setUp()
@@ -1118,6 +1116,44 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       for d in jax.local_devices()
     ):
       self.skipTest("Not all local devices support multicast")
+
+  def test_collective_metadata_with_nvshmem_raises(self):
+    if is_nvshmem_used():
+      self.skipTest("This test runs only in single-process mode.")
+
+    def kernel(y_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
+        plgpu.multimem_store(output, y_ref, 'x')
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    f = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
+        )
+    )
+
+    enable_nvshmem_flag = "--xla_gpu_experimental_enable_nvshmem=true"
+    xla_flags = os.environ.get("XLA_FLAGS", "")
+    if xla_flags:
+      xla_flags = f"{xla_flags} {enable_nvshmem_flag}"
+    else:
+      xla_flags = enable_nvshmem_flag
+    with jtu.set_env(XLA_FLAGS=xla_flags):
+      with self.assertRaisesRegex(
+          Exception,
+          "remove --xla_gpu_experimental_enable_nvshmem from your XLA flags.",
+      ):
+        f().block_until_ready()
 
   def _test_reduce_scatter(
       self,
