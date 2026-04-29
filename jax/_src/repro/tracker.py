@@ -795,7 +795,7 @@ class FunctionDef(Call):
     self.body : list[Statement] = []  # Only if `for_body`
     if func.function_def:
       # We know of cases when this happens, e.g., higher-order custom_vjp,
-      # fusions
+      # fusions, index_maps in Pallas
       _thread_local_state.warn_or_error(
           f"Ignoring additional invocation {self}. "
           f"Previous invocation was {self.func.function_def}",
@@ -1119,10 +1119,10 @@ def wrap_callable(f: Callable, *, is_user: bool):
   return res
 
 
-def generic_trampoline(transform_name: str, real_transform: Callable) -> Callable:
+def generic_trampoline(trans: str, real_transform: Callable) -> Callable:
   """
-  Builds a generic trampoline, e.g., for a transformation "trans" (grad, vmap,
-  jit, ...):
+  Builds a generic trampoline, e.g., for a transformation "trans" (e.g., grad,
+  vmap, jit, ...):
     jax.trans(f, *trans_args, **trans_kwargs)(*args, **kwargs) ->
        jax_trans_call(f, trans_args, trans_kwargs, *args, *kwargs)
 
@@ -1132,16 +1132,16 @@ def generic_trampoline(transform_name: str, real_transform: Callable) -> Callabl
 
   The `jax_<trans>_call` are defined in repro_api.py.
   """
-  jax_trans_call_name = f"jax_{transform_name}_call"
+  jax_trans_call_name = f"jax_{trans}_call"
   from jax._src.repro import repro_api
 
   def trampoline(fun: Callable, *trans_args: tuple[Any], **trans_kwargs: KWArgs):
     def call_trampoline(*args, **kwargs):
       return getattr(repro_api, jax_trans_call_name)(fun, trans_args, trans_kwargs, *args, **kwargs)
-    call_trampoline.__name__ = f"jax_{transform_name}_call_trampoline"
+    call_trampoline.__name__ = f"jax_{trans}_call_trampoline"
     call_trampoline.__qualname__ = call_trampoline.__name__
     return call_trampoline
-  trampoline.__name__ = f"jax_{transform_name}_trampoline"
+  trampoline.__name__ = f"jax_{trans}_trampoline"
   trampoline.__qualname__ = trampoline.__name__
   trampoline.real_boundary_fun = real_transform
   return trampoline
@@ -1308,6 +1308,20 @@ boundary_trampolines["jax.experimental.pallas.run_state"] = partial(generic_tram
 
 boundary_trampolines["jax.experimental.pallas.mosaic_gpu.kernel"] = partial(generic_trampoline, "pallas_gpu_kernel")
 
+boundary_trampolines["jax.experimental.pallas.mosaic_gpu.emit_pipeline"] = partial(generic_trampoline, "pallas_gpu_emit_pipeline")
+
+boundary_trampolines["jax.experimental.pallas.tpu.emit_pipeline"] = partial(generic_trampoline, "pallas_tpu_emit_pipeline")
+
+def emit_pipeline_with_allocations_trampoline(real_boundary_fun: Callable):
+  from jax._src.repro.repro_api import jax_pallas_tpu_emit_pipeline_with_allocations
+
+  def trampoline(body, **kwargs):
+    return jax_pallas_tpu_emit_pipeline_with_allocations(body, kwargs)
+  trampoline.real_boundary_fun = real_boundary_fun
+  return trampoline
+
+boundary_trampolines["jax.experimental.pallas.tpu.emit_pipeline_with_allocations"] = emit_pipeline_with_allocations_trampoline
+
 def fuser_fuse_trampoline(real_boundary_fun: Callable) -> Callable:
   from jax._src.repro.repro_api import jax_fuser_fuse
 
@@ -1394,8 +1408,6 @@ boundary_trampolines["jax.custom_gradient"] = jax_custom_gradient_trampoline
 
 boundary_trampolines["flax.core.axes_scan.scan"] = partial(generic_trampoline, "flax_axes_scan")
 
-
-# boundary_trampolines["jax_repro_collect"] = jax_repro_collect_trampoline
 ####
 
 
@@ -1471,4 +1483,9 @@ TODO:
   transition from USER to JAX.
 * we don't handle xla_metadata.set_xla_metadata() context manager
 * finish implementing the deduplication of user functions
+* I discovered for test_pallas_emit_pipeline_tpu_interpret_True that the
+  index_maps may be called multiple times. The first time it is called
+  with the argument 0 (from get_dma_slice) and then it is called with actual
+  tracers. We ignore the **2nd** call, and we generate a body that uses the
+  value 0 for the argument!!!
 """

@@ -30,6 +30,7 @@ from jax import lax
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -207,6 +208,9 @@ def _downcast_spec(
   )
 
 
+@functools.partial(
+    traceback_util.api_boundary,
+    repro_api_name="jax.experimental.pallas.mosaic_gpu.emit_pipeline")
 def emit_pipeline(
     body: Callable[..., T],
     *,

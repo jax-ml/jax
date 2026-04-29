@@ -256,6 +256,26 @@ def jax_pallas_gpu_kernel_call(body: Callable, trans_args: tuple[Any, ...],
   return repro_bypass_wrapper(gpu_core.kernel)(body, *trans_args, **trans_kwargs)(*args, **kwargs)
 
 
+@partial(repro_boundary, api_name="jax_pallas_gpu_emit_pipeline_call")
+def jax_pallas_gpu_emit_pipeline_call(f: Callable, trans_args: tuple[Any, ...],
+                                      trans_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic_gpu import pipeline as gpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(gpu_pipeline.emit_pipeline)(f, *trans_args, **trans_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, api_name="jax_pallas_tpu_emit_pipeline_call")
+def jax_pallas_tpu_emit_pipeline_call(f: Callable, trans_args: tuple[Any, ...],
+                                      trans_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic import pipeline as tpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(tpu_pipeline.emit_pipeline)(f, *trans_args, **trans_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, api_name="jax_pallas_tpu_emit_pipeline_with_allocations")
+def jax_pallas_tpu_emit_pipeline_with_allocations(body: Callable, kwargs):
+  from jax._src.pallas.mosaic import pipeline as tpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(tpu_pipeline.emit_pipeline_with_allocations)(body, **kwargs)
+
+
 @partial(repro_boundary, api_name="jax_fuser_fuse")
 def jax_fuser_fuse(fun: Callable, trans_kwargs: dict[str, Any],
                   *args):
