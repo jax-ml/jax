@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Mapping, Sequence
+import contextlib
 import dataclasses
 import enum
 from typing import Any, Literal
@@ -373,6 +374,10 @@ class TensorCoreMesh(pallas_core.Mesh):
         MemorySpace.CMEM,
         MemorySpace.SEMAPHORE,
     ]
+
+  @contextlib.contextmanager
+  def tracing_context(self):
+    yield
 
 
 def create_tensorcore_mesh(

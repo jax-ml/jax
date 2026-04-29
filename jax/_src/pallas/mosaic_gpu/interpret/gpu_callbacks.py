@@ -38,10 +38,13 @@ from jax._src.state import indexing
 import numpy as np
 
 
-IDX_BY_GPU_MEMORY_SPACE: Mapping[mosaic_gpu_core.MemorySpace, int]
-IDX_BY_GPU_MEMORY_SPACE = types.MappingProxyType(
-    {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)}
+IDX_BY_GPU_MEMORY_SPACE: dict[mosaic_gpu_core.MemorySpace | None, int]
+IDX_BY_GPU_MEMORY_SPACE = dict(  # pyrefly: ignore[bad-assignment]
+    {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)},
 )
+IDX_BY_GPU_MEMORY_SPACE[None] = IDX_BY_GPU_MEMORY_SPACE[
+    mosaic_gpu_core.MemorySpace.GMEM
+]
 
 
 GPU_MEMORY_SPACE_BY_IDX: Mapping[int, mosaic_gpu_core.MemorySpace]

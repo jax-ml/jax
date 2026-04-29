@@ -33,7 +33,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import frozen_dict
 from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import numpy as jnp
@@ -1469,12 +1468,9 @@ def _core_map_is_high(*avals, jaxpr, **params):
   return jaxpr.is_high
 core_map_p.is_high = _core_map_is_high
 
-def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
+def _core_map_to_lojax(*consts, jaxpr, mesh: Mesh, **params):
   closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
-  with (
-      tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
-      jax_core.extend_axis_env_nd(mesh.shape.items()),
-  ):
+  with mesh.tracing_context():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
   assert not closed_lo_jaxpr.is_high
   return core_map_p.bind(
@@ -1518,53 +1514,24 @@ def core_map(
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret)
 
-  def wrapped(f):
-    if isinstance(scratch_shapes, dict):
-      fun_args = ((), scratch_shapes)
-    else:
-      fun_args = (scratch_shapes, {})
+  def wrapper(f):
+    # Import here to avoid circular dependency.
+    from jax._src.pallas import helpers
 
-    flat_args, in_tree = tree_util.tree_flatten(fun_args)
-    debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)  # pyrefly: ignore[bad-argument-type]
-    flat_fun, out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(f, debug_info=debug_info), in_tree
-    )
-    ref_avals = tuple(t.get_ref_aval() for t in flat_args)
-    with (
-        tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
-        jax_core.extend_axis_env_nd(mesh.shape.items()),
-        config._check_vma(False),
-    ):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
-
-    out_tree = out_tree_thunk()
-    if out_tree != tree_util.tree_structure(None):
-      raise ValueError(
-          f"The kernel function in core_map {debug_info.func_src_info} should"
-          f" return None. It returns a PyTree: {out_tree}."
-      )
-    if debug:
-      print(f"core_map jaxpr: {jaxpr}")
-
-    out = core_map_p.bind(
-        *consts,
-        jaxpr=jaxpr,
-        debug_info=debug_info,
+    f = helpers.kernel(
+        f,
         mesh=mesh,
         compiler_params=compiler_params,
-        interpret=(
-            config.pallas_tpu_interpret_mode_context_manager.value or interpret
-        ),
+        interpret=interpret,
         debug=debug,
         cost_estimate=cost_estimate,
-        name=name or util.fun_name(f),
-        metadata=frozen_dict.FrozenDict(metadata)
-        if metadata is not None
-        else None,
+        name=name,
+        metadata=metadata,
+        scratch_types=scratch_shapes,
     )
-    return tree_util.tree_unflatten(out_tree, out)
+    f()
 
-  return wrapped
+  return wrapper
 
 
 # TODO(sharadmv,ivyzheng): remove this once we use axis dicts primarily
@@ -1662,6 +1629,14 @@ class Mesh(Protocol):
   @property
   def supported_memory_spaces(self) -> Sequence[Any]:
     """Return the memory spaces supported by the mesh."""
+
+  @contextlib.contextmanager
+  def tracing_context(self) -> Generator[None, None, None]:
+    with (
+        tracing_grid_env(tuple(self.shape.values()), mapped_dims=()),
+        jax_core.extend_axis_env_nd(self.shape.items()),
+    ):
+      yield
 
 
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}

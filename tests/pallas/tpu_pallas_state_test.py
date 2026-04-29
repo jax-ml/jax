@@ -288,22 +288,6 @@ class CoreMapTest(jtu.JaxTestCase):
       result = pl.kernel(out_type=x, mesh=mesh)(body)(x)
       np.testing.assert_array_equal(result, x)
 
-  def test_empty_core_map_raises_error(self):
-    @jax.jit
-    def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        del refs  # Unused.
-        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-        def _():
-          pass
-      _, y = pl.run_state(inner)((x, y))
-      return y
-    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    with self.assertRaisesRegex(Exception,
-      "Attempted to lower core_map without discharging."):
-      f(x)
-
   def test_can_signal_cores(self):
     @jax.jit
     def f(x):

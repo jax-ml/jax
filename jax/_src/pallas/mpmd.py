@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools as it
 from typing import Any, Generator, TypeVar, cast
@@ -38,7 +39,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
 from jax._src.typing import Array
 
@@ -64,9 +64,9 @@ def mpmd_map_tracing_context(
   mesh: pallas_core.Mesh,
   other_meshes: tuple[pallas_core.Mesh, ...],
 ) -> Generator[None, None, None]:
-  del mesh  # Will be needed in follow up.
   super_mesh_shape = get_super_mesh_shape(other_meshes)
   with (
+      mesh.tracing_context(),
       jax_core.extend_axis_env_nd(super_mesh_shape.items()),
       config._check_vma(False),
   ):
@@ -220,6 +220,12 @@ def _mpmd_map_discharge_rule(
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(io_indices):
     new_aliases[in_idx] = num_out_orig + out_idx
+  if debug:
+    print("discharged mpmd_map")
+    for mesh, jaxpr in zip(meshes, new_jaxprs):
+      print(f"mesh: {mesh}")
+      print(f"new_jaxpr: {jaxpr}")
+    print(f"new_aliases: {new_aliases}")
 
   res = mpmd_map_p.bind(
       *args,
@@ -382,6 +388,7 @@ def _mpmd_map_to_lojax(
       assert not closed_lo_jaxpr.consts
       lo_jaxprs.append(closed_lo_jaxpr.jaxpr)
 
+  from jax._src.pallas import pallas_call
   input_index_mapping = pallas_call._get_index_mapping(in_avals)
   output_index_mapping = pallas_call._get_index_mapping(out_avals)
   new_input_output_aliases = {}
@@ -430,8 +437,8 @@ def _mpmd_map_tpu_lowering(
   try:
     from jax._src.pallas.mosaic import pallas_call_registration
   except ImportError:
+    from jax._src.pallas import pallas_call
     raise pallas_call._unsupported_lowering_error("tpu")
-  num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
   return pallas_call_registration.mpmd_map_tpu_lowering_rule(
       ctx,
       *in_nodes,
@@ -446,7 +453,6 @@ def _mpmd_map_tpu_lowering(
       metadata=metadata,
       name=name,
       external_meshes=external_meshes,
-      num_scratch=num_scratch,
   )
 
 
@@ -477,12 +483,14 @@ def _mpmd_map_fallback_lowering(
   [mesh] = meshes
 
   if compiler_params is not None:
-    if hasattr(mesh, "dimension_semantics"):
-      compiler_params = compiler_params.replace(
-          dimension_semantics=mesh.dimension_semantics
-      )
-    if hasattr(mesh, "core_type"):
-      compiler_params = compiler_params.replace(kernel_type=mesh.core_type)
+    replace_kwargs = {}
+    if hasattr(mesh, "dimension_semantics") and hasattr(compiler_params, "dimension_semantics"):
+      replace_kwargs["dimension_semantics"] = mesh.dimension_semantics
+    if hasattr(mesh, "core_type") and hasattr(compiler_params, "kernel_type"):
+      replace_kwargs["kernel_type"] = mesh.core_type
+
+    if replace_kwargs:
+      compiler_params = dataclasses.replace(compiler_params, **replace_kwargs)
 
   num_scratch = len(jaxpr.invars) - len(in_nodes) - len(out_avals)
   scratch_avals = (
@@ -537,6 +545,7 @@ def _mpmd_map_fallback_lowering(
       debug=debug,
   )
 
+  from jax._src.pallas import pallas_call
   return pallas_call._pallas_call_lowering(
       ctx,
       *in_nodes,
