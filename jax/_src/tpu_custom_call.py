@@ -68,7 +68,7 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
-_FWD_COMPAT_VERSION = 9
+_FWD_COMPAT_VERSION = 11
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if (
