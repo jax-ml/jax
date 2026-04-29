@@ -235,6 +235,7 @@ _OUT_SHARDING_CASES = [
     ('rayleigh', lambda key, n, s: random.rayleigh(key, shape=(n,), scale=0.5, out_sharding=s)),
     ('t', lambda key, n, s: random.t(key, df=10.0, shape=(n,), out_sharding=s)),
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
+    ('triangular', lambda key, n, s: random.triangular(key, left=0., mode=0.5, right=1., shape=(n,), out_sharding=s)),
     ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('gamma', lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
 ]
