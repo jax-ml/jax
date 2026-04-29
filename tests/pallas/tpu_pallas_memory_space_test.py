@@ -288,7 +288,7 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     if len(mesh.devices) > 1:
       self.skipTest('Only one core is supported for this test.')
 
-    kernel = pl.core_map(mesh=mesh)
+    kernel = pl.core_map(mesh=mesh, debug=True)
 
     @jax.jit
     def f():
@@ -306,6 +306,7 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
       return y_ref[...]
 
+    print(f.lower().as_text())
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy(self):
