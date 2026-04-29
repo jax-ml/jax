@@ -144,9 +144,7 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
       ptr_space = 3 if utils.is_smem_ref(ref_ty) else None
       return ptr_as_memref(
           # NOTE: memref_ptr applies the offset in case there was any.
-          memref_ptr(ref, memory_space=ptr_space),
-          new_ref_ty,
-          ptr_memory_space=ptr_space,
+          memref_ptr(ref), new_ref_ty, ptr_memory_space=ptr_space
       )
     src = bitcast(src)
     dst = bitcast(dst)
