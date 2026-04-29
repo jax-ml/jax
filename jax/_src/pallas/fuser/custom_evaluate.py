@@ -14,6 +14,7 @@
 
 """Helpers for evaluating functions under certain constraints."""
 import dataclasses
+import functools
 from typing import Any
 
 from jax import lax
@@ -22,6 +23,7 @@ from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.pallas.fuser import fuser_utils
+from jax._src.traceback_util import api_boundary
 
 
 @dataclasses.dataclass
@@ -29,6 +31,7 @@ class CustomEvaluateSettings:
   allow_transpose: bool = True
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.evaluate")
 def evaluate(f, *, allow_transpose: bool = True):
   def wrapped(*args, **kwargs):
     jaxpr, consts, _, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)

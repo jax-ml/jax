@@ -81,6 +81,8 @@ for repro_api_name, transform_name in [
   ("flax.core.axes_scan.scan", "flax_axes_scan"),
   ("jax.experimental.pallas.mosaic_gpu.emit_pipeline", "pallas_gpu_emit_pipeline"),
   ("jax.experimental.pallas.tpu.emit_pipeline", "pallas_tpu_emit_pipeline"),
+  ("fuser.pull_block_spec", "fuser_pull_block_spec"),
+  ("fuser.push_block_spec", "fuser_push_block_spec"),
 ]:
   api_trampolines[repro_api_name] = partial(uncurry_trampoline, transform_name)
 
@@ -150,6 +152,7 @@ for repro_api_name, transform_name in [
   ("jax.linearize", "linearize"),
   ("jax.vjp", "vjp"),
   ("jax.experimental.pallas.tpu.emit_pipeline_with_allocations", "pallas_tpu_emit_pipeline_with_allocations"),
+  ("fuser.make_scalar_prefetch_handler", "fuser_make_scalar_prefetch_handler"),
 ]:
   api_trampolines[repro_api_name] = partial(redirect_trampoline, transform_name)
 
@@ -288,3 +291,64 @@ def pallas_core_map_trampoline(real_api_fun: Callable):
     return pallas_core_map_decorator
   pallas_core_map_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
   return pallas_core_map_trampoline
+
+
+@api_trampoline("fuser.fuse")
+def fuser_fuse_trampoline(real_api_fun: Callable) -> Callable:
+  from jax._src.repro.repro_api import fuser_fuse
+
+  def jax_fuser_fuse_trampoline(fun: Callable | None = None, **trans_kwargs):
+    def actual_decorator(fun: Callable):
+      return partial(fuser_fuse, fun, trans_kwargs)
+    if fun is None:
+      return actual_decorator
+    return actual_decorator(fun)
+
+  jax_fuser_fuse_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return jax_fuser_fuse_trampoline
+
+
+@api_trampoline("fuser.evaluate")
+def fuser_evaluate_trampoline(real_api_fun: Callable) -> Callable:
+  from jax._src.repro.repro_api import fuser_evaluate
+
+  def fuser_evaluate_trampoline(fun: Callable | None = None, **trans_kwargs):
+    def actual_decorator(fun: Callable):
+      return partial(fuser_evaluate, fun, trans_kwargs)
+    if fun is None:
+      return actual_decorator
+    return actual_decorator(fun)
+
+  fuser_evaluate_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return fuser_evaluate_trampoline
+
+
+@api_trampoline("fuser.fusible")
+def fuser_fusible_trampoline(real_api_fun: Callable) -> Callable:
+  from jax._src.repro.repro_api import fuser_fusible
+
+  def jax_fuser_fusible_trampoline(fun: Callable | None = None, **trans_kwargs):
+    def actual_decorator(fun: Callable):
+      return partial(fuser_fusible, fun, fun, trans_kwargs)
+    if fun is None:
+      return actual_decorator
+    return actual_decorator(fun)
+
+  jax_fuser_fusible_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return jax_fuser_fusible_trampoline
+
+
+@api_trampoline("jax.pallas.custom_fusion.__call__")
+def pallas_custom_fusion_trampoline(real_api_fun: Callable):
+  from jax._src import api_util  # type: ignore
+  from jax._src.repro.repro_api import pallas_custom_fusion_call
+
+  def custom_fusion_trampoline(*args, **kwargs):
+    cfus, *rest_args = args
+    resolved_args = api_util.resolve_kwargs(cfus.fun, rest_args, kwargs)
+    return pallas_custom_fusion_call(
+        cfus.fun, cfus.eval_rule, cfus.pull_block_spec_rule,
+        cfus.push_block_spec_rule, cfus.pallas_impl, *resolved_args)
+
+  custom_fusion_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return custom_fusion_trampoline

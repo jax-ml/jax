@@ -429,3 +429,132 @@ def pallas_tpu_emit_pipeline_call(f: Callable, api_args: tuple[Any, ...],
 def pallas_tpu_emit_pipeline_with_allocations(body: Callable, kwargs):
   from jax._src.pallas.mosaic import pipeline as tpu_pipeline  # type: ignore
   return repro_bypass_wrapper(tpu_pipeline.emit_pipeline_with_allocations)(body, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="fuser_fuse")
+def fuser_fuse(fun: Callable, api_kwargs: dict[str, Any], *args, **kwargs):
+  from jax.experimental.pallas import fuser  # type: ignore
+  return repro_bypass_wrapper(fuser.fuse)(fun, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="fuser_evaluate")
+def fuser_evaluate(fun: Callable, trans_kwargs: dict[str, Any],
+                   *args):
+  from jax.experimental.pallas import fuser  # type: ignore
+  return repro_bypass_wrapper(fuser.evaluate)(fun, **trans_kwargs)(*args)
+
+
+@partial(repro_boundary, repro_api_name="fuser_fusible",
+         map_user_func_args=lambda toapply, fun_1, fun_2, api_kwargs, *args, **kwargs:((
+          toapply(fun_1), toapply(fun_2), api_kwargs, *args), kwargs))
+def fuser_fusible(fun_1: Callable, fun_2: Callable,
+                  api_kwargs: dict[str, Any],
+                  *args, **kwargs):
+  # Since the original `fuser.fusible` traces the function twice, once
+  # with the "output" fusion being `None` and once with actual functions,
+  # we create two separate functions `fun_1` and `fun_2` that we then
+  # merge into a `joint_fun`.
+  from jax._src.repro import tracker  # type: ignore
+  from jax.experimental.pallas import fuser  # type: ignore
+  def wrap_fusion(fn: fuser.Fusion | Any) -> fuser.Fusion:
+    if not isinstance(fn, fuser.Fusion): return fn
+    res = tracker.wrap_callable(fn, is_user=False)
+    # TODO: maybe we can forward all properties?
+    if res is not fn:
+      res.dtype = fn.dtype
+      res.shape = fn.shape
+      res.type = fn.type
+      res.out_type = fn.out_type
+      res.in_dtype = fn.in_dtype
+      res.in_shape = fn.in_shape
+      res.in_type = fn.in_type
+    return res
+  def joint_fun(*args, **kwargs):
+    wrapped_args = tree_util.tree_map(wrap_fusion, args)
+    if not tree_util.tree_leaves(args[-1]):  # all None
+      return fun_1(*wrapped_args, **kwargs)
+    else:
+      return fun_2(*wrapped_args, **kwargs)
+  return repro_bypass_wrapper(fuser.fusible)(joint_fun, **api_kwargs)(*args)
+
+
+@partial(repro_boundary, repro_api_name="pallas_custom_fusion_call",
+         map_user_func_args=lambda toapply, fun, eval_rule, pull_block_spec_rule, push_block_spec_rule, impl_rule, *args, **kwargs:(
+             (toapply(fun), toapply(eval_rule), toapply(pull_block_spec_rule),
+              toapply(push_block_spec_rule), toapply(impl_rule),
+              *args), kwargs))
+def pallas_custom_fusion_call(fun: Callable,
+                              eval_rule: Callable,
+                              pull_block_spec_rule: Callable,
+                              push_block_spec_rule: Callable | None,
+                              impl_rule: Callable | None,
+                              *args):
+  from jax.experimental.pallas import fuser  # type: ignore
+  cfus = fuser.custom_fusion(fun)
+  cfus.def_eval_rule(eval_rule)
+  cfus.def_push_block_spec(push_block_spec_rule)  # type: ignore
+  cfus.def_pull_block_spec(pull_block_spec_rule)
+  cfus.def_pallas_impl(impl_rule)
+  return repro_bypass_wrapper(cfus.__call__)(cfus, *args)
+
+
+@partial(repro_boundary, repro_api_name="fuser_pull_block_spec_call",
+         map_user_func_args=lambda toapply, fun, api_args, api_kwargs, *args, **kwargs: (
+             (toapply(fun),
+              tree_util.tree_map(partial(_pallas_map_blockspec, toapply), api_args),
+              tree_util.tree_map(partial(_pallas_map_blockspec, toapply), api_kwargs),
+              *args), kwargs))
+def fuser_pull_block_spec_call(fun: Callable, api_args, api_kwargs,
+                              *args, **kwargs):
+  from jax._src.pallas.fuser import block_spec  # type: ignore
+
+  res = repro_bypass_wrapper(block_spec.pull_block_spec)(
+      fun, *api_args, **api_kwargs)(*args, **kwargs)
+  kernel_fn, in_block_arg_specs, in_block_kwarg_specs = res
+
+  wrapped_in_args = tree_util.tree_map(
+      lambda x: _pallas_map_blockspec(lambda f: repro_boundary(f, is_user=False), x),
+      in_block_arg_specs
+  )
+  wrapped_in_kwargs = tree_util.tree_map(
+      lambda x: _pallas_map_blockspec(lambda f: repro_boundary(f, is_user=False), x),
+      in_block_kwarg_specs
+  )
+  return repro_boundary(kernel_fn, is_user=False), wrapped_in_args, wrapped_in_kwargs
+
+@partial(repro_boundary, repro_api_name="fuser_push_block_spec_call",
+         map_user_func_args=lambda toapply, fun, api_args, api_kwargs, *args, **kwargs: (
+             (toapply(fun),
+              tree_util.tree_map(partial(_pallas_map_blockspec, toapply), api_args),
+              tree_util.tree_map(partial(_pallas_map_blockspec, toapply), api_kwargs),
+              *args), kwargs))
+def fuser_push_block_spec_call(fun: Callable, api_args, api_kwargs,
+                                *args, **kwargs):
+  from jax._src.pallas.fuser import block_spec  # type: ignore
+
+  res = repro_bypass_wrapper(block_spec.push_block_spec)(
+      fun, *api_args, **api_kwargs)(*args, **kwargs)
+
+  wrapped_res = tree_util.tree_map(
+      lambda x: _pallas_map_blockspec(lambda f: repro_boundary(f, is_user=False), x),
+      res
+  )
+  return wrapped_res
+
+
+@partial(repro_boundary, repro_api_name="fuser_get_fusion_values")
+def fuser_get_fusion_values(fun: Callable, *api_args, **api_kwargs):
+  from jax._src.pallas.fuser import block_spec  # type: ignore
+  kernel_fn, *rest_res = repro_bypass_wrapper(block_spec.get_fusion_values)(
+      fun, *api_args, **api_kwargs)
+
+  return repro_boundary(kernel_fn, is_user=False), *rest_res
+
+
+@partial(repro_boundary, repro_api_name="fuser_make_scalar_prefetch_handler",
+         # No user functions in the args
+         map_user_func_args=lambda toapply, *args, **kwargs: (args, kwargs))
+def fuser_make_scalar_prefetch_handler(*args, **kwargs):
+  from jax._src.pallas.fuser import block_spec  # type: ignore
+  handler_fn = repro_bypass_wrapper(block_spec.make_scalar_prefetch_handler)(*args, **kwargs)
+  return repro_boundary(handler_fn, is_user=False)

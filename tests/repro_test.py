@@ -42,6 +42,7 @@ from jax import checkpoint as new_checkpoint
 from jax.experimental import layout
 import jax.experimental.pallas as pl
 from jax.experimental import pjit
+from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
 try:
   import jax.experimental.pallas.ops.tpu.matmul
@@ -2554,7 +2555,6 @@ class ReproTest(jtu.JaxTestCase):
     with tracker.flags_override(fake_array_threshold=x.size + 1):
       self.collect_and_check(f, x)
 
-
   def test_pallas_call_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -2592,7 +2592,6 @@ class ReproTest(jtu.JaxTestCase):
 
     with tracker.flags_override(fake_array_threshold=s.size + x.size + 1):
       self.collect_and_check(kernel, s, x)
-
 
   def test_pallas_core_map(self):
     mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
@@ -2821,6 +2820,423 @@ class ReproTest(jtu.JaxTestCase):
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     self.collect_and_check(f, x)
+
+
+  def test_pallas_call_fusions_trivial(self):
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fn, z_fns):
+      # Check the properties of a Fusion object wrapper
+      self.assertEqual(x_fn.dtype, np.float32)
+      self.assertEqual(x_fn.shape, (128, 128))
+      self.assertEqual(x_fn.type.shape, (128, 128))
+      self.assertEqual(x_fn.out_type.shape, (128, 128))
+      self.assertEqual(x_fn.in_dtype, ((), {}))
+      self.assertEqual(x_fn.in_shape, ((), {}))
+      self.assertEqual(x_fn.in_type, ((), {}))
+
+      x = x_fn()
+      y = y_fn()
+      z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
+      return z_fn1(x), z_fn2(y)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, y):
+      x, y = f(x, y)
+      return x, y * 2
+
+    x = np.ones((128, 128), dtype=np.float32)
+    y = np.ones((1, 128), dtype=np.float32)
+    #g(x, y)
+    self.collect_and_check(g, x, y)
+
+  def test_fusion_with_jit_example(self):
+    @fuser.fusible
+    def fusible_sin(x_fn, y_fn):
+      if y_fn is None:
+        y_fn = lambda x: x
+      @jax.jit
+      def _impl():
+        x = x_fn()
+        out = jnp.sin(x)
+        return y_fn(out)
+      return _impl()
+
+    @fuser.fuse
+    def f(x):
+      x = 2 * x
+      out = fusible_sin(x)
+      return out + 1.0
+
+    x = np.ones( (128,), dtype=jnp.float32)
+    self.collect_and_check(f, x)
+
+  def test_pallas_call_fusible_matmul(self):
+    self.skipTest("TODO")
+    # Copied from tpu_fusible_matmult_test
+    def matmul_kernel(
+        x_scalar_prefetch,
+        y_scalar_prefetch,
+        z_scalar_prefetch,
+        x_value_refs,
+        y_value_refs,
+        z_value_refs,
+        o_ref,
+        acc_ref,
+        *,
+        x_fn: Any,
+        y_fn: Any,
+        z_fn: Any,
+        out_dtype: jnp.dtype,
+    ):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
+      scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
+
+      x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
+      x = x_fn(pids, scalar_prefetch, x_values)
+      y_values = jax.tree.map(lambda ref: ref.get(), y_value_refs)
+      y = y_fn(pids, scalar_prefetch, y_values)
+      acc_ref[...] += jnp.dot(x, y, preferred_element_type=jnp.float32)
+
+      @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+      def _():
+        acc = acc_ref[...].astype(out_dtype)
+        z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
+        out = z_fn(pids, scalar_prefetch, z_values, acc)
+        jax.tree.map(lambda ref, x: ref.set(x), o_ref, out)
+
+    def _fusible_matmul(
+        x: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
+        y: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
+        z: fuser.Fusion[[jax.Array], jax.Array] | None,  # pytype: disable=invalid-annotation
+        *,
+        bm: int,
+        bk: int,
+        bn: int,
+        interpret: bool,
+        debug: bool,
+    ) -> jax.Array:
+      m, k = x.shape
+      k_, n = y.shape
+      out_dtype = jnp.float32
+      z_type = jax.ShapeDtypeStruct((m, n), dtype=out_dtype)
+      if not z:
+        z = lambda x: x
+      if k != k_:
+        raise ValueError(f'X and Y shapes must be compatible. Got {k} != {k_}')
+
+      assert m % bm == 0
+      assert k % bk == 0
+      assert n % bn == 0
+      grid = (m // bm, n // bn, k // bk)
+
+      def x_index_map(i, j, k, *_):
+        del j
+        return i, k
+
+      x_block_spec = pl.BlockSpec(block_shape=(bm, bk), index_map=x_index_map)
+
+      def y_index_map(i, j, k, *_):
+        del i
+        return k, j
+
+      y_block_spec = pl.BlockSpec(block_shape=(bk, bn), index_map=y_index_map)
+
+      def z_index_map(i, j, k, *_):
+        del k
+        return i, j
+
+      z_block_spec = pl.BlockSpec(block_shape=(bm, bn), index_map=z_index_map)
+      dimension_semantics = (pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
+
+      z_out_type = jax.eval_shape(z, z_type)
+
+      # First thing we do is extract the values from the fusions. These will be
+      # values that are passed in directly and values that are passed in via
+      # scalar prefetch.
+      x_fn, x_values, x_scalar_prefetch = fuser.get_fusion_values(x)
+      y_fn, y_values, y_scalar_prefetch = fuser.get_fusion_values(y)
+      z_fn, z_values, z_scalar_prefetch = fuser.get_fusion_values(z, z_type)
+
+      # We construct the set of scalar prefetch arguments that will be passed to
+      # the kernel.
+      scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
+
+      x_fn, (x_value_block_specs,), _ = fuser.pull_block_spec(
+          x_fn,
+          x_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(0),
+          grid=grid,
+      )(x_values)
+
+      y_fn, (y_value_block_specs,), _ = fuser.pull_block_spec(
+          y_fn,
+          y_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(1),
+          grid=grid,
+      )(y_values)
+
+      z_out_block_spec = fuser.push_block_spec(z, z_block_spec)(z_type)
+      z_fn, (z_value_block_specs, _), _ = fuser.pull_block_spec(
+          z_fn,
+          z_out_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
+          grid=grid,
+      )(z_values, z_type)
+
+      # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
+      # prefetch arguments directly to the kernel but don't have Mosaic support atm.
+      scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
+
+      return pl.pallas_call(
+          partial(
+              matmul_kernel,
+              x_fn=x_fn,
+              y_fn=y_fn,
+              z_fn=z_fn,
+              out_dtype=out_dtype,
+          ),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=len(scalar_prefetch),
+              grid=grid,
+              scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
+              in_specs=[
+                  x_value_block_specs,
+                  y_value_block_specs,
+                  z_value_block_specs,
+              ],
+              out_specs=[z_out_block_spec],
+          ),
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=dimension_semantics,
+          ),
+          out_shape=[z_out_type],
+          interpret=interpret,
+          debug=debug,
+      )(
+          *scalar_prefetch,
+          x_values,
+          y_values,
+          z_values,
+      )[0]
+
+    def fusible_matmul(
+        x: jax.Array,
+        y: jax.Array,
+        *,
+        bm: int = 128,
+        bk: int = 128,
+        bn: int = 128,
+        debug: bool = False,
+        interpret: bool = True,  # TODO: False on a TPU backend
+    ) -> jax.Array:
+      return fuser.fusible(
+          partial(
+              _fusible_matmul,
+              bm=bm,
+              bk=bk,
+              bn=bn,
+              interpret=interpret,
+              debug=debug,
+          )
+      )(x, y)
+
+    dtype = np.float32
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_relu(x, y):
+      x = fusible_matmul(x, y)
+      x = jnp.maximum(x, 0.0)
+      return x
+
+    def mm_ref(x, y):
+      return jnp.dot(x, y, preferred_element_type=jnp.float32)
+
+    @partial(jax.jit, compiler_options={'xla_allow_excess_precision': False})
+    def matmul_relu_ref(x, y):
+      return jax.nn.relu(mm_ref(x, y))
+
+    logging.warning(matmul_relu.trace(x, y).jaxpr)
+
+    self.collect_and_check(matmul_relu, x, y)
+
+  def test_pallas_call_custom_fusion_0(self):
+    @fuser.custom_fusion
+    def c(x, y):
+      return x + y
+
+    c.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
+    c.def_push_block_spec(lambda bss: (bss[0],))
+    c.def_eval_rule(lambda _, x, y: (c(x, y),))
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fn, z_fns):
+      x = x_fn()
+      y = y_fn()
+      z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
+      return z_fn1(x), z_fn2(y)
+
+    def g(x, y, z):
+      x, y = f(x, c(y, z))
+      return c(x, z), y * 2
+
+    x = jax.random.normal(jax.random.key(0), (4, 4), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (1, 4), dtype=jnp.float32)
+    z = jax.random.normal(jax.random.key(2), (1, 4), dtype=jnp.float32)
+    g(x, y, x)
+    self.collect_and_check(jax.jit(fuser.fuse(g)), x, y, z)
+
+  def test_pallas_call_custom_fusion_with_kwargs(self):
+    @fuser.custom_fusion
+    def c(x, y):  # y is passed as kwarg
+      return x + y
+
+    c.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
+    c.def_push_block_spec(lambda bss: (bss[0],))
+    c.def_eval_rule(lambda _, x, y: (c(x, y=y),))
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fn, z_fns):
+      x = x_fn()
+      y = y_fn()
+      z_fn1, z_fn2 = z_fns
+      if z_fn1 is None:
+        z_fn1 = lambda x: x
+      if z_fn2 is None:
+        z_fn2 = lambda x: x
+      return z_fn1(x), z_fn2(y)
+
+    def g(x, y1, y2):
+      x, y3 = f(x, c(y1, y=y2))
+      return c(x, y=y2), y3 * 2
+
+    x = jax.random.normal(jax.random.key(0), (4, 4), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (1, 4), dtype=jnp.float32)
+    z = jax.random.normal(jax.random.key(2), (1, 4), dtype=jnp.float32)
+    g(x, y, z)
+    self.collect_and_check(jax.jit(fuser.fuse(g)), x, y, z)
+
+  def test_fuser_pull_block_spec(self):
+    def fn(x):
+      return jnp.exp(x)
+
+    def f(x):
+      return fn(x)
+
+    def top():
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+      f2, new_values, scalar_prefetch_values = \
+        fuser.get_fusion_values(f, in_type)
+
+      block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+      kernel_fn, (value_block_specs, in_block_spec), _ = (
+          fuser.pull_block_spec(
+              f2,
+              block_spec,
+              grid_len=3,
+              scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(0),
+          )(new_values, in_type)
+      )
+
+      x = jnp.ones((128, 128), dtype=np.float32)
+      return kernel_fn((0, 0, 0), scalar_prefetch_values, (), x)
+
+    with tracker.flags_override(fake_array_threshold=128 * 128 + 1):
+      self.collect_and_check(top)
+
+  def test_fuser_pull_block_spec_out_block_specs_is_kwarg(self):
+    def fn(x):
+      return jnp.exp(x)
+
+    def f(x):
+      return fn(x)
+
+    def top():
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+      f2, new_values, scalar_prefetch_values = \
+        fuser.get_fusion_values(f, in_type)
+
+      block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+      kernel_fn, (value_block_specs, in_block_spec), _ = (
+          fuser.pull_block_spec(
+              f2,
+              out_block_specs=block_spec,
+              grid_len=3,
+              scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(0),
+          )(new_values, in_type)
+      )
+
+      x = jnp.ones((128, 128), dtype=np.float32)
+      return kernel_fn((0, 0, 0), scalar_prefetch_values, (), x)
+
+    with tracker.flags_override(fake_array_threshold=128 * 128 + 1):
+      self.collect_and_check(top)
+
+  def test_fuser_push_block_spec(self):
+    def fn(x):
+      return jnp.exp(x)
+
+    def f(x):
+      return fn(x)
+
+    def top():
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      out_block_spec = fuser.push_block_spec(f, block_spec)(in_type)
+      return out_block_spec.block_shape
+
+    with tracker.flags_override(fake_array_threshold=128 * 128 + 1):
+      self.collect_and_check(top)
+
+  def test_fuser_push_block_spec_pytrees_kwargs(self):
+    def fn(x, y, *, z):
+      return (jnp.exp(x) + y), (z + y)
+
+    def f(x_and_y, *, z):
+      x, y = x_and_y
+      return fn(x, y, z=z)
+
+    def top():
+      in_type = (
+          jax.ShapeDtypeStruct((512, 512), jnp.float32),
+          jax.ShapeDtypeStruct((512, 512), jnp.float32),
+      )
+      z_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      (out_block_spec1, out_block_spec2) = fuser.push_block_spec(
+          f,
+          (block_spec, pl.no_block_spec),
+          z=block_spec,
+      )(in_type, z=z_type)
+      return out_block_spec1.block_shape, out_block_spec2.block_shape
+
+    with tracker.flags_override(fake_array_threshold=128 * 128 + 1):
+      self.collect_and_check(top)
+
+  def test_fuser_evaluate(self):
+    def f(x):
+      return jnp.sin(x) + 1.0
+
+    x = np.ones((128,), dtype=jnp.float32)
+    self.collect_and_check(jax.jit(fuser.evaluate(f)), x)
 
 
 if __name__ == '__main__':

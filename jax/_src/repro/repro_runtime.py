@@ -32,6 +32,10 @@ try:
 except ImportError:
   pltpu = None  # type: ignore
 try:
+  from jax.experimental.pallas import fuser  # type: ignore  # noqa: F401
+except ImportError:
+  fuser = None  # type: ignore
+try:
   from jax._src.pallas import primitives as pallas_primitives # type: ignore  # noqa: F401
 except ImportError:
   pallas_primitives = None  # type: ignore

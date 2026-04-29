@@ -1195,6 +1195,10 @@ TODO:
   in the .runfiles directory. Fixed by including the dependency.
 * finish repro.collect, ensure we use the same name for error and non-error
   repro. document the repro.collect
+* when we implement fuser.fusion, we have to carry over some properties from
+  Fusion to the wrapped object. Do we really need to wrap the Fusion as
+  opposed to the function it carries? And if so why don't we copy all
+  properties over?
 * if some functions are wrapped outside collect and then used inside collect
   we get collision on ids because the collector reset the tracker state
 * I want to compress the stack trace, there are now 4 frames added for each
