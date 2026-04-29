@@ -32,10 +32,10 @@ class PallasTest(jtu.JaxTestCase):
       # Running on accelerator
       if jtu.test_device_matches(["cpu"]):
         self.skipTest("On CPU the test works only in interpret mode")
-      if (jtu.test_device_matches(["cuda"]) and
+      if (jtu.is_device_cuda() and
           not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPU with capability >= sm80")
-      if (jtu.test_device_matches(["cuda"]) and use_mosaic_gpu and
+      if (jtu.is_device_cuda() and use_mosaic_gpu and
           not jtu.is_cuda_compute_capability_at_least("9.0")):
         self.skipTest("Mosaic GPU requires capability >= sm90")
       if sys.platform == "win32":
