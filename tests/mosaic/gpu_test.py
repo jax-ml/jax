@@ -532,7 +532,8 @@ class MemRefTest(TestCase):
           swizzle=128,
           optimized=False,
       )
-      barrier.arrive_expect_tx(math.prod(a.shape) * mgpu.bitwidth(a.mlir_dtype) // 8 // 128)
+      peer_barrier = barrier.remap_to_cluster(gpu.Dimension.x, peer_idx)
+      peer_barrier.arrive_expect_tx(math.prod(a.shape) * mgpu.bitwidth(a.mlir_dtype) // 8 // 128)
       a.store_tiled_async(
           smem,
           barrier,
