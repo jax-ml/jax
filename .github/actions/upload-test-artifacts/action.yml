@@ -97,9 +97,10 @@ runs:
         GCS_UPLOAD_URI: ${{ inputs.gcs-upload-uri }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         PADDED_ATTEMPT: ${{ steps.check-artifacts.outputs.padded_attempt }}
+        GITHUB_WORKFLOW: ${{ github.workflow }}
       run: |
         artifact_name="$INPUT_ARTIFACT_NAME-$PADDED_ATTEMPT"
-        WF_NAME="${{ github.workflow }}"
+        WF_NAME="$GITHUB_WORKFLOW"
         SAFE_WF_NAME="${WF_NAME//\//-}"
         REAL_URI="${GCS_UPLOAD_URI//$WF_NAME/$SAFE_WF_NAME}"
 
