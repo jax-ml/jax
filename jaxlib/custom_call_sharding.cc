@@ -204,9 +204,13 @@ void CallInspectSharding(void* obj, JAX_InspectSharding_Callback_Args* args) {
   if (!arg.has_value()) {
     return;
   }
+  xla::HloSharding sharding = *arg;
+  if (sharding.UseNamedShardingLeaf()) {
+    sharding = xla::HloSharding::V3ToV2Sharding(sharding.named_sharding());
+  }
   try {
     nb::gil_scoped_acquire gil;
-    nb::handle(reinterpret_cast<PyObject*>(obj))(*std::move(arg));
+    nb::handle(reinterpret_cast<PyObject*>(obj))(sharding);
   } catch (const nb::python_error& e) {
     InspectShardingSetError(args, std::string(e.what()));
   }
