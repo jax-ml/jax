@@ -3008,6 +3008,16 @@ class APITest(jtu.JaxTestCase):
     out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
     self.assertEqual(out_shape.shape, (3,))
 
+  def test_eval_shape_error_bad_output(self):
+    def f(x):
+      return (2.0, f)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r'function f at .*api_test.py.*returned a value.*'
+        r'at output component \[1\], which is not a valid JAX type'):
+      api.eval_shape(f, 1)
+
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
     x = jnp.array([1, 2, 3])
