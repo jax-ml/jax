@@ -95,7 +95,8 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest
+      # second sha is for rocm720 and rocm711
+      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:${{ inputs.rocm-tag == 'rocm7120' && '4c39036a73d9a20cc8f14c3b3a8e5e3631626b34' || '88a397a3c85416e8ceb638615a9807a09c549824' }}
       volumes:
         - /data:/data
       options: >-
@@ -145,13 +146,16 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Resolve RBE container image digest
         id: rbe-image
+        env:
+          ROCM_TAG: ${{ inputs.rocm-tag }}
+          IMAGE_TAG: ${{ inputs.rocm-tag == 'rocm7120' && '4c39036a73d9a20cc8f14c3b3a8e5e3631626b34' || '88a397a3c85416e8ceb638615a9807a09c549824' }}
         run: |
-          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
-          REPO="rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
+          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${ROCM_TAG}"
+          REPO="rocm/jax-dev-ubu24.${ROCM_TAG}"
           TOKEN=$(curl -sf "https://ghcr.io/token?service=ghcr.io&scope=repository:${REPO}:pull" | \
             python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
           echo "::add-mask::${TOKEN}"
-          DIGEST=$(curl -sfI "https://ghcr.io/v2/${REPO}/manifests/latest" \
+          DIGEST=$(curl -sfI "https://ghcr.io/v2/${REPO}/manifests/${IMAGE_TAG}" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Accept: application/vnd.docker.distribution.manifest.v2+json" | \
             grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
@@ -159,15 +163,21 @@ jobs:
           echo "rbe_image=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
+        env:
+          BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+          BUILD_JAX: ${{ inputs.build_jax }}
+          PYTHON: ${{ inputs.python }}
+          ENABLE_X64: ${{ inputs.enable-x64 }}
+          RBE_IMAGE: ${{ steps.rbe-image.outputs.rbe_image }}
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config=single_gpu \
             --local_test_jobs=4 \
-            --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
-            --//jax:build_jax="${{ inputs.build_jax }}" \
-            --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
-            --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}" \
+            --//jax:build_jaxlib="${BUILD_JAXLIB}" \
+            --//jax:build_jax="${BUILD_JAX}" \
+            --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON}" \
+            --action_env=JAX_ENABLE_X64="${ENABLE_X64}" \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${RBE_IMAGE}" \
             "${JAXCI_ROCM_LOCK_FLAG:-}"
       - name: Upload test artifacts
         if: always()
