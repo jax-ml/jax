@@ -237,6 +237,7 @@ _OUT_SHARDING_CASES = [
     ('truncated_normal', lambda key, n, s: random.truncated_normal(key, lower=-2., upper=2., shape=(n,), out_sharding=s)),
     ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('gamma', lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('weibull_min', lambda key, n, s: random.weibull_min(key, scale=1., concentration=2., shape=(n,), out_sharding=s)),
 ]
 
 
@@ -1137,6 +1138,37 @@ class DistributionsTest(RandomTestBase):
       self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.weibull_min(
           c=concentration, scale=scale).cdf)
+
+  def test_weibull_min_shape_none_broadcasting(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/35493
+    # When shape=None, scale and concentration should be broadcast together
+    # so different samples are drawn for each element.
+    key = random.key(0)
+    scale = np.ones(4)
+    concentration = np.ones(4)
+
+    # With shape=None, internal broadcasting should yield independent samples.
+    result_implicit = random.weibull_min(key, scale, concentration)
+    # With shape=(4,), the result should match.
+    result_explicit = random.weibull_min(key, scale, concentration, shape=(4,))
+
+    self.assertEqual(result_implicit.shape, (4,))
+    np.testing.assert_array_equal(result_implicit, result_explicit)
+    # All values should not be identical (would indicate a broadcasting bug).
+    self.assertFalse(np.all(result_implicit == result_implicit[0]),
+                    "weibull_min returned identical values for all elements, "
+                    "indicating a shape broadcasting bug.")
+
+  @parameterized.parameters('standard', 'strict')
+  def testWeibullComplexValueRaisesTypeError(self, promotion):
+    with jax.numpy_dtype_promotion(promotion):
+      key = self.make_key(0)
+      complex_scale = jnp.array(1.0 + 0j)
+      with self.assertRaises(TypeError):
+        random.weibull_min(key, scale=complex_scale, concentration=2.0, shape=(10,))
+      complex_concentration = jnp.array(2.0 + 0j)
+      with self.assertRaises(TypeError):
+        random.weibull_min(key, scale=1.0, concentration=complex_concentration, shape=(10,))
 
   @parameterized.named_parameters(
       ('test1', 4.0, 1.0),
