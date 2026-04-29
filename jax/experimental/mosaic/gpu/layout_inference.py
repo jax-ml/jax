@@ -1105,7 +1105,7 @@ def _wgmma_constraint_system(
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
   constraints: list[cs.Constraint]
   if b_is_transposed:
-    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), input_bitwidth)]
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var, (1, 0)), input_bitwidth)]
   else:
     constraints = [cs.IsValidMmaTiling(b_var, input_bitwidth)]
   value_sites_for_variable[b_var] = [b]
@@ -1119,7 +1119,7 @@ def _wgmma_constraint_system(
     # operands are transposed, we need to transpose the transform as well.
     a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
     if a_is_transposed != b_is_transposed:
-      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var)))
+      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var, (1, 0))))
     else:
       constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
@@ -1523,7 +1523,7 @@ def _tcgen05_mma_constraint_system(
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
   constraints: list[cs.Constraint]
   if b_is_transposed:
-    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), element_type_bitwidth)]
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var, (1, 0)), element_type_bitwidth)]
   else:
     constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
 
@@ -1568,7 +1568,7 @@ def _tcgen05_mma_constraint_system(
     a_var = ctx.producer_ref(a)
     operands_for_variable[a_var] = [a]
     if a_is_transposed:
-      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var), element_type_bitwidth))
+      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var, (1, 0)), element_type_bitwidth))
     else:
       constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
 
@@ -1858,9 +1858,16 @@ def _memref_transpose_op_constraint_system(
     return cs.ConstraintSystem(), {source_var: [source, dest]}
 
   dest_var = cs.Variable(dest)
+
+  permutation = tuple(
+      ir.AffineDimExpr(e).position
+      for e in ir.AffineMapAttr(op.attributes["permutation"]).value.results
+  )
+  inv_permutation = tuple(permutation.index(i) for i in range(len(in_strides)))
+
   constraints = [
-      cs.Equals(cs.Transpose(source_var), dest_var),
-      cs.Equals(source_var, cs.Transpose(dest_var)),
+      cs.Equals(cs.Transpose(source_var, permutation=permutation), dest_var),
+      cs.Equals(source_var, cs.Transpose(dest_var, permutation=inv_permutation)),
   ]
   system = cs.ConstraintSystem(constraints=constraints)
   return system, {source_var: [source], dest_var: [dest]}

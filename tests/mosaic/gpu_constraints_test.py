@@ -542,18 +542,57 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(smem_to_reg.holds(), holds)
 
   def test_transpose_expression(self):
-    def transpose(tiling):
+    def transpose(tiling, permutation):
       transform = None if tiling is None else lc.TileTransform(tiling)
-      return cs.Transpose(cs.SMEMTiling(transform))
+      return cs.Transpose(cs.SMEMTiling(transform), permutation)
 
     self.assertEqual(
-        cs.reduce_expression(transpose(None), {}),
+        cs.reduce_expression(transpose(tiling=None, permutation=()), {}),
         cs.SMEMTiling(None),
     )
     self.assertEqual(
-        cs.reduce_expression(transpose((2, 3)), {}),
+        cs.reduce_expression(transpose(tiling=(2, 3), permutation=(1, 0)), {}),
         cs.SMEMTiling(lc.TileTransform((3, 2))),
     )
+    self.assertEqual(
+        cs.reduce_expression(transpose(tiling=(3,), permutation=(0,)), {}),
+        cs.SMEMTiling(lc.TileTransform((3,))),
+    )
+    self.assertEqual(
+        cs.reduce_expression(
+            transpose(tiling=(2, 4, 8), permutation=(1, 0, 2)), {}
+        ),
+        cs.SMEMTiling(lc.TileTransform((4, 2, 8))),
+    )
+    self.assertEqual(
+        cs.reduce_expression(
+            transpose(tiling=(2, 4, 8), permutation=(1, 2, 0)), {}
+        ),
+        cs.SMEMTiling(lc.TileTransform((4, 8, 2))),
+    )
+    self.assertEqual(
+        cs.reduce_expression(
+            transpose(tiling=(2, 4, 8), permutation=(2, 1, 0)), {}
+        ),
+        cs.SMEMTiling(lc.TileTransform((8, 4, 2))),
+    )
+
+  def test_transpose_expression_raises(self):
+    def transpose(tiling, permutation):
+      transform = None if tiling is None else lc.TileTransform(tiling)
+      return cs.Transpose(cs.SMEMTiling(transform), permutation)
+
+    with self.assertRaisesRegex(NotImplementedError, "Unsupported transpose"):
+      cs.reduce_expression(transpose(tiling=(2, 32), permutation=(1, 0, 2)), {})
+
+    with self.assertRaisesRegex(NotImplementedError, "Unsupported transpose"):
+      cs.reduce_expression(transpose(tiling=(2, 32), permutation=(1, 2, 0)), {})
+
+    with self.assertRaisesRegex(NotImplementedError, "Unsupported transpose"):
+      cs.reduce_expression(transpose(tiling=(2, 32), permutation=(2, 0, 1)), {})
+
+    with self.assertRaisesRegex(NotImplementedError, "Unsupported transpose"):
+      cs.reduce_expression(transpose(tiling=(2, 32), permutation=(2, 1, 0)), {})
 
   def test_divides_constraint_are_satisfied_by_empty_tiling(self):
     self.assertTrue(cs.Divides(cs.SMEMTiling(None), (1, 2)).holds())

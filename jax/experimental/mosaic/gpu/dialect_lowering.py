@@ -1055,9 +1055,9 @@ def _mgpu_async_load_op_lowering_rule(
     unwrapped_dst = utils.memref_transpose(
         unwrapped_dst, permutation
     )
-    if transforms:
-      raise NotImplementedError("Can't transpose transformed refs.")
-    transforms = (lc.TransposeTransform(permutation),)
+    if not transforms:
+      transforms = tuple()
+    transforms = transforms + (lc.TransposeTransform(permutation),)
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
@@ -1143,9 +1143,9 @@ def _mgpu_async_store_op_lowering_rule(
     unwrapped_source = utils.memref_transpose(
         unwrapped_source, permutation
     )
-    if transforms:
-      raise NotImplementedError("Can't transpose transformed refs.")
-    transforms = (lc.TransposeTransform(permutation),)
+    if not transforms:
+      transforms = tuple()
+    transforms = transforms + (lc.TransposeTransform(permutation),)
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, store_op)
 
@@ -1936,6 +1936,10 @@ def _memref_transpose_op_lowering_rule(
       new_permutation = _permutation_to_affine_map_attr([0, 1, 2, 3])
     elif op.permutation == _permutation_to_affine_map_attr([1, 0]):
       new_permutation = _permutation_to_affine_map_attr([1, 0, 3, 2])
+    elif op.permutation == _permutation_to_affine_map_attr([1, 0, 2]):
+      new_permutation = _permutation_to_affine_map_attr([1, 0, 2, 3])
+    elif op.permutation == _permutation_to_affine_map_attr([0, 1, 2]):
+      new_permutation = _permutation_to_affine_map_attr([0, 1, 2, 3])
     else:
       raise NotImplementedError(f"Unsupported permutation={op.permutation}.")
   else:
