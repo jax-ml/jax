@@ -285,7 +285,7 @@ def _mosaic_gpu_lowering_rule(
   return mlir.custom_call(
       call_target_name="mosaic_gpu_v2",
       result_types=mlir.flatten_ir_types(
-          mlir.aval_to_ir_type(aval) for aval in ctx.avals_out
+          mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out
       ),
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],

@@ -2345,7 +2345,7 @@ def _gather_lower(ctx, operand, indices, *,
     # return hlo.DynamicGatherOp(
     #     operand, indices, mlir.shape_tensor(slice_sizes),
     #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
-    results = mlir.flatten_ir_types(mlir.aval_to_ir_types(aval_out))
+    results = mlir.flatten_ir_types(mlir.aval_to_ir_types(ctx.module_context, aval_out))
     operands = [operand, indices, slice_sizes]
     attributes: dict[str, ir.Attribute] = {
         "dimension_numbers": dnums,
@@ -3303,13 +3303,13 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
       scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
       index_vector_dim=len(avals_in[1].shape) - 1,
   )
-  result = mlir.aval_to_ir_type(aval_out)
+  result = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   operand = [operand]
   updates = [updates]
   op = hlo.ScatterOp((result,), operand, indices, updates, scatter_dnums,
                      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
                      unique_indices=ir.BoolAttr.get(unique_indices))
-  scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
+  scalar_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
     name_stack = source_info_util.new_name_stack()
@@ -3365,7 +3365,7 @@ def _scatter_addsub_lower_gpu(
   )
   real_dtype = _real_dtype(aval_out.dtype)
   operand_type_part = mlir.aval_to_ir_type(
-      core.ShapedArray(aval_out.shape, real_dtype))
+      ctx.module_context, core.ShapedArray(aval_out.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
     operand_part = [operand_part]
@@ -3375,7 +3375,7 @@ def _scatter_addsub_lower_gpu(
         (operand_type_part,), operand_part, indices, updates_part, scatter_dnums,
         indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
         unique_indices=ir.BoolAttr.get(unique_indices))
-    scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
+    scalar_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
       hlo.return_([reduce_op(*reducer.arguments).result])

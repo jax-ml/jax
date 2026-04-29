@@ -314,7 +314,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     result_shapes = None
   else:
     result_shapes = mlir.flatten_ir_values(
-        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        mlir.shape_tensor(ctx.module_context, mlir.eval_dynamic_shape(ctx, aval_out.shape))
         for aval_out in ctx.avals_out
     )
 
@@ -322,7 +322,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     backend_config["top_k"] = mlir.i64_attr(k)
     out = mlir.custom_call(
         "ApproxTopK",
-        result_types=mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
+        result_types=mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
         operands=[operand, iota, *init_vals, init_arg],
         called_computations=[comparator.name.value],
         backend_config=backend_config,
@@ -331,7 +331,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out = mlir.custom_call(
         "stablehlo.dynamic_approx_top_k",
-        result_types=mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
+        result_types=mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
         operands=[operand, iota, *init_vals, init_arg, k_value],
         called_computations=[comparator.name.value],
         backend_config=backend_config,

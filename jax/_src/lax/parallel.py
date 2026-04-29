@@ -1017,7 +1017,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
         [x.type], [x], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray(
         (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
-    scalar_type = mlir.aval_to_ir_type(scalar_aval)
+    scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
       lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
@@ -1217,7 +1217,7 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   full_perm, other_args = _pcollectives_lowering_common(
       ctx, axis_name=axis_name, perm=perm, op_name="precv"
   )
-  out_type = mlir.aval_to_ir_type(out_shape)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_shape)
   recv_op = hlo.RecvOp(
       [out_type, token.type],
       token,
@@ -1777,7 +1777,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     new_shape.insert(all_gather_dimension, 1)
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
-        mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
+        mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=new_shape)), x,
         mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
@@ -1792,7 +1792,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   else:
     other_args = {}
 
-  out_type = mlir.aval_to_ir_type(out_aval)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
   if not is_async:
     return hlo.AllGatherOp(
         [out_type],
@@ -2040,12 +2040,12 @@ def _reduce_scatter_lowering(
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(
-      mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
+      mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=scatter_out_shape)),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
       replica_groups=_replica_groups_hlo(replica_groups),
       **other_args)
-  scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
   reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_block):
     lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
@@ -2058,7 +2058,7 @@ def _reduce_scatter_lowering(
   if tiled:
     return op.results
   else:
-    out_type = mlir.aval_to_ir_type(aval_out)
+    out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
     return [hlo.reshape(out_type, op.result)]
 
 
@@ -2970,7 +2970,7 @@ def _start_lowering(sync_lower):
     (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
     (out_aval,) = ctx.avals_out  # e.g., # AbstractTodo[f32[4, 2]]
     inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
-    inner_type = mlir.aval_to_ir_type(inner_aval)  # e.g., <tensor<4x2xf32>
+    inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)  # e.g., <tensor<4x2xf32>
     # e.g., !stablehlo.future<tensor<4x2xf32>>
     future_type = hlo.FutureType.get([inner_type])
     async_start = hlo.AsyncStartOp(future_type, [x])

@@ -2978,7 +2978,7 @@ class AbstractTodo(AbstractValue):
     self.inner_aval = inner_aval
 
   def __eq__(self, other):
-    return self.inner_aval == other.inner_aval
+    return isinstance(other, AbstractTodo) and self.inner_aval == other.inner_aval
 
   def __hash__(self):
     return hash(self.inner_aval)

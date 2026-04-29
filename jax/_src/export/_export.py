@@ -1671,7 +1671,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # is valid.
   def convert_shape(x: ir.Value, x_aval: core.AbstractValue,
                     new_aval: core.AbstractValue) -> ir.Value:
-    new_ir_type = mlir.aval_to_ir_type(new_aval)
+    new_ir_type = mlir.aval_to_ir_type(ctx.module_context, new_aval)
     if x.type != new_ir_type:
       return hlo.convert(new_ir_type, x)
     else:
@@ -1710,7 +1710,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     else:
       current_platform_idx = cast(ir.Value, mlir.ir_constant(np.int32(0)))
     # Compute the rule index based on the current platform
-    i32_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
+    i32_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
       current_platform_idx = hlo.convert(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],

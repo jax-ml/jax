@@ -4286,7 +4286,7 @@ def _nary_lower_hlo(
                                            aval_out.sharding))
 
   if out_dtype is not None:
-    ir_type = mlir.aval_to_ir_type(aval_out)
+    ir_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
     args = tuple(hlo.convert(ir_type, a) for a in args)
 
   out = op(*args)
@@ -4691,7 +4691,7 @@ def _pow_lower(ctx, x, y):
   if x_aval.dtype != y_aval.dtype:
     out_aval, = ctx.avals_out
     y_aval = y_aval.update(dtype=out_aval.dtype)
-    y = hlo.convert(mlir.aval_to_ir_type(y_aval), y)
+    y = hlo.convert(mlir.aval_to_ir_type(ctx.module_context, y_aval), y)
     ctx = ctx.replace(avals_in=[x_aval, y_aval])
   return _nary_lower_hlo(hlo.power, ctx, x, y)
 mlir.register_lowering(pow_p, _pow_lower)
@@ -5402,7 +5402,7 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   aval_out, = ctx.avals_out
-  out_type = mlir.aval_to_ir_type(aval_out)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   out = hlo.bitcast_convert(out_type, operand)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
@@ -6006,7 +6006,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
-  acc_type = mlir.aval_to_ir_type(accumulation_aval)
+  acc_type = mlir.aval_to_ir_type(ctx.module_context, accumulation_aval)
   result = hlo.dot_general(
       acc_type,
       lhs,
@@ -6590,7 +6590,7 @@ def _ragged_dot_general_lower(
       ),
       rhs_group_dimensions=list(rhs_group_dims),
   )
-  acc_type = mlir.aval_to_ir_type(accumulation_aval)
+  acc_type = mlir.aval_to_ir_type(ctx.module_context, accumulation_aval)
   result = chlo.ragged_dot(
       acc_type,
       lhs,
@@ -7947,9 +7947,9 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
-  op = hlo.ReduceOp(mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
+  op = hlo.ReduceOp(mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
                     operands, init_values, mlir.dense_int_array(dimensions))
-  ir_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, init_value_avals))
+  ir_types = mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), init_value_avals))
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
     name_stack = source_info_util.new_name_stack()
@@ -8212,11 +8212,11 @@ batching.defreducer(reduce_xor_p)
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
-  out_type = mlir.aval_to_ir_type(aval_out)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   op = hlo.ReduceOp([out_type], [x],
                     [mlir.ir_constant(unit_factory(aval_out.dtype))],
                     mlir.dense_int_array(axes))
-  scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
+  scalar_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
     hlo.return_([reducer(*reducer_region.arguments)])
@@ -8414,14 +8414,14 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
-  sort = hlo.SortOp(mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)),
+  sort = hlo.SortOp(mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
   scalar_s = lambda a: a.sharding.update(spec=P())
   scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
                   for aval in ctx.avals_in]
-  scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
+  scalar_types = safe_map(partial(mlir.aval_to_ir_type, ctx.module_context), scalar_avals)
   comparator = sort.comparator.blocks.append(
       *util.flatten(zip(scalar_types, scalar_types)))
   with ir.InsertionPoint(comparator):
@@ -8525,8 +8525,8 @@ def _top_k_lower(ctx, operand, k, axis):
     results = mlir.custom_call(
         "stablehlo.dynamic_top_k",
         result_types=mlir.flatten_ir_types([
-            mlir.aval_to_ir_types(out_values_aval),
-            mlir.aval_to_ir_types(out_indices_aval)
+            mlir.aval_to_ir_types(ctx.module_context, out_values_aval),
+            mlir.aval_to_ir_types(ctx.module_context, out_indices_aval)
         ]),
         operands=[operand, k_value],
     ).results
@@ -8717,13 +8717,13 @@ def _rng_bit_generator_lowering(
   algorithm_attr = _rng_algorithm(algorithm)
   out_key_aval, out_vals_aval = ctx.avals_out
   if any(not core.is_constant_shape(a.shape) for a in ctx.avals_out):
-    output_shape = mlir.shape_tensor(
+    output_shape = mlir.shape_tensor(ctx.module_context,
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
     out_key, out_vals = mlir.custom_call(
         "stablehlo.dynamic_rng_bit_generator",
         result_types=[
             key.type,
-            mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))
+            mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray(shape, rbg_dtype))
         ],
         operands=mlir.flatten_ir_values([key, output_shape]),
         extra_attributes=dict(rng_algorithm=algorithm_attr),
@@ -9326,7 +9326,7 @@ def _optimization_barrier_abstract_eval(*args):
   return args
 
 def _optimization_barrier_lowering_rule(ctx, *args):
-  barrier_types = map(mlir._aval_to_ir_types, ctx.avals_in)
+  barrier_types = map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_in)
   flat_args = mlir.flatten_ir_values(args)
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
   return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
