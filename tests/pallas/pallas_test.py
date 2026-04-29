@@ -2467,6 +2467,44 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  @parameterized.named_parameters(
+      ("all_tangents", None),
+      ("first_tangent", 0),
+      ("middle_tangent", 1),
+      ("last_tangent", 2),
+  )
+  def test_jvp_with_symbolic_zero_tangents(self, active_index):
+    inputs = tuple(random.normal(random.key(i), (8,)) for i in range(3))
+    tangents = tuple(
+        random.normal(random.key(i + 3), (8,)) for i in range(3)
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct.like(inputs[0]),
+    )
+    def add(x_ref, y_ref, z_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...] + z_ref[...]
+
+    def f(*args):
+      args = tuple(
+          arg if active_index is None or i == active_index
+          else lax.stop_gradient(arg)
+          for i, arg in enumerate(args)
+      )
+      return add(*args)
+
+    out_primal, out_tangent = jax.jvp(f, inputs, tangents)
+    np.testing.assert_allclose(
+        out_primal, sum(inputs), atol=self.tol, rtol=self.tol
+    )
+    expected_tangent = (
+        sum(tangents) if active_index is None else tangents[active_index]
+    )
+    np.testing.assert_allclose(
+        out_tangent, expected_tangent, atol=self.tol, rtol=self.tol
+    )
+
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
   #   k1, k2 = random.split(random.key(0))
