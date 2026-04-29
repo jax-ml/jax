@@ -1637,18 +1637,23 @@ class VectorSubcoreTest(PallasSCTest):
 
     _kernel()
 
-  def test_reshape(self):
-    shape = (self.num_lanes,)
-    dtype = jnp.int32
-
-    @self.vector_subcore_kernel(out_shape=jax.ShapeDtypeStruct(shape, dtype))
+  @parameterized.parameters(
+      ((8, 80), (4, 160), jnp.float32),
+      ((2, 160), (2, 10, 16), jnp.bfloat16),
+      ((2, 10, 16), (2, 160), jnp.bfloat16),
+  )
+  def test_reshape(self, in_shape, out_shape, dtype):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
     def kernel(x_ref, o_ref):
       o_ref[...] = (
-          x_ref[...].reshape(2, self.num_lanes // 2).reshape(self.num_lanes)
+          x_ref[...].reshape(out_shape)
       )
 
-    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
-    np.testing.assert_array_equal(kernel(x), x)
+    x = jnp.arange(math.prod(in_shape), dtype=dtype).reshape(in_shape)
+    np.testing.assert_array_equal(kernel(x), x.reshape(out_shape))
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
