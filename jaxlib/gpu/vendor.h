@@ -857,8 +857,28 @@ namespace jax::hip {
 inline constexpr uint32_t kNumThreadsPerWarp = 64;
 }  // namespace jax::hip
 
+#elif defined(JAX_GPU_ONEAPI)
+
+// TODO(Intel-tf):
+// placeholder for OneAPI/SYCL glue code compilation.
+// Full GPU kernel support requires additional type mappings.
+
+#define JAX_GPU_NAMESPACE oneapi
+#define JAX_GPU_PREFIX "oneapi"
+#define JAX_GPU_PLUGIN_NAME "oneapi"
+
+#define JAX_GPU_HAVE_64_BIT 0
+#define JAX_GPU_HAVE_FP8 0
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
+
+namespace jax::oneapi {
+// Probably the SYCL equivalent is "sub-group size".
+// Placeholder to satisfy the vendor.h interface.
+inline constexpr uint32_t kNumThreadsPerWarp = 32;
+}  // namespace jax::oneapi
+
 #else  // defined(GPU vendor)
-#error "Either JAX_GPU_CUDA or JAX_GPU_HIP must be defined"
+#error "Either JAX_GPU_CUDA, JAX_GPU_HIP, or JAX_GPU_ONEAPI must be defined"
 #endif  // defined(GPU vendor)
 
 #endif  // JAXLIB_GPU_VENDOR_H_
