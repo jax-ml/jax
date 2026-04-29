@@ -149,6 +149,7 @@ def _running_under_ipython() -> bool:
 def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
   import IPython  # pyrefly: ignore[missing-import]
+  # pyrefly: ignore[unsupported-operation]  # pyrefly#896
   return IPython.version_info[:2] >= (7, 17)
 
 def _filtering_mode() -> str:
@@ -226,7 +227,7 @@ def api_boundary(
       finally:
         del mode, tb
   if repro and (repro_api_name or repro_user_func):
-    reraise_with_filtered_traceback = repro.boundary(
+    reraise_with_filtered_traceback = repro.boundary(  # pyrefly: ignore [missing-attribute]
         reraise_with_filtered_traceback, api_name=repro_api_name,
         is_user=repro_user_func)
   return cast(C, reraise_with_filtered_traceback)

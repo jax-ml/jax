@@ -211,7 +211,7 @@ class _DimFactor:
     return self._syntactic_cmp(other) >= 0
 
   def evaluate(self, env: DimVarEnv, scope: SymbolicScope):
-    from jax._src.lax import lax
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
     if self.var is not None:
       try:
@@ -1787,7 +1787,7 @@ class ShapeConstraint:
         ok = (left >= right)
       else:
         assert False  # We are in a context where we know we can evaluate
-        # all symbolic expressions to constants.
+                      # all symbolic expressions to constants.
     except InconclusiveDimensionOperation as e:
       raise self.make_error(eval) from e
     if not ok:
@@ -1801,7 +1801,7 @@ class ShapeConstraint:
     resolved statically, returns a value representing if the
     constraint is satisfied.
     """
-    from jax._src.lax import lax
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
     left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     # Try to evaluate the constraint statically.

@@ -696,7 +696,7 @@ def _deserialize_partition_spec_one_axis(
 def _serialize_partition_spec(builder: flatbuffers.Builder,
                               spec: partition_spec.PartitionSpec) -> int:
   partitions = _serialize_array(builder, _serialize_partition_spec_one_axis,
-                                spec._partitions)
+                                spec._partitions)  # pyrefly: ignore[bad-argument-type]
   reduced = _serialize_array(builder,
                              lambda builder, ps: builder.CreateString(ps),
                              spec.reduced)
