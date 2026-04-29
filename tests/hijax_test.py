@@ -185,7 +185,7 @@ class TupTy(HiType):
     return hash(self.tys)
 
   def __eq__(self, other):
-    return self.tys == other.tys
+    return isinstance(other, TupTy) and self.tys == other.tys
 
   def lo_ty(self):
     return list(self.tys)

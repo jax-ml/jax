@@ -1022,7 +1022,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   tokens_in = ctx.tokens_in.subset(ordered_effects)
   output_token_types = [mlir.token_type() for _ in ordered_effects]
   output_types = [
-      *output_token_types, *map(mlir._aval_to_ir_types, ctx.avals_out)]
+      *output_token_types, *map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_out)]
   flat_output_types = mlir.flatten_ir_types(output_types)
 
   # CaseOp takes a single argument 'index' and the corresponding blocks

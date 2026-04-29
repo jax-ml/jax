@@ -751,7 +751,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
       mem_kind = (core.mem_space_to_kind(device)
                   if isinstance(device, core.MemorySpace) else device.memory_kind)
       assert mem_kind is not None
-      x = mlir.wrap_with_memory_kind(x, mem_kind, out_aval)
+      x = mlir.wrap_with_memory_kind(ctx.module_context, x, mem_kind, out_aval)
       return x
     return x
   return list(map(lower, xs, devices, ctx.avals_in, ctx.avals_out))

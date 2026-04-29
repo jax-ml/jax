@@ -636,7 +636,7 @@ def _call_tf_lowering(
     jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
     if res_dtype != jax_res_dtype:
       op = hlo.ConvertOp(
-          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype)),
+          mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray(res_type.shape, jax_res_dtype)),
           op,
       ).result
     outputs.append(op)
@@ -685,7 +685,7 @@ def emit_tf_embedded_graph_custom_call(
 
   operands = list(operands)
   result_types = list(
-      mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
+      mlir.flatten_ir_types([mlir.aval_to_ir_type(ctx.module_context, aval) for aval in result_avals])
   )
   if ordered:
     operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect))

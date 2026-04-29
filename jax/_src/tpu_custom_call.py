@@ -385,7 +385,7 @@ def _tpu_custom_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
 ) -> ir.OpResultList:
-  result_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, out_avals))
+  result_types = mlir.flatten_ir_types([mlir.aval_to_ir_types(ctx.module_context, aval) for aval in out_avals])
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     manual_axes = axis_context.manual_axes | set(axis_context.mesh.manual_axes)
@@ -409,7 +409,7 @@ def _tpu_custom_call_lowering(
     result_shapes = None
   else:
     result_shapes = mlir.flatten_ir_values(
-        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        mlir.shape_tensor(ctx.module_context, mlir.eval_dynamic_shape(ctx, aval_out.shape))
         for aval_out in ctx.avals_out
     )
   extra_attributes: dict[str, ir.Attribute] | None = None

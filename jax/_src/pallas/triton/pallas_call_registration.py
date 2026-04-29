@@ -110,7 +110,8 @@ def pallas_call_lowering(
   # to avoid the need to fetch the new name from PTX post compilation.
   name = mlir.sanitize_name(debug_info.func_name)
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, grid_mapping, lowering_platform, compute_capability or None
+      jaxpr, grid_mapping, lowering_platform, compute_capability or None,
+      mlir_ctx=ctx.module_context
   )
   module_op = lowering_result.module.operation
   if debug:
@@ -192,7 +193,7 @@ def pallas_call_lowering(
     return mlir.custom_call(
         call_target_name="triton_kernel_call_ffi",
         result_types=mlir.flatten_ir_types(
-            map(mlir.aval_to_ir_type, ctx.avals_out)
+            [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
         ),
         operands=in_nodes,
         backend_config={"opaque": ir.StringAttr.get(zlib.compress(
@@ -209,7 +210,7 @@ def pallas_call_lowering(
     return mlir.custom_call(
         call_target_name="triton_kernel_call",
         result_types=mlir.flatten_ir_types(
-            map(mlir.aval_to_ir_type, ctx.avals_out)
+            [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
         ),
         operands=in_nodes,
         backend_config=zlib.compress(
