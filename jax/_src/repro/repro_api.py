@@ -249,6 +249,13 @@ def jax_pallas_run_state_call(f: Callable, trans_args: tuple[Any, ...],
   return repro_bypass_wrapper(discharge.run_state)(f, *trans_args, **trans_kwargs)(*args, **kwargs)
 
 
+@partial(repro_boundary, api_name="jax_pallas_gpu_kernel_call")
+def jax_pallas_gpu_kernel_call(body: Callable, trans_args: tuple[Any, ...],
+                               trans_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic_gpu import core as gpu_core  # type: ignore
+  return repro_bypass_wrapper(gpu_core.kernel)(body, *trans_args, **trans_kwargs)(*args, **kwargs)
+
+
 @partial(repro_boundary, api_name="jax_fuser_fuse")
 def jax_fuser_fuse(fun: Callable, trans_kwargs: dict[str, Any],
                   *args):

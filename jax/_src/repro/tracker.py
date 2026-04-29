@@ -1306,6 +1306,8 @@ boundary_trampolines["jax.experimental.pallas.core_map"] = core_map_trampoline
 
 boundary_trampolines["jax.experimental.pallas.run_state"] = partial(generic_trampoline, "pallas_run_state")
 
+boundary_trampolines["jax.experimental.pallas.mosaic_gpu.kernel"] = partial(generic_trampoline, "pallas_gpu_kernel")
+
 def fuser_fuse_trampoline(real_boundary_fun: Callable) -> Callable:
   from jax._src.repro.repro_api import jax_fuser_fuse
 
