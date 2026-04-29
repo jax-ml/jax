@@ -1052,6 +1052,18 @@ class BarrierRef:
         1,
     )
 
+  @property
+  def _ptx_scope(self) -> str:
+    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
+      return "cluster"
+    return "cta"
+
+  @property
+  def _nvvm_scope(self) -> nvvm.MemScopeKind:
+    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
+      return nvvm.MemScopeKind.CLUSTER
+    return nvvm.MemScopeKind.CTA
+
   def test_parity(self, parity, orders_tensor_core=False) -> ir.Value:
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
@@ -1070,6 +1082,8 @@ class BarrierRef:
     return wait_complete
 
   def wait_parity(self, parity, orders_tensor_core=False):
+    if self._ptx_scope != "cta":
+      raise ValueError("Can only await on CTA-local barriers")
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
@@ -1111,7 +1125,8 @@ class BarrierRef:
         else:
           raise ValueError(f"Unsupported scope: {scope}")
 
-    if can_complete:
+    ptx_scope = self._ptx_scope
+    if can_complete or ptx_scope != "cta":
       pred_ptx = pred_constraint = ""
       if predicate is not None:
         pred_ptx = "@$2"
@@ -1119,7 +1134,7 @@ class BarrierRef:
       llvm.inline_asm(
           ir.IntegerType.get_signless(64),
           [self.get_ptr()] + ([predicate] if predicate is not None else []),
-          f"{pred_ptx} mbarrier.arrive.release.cta.shared::cta.b64 $0, [$1],"
+          f"{pred_ptx} mbarrier.arrive.release.{ptx_scope}.shared::{ptx_scope}.b64 $0, [$1],"
           f" {arrival_count};",
           "=l,r" + pred_constraint,
           has_side_effects=True,
@@ -1140,7 +1155,9 @@ class BarrierRef:
     elif isinstance(bytes.type, ir.IndexType):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-    nvvm_mbarrier_arrive_expect_tx(self.get_ptr(), bytes, predicate=predicate)
+    nvvm_mbarrier_arrive_expect_tx(
+        self.get_ptr(), bytes, predicate=predicate, scope=self._nvvm_scope
+    )
 
   def complete_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
@@ -1160,7 +1177,7 @@ class BarrierRef:
         ir.Type.parse("!llvm.void"),
         [self.get_ptr(), bytes]
         + ([predicate] if predicate is not None else []),
-        f"{pred_ptx} mbarrier.complete_tx.shared::cta.b64 [$0], $1;",
+        f"{pred_ptx} mbarrier.complete_tx.shared::{self._ptx_scope}.b64 [$0], $1;",
         "l,r" + pred_constraint,
         has_side_effects=True,
     )
@@ -1174,6 +1191,14 @@ class BarrierRef:
       )
     i64 = ir.IntegerType.get_signless(64)
     return getelementptr(self.base_address, [self.offset], i64)
+
+  def remap_to_cluster(self, dim: gpu.Dimension, idx: ir.Value):
+    i32 = ir.IntegerType.get_signless(32)
+    idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
+    idxs[dim] = idx
+    flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
+    cptr = get_cluster_ptr(self.get_ptr(), flat_block, generic=False)
+    return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2198,7 +2223,10 @@ def nanosleep(nanos: ir.Value):
 
 
 def nvvm_mbarrier_arrive_expect_tx(
-    barrier: ir.Value, expect_tx: ir.Value, predicate: ir.Value | None = None
+    barrier: ir.Value,
+    expect_tx: ir.Value,
+    predicate: ir.Value | None = None,
+    scope: nvvm.MemScopeKind | None = None,
 ):
   # TODO(bchetioui): Remove once jaxlib 0.11.0 is the minimum version.
   first_param, *_ = inspect.signature(nvvm.mbarrier_arrive_expect_tx).parameters.keys()
@@ -2207,7 +2235,7 @@ def nvvm_mbarrier_arrive_expect_tx(
   else:
     args = (barrier, expect_tx)
   return nvvm.mbarrier_arrive_expect_tx(
-      *args, predicate=predicate  # pyrefly: ignore[bad-argument-type]
+      *args, scope=scope, predicate=predicate  # pyrefly: ignore[bad-argument-type]
   )
 
 
