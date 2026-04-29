@@ -1430,6 +1430,14 @@ void PyTreeDef::SetNumLeavesAndNumNodes() {
     if (traversal_[i].arity == 0) {
       starts.push_back(start);
     } else {
+      // arity must fit on the stack of partially-completed subtrees;
+      // otherwise the resize underflows and the back() reads below are UB.
+      if (traversal_[i].arity < 0 ||
+          static_cast<size_t>(traversal_[i].arity) > starts.size()) {
+        throw std::invalid_argument(absl::StrCat(
+            "Malformed PyTreeDef: node ", i, " has invalid arity ",
+            traversal_[i].arity, " (stack size ", starts.size(), ")"));
+      }
       starts.resize(starts.size() - (traversal_[i].arity - 1));
     }
     traversal_[i].num_leaves = num_leaves - starts.back().first;
