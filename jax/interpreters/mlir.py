@@ -63,7 +63,6 @@ from jax._src.interpreters.mlir import (
 from jax._src.mesh import Mesh as Mesh
 from jax._src.sharding_impls import (
   MeshAxisName as MeshAxisName,
-  ReplicaAxisContext as ReplicaAxisContext,
   SPMDAxisContext as SPMDAxisContext,
   ShardingContext as ShardingContext,
 )

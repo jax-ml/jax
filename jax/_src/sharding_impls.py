@@ -344,14 +344,12 @@ def prepare_axis_resources(axis_resources, arg_name,
             f' {entry}')
       _check_unique_resources(entry, arg_name)
       new_entries.append(entry)
-
   return tree_util.tree_unflatten(treedef, new_entries)
 
 
 # Axis environments
 
 class AxisEnv(NamedTuple):
-  """Represents a pmap mesh (only along the replica axes)."""
   nreps: int
   names: tuple[Any, ...]
   sizes: tuple[int, ...]
@@ -370,29 +368,8 @@ class SPMDAxisContext:
 
   @property
   def axis_env(self):
-    # All collectives that touch axis_env should remember to set use_global_device_ids
-    # when this context is enabled!
-    return self.unsafe_axis_env
-
-  @property
-  def unsafe_axis_env(self):
-    return AxisEnv(
-        nreps=self.mesh.size,
-        names=self.mesh.axis_names,
-        sizes=tuple(self.mesh.shape.values()))
-
-  def extend_manual(self, axes: frozenset[MeshAxisName]) -> SPMDAxisContext:
-    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
-
-
-@dataclasses.dataclass(frozen=True)
-class ReplicaAxisContext:
-  """A hardware axis context for parallel computations that are partitioned by JAX.
-
-  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
-  explicit collectives.
-  """
-  axis_env: AxisEnv
+    return AxisEnv(nreps=self.mesh.size, names=self.mesh.axis_names,
+                   sizes=tuple(self.mesh.shape.values()))
 
 
 @dataclasses.dataclass(frozen=True)

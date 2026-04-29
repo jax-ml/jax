@@ -645,11 +645,8 @@ def make_ir_context() -> ir.Context:
   return context
 
 
-AxisContext = Union[
-    sharding_impls.SPMDAxisContext,
-    sharding_impls.ReplicaAxisContext,
-    sharding_impls.ShardingContext,
-]
+AxisContext = Union[sharding_impls.SPMDAxisContext,
+                    sharding_impls.ShardingContext]
 
 class ShapePolyLoweringState:
   # The names of the dimension variables, sorted by name. This is the order in
