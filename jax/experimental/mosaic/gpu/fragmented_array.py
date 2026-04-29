@@ -4494,7 +4494,6 @@ def optimization_barrier(*arrays):
     reg_constraints += [reg_constraint] * len(array_regs)
   ptx = ""
   all_reg_constraints = ",".join(
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2854
       [*("=" + c for c in reg_constraints), *map(str, range(len(reg_constraints)))]
   )
 

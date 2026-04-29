@@ -66,7 +66,7 @@ def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
   is_int_indexing = [not isinstance(i, Slice) for i in indexer.indices]
   slice_indexers, int_indexers = partition_list(
       is_int_indexing, indexer.indices)
-  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # pyrefly: ignore[bad-argument-type, bad-return]
+  return tuple(is_int_indexing), tuple(slice_indexers), tuple(int_indexers)  # pyrefly: ignore [bad-return]
 
 def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
@@ -206,7 +206,7 @@ class NDIndexer(state_types.Transform):
     # We treat refs differently from scalars and arrays, because refs can have
     # a dynamic shape, making it impossible to statically determine the
     # broadcasted shape in the presence of other non-slice indexers.
-    from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
+    from jax._src.state import types as state_types
     if ref_indexers := [
         i
         for i in flat_other_indexers
@@ -248,9 +248,8 @@ class NDIndexer(state_types.Transform):
       # The local import avoids a circular dependency between primitives
       # and this module.
       from jax._src.state import primitives as sp  # pyrefly: ignore[missing-module-attribute]
-
       flat_other_indexers = [
-          sp.broadcast_to(i, indexer_shape) for i in flat_other_indexers  # pyrefly: ignore[bad-argument-type]
+          sp.broadcast_to(i, indexer_shape) for i in flat_other_indexers
       ]
       other_indexers = tree_util.tree_unflatten(
           other_indexers_tree, flat_other_indexers

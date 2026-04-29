@@ -18,7 +18,7 @@ import io
 from typing import Any
 
 try:
-  import cloudpickle  # pyrefly: ignore[missing-import]
+  import cloudpickle
 except ImportError:
   cloudpickle = None
 

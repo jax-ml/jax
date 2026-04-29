@@ -644,7 +644,7 @@ def _load_lowering_rule(
       raise NotImplementedError("Get does not support masked scalar loads")
     return memref.load(ref, starts)
 
-  if not ctx.lowering_context.needs_layout_passes:  # pyrefly: ignore[missing-attribute]
+  if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Get", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
@@ -729,7 +729,7 @@ def _store_lowering_rule(
     memref.store(val, ref, starts)
     return old_val
 
-  if not ctx.lowering_context.needs_layout_passes:  # pyrefly: ignore[missing-attribute]
+  if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Swap", out_aval)
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
