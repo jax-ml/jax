@@ -1965,23 +1965,25 @@ def _memref_transpose_op_lowering_rule(
   in_transforms = inference_utils.in_transforms(op)[0]
   unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
-  if in_transformed_ty.rank == op.in_.type.rank:
-    new_permutation = op.permutation
-  elif in_transformed_ty.rank == 4:
-    if op.permutation == _permutation_to_affine_map_attr([0, 1]):
-      new_permutation = _permutation_to_affine_map_attr([0, 1, 2, 3])
-    elif op.permutation == _permutation_to_affine_map_attr([1, 0]):
-      new_permutation = _permutation_to_affine_map_attr([1, 0, 3, 2])
-    else:
-      raise NotImplementedError(f"Unsupported permutation={op.permutation}.")
-  else:
-    raise NotImplementedError(
-        "TransposeOp only supports transposing 4D tiled memrefs and untiled"
-        " memrefs."
-    )
-
+  permutation = [
+      ir.AffineDimExpr(e).position
+      for e in op.permutation.value.results
+  ]
   out_transforms = inference_utils.out_transforms(op)[0]
   _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
+  if not transforms:
+    new_permutation = op.permutation
+  else:
+    [transform] = transforms
+    if not isinstance(transform, lc.TileTransform):
+      raise ValueError(f"Supporting only tile transform, got: {transform}.")
+    tiling_len = in_transformed_ty.rank - len(permutation)
+    tiling_offset = len(permutation) - tiling_len
+    assert all(dim >= tiling_offset for dim in permutation[-tiling_len :])
+    new_permutation = permutation + [x + tiling_len for x in permutation[-tiling_len:]]
+    new_permutation = _permutation_to_affine_map_attr(new_permutation)
+
+  out_transforms = inference_utils.out_transforms(op)[0]
   new_transpose_op = memref.TransposeOp(
       transform_type(ir.MemRefType(op.result.type), transforms),
       unwrapped_in_ref,
