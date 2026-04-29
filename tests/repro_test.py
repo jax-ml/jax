@@ -2584,7 +2584,30 @@ class ReproTest(jtu.JaxTestCase):
       return y
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    self.collect_and_check(f, x)
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(f, x)
+
+  def test_pallas_run_scoped(self):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        x_ref, y_ref = refs
+        @pl.core_map(mesh, interpret=True)
+        def _():
+          def scoped_body(scratch_ref):
+            scratch_ref[...] = x_ref[...] + 1
+            y_ref[...] = scratch_ref[...]
+          pl.run_scoped(scoped_body,
+                        pltpu.VMEM((8, 128), jnp.int32))
+      _, y = pl.run_state(inner)((x, y))
+      return y
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(f, x)
 
 
 if __name__ == '__main__':
