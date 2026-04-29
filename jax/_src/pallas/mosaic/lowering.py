@@ -215,6 +215,8 @@ class LoweringContext:
   backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
   lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp]
+  # Accumulator offsets for each MXU, in units of MXU entries.
+  accumulator_offsets: list[int]
   dynamic_shape_env: LoweringDynamicShapeEnv | None = None
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
@@ -256,6 +258,37 @@ class LoweringContext:
       raise ValueError(f"Invalid axis {axis} for num_programs")
     return tpu.iteration_bound(i)
 
+  def alloc_accumulator(self, aval: state.AbstractRef) -> AccRef:
+    assert isinstance(aval.memory_space, tpu_core.AccMemorySpace)
+    mxu_id = aval.memory_space.mxu_id
+    assert 0 <= mxu_id < len(self.accumulator_offsets)
+    base_entry = self.accumulator_offsets[mxu_id]
+    num_rows = math.prod(aval.shape[:-1])
+    info = tpu_info.get_tpu_info()
+    assert num_rows % info.num_sublanes == 0
+    assert aval.shape[-1] == info.mxu_column_size
+    num_entries = num_rows // info.num_sublanes
+    if info.num_accumulators < base_entry + num_entries:
+      raise ValueError(
+          f"Accumulator space overflow while attempting to allocate ref of "
+          f"shape {aval.shape} at offset {base_entry} on MXU "
+          f"{mxu_id}. The shape requires {num_entries} entries, but only "
+          f"{info.num_accumulators - base_entry} are available. "
+          "This is expected behavior when too many accumulators are live at the "
+          "same time. If you think this shouldn't happen (i.e. you have tried "
+          "to deallocate accumulators that are no longer in use), please "
+          "report a bug at "
+          "https://github.com/google/jax/issues/new?assignees=bchetioui"
+      )
+    self.accumulator_offsets[mxu_id] += num_entries
+    vregs_per_entry = info.mxu_column_size // info.num_lanes
+    return AccRef(
+        base_address=base_entry * vregs_per_entry,
+        shape=aval.shape,
+        dtype=aval.dtype,
+        mxu_id=mxu_id,
+    )
+
 
 @dataclasses.dataclass
 class PipelinedLoweringContext(LoweringContext):
@@ -291,6 +324,7 @@ class PipelinedLoweringContext(LoweringContext):
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
         dynamic_shape_env=dynamic_shape_env,
@@ -335,6 +369,7 @@ class UnpipelinedLoweringContext(LoweringContext):
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=lambda x: x,
+        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus,
         needs_layout_passes=needs_layout_passes,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
@@ -451,14 +486,15 @@ def _emit_pallas_lowering_rule_as_fun(
     outs = rule(sub_ctx, *rule_args, **params)
 
     flat_outs = list(outs) if primitive.multiple_results else [outs]
-    flat_outs = [_ensure_mlir_value(x, aval)
+    flat_outs = [_ensure_valid_argument(x, aval)
                  for x, aval in zip(flat_outs, rule_context.avals_out)]
 
     if any(not isinstance(x, ir.Value) for x in flat_outs):
       # TODO(phawkins): this is probably from KeyScalarBundle primarily. Handle
       # this case and remove the exception.
       raise UncacheablePrimitiveError("Lowering rule returned non-ir.Value")
-    return flat_outs
+    # Pyrefly can't tell that flat_outs is a list[ir.Value].
+    return flat_outs  # pyrefly: ignore[bad-return]
 
   return _emit_detached_func(func_name, input_types, output_types, body_builder)
 
@@ -1557,6 +1593,7 @@ def lower_jaxpr_to_transform_func(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         lowering_cache=lowering_cache,
         dynamic_shape_env=dynamic_shape_env,
+        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -1701,7 +1738,7 @@ def _compute_name_stack_updates(
 
 
 def jaxpr_subcomp(
-    ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value
+    ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value | AccRef
 ) -> list[ir.Value]:
   assert not jaxpr.constvars
   env = {}
@@ -1721,7 +1758,7 @@ def jaxpr_subcomp(
     return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
 
   def write_env(var: jax_core.Var, val):
-    is_valid_type = isinstance(val, (ir.Value, KeyScalarBundle))
+    is_valid_type = isinstance(val, (ir.Value, KeyScalarBundle, AccRef))
     assert is_valid_type, type(val)
     env[var] = val
 
@@ -1744,7 +1781,7 @@ def jaxpr_subcomp(
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
         if (eqn.primitive, ctx.kernel_type) not in skip_mlir_conversions:
           invals = [
-              _ensure_mlir_value(x, cast(ShapedAbstractValue, v.aval))
+              _ensure_valid_argument(x, cast(ShapedAbstractValue, v.aval))
               for x, v in zip(invals, eqn.invars)
           ]
         avals_in = cast(tuple[ShapedAbstractValue, ...],
@@ -1767,9 +1804,15 @@ def jaxpr_subcomp(
         cache_key = None
         rule_context = None
 
-        # TODO(phawkins): allow KeyScalarBundle here as well as ir.Value.
+        def is_acc_aval(aval):
+          return (
+              isinstance(aval, state.AbstractRef) and
+              isinstance(aval.memory_space, tpu_core.AccMemorySpace)
+          )
+        # TODO(phawkins): allow KeyScalarBundle/AccRef here as well as ir.Value.
         can_cache = (eqn.primitive not in _uncacheable_primitives and
-                     all(isinstance(x, ir.Value) for x in invals))
+                     all(isinstance(x, ir.Value) for x in invals) and
+                     not any(is_acc_aval(o) for o in avals_out))
         if can_cache:
           grid_arity = (
               len(ctx.user_grid_indices)
@@ -1808,7 +1851,7 @@ def jaxpr_subcomp(
               cache_entry = _emit_pallas_lowering_rule_as_fun(
                   ctx, eqn.primitive,
                   lowering_rules[ctx.kernel_type][eqn.primitive],
-                  rule_context, invals, **eqn.params
+                  rule_context, cast(list[ir.Value], invals), **eqn.params
               )
               if ctx.dynamic_shape_env is not None:
                 cache_key = dataclasses.replace(
@@ -1823,7 +1866,8 @@ def jaxpr_subcomp(
           call_args = []
           if eqn.primitive in _primitives_needing_grid and ctx.user_grid_indices is not None:
             call_args.extend(ctx.user_grid_indices)
-          call_args.extend(invals)
+          assert all(isinstance(x, ir.Value) for x in invals)
+          call_args.extend(invals)  # pyrefly: ignore[bad-argument-type]
           outs = jax_mlir_ext.inlined_func_call(
             cache_entry.operation, call_args)
 
@@ -1875,11 +1919,8 @@ def jaxpr_subcomp(
   return outvals
 
 
-def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> Any:
+def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> ir.Value:
   if isinstance(val, ir.Value):
-    return val
-  if isinstance(val, KeyScalarBundle):
-    # TODO(slebedev): Drop this branch and change the return type to ir.Value.
     return val
   elif isinstance(val, (np.generic, np.ndarray, int, float)):
     return ir_constant(val, _dtype_to_ir_type(aval.dtype))
@@ -1887,6 +1928,14 @@ def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> Any:
     raise RuntimeError(
         f"Unsupported argument to a JAX primitive of type: {type(val)}"
     )
+
+
+def _ensure_valid_argument(
+    val: object, aval: ShapedAbstractValue
+) -> ir.Value | AccRef | KeyScalarBundle:
+  if isinstance(val, (AccRef, KeyScalarBundle)):
+    return val
+  return _ensure_mlir_value(val, aval)
 
 
 @register_lowering_rule(state_primitives.get_p, ensure_mlir_values=False)
@@ -1918,6 +1967,9 @@ def _swap_lowering_rule(
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[2:])
   # Call _masked_swap_lowering_rule (since it's more general)
   ref_aval, val_aval, *_ = ctx.avals_in
+  assert isinstance(ref_aval, state.AbstractRef)
+  if isinstance(ref_aval.memory_space, tpu_core.AccMemorySpace):
+    raise ValueError("Storing into an accumulator is not supported.")
   args_flat, args_tree = tree_util.tree_flatten((ref, indexers, val, None))
   avals_flat = tree_util.tree_leaves(
       (ref_aval, indexers_avals, val_aval, None)
@@ -2224,6 +2276,11 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   )
   if mask is not None:
     raise NotImplementedError
+  if isinstance(ref_aval.memory_space, tpu_core.AccMemorySpace):
+    raise ValueError(
+        "Loading from an accumulator is not supported. Use `matmul_pop` "
+        "instead, which will additionally zero out the accumulator."
+    )
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
@@ -4136,8 +4193,8 @@ def _scan_lowering_rule(
     args_avals = args_avals[1:]
   else:
     loop_index_start = 0
-  consts = map(_ensure_mlir_value, consts, consts_avals)
-  args = map(_ensure_mlir_value, args, args_avals)
+  consts = map(_ensure_valid_argument, consts, consts_avals)
+  args = map(_ensure_valid_argument, args, args_avals)
   out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr_body, loop_index_start, length,
       consts, *args, has_loop_index=has_loop_index,
@@ -4600,9 +4657,11 @@ def _poison_memref(ref: ir.Value):
 
 def _alloc_value(
     aval: jax_core.AbstractValue | ShapedAbstractValue, *, ctx: LoweringRuleContext
-) -> ir.Value:
+) -> ir.Value | AccRef:
   if isinstance(aval, state.AbstractRef):
-    if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
+    if isinstance(aval.memory_space, tpu_core.AccMemorySpace):
+      return ctx.lowering_context.alloc_accumulator(aval)
+    elif jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
       assert aval.memory_space == SEMAPHORE
       memref_type = ctx.aval_to_ir_type(aval, memory_space=SEMAPHORE)
       return tpu.sem_alloc(memref_type)
@@ -4633,6 +4692,7 @@ def _run_scoped_lowering_rule(
   in_avals = [v.aval for v in jaxpr.invars]
   with ctx.lowering_context.grid_name_context():
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  old_accumulator_offsets = ctx.lowering_context.accumulator_offsets[:]
   with ir.InsertionPoint(region.body):
     args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
@@ -4644,6 +4704,7 @@ def _run_scoped_lowering_rule(
     )
     out = jaxpr_subcomp(lowering_ctx, jaxpr, *consts, *args)
     tpu.yield_(out)
+  ctx.lowering_context.accumulator_offsets = old_accumulator_offsets
   return region.results
 
 
@@ -5399,38 +5460,55 @@ def _matmul_push_rhs_lowering_rule(
   return []
 
 
+@dataclasses.dataclass(frozen=True)
+class AccRef:
+  # The base address of an accumulator reference is an offset in units of
+  # vregs from the start of the MXU's accumulator memory space.
+  base_address: int
+  shape: tuple[int, ...]
+  dtype: jnp.dtype
+  mxu_id: int
+
+  def __post_init__(self):
+    tpu_core.check_accumulator_ref(self.shape, self.dtype, self.mxu_id)
+
+
 @register_lowering_rule(tpu_primitives.matmul_acc_lhs_p)
 def _matmul_acc_lhs_lowering_rule(
     ctx: LoweringRuleContext,
+    acc: AccRef,
     lhs: ir.Value,
-    *,
-    acc_addr: int,
-    mxu_index: int,
+    *flat_acc_transforms,
     load_staged_rhs: int | None,
+    acc_transforms_tree,
 ):
   del ctx
+  acc_transforms = jax.tree.unflatten(acc_transforms_tree, flat_acc_transforms)
+  if acc_transforms:
+    raise NotImplementedError("Transforms not supported for matmul_acc_lhs.")
   staged_rhs_kwarg: dict[str, Any] = {}
   if load_staged_rhs is not None:
     staged_rhs_kwarg = {"load_staged_rhs": load_staged_rhs}
-  tpu.matmul_acc_lhs(acc_addr, lhs, mxu_index, **staged_rhs_kwarg)
+  tpu.matmul_acc_lhs(acc.base_address, lhs, acc.mxu_id, **staged_rhs_kwarg)
   return []
 
 
 @register_lowering_rule(tpu_primitives.matmul_pop_p)
 def _matmul_pop_lowering_rule(
     ctx: LoweringRuleContext,
-    *,
-    acc_addr: int,
-    mxu_index: int,
-    shape: tuple[int, int],
-    dtype: jax.typing.DTypeLike,
+    acc: AccRef,
+    *flat_acc_transforms,
+    acc_transforms_tree,
 ):
+  acc_transforms = jax.tree.unflatten(acc_transforms_tree, flat_acc_transforms)
+  if acc_transforms:
+    raise NotImplementedError("Transforms not supported for matmul_pop.")
   return tpu.matmul_pop(
       ir.VectorType.get(
-          ctx.lowering_context.dynamic_shape_replacement_fn(shape),
-          _dtype_to_ir_type(dtype)),
-      acc_addr,
-      mxu_index,
+          ctx.lowering_context.dynamic_shape_replacement_fn(acc.shape),
+          _dtype_to_ir_type(acc.dtype)),
+      acc.base_address,
+      acc.mxu_id,
   )
 
 
