@@ -1483,6 +1483,15 @@ LogicalResult EnqueueDMAOp::verify() {
           "Non-DMA semaphores are not supported for DMAs involving SMEM");
     }
   }
+  if (!is_remote && issuing_core == CoreType::kScVectorSubcore) {
+    if ((HasMemorySpace(source_ty, MemorySpace::kHbm) &&
+         HasMemorySpace(target_ty, MemorySpace::kSmem)) ||
+        (HasMemorySpace(source_ty, MemorySpace::kSmem) &&
+         HasMemorySpace(target_ty, MemorySpace::kHbm))) {
+      // TODO(b/502187042): add software simulation for this.
+      return emitOpError("HBM/SMEM simple DMA is not supported yet.");
+    }
+  }
   return success();
 }
 
