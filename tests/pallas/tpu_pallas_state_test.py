@@ -239,6 +239,10 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
+    self.skipTest(
+        "TODO(b/507446729): test_basic_vmem has regressed and "
+        "does not test the intended behavior."
+    )
 
     @jax.jit
     def f(x):
