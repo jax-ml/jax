@@ -35,6 +35,7 @@ _TPU_V5P = "TPU v5p"
 _TPU_V6_LITE = "TPU v6 lite"
 _TPU_7X = "TPU7x"
 _TPU_7 = "TPU7"
+_TPU_8I = "TPU8i"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -100,7 +101,7 @@ def _tpu_v2_v3_create_device_mesh(
 
 # TODO(b/303712469): Unit test these handler functions.
 # Creates a physical ring 0->1->3->2 if on v4i.
-def _v4i_create_device_mesh(
+def _v4i_v8i_create_device_mesh(
     mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
 ) -> np.ndarray | None:
   if len(devices) == 4:
@@ -235,12 +236,13 @@ device_kind_handler_dict: dict[
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
-    _TPU_V4_LITE: _v4i_create_device_mesh,
+    _TPU_V4_LITE: _v4i_v8i_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
     _TPU_V6_LITE: _v5e_create_device_mesh,
     _TPU_7X: _7x_create_device_mesh,
     _TPU_7: _7x_create_device_mesh,
+    _TPU_8I: _v4i_v8i_create_device_mesh,
 }
 
 
@@ -703,7 +705,7 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
           coords[1] - min_coords[1],
           d.core_on_chip - min_cores_per_chip,
       ] = d
-  elif (device_kind in (_TPU_7X,_TPU_7) or
+  elif (device_kind in (_TPU_7X, _TPU_7, _TPU_8I) or
         (device_kind in (_TPU_V5P,) and cores_per_chip == 2)):
     out = np.empty(dims + (cores_per_chip,), dtype=object)
     for d in jax_devices:
