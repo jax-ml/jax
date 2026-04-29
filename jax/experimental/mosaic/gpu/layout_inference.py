@@ -118,7 +118,7 @@ class ValueSite:
     assert isinstance(ty, ir.MemRefType)
     if utils.is_tmem_ref(ty):
       return cs.MemorySpace.TMEM
-    elif utils.is_smem_ref(ty):
+    elif utils.is_smem_ref(ty) or utils.is_cluster_smem_ref(ty):
       return cs.MemorySpace.SMEM
     raise ValueError(f"Unsupported memory space for: {ty}")
 
@@ -672,7 +672,9 @@ def is_vector(v: ir.Value) -> bool:
 
 
 def _is_smem_ref(v: ir.Value) -> bool:
-  return isinstance(v.type, ir.MemRefType) and utils.is_smem_ref(v)
+  return isinstance(v.type, ir.MemRefType) and (
+      utils.is_smem_ref(v) or utils.is_cluster_smem_ref(v)
+  )
 
 
 def _is_tmem_ref(v: ir.Value) -> bool:
@@ -759,7 +761,7 @@ def _vector_load_constraint_system(
     optimized = cs.OptimizedTransferKind.UNOPTIMIZED
 
   # SMEM
-  if utils.is_smem_ref(op.source):
+  if _is_smem_ref(op.source):
     source = ValueSite(op, VariableType.OPERAND, 0)
     source_var = ctx.producer_ref(source)
     value_sites_for_variable[source_var] = [source]
@@ -812,7 +814,7 @@ def _vector_store_constraint_system(
 
   # SMEM
   constraints = []
-  if utils.is_smem_ref(op.destination):
+  if _is_smem_ref(op.destination):
     dest = ValueSite(op, VariableType.OPERAND, 1)
     dest_var = ctx.producer_ref(dest)
     value_sites_for_variable[dest_var] = [dest]
@@ -1778,6 +1780,20 @@ def _slice_smem_constraint_system(
   else:
     result_variable = cs.Variable(result)
   return cs.ConstraintSystem(), {result_variable: [result]}
+
+
+# TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
+if hasattr(mgpu, "GetClusterRefOp"):
+
+  @_add_constraint_system_derivation_rule(mgpu.GetClusterRefOp)
+  def _get_cluster_ref_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.GetClusterRefOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    source = ValueSite(op, VariableType.OPERAND, 0)
+    var_source_dest = ctx.producer_ref(source)
+    dest = ValueSite(op, VariableType.RESULT, 0)
+    return cs.ConstraintSystem(), {var_source_dest: [source, dest]}
 
 
 @_add_constraint_system_derivation_rule(memref.SubViewOp)

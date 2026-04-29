@@ -1189,6 +1189,22 @@ void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
   patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
 }
 
+llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
+    mlir::MLIRContext* context, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  auto memref_type = mlir::cast<mlir::MemRefType>(operands[0].getType());
+  auto result_type = mlir::MemRefType::get(
+      memref_type.getShape(), memref_type.getElementType(),
+      memref_type.getLayout(), SmemClusterAttr::get(context));
+  inferredReturnTypes.assign({result_type});
+  return mlir::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

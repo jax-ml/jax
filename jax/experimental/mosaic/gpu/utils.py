@@ -2087,6 +2087,11 @@ def tmem() -> ir.Attribute:
   return ir.Attribute.parse("#mosaic_gpu.tmem")
 
 
+def smem_cluster() -> ir.Attribute:
+  """Returns the attribute for the cluster SMEM memory space."""
+  return ir.Attribute.parse("#mosaic_gpu.smem_cluster")
+
+
 def is_smem_ref(ref: ir.Value | ir.Type) -> bool:
   """Returns true if the input mem ref or memref type points to SMEM.
 
@@ -2111,6 +2116,16 @@ def is_tmem_ref(ref: ir.Value | ir.Type) -> bool:
     raise ValueError(f"Expected a memref type but got {ref}")
   ref = ir.MemRefType(ref)
   return ref.memory_space is not None and ref.memory_space == tmem()
+
+
+def is_cluster_smem_ref(ref: ir.Value | ir.Type) -> bool:
+  """Returns true if the input mem ref or memref type points to cluster SMEM."""
+  if isinstance(ref, ir.Value):
+    ref = ref.type
+  if not isinstance(ref, ir.MemRefType):
+    raise ValueError(f"Expected a memref type but got {ref}")
+  ref = ir.MemRefType(ref)
+  return ref.memory_space is not None and ref.memory_space == smem_cluster()
 
 
 def try_cluster_cancel(
@@ -2245,11 +2260,15 @@ def get_cluster_ref(
   # We replace the offset in the ref type by 0, because memref_ptr always
   # folds the offset into the pointer.
   ref_ty = ir.MemRefType(ref.type)
-  strides, _ = ref_ty.get_strides_and_offset()
+  strides, offset = ref_ty.get_strides_and_offset()
+  if offset != 0:
+    new_layout = ir.StridedLayoutAttr.get(0, strides)
+  else:
+    new_layout = ref_ty.layout
   result_type = ir.MemRefType.get(
       ref_ty.shape,
       ref_ty.element_type,
-      ir.StridedLayoutAttr.get(0, strides),
+      new_layout,
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
   if not is_smem_ref(ref_ty):

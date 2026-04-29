@@ -747,6 +747,10 @@ def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
   let summary = "Tensor memory space.";
 }
 
+def MosaicGPU_SmemClusterAttr : MosaicGPU_Attr<"SmemCluster", "smem_cluster"> {
+  let summary = "Cluster shared memory space.";
+}
+
 def MosaicGPU_TcGen05MMASupportedABType : AnyTypeOf<[F16, F32, BF16, TF32, F8E4M3FN, F8E5M2, F6E2M3FN, F6E3M2FN, F4E2M1FN, I8],
     "A type supported by the `a` and `b` operands of the `tcgen05.mma` instruction">;
 
@@ -1124,6 +1128,22 @@ def MosaicGPU_BroadcastedIotaOp : Op<MosaicGPU_Dialect, "broadcasted_iota", []> 
   let results = (outs AnyFixedVectorOfNonZeroRank);
 
   let hasVerifier = 1;
+}
+
+def MosaicGPU_GetClusterRefOp : Op<MosaicGPU_Dialect, "get_cluster_ref", [Pure, AttrSizedOperandSegments, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Maps a memref to a peer block in the cluster.";
+  let description = [{
+    Maps a memref to a peer block in the cluster along specified dimensions.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Optional<I32>:$x,
+    Optional<I32>:$y,
+    Optional<I32>:$z
+  );
+
+  let results = (outs AnyMemRef:$result);
 }
 
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

@@ -1834,14 +1834,16 @@ def _handle_transforms(
         new_transforms.append(t)
         new_transforms_avals.append(t_aval)
   if cluster_dim is not None:
-    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-      raise NotImplementedError(
-          "cluster_ref not supported under WG semantics yet."
-      )
     assert cluster_idx is not None
-    transformed_ref = mgpu.get_cluster_ref(
-        transformed_ref, cluster_dim, cluster_idx, generic=False
-    )
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      i32 = ir.IntegerType.get_signless(32)
+      kwargs = dict(x=None, y=None, z=None)
+      kwargs[cluster_dim.name] = arith_dialect.index_cast(i32, cluster_idx)
+      transformed_ref = mgpu.dialect.get_cluster_ref(transformed_ref, **kwargs)
+    else:
+      transformed_ref = mgpu.get_cluster_ref(
+          transformed_ref, cluster_dim, cluster_idx, generic=False
+      )
   if peer_device_id is not None:
     assert not is_multicast
     if not allow_peer_refs:

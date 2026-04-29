@@ -756,6 +756,25 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(op, [wgmma_layout])
     self.checkOutLayouts(op, [wgmma_row_layout])
 
+  def test_get_cluster_ref_propagates_transforms(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
+      [ref] = undefs(ref_ty)
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 32)),
+          mgpu.dialect.SwizzleTransformAttr.get(64),
+      ])
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      c0 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      get_cluster_ref = mgpu.dialect.get_cluster_ref(ref, x=c0).owner
+    mgpu.infer_layout(self.module)
+    [in_transforms] = inference_utils.in_transforms(get_cluster_ref)
+    self.assertEqual(in_transforms, transforms)
+    [out_transforms] = inference_utils.out_transforms(get_cluster_ref)
+    self.assertEqual(out_transforms, transforms)
+
   def test_constraint_extraction_works_correctly(self):
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):

@@ -3342,7 +3342,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters("x", "y")
   def test_cluster_ref_read(self, axis_name):
-    self.skip_if_wg_semantics()
+    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
+    if not hasattr(mgpu.dialect, "GetClusterRefOp"):
+      self.skip_if_wg_semantics()
 
     def kernel(src_ref, dst_ref, scratch_ref, copy_barrier, cluster_barrier):
       my_idx = lax.axis_index(axis_name)

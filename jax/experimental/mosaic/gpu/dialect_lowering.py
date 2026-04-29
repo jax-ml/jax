@@ -331,6 +331,34 @@ def _optimization_barrier_op_lowering_rule(
   ]
 
 
+# TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
+if hasattr(mgpu, "GetClusterRefOp"):
+  @_register_lowering(mgpu.GetClusterRefOp)
+  def _get_cluster_ref_op_lowering_rule(
+      _: LoweringContext, op: mgpu.GetClusterRefOp,
+  ) -> Sequence[ir.Value]:
+    index = ir.IndexType.get()
+    specified_idxs = [
+        (d, dim) for d, dim in zip((op.x, op.y, op.z), gpu.Dimension)
+        if d is not None
+    ]
+    if len(specified_idxs) != 1:
+      raise ValueError(
+          "Exactly one cluster dimension must be specified, got"
+          f" {len(specified_idxs)}"
+      )
+    [(idx, dim)] = specified_idxs
+    [in_transforms] = inference_utils.in_transforms(op)
+    result = utils.get_cluster_ref(
+        unwrap_transformed_memref(op.source, in_transforms),
+        dim,
+        arith.index_cast(index, idx),
+        generic=False,
+    )
+    [out_transforms] = inference_utils.out_transforms(op)
+    return [wrap_transformed_memref(result, op.result.type, out_transforms)]
+
+
 @_register_lowering(arith.ConstantOp)
 def _arith_constant_op_lowering_rule(
     _: LoweringContext, op: arith.ConstantOp
@@ -388,7 +416,7 @@ def _vector_load_op_lowering_rule(
   is_signed = _default_is_signed(element_type)
 
   orig_ref_ty = op.source.type
-  if utils.is_smem_ref(orig_ref_ty):
+  if utils.is_smem_ref(orig_ref_ty) or utils.is_cluster_smem_ref(orig_ref_ty):
     [transforms_attr] = inference_utils.in_transforms(op)
     transformed_ref = unwrap_transformed_memref(op.source, transforms_attr)
   else:
@@ -963,8 +991,16 @@ def transform_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[lc.MemRefTransform, ...],
 ) -> ir.MemRefType:
-  if not utils.is_smem_ref(ref_ty):
+  if not (utils.is_smem_ref(ref_ty) or utils.is_cluster_smem_ref(ref_ty)):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
+  if utils.is_cluster_smem_ref(ref_ty):
+    i32 = ir.IntegerType.get_signless(32)
+    ref_ty = ir.MemRefType.get(
+        ref_ty.shape,
+        ref_ty.element_type,
+        ref_ty.layout,
+        memory_space=ir.IntegerAttr.get(i32, 7),
+    )
 
   if not transforms:
     return ref_ty
