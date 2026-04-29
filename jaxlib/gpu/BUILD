@@ -32,6 +32,12 @@ package(
 )
 
 exports_files(srcs = [
+    "aiter_mha_fwd.cc",
+    "aiter_mha_bwd.cc",
+    "aiter_mha_common_utils.cc",
+    "aiter_mha_common_utils.h",
+    "aiter.cc",
+    "aiter.h",
     "blas_handle_pool.cc",
     "blas_handle_pool.h",
     "ffi_wrapper.h",

@@ -365,6 +365,17 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
         """,
   )
 
+  compile_group.add_argument(
+      "--local_aiter_path",
+      type=str,
+      default=os.environ.get("LOCAL_AITER_PATH", ""),
+      help="""
+        Path to a directory containing locally-built AITER shared libraries
+        and headers (libs/libmha_fwd.so, libs/libmha_bwd.so, include/*.h).
+        If not set, Bazel downloads the pre-built AITER wheel from GitHub.
+        """,
+  )
+
 async def main():
   parser = argparse.ArgumentParser(
       description=r"""
@@ -534,6 +545,10 @@ async def main():
   if args.local_xla_path:
     logging.debug("Local XLA path: %s", args.local_xla_path)
     wheel_build_command_base.append(f"--override_repository=xla=\"{args.local_xla_path}\"")
+
+  if args.local_aiter_path:
+    logging.debug("Local AITER libs path: %s", args.local_aiter_path)
+    wheel_build_command_base.append(f"--repo_env=LOCAL_AITER_PATH=\"{args.local_aiter_path}\"")
 
   if args.target_cpu:
     logging.debug("Target CPU: %s", args.target_cpu)

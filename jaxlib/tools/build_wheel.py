@@ -206,6 +206,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/gpu_rnn.py",
           f"{source_file_prefix}jaxlib/gpu_triton.py",
           f"{source_file_prefix}jaxlib/gpu_common_utils.py",
+          f"{source_file_prefix}jaxlib/gpu_aiter.py",
           f"{source_file_prefix}jaxlib/gpu_solver.py",
           f"{source_file_prefix}jaxlib/gpu_sparse.py",
           f"{source_file_prefix}jaxlib/plugin_support.py",

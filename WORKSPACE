@@ -13,6 +13,10 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
+load("//third_party/aiter:workspace.bzl", "aiter_mha_whl")
+
+aiter_mha_whl()
+
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
