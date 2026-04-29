@@ -2131,6 +2131,25 @@ class DialectLoweringTest(MosaicGpuTest):
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
 
+  def test_memref_transforms_with_transpose_nd(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_in = ir.MemRefType.get(
+          (64, 128, 256),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      ref = memref.alloc(ty_in, [], [])
+
+      ref = mgpu_utils.memref_transpose(ref, (0, 2, 1))
+
+      ty_transformed = lowering.transform_type(
+          ir.MemRefType(ref.type),
+          (mgpu.TileTransform(tiling=(16, 32)),)
+      )
+      self.assertEqual(ty_transformed.shape, [64, 16, 4, 16, 32])
+      strides, _ = ty_transformed.get_strides_and_offset()
+      self.assertEqual(strides, [32768, 512, 8192, 1, 16])
+
   def test_optimized_gmem_transfers_are_not_supported(self):
     def body(ctx, input, output, scratch):
       del ctx, output, scratch
