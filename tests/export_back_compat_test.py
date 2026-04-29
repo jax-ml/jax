@@ -240,9 +240,9 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
     # Select test data based on platform
-    if jtu.test_device_matches(["rocm"]):
+    if jtu.is_device_rocm():
       info = rocm_cholesky_solver_potrf.data_2026_02_05[dtype_name]
-    elif jtu.test_device_matches(["cuda"]):
+    elif jtu.is_device_cuda():
       info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
     else:
       self.skipTest("Unsupported platform")
@@ -378,9 +378,9 @@ class CompatTest(bctu.CompatTestBase):
     operand = CompatTest.eigh_input((size, size), dtype)
 
     # Select appropriate test data based on platform
-    if jtu.test_device_matches(["rocm"]):
+    if jtu.is_device_rocm():
       data = self.load_testdata(gpu_eigh_solver_syev.data_2026_02_16[dtype_name])
-    elif jtu.test_device_matches(["cuda"]):
+    elif jtu.is_device_cuda():
       data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
     else:
       self.skipTest("Unsupported platform")
@@ -484,10 +484,10 @@ class CompatTest(bctu.CompatTestBase):
     func = lambda: CompatTest.qr_harness(shape, dtype)
 
     platform_data = None
-    if jtu.test_device_matches(["cuda"]):
+    if jtu.is_device_cuda():
       platform_data = \
           cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name]
-    elif jtu.test_device_matches(["rocm"]):
+    elif jtu.is_device_rocm():
       platform_data = \
           rocm_qr_hipsolver_geqrf.data_2026_02_04[dtype_name]
     else:
@@ -849,10 +849,10 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
     platform_data = None
-    if jtu.test_device_matches(["cuda"]):
+    if jtu.is_device_cuda():
       platform_data = \
           cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
-    elif jtu.test_device_matches(["rocm"]):
+    elif jtu.is_device_rocm():
       platform_data = \
           rocm_tridiagonal_hipsolver_sytrd.data_2026_02_04[dtype_name]
     else:
@@ -966,7 +966,7 @@ class CompatTest(bctu.CompatTestBase):
                ["annotate_device_placement"]),
               (annotate_data_placement.data_2025_06_30_tpu, None),
               (annotate_data_placement.data_2026_03_24_tpu, None)]
-    elif jtu.test_device_matches(["rocm"]):
+    elif jtu.is_device_rocm():
       # ROCm test data - currently only have one version (Feb 2026)
       data = [(annotate_data_placement.data_2026_02_04_rocm,
                ["annotate_device_placement"])]
