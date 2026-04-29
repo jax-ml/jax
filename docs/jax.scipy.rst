@@ -8,7 +8,7 @@ jax.scipy.cluster
 
 .. autosummary::
    :toctree: _autosummary
-   
+
    vq
 
 jax.scipy.fft
@@ -122,6 +122,7 @@ jax.scipy.signal
    csd
    detrend
    istft
+   savgol_coeffs
    stft
    welch
 
