@@ -79,14 +79,9 @@ def ptr_as_memref(
     raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  ptr_ty = "ptr" if ptr_memory_space is None else f"ptr<{ptr_memory_space}>"
-  if rank > 0:
-    desc_ty = ir.Type.parse(
-        f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
-        f" array<{rank} x i64>)>"
-    )
-  else:
-    desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
+  ptr_ty = llvm.PointerType.get(ptr_memory_space)
+  arr_ty = llvm.ArrayType.get(i64, rank)
+  desc_ty = llvm.StructType.get_literal([ptr_ty, ptr_ty, i64, arr_ty, arr_ty])
   desc = llvm.UndefOp(desc_ty).result
   desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
@@ -322,9 +317,7 @@ def multimem_load_reduce(
   if vector_i32_length == 1:
     asm_out_ty = i32
   else:
-    asm_out_ty = ir.Type.parse(
-        f"!llvm.struct<({','.join(['i32'] * vector_i32_length)})>"
-    )
+    asm_out_ty = llvm.StructType.get_literal([i32] * vector_i32_length)
   out_reg_struct = llvm.inline_asm(
       asm_out_ty,
       [ptr],
@@ -1269,7 +1262,7 @@ class DialectBarrierRef:
           f"!mosaic_gpu.barrier, but got {barrier.type}"
       )
 
-    ptr_type = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
+    ptr_type = llvm.PointerType.get(WORKGROUP_NVPTX_ADDRESS_SPACE)
     addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     assert isinstance(addr, ir.Value)
     return cls(
@@ -1707,25 +1700,19 @@ def warp_tree_reduce(value, op, group_size):
   return result
 
 
-def memref_ptr(memref_arg, memory_space=None):
+def memref_ptr(memref_arg, memory_space: int | None = None):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
   rank = len(memref_ty.shape)
   # TODO: Read out memory space from memref
-  space = "" if memory_space is None else "<" + str(memory_space) + ">"
-  ptr_ty = ir.Type.parse("!llvm.ptr" + space)
-  if rank == 0:
-    desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
-  else:
-    desc_ty = ir.Type.parse(
-        f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
-        f" array<{rank} x i64>)>"
-    )
+  ptr_ty = llvm.PointerType.get(memory_space)
+  arr_ty = llvm.ArrayType.get(i64, rank)
+  desc_ty = llvm.StructType.get_literal([ptr_ty, ptr_ty, i64, arr_ty, arr_ty])
   desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
   assert isinstance(desc, ir.Value)
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
-
   offset_elems = llvm.extractvalue(i64, desc, [2])
+
   elem_bitwidth = bitwidth(memref_ty.element_type)
   if elem_bitwidth < 8:
     *_, static_offset = memref_ty.get_strides_and_offset()
@@ -2246,11 +2233,11 @@ def get_cluster_ptr(
 ):
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
-  assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
-  mapped_smem_ptr = nvvm.mapa(ir.Type.parse("!llvm.ptr<7>"), ptr, cluster_block)
+  assert ptr.type == llvm.PointerType.get(3), ptr.type
+  mapped_smem_ptr = nvvm.mapa(llvm.PointerType.get(7), ptr, cluster_block)
   if not generic:
     return mapped_smem_ptr
-  return llvm.addrspacecast(ir.Type.parse("!llvm.ptr"), mapped_smem_ptr)
+  return llvm.addrspacecast(llvm.PointerType.get(), mapped_smem_ptr)
 
 
 def get_cluster_ref(

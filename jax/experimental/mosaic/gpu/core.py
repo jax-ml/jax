@@ -813,8 +813,9 @@ def _lower_as_gpu_kernel(
     jax_mesh: mesh_lib.Mesh | None = None,
     base_loc: ir.Location | None = None,
 ):
-  ptr_ty = ir.Type.parse("!llvm.ptr")
-  token_ty = ir.Type.parse("!gpu.async.token")
+  ptr_ty = llvm.PointerType.get()
+  token_ty = gpu.AsyncTokenType.get()
+  i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
 
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
@@ -847,7 +848,7 @@ def _lower_as_gpu_kernel(
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     global_scratch = llvm.GlobalOp(
-        ir.Type.parse("!llvm.array<0 x i8>"),  # We don't know the shape yet.
+        llvm.ArrayType.get(i8, 0),  # We don't know the shape yet.
         "global_scratch",
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
@@ -948,7 +949,7 @@ def _run_serde_pass(
 
 def _declare_runtime_functions():
   """Declares the runtime functions that can be used by the generated code."""
-  ptr_ty = ir.Type.parse("!llvm.ptr")
+  ptr_ty = llvm.PointerType.get()
   i64 = ir.IntegerType.get_signless(64)
   arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
   init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
