@@ -22,7 +22,6 @@ from jax._src import api
 from jax._src import array
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -144,7 +143,6 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     self.assertEqual(out.sharding.spec, jax.sharding.PartitionSpec())
     self.assertEqual(out.sharding.mesh.size, jax.local_device_count())
 
-  @unittest.skipIf(jaxlib_extension_version < 430, "Requires jaxlib_extension_version >= 430")
   @jtu.ignore_warning(category=DeprecationWarning)
   def testShardedArrayIndexing(self):
     """Test that indexing a sharded array directly triggers copy error."""

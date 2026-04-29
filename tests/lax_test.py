@@ -3856,8 +3856,6 @@ class LaxTest(jtu.JaxTestCase):
       jax.jacobian(f)(x, y)
 
   def test_dce_sink_prevents_xla_dce(self):
-    if jaxlib_extension_version < 438:
-      self.skipTest("Requires jaxlib extension version >= 438")
     if jtu.is_cloud_tpu_at_least(2026, 4, 17):
       self.skipTest('Requires nightly libtpu')
 

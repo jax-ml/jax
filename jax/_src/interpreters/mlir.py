@@ -208,8 +208,7 @@ def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
-if jaxlib_extension_version >= 427:
-  ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
+ir_type_handlers[core.AbstractTodo] = lambda x: hlo.FutureType.get([_array_ir_types(x.inner_aval)])
 
 def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
   """Converts a JAX aval to one or more MLIR IR types.
@@ -422,15 +421,7 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   x = np.ascontiguousarray(x)
-  try:
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  except ValueError:
-    # Backwards compatibility fallback for old MLIR versions.
-    # Delete once minimum supported jaxlib version is 0.9.1.
-    if x.dtype != np.bool_:
-      raise
-    x = np.ascontiguousarray(np.packbits(x, bitorder='little'))
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
