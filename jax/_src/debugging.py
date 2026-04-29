@@ -717,7 +717,6 @@ _INSPECT_SHARDING_CALL_NAME = "InspectSharding"
 
 def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                                     callback):
-
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
@@ -732,7 +731,10 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                            am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     mesh = axis_context.mesh
-    devices = axis_context.mesh._flat_devices_tuple
+    devices = axis_context.device_assignment
+    if devices is None:
+      raise AssertionError(
+          'Please file a bug at https://github.com/jax-ml/jax/issues')
   else:
     raise NotImplementedError(type(axis_context))
   assert devices is not None

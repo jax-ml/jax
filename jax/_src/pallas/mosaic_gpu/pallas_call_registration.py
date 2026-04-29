@@ -85,7 +85,7 @@ def pallas_call_lowering(
   lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
       mesh,
-      jax_mesh,
+      jax_mesh,  # type: ignore
       jaxpr,
       gpu_params,
       cost_estimate,
