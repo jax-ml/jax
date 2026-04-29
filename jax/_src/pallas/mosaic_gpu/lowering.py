@@ -1839,7 +1839,7 @@ def _handle_transforms(
       i32 = ir.IntegerType.get_signless(32)
       kwargs = dict(x=None, y=None, z=None)
       kwargs[cluster_dim.name] = arith_dialect.index_cast(i32, cluster_idx)
-      transformed_ref = mgpu.dialect.get_cluster_ref(transformed_ref, **kwargs)
+      transformed_ref = mgpu.dialect.get_cluster_ref(transformed_ref, **kwargs)  # pyrefly: ignore[missing-attribute]
     else:
       transformed_ref = mgpu.get_cluster_ref(
           transformed_ref, cluster_dim, cluster_idx, generic=False
