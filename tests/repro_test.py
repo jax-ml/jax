@@ -2836,6 +2836,15 @@ class ReproTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     self.collect_and_check(f, x)
 
+  def test_pallas_estimate_cost(self):
+    @jax.jit
+    def f(x):
+      cost = pl.estimate_cost(lambda a: a + 1, x)
+      return x + cost.flops
+
+    x = jnp.ones((4, 4), dtype=jnp.int32)
+    self.collect_and_check(f, x)
+
   @jtu.parameterized_filterable(
     kwargs=[dict(with_jit=with_jit,
                 variant=variant)
