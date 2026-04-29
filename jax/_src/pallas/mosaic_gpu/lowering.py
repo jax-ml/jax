@@ -1431,7 +1431,7 @@ def _handle_dtype_bitcast(
   # works on a super restricted set of `memref`s. E.g., it does not work if an
   # offset is specified, which can be the case for our SMEM refs.
   smem = mgpu_utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ref = mgpu_utils.memref_ptr(ref, memory_space=smem)
+  ref = mgpu_utils.memref_ptr(ref)
   return mgpu_utils.ptr_as_memref(ref, result_type, ptr_memory_space=smem)
 
 
