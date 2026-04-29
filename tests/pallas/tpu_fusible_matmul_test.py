@@ -78,6 +78,7 @@ def matmul_kernel(
 class KernelImpl(enum.Enum):
   PALLAS_CALL = enum.auto()
   CORE_MAP = enum.auto()
+  KERNEL = enum.auto()
 
 
 def _fusible_matmul(
@@ -235,10 +236,55 @@ def _fusible_matmul(
         )(x_values_refs, y_values_refs, z_values_refs, out_ref)
       pl.run_scoped(_f,
                     pltpu.VMEM((bm, bn), jnp.float32),
-                    jax.tree.map(lambda t: pltpu.SMEM(t.shape, t.dtype),
-                                 scalar_prefetch_refs))
+                    jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
 
     return jax.tree.map(lambda ref: ref.get(), out_ref)
+
+  elif impl == KernelImpl.KERNEL:
+    def body(x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs,
+             out_ref, acc_vmem_ref, scalar_prefetch_smem_refs):
+      pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
+
+      def block_spec_with_prefetch(bs):
+        if bs is pl.no_block_spec:
+          return pl.BlockSpec()
+        if bs.index_map is None:
+          return bs
+        return bs.replace(
+          index_map=lambda *args: bs.index_map(
+              *args, *scalar_prefetch_smem_refs))
+
+      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
+          x_value_block_specs, y_value_block_specs, z_value_block_specs))
+      z_out_block_spec_ = jax.tree.map(
+          block_spec_with_prefetch, z_out_block_spec)
+      pltpu.emit_pipeline(
+          functools.partial(
+                  matmul_kernel,
+                  *scalar_prefetch_smem_refs,
+                  acc_ref=acc_vmem_ref,
+                  x_fn=x_fn,
+                  y_fn=y_fn,
+                  z_fn=z_fn,
+                  out_dtype=out_dtype),
+          grid=grid,
+          in_specs=in_specs_,
+          out_specs=(z_out_block_spec_,),
+          core_axis_name='core',
+          dimension_semantics=dimension_semantics
+      )(x_values_refs, y_values_refs, z_values_refs, out_ref)
+
+    return pl.kernel(
+        body,
+        out_type=(z_out_type,),
+        mesh=pltpu.create_tensorcore_mesh('core'),
+        scratch_types=[
+            pltpu.VMEM((bm, bn), jnp.float32),
+            jax.tree.map(pltpu.SMEM.like, scalar_prefetch),
+        ],
+        interpret=interpret,
+        debug=debug,
+    )(x_values, y_values, z_values, scalar_prefetch)[0]
 
   else:
     raise ValueError(f'Unsupported impl: {impl}')
@@ -275,10 +321,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0))
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -289,10 +332,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_activation(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0))
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -313,7 +353,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum(self, impl):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5+')
@@ -337,7 +377,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_reduce_sum(x, y), matmul_reduce_sum_ref(x, y), atol=1e-3
     )
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum_broadcast(self, impl):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5+')
@@ -366,10 +406,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=1e-3,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_plus_iota_custom_fusion(self, dtype, impl):
     def make_iota_custom_fusion(shape, dtype):
       @fuser.custom_fusion
@@ -407,10 +444,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_plus_iota(x, y), matmul_plus_iota_ref(x, y), atol=5e-5
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_bias(self, dtype, impl):
     if dtype == 'bfloat16' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('bfloat16 bcast not supported on TPU generations < 5')
@@ -436,10 +470,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5 if dtype == 'float32' else 0.5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_slice(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0))
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -459,10 +490,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_dynamic_slice(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0))
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -482,10 +510,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_slice(x, y, 1), matmul_slice_ref(x, y, 1), atol=5e-5
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_dynamic_slice_bias(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -508,10 +533,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5 if dtype == 'float32' else 0.5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_multi_slice(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -531,10 +553,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_multiple_slices(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -554,10 +573,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_multiple_dynamic_slices(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -579,10 +595,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
             matmul_slice(x, y, i, j), matmul_slice_ref(x, y, i, j), atol=5e-5
         )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_mixed_slices(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -604,16 +617,10 @@ class FusibleMatmulTest(jtu.JaxTestCase):
             matmul_slice(x, y, i, j), matmul_slice_ref(x, y, i, j), atol=5e-5
         )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_multiple_mixed_slices_and_bias(self, dtype, impl):
     if dtype == 'bfloat16' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('bfloat16 bcast not supported on TPU generations < 5')
-    if dtype == 'bfloat16' and impl == KernelImpl.CORE_MAP:
-      self.skipTest('TODO: Work around or fix incompatible shape constraints '
-                    'on emit_pipeline DMA and BlockSpec for bias term.')
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (4, 4, 512, 512), dtype)
     y = jax.random.normal(k1, (4, 2, 3, 512, 512), dtype)
@@ -639,10 +646,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
               atol=5e-5 if dtype == 'float32' else 0.5,
           )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_input_concat_output(self, dtype, impl):
     self.skipTest('select_n does not support more than 3 elements')
     # TODO(sharadmv): fix this test
@@ -671,10 +675,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_input_concat_contract(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -700,10 +701,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_double_concat(self, dtype, impl):
     k0, k1, k2, k3 = jax.random.split(jax.random.key(0), 4)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -732,10 +730,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_slice_concat(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -760,10 +755,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_slice_concat_slice(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -788,10 +780,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_dynamic_slice_concat(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -816,10 +805,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_no_following_ops(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -840,10 +826,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_then_add(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -864,10 +847,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_after_slice(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -888,10 +868,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_before_slice(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -912,10 +889,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_major_dim(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -936,10 +910,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_transpose(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -960,10 +931,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_rhs_transpose_add_transpose(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (128, 256), dtype)
@@ -983,10 +951,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_lhs_transpose(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 512), dtype)
@@ -1007,10 +972,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_lhs_transpose_add(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 512), dtype)
@@ -1031,10 +993,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_out_transpose(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 256), dtype)
@@ -1055,10 +1014,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_out_custom_vjp_fwd(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 256), dtype)
@@ -1091,10 +1047,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_out_custom_vjp_bwd(self, dtype, impl):
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (256, 256), dtype)
@@ -1140,10 +1093,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
-  @parameterized.product(
-      dtype=['float32', 'bfloat16'],
-      impl=[KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP],
-  )
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_out_transpose_mul(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 256), dtype)
@@ -1202,7 +1152,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_bf16_out(self, impl):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('TPU v4+ required')
@@ -1230,7 +1180,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
         atol=0,
     )
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_bf16_activation(self, impl):
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
@@ -1251,7 +1201,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
 
     self.assertAllClose(out, out_ref, atol=0)
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_f32_out_simple(self, impl):
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
@@ -1280,7 +1230,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
       atol = 1e-5
     self.assertAllClose(out, out_ref, atol=atol)
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_f32_out_fused_downcast(self, impl):
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
@@ -1317,7 +1267,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     out = jax.jit(impl)(x, y)
     self.assertArraysEqual(out, out_ref)
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_out_bf16_with_f32_activation(self, impl):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('TPU v4+ required')
@@ -1356,7 +1306,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     out = jax.jit(impl)(x, y)
     self.assertArraysEqual(out, out_ref)
 
-  @parameterized.parameters(KernelImpl.PALLAS_CALL, KernelImpl.CORE_MAP)
+  @parameterized.parameters(KernelImpl)
   def test_matmul_out_bf16_with_bf16_activation(self, impl):
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
