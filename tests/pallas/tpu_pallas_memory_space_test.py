@@ -15,6 +15,8 @@
 """Test TPU-specific uses of Pallas memory space APIs."""
 
 import functools
+import json
+import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -28,6 +30,37 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 P = jax.sharding.PartitionSpec
 partial = functools.partial
+
+
+def _json_object_with_fields(fields):
+  return (
+      r'\{'
+      + ''.join(
+          '(?=[^{}]*' + _json_object_with_a_field(name, value) + ')'
+          for name, value in fields.items()
+      )
+      + r'[^{}]*\}'
+  )
+
+
+def _json_object_with_a_field(field_name, value):
+  return (
+      re.escape(json.dumps(field_name, separators=(',', ':')))
+      + ':'
+      + _json_value_pattern(value)
+  )
+
+
+def _json_value_pattern(value):
+  if isinstance(value, dict):
+    return _json_object_with_fields(value)
+  if isinstance(value, list):
+    return (
+        r'\['
+        + ','.join(_json_value_pattern(entry) for entry in value)
+        + r'\]'
+    )
+  return re.escape(json.dumps(value, separators=(',', ':')))
 
 
 class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
@@ -70,9 +103,18 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     if color is None or memory_space == pltpu.SMEM:
       self.assertIn('"input_memory_space_colors":[]', hlo)
     else:
-      self.assertIn(
-          f'"input_memory_space_colors":[{{"operand_index":"0","color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'input_memory_space_colors',
+              [
+                  {
+                      'color': str(color),
+                      'operand_index': '0',
+                      'shape_index': [],
+                  }
+              ],
+          ),
       )
 
   @parameterized.parameters(
@@ -121,9 +163,12 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     if color is None:
       self.assertIn('"output_memory_space_colors":[]', hlo)
     else:
-      self.assertIn(
-          f'"output_memory_space_colors":[{{"color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'output_memory_space_colors',
+              [{'color': str(color), 'shape_index': []}],
+          ),
       )
 
   def test_tuple_output_memory_space_constraint(self):
@@ -158,9 +203,15 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x)
     np.testing.assert_array_equal(z, x)
     hlo = jax.jit(f).lower(x).compile().as_text()
-    self.assertIn(
-        f'"output_memory_space_colors":[{{"color":"{color}","shape_index":["0"]}},{{"color":"{color}","shape_index":["1"]}}]',
+    self.assertRegex(
         hlo,
+        _json_object_with_a_field(
+            'output_memory_space_colors',
+            [
+                {'color': str(color), 'shape_index': ['0']},
+                {'color': str(color), 'shape_index': ['1']},
+            ],
+        ),
     )
 
 
@@ -211,9 +262,23 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     if color is None or memory_space == pltpu.SMEM:
       self.assertIn('"input_memory_space_colors":[]', hlo)
     else:
-      self.assertIn(
-          f'"input_memory_space_colors":[{{"operand_index":"0","color":"{color}","shape_index":[]}},{{"operand_index":"1","color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'input_memory_space_colors',
+              [
+                  {
+                      'color': str(color),
+                      'operand_index': '0',
+                      'shape_index': [],
+                  },
+                  {
+                      'color': str(color),
+                      'operand_index': '1',
+                      'shape_index': [],
+                  },
+              ],
+          ),
       )
     y = compiled(x)
     np.testing.assert_array_equal(y, x)
