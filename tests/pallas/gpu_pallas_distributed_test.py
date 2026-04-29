@@ -1108,8 +1108,6 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
   """
 
   def setUp(self):
-    if jax.local_device_count() > 1:
-      self.skipTest("Multimem not supported in multi-thread mode yet.")
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
     super().setUp()
