@@ -319,6 +319,16 @@ LogicalResult arith_constant_downgrade(Operation* op, int version, bool&) {
   return success();
 }
 
+LogicalResult reinterpret_cast_downgrade(Operation* op, int version, bool&) {
+  if (version < 12) {
+    if (op->getNumOperands() == 2) {
+      return op->emitOpError(
+          "Can only downgrade below version 12 when dynamic_offset is not set");
+    }
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
@@ -345,6 +355,7 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_downgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_downgrade},
+      {ReinterpretCastOp::getOperationName(), reinterpret_cast_downgrade},
   };
   return *rules;
 }
