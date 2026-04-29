@@ -2374,7 +2374,7 @@ def _check_returned_jaxtypes(dbg, out_tracers):
   for i, x in enumerate(out_tracers):
     try: typeof(x)
     except TypeError:
-      if (dbg and len(paths := dbg.resolve_result_paths()) > i and
+      if (dbg and len(paths := dbg.resolve_result_paths().result_paths) > i and
           (p := paths[i].removeprefix('result'))):
         extra = f' at output component {p}'
       else:

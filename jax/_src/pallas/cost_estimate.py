@@ -18,6 +18,7 @@ import math
 from typing import Any
 from collections.abc import Sequence
 
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import api_util
 from jax._src import core as jax_core
@@ -77,6 +78,8 @@ def cost_estimate_jaxpr(
       bytes_accessed=total_cost.bytes_accessed,
   )
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.experimental.pallas.estimate_cost")
 def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   """Computes a cost estimate for the given function.
 

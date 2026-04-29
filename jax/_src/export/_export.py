@@ -561,8 +561,6 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   return aval.shape, aval.dtype
 
 
-@functools.partial(traceback_util.api_boundary,
-                   repro_api_name="jax.export.export")
 def export(
     fun_jit: stages.Wrapped,
     *,
@@ -620,6 +618,8 @@ def export(
 
 
 # TODO(necula): remove this once we improve the integration with jax2tf.
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.export.export")
 def _export_internal(
     fun_jit: stages.Wrapped,
     *,
