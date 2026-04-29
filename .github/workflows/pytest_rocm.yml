@@ -34,13 +34,13 @@ on:
       rocm-version:
         description: "Which ROCm version to test?"
         type: choice
-        default: "7.2.0"
+        default: "7.2.2"
         options:
-          - "7.2.0"
+          - "7.2.2"
       rocm-tag:
-        description: "ROCm tag for container image (e.g., rocm720)"
+        description: "ROCm tag for container image (e.g., rocm722)"
         type: string
-        default: "rocm720"
+        default: "rocm722"
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: choice
@@ -80,11 +80,11 @@ on:
       rocm-version:
         description: "Which ROCm version to test?"
         type: string
-        default: "7.2.0"
+        default: "7.2.2"
       rocm-tag:
-        description: "ROCm tag for container image (e.g., rocm720)"
+        description: "ROCm tag for container image (e.g., rocm722)"
         type: string
-        default: "rocm720"
+        default: "rocm722"
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: string
