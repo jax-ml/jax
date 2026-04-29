@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "xla/array.h"
 
 namespace mlir::tpu {
@@ -59,32 +60,34 @@ TypedValue<VectorType> getFullLikeVector(OpBuilder& builder, Location loc,
                                          TypedValue<VectorType> vec,
                                          Attribute value);
 
-// Creates a vmask with false flags to bottom (dim = 0)
-// or right (dim = 1) where the flag count corresponds to the (dim_size -
-// padding).
+// Masks out the padding in the bottom and right of the `vregs`. Each vreg is
+// expected to tiled according to the given `tiling` and the masked vregs are
+// mutated in `vregs`. `padding_bottom` and `padding_right` is the number of
+// logical elements to pad in the bottom and right.
 //
-// For example, assume vmask shape is (4, 8)
-//
-// getX32VmaskByPaddingEnd(padding=3, dim=1) creates:
-//  [T, T, T, T, T, F, F, F]
-//  [T, T, T, T, T, F, F, F]
-//  [T, T, T, T, T, F, F, F]
-//  [T, T, T, T, T, F, F, F]
-// TODO(b/385204135): Unify with getVmaskByPaddingEnd in tpu_rotate_rule, and
-// improve the codegen.
-FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
-    ImplicitLocOpBuilder& builder, int64_t padding,
-    std::array<int64_t, 2> target_shape, int64_t dim);
+// PRECONDITION: `vregs` array must be 2D.
+LogicalResult maskTiledVregs(ImplicitLocOpBuilder& builder,
+                             xla::Array<Value>& vregs,
+                             std::array<int64_t, 2> target_shape,
+                             std::array<int64_t, 2> tiling,
+                             int64_t padding_bottom, int64_t padding_right,
+                             int generation);
 
-// Masks out the padding in the bottom and right of the vregs. vregs are
-// expected to have native tiling, and the masked vregs are mutated in
-// `vregs`. `padding_bottom` and `padding_right` is the number of elements to
-// pad in the bottom and right.
-LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
-                                    xla::Array<Value>& vregs,
-                                    std::array<int64_t, 2> target_shape,
-                                    int64_t padding_bottom,
-                                    int64_t padding_right);
+// Selects between values using the provided bounds.
+//
+// Arguments:
+//   bounds:  An object specifying the bounds of the data to be masked.
+//   in_bounds_vreg:     Vreg to select data that is in bounds.
+//   out_of_bounds_vreg: Vreg to select data that is out of bounds. Must have
+//                       the same type as in_bounds_vreg.
+//
+// Returns:
+//   A vreg with its elements selected according to the provided bounds.
+FailureOr<TypedValue<VectorType>> selectWithBounds(
+    ImplicitLocOpBuilder& builder, const VRegDataBounds& bounds,
+    TypedValue<VectorType> in_bounds_vreg,
+    TypedValue<VectorType> out_of_bounds_vreg,
+    std::array<int64_t, 2> target_shape, int generation);
 
 // Broadcasts the subelement at `subelement_idx` within each packed word.
 // subelement_idx must be between 0 and packing.

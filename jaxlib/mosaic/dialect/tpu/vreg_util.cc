@@ -17,18 +17,20 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "absl/log/check.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -103,124 +105,143 @@ TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder& builder,
   return getZerosVector(builder, vec.getType());
 }
 
-FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
-    ImplicitLocOpBuilder& builder, int64_t padding,
-    const std::array<int64_t, 2> target_shape, int64_t dim) {
-  if (dim != 0 && dim != 1) {
-    return builder.emitError()
-           << "Expected a 2D vector for getX32VmaskByPaddingEnd";
+LogicalResult maskTiledVregs(ImplicitLocOpBuilder& builder,
+                             xla::Array<Value>& vregs,
+                             std::array<int64_t, 2> target_shape,
+                             std::array<int64_t, 2> tiling,
+                             int64_t padding_bottom, int64_t padding_right,
+                             int generation) {
+  if (vregs.dimensions().size() != 2) {
+    return builder.emitError() << "Expected a 2D vector for maskTiledVregs";
   }
 
-  if (padding < 0 || padding > target_shape[dim]) {
-    return builder.emitError()
-           << "Padding must be in [0, target_shape[dim]]. Padding: " << padding
-           << ", target_shape[dim]: " << target_shape[dim];
-  }
-
-  auto idx_const = [&builder](int64_t idx) {
-    return IdxConst(idx, builder, builder.getLoc());
-  };
-
-  tpu::CreateMaskOp mask_op;
-  const VectorType vmask_ty = getNativeVregOrVmaskType(
-      builder.getI1Type(), /*layout_bitwidth=*/32, target_shape);
-  if (dim == 0) {
-    mask_op = tpu::CreateMaskOp::create(
-        builder, vmask_ty, ValueRange{idx_const(0), idx_const(0)},
-        ValueRange{idx_const(target_shape[0] - padding),
-                   idx_const(target_shape[1])});
-  } else {
-    mask_op = tpu::CreateMaskOp::create(
-        builder, vmask_ty, ValueRange{idx_const(0), idx_const(0)},
-        ValueRange{idx_const(target_shape[0]),
-                   idx_const(target_shape[1] - padding)});
-  }
-  return cast<TypedValue<VectorType>>(mask_op.getResult());
-}
-
-LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
-                                    xla::Array<Value>& vregs,
-                                    std::array<int64_t, 2> target_shape,
-                                    int64_t padding_bottom,
-                                    int64_t padding_right) {
   auto vreg_ty = dyn_cast<VectorType>(vregs.begin()->getType());
   if (!vreg_ty) {
     return builder.emitError() << "Expected a vector type";
   }
 
-  VectorType i32_vreg_ty =
-      getNativeVregType(builder.getI32Type(), target_shape);
-  Value i32_zeros_vreg = getZerosVector(builder, i32_vreg_ty);
-  Value i32_max_vreg = getFullVector(builder, i32_vreg_ty,
-                                     builder.getI32IntegerAttr(0xffffffff));
+  bool is_1d_tiling = tiling[0] == 1;
 
-  int packing = vreg_ty.getRank() > 2 ? vreg_ty.getShape()[2] : 1;
+  VectorLayout layout(getElementTypeBitwidth(vreg_ty), LayoutOffsets{0, 0},
+                      tiling);
+  std::array<int64_t, 2> vreg_slice = layout.vregSlice(target_shape);
+
+  auto make_data_bounds =
+      [&](int64_t dim,
+          int64_t padding) -> FailureOr<std::unique_ptr<VRegDataBounds>> {
+    if (vreg_slice[dim] < padding) {
+      return builder.emitError()
+             << "Padding must be less than or equal to the vreg slice. "
+                "Padding: "
+             << padding << ", vreg_slice[" << dim << "]: " << vreg_slice[dim];
+    }
+
+    std::unique_ptr<VRegDataBounds> bounds;
+    if (is_1d_tiling) {
+      int64_t end_offset = vreg_slice[dim] - padding;
+      bounds = std::make_unique<SingleRowVRegBounds>(layout, /*start_offset=*/0,
+                                                     /*end_offset=*/end_offset,
+                                                     target_shape);
+    } else {
+      const std::array<int64_t, 2> start_offsets = {0, 0};
+      std::array<int64_t, 2> end_offsets = vreg_slice;
+      end_offsets[dim] -= padding;
+      bounds = std::make_unique<TiledRectangularVregBounds>(
+          layout, start_offsets, end_offsets, target_shape);
+    }
+    return std::move(bounds);
+  };
+
+  TypedValue<VectorType> zeros_vreg = getZerosVector(builder, vreg_ty);
   // Mask out the bottom.
   if (padding_bottom > 0) {
-    // The function is only called when the vreg has native tiling. Therefore,
-    // it is safe to bitcast to x32 vreg for masking.
-    int sub_padding = padding_bottom % packing;
-    int x32_padding_bottom = padding_bottom / packing;
-    FAILUREOR_ASSIGN_OR_RETURN(
-        Value mask_top, getX32VmaskByPaddingEnd(builder, x32_padding_bottom + 1,
-                                                target_shape, /*dim=*/0));
-    FAILUREOR_ASSIGN_OR_RETURN(
-        Value mask_bottom,
-        getX32VmaskByPaddingEnd(builder, x32_padding_bottom, target_shape,
-                                /*dim=*/0));
-    // Create an int32 vreg which contains subelement masking and then
-    // logical_and with target vreg to mask out the unaligned paddings.
-    // Eg. if padding_bottom = 5, packing = 2, and assume the vreg shape is
-    // [8, 128], then the mask will be:
-    //
-    // sublane 0: [0xffffffff, 0xffffffff, ..., 0xffffffff]
-    // sublane 1: [0xffffffff, 0xffffffff, ..., 0xffffffff]
-    // sublane 2: [0xffffffff, 0xffffffff, ..., 0xffffffff]
-    // sublane 3: [0xffffffff, 0xffffffff, ..., 0xffffffff]
-    // sublane 4: [0xffffffff, 0xffffffff, ..., 0xffffffff]
-    // sublane 5: [0x0000ffff, 0x0000ffff, ..., 0x0000ffff]
-    // sublane 6: [0         , 0         , ..., 0         ]
-    // sublane 7: [0         , 0         , ..., 0         ]
-    //
-    // Through this way, in order to mask sub-elements, each target vreg only
-    // needs to apply 1 op (logical_and) instead of 3 ops (unpacking + select
-    // + packing).
-    Value partial_sublane_mask = getFullVector(
-        builder, i32_vreg_ty,
-        builder.getI32IntegerAttr(
-            0xffffffff >> (sub_padding * getElementTypeBitwidth(vreg_ty))));
-    // Insert 0xffffffff above the blended sublane.
-    Value sublane_mask = arith::SelectOp::create(
-        builder, mask_top, i32_max_vreg, partial_sublane_mask);
-    // Insert 0 below the blended sublane.
-    sublane_mask = arith::SelectOp::create(builder, mask_bottom, sublane_mask,
-                                           i32_zeros_vreg);
+    FAILUREOR_ASSIGN_OR_RETURN(auto bounds,
+                               make_data_bounds(/*dim=*/0, padding_bottom));
     for (int64_t i = 0; i < vregs.dim(1); ++i) {
       Value& vreg = vregs({vregs.dim(0) - 1, i});
-      Value i32_vreg = tpu::BitcastVregOp::create(builder, i32_vreg_ty, vreg);
-      if (sub_padding > 0) {
-        i32_vreg = arith::AndIOp::create(builder, i32_vreg, sublane_mask);
-      } else {
-        i32_vreg = arith::SelectOp::create(builder, mask_bottom, i32_vreg,
-                                           i32_zeros_vreg);
-      }
-      vreg = tpu::BitcastVregOp::create(builder, vreg_ty, i32_vreg);
+      FAILUREOR_ASSIGN_OR_RETURN(
+          vreg,
+          selectWithBounds(builder, *bounds, cast<TypedValue<VectorType>>(vreg),
+                           zeros_vreg, target_shape, generation));
     }
   }
   // Mask out the right.
   if (padding_right > 0) {
-    FAILUREOR_ASSIGN_OR_RETURN(
-        Value mask_right, getX32VmaskByPaddingEnd(builder, padding_right,
-                                                  target_shape, /*dim=*/1));
+    FAILUREOR_ASSIGN_OR_RETURN(auto bounds,
+                               make_data_bounds(/*dim=*/1, padding_right));
     for (int64_t i = 0; i < vregs.dim(0); ++i) {
       Value& vreg = vregs({i, vregs.dim(1) - 1});
-      Value i32_vreg = tpu::BitcastVregOp::create(builder, i32_vreg_ty, vreg);
-      i32_vreg = arith::SelectOp::create(builder, mask_right, i32_vreg,
-                                         i32_zeros_vreg);
-      vreg = tpu::BitcastVregOp::create(builder, vreg_ty, i32_vreg);
+      FAILUREOR_ASSIGN_OR_RETURN(
+          vreg,
+          selectWithBounds(builder, *bounds, cast<TypedValue<VectorType>>(vreg),
+                           zeros_vreg, target_shape, generation));
     }
   }
   return success();
+}
+
+FailureOr<TypedValue<VectorType>> selectWithBounds(
+    ImplicitLocOpBuilder& builder, const VRegDataBounds& bounds,
+    TypedValue<VectorType> in_bounds_vreg,
+    TypedValue<VectorType> out_of_bounds_vreg,
+    std::array<int64_t, 2> target_shape, int generation) {
+  auto native_vreg_ty = getNativeVregType(
+      in_bounds_vreg.getType().getElementType(), target_shape);
+  TPU_ASSERT_LOC(builder.getLoc(), in_bounds_vreg.getType() == native_vreg_ty);
+  TPU_ASSERT_LOC(builder.getLoc(),
+                 out_of_bounds_vreg.getType() == native_vreg_ty);
+  if (bounds.isComplete(target_shape)) {
+    return in_bounds_vreg;
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(TypedValue<VectorType> vmask,
+                             bounds.getVectorMask(builder, builder.getLoc(),
+                                                  generation, target_shape));
+  VectorType vmask_ty = vmask.getType();
+  if (vmask_ty.getElementType() == builder.getI32Type()) {
+    // Handle bitmask.
+    VectorType i32_vreg_ty =
+        getNativeVregType(builder.getI32Type(), target_shape);
+    Value i32_in_bounds_vreg =
+        tpu::BitcastVregOp::create(builder, i32_vreg_ty, in_bounds_vreg);
+    Value i32_out_of_bounds_vreg =
+        tpu::BitcastVregOp::create(builder, i32_vreg_ty, out_of_bounds_vreg);
+    // See https://graphics.stanford.edu/~seander/bithacks.html#MaskedMerge
+    //
+    // r = a if mask = 0; or b if mask = 1
+    //   = a ^ ((a ^ b) & mask)
+    //
+    // Note that when a is 0, compilers fold the expression to b & mask.
+    Value masked_i32_vreg = arith::XOrIOp::create(
+        builder, builder.getLoc(), i32_out_of_bounds_vreg,
+        arith::AndIOp::create(
+            builder, builder.getLoc(),
+            arith::XOrIOp::create(builder, builder.getLoc(),
+                                  i32_out_of_bounds_vreg, i32_in_bounds_vreg),
+            vmask));
+    return tpu::BitcastVregOp::create(builder, native_vreg_ty, masked_i32_vreg)
+        .getResult();
+  }
+
+  DCHECK_EQ(vmask_ty.getElementType(), builder.getI1Type());
+  const bool needs_bitcast = vmask_ty.getShape() != native_vreg_ty.getShape();
+  if (needs_bitcast) {
+    DCHECK_GE(vmask_ty.getRank(), 2);
+    const int mask_packing =
+        vmask_ty.getRank() == 2 ? 1 : vmask_ty.getDimSize(2);
+    const int mask_bitwidth = 32 / mask_packing;
+    VectorType bitcast_ty = VectorType::get(
+        vmask_ty.getShape(), builder.getIntegerType(mask_bitwidth));
+    in_bounds_vreg =
+        tpu::BitcastVregOp::create(builder, bitcast_ty, in_bounds_vreg);
+    out_of_bounds_vreg =
+        tpu::BitcastVregOp::create(builder, bitcast_ty, out_of_bounds_vreg);
+  }
+  Value result = arith::SelectOp::create(builder, vmask, in_bounds_vreg,
+                                         out_of_bounds_vreg);
+  if (needs_bitcast) {
+    result = tpu::BitcastVregOp::create(builder, native_vreg_ty, result);
+  }
+  return cast<TypedValue<VectorType>>(result);
 }
 
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
