@@ -31,7 +31,7 @@ except ImportError:
 if zstd is None:
   # TODO(phawkins): remove this case when we drop support for Python 3.13.
   try:
-    import zstandard
+    import zstandard  # pyrefly: ignore[missing-import]
   except ImportError:
     zstandard = None
 else:
