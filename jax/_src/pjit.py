@@ -1032,7 +1032,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if isinstance(pjit_in_s, UnspecifiedValue):
       resolved_in_shardings.append(finalize_arg_sharding(arg_s, committed))
     else:
-      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and
+      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and  # pyrefly: ignore[missing-attribute]
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1048,14 +1048,14 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
-        if pjit_in_s.memory_kind != arg_s.memory_kind:
+        if pjit_in_s.memory_kind != arg_s.memory_kind:  # pyrefly: ignore[missing-attribute]
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '
               f'arg memory kind: {arg_s.memory_kind} for arg type: {arg.aval}')
         if (committed and
             not op_shardings.are_hlo_shardings_equal(
-                pjit_in_s._to_xla_hlo_sharding(arg.ndim),
+                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # pyrefly: ignore[missing-attribute]
                 arg_s._to_xla_hlo_sharding(arg.ndim))):
           raise ValueError('Sharding passed to jit does not match the sharding '
                            'on the respective arg. '

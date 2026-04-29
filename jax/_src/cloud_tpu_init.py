@@ -73,7 +73,7 @@ def cloud_tpu_init() -> None:
   """
   global running_in_cloud_tpu_vm
 
-  from jax import version
+  from jax import version  # pyrefly: ignore[missing-import]
 
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
   libtpu_path = get_tpu_library_path()
