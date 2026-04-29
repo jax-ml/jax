@@ -76,6 +76,7 @@ for repro_api_name, transform_name in [
   ("jax.checkpoint", "checkpoint"),
   ("jax.experimental.pallas.pallas_call", "pallas_call"),
   ("jax.experimental.pallas.run_state", "pallas_run_state"),
+  ("jax.experimental.pallas.mosaic_gpu.kernel", "pallas_gpu_kernel"),
   ("jax.custom_gradient", "custom_gradient"),
   ("flax.core.axes_scan.scan", "flax_axes_scan"),
 ]:

@@ -2610,5 +2610,39 @@ class ReproTest(jtu.JaxTestCase):
       self.collect_and_check(f, x)
 
 
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  def test_pallas_gpu_kernel(self, *, interpret: bool):
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    if jtu.device_under_test() not in ["gpu", "cpu"]:
+      self.skipTest("Test runs only on CPU and GPU")
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    @jax.jit
+    def g(x):
+      return plgpu.kernel(
+          body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(1,),
+          grid_names=("sm",),
+          interpret=interpret,
+      )(x)
+
+    def f(x):
+      if interpret or jtu.device_under_test() == "gpu":
+        return g(x)
+      else:  # On CPU without interpret, we try jax.export
+        exp = export.export(g, platforms=("cuda",))(x)
+        return 0.
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    self.collect_and_check(f, x)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

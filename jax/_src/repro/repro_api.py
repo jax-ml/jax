@@ -394,3 +394,11 @@ def pallas_run_state_call(f: Callable, api_args: tuple[Any, ...],
   from jax._src.state import discharge  # type: ignore
   return repro_bypass_wrapper(discharge.run_state)(
     f, *api_args, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="pallas_gpu_kernel_call")
+def pallas_gpu_kernel_call(body: Callable, api_args: tuple[Any, ...],
+                           api_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic_gpu import core as gpu_core  # type: ignore
+  return repro_bypass_wrapper(gpu_core.kernel)(
+    body, *api_args, **api_kwargs)(*args, **kwargs)
