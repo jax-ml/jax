@@ -21,6 +21,7 @@ from collections.abc import Mapping, Sequence
 import contextlib
 import dataclasses
 import enum
+import math
 from typing import Any, Literal
 
 import jax
@@ -205,6 +206,37 @@ class CompilerParams:
   replace = dataclasses.replace
 
 
+def check_accumulator_ref(shape: tuple[int, ...], dtype: jnp.dtype, mxu_id: int):
+  from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-module-attribute]
+  if len(shape) < 2:
+    raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
+
+  if dtype not in (jnp.float32, jnp.int32):
+    raise ValueError(
+        f"Acc ref dtype must be float32 or int32, got {dtype}")
+
+  info = tpu_info.get_tpu_info()
+  if not info.num_accumulators:
+    raise ValueError(
+        f"Accumulators are not available on TPU {info.chip_version}"
+    )
+
+  if mxu_id < 0 or mxu_id >= info.num_mxus:
+    raise ValueError(f"mxu_id must be in [0, {info.num_mxus}), got {mxu_id=}")
+
+  m, n = math.prod(shape[:-1]), shape[-1]
+  if n != info.mxu_column_size:
+    raise ValueError(
+        f"The minor dimension size of an accumulator ref must be "
+        f"{info.mxu_column_size} but got {n}"
+    )
+  if m <= 0 or m % info.num_sublanes != 0:
+    raise ValueError(
+        f"The product of the major dimensions must be a multiple of "
+        f"{info.num_sublanes}, but got {m}"
+    )
+
+
 class MemoryRef(pallas_core.MemoryRef):
 
   def __matmul__(self, other, /):
@@ -254,6 +286,27 @@ class MemorySpace(enum.Enum):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return pallas_core.CoreMemorySpace(self, other)
+
+
+@dataclasses.dataclass(frozen=True)
+class AccMemorySpace:
+  mxu_id: int
+
+  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+    shape = tuple(shape)
+    check_accumulator_ref(shape, dtype, self.mxu_id)
+    return MemoryRef(
+        jax_core.ShapedArray(shape, dtype),
+        memory_space=self,
+    )
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, pallas_core.Mesh):
+      return NotImplemented
+    return pallas_core.CoreMemorySpace(self, other)
+
+  def __str__(self) -> str:
+    return f"ACC(mxu_id={self.mxu_id})"
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -633,6 +686,8 @@ def memory_space_to_tpu_memory_space(
           if memory_space.mesh.core_type is core_type
           else memory_space
       )
+    case acc if isinstance(acc, AccMemorySpace):
+      return acc
     case MemorySpace():
       return memory_space
     case _:

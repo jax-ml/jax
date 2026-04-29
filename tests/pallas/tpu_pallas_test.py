@@ -35,6 +35,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
@@ -5219,15 +5220,13 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       y = generator.normal(size=(k, n)).astype(dtype)
 
     def matmul_kernel(x_ref, y_ref, o_ref):
+      acc = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32),
+                          memory_space=pltpu.ACC(0))
       pltpu.matmul_push_rhs(
           y_ref[...], mxu_index=0, staging_register=0, transpose=transpose
       )
-      pltpu.matmul_acc_lhs(
-          acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
-      )
-      o_ref[...] = pltpu.matmul_pop(
-          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=0
-      )
+      pltpu.matmul_acc_lhs(acc, lhs=x_ref[...], load_staged_rhs=0)
+      o_ref[...] = pltpu.matmul_pop(acc)
     matmul = pl.pallas_call(
         matmul_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
     )
@@ -5256,24 +5255,20 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     y1 = generator.normal(size=(k, n)).astype(dtype)
 
     def matmul_kernel(x_ref, y0_ref, y1_ref, o0_ref, o1_ref):
+      acc0 = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32),
+                           memory_space=pltpu.ACC(0))
+      acc1 = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32),
+                           memory_space=pltpu.ACC(1))
       pltpu.matmul_push_rhs(
           y0_ref[...], mxu_index=0, staging_register=0
       )
       pltpu.matmul_push_rhs(
           y1_ref[...], mxu_index=1, staging_register=0
       )
-      pltpu.matmul_acc_lhs(
-          acc_addr=0, lhs=x_ref[...], mxu_index=0, load_staged_rhs=0
-      )
-      pltpu.matmul_acc_lhs(
-          acc_addr=0, lhs=x_ref[...], mxu_index=1, load_staged_rhs=0
-      )
-      o0_ref[...] = pltpu.matmul_pop(
-          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=0
-      )
-      o1_ref[...] = pltpu.matmul_pop(
-          acc_addr=0, shape=(m, n), dtype=jnp.float32, mxu_index=1
-      )
+      pltpu.matmul_acc_lhs(acc0, lhs=x_ref[...], load_staged_rhs=0)
+      pltpu.matmul_acc_lhs(acc1, lhs=x_ref[...], load_staged_rhs=0)
+      o0_ref[...] = pltpu.matmul_pop(acc0)
+      o1_ref[...] = pltpu.matmul_pop(acc1)
 
     matmul = pl.pallas_call(
         matmul_kernel,
@@ -5326,8 +5321,16 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       assert k % mem_block_k == 0
 
       compute_block_m = compute_block_n = compute_block_k = 256
-      mxu_count = 2
+      mxu_count = tpu_info.get_tpu_info().num_mxus
 
+      # TODO(bchetioui): clean up by supporting transforms on accumulators.
+      buffers = [
+          [jax.empty_ref(
+              jax.ShapeDtypeStruct((compute_block_m, compute_block_n), jnp.float32),
+              memory_space=pltpu.ACC(mxu_id))
+          ] * 2
+          for mxu_id in range(mxu_count)
+      ]
       def memory_body(x_vmem, y_vmem, o_vmem):
         compute_mn_grid = (
             mem_block_m // (mxu_count * compute_block_m),
@@ -5366,17 +5369,14 @@ class ExplicitMXUTest(jtu.JaxTestCase):
           pop_mi, pop_ni = mn_indices
           mi, ni = _next_index(mn_indices, compute_mn_grid)
 
-          def body(pop_addr, mul_addr):
+          def body(pop_idx, mul_idx):
+            assert pop_idx != mul_idx
             for mxu in range(mxu_count):
+              pop_buffer = buffers[mxu][pop_idx]
               mxu_slice = pl.ds(mxu * compute_block_m, compute_block_m)
               o_vmem_slice = o_vmem.at[out_slice(pop_mi, pop_ni)].at[mxu_slice]
               prev_out = jnp.where(accumulate, o_vmem_slice[...], jnp.zeros_like(o_vmem_slice))
-              o_vmem_slice[...] = prev_out + pltpu.matmul_pop(
-                  acc_addr=pop_addr,
-                  shape=(compute_block_m, compute_block_n),
-                  dtype=jnp.float32,
-                  mxu_index=mxu,
-              ).astype(o_vmem.dtype)
+              o_vmem_slice[...] = prev_out + pltpu.matmul_pop(pop_buffer).astype(o_vmem.dtype)
 
             def steady_k(ki, push=True):
               lhs = x_vmem.at[lhs_slice(mi, ni, ki)]
@@ -5387,8 +5387,9 @@ class ExplicitMXUTest(jtu.JaxTestCase):
               rhs = y_vmem.at[rhs_slice(*rhs_indices)]
               for mxu in range(mxu_count):
                 mxu_slice = pl.ds(mxu * compute_block_m, compute_block_m)
+                mul_buffer = buffers[mxu][mul_idx]
                 pltpu.matmul_acc_lhs(
-                    acc_addr=mul_addr, lhs=lhs[mxu_slice], mxu_index=mxu, load_staged_rhs=0
+                    mul_buffer, lhs=lhs[mxu_slice], load_staged_rhs=0
                 )
                 if push:
                   pltpu.matmul_push_rhs(rhs=rhs[...], staging_register=0, mxu_index=mxu)
@@ -5404,10 +5405,10 @@ class ExplicitMXUTest(jtu.JaxTestCase):
 
           @pl.when(jax.lax.rem(i, 2) == 0)
           def _even():
-            body(128, 0)
+            body(1, 0)
           @pl.when(jax.lax.rem(i, 2) != 0)
           def _odd():
-            body(0, 128)
+            body(0, 1)
 
           return mi, ni
 
@@ -5421,12 +5422,8 @@ class ExplicitMXUTest(jtu.JaxTestCase):
           # TODO(apaszke): Accumulate in f32
           o_vmem_slice = o_vmem.at[out_slice(*final_indices)].at[mxu_slice]
           prev_out = jnp.where(accumulate, o_vmem_slice[...], jnp.zeros_like(o_vmem_slice))
-          o_vmem_slice[...] = prev_out + pltpu.matmul_pop(
-              acc_addr=128 if math.prod(compute_mn_grid) % 2 == 0 else 0,
-              shape=(compute_block_m, compute_block_n),
-              dtype=jnp.float32,
-              mxu_index=mxu,
-          ).astype(o_vmem.dtype)
+          pop_buffer = buffers[mxu][int(math.prod(compute_mn_grid) % 2 == 0)]
+          o_vmem_slice[...] = prev_out + pltpu.matmul_pop(pop_buffer).astype(o_vmem.dtype)
 
       mem_grid = (
           x.shape[0] // mem_block_m,
@@ -5455,6 +5452,134 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     out_ref = jnp.matmul(x, y).block_until_ready().astype(jnp.float32)
     np.testing.assert_allclose(out, out_ref, atol=1e-2, rtol=1e-2)
 
+  @parameterized.named_parameters(
+      ('unsupported_dtype', (8, 256), jnp.bfloat16, 0, r'float32 or int32'),
+      ('too_large_mxu_id', (8, 256), jnp.float32, 1000, r'mxu_id must be in'),
+      ('negative_mxu_id', (8, 256), jnp.float32, -1, r'mxu_id must be in'),
+      ('invalid_minor_dim', (8, 128), jnp.float32, 0, r'minor dimension size'),
+      ('invalid_major_dim_multiple', (3, 4, 256), jnp.float32, 0,
+       r'product of the major dimensions must be a multiple of 8'),
+  )
+  def test_create_invalid_acc_raises(self, shape, dtype, mxu_id, msg):
+    with self.assertRaisesRegex(ValueError, msg):
+      pltpu.ACC(mxu_id)(shape, dtype)
+
+  def test_create_and_pop_empty_ref_acc(self):
+    shape = (8, 256)
+    def kernel(out):
+      acc = jax.empty_ref(jax.ShapeDtypeStruct(shape, jnp.float32),
+                          memory_space=pltpu.ACC(0))
+      out[...] = pltpu.matmul_pop(acc)
+    out = pl.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+    )()
+    np.testing.assert_array_equal(out, 0)
+
+  def test_loading_from_acc_raises(self):
+    shape = (8, 256)
+    def kernel(out):
+      acc = jax.empty_ref(jax.ShapeDtypeStruct(shape, jnp.float32),
+                          memory_space=pltpu.ACC(0))
+      out[...] = acc[...]
+    with self.assertRaisesRegex(
+        ValueError, 'Loading from an accumulator is not supported'
+    ):
+      pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+      )()
+
+  def test_storing_to_acc_raises(self):
+    shape = (8, 256)
+    def kernel(out):
+      del out
+      acc = jax.empty_ref(jax.ShapeDtypeStruct(shape, jnp.float32),
+                          memory_space=pltpu.ACC(0))
+      acc[...] = jnp.full(shape, 1.0, jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, 'Storing into an accumulator is not supported'
+    ):
+      pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+      )()
+
+  def test_create_acc_out_of_bounds_raises(self):
+    info = tpu_info.get_tpu_info()
+    b, m, n = info.num_accumulators, info.num_sublanes, info.mxu_column_size
+    def kernel(out):
+      # TODO(bchetioui): clean up to be 3D once reshape transform is supported.
+      acc0 = jax.empty_ref(jax.ShapeDtypeStruct((b * m, n), jnp.float32),
+                           memory_space=pltpu.ACC(0))
+      acc1 = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32),
+                           memory_space=pltpu.ACC(0))
+      out[:b * m] = pltpu.matmul_pop(acc0)
+      out[b * m:] = pltpu.matmul_pop(acc1)
+    with self.assertRaisesRegex(
+        ValueError, 'Accumulator space overflow'
+    ):
+      pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(((b + 1) * m, n), jnp.float32)
+      )()
+
+  def test_create_large_acc_on_distinct_mxus_succeeds(self):
+    info = tpu_info.get_tpu_info()
+    b, m, n = info.num_accumulators, info.num_sublanes, info.mxu_column_size
+    def kernel(out):
+      acc0 = jax.empty_ref(jax.ShapeDtypeStruct((b * m, n), jnp.float32),
+                           memory_space=pltpu.ACC(0))
+      acc1 = jax.empty_ref(jax.ShapeDtypeStruct((b * m, n), jnp.float32),
+                           memory_space=pltpu.ACC(1))
+      out[:b * m] = pltpu.matmul_pop(acc0)
+      out[b * m:] = pltpu.matmul_pop(acc1)
+    out = pl.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((2 * b * m, n), jnp.float32)
+    )()
+    np.testing.assert_array_equal(out, 0)
+
+  def test_create_large_acc_on_same_mxu_in_distinct_run_scoped_succeeds(self):
+    info = tpu_info.get_tpu_info()
+    b, m, n = info.num_accumulators, info.num_sublanes, info.mxu_column_size
+    def kernel(out):
+      acc_ty = pltpu.ACC(0)((b * m, n), jnp.float32)
+      def f(i, acc):
+        out[i] = pltpu.matmul_pop(acc) + i
+      pl.run_scoped(functools.partial(f, 0), acc_ty)
+      pl.run_scoped(functools.partial(f, 1), acc_ty)
+
+    out = pl.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((2, b * m, n), jnp.float32)
+    )()
+    np.testing.assert_array_equal(out[0], 0)
+    np.testing.assert_array_equal(out[1], 1)
+
+  def test_create_acc_out_of_bounds_in_run_scoped_fails(self):
+    info = tpu_info.get_tpu_info()
+    b, m, n = info.num_accumulators, info.num_sublanes, info.mxu_column_size
+    def kernel(out):
+      acc_ty = pltpu.ACC(0)((b * m, n), jnp.float32)
+      def f(acc0, acc1):
+        out[0] = pltpu.matmul_pop(acc0)
+        out[1] = pltpu.matmul_pop(acc1)
+      pl.run_scoped(f, acc_ty, acc_ty)
+    with self.assertRaisesRegex(
+        ValueError, 'Accumulator space overflow'
+    ):
+      pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct((2, b * m, n), jnp.float32)
+      )()
+
+  def test_matmul_acc_lhs_with_incompatible_shapes_raises(self):
+    def kernel(out):
+      del out
+      acc = jax.empty_ref(jax.ShapeDtypeStruct((8, 256), jnp.float32),
+                          memory_space=pltpu.ACC(0))
+      lhs = jnp.ones((4, 256), jnp.float32)
+      pltpu.matmul_acc_lhs(acc, lhs)
+    with self.assertRaisesRegex(
+        ValueError, 'The shape of the accumulator.*does not match.*lhs'
+    ):
+      pl.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct((8, 256), jnp.float32)
+      )()
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
