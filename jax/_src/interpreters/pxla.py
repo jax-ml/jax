@@ -411,19 +411,23 @@ class ExecuteReplicated:
       return out_
 
 
-def _axis_read(axis_env, axis_name):
+def _axis_read(axis_names, axis_name):
   try:
-    return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+    return max(i for i, name in enumerate(axis_names) if name == axis_name)
   except ValueError:
     raise NameError(f"unbound axis name: {axis_name}") from None
 
-def axis_groups(axis_env: sharding_impls.AxisEnv, name) -> tuple[tuple[int, ...]]:
+def axis_groups(axis_ctx, name) -> tuple[tuple[int, ...]]:
+  assert not isinstance(axis_ctx, sharding_impls.ShardingContext)
+  size = axis_ctx.mesh.size
+  axis_names = axis_ctx.mesh.axis_names
+  axis_sizes = axis_ctx.mesh.axis_sizes
   if not isinstance(name, (list, tuple)):
     name = (name,)
-  mesh_axes = tuple(unsafe_map(partial(_axis_read, axis_env), name))
-  trailing_size, ragged = divmod(axis_env.nreps, math.prod(axis_env.sizes))
+  mesh_axes = tuple(unsafe_map(partial(_axis_read, axis_names), name))
+  trailing_size, ragged = divmod(size, math.prod(axis_sizes))
   assert not ragged
-  mesh_spec = axis_env.sizes + (trailing_size,)
+  mesh_spec = axis_sizes + (trailing_size,)
   return _axis_groups(mesh_spec, mesh_axes)
 
 def _axis_groups(mesh_spec, mesh_axes):

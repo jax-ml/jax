@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import itertools as it
-from typing import Any, NamedTuple, cast
+from typing import Any, cast
 
 from jax._src import config
 from jax._src import core
@@ -349,12 +349,6 @@ def prepare_axis_resources(axis_resources, arg_name,
 
 # Axis environments
 
-class AxisEnv(NamedTuple):
-  nreps: int
-  names: tuple[Any, ...]
-  sizes: tuple[int, ...]
-
-
 @dataclasses.dataclass(frozen=True)
 class SPMDAxisContext:
   """A hardware axis context for parallel computations that use the GSPMD partitioner.
@@ -365,11 +359,6 @@ class SPMDAxisContext:
   """
   mesh: Mesh
   manual_axes: frozenset[MeshAxisName] = frozenset()
-
-  @property
-  def axis_env(self):
-    return AxisEnv(nreps=self.mesh.size, names=self.mesh.axis_names,
-                   sizes=tuple(self.mesh.shape.values()))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -387,11 +376,6 @@ class ShardingContext:
     if self.device_assignment is not None:
       assert isinstance(self.device_assignment, tuple)
       assert self.num_devices == len(self.device_assignment)
-
-  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
-  @property
-  def axis_env(self):
-    return AxisEnv(nreps=1, names=(), sizes=())
 
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------

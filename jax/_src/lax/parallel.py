@@ -921,8 +921,8 @@ def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
                     v))
   return val_out, batching.not_mapped
 
-def _replica_groups(axis_env, axis_name, axis_index_groups):
-  replica_groups = pxla.axis_groups(axis_env, axis_name)
+def _replica_groups(axis_ctx, axis_name, axis_index_groups):
+  replica_groups = pxla.axis_groups(axis_ctx, axis_name)
   if axis_index_groups is not None:
     replica_groups = [[axis_group[i] for i in axis_index_group]
                       for axis_group in replica_groups
@@ -999,7 +999,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
     return [arg]
 
   replica_groups = _replica_groups_hlo(
-      _replica_groups(ctx.module_context.axis_env, named_axes,
+      _replica_groups(ctx.module_context.axis_context, named_axes,
                       axis_index_groups))
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
@@ -1075,7 +1075,7 @@ batching.fancy_primitive_batchers[pmin_p] = \
 
 
 def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -1280,7 +1280,7 @@ def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
   return v.take([source] * axis_size, d), d
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
   def source_to_front(group):
     return [group[source]] + list(group[:source]) + list(group[source + 1:])
   replica_groups = [source_to_front(group) for group in replica_groups]
@@ -1329,7 +1329,7 @@ def _all_to_all_lowering(
 ):
   del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   # Workaround for AllToAll not being implemented on CPU.
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                    axis_index_groups)
   if len(replica_groups[0]) == 1:
     return [x]
@@ -1496,7 +1496,7 @@ def _ragged_all_to_all_lowering(
     ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     *, axis_name, axis_index_groups
 ):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                    axis_index_groups)
 
   # Assumes all groups are the same size
@@ -1779,7 +1779,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
         mlir.dense_int_array(broadcast_dimensions))
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                     axis_index_groups)
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a
@@ -2020,7 +2020,7 @@ def _reduce_scatter_lowering(
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   scalar_aval = x_aval.update(shape=())
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                    axis_index_groups)
   scatter_out_shape = list(x_aval.shape)
   scatter_out_shape[scatter_dimension] //= axis_size
@@ -2276,40 +2276,48 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
   return tree_util.tree_map(bind, x)
 
 
-def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
+def _build_axis_index_lowering_hlo(ctx, axis_name, axis_ctx):
   from jax._src.shard_map import shard_map  # pyrefly: ignore[missing-import]
 
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'
     if len(axis_name) > 1:
       raise NotImplementedError(
-          '`axis_index` translation rule does not support multiple axis names.')
+          '`axis_index` lowering rule does not support multiple axis names.')
     axis_name, = axis_name
-  if axis_name not in axis_env.names:
+
+  if isinstance(axis_ctx, SPMDAxisContext):
+    size = axis_ctx.mesh.size
+    axis_names = axis_ctx.mesh.axis_names
+    axis_sizes = axis_ctx.mesh.axis_sizes
+  else:
+    assert isinstance(axis_ctx, ShardingContext)
+    size, axis_names, axis_sizes = 1, (), ()
+
+  if axis_name not in axis_names:
     raise NameError(f"unbound axis name: {axis_name}")
-  axis_context = ctx.module_context.axis_context
-  axis_pos = list(axis_env.names).index(axis_name)
+  axis_pos = list(axis_names).index(axis_name)
 
   # For partial auto, enter into a fully manual shard_map.
-  if (isinstance(axis_context, SPMDAxisContext) and
-      axis_context.manual_axes and
-      axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
-    if axis_env.sizes[axis_pos] == 1:
+  if (isinstance(axis_ctx, SPMDAxisContext) and
+      axis_ctx.manual_axes and
+      axis_ctx.manual_axes != frozenset(axis_ctx.mesh.axis_names)):
+    if axis_sizes[axis_pos] == 1:
       return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
     def f():
       return axis_index_p.bind(axis_name=axis_name)
-    return mlir.lower_fun(
-        lambda: [shard_map(f, check_vma=False, in_specs=(),
-                           out_specs=P())()])(ctx)[0]
+    return mlir.lower_fun(lambda: [shard_map(f, check_vma=False, in_specs=(),
+                                             out_specs=P())()]
+                          )(ctx)[0]
 
-  nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
+  nreplicas = size // math.prod(axis_sizes)
   div = mlir.ir_constant(
       np.array(
-          nreplicas * math.prod(axis_env.sizes[axis_pos + 1 :]), dtype=np.uint32
+          nreplicas * math.prod(axis_sizes[axis_pos + 1 :]), dtype=np.uint32
       )
   )
-  mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
-  if isinstance(axis_context, (ShardingContext, SPMDAxisContext)):
+  mod = mlir.ir_constant(np.array(axis_sizes[axis_pos], dtype=np.uint32))
+  if isinstance(axis_ctx, (ShardingContext, SPMDAxisContext)):
     device_id = hlo.partition_id()
   else:
     device_id = hlo.replica_id()
@@ -2320,7 +2328,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
 
 def _axis_index_lowering(ctx, *, axis_name):
   return [_build_axis_index_lowering_hlo(ctx, axis_name,
-                                         ctx.module_context.axis_env)]
+                                         ctx.module_context.axis_context)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
   effect = {core.NamedAxisEffect(axis_name)}

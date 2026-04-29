@@ -37,11 +37,9 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import pmap as pmap_lib
-from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
-from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.sharding import IndivisibleError
 from jax._src.util import safe_map, safe_zip
@@ -904,22 +902,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     shape = (len(devices), 2 if axis_index_groups else jax.device_count())
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
-
-  def testAxisGroups(self):
-    axis_env = sharding_impls.AxisEnv(8, ('i', 'j'), (4, 2))
-    groups = pxla.axis_groups(axis_env, 'i')
-    self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
-
-    groups = pxla.axis_groups(axis_env, 'j')
-    self.assertEqual(groups, ((0, 1), (2, 3), (4, 5), (6, 7)))
-
-    groups = pxla.axis_groups(axis_env, ('i', 'j'))
-    self.assertEqual(groups, ((0, 1, 2, 3, 4, 5, 6, 7,),))
-
-    groups = pxla.axis_groups(axis_env, ('j', 'i'))
-    self.assertEqual(len(groups), 1)
-    self.assertEqual((tuple(sorted(groups[0])),),
-                     ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
   @jtu.run_on_devices("gpu")
   def testCollectiveBroadcast(self):

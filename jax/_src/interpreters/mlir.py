@@ -776,10 +776,6 @@ class ModuleContext:
 
   lowering_parameters: LoweringParameters
 
-  @property
-  def axis_env(self) -> sharding_impls.AxisEnv:
-    return self.axis_context.axis_env
-
   def __init__(
       self,
       *,
