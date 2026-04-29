@@ -2115,10 +2115,6 @@ class PallasControlFlowTest(ptu.PallasTest):
     """Tests lowering of a while_loop which cannot reduce to a fori_loop."""
 
     def kernel(x_ref, r_ref):
-      @pl.when(pl.program_id(0) == 0)
-      def _():
-        r_ref[0, 0] = 0
-
       def cond(state):
         i, s = state
         return jnp.logical_and(i < 1024, s < 1024)
@@ -2127,24 +2123,24 @@ class PallasControlFlowTest(ptu.PallasTest):
         i, s = state
         sl = jax.lax.div(i, jnp.astype(128, i.dtype))
         l = jax.lax.rem(i, jnp.astype(128, i.dtype))
-        v = x_ref[0, sl, l]
+        v = x_ref[sl, l]
         return i + 1, s + v
 
-      i = jnp.int32(0)
-      _, r_ref[0, 0] = jax.lax.while_loop(cond, body, (i, r_ref[0, 0]))
+      _, r_ref[0, 0] = jax.lax.while_loop(
+          cond, body, (jnp.int32(0), jnp.zeros((), intx)))
 
-    x = jnp.arange(4096)
-    x = jnp.reshape(x, [4, 8, 128])
+    x = jnp.arange(1024)
+    x = jnp.reshape(x, [8, 128])
 
     r = pl.pallas_call(
         kernel,
-        grid=(4,),
+        grid=(1,),
         out_specs=pl.BlockSpec((1, 1), memory_space=smem_on_tpu()),
         out_shape=jax.ShapeDtypeStruct([1, 1], intx),
         in_specs=[
             pl.BlockSpec(
-                (1, 8, 128),
-                lambda i: (i, 0, 0),
+                (8, 128),
+                lambda i: (0, 0),
                 memory_space=smem_on_tpu(),
             )
         ],
