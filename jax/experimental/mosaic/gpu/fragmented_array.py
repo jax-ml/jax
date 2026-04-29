@@ -2368,7 +2368,7 @@ class FragmentedArray:
           # Below xN means the value of nibble N, sN means that all 4 bits are
           # equal to the sign bit of nibble N, and 00 means an all 0 nibble.
           out_struct = llvm.inline_asm(
-              ir.Type.parse("!llvm.struct<(i32, i32)>"),
+              llvm.StructType.get_literal([i32, i32]),
               [reg],
               f"""
               {{
@@ -3640,7 +3640,9 @@ class FragmentedArray:
     i32 = ir.IntegerType.get_signless(32)
     if cluster_barrier_ptr is not None:
       assert not is_smem and not multimem
-      assert cluster_barrier_ptr.type == ir.Type.parse("!llvm.ptr<7>"), cluster_barrier_ptr.type
+      assert cluster_barrier_ptr.type == llvm.PointerType.get(
+          address_space=7
+      ), cluster_barrier_ptr.type
       red = "red.async"
       scope = "cluster.shared::cluster.mbarrier::complete_tx::bytes"
       space = ""
@@ -4506,9 +4508,7 @@ def optimization_barrier(*arrays):
     )
     regs = [result_elem]
   else:
-    struct_ty = ir.Type.parse(
-        f"!llvm.struct<({','.join(map(str, reg_dtypes))})>"
-    )
+    struct_ty = llvm.StructType.get_literal(reg_dtypes)
     result_struct = llvm.inline_asm(
         struct_ty, regs, ptx, all_reg_constraints,
         asm_dialect=0, has_side_effects=True,

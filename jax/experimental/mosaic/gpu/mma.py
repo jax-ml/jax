@@ -128,11 +128,8 @@ def _mma_single_tile(
   )
 
   in_operands = [*a_regs, *b_regs, *acc_regs]
-  acc_struct_type = ir.Type.parse(
-      f"!llvm.struct<({','.join(str(acc.mlir_dtype) for _ in acc_regs)})>"
-  )
   out_regs_struct = llvm.inline_asm(
-      acc_struct_type,
+      llvm.StructType.get_literal([acc.mlir_dtype] * len(acc_regs)),
       in_operands,
       ptx,
       constraints,
