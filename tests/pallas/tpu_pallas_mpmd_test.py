@@ -381,6 +381,7 @@ class MpmdTest(PallasSCTest):
   def test_mixed_outputs_and_refs(self, core_type):
     mesh = self.from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    num_lanes = pltpu.get_tpu_info().sparse_core.num_lanes
 
     @jax.jit
     def f(x):
@@ -389,7 +390,7 @@ class MpmdTest(PallasSCTest):
       def fn(x_ref, out_ref, scratch_ref):
         pltpu.sync_copy(x_ref, out_ref)
         pltpu.sync_copy(x_ref, scratch_ref)
-        scratch_ref[0, :8] += jnp.ones(8, dtype=jnp.int32)
+        scratch_ref[0, :num_lanes] += jnp.ones(num_lanes, dtype=jnp.int32)
         pltpu.sync_copy(scratch_ref, x_ref)
 
       out = pl.kernel(
@@ -402,7 +403,7 @@ class MpmdTest(PallasSCTest):
 
     out, mutated_x = f(x)
     np.testing.assert_array_equal(out, x)
-    np.testing.assert_array_equal(mutated_x, x.at[0, :8].add(1))
+    np.testing.assert_array_equal(mutated_x, x.at[0, :num_lanes].add(1))
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_refs_read_only(self, core_type):
