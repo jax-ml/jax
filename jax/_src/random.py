@@ -1200,6 +1200,23 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
   else:
     return uniform(key, shape, lax.dtype(p)) < p
 
+def check_convert_element_type(name: str, value: ArrayLike, dtype: DTypeLike) -> Array:
+  try:
+    ok = dtypes.safe_to_cast(value, dtype)
+  except dtypes.TypePromotionError:
+    ok = False
+  if not ok:
+      raise TypeError(f"In arguments to {name}, cannot safely cast {value} to {dtype}")
+  return lax.convert_element_type(value, dtype)
+
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
 
 def beta(key: ArrayLike,
          a: RealArray,
@@ -2489,8 +2506,10 @@ def _maxwell(key, shape, dtype) -> Array:
 def double_sided_maxwell(key: ArrayLike,
                          loc: RealArray,
                          scale: RealArray,
-                         shape: Shape = (),
-                         dtype: DTypeLikeFloat | None = None) -> Array:
+                         shape: Shape | None = None,
+                         dtype: DTypeLikeFloat | None = None,
+                         *,
+                         out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample from a double sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2505,8 +2524,17 @@ def double_sided_maxwell(key: ArrayLike,
     key: a PRNG key.
     loc: The location parameter of the distribution.
     scale: The scale parameter of the distribution.
-    shape: The shape added to the parameters loc and scale broadcastable shape.
+    shape: Optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``loc`` and ``scale``.
     dtype: The type used for samples.
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A jnp.array of samples.
@@ -2518,23 +2546,23 @@ def double_sided_maxwell(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
-  shape = core.canonicalize_shape(shape)
-  return _double_sided_maxwell(key, loc, scale, shape, dtype)
-
+  shape = check_broadcast_shapes("double_sided_maxwell", shape, loc, scale)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "double_sided_maxwell", shape)
+  return maybe_auto_axes(_double_sided_maxwell, out_sharding, shape=shape, dtype=dtype)(key, loc, scale)
 
 @jit(static_argnums=(3, 4))
 def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
-  params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
-  if not shape:
-    shape = params_shapes
-
-  shape = shape + params_shapes
+  if shape is None:
+    shape = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
+  else:
+    _check_shape("double_sided_maxwell", shape, np.shape(loc), np.shape(scale))
   maxwell_key, rademacher_key = _split(key)
   maxwell_rvs = maxwell(maxwell_key, shape=shape, dtype=dtype)
   # Generate random signs for the symmetric variates.
   random_sign = rademacher(rademacher_key, shape=shape, dtype=dtype)
   assert random_sign.shape == maxwell_rvs.shape
-
+  scale = check_convert_element_type("double_sided_maxwell", scale, dtype)
+  loc = check_convert_element_type("double_sided_maxwell", loc, dtype)
   return random_sign * maxwell_rvs * scale + loc
 
 
