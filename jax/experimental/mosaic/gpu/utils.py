@@ -1837,52 +1837,33 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
 
 def memref_ptr(memref_arg):
   i64 = ir.IntegerType.get_signless(64)
+  index = ir.IndexType.get()
   memref_ty = ir.MemRefType(memref_arg.type)
-  rank = len(memref_ty.shape)
   address_space = get_memref_llvm_address_space(memref_ty)
   ptr_ty = llvm.PointerType.get(address_space)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
-  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
-  assert isinstance(desc, ir.Value)
-  aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
-  offset_elems = llvm.extractvalue(i64, desc, [2])
+
+  aligned_ptr = memref.extract_aligned_pointer_as_index(memref_arg)
+  _, offset_elems, *_ = memref.extract_strided_metadata(memref_arg)  # pyrefly: ignore[not-iterable]
 
   elem_bitwidth = bitwidth(memref_ty.element_type)
   if elem_bitwidth < 8:
+    assert 8 % elem_bitwidth == 0
+    packing = 8 // elem_bitwidth
+    # If the offset is static, check it aligns to an exact number of bytes.
     *_, static_offset = memref_ty.get_strides_and_offset()
     if static_offset != ir.ShapedType.get_dynamic_stride_or_offset():
-      assert elem_bitwidth.bit_count() == 1
-      packing = 8 // elem_bitwidth
       if static_offset % packing != 0:
         raise ValueError(
             f"{memref_ty} {static_offset=} is not divisible by {packing=}`"
         )
-      offset_bytes = c(static_offset // packing, i64)
+      offset_bytes = c(static_offset // packing, index)
     else:
-      offset_bits = llvm.mul(
-          offset_elems,
-          c(elem_bitwidth, i64),
-          overflow_flags=llvm.IntegerOverflowFlags.none,
-      )
-      offset_bytes = llvm.udiv(offset_bits, c(8, i64))
+      offset_bytes = arith.divui(offset_elems, c(packing, index))
   else:
     assert elem_bitwidth % 8 == 0
-    offset_bytes = llvm.mul(
-        offset_elems,
-        c(elem_bitwidth // 8, i64),
-        overflow_flags=llvm.IntegerOverflowFlags.none,
-    )
-  return llvm.inttoptr(
-      ptr_ty,
-      llvm.add(
-          llvm.ptrtoint(i64, aligned_ptr),
-          offset_bytes,
-          overflow_flags=llvm.IntegerOverflowFlags.none,
-      ),
-  )
+    offset_bytes = arith.muli(offset_elems, c(elem_bitwidth // 8, index))
+  ptr = arith.addi(aligned_ptr, offset_bytes)
+  return llvm.inttoptr(ptr_ty, arith.index_castui(i64, ptr))
 
 
 def cluster_collective_mask(
