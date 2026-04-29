@@ -135,6 +135,7 @@ class SparseCoreInfo:
   num_cores: int
   num_subcores: int
   num_lanes: int
+  vmem_capacity_bytes: int
   dma_granule_size_bytes: int
 
 
@@ -393,6 +394,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
               num_cores=4,
               num_subcores=16,
               num_lanes=8,
+              vmem_capacity_bytes=512 * 1024,  # 512 KiB per vector subcore
               dma_granule_size_bytes=32,
           ),
       )
@@ -417,6 +419,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
               num_cores=2,
               num_subcores=16,
               num_lanes=8,
+              vmem_capacity_bytes=256 * 1024,  # 256 KiB per vector subcore
               dma_granule_size_bytes=32,
           ),
       )
@@ -441,6 +444,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
               num_cores=2,
               num_subcores=16,
               num_lanes=16,
+              vmem_capacity_bytes=512 * 1024,  # 512 KiB per vector subcore
               dma_granule_size_bytes=64,
           ),
       )
