@@ -832,14 +832,14 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, transforms=dst_transforms
       )
       dst_ref_shape = ir.MemRefType(dst_ref.type).shape
       indirect_offsets, src_transforms = _extract_indirect_offsets(
           src_transforms, tuple(dst_ref_shape), src_transforms_aval, core_type
       )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref, src_aval, transforms=src_transforms
       )
       indirect_offsets_ref_str = "src_ref"
     case MemorySpace.VMEM, MemorySpace.HBM | MemorySpace.VMEM_SHARED:
@@ -849,14 +849,14 @@ def _prepare_dma_refs(
             " `pltpu.async_copy`"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref, src_aval, transforms=src_transforms
       )
       src_ref_shape = ir.MemRefType(src_ref.type).shape
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
           dst_transforms, tuple(src_ref_shape), dst_transforms_aval, core_type
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, transforms=dst_transforms
       )
       indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
@@ -878,10 +878,10 @@ def _prepare_dma_refs(
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
       src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
+          src_ref, src_aval, transforms=src_transforms
       )
       dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
+          dst_ref, dst_aval, transforms=dst_transforms
       )
       indirect_offsets = None
       indirect_offsets_ref_str = ""
@@ -932,9 +932,9 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
+  sem, _ = _transform_ref(sem, sem_aval)
   if src_sem is not None:
-    src_sem, _ = _transform_ref(src_sem, src_sem_aval, src_sem_aval.shape)
+    src_sem, _ = _transform_ref(src_sem, src_sem_aval)
 
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
@@ -1008,7 +1008,7 @@ def _dma_wait_lowering_rule(
       dst_aval,
       ctx.lowering_context.kernel_type,
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
+  sem, _ = _transform_ref(sem, sem_aval)
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
