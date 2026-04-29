@@ -141,9 +141,10 @@ class MpmdTest(PallasSCTest):
   @parameterized.parameters([TC, SCS, SCV])
   def test_mpmd_capture_scalar(self, core_type):
     mesh = self.from_core_type(core_type)
+    axis_name = list(mesh.shape.keys())[0]
     def f(x, i):
       def body(x_ref, out_ref):
-        idx = jax.lax.axis_index("x")
+        idx = jax.lax.axis_index(axis_name)
         pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
 
       return pl.kernel(
