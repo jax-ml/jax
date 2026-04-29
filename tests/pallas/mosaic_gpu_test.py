@@ -238,6 +238,13 @@ class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
 
 class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
+  def test_memory_space_like(self):
+    x = jax.ShapeDtypeStruct((2, 3), jnp.float32)
+    ref = gpu_core.MemorySpace.GMEM.like(x)
+    self.assertEqual(ref.inner_aval.shape, (2, 3))
+    self.assertEqual(ref.inner_aval.dtype, jnp.float32)
+    self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
+
   def test_jitted_function_containing_multiple_pallas_calls(self):
     # This test aims to ensure that execution works correctly inside CUDA
     # graphs. This is complementary to the test in

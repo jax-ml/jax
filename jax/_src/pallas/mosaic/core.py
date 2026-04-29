@@ -222,6 +222,9 @@ class MemorySpace(enum.Enum):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
+  def like(self, shape_dtype_like):
+    return self(shape_dtype_like.shape, shape_dtype_like.dtype)
+
   def __matmul__(self, other, /):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented

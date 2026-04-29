@@ -192,6 +192,9 @@ class MemorySpace(enum.Enum):
                         transforms=transforms, layout=mgpu_layout,
                         collective=collective)
 
+  def like(self, shape_dtype_like):
+    return self(shape_dtype_like.shape, shape_dtype_like.dtype)
+
 
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
