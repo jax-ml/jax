@@ -29,6 +29,7 @@ from jax import core as jax_core
 from jax import lax
 from jax import tree_util
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import util as jax_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
@@ -1547,6 +1548,9 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     tpu_helpers.sync_copy(window_ref, hbm_ref)
 
 
+@functools.partial(
+  traceback_util.api_boundary,
+  repro_api_name="jax.experimental.pallas.tpu.emit_pipeline")
 def emit_pipeline(
     body,
     *,
@@ -1761,6 +1765,9 @@ def emit_pipeline(
   return pipeline
 
 
+@functools.partial(
+  traceback_util.api_boundary,
+  repro_api_name="jax.experimental.pallas.tpu.emit_pipeline_with_allocations")
 def emit_pipeline_with_allocations(
     body,
     *,

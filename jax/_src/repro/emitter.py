@@ -404,6 +404,10 @@ def initialize_operand_emitter_pallas():
   _operand_emitter_by_type[pltpu.MemorySpace] = emit_enum("pltpu.MemorySpace")
   _operand_emitter_by_type[pltpu.SemaphoreType] = emit_enum("pltpu.SemaphoreType")
 
+  from jax._src.pallas.mosaic.core import DMASemaphore  # type: ignore
+  _operand_emitter_by_type[DMASemaphore] = (
+      lambda ctx, v: "pltpu.DMASemaphore()")
+
   @partial(register_emitter_by_type, pallas_core.MemoryRef)
   def emit_MemoryRef(ctx: "EmitFunctionDefContext", v: pallas_core.MemoryRef) -> str:
     inner_aval = ctx.traverse_value_atom(v.inner_aval)
@@ -636,7 +640,7 @@ class EmitFunctionDefContext:
     if self.global_ctx.emit_reduction_strategy:
       return self.global_ctx.emit_reduction_strategy.undefined_value(v)
 
-    # An undefined value
+    # An undefined value, log details in the emitted repro.
     vn = self.global_ctx.var_name_for_val(v, prefix="g")
     msg = f"Undefined {vn} = {v} of type {type(v)}"
     from jax._src import core  # type: ignore

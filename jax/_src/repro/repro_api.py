@@ -357,8 +357,10 @@ def _pallas_map_gridspec(toapply: Callable, gs):
   return gs
 
 
-def _pallas_call_call_map_user_func_args(toapply, kernel, api_args,
-                                         api_kwargs, *args, **kwargs):
+def _pallas_call_call_map_user_func_args(toapply, kernel: Callable,
+                                         api_args: tuple[Any, ...],
+                                         api_kwargs: dict[str, Any],
+                                         *args, **kwargs):
   new_api_kwargs = dict(api_kwargs)
   if (in_specs := new_api_kwargs.get("in_specs")) is not None:
     new_api_kwargs["in_specs"] = \
@@ -402,3 +404,28 @@ def pallas_gpu_kernel_call(body: Callable, api_args: tuple[Any, ...],
   from jax._src.pallas.mosaic_gpu import core as gpu_core  # type: ignore
   return repro_bypass_wrapper(gpu_core.kernel)(
     body, *api_args, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="pallas_gpu_emit_pipeline_call",
+         map_user_func_args=_pallas_call_call_map_user_func_args)
+def pallas_gpu_emit_pipeline_call(f: Callable, api_args: tuple[Any, ...],
+                                 api_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic_gpu import pipeline as gpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(gpu_pipeline.emit_pipeline)(
+    f, *api_args, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="pallas_tpu_emit_pipeline_call",
+         map_user_func_args=_pallas_call_call_map_user_func_args)
+def pallas_tpu_emit_pipeline_call(f: Callable, api_args: tuple[Any, ...],
+                                  api_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.pallas.mosaic import pipeline as tpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(tpu_pipeline.emit_pipeline)(
+    f, *api_args, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="pallas_tpu_emit_pipeline_with_allocations",
+         map_user_func_args=_pallas_call_call_map_user_func_args)
+def pallas_tpu_emit_pipeline_with_allocations(body: Callable, kwargs):
+  from jax._src.pallas.mosaic import pipeline as tpu_pipeline  # type: ignore
+  return repro_bypass_wrapper(tpu_pipeline.emit_pipeline_with_allocations)(body, **kwargs)

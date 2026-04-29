@@ -772,7 +772,7 @@ class FunctionDef(Call):
     self.body : list[Statement] = []  # Only if `for_body`
     if func.function_def:
       # We know of cases when this happens, e.g., higher-order custom_vjp,
-      # fusions
+      # fusions, index_maps in Pallas
       _thread_local_state.warn_or_error(
           f"Ignoring additional invocation {self}. "
           f"Previous invocation was {self.func.function_def}",
@@ -1201,4 +1201,9 @@ TODO:
   transition from USER to JAX.
 * we don't handle xla_metadata.set_xla_metadata() context manager
 * finish implementing the deduplication of user functions
+* I discovered for test_pallas_emit_pipeline_tpu_interpret_True that the
+  index_maps may be called multiple times. The first time it is called
+  with the argument 0 (from get_dma_slice) and then it is called with actual
+  tracers. We ignore the **2nd** call, and we generate a body that uses the
+  value 0 for the argument!!!
 """

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import contextlib
+from unittest import mock
 import dataclasses
 from functools import partial
 import gc
@@ -57,6 +58,7 @@ from jax._src import literals
 from jax._src import repro
 from jax._src.repro import tracker
 from jax._src.repro import emitter
+from jax._src.pallas.mosaic import tpu_info
 
 
 from jax._src import test_util as jtu
@@ -80,6 +82,29 @@ floatx = dtypes.default_float_dtype()
 def maybe_skip_known_failure(msg: str = ""):
   if os.getenv("SKIP_KNOWN_FAILURES", ""):
     raise unittest.SkipTest(f"TODO: SKIP_KNOWN_FAILURES is set: {msg}")
+
+
+def mock_tpu_context(
+    chip_version: tpu_info.ChipVersion = tpu_info.ChipVersion.TPU_V6E,
+    num_cores: int = 1,
+) -> contextlib.AbstractContextManager:
+  """Returns a context manager that mocks TPU info for non-TPU devices.
+
+  On TPU v5+ devices, returns a nullcontext. On other devices, mocks both
+  `get_tpu_info` and `is_tpu_device` so that Pallas TPU code paths can be
+  exercised (e.g. via interpret mode or jax.export).
+  """
+  fake_info = tpu_info._get_tpu_info_impl(chip_version, num_cores)
+  if jtu.is_device_tpu_at_least(fake_info.generation):
+    return contextlib.nullcontext()
+  mock_stack = contextlib.ExitStack()
+  mock_stack.enter_context(mock.patch(
+      "jax._src.pallas.mosaic.tpu_info.get_tpu_info",
+      return_value=fake_info))
+  mock_stack.enter_context(mock.patch(
+      "jax._src.pallas.mosaic.tpu_info.is_tpu_device",
+      return_value=True))
+  return mock_stack
 
 
 @tree_util.register_dataclass
@@ -2645,7 +2670,153 @@ class ReproTest(jtu.JaxTestCase):
       if interpret or jtu.device_under_test() == "gpu":
         return g(x)
       else:  # On CPU without interpret, we try jax.export
-        exp = export.export(g, platforms=("cuda",))(x)
+        _ = export.export(g, platforms=("cuda",))(x)
+        return 0.
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    self.collect_and_check(f, x)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  @jtu.thread_unsafe_test()
+  def test_pallas_emit_pipeline_tpu(self, *, interpret: bool):
+    if jtu.device_under_test() != "cpu" and not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Test runs only on CPU and TPU v5+")
+
+    if interpret and jtu.device_under_test() == "cpu":
+      self.skipTest("TODO: the test returns different result, due to index_map "
+                    "called multiple times.")
+
+    def kernel(x_ref, o_ref):
+      def pipeline_body(x_inner, o_inner):
+        o_inner[...] = x_inner[...] + 1
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(2,),
+          in_specs=[pl.BlockSpec((4, 128), lambda i: (i, 0))],
+          out_specs=pl.BlockSpec((4, 128), lambda i: (i, 0)),
+      )(x_ref, o_ref)
+
+    @jax.jit
+    def g(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pl.MemorySpace.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.MemorySpace.ANY),
+          interpret=interpret,
+      )(x)
+
+    run_native = interpret or jtu.is_device_tpu_at_least(5)
+    mock_context = mock_tpu_context(tpu_info.ChipVersion.TPU_V5E)
+
+    def f(x):
+      if run_native:
+        return g(x)
+      else:  # On CPU without interpret, we try jax.export
+        _ = export.export(g, platforms=("tpu",))(x)
+        return 0.
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with mock_context:
+      with tracker.flags_override(fake_array_threshold=x.size + 1):
+        self.collect_and_check(f, x)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  @jtu.thread_unsafe_test()
+  def test_pallas_emit_pipeline_with_allocations(self, *, interpret: bool):
+    maybe_skip_known_failure()
+    if jtu.device_under_test() != "cpu" and not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Test runs only on CPU and TPU v5+")
+
+    # if interpret and jtu.device_under_test() == "cpu":
+    #   self.skipTest("TODO: the test returns different result, due to index_map "
+    #                 "called multiple times.")
+
+    def kernel(x_ref, o_ref):
+      def pipeline_body(x_inner, o_inner):
+        o_inner[...] = x_inner[...] + 1
+      in_specs = [pl.BlockSpec((4, 128), lambda i: (i, 0))]
+      out_specs = pl.BlockSpec((4, 128), lambda i: (i, 0))
+      pipeline, make_allocations = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=(2,),
+          in_specs=in_specs,
+          out_specs=out_specs,
+      )
+      allocations = make_allocations(x_ref, o_ref)
+      pipeline(x_ref, o_ref, allocations=allocations)
+
+    @jax.jit
+    def g(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pl.MemorySpace.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.MemorySpace.ANY),
+          interpret=interpret,
+      )(x)
+
+    run_native = interpret or jtu.is_device_tpu_at_least(5)
+    mock_context = mock_tpu_context(tpu_info.ChipVersion.TPU_V5E)
+
+    def f(x):
+      if run_native:
+        return g(x)
+      else:  # On CPU without interpret, we try jax.export
+        _ = export.export(g, platforms=("tpu",))(x)
+        return 0.
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with mock_context:
+      with tracker.flags_override(fake_array_threshold=x.size + 1):
+        self.collect_and_check(f, x)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  def test_pallas_emit_pipeline_gpu(self, *, interpret: bool):
+    if jtu.device_under_test() not in ["gpu", "cpu"]:
+      self.skipTest("Test runs only on CPU and GPU")
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    if interpret:
+      self.skipTest("TODO: maybe interpret mode does not work? no state "
+                    "discharge rule for copy_gmem_to_smem")
+
+    def kernel(x_gmem, o_gmem):
+      def pipeline_body(step, x_smem, o_smem):
+        o_smem[...] = x_smem[...] + 1
+      plgpu.emit_pipeline(
+          pipeline_body,
+          grid=(2,),
+          in_specs=[plgpu.BlockSpec((4, 128), lambda i: (i, 0))],
+          out_specs=[plgpu.BlockSpec((4, 128), lambda i: (i, 0))],
+      )(x_gmem, o_gmem)
+
+    @jax.jit
+    def g(x):
+      return plgpu.kernel(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(1,),
+          grid_names=("sm",),
+          interpret=interpret,
+      )(x)
+
+    run_native = interpret or jtu.device_under_test() == "gpu"
+
+    def f(x):
+      if run_native:
+        return g(x)
+      else:  # On CPU without interpret, we try jax.export
+        _ = export.export(g, platforms=("cuda",))(x)
         return 0.
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))

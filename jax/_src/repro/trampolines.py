@@ -79,6 +79,8 @@ for repro_api_name, transform_name in [
   ("jax.experimental.pallas.mosaic_gpu.kernel", "pallas_gpu_kernel"),
   ("jax.custom_gradient", "custom_gradient"),
   ("flax.core.axes_scan.scan", "flax_axes_scan"),
+  ("jax.experimental.pallas.mosaic_gpu.emit_pipeline", "pallas_gpu_emit_pipeline"),
+  ("jax.experimental.pallas.tpu.emit_pipeline", "pallas_tpu_emit_pipeline"),
 ]:
   api_trampolines[repro_api_name] = partial(uncurry_trampoline, transform_name)
 
@@ -147,6 +149,7 @@ for repro_api_name, transform_name in [
   ("jax.lax.while_loop", "while_loop"),
   ("jax.linearize", "linearize"),
   ("jax.vjp", "vjp"),
+  ("jax.experimental.pallas.tpu.emit_pipeline_with_allocations", "pallas_tpu_emit_pipeline_with_allocations"),
 ]:
   api_trampolines[repro_api_name] = partial(redirect_trampoline, transform_name)
 
