@@ -68,13 +68,21 @@ def compute_on(compute_type: str):
   with extend_compute_type(compute_type):
     yield
 
-def compute_on2(f=None, *, compute_type, out_memory_spaces):
-  kwargs = dict(compute_type=compute_type, out_memory_spaces=out_memory_spaces)
+
+def compute_on2(
+    f=None, *, compute_type, out_memory_spaces, backend_config=None
+):
+  kwargs = dict(
+      compute_type=compute_type,
+      out_memory_spaces=out_memory_spaces,
+      backend_config=backend_config,
+  )
   if f is None:
     return lambda g: _compute_on2(g, **kwargs)
   return _compute_on2(f, **kwargs)
 
-def _compute_on2(f, *, compute_type, out_memory_spaces):
+
+def _compute_on2(f, *, compute_type, out_memory_spaces, backend_config):
   def wrapped(*args):
     dbg = debug_info('compute_on', f, args, {})
     args_flat, in_tree = tree_flatten(args)
@@ -83,10 +91,15 @@ def _compute_on2(f, *, compute_type, out_memory_spaces):
     out_memory_spaces_flat = flatten_axes(
         "compute_on out_memory_spaces", out_tree, out_memory_spaces)
     outs_flat = compute_on_p.bind(
-        *args_flat, jaxpr=jaxpr, compute_type=compute_type,
-        out_memory_spaces=tuple(out_memory_spaces_flat))
+        *args_flat,
+        jaxpr=jaxpr,
+        compute_type=compute_type,
+        out_memory_spaces=tuple(out_memory_spaces_flat),
+        backend_config=backend_config,
+    )
     return tree_unflatten(out_tree, outs_flat)
   return wrapped
+
 
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_avals, in_tree, dbg):
@@ -100,13 +113,19 @@ compute_on_p.multiple_results = True
 dispatch.simple_impl(compute_on_p)
 
 
-def _compute_on_abstract_eval(*in_avals, jaxpr, compute_type, out_memory_spaces):
+def _compute_on_abstract_eval(
+    *in_avals, jaxpr, compute_type, out_memory_spaces, backend_config
+):
   return [a.update(memory_space=s)
           for a, s in zip(jaxpr.out_avals, out_memory_spaces)]
+
+
 compute_on_p.def_abstract_eval(_compute_on_abstract_eval)
 
 
-def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces):
+def _compute_on_lowering(
+    ctx, *args, jaxpr, compute_type, out_memory_spaces, backend_config
+):
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_avals = unzip2(const_args_and_avals)
   const_arg_values = [
@@ -125,16 +144,29 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces):
       flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
       mlir.flatten_ir_values(args))
 
+  frontend_attrs: dict[str, ir.Attribute] = {}
   if compute_type.startswith("gpu_stream:"):
-    dict_attr = ir.DictAttr.get({
-        "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
-        "inlineable": ir.StringAttr.get("false"),
-    })
+    frontend_attrs['_xla_stream_annotation'] = ir.StringAttr.get(
+        compute_type.split(':')[1]
+    )
+    frontend_attrs['inlineable'] = ir.StringAttr.get('false')
   else:
-    dict_attr = ir.DictAttr.get({
-        "_xla_compute_type": ir.StringAttr.get(mlir.map_compute_type(compute_type))
-    })
-  call.operation.attributes["mhlo.frontend_attributes"] = dict_attr
+    frontend_attrs['_xla_compute_type'] = ir.StringAttr.get(
+        mlir.map_compute_type(compute_type)
+    )
+
+  if backend_config is not None:
+    if hasattr(backend_config, 'to_json'):
+      bcfg = backend_config.to_json()
+    else:
+      bcfg = backend_config
+    if isinstance(bcfg, bytes):
+      bcfg = bcfg.decode('utf-8')
+    frontend_attrs['backend_config'] = ir.StringAttr.get(bcfg)
+
+  call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(
+      frontend_attrs
+  )
 
   out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
@@ -145,62 +177,103 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces):
       for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)
   ]
 
+
 mlir.register_lowering(compute_on_p, _compute_on_lowering)
 
 
-def _compute_on_batcher(axis_data, vals_in, dims_in, *, jaxpr, compute_type,
-                        out_memory_spaces):
+def _compute_on_batcher(
+    axis_data,
+    vals_in,
+    dims_in,
+    *,
+    jaxpr,
+    compute_type,
+    out_memory_spaces,
+    backend_config,
+):
   batched_jaxpr, dims_out = batching.batch_jaxpr2(jaxpr, axis_data, dims_in)
-  outs = compute_on_p.bind(*vals_in, jaxpr=batched_jaxpr,
-                           compute_type=compute_type,
-                           out_memory_spaces=out_memory_spaces)
+  outs = compute_on_p.bind(
+      *vals_in,
+      jaxpr=batched_jaxpr,
+      compute_type=compute_type,
+      out_memory_spaces=out_memory_spaces,
+      backend_config=backend_config,
+  )
   return outs, dims_out
+
+
 batching.fancy_primitive_batchers[compute_on_p] = _compute_on_batcher
 
 
-def _compute_on_jvp(primals, tangents, *, jaxpr, compute_type,
-                    out_memory_spaces):
+def _compute_on_jvp(
+    primals, tangents, *, jaxpr, compute_type, out_memory_spaces, backend_config
+):
   nzs = [not isinstance(t, ad.Zero) for t in tangents]
   jaxpr_jvp, out_nzs = ad.jvp_jaxpr(jaxpr, nzs, False)
   nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
   spaces_jvp = (*out_memory_spaces,
                 *[s for s, nz in zip(out_memory_spaces, out_nzs) if nz])
-  outs = compute_on_p.bind(*primals, *nz_tangents, jaxpr=jaxpr_jvp,
-                           compute_type=compute_type,
-                           out_memory_spaces=spaces_jvp)
+  outs = compute_on_p.bind(
+      *primals,
+      *nz_tangents,
+      jaxpr=jaxpr_jvp,
+      compute_type=compute_type,
+      out_memory_spaces=spaces_jvp,
+      backend_config=backend_config,
+  )
   primals_out, nz_tangents_out = outs[:len(out_nzs)], outs[len(out_nzs):]
   nz_outs = iter(nz_tangents_out)
   tangents_out = [next(nz_outs) if nz else ad.Zero(aval.to_tangent_aval())
                   for aval, nz in zip(jaxpr.out_avals, out_nzs)]
   assert next(nz_outs, None) is None
   return primals_out, tangents_out
+
+
 ad.primitive_jvps[compute_on_p] = _compute_on_jvp
 
 
-def _compute_on_lin(_is_vjp, nzs, *primals, jaxpr, compute_type, out_memory_spaces):
+def _compute_on_lin(
+    _is_vjp,
+    nzs,
+    *primals,
+    jaxpr,
+    compute_type,
+    out_memory_spaces,
+    backend_config,
+):
   # TODO(mattjj): why did i do jvp + dce here, not ad.linearize_jaxpr?
   jaxpr_jvp, out_nzs = ad.jvp_jaxpr(jaxpr, nzs, False)
   lin_outs = [False] * len(out_nzs) + [True] * sum(out_nzs)
   jaxpr_lin_, used_inputs = pe.dce_jaxpr(jaxpr_jvp.jaxpr, lin_outs, False)
   jaxpr_lin = pe.close_jaxpr(jaxpr_lin_)
   spaces_lin = tuple(s for s, nz in zip(out_memory_spaces, out_nzs) if nz)
-  primals_out = compute_on_p.bind(*primals, jaxpr=jaxpr,
-                                  compute_type=compute_type,
-                                  out_memory_spaces=out_memory_spaces)
+  primals_out = compute_on_p.bind(
+      *primals,
+      jaxpr=jaxpr,
+      compute_type=compute_type,
+      out_memory_spaces=out_memory_spaces,
+      backend_config=backend_config,
+  )
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
   def compute_on_lin(primals, *tangents):
     nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
     inputs = [x for x, u in zip([*primals, *nz_tangents], used_inputs) if u]
-    nz_outs = compute_on_p.bind(*inputs, jaxpr=jaxpr_lin,
-                                compute_type=compute_type,
-                                out_memory_spaces=spaces_lin)
+    nz_outs = compute_on_p.bind(
+        *inputs,
+        jaxpr=jaxpr_lin,
+        compute_type=compute_type,
+        out_memory_spaces=spaces_lin,
+        backend_config=backend_config,
+    )
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(out_nzs, tangent_avals_out)]
     assert next(nz_outs_, None) is None
     return outs
   return primals_out, out_nzs, primals, compute_on_lin
+
+
 ad.primitive_linearizations[compute_on_p] = _compute_on_lin
 
 def _compute_on_partial_eval_custom_params_updater(
@@ -247,8 +320,10 @@ def _transpose_jaxpr(jaxpr, in_avals, in_tree):
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
   return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 
-def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
-                          out_memory_spaces):
+
+def _compute_on_transpose(
+    cts_in, *primals_in, jaxpr, compute_type, out_memory_spaces, backend_config
+):
   in_flat, in_tree = tree_flatten((primals_in, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
   trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_avals, in_tree)
@@ -256,8 +331,14 @@ def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
                else core.typeof(x).memory_space for x in primals_in]
   cts_out_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
   trans_spaces = tuple(s for x, s in zip(cts_out_, in_spaces) if x)
-  cts_out = compute_on_p.bind(*in_flat, jaxpr=trans_jaxpr,
-                              compute_type=compute_type,
-                              out_memory_spaces=trans_spaces)
+  cts_out = compute_on_p.bind(
+      *in_flat,
+      jaxpr=trans_jaxpr,
+      compute_type=compute_type,
+      out_memory_spaces=trans_spaces,
+      backend_config=backend_config,
+  )
   return tree_unflatten(out_tree, cts_out)
+
+
 ad.primitive_transposes[compute_on_p] = _compute_on_transpose
