@@ -15,29 +15,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import math
-from typing import cast, Any, ClassVar, Literal, TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, ClassVar, Literal, TypeVar, cast
+
+import numpy as np
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import _gpu_ops_gen
-from jaxlib.mlir.dialects import arith
-from jaxlib.mlir.dialects import builtin
-from jaxlib.mlir.dialects import func
-from jaxlib.mlir.dialects import gpu
-from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvvm
-import numpy as np
+from jaxlib.mlir.dialects import (
+  _gpu_ops_gen,
+  arith,
+  builtin,
+  func,
+  gpu,
+  llvm,
+  memref,
+  nvvm,
+)
 
 from . import fragmented_array as fa
-from . import profiler
-from . import utils
+from . import profiler, utils
 
 _OpT = TypeVar("_OpT", bound=ir.OpView)
 
@@ -78,6 +80,9 @@ USES_MULTIMEM_ATTR = "mosaic_gpu.multimem_used"
 # Module attribute used to identify which kernel arguments are used with
 # multimem.
 MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
+# Module attribute used to identify which kernel arguments require symmetric
+# memory allocation (e.g. for NCCL device-side window registration).
+SYMMETRIC_ARGS_ATTR = "mosaic_gpu.symmetric_args"
 
 
 def uses_collective_metadata(module):
@@ -697,6 +702,7 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   buffers: ir.Value
   profiler: OnDeviceProfiler | None = None
+  device_nccl_metadata: ir.Value | None = None
   device_collective_metadata: ir.Value | None = None
   num_peers: int = 0
   num_params: int = 0
@@ -705,6 +711,7 @@ class LaunchContext:
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
+  _nccl_decls_emitted: bool = dataclasses.field(default=False, init=False)
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -728,6 +735,16 @@ class LaunchContext:
       ptr_ty, utils.getelementptr(self.buffers, [self.num_params + 1], ptr_ty)
     )
     return utils.ptr_as_memref(host_metadata_ptr, metadata_ty)
+
+  @property
+  def nccl_metadata(self) -> ir.Value | None:
+    """Returns pre-loaded NCCL metadata memref.
+
+    Layout: [window_0, offset_0, ..., window_N, offset_N, rank, num_peers]
+    Each entry is a uint64_t. Loaded in HOST code and passed as a kernel
+    parameter to avoid GPU-side access to host stack memory.
+    """
+    return self.device_nccl_metadata
 
   def _alloc_scratch(
       self,
@@ -1939,6 +1956,124 @@ class LaunchContext:
           "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
       )
 
+  def _ensure_nccl_decls(self):
+    """Declares NCCL device-side bitcode functions as LLVM extern functions.
+
+    These are resolved at link time against libnccl_device.bc.
+    """
+    if self._nccl_decls_emitted:
+      return
+    self._nccl_decls_emitted = True
+    self.is_device_collective = True
+    with ir.InsertionPoint(self.module.body):
+      # ncclGetLsaPointer(ncclWindow_t w, size_t offset, int peer) -> void*
+      # ncclWindow_t is a pointer (ncclWindow_vidmem*)
+      nccl_get_lsa_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr, i64, i32)>")
+      )
+      llvm.LLVMFuncOp(
+          "ncclGetLsaPointer", nccl_get_lsa_ptr_type,
+          sym_visibility="private",
+      )
+      # ncclGetLocalPointer(ncclWindow_t w, size_t offset) -> void*
+      nccl_get_local_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr, i64)>")
+      )
+      llvm.LLVMFuncOp(
+          "ncclGetLocalPointer", nccl_get_local_ptr_type,
+          sym_visibility="private",
+      )
+      # ncclGetPeerPointer(ncclWindow_t w, size_t offset, int peer) -> void*
+      nccl_get_peer_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr, i64, i32)>")
+      )
+      llvm.LLVMFuncOp(
+          "ncclGetPeerPointer", nccl_get_peer_ptr_type,
+          sym_visibility="private",
+      )
+      # ncclGetLsaMultimemPointer(ncclWindow_t w, size_t offset,
+      #                           ncclDevComm const&) -> void*
+      nccl_get_lsa_multimem_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr, i64, !llvm.ptr)>")
+      )
+      llvm.LLVMFuncOp(
+          "ncclGetLsaMultimemPointer", nccl_get_lsa_multimem_ptr_type,
+          sym_visibility="private",
+      )
+
+  def nccl_get_lsa_pointer(
+      self,
+      window: ir.Value,
+      offset: ir.Value,
+      peer: ir.Value,
+  ) -> ir.Value:
+    """Calls ncclGetLsaPointer(window, offset, peer) -> ptr.
+
+    Args:
+      window: ncclWindow_t (an !llvm.ptr to ncclWindow_vidmem).
+      offset: Byte offset into the window (i64).
+      peer: Peer rank within the LSA team (i32).
+
+    Returns:
+      An !llvm.ptr to the remote memory on the given peer.
+    """
+    self._ensure_nccl_decls()
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    return cast(ir.Value, llvm.call(
+        ptr_ty, [window, offset, peer], [], [],
+        callee="ncclGetLsaPointer",
+    ))
+
+  def nccl_get_local_pointer(
+      self,
+      window: ir.Value,
+      offset: ir.Value,
+  ) -> ir.Value:
+    """Calls ncclGetLocalPointer(window, offset) -> ptr."""
+    self._ensure_nccl_decls()
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    return cast(ir.Value, llvm.call(
+        ptr_ty, [window, offset], [], [],
+        callee="ncclGetLocalPointer",
+    ))
+
+  def nccl_get_peer_pointer(
+      self,
+      window: ir.Value,
+      offset: ir.Value,
+      peer: ir.Value,
+  ) -> ir.Value:
+    """Calls ncclGetPeerPointer(window, offset, peer) -> ptr."""
+    self._ensure_nccl_decls()
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    return cast(ir.Value, llvm.call(
+        ptr_ty, [window, offset, peer], [], [],
+        callee="ncclGetPeerPointer",
+    ))
+
+  def nccl_get_lsa_multimem_pointer(
+      self,
+      window: ir.Value,
+      offset: ir.Value,
+      dev_comm: ir.Value,
+  ) -> ir.Value:
+    """Calls ncclGetLsaMultimemPointer(window, offset, &devComm) -> ptr.
+
+    Args:
+      window: ncclWindow_t (an !llvm.ptr).
+      offset: Byte offset (i64).
+      dev_comm: Pointer to ncclDevComm struct (!llvm.ptr).
+
+    Returns:
+      An !llvm.ptr to the multicast memory address.
+    """
+    self._ensure_nccl_decls()
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    return cast(ir.Value, llvm.call(
+        ptr_ty, [window, offset, dev_comm], [], [],
+        callee="ncclGetLsaMultimemPointer",
+    ))
+
   def _find_kernel_argument_index(self, ref: ir.Value):
     """Finds the index of the kernel argument used to derive the given reference."""
     if not isinstance(ref.type, ir.MemRefType):
@@ -2047,6 +2182,44 @@ class LaunchContext:
       if peer.type != i32:
         raise ValueError(f"peer index must be an i32, got {peer.type}")
       return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+    elif self.nccl_metadata is not None and not on_host:
+      # NCCL LSA path: use ncclGetLsaPointer(window, offset, peer).
+      # nccl_metadata layout: [win_0, off_0, win_1, off_1, ..., rank, n_peers]
+      self._ensure_nccl_decls()
+      self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+
+      assert _kernel_arg_idx is not None
+      module_attributes = self.module.operation.attributes
+      if SYMMETRIC_ARGS_ATTR in module_attributes:
+        parameter_uses_symmetric = np.array(
+            module_attributes[SYMMETRIC_ARGS_ATTR]
+        )
+      else:
+        parameter_uses_symmetric = np.zeros(self.num_params, dtype=np.int64)
+      parameter_uses_symmetric[_kernel_arg_idx] = 1
+      module_attributes[SYMMETRIC_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
+          parameter_uses_symmetric
+      )
+      index = ir.IndexType.get()
+      ptr_ty = ir.Type.parse("!llvm.ptr")
+
+      # Load ncclWindow_t and symmetric offset for this parameter.
+      win_idx = arith.constant(index, _kernel_arg_idx * 2)
+      off_idx = arith.constant(index, _kernel_arg_idx * 2 + 1)
+      window_i64 = memref.load(self.nccl_metadata, [win_idx])
+      sym_offset = memref.load(self.nccl_metadata, [off_idx])
+      window = llvm.inttoptr(ptr_ty, window_i64)
+
+      # Compute byte offset of ref within the buffer.
+      current_device = self.device_id(on_host=False)
+      parameter_on_current_device = self._get_parameter_address_on_peer(
+          _kernel_arg_idx, current_device, on_host=False
+      )
+      ref_offset = self._get_offset_to_parameter(
+          ref, parameter_on_current_device
+      )
+      total_offset = arith.addi(sym_offset, ref_offset)
+      return self.nccl_get_lsa_pointer(window, total_offset, peer)
     else:
       # Collective metadata contains pointers of kernel arguments for each peer
       # device. The pointer has the following format:
