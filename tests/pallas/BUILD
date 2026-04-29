@@ -1449,8 +1449,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "tpu_async_sc_tc_test",
-    srcs = ["tpu_async_sc_tc_test.py"],
+    name = "tpu_pallas_mpmd_test",
+    srcs = ["tpu_pallas_mpmd_test.py"],
     args = [
         "--xla_msa_enable=false",
         "--xla_tpu_vmem_scavenging_mode=NONE",
