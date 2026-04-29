@@ -29,7 +29,6 @@ from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
 from jax._src import lax
-from jax._src import literals
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -38,11 +37,12 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
+from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
-from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax._src.pallas.mosaic_gpu.core import state_types
@@ -555,14 +555,16 @@ def _copy_gmem_to_smem_lowering(
           ],
       )
   )
-  flat_src_transforms_avals, flat_dst_transforms_avals, _ = (
-      util.split_list(
-          ctx.avals_in[3:],
-          [
-              src_transforms_treedef.num_leaves,
-              dst_transforms_treedef.num_leaves,
-          ],
-      )
+  (
+      flat_src_transforms_avals,
+      flat_dst_transforms_avals,
+      flat_barrier_transforms_avals,
+  ) = util.split_list(
+      ctx.avals_in[3:],
+      [
+          src_transforms_treedef.num_leaves,
+          dst_transforms_treedef.num_leaves,
+      ],
   )
   src_transform_avals = src_transforms_treedef.unflatten(
       flat_src_transforms_avals
@@ -590,12 +592,14 @@ def _copy_gmem_to_smem_lowering(
       **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
       **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
   }
-  base_index = _get_barrier_base_index(
+  barrier = _handle_barrier_transforms(
+      ctx,
+      barrier,
       barrier_ref_aval,
+      barrier_transforms_treedef.unflatten(flat_barrier_transforms_avals),
       barrier_transforms_treedef.unflatten(flat_barrier_transforms),
   )
-  if base_index is not None:
-    barrier = barrier[base_index]
+
   collective = None
   if collective_axes is not None:
     collective = tuple(
@@ -937,46 +941,24 @@ def async_prefetch(
   return None
 
 
-def _get_barrier_base_index(aval, transforms) -> ir.Value | None:
+def _handle_barrier_transforms(ctx, barrier, aval, transform_avals, transforms):
   if not transforms:
-    return None
-  strides = list(pallas_utils.strides_from_shape(aval.shape))
-  base_index: ir.Value | None = None
-  while transforms:
-    match transforms:
-      case [indexing.NDIndexer() as indexer, *transforms]:
-        num_int_idxs = 0
-        for i, (idx, stride) in enumerate(zip(indexer.indices, strides[:])):
-          if isinstance(idx, indexing.Slice):
-            if idx.stride != 1:
-              raise NotImplementedError(
-                  "Barrier does not support slice with `stride != 1`"
-              )
-            idx = idx.start
-          else:
-            # This dimension is absent for any corresponding `NDIndexer`s, so
-            # we remove the corresponding stride.
-            strides.pop(i - num_int_idxs)
-            num_int_idxs += 1
+    return barrier
 
-          if isinstance(
-              idx, (int, ir.Value, mgpu.FragmentedArray, literals.TypedNdArray)
-          ):
-            idx = lowering._as_index(idx)  # pylint: disable=protected-access
-          else:
-            raise ValueError(
-                "Barrier can only be indexed with integers or slices, got"
-                f" {idx}"
-            )
+  i8 = ir.IntegerType.get_signless(8)
+  # Create a memref to an imaginary allocation at address zero.
+  ptr = llvm_dialect.mlir_zero(llvm_dialect.PointerType.get())
+  ref = mgpu_utils.ptr_as_memref(ptr, ir.MemRefType.get(aval.shape, i8))
+  assert isinstance(ref, ir.Value)
+  ref, _, transforms = lowering._handle_transforms(  # pylint: disable=protected-access
+      ctx, aval, ref, transform_avals, transforms
+  )
+  if transforms:
+    raise ValueError("Unsupported transforms on barrier.")
 
-          idx = arith_dialect.muli(idx, lowering._as_index(stride))  # pylint: disable=protected-access
-          if base_index is None:
-            base_index = idx
-          else:
-            base_index = arith_dialect.addi(base_index, idx)
-      case _:
-        raise ValueError("Barrier does not support arbitrary transforms")
-  return base_index
+  # TODO(cjfj): Check that the ref points to a single element.
+  _, offset, *_ = memref_dialect.extract_strided_metadata(ref)  # pyrefly: ignore[not-iterable]
+  return barrier[offset]
 
 
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
@@ -1019,12 +1001,13 @@ def _barrier_arrive_lowering(
     *flat_transforms,
     transforms_treedef,
 ):
-  transforms = transforms_treedef.unflatten(flat_transforms)
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
-  base_index = _get_barrier_base_index(barrier_aval, transforms)
-  if base_index is not None:
-    barrier = barrier[base_index]
+  transform_avals = transforms_treedef.unflatten(ctx.avals_in[1:])
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier = _handle_barrier_transforms(
+      ctx, barrier, barrier_aval, transform_avals, transforms
+  )
   sem_dtype = barrier_aval.inner_aval.dtype  # pyrefly: ignore[missing-attribute]
   orders_tensor_core = getattr(sem_dtype, "orders_tensor_core", False)
 
@@ -1112,13 +1095,14 @@ def _barrier_test_lowering(
 ):
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
+  transform_avals = transforms_treedef.unflatten(ctx.avals_in[1:])
   transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier = _handle_barrier_transforms(
+      ctx, barrier, barrier_aval, transform_avals, transforms
+  )
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
-  base_index = _get_barrier_base_index(barrier_aval, transforms)
-  if base_index is not None:
-    barrier = barrier[base_index]
   wait_complete = barrier.test(orders_tensor_core=orders_tensor_core)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     return wait_complete
@@ -1184,13 +1168,14 @@ def _barrier_wait_lowering(
 ):
   barrier_aval = ctx.avals_in[0]
   assert isinstance(barrier_aval, state_types.AbstractRef)
+  transform_avals = transforms_treedef.unflatten(ctx.avals_in[1:])
   transforms = transforms_treedef.unflatten(flat_transforms)
+  barrier = _handle_barrier_transforms(
+      ctx, barrier, barrier_aval, transform_avals, transforms
+  )
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
-  base_index = _get_barrier_base_index(barrier_aval, transforms)
-  if base_index is not None:
-    barrier = barrier[base_index]
   barrier.wait(orders_tensor_core=orders_tensor_core)
   return ()
 
@@ -2149,12 +2134,13 @@ def _tcgen05_mma_lowering(
     )
 
   if barrier_transforms_tree is not None and barrier_ref is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
+    barrier_ref = _handle_barrier_transforms(
+        ctx,
+        barrier_ref,
+        barrier_ref_aval,
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves_avals),
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves),
     )
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
 
   if lhs_swizzle is None:
     lhs_swizzle = rhs_swizzle
@@ -2336,7 +2322,7 @@ def _tcgen05_mma_lowering_wg(
       acc_transforms_leaves_avals,
       a_transforms_leaves_avals,
       b_transforms_leaves_avals,
-      _,
+      barrier_transforms_leaves_avals,
       a_scale_transforms_leaves_avals,
       b_scale_transforms_leaves_avals,
       a_sparse_metadata_transforms_leaves_avals,
@@ -2391,12 +2377,13 @@ def _tcgen05_mma_lowering_wg(
   )
 
   if barrier_transforms_tree is not None and barrier_ref is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
+    barrier_ref = _handle_barrier_transforms(
+        ctx,
+        barrier_ref,
+        barrier_ref_aval,
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves_avals),
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves),
     )
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
 
   a_scale_ref = handle_transforms_and_get_ref(
       a_scale_transforms_tree,
@@ -2505,12 +2492,13 @@ def _tcgen05_commit_arrive_lowering(
   barrier_ref_aval = ctx.avals_in[0]
   assert isinstance(barrier_ref_aval, state_types.AbstractRef)
   if barrier_transforms_tree is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
+    barrier_ref = _handle_barrier_transforms(
+        ctx,
+        barrier_ref,
+        barrier_ref_aval,
+        barrier_transforms_tree.unflatten(ctx.avals_in[1:]),
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves),
     )
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
@@ -2544,12 +2532,13 @@ def _tcgen05_commit_arrive_lowering_wg(
   barrier_ref_aval = ctx.avals_in[0]
   assert isinstance(barrier_ref_aval, state_types.AbstractRef)
   if barrier_transforms_tree is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
+    barrier_ref = _handle_barrier_transforms(
+        ctx,
+        barrier_ref,
+        barrier_ref_aval,
+        barrier_transforms_tree.unflatten(ctx.avals_in[1:]),
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves),
     )
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
 
   predicate_ctx: contextlib.AbstractContextManager[None]
   if collective_axis is not None:
@@ -4029,8 +4018,11 @@ def try_cluster_cancel_lowering(
     res_transforms_leaves, barrier_transforms_leaves = util.split_list(
       transforms_leaves, [result_transforms_tree.num_leaves])
     res_transforms = result_transforms_tree.unflatten(res_transforms_leaves)
+    res_transforms_avals_leaves, barrier_transforms_avals_leaves = (
+        util.split_list(ctx.avals_in[2:], [result_transforms_tree.num_leaves])
+    )
     res_transform_avals = result_transforms_tree.unflatten(
-        ctx.avals_in[2 : 2 + result_transforms_tree.num_leaves]
+        res_transforms_avals_leaves
     )
     result_aval = ctx.avals_in[0]
     assert isinstance(result_aval, state_types.AbstractRef)
@@ -4041,15 +4033,17 @@ def try_cluster_cancel_lowering(
           f"Unimplemented transforms for result ref: {res_transforms}"
       )
   else:
+    barrier_transforms_avals_leaves = ctx.avals_in[2:]
     barrier_transforms_leaves = transforms_leaves
 
   if barrier_transforms_tree is not None:
-    base_index = _get_barrier_base_index(
+    barrier = _handle_barrier_transforms(
+        ctx,
+        barrier,
         ctx.avals_in[1],
+        barrier_transforms_tree.unflatten(barrier_transforms_avals_leaves),
         barrier_transforms_tree.unflatten(barrier_transforms_leaves),
     )
-    if base_index is not None:
-      barrier = barrier[base_index]
 
   result_ty = ir.MemRefType(result_ref.type)
   bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
