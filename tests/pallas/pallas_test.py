@@ -2448,6 +2448,29 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  def test_jvp_with_zero_tangent(self):
+    # Regression: lax.stop_gradient supplies a symbolic ad_util.Zero
+    # tangent for one input. Pre-fix _pallas_call_jvp_rule built jvp_bms
+    # by duplicating in_bms 1:1 with primals, mismatching jvp_jaxpr.invars
+    # whenever the nonzero_tangents filter dropped any input.
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((64,), floatx),
+    )
+    def add_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    def f(x, y):
+      return add_kernel(x, lax.stop_gradient(y))
+
+    x = jnp.arange(64, dtype=floatx)
+    y = jnp.arange(64, dtype=floatx) * 2.0
+    vx = jnp.ones_like(x)
+    vy = jnp.ones_like(y)
+    out_primal, out_tangent = jax.jvp(f, (x, y), (vx, vy))
+    np.testing.assert_allclose(out_primal, x + y, atol=self.tol, rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, vx, atol=self.tol, rtol=self.tol)
+
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
   #   k1, k2 = random.split(random.key(0))
