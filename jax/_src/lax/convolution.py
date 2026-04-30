@@ -822,7 +822,7 @@ def _conv_general_dilated_lower(
     # TODO(https://github.com/openxla/stablehlo/issues/1268)
     raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
-    result_type = mlir.aval_to_ir_type(aval_out)
+    result_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
     out = hlo.convolution(
         result_type, lhs, rhs,
         dimension_numbers=dnums,
@@ -838,14 +838,14 @@ def _conv_general_dilated_lower(
   else:
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
-    int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    int2d = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pad1 = mlir.eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
       return hlo.reshape(int2d, pad1)
     d_padding = hlo.concatenate(
         list(map(prep_one_pad, padding)), mlir.i64_attr(0)
     )
-    result_type = mlir.aval_to_ir_type(aval_out)
+    result_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
     return [
         hlo.dynamic_conv(
           result_type,

@@ -33,8 +33,14 @@ def print_custom_call(name, arg_avals, result_avals, **kw):
   with ctx, loc:
     module = ir.Module.create(loc=ir.Location.unknown())
     ip = ir.InsertionPoint(module.body)
-    arg_types = [mlir.aval_to_ir_type(aval) for aval in arg_avals]
-    result_types = [mlir.aval_to_ir_type(aval) for aval in result_avals]
+    arg_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in arg_avals
+    ]
+    result_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in result_avals
+    ]
     ftype = ir.FunctionType.get(arg_types, result_types)
     func = func_dialect.FuncOp("func", ftype, ip=ip)
     entry_block = func.add_entry_block()

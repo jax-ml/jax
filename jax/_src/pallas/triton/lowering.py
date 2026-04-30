@@ -75,6 +75,7 @@ class ModuleContext:
   traceback_caches: mlir.TracebackCaches = dataclasses.field(repr=False)
   platform: str
   compute_capability: int | None
+  mlir_ctx: mlir.ModuleContext
 
 
 @dataclasses.dataclass
@@ -304,6 +305,7 @@ def lower_jaxpr_to_triton_module(
     grid_mapping: GridMapping,
     platform: str,
     compute_capability: int | None,
+    mlir_ctx: mlir.ModuleContext,
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -357,6 +359,7 @@ def lower_jaxpr_to_triton_module(
           mlir.TracebackCaches(),
           platform,
           compute_capability,
+          mlir_ctx=mlir_ctx,
       )
       block_infos = [
           BlockInfo(

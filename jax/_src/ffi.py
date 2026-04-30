@@ -246,7 +246,7 @@ def build_ffi_lowering_function(
             f"of at least 4; got api_version={kwargs['api_version']}.")
       kwargs["backend_config"] = backend_config
     if "result_types" not in kwargs:
-      kwargs["result_types"] = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out))
+      kwargs["result_types"] = mlir.flatten_ir_types([mlir._aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out])
     if not skip_ffi_layout_processing:
       if operand_layouts is None:
         kwargs["operand_layouts"] = map(
@@ -269,7 +269,7 @@ def build_ffi_lowering_function(
     if "result_shapes" not in kwargs and not all(
         core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
       kwargs["result_shapes"] = [
-          mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
+          mlir.shape_tensor(ctx.module_context, mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
           for aval in ctx.avals_out]
 
     return mlir.custom_call(call_target_name, operands=operands, **kwargs)

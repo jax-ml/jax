@@ -996,7 +996,7 @@ def _shard_map_lowering_shardy(
       ctx.module_context.sharding_attr_cache)
 
   output_types = ([hlo.TokenType.get()] * num_tokens +
-                  mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out)))
+                  mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_out)))
 
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
@@ -1004,11 +1004,11 @@ def _shard_map_lowering_shardy(
       sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
 
   dim_var_types = [
-    mlir.aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))
+    mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtypes.default_int_dtype()))
   ] * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
-  const_arg_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, const_avals))
-  in_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, in_avals_))
+  const_arg_types = mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), const_avals))
+  in_types = mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), in_avals_))
   block = ir.Block.create_at_start(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))

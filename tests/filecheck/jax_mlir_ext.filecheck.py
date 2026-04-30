@@ -71,8 +71,14 @@ def test_inlined_func_call():
 
     module = ir.Module.create(loc=ir.Location.unknown())
     ip = ir.InsertionPoint(module.body)
-    arg_types = [mlir.aval_to_ir_type(aval) for aval in arg_avals]
-    result_types = [mlir.aval_to_ir_type(aval) for aval in result_avals]
+    arg_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in arg_avals
+    ]
+    result_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in result_avals
+    ]
     ftype = ir.FunctionType.get(arg_types, result_types)
     callee = func_dialect.FuncOp("callee", ftype, ip=ip)
     callee.attributes["sym_visibility"] = ir.StringAttr.get("private")

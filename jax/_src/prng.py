@@ -1095,7 +1095,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
                                 broadcast_dimensions=[])
   counts_shifted = mlir.hlo.shift_right_logical(counts, shift)
-  result_type = mlir.aval_to_ir_type(aval_out)
+  result_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   counts_lo = mlir.hlo.convert(result_type, counts)
   counts_hi = mlir.hlo.convert(result_type, counts_shifted)
   return counts_hi, counts_lo
