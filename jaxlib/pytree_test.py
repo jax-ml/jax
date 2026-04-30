@@ -15,9 +15,9 @@
 import collections
 import dataclasses
 import gc
+import warnings
 
-from absl.testing import absltest
-
+from absl.testing import absltest, parameterized
 from jax.jaxlib import xla_client
 
 pytree = xla_client._xla.pytree
@@ -55,7 +55,7 @@ class Custom:
 registry.register_dataclass_node(Custom, ["a"], ["b"])
 
 
-class PyTreeTest(absltest.TestCase):
+class PyTreeTest(parameterized.TestCase):
 
   def roundtrip_proto(self, example):
     original = registry.flatten(example)[1]
@@ -139,6 +139,38 @@ class PyTreeTest(absltest.TestCase):
         gc.get_referents(treedef),
     )
 
+  # TODO(rdyro): Remove this test when iterators throw an error.
+  @parameterized.named_parameters(
+      ("zip", zip([], [])),
+      ("list_iter", iter([])),
+      ("set_iter", iter(set())),
+      ("generator", (x for x in [])),
+      ("map", map(lambda x: x, [])),
+      ("filter", filter(lambda x: True, [])),
+      ("enumerate", enumerate([])),
+      ("reversed", reversed(())),
+      ("tuple_iter", iter(())),
+      ("dict_key_iter", iter({}.keys())),
+      ("dict_value_iter", iter({}.values())),
+      ("dict_item_iter", iter({}.items())),
+      ("dict_values", {}.values()),
+  )
+  def testIterableWarning(self, iterator):
+    with self.assertWarnsRegex(
+        DeprecationWarning,
+        "Python iterable type '.*' is treated as a leaf in PyTree.",
+    ):
+      registry.flatten(iterator)
+
+  def testDictValuesWithLeafPredicate(self):
+    d = {"a": 1, "b": 2}
+    v = d.values()
+    dict_values_type = type(v)
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      leaves, _ = registry.flatten(v, lambda x: isinstance(x, dict_values_type))
+      self.assertEmpty(w)
+    self.assertEqual(leaves, [v])
 
 if __name__ == "__main__":
   absltest.main()
