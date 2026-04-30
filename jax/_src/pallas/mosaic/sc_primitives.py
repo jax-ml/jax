@@ -23,6 +23,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import traceback_util
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
@@ -827,6 +828,8 @@ def parallel_loop(
   ...
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pallas.tpu_sc.parallel_loop")
 def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
   """A parallel loop decorator.
 

@@ -20,6 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
+from functools import partial
 import itertools
 import math
 from typing import Any, Literal, assert_never
@@ -32,6 +33,7 @@ from jax._src import lax
 from jax._src import literals
 from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.lib.mlir import ir
@@ -417,6 +419,8 @@ def _extract_smem_copy_params(aval, transforms):
   )
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.copy_smem_to_gmem")
 def copy_smem_to_gmem(
     src: _Ref,
     dst: _Ref,
@@ -1266,6 +1270,7 @@ def _barrier_arrive_lowering(
   return ()
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.barrier_arrive")
 def barrier_arrive(barrier: state.AbstractRef) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
@@ -1333,6 +1338,7 @@ def _barrier_test_lowering(
   return mgpu.FragmentedArray.splat(wait_complete, shape=(), is_signed=False)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.barrier_test")
 def barrier_test(barrier: state.AbstractRef) -> jax.Array:
   """Tests the given barrier.
 
@@ -1405,6 +1411,7 @@ def _barrier_wait_lowering(
   return ()
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.barrier_wait")
 def barrier_wait(barrier: state.AbstractRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
@@ -1449,6 +1456,8 @@ def _wait_smem_to_gmem_lowering(
   return ()
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.wait_smem_to_gmem")
 def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
   """Waits until no more than the most recent ``n`` SMEM->GMEM copies issued by the calling thread are in flight.
 
@@ -1491,6 +1500,7 @@ wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.wgmma")
 def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
   """Performs an asynchronous warp group matmul-accumulate on the given references.
 
@@ -1987,6 +1997,8 @@ def _wgmma_accumulator_store_warpgroup_lowering(
 tcgen05_mma_p = jax_core.Primitive("tcgen05_mma")
 tcgen05_mma_p.multiple_results = True
 
+
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.tcgen05_mma")
 def tcgen05_mma(acc: _Ref,
                 a: _Ref,
                 b: _Ref,
@@ -2659,6 +2671,8 @@ tcgen05_commit_arrive_p = jax_core.Primitive("tcgen05_commit_arrive")
 tcgen05_commit_arrive_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.tcgen05_commit_arrive")
 def tcgen05_commit_arrive(barrier: _Ref,
                           collective_axis: str | None = None):
   """Tracks completion of all preceding ``tcgen05_mma`` and ``async_copy_smem_to_tmem`` calls.
@@ -3464,6 +3478,7 @@ lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
 )
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.load")
 def load(
     src: _Ref,
     idx,
@@ -3502,6 +3517,8 @@ def load(
 
 async_load_tmem_p = jax_core.Primitive("async_load")
 
+
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.async_load_tmem")
 def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array:
   """Performs an asynchronous load from the TMEM array.
 
@@ -3631,6 +3648,8 @@ def _wait_load_tmem_lowering(_):
 async_store_tmem_p = jax_core.Primitive("async_store_tmem")
 async_store_tmem_p.multiple_results = True
 
+
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.async_store_tmem")
 def async_store_tmem(ref: _Ref, value):
   """Stores the value to TMEM.
 
@@ -3724,6 +3743,8 @@ async_copy_scales_to_tmem_p = jax_core.Primitive("async_copy_scales_to_tmem")
 async_copy_scales_to_tmem_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.async_copy_scales_to_tmem")
 def async_copy_scales_to_tmem(
     smem_ref: _Ref, tmem_ref: _Ref, collective_axis: AxisName | None = None,
 ):
@@ -3758,6 +3779,8 @@ async_copy_sparse_metadata_to_tmem_p = jax_core.Primitive("async_copy_sparse_met
 async_copy_sparse_metadata_to_tmem_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.async_copy_sparse_metadata_to_tmem")
 def async_copy_sparse_metadata_to_tmem(
     smem_ref: _Ref, tmem_ref: _Ref, collective_axis: AxisName | None = None
 ):
@@ -3903,6 +3926,8 @@ async_copy_smem_to_tmem_p = jax_core.Primitive("async_copy_smem_to_tmem")
 async_copy_smem_to_tmem_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.async_copy_smem_to_tmem")
 def async_copy_smem_to_tmem(
     smem_ref: _Ref,
     tmem_ref: _Ref,
@@ -4110,6 +4135,8 @@ class SemaphoreSignal:
   inc: int | jax.Array = 1
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.semaphore_signal_parallel")
 def semaphore_signal_parallel(*signals: SemaphoreSignal):
   """Signals multiple semaphores without any guaranteed ordering of signal arrivals.
 
@@ -4317,6 +4344,8 @@ def try_cluster_cancel_lowering(
   return []
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.try_cluster_cancel")
 def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
   """Initiates an async request to claim a new work unit from the grid.
 
@@ -4423,6 +4452,8 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
   return (*requested_idxs, success)
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.query_cluster_cancel")
 def query_cluster_cancel(
     result_ref: _Ref,
     grid_names: Sequence[Hashable]) -> tuple[tuple[jax.Array, ...], jax.Array]:
@@ -4712,6 +4743,7 @@ multimem_store_p = jax_core.Primitive("multimem_store")
 multimem_store_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.multimem_store")
 def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tuple[Hashable, ...]):
   """Stores the value to ref on all devices present in collective_axes.
 
@@ -4920,6 +4952,8 @@ def _multimem_load_reduce_lowering_rule_wg(
   )
 
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.multimem_load_reduce")
 def multimem_load_reduce(
     ref: _Ref,
     *,
@@ -4957,6 +4991,8 @@ def multimem_load_reduce(
 semaphore_signal_multicast_p = jax_core.Primitive("semaphore_signal_multicast")
 semaphore_signal_multicast_p.multiple_results = True
 
+@partial(traceback_util.api_boundary,
+         repro_api_name="plgpu.semaphore_signal_multicast")
 def semaphore_signal_multicast(
     semaphore,
     value: int | jax.Array = 1,
@@ -5053,6 +5089,7 @@ semaphore_signal_p = jax_core.Primitive("semaphore_signal")
 semaphore_signal_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.semaphore_signal")
 def semaphore_signal(
     semaphore,
     inc: int | jax.Array = 1,
@@ -5166,6 +5203,7 @@ semaphore_wait_p = jax_core.Primitive("semaphore_wait")
 semaphore_wait_p.multiple_results = True
 
 
+@partial(traceback_util.api_boundary, repro_api_name="plgpu.semaphore_wait")
 def semaphore_wait(
     semaphore,
     value: int | jax.Array = 1,

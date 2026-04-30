@@ -10,6 +10,7 @@ Table of contents:
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
 * [Throwing Python errors with JAX’s debug flags](./flags)
 * [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
+* [Generating reproducers for JAX errors](repro)
 
 ## Interactive inspection with `jax.debug`
 
@@ -142,4 +143,5 @@ flags
 print_breakpoint
 checkify_guide
 xla_metadata
+repro
 ```

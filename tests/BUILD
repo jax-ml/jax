@@ -32,6 +32,138 @@ package(
 jax_generate_backend_suites()
 
 jax_multiplatform_test(
+    name = "repro_test",
+    srcs = ["repro_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    # Only some sample non-CPU configs are needed.
+    enable_configs = [
+        "gpu_h100",
+        "tpu_v6e",
+    ],
+    env = {
+        "JAX_REPRO_DIR": "sponge",
+        "JAX_REPRO_FLAGS": "",
+    },
+    shard_count = 2,
+    deps = [
+        "//jax/_src:callback",
+        "//jax/_src:repro_runtime",
+        "//jax/_src:repro_test_util",
+        "//jax/experimental:layout",
+        "//jax/experimental/jax2tf",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_gpu",
+        "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "repro_pallas_test",
+    srcs = ["repro_pallas_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    # Only some sample non-CPU configs are needed.
+    enable_configs = [
+        "gpu_h100",
+        "tpu_v6e",
+    ],
+    env = {
+        "JAX_REPRO_DIR": "sponge",
+        "JAX_REPRO_FLAGS": "",
+    },
+    shard_count = 2,
+    deps = [
+        "//jax/_src:repro_runtime",
+        "//jax/_src:repro_test_util",
+        "//jax/experimental:hijax",
+        "//jax/experimental:layout",
+        "//jax/experimental/jax2tf",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_gpu",
+        "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "repro_hijax_test",
+    srcs = ["repro_hijax_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    # Only some sample non-CPU configs are needed.
+    enable_configs = [
+        "gpu_h100",
+        "tpu_v6e",
+    ],
+    env = {
+        "JAX_REPRO_DIR": "sponge",
+        "JAX_REPRO_FLAGS": "",
+    },
+    shard_count = 2,
+    deps = [
+        "//jax/_src:repro_runtime",
+        "//jax/_src:repro_test_util",
+        "//jax/experimental:hijax",
+        "//jax/experimental:layout",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_gpu",
+        "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "repro_reduce_test",
+    srcs = ["repro_reduce_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    env = {
+        "JAX_REPRO_DIR": "sponge",
+        "JAX_REPRO_FLAGS": "",
+    },
+    shard_count = 1,
+    deps = [
+        "//jax/_src:repro_runtime",
+        "//jax/_src:repro_test_util",
+        "//jax/experimental:hijax",
+        "//jax/experimental:layout",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_gpu",
+        "//jax/experimental:pallas_gpu_ops",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
     enable_configs = ["tpu_v3_x4"],

@@ -22,6 +22,7 @@ load(
     "jax_visibility",
     "py_deps",
     "py_library_providing_imports_info",
+    "pytype_library",
     "pytype_strict_library",
 )
 
@@ -284,6 +285,7 @@ pytype_strict_library(
         ":partition_spec",
         ":profiler",
         ":remat",
+        ":repro",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
@@ -374,6 +376,7 @@ pytype_strict_library(
         ":pickle_util",
         ":sharding",
         ":sharding_impls",
+        ":traceback_util",
         ":tree_util",
         ":typing",
         ":util",
@@ -571,6 +574,7 @@ pytype_strict_library(
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
+        ":repro",
         ":sharding",
         ":source_info_util",
         ":traceback_util",
@@ -712,6 +716,7 @@ pytype_strict_library(
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
+        ":traceback_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
@@ -1482,6 +1487,86 @@ pytype_strict_library(
         ":traceback_util",
         "//jax/_src/lib",
     ],
+)
+
+# TODO(necula): avoid circular dependency: repro imports many of its
+# dependencies lazily, and we can list here as dependencies only very
+# basic modules. That is why we use `pytype_library` instead of
+# `pytype_strict_library`. Include the repro_runtime dependency to allow
+# inline_runtime to be used in the emitters.
+pytype_library(
+    name = "repro",
+    srcs = [
+        "repro/__init__.py",
+        "repro/ddmin.py",
+        "repro/emitter.py",
+        "repro/reducer.py",
+        "repro/reduce_repro.py",
+        "repro/repro_api.py",
+        "repro/repro_primitives.py",
+        "repro/repro_runtime.py",  # buildcleaner: keep
+        "repro/tracker.py",
+        "repro/trampolines.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":config",
+        ":dtypes",
+        ":frozen_dict",
+        ":path",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+    ] + py_deps("numpy") + py_deps("absl-all"),
+)
+
+pytype_library(
+    name = "repro_runtime",
+    srcs = [
+        "repro/repro_runtime.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":ad",
+        ":api",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
+        ":frozen_dict",
+        ":lax",
+        ":literals",
+        ":mesh",
+        ":mlir",
+        ":named_sharding",
+        ":path",
+        ":partition_spec",
+        ":random",
+        ":repro",
+        ":shard_map",
+        ":sharding",
+        ":source_info_util",
+        ":traceback_util",
+        ":typing",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_library(
+    name = "repro_test_util",
+    testonly = True,
+    srcs = [
+        "repro/repro_test_util.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":repro",
+        ":repro_runtime",
+        ":test_util",
+        "//jax/_src/pallas/mosaic:tpu_info",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

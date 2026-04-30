@@ -38,6 +38,7 @@ from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -564,10 +565,6 @@ class BlockSpec:
 
   def __post_init__(self):
     if self.index_map is not None:
-      # TODO(sharadmv): Add this once we have a better way to handle
-      # index_map equality.
-      # self.index_map = _IndexMapFunc(
-      #     traceback_util.api_boundary(self.index_map, repro_user_func=True))
       self.index_map = _IndexMapFunc(self.index_map)
 
   def to_block_mapping(
@@ -1491,6 +1488,8 @@ def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
 core_map_p.to_lojax = _core_map_to_lojax
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pallas.core_map")
 def core_map(
     mesh,
     *,

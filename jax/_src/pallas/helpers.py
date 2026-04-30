@@ -23,6 +23,7 @@ from jax._src import core as jax_core
 from jax._src import lax as lax
 from jax._src import numpy as jnp
 from jax._src import tree_util
+from jax._src import traceback_util
 from jax._src import typing as jax_typing
 from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
@@ -153,6 +154,8 @@ def loop(
   return decorator
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pallas.kernel")
 def kernel(
     body: Callable | Sequence[Callable] | api.NotSpecified = api.NotSpecified(),
     out_type: object | None = (),

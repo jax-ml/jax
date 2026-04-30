@@ -30,6 +30,7 @@ from jax import lax
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -151,6 +152,9 @@ class BufferedRef:
     )
 
 
+@functools.partial(
+    traceback_util.api_boundary,
+    repro_api_name="pallas.mosaic_gpu._uses_arguments")
 def _uses_arguments(
     index_map: Callable[..., Any], num_args: int
 ) -> Sequence[bool]:
@@ -214,6 +218,9 @@ def _downcast_spec(
   )
 
 
+@functools.partial(
+    traceback_util.api_boundary,
+    repro_api_name="pallas.mosaic_gpu.emit_pipeline")
 def emit_pipeline(
     body: Callable[..., T],
     *,
@@ -526,6 +533,9 @@ class WarpSpecializedPipeline(Protocol):
     ...
 
 
+@functools.partial(
+    traceback_util.api_boundary,
+    repro_api_name="pallas.mosaic_gpu.emit_pipeline_warp_specialized")
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,

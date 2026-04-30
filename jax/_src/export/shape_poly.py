@@ -41,6 +41,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src.interpreters import mlir
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
@@ -1378,6 +1379,8 @@ class PolyShape(tuple):
     return "(" + ", ".join(["..." if d is ... else str(d) for d in self]) + ")"
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.export.symbolic_shape")
 def symbolic_shape(shape_spec: str | None,
                    *,
                    constraints: Sequence[str] = (),

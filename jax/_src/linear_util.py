@@ -361,7 +361,8 @@ class DebugInfo(NamedTuple):
 
   def assert_arg_names(self, expected_count: int):
     assert self.arg_names is None or len(self.arg_names) == expected_count, (
-        expected_count, self)
+      "Argument count mismatch",
+      expected_count, self)
 
   def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str, ...] | None:
     """Keep only the arg_names for which `keep` is True."""
