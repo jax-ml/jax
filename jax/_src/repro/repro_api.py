@@ -328,3 +328,55 @@ def export_internal_call(fun: Callable, jit_kwargs: dict[str, Any],
   from jax._src.export import _export  # type: ignore
   fun_jit = repro_bypass_wrapper(api.jit)(fun, **jit_kwargs)
   return repro_bypass_wrapper(_export._export_internal)(fun_jit, **exp_kwargs)(*args, **kwargs)
+
+
+def _pallas_map_blockspec(toapply: Callable, bs):
+  from jax.experimental.pallas import BlockSpec  # type: ignore
+  from jax._src.pallas.core import _IndexMapFunc  # type: ignore
+
+  if isinstance(bs, BlockSpec):
+    if bs.index_map is not None:
+      orig_map = bs.index_map.index_map if isinstance(bs.index_map, _IndexMapFunc) else bs.index_map
+      return dataclasses.replace(bs, index_map=toapply(orig_map))
+  return bs
+
+
+def _pallas_map_gridspec(toapply: Callable, gs):
+  from jax._src.pallas.core import GridSpec  # type: ignore
+
+  if isinstance(gs, GridSpec):
+    new_fields = {}
+    new_fields["in_specs"] = \
+      tree_util.tree_map(partial(_pallas_map_blockspec, toapply), gs.in_specs)
+    new_fields["out_specs"] = \
+      tree_util.tree_map(partial(_pallas_map_blockspec, toapply), gs.out_specs)
+    new_spec = copy.copy(gs)
+    for k, v in new_fields.items():
+      object.__setattr__(new_spec, k, v)
+    return new_spec
+  return gs
+
+
+def _pallas_call_call_map_user_func_args(toapply, kernel, api_args,
+                                         api_kwargs, *args, **kwargs):
+  new_api_kwargs = dict(api_kwargs)
+  if (in_specs := new_api_kwargs.get("in_specs")) is not None:
+    new_api_kwargs["in_specs"] = \
+      tree_util.tree_map(partial(_pallas_map_blockspec, toapply), in_specs)
+  if (out_specs := new_api_kwargs.get("out_specs")) is not None:
+    new_api_kwargs["out_specs"] = \
+        tree_util.tree_map(partial(_pallas_map_blockspec, toapply), out_specs)
+  if (grid_spec := new_api_kwargs.get("grid_spec")) is not None:
+    new_api_kwargs["grid_spec"] = _pallas_map_gridspec(toapply, grid_spec)
+
+  return (toapply(kernel), api_args, new_api_kwargs, *args), kwargs
+
+
+@partial(repro_boundary, repro_api_name="pallas_call_call",
+         map_user_func_args=_pallas_call_call_map_user_func_args)
+def pallas_call_call(kernel: Callable, api_args: tuple[Any, ...],
+                     api_kwargs: dict[str, Any], *args, **kwargs):
+
+  from jax._src.pallas import pallas_call  # type: ignore
+  return repro_bypass_wrapper(pallas_call.pallas_call)(
+    kernel, *api_args, **api_kwargs)(*args, **kwargs)

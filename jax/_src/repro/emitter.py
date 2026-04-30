@@ -328,6 +328,89 @@ def initialize_operand_emitter():
 
     return res
 
+  initialize_operand_emitter_pallas()
+
+
+def initialize_operand_emitter_pallas():
+  try:
+    from jax._src.pallas import core as pallas_core  # type: ignore
+    from jax.experimental.pallas import tpu as pltpu  # type: ignore
+  except ImportError:
+    return
+
+  @partial(register_emitter_by_type, pallas_core.GridSpec)
+  def emit_GridSpec(ctx: "EmitFunctionDefContext", v: pallas_core.GridSpec) -> str:
+    grid = ctx.traverse_value(v.grid)
+    in_specs = ctx.traverse_value(v.in_specs)
+    out_specs = ctx.traverse_value(v.out_specs)
+    scratch_shapes = ctx.traverse_value(v.scratch_shapes)
+    if type(v) is pallas_core.GridSpec:
+      grid_spec_type = "pallas_core.GridSpec"
+      rest = ""
+    elif type(v) is pltpu.PrefetchScalarGridSpec:
+      grid_spec_type = "pltpu.PrefetchScalarGridSpec"
+      rest = f", num_scalar_prefetch={v.num_scalar_prefetch}"
+    else:
+      assert False
+    res = (f"{grid_spec_type}(grid={grid}, "
+           f"in_specs={in_specs}, out_specs={out_specs}, "
+           f"scratch_shapes={scratch_shapes}{rest})")
+    return ctx.named_value(res, prefix="gs")
+
+  register_emitter_by_type(pltpu.PrefetchScalarGridSpec, emit_GridSpec)
+
+  register_emitter_by_type(pallas_core.NoBlockSpec, lambda ctx, v: "pallas_core.no_block_spec")
+
+  @partial(register_emitter_by_type, pallas_core.BlockSpec)
+  def emit_BlockSpec(ctx: "EmitFunctionDefContext", v: pallas_core.BlockSpec) -> str:
+    index_map = ctx.traverse_value_atom(v.index_map)
+    res = (f"pallas_core.BlockSpec(block_shape={v.block_shape}, "
+           f"index_map={index_map}, "
+           f"memory_space={ctx.traverse_value(v.memory_space)}, "
+           f"pipeline_mode={v.pipeline_mode})")
+    return ctx.named_value(res, prefix="bs")
+
+  @partial(register_emitter_by_type, pallas_core._IndexMapFunc)
+  def emit_IndexMapFunc(ctx: "EmitFunctionDefContext", v: pallas_core._IndexMapFunc) -> str:
+    # The _IndexMapFunc is added upon construction of BlockSpec, it is
+    # ok to strip it when emitting
+    return ctx.traverse_value_atom(v.index_map)
+
+  _operand_emitter_by_type[pallas_core.MemorySpace] = emit_enum("pallas_core.MemorySpace")
+
+  from jax.experimental.pallas import tpu as pltpu  # type: ignore
+  @partial(register_emitter_by_type, pltpu.CompilerParams)
+  def emit_CompilerParams(ctx: "EmitFunctionDefContext", v: pltpu.CompilerParams) -> str:
+    dimension_semantics = ctx.traverse_value(v.dimension_semantics)
+    allow_input_fusion = ctx.traverse_value(v.allow_input_fusion)
+    flags = ctx.traverse_value(v.flags)
+    kernel_type = ctx.traverse_value_atom(v.kernel_type)
+    res = (f"pltpu.CompilerParams(dimension_semantics={dimension_semantics}, "
+           f"allow_input_fusion={allow_input_fusion}, vmem_limit_bytes={v.vmem_limit_bytes}, "
+           f"collective_id={v.collective_id}, has_side_effects={v.has_side_effects}, "
+           f"flags={flags}, internal_scratch_in_bytes={v.internal_scratch_in_bytes}, "
+           f"serialization_format={v.serialization_format}, kernel_type={kernel_type}, "
+           f"disable_bounds_checks={v.disable_bounds_checks}, skip_device_barrier={v.skip_device_barrier}, "
+           f"allow_collective_id_without_custom_barrier={v.allow_collective_id_without_custom_barrier})")
+    return ctx.named_value(res, prefix="cp")
+
+  @partial(register_emitter_by_type, pallas_core.CostEstimate)
+  def emit_CostEstimate(ctx: "EmitFunctionDefContext", v: pallas_core.CostEstimate) -> str:
+    res = f"pallas_core.CostEstimate({v.flops}, {v.transcendentals}, {v.bytes_accessed}, {v.remote_bytes_transferred})"
+    return ctx.named_value(res, prefix="ce")
+
+  _operand_emitter_by_type[pltpu.CoreType] = emit_enum("pltpu.CoreType")
+  _operand_emitter_by_type[pltpu.GridDimensionSemantics] = emit_enum("pltpu.GridDimensionSemantics")
+  _operand_emitter_by_type[pltpu.MemorySpace] = emit_enum("pltpu.MemorySpace")
+  _operand_emitter_by_type[pltpu.SemaphoreType] = emit_enum("pltpu.SemaphoreType")
+
+  @partial(register_emitter_by_type, pallas_core.MemoryRef)
+  def emit_MemoryRef(ctx: "EmitFunctionDefContext", v: pallas_core.MemoryRef) -> str:
+    inner_aval = ctx.traverse_value_atom(v.inner_aval)
+    memory_space = ctx.traverse_value_atom(v.memory_space)
+    res = f"pallas_core.MemoryRef({inner_aval}, {memory_space})"
+    return ctx.named_value(res, prefix="mr")
+
 
 tracker.lazy_initializers.append(initialize_operand_emitter)  # type: ignore
 

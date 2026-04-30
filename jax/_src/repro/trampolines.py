@@ -74,6 +74,7 @@ for repro_api_name, transform_name in [
   ("jax.hessian", "hessian"),
   ("jax.value_and_grad", "value_and_grad"),
   ("jax.checkpoint", "checkpoint"),
+  ("jax.experimental.pallas.pallas_call", "pallas_call"),
   ("jax.custom_gradient", "custom_gradient"),
   ("flax.core.axes_scan.scan", "flax_axes_scan"),
 ]:

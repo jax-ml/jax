@@ -39,7 +39,13 @@ from jax import lax
 from jax import numpy as jnp
 from jax import checkpoint as new_checkpoint
 from jax.experimental import layout
+import jax.experimental.pallas as pl
 from jax.experimental import pjit
+from jax.experimental.pallas import tpu as pltpu
+try:
+  import jax.experimental.pallas.ops.tpu.matmul
+except ImportError:
+  pass
 from jax.experimental import shard_map as exp_shard_map
 from jax.sharding import PartitionSpec as P
 from jax.sharding import AxisType
@@ -2339,6 +2345,228 @@ class ReproTest(jtu.JaxTestCase):
     x = jnp.ones([1, 1, 1])
 
     self.collect_and_check(f, w, x)
+
+  def test_pallas_call_0(self):
+    m, n = 32, 4
+    out_shape = jax.ShapeDtypeStruct((4, n), floatx)
+    @jax.jit
+    @partial(
+        pl.pallas_call,
+        interpret=True,
+        out_shape=out_shape,
+    )
+    def slice_kernel(x_ref, y_ref):
+      y_ref[:4, :4] = x_ref[:4, :4]
+    x = np.arange(m * n, dtype=floatx).reshape((m, n))
+    y = slice_kernel(x)
+    self.collect_and_check(slice_kernel, y)
+
+  def test_pallas_call_1(self):
+    @partial(jax.jit, static_argnames=["bm", "bn", "bk",
+                                       "interpret", "debug"])
+    def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
+      m, n, k = x.shape[0], y.shape[1], x.shape[1]
+
+      @partial(
+          pl.pallas_call,
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+          interpret=interpret,
+          debug=debug,
+          in_specs=[
+              pl.BlockSpec((bm, x.shape[1]), lambda i, _: (i, 0),
+                           memory_space=pltpu.MemorySpace.SMEM),
+              pl.BlockSpec((y.shape[0], bn), lambda _, j: (0, j)),
+          ],
+          out_specs=pl.BlockSpec((bm, bn), lambda i, j: (i, j)),
+          grid=(pl.cdiv(m, bm), pl.cdiv(n, bn)),
+      )
+      def matmul_kernel(x_ref, y_ref, o_ref):
+        acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
+
+        def body(i, acc):
+          x_block = x_ref[:, pl.ds(i * bk, bk)]
+          y_block = y_ref[pl.ds(i * bk, bk), :]
+          return acc + pl.dot(x_block, y_block)
+
+        acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
+        o_ref[:, :] = acc
+
+      return matmul_kernel(x, y)
+
+    x = y = np.ones((16, 16), dtype=np.float32)
+
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(matmul_block_spec,
+                             x, y, bm=2, bn=4, bk=8, interpret=True)
+
+  def test_pallas_blockspec_outside_collect(self):
+    bs = pl.BlockSpec((8, 8), lambda i, j: (i, j))
+
+    @jax.jit
+    @partial(
+        pl.pallas_call,
+        interpret=True,
+        out_shape=jax.ShapeDtypeStruct((16, 16), floatx),
+        in_specs=[bs],
+        out_specs=pl.BlockSpec((8, 8), lambda i, j: (i, j)),
+        grid=(2, 2),
+    )
+    def copy_kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = np.arange(16 * 16, dtype=floatx).reshape((16, 16))
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(copy_kernel, x)
+
+  def test_pallas_blockspec_calls_blockspec(self):
+    def f(x):
+      bs = pl.BlockSpec((8, 8), lambda i, j: (i, j))
+      bs1 = pl.BlockSpec((8, 8), lambda i, j: bs.index_map(j, i))
+      @jax.jit
+      @partial(
+          pl.pallas_call,
+          interpret=True,
+          out_shape=jax.ShapeDtypeStruct((16, 16), floatx),
+          in_specs=[bs1],
+          out_specs=pl.BlockSpec((8, 8), lambda i, j: (i, j)),
+          grid=(2, 2),
+      )
+      def copy_kernel(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+      return copy_kernel(x)
+
+    x = np.arange(16 * 16, dtype=floatx).reshape((16, 16))
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(f, x)
+
+  def test_pallas_blockspec_replace(self):
+
+    def top(x):
+      # BlockSpec.replace() triggers __post_init__ which re-wraps the index_map
+      # This happens sometimes, and we must handle it.
+      bs = pl.BlockSpec((8, 8), lambda i, j: (i, j))
+      bs2 = bs.replace(memory_space=pl.MemorySpace.DEFAULT)
+
+      @jax.jit
+      @partial(
+          pl.pallas_call,
+          interpret=True,
+          out_shape=jax.ShapeDtypeStruct((16, 16), floatx),
+          in_specs=[bs2],
+          out_specs=pl.BlockSpec((8, 8), lambda i, j: (i, j)),
+          grid=(2, 2),
+      )
+      def copy_kernel(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+
+      return copy_kernel(x)
+
+    x = np.arange(16 * 16, dtype=floatx).reshape((16, 16))
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(top, x)
+
+  def test_pallas_blockspec_reuse(self):
+
+    def top(x, y):
+      # Reuse the same BlockSpec object
+      bs = pl.BlockSpec((8, 8), lambda i, j: (i, j))
+      @jax.jit
+      @partial(
+          pl.pallas_call,
+          interpret=True,
+          out_shape=jax.ShapeDtypeStruct((16, 16), floatx),
+          in_specs=[bs, bs],
+          out_specs=bs,
+          grid=(2, 2),
+      )
+      def add_kernel(x_ref, y_ref, o_ref):
+        o_ref[...] = x_ref[...] + y_ref[...]
+
+      return add_kernel(x, y)
+
+    x = np.arange(16 * 16, dtype=floatx).reshape((16, 16))
+    y = np.ones((16, 16), dtype=floatx)
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(top, x, y)
+
+  def test_pallas_ref_transforms(self):
+
+    def kernel(x_ref, y_ref):
+      ref = (
+          x_ref.at[:16, :256]  # i32(16, 256)
+          .bitcast(jnp.int16)  # i16(32, 256)
+          .reshape((2, 16, 256))  # i16(2, 16, 256)
+          .bitcast(jnp.float16)  # bf16(2, 16, 256)
+          .at[1:, :, :]  # bf16(1, 16, 256)
+          .reshape((16, 256))  # bf16(16, 256)
+          .at[:, :128]  # bf16(16, 128)
+          .bitcast(jnp.int32)  # i32(8, 128)
+      )
+      y_ref[...] = ref[...]
+
+    x = jnp.arange(32 * 256, dtype=jnp.int32).reshape((32, 256))
+    def myf():
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+          interpret=True)(x)
+
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(myf)
+
+  def test_pallas_cost_analysis(self):
+    def kernel(x, y):
+      y[:] = x[:]
+    x = jnp.arange(1024.).reshape(8, 128)
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        cost_estimate=pl.CostEstimate(
+            flops=1234, transcendentals=21, bytes_accessed=12345
+        ),
+        interpret=True,
+    )
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(f, x)
+
+
+  def test_pallas_call_scalar_prefetch(self):
+    def body(_, x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(2 * 8 * 8 * 4, dtype=jnp.int32).reshape((2, 8 * 8, 4))
+
+    def _x_transform(i, s_ref):
+      s = s_ref[i]
+      return (s, 0)
+
+    s = jnp.tile(s[None], [2, 1])
+
+    @jax.jit
+    @jax.vmap
+    def kernel(s, x):
+      return pl.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              in_specs=[
+                  pl.BlockSpec((x.shape[0] // 8, x.shape[1]), _x_transform),
+              ],
+              out_specs=pl.BlockSpec(
+                  (x.shape[0] // 8, x.shape[1]), lambda i, _: (i, 0)
+              ),
+              grid=8,
+          ),
+          compiler_params=pltpu.CompilerParams(
+              allow_input_fusion=[False, True]
+          ),
+          interpret=True,
+      )(s, x)
+
+    with tracker.flags_override(fake_array_threshold=s.size + x.size + 1):
+      self.collect_and_check(kernel, s, x)
 
 
 if __name__ == '__main__':
