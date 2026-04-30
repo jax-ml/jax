@@ -38,6 +38,7 @@ from jax._src import frozen_dict
 from jax._src import lax
 from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.pallas import core as pallas_core
@@ -250,6 +251,9 @@ WGxWARP_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warp)
 
 
+@functools.partial(
+  traceback_util.api_boundary,
+  repro_api_name="pallas.mosaic_gpu.kernel")
 def kernel(
     body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
     out_shape: object | api.NotSpecified = api.NotSpecified(),
