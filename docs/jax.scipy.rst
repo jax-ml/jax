@@ -64,6 +64,7 @@ jax.scipy.linalg
    eigh_tridiagonal
    expm
    expm_frechet
+   fiedler
    funm
    hadamard
    hessenberg
