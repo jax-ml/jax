@@ -33,6 +33,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import flattree as ft
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import util as jax_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src import api_util
@@ -1712,6 +1713,7 @@ class PipelineStep:
     return cls(index=tuple(index), local_index=local_index)
 
 
+@traceback_util.api_boundary
 def _emit_pipeline(
     body,
     *,
@@ -1933,6 +1935,9 @@ def _emit_pipeline(
   return pipeline
 
 
+@functools.partial(
+  traceback_util.api_boundary,
+  repro_api_name="pallas.tpu.emit_pipeline_with_allocations")
 def emit_pipeline_with_allocations(
     body,
     *,
@@ -1997,6 +2002,9 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
 
+@functools.partial(
+    traceback_util.api_boundary,
+    repro_api_name="pallas.tpu.emit_pipeline")
 def emit_pipeline(
     body,
     *,

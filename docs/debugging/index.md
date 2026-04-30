@@ -15,6 +15,7 @@ Table of contents:
 * [Throwing Python errors with JAX’s debug flags](./flags)
 * [Attaching XLA metadata with `set_xla_metadata`](./xla_metadata)
 * [Debugging slow JAX tracing and XLA compilation](slow_tracing_compilation)
+* [Generating reproducers for JAX errors](repro)
 
 ## Interactive inspection with `jax.debug`
 
@@ -148,4 +149,5 @@ print_breakpoint
 checkify_guide
 xla_metadata
 slow_tracing_compilation
+repro
 ```

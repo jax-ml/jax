@@ -2150,7 +2150,7 @@ def make_jaxpr(
 ) -> Callable[..., tuple[core.Jaxpr, Any]]:
   ...
 
-@partial(api_boundary, repro_api_name="jax.make_japr")
+
 def make_jaxpr(
     fun: Callable,
     static_argnums: int | Sequence[int] = (),

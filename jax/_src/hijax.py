@@ -126,6 +126,10 @@ class HiType(core.AbstractValue):
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn
   dtypes.register_canonicalize_value_handler(val_cls, None)
+  if traceback_util.repro_is_enabled:
+    from jax._src.repro import emitter  # type: ignore
+    emitter.register_hival_class(val_cls)
+
 
 def hijax_method(f):
   return core.aval_method(f)
@@ -228,6 +232,8 @@ class HiPrim:
   def remat(self, _trace, *args):
     return self(*args), self  # full remat by default
 
+  @partial(traceback_util.api_boundary,
+           repro_api_name="hijax.VJPHiPrimitive.__call__.trampoline")
   def __call__(self, *args):
     args_flat = tree_leaves_checked(self.in_tree, args)
     ans_flat = call_hi_primitive_p.bind(*args_flat, _prim=self)
