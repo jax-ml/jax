@@ -222,6 +222,18 @@ class EighTest(jtu.JaxTestCase):
     lower=[True, False],
   )
   def testEighIdentity(self, n, dtype, lower):
+
+    # In ROCm 7.2.0, hipsolverDnCheevd and hipsolverDnZheevd produce NaNs in
+    # eigenvectors for complex types when matrices are too large (n>64) and
+    # have certain structures (such as the identity matrix).
+    #
+    # TODO: Re-enable this test when the hipSolver issue is resolved.
+    #
+    if (jtu.is_device_rocm() and n > 64
+        and np.issubdtype(dtype, np.complexfloating)):
+      self.skipTest("Complex types not currently supported on ROCm due to "
+                    "hipSolver issue.")
+
     tol = np.finfo(dtype).eps
     uplo = "L" if lower else "U"
 
