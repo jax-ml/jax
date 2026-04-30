@@ -1484,7 +1484,7 @@ class SemaphoreRef:
           in_memory = llvm.inline_asm(
               i32,
               [self.ptr, expected_in_memory, new_val],
-              f"atom.acquire.{memory_scope}.global.cas.b32 $0, [$1], $2, $3;",
+              f"atom.relaxed.{memory_scope}.global.cas.b32 $0, [$1], $2, $3;",
               "=r,l,r,r",
               has_side_effects=True,
           )
