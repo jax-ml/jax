@@ -1,6 +1,6 @@
 # Profiling computation
 
-<!--* freshness: { reviewed: '2025-06-12' } *-->
+<!--* freshness: { reviewed: '2026-04-30' } *-->
 
 ## Viewing program traces with Perfetto
 
@@ -349,6 +349,8 @@ jax.profiler.stop_trace()
     each sparse core to trace on the TPU.
 4.  `tpu_num_chips_to_profile_per_task`: Specifies the number of TPU chips to
     profile per task.
+5.  `tpu_perf_counters`: Controls the collection of performance counters.
+    Defaults to `True`.
 
 ##### GPU options
 
