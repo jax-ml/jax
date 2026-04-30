@@ -21,14 +21,15 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -221,6 +222,46 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
     }
   }
   return success();
+}
+
+FailureOr<TypedValue<VectorType>> selectWithBounds(
+    ImplicitLocOpBuilder& builder, const VRegDataBounds& bounds,
+    TypedValue<VectorType> in_bounds_vreg,
+    TypedValue<VectorType> out_of_bounds_vreg,
+    std::array<int64_t, 2> target_shape, int generation) {
+  auto native_vreg_ty = getNativeVregType(
+      in_bounds_vreg.getType().getElementType(), target_shape);
+  TPU_ASSERT_LOC(builder.getLoc(), in_bounds_vreg.getType() == native_vreg_ty);
+  TPU_ASSERT_LOC(builder.getLoc(),
+                 out_of_bounds_vreg.getType() == native_vreg_ty);
+  if (bounds.isComplete(target_shape)) {
+    return in_bounds_vreg;
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(TypedValue<VectorType> mask,
+                             bounds.getVectorMask(builder, builder.getLoc(),
+                                                  generation, target_shape));
+  VectorType mask_ty = mask.getType();
+  if (cast<IntegerType>(mask_ty.getElementType()).getWidth() != 1) {
+    return emitError(builder.getLoc(),
+                     "Not implemented: Unsupported mask bitwidth");
+  }
+  const bool needs_bitcast = mask_ty.getShape() != native_vreg_ty.getShape();
+  if (needs_bitcast) {
+    DCHECK_GE(mask_ty.getRank(), 2);
+    const int mask_packing = mask_ty.getRank() == 2 ? 1 : mask_ty.getDimSize(2);
+    const int mask_bitwidth = 32 / mask_packing;
+    VectorType bitcast_ty = VectorType::get(
+        mask_ty.getShape(), builder.getIntegerType(mask_bitwidth));
+    in_bounds_vreg = BitcastVregOp::create(builder, bitcast_ty, in_bounds_vreg);
+    out_of_bounds_vreg =
+        BitcastVregOp::create(builder, bitcast_ty, out_of_bounds_vreg);
+  }
+  Value result = arith::SelectOp::create(builder, mask, in_bounds_vreg,
+                                         out_of_bounds_vreg);
+  if (needs_bitcast) {
+    result = BitcastVregOp::create(builder, native_vreg_ty, result);
+  }
+  return cast<TypedValue<VectorType>>(result);
 }
 
 FailureOr<TypedValue<VectorType>> broadcastSubelements(

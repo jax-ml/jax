@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "xla/array.h"
 
 namespace mlir::tpu {
@@ -85,6 +86,22 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder& builder,
                                     std::array<int64_t, 2> target_shape,
                                     int64_t padding_bottom,
                                     int64_t padding_right);
+
+// Selects between values using the provided bounds.
+//
+// Arguments:
+//   bounds:  An object specifying the bounds of the data to be masked.
+//   in_bounds_vreg:     Vreg to select data that is in bounds.
+//   out_of_bounds_vreg: Vreg to select data that is out of bounds. Must have
+//                       the same type as in_bounds_vreg.
+//
+// Returns:
+//   A vreg with its elements selected according to the provided bounds.
+FailureOr<TypedValue<VectorType>> selectWithBounds(
+    ImplicitLocOpBuilder& builder, const VRegDataBounds& bounds,
+    TypedValue<VectorType> in_bounds_vreg,
+    TypedValue<VectorType> out_of_bounds_vreg,
+    std::array<int64_t, 2> target_shape, int generation);
 
 // Broadcasts the subelement at `subelement_idx` within each packed word.
 // subelement_idx must be between 0 and packing.
