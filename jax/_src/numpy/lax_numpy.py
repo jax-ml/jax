@@ -969,7 +969,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
 
   if N != 1 and N != 2:
     x_edges = y_edges = asarray(bins)
-    bins = [x_edges, y_edges]
+    bins = [x_edges, y_edges]  # pyrefly: ignore[bad-assignment]
 
   sample = transpose(asarray([x, y]))
   hist, edges = histogramdd(sample, bins, range, weights, density)
