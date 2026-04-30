@@ -29,12 +29,24 @@
 #   output_dir: Directory to copy XML files to (default: test-artifacts)
 #
 # Set JAXCI_COLLECT_BAZEL_TEST_XMLS_VERBOSE=1 to enable verbose diagnostics
-# without changing call sites.
+# without changing call sites. Set JAXCI_COLLECT_BAZEL_TEST_XMLS_TRACE=1 to
+# preserve inherited xtrace output while debugging this script.
 
+if [[ "${JAXCI_COLLECT_BAZEL_TEST_XMLS_TRACE:-0}" != "1" ]]; then
+  # Many CI entrypoints run with `set -x`; disable it unless explicitly
+  # debugging this helper so copying many files stays quiet.
+  { set +x; } 2>/dev/null
+fi
 set -euo pipefail
 
 VERBOSE="${JAXCI_COLLECT_BAZEL_TEST_XMLS_VERBOSE:-0}"
+LOG_LIMIT="${JAXCI_COLLECT_BAZEL_TEST_XMLS_LOG_LIMIT:-200}"
 OUTPUT_DIR="test-artifacts"
+
+if [[ ! "$LOG_LIMIT" =~ ^[0-9]+$ ]]; then
+  LOG_LIMIT=200
+fi
+LOG_LIMIT=$((10#$LOG_LIMIT))
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,6 +64,21 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+GROUP_OPENED=0
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::group::Collect Bazel test XML artifacts"
+  GROUP_OPENED=1
+fi
+
+# `trap ... EXIT` runs on success and failure, which keeps GitHub log groups
+# balanced even when a command exits early.
+finish_group() {
+  if [[ "$GROUP_OPENED" == "1" ]]; then
+    echo "::endgroup::"
+  fi
+}
+trap finish_group EXIT
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -79,12 +106,73 @@ if [[ "$VERBOSE" == "1" ]]; then
   find -L "$TESTLOGS_DIR" -type f 2>/dev/null | head -20 || true
 fi
 
+manifest_tmp="$(mktemp)"
+manifest_file="$OUTPUT_DIR/bazel-test-artifacts-manifest.tsv"
+printf 'source\tdestination\n' > "$manifest_tmp"
+
 count=0
+# `find -print0` plus `read -d ''` preserves file names with spaces or other
+# shell-sensitive characters.
 while IFS= read -r -d '' xml_file; do
   relative_path="${xml_file#${TESTLOGS_DIR}/}"
   mangled_name="${relative_path//\//__}"
   cp "$xml_file" "$OUTPUT_DIR/$mangled_name"
+  printf '%s\t%s\n' "$relative_path" "$mangled_name" >> "$manifest_tmp"
   count=$((count + 1))
 done < <(find -L "$TESTLOGS_DIR" -name "test.xml" -print0 2>/dev/null || true)
 
+if [[ "$count" -gt 0 ]]; then
+  # Publish the manifest only after successful copies, so partial failures do
+  # not leave behind a misleading artifact list.
+  mv "$manifest_tmp" "$manifest_file"
+else
+  rm -f "$manifest_tmp"
+fi
+
 echo "Collected $count test XML file(s) into $OUTPUT_DIR/"
+if [[ "$count" -gt 0 ]]; then
+  echo "Wrote manifest: $manifest_file"
+  if [[ "$LOG_LIMIT" -gt 0 ]]; then
+    echo "Copied Bazel XML files:"
+    awk -F '\t' -v limit="$LOG_LIMIT" '
+      NR > 1 && printed < limit {
+        printf "  %s -> %s\n", $1, $2
+        printed++
+      }
+    ' "$manifest_file"
+  fi
+  if [[ "$count" -gt "$LOG_LIMIT" ]]; then
+    echo "  ... and $((count - LOG_LIMIT)) more file(s); see $manifest_file"
+  fi
+fi
+
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" && "$count" -gt 0 ]]; then
+  {
+    echo "### Bazel test XML collection"
+    echo
+    echo "- output directory: \`$OUTPUT_DIR\`"
+    echo "- XML files copied: $count"
+    echo "- manifest: \`$manifest_file\`"
+    echo
+    summary_label="Copied files"
+    if [[ "$count" -gt "$LOG_LIMIT" ]]; then
+      summary_label="$summary_label (first $LOG_LIMIT)"
+    fi
+    echo "<details><summary>$summary_label</summary>"
+    echo
+    echo '```text'
+    awk -F '\t' -v limit="$LOG_LIMIT" '
+      NR > 1 && printed < limit {
+        printf "%s -> %s\n", $1, $2
+        printed++
+      }
+    ' "$manifest_file"
+    if [[ "$count" -gt "$LOG_LIMIT" ]]; then
+      echo "... and $((count - LOG_LIMIT)) more file(s)"
+    fi
+    echo '```'
+    echo
+    echo "</details>"
+    echo
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
