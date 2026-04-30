@@ -1289,7 +1289,7 @@ absl::Status MosaicGpuPrepare(
     se::DeviceAddressBase device_address = buffers[i].device_memory();
 
     if (collective_params->executor->IsVmmMemory(device_address)) {
-      TF_RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
+      TF_RETURN_IF_ERROR(collective_memory_requests->RequestMulticastAddress(
           clique_key, buffers[i].device_memory()));
     }
   }
@@ -1349,27 +1349,24 @@ absl::Status MosaicGpuInitialize(
       // (for example we have separate allocations for the HLO module parameters
       // and temporary buffers). Each allocation can contain several HLO buffers
       // which can overlap within the lifetime of HLO execution.
-      // FindSymmetricMemory returns the symmetric memory allocation containing
-      // a given buffer and the offset of this buffer within the allocation.
-      // Since we are mapping an XLA allocation to the multimem address space we
-      // also need to subtract the offset from the parameter base address to
-      // exchange the addresses of allocation in which the parameter is
-      // located.
-      auto [symmetric_memory, offset] =
-          collective_memory->FindSymmetricMemory(clique_key, device_address);
+      // FindMultimemAddress returns the address of an allocation within which
+      // a given buffer is located and the offset of this buffer. Since we are
+      // mapping the allocation range to multimem address space we also need to
+      // substract the offset from the parameter base address to exchange the
+      // addresses of allocation in which the parameter is located.
+      auto [multimem_address, offset] =
+          collective_memory->FindMultimemAddress(clique_key, device_address);
 
-      TF_ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
-                          symmetric_memory->multimem_addr());
 
       XLA_VLOG_DEVICE(6, device_ordinal)
-          << "MosaicGpuInitialize buffer: " << i << " device_address: ("
-          << device_address.opaque() << ", size: " << device_address.size()
-          << ") found multimem_address: (" << multimem_address.opaque()
-          << ", offset: " << offset << ")"
-          << " for device_address: (" << device_address.opaque()
-          << ", size: " << device_address.size() << ")";
+              << "MosaicGpuInitialize buffer: " << i << " device_address: ("
+              << device_address.opaque() << ", size: " << device_address.size()
+              << ") found multimem_address: (" << multimem_address
+              << ", offset: " << offset << ")"
+              << " for device_address: (" << device_address.opaque()
+              << ", size: " << device_address.size() << ")";
 
-      parameter_multimem_addresses[i] = multimem_address.opaque();
+      parameter_multimem_addresses[i] = multimem_address;
       // Use the allocated memory allocation instead to correctly calculate the
       // offset of the multimem parameter.
       collective_metadata_parameters[i] =
@@ -1428,7 +1425,7 @@ absl::Status MosaicGpuInitialize(
                                     device_state.metadata_bytes.size()));
 
   XLA_VLOG_DEVICE(5, device_ordinal)
-      << "Constructed device state {"
+      << "[" << rank << "] Constructed device state {"
       << " metadata rank: " << metadata.rank << ", param_to_peers: ("
       << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
       << "), multimem address spaces: ("
