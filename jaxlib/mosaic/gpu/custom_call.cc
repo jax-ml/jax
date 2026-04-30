@@ -1192,6 +1192,17 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
+DeviceState& GetDeviceState(
+    CustomCallResources* resources,
+    const xla::gpu::CollectiveParams* collective_params) {
+  auto local_device_id = collective_params->local_device_id.value();
+  CHECK(local_device_id < resources->device_states.size())
+      << "Local device_id" << local_device_id
+      << " is out of collective metadata bounds: "
+      << resources->device_states.size();
+  return resources->device_states[local_device_id];
+}
+
 absl::Status MosaicGpuPrepare(
     const xla::gpu::CollectiveParams* absl_nullable collective_params,
     xla::gpu::CollectiveMemoryRequests* absl_nullable
@@ -1211,8 +1222,7 @@ absl::Status MosaicGpuPrepare(
   // This operation should be done at Prepare stage since XLA launches a
   // rendez-vous between Prepare and Initialize, which we need here to make sure
   // that modules were loaded on all devices before the first execution.
-  DeviceState& device_state =
-      resources->device_states[collective_params->local_device_id.value()];
+  DeviceState& device_state = GetDeviceState(resources, collective_params);
   TF_ASSIGN_OR_RETURN(device_state.kernel_handle,
                       CachedInit(resources->kernel));
   CHECK_NOTNULL(device_state.kernel_handle);
@@ -1333,14 +1343,7 @@ absl::Status MosaicGpuInitialize(
     }
   }
 
-  xla::RankId rank =
-      clique_key.rank(collective_params->global_device_id).value();
-
-  CHECK(rank.value() < resources->device_states.size())
-      << "Rank id" << rank.value() << " is out of collective metadata bounds: "
-      << resources->device_states.size();
-  DeviceState& device_state = resources->device_states[rank.value()];
-
+  DeviceState& device_state = GetDeviceState(resources, collective_params);
   // Allocate and zero dedicated buffer for cross-device barrier. These buffers
   // can't be a part of the output parameter used for collective metadata
   // because buffer assigner can use the same buffer for different ops and we
@@ -1389,6 +1392,8 @@ absl::Status MosaicGpuInitialize(
   // CollectParamToPeers call.
   TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
+  xla::RankId rank =
+      clique_key.rank(collective_params->global_device_id).value();
   if (device_state.barrier_signal_symmetric_memory.Expired()) {
     TF_ASSIGN_OR_RETURN(auto* comm,
                         collective_cliques->GetComm(clique_key, rank));
@@ -1476,8 +1481,7 @@ absl::Status MosaicGpuExecute(
 
   cudaStream_t cuda_stream =
       reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
-  DeviceState& device_state =
-      resources->device_states[collective_params->local_device_id.value()];
+  DeviceState& device_state = GetDeviceState(resources, collective_params);
   int device_ordinal = collective_params->global_device_id.value();
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
