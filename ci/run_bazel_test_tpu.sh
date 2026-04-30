@@ -234,6 +234,7 @@ else
 fi
 
 # Merge results with prefixes to avoid overwriting
+{ set +x; } 2>/dev/null
 mkdir -p test-artifacts
 if [[ -d test-artifacts-single ]]; then
   for f in test-artifacts-single/*; do
@@ -247,6 +248,7 @@ if [[ -d test-artifacts-multi ]]; then
     cp "$f" "test-artifacts/multi_$(basename "$f")"
   done
 fi
+set -x
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
