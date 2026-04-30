@@ -340,13 +340,23 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "DLPack is only supported for devices addressable by the current "
         "process.");
   }
-  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
+if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return xla::InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
         std::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
+  // 🛡️ SECURITY FIX: Prevent arbitrary memory reading via malicious DLPack data pointers.
+  if (dlmt->dl_tensor.device.device_type == kDLCPU) {
+    if (dlmt->dl_tensor.data == nullptr) {
+      return xla::InvalidArgument("DLPack Error: data pointer is null.");
+    }
+    size_t alignment = dlmt->dl_tensor.dtype.bits / 8;
+    if (alignment > 0 && reinterpret_cast<uintptr_t>(dlmt->dl_tensor.data) % alignment != 0) {
+      return xla::InvalidArgument("DLPack Error: data pointer is not aligned to the required boundary.");
+    }
+  }
   if (dlmt->dl_tensor.ndim < 0) {
     return xla::InvalidArgument(
         "Number of dimensions in DLManagedTensor must be nonnegative, got %d",
@@ -356,7 +366,6 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
       reinterpret_cast<int64_t*>(dlmt->dl_tensor.shape), dlmt->dl_tensor.ndim);
   TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
                       xla::DLDataTypeToPrimitiveType(dlmt->dl_tensor.dtype));
-
   bool has_custom_layout = dlmt->dl_tensor.strides != nullptr;
   std::vector<int64_t> minor_to_major;
   if (dlmt->dl_tensor.strides &&
