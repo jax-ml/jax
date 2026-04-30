@@ -1924,80 +1924,92 @@ def _get_lowering_rule(
 
   is_signed = mgpu_utils.is_signed(dtype)
 
-  if not ctx.avals_out[0].shape:  # The scalar case is simple.
-    val = memref_dialect.load(x_smem, [])
+  if math.prod(ctx.avals_out[0].shape) == 1:  # The scalar case is simple.
+    zero_idx = _ir_constant(0, ir.IndexType.get())
+    indices = [zero_idx] * len(ctx.avals_out[0].shape)
+    val = memref_dialect.load(x_smem, indices)
     return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
-  match transforms:
-    case (
-        gpu_core.UnswizzleRef(swizzle),
-        gpu_core.UntilingTransform(tiling),
-        *maybe_transpose,
-    ):
-      if len(tiling) != 2:
-        raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
-      expected_minor_tiling = swizzle * 8 // bw
-      if tiling[-1] != expected_minor_tiling:
-        raise NotImplementedError(
-            "Minor tiling dimension does not fit swizzle: "
-            f" expected {expected_minor_tiling}, got {tiling[-1]}"
-        )
+  swizzle: int | None = None
+  tiling: tuple[int, ...] | None = None
+  permutation: tuple[int, ...] | None = None
+  for t in transforms:
+    match t:
+      case gpu_core.UnswizzleRef(swizzle=s):
+        assert swizzle is None
+        swizzle = s
+      case gpu_core.UntilingTransform(tiling=t):
+        assert tiling is None
+        tiling = t
+      case state_types.TransposeTransform(permutation=p):
+        assert permutation is None
+        permutation = p
+      case _:
+        raise NotImplementedError(f"Unsupported transform: {t}")
 
-      if transposed != bool(maybe_transpose):
-        raise ValueError(
-            "Either both the ref and the value are transposed or neither is."
-        )
-
-      if maybe_transpose:
-        if maybe_transpose != [state_types.TransposeTransform((1, 0))]:
-          raise NotImplementedError(
-              f"Unsupported transforms: {transforms} ({maybe_transpose})"
-          )
-
-        x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
-      return mgpu.FragmentedArray.load_tiled(
-          x_smem,
-          is_signed=is_signed,
-          swizzle=swizzle,
-          layout=ctx.out_layout_hint or mgpu.WGMMA_LAYOUT,
-          optimized=optimized,
-          tiling_rank=len(tiling),
-      )
-    case (*maybe_transpose,):
-      if maybe_transpose:
-        if len(maybe_transpose) != 1 or not isinstance(
-            maybe_transpose[0], state_types.TransposeTransform
-        ):
-          raise NotImplementedError(
-              f"Unsupported transforms: {transforms} ({maybe_transpose})"
-          )
-        x_smem = mgpu.memref_transpose(x_smem, maybe_transpose[0].permutation)
-      match ctx.out_layout_hint:
-        case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
-          ref_ty = ir.MemRefType(x_smem.type)
-          if shape != tuple(ref_ty.shape):
-            raise ValueError(
-                f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
-            )
-          return mgpu.FragmentedArray.load_strided(
-              x_smem,
-              is_signed=is_signed,
-              vec_size=vec_size,
-          )
-        case None:
-          return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
-        case _:
-          assert isinstance(ctx.out_layout_hint, mgpu.TiledLayout)
-          return mgpu.FragmentedArray.load_untiled(
-              x_smem,
-              is_signed=is_signed,
-              layout=ctx.out_layout_hint,
-              swizzle=16,
-              optimized=optimized,
-          )
-    case _:
+  if tiling is not None:
+    if swizzle is None:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
+    if len(tiling) != 2:
+      raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+    bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
+    expected_minor_tiling = swizzle * 8 // bw
+    if tiling[-1] != expected_minor_tiling:
+      raise NotImplementedError(
+          "Minor tiling dimension does not fit swizzle: "
+          f" expected {expected_minor_tiling}, got {tiling[-1]}"
+      )
+
+    if transposed != (permutation is not None):
+      raise ValueError(
+          "Either both the ref and the value are transposed or neither is."
+      )
+
+    if permutation is not None:
+      if permutation != (1, 0):
+        raise NotImplementedError(
+            f"Unsupported permutation: {permutation}"
+        )
+      x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
+
+    return mgpu.FragmentedArray.load_tiled(
+        x_smem,
+        is_signed=is_signed,
+        swizzle=swizzle,
+        layout=ctx.out_layout_hint or mgpu.WGMMA_LAYOUT,
+        optimized=optimized,
+        tiling_rank=len(tiling),
+    )
+  else:
+    match ctx.out_layout_hint:
+      case mgpu.TiledLayout():
+        if permutation is not None:
+          x_smem = mgpu.memref_transpose(x_smem, permutation)
+        return mgpu.FragmentedArray.load_untiled(
+            x_smem,
+            is_signed=is_signed,
+            layout=ctx.out_layout_hint,
+            swizzle=swizzle or 16,
+            optimized=optimized,
+        )
+      case layout:
+        if permutation is not None:
+          raise NotImplementedError(f"Unsupported transforms: {transforms}")
+        if isinstance(layout, mgpu.WGStridedFragLayout):
+          ref_ty = ir.MemRefType(x_smem.type)
+          if layout.shape != tuple(ref_ty.shape):
+            raise ValueError(
+                f"Unsupported layout shape {layout.shape}, (expected {tuple(ref_ty.shape)})"
+            )
+          vec_size = layout.vec_size
+        else:
+          assert layout is None
+          vec_size = None
+        return mgpu.FragmentedArray.load_strided(
+            x_smem,
+            is_signed=is_signed,
+            vec_size=vec_size,
+        )
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Warpgroup)
@@ -2071,76 +2083,85 @@ def _swap_lowering_rule(
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
 
-  match transforms:
-    case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
-      zero_idx = _ir_constant(0, ir.IndexType.get())
-      indices = [zero_idx] * len(ctx.avals_out[0].shape)
-      old_value = mgpu.FragmentedArray.splat(
-          memref_dialect.load(x_smem, indices),
-          shape=(),
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
-      )
-      value.store_untiled(x_smem)
-    case (
-        gpu_core.UnswizzleRef(swizzle),
-        gpu_core.UntilingTransform(tiling),
-        *maybe_transpose,
-    ):
-      if len(tiling) != 2:
-        raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      bw = dtypes.itemsize_bits(v_aval.dtype)
-      expected_minor_tiling = swizzle * 8 // bw
-      if tiling[-1] != expected_minor_tiling:
-        raise NotImplementedError(
-            "Minor tiling dimension does not fit swizzle: "
-            f" expected {expected_minor_tiling}, got {tiling[-1]}"
-        )
+  swizzle: int | None = None
+  tiling: tuple[int, ...] | None = None
+  permutation: tuple[int, ...] | None = None
+  for t in transforms:
+    if isinstance(t, gpu_core.UnswizzleRef):
+      swizzle = t.swizzle
+    elif isinstance(t, gpu_core.UntilingTransform):
+      tiling = t.tiling
+    elif isinstance(t, state_types.TransposeTransform):
+      permutation = t.permutation
+    else:
+      raise NotImplementedError(f"Unsupported transform: {t}")
 
-      if transposed_value != bool(maybe_transpose):
-        raise ValueError(
-            "Either both the ref and the value are transposed or neither is."
-        )
+  if math.prod(ctx.avals_out[0].shape) == 1:  # scalar case
+    zero_idx = _ir_constant(0, ir.IndexType.get())
+    indices = [zero_idx] * len(ctx.avals_out[0].shape)
+    old_value = mgpu.FragmentedArray.splat(
+        memref_dialect.load(x_smem, indices),
+        shape=(),
+        is_signed=mgpu_utils.is_signed(v_aval.dtype),
+    )
+    value.store_untiled(x_smem)
 
-      if maybe_transpose:
-        if maybe_transpose != [state_types.TransposeTransform((1, 0))]:
-          raise NotImplementedError(
-              f"Unsupported transforms: {transforms} ({maybe_transpose})"
-          )
-
-        x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
-
-      old_value = mgpu.FragmentedArray.load_tiled(
-          x_smem,
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
-          swizzle=swizzle,
-          layout=value.layout,
-          tiling_rank=len(tiling),
-      )
-      value.store_tiled(x_smem, swizzle=swizzle, tiling_rank=len(tiling))
-    case () | (state_types.TransposeTransform(),):
-      transposed = bool(transforms)
-      match value.layout:
-        case mgpu.TiledLayout():
-          if transposed:
-            assert isinstance(transforms[0], state_types.TransposeTransform)
-            permutation = transforms[0].permutation
-            x_smem = mgpu.memref_transpose(x_smem, permutation)
-          old_value = mgpu.FragmentedArray.load_untiled(
-              x_smem,
-              layout=value.layout,
-              is_signed=mgpu_utils.is_signed(v_aval.dtype),
-              optimized=False,
-          )
-          value.store_untiled(x_smem, optimized=False)
-        case _:
-          if transposed:
-            raise NotImplementedError(f"Unsupported transforms: {transforms}")
-          old_value = mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
-          )
-          value.store_untiled(x_smem)
-    case _:
+  elif tiling is not None:
+    if swizzle is None:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
+    if len(tiling) != 2:
+      raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+    bw = dtypes.itemsize_bits(v_aval.dtype)
+    expected_minor_tiling = swizzle * 8 // bw
+    if tiling[-1] != expected_minor_tiling:
+      raise NotImplementedError(
+          "Minor tiling dimension does not fit swizzle: "
+          f" expected {expected_minor_tiling}, got {tiling[-1]}"
+      )
+
+    if transposed_value != (permutation is not None):
+      raise ValueError(
+          "Either both the ref and the value are transposed or neither is."
+      )
+
+    if permutation is not None:
+      if permutation != (1, 0):
+        raise NotImplementedError(
+            f"Unsupported permutation: {permutation}"
+        )
+      x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
+
+    old_value = mgpu.FragmentedArray.load_tiled(
+        x_smem,
+        is_signed=mgpu_utils.is_signed(v_aval.dtype),
+        swizzle=swizzle,
+        layout=value.layout,
+        tiling_rank=len(tiling),
+    )
+    value.store_tiled(x_smem, swizzle=swizzle, tiling_rank=len(tiling))
+
+  else:
+    match value.layout:
+      case mgpu.TiledLayout():
+        if permutation is not None:
+          x_smem = mgpu.memref_transpose(x_smem, permutation)
+        swizzle_val = swizzle or 16
+        old_value = mgpu.FragmentedArray.load_untiled(
+            x_smem,
+            layout=value.layout,
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+            swizzle=swizzle_val,
+            optimized=False,
+        )
+        value.store_untiled(x_smem, swizzle=swizzle_val, optimized=False)
+      case _:
+        if permutation is not None:
+          raise NotImplementedError(f"Unsupported transforms: {transforms}")
+        old_value = mgpu.FragmentedArray.load_strided(
+            x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
+        )
+        value.store_untiled(x_smem)
+
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure the writes have completed.
   return old_value
