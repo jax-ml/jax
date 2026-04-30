@@ -38,6 +38,7 @@ from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import checkpoint as new_checkpoint
+from jax.experimental import layout
 from jax.experimental import pjit
 from jax.experimental import shard_map as exp_shard_map
 from jax.sharding import PartitionSpec as P
@@ -2296,6 +2297,15 @@ class ReproTest(jtu.JaxTestCase):
     a = jnp.arange(4 * 4, dtype=np.float32).reshape((4, 4))
     self.collect_and_check(f, a)
 
+  def test_layout_constraint(self):
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Enforce a specific layout on `y`
+      y = layout.with_layout_constraint(y, layout.Layout(major_to_minor=(0, 1)))
+      return y * 2
+
+    self.collect_and_check(f, jnp.ones((4, 4)))
 
   def test_named_call_0(self):
     @jax.jit

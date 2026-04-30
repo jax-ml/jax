@@ -269,6 +269,11 @@ def initialize_operand_emitter():
     return f"lax.Tolerance({v.atol}, {v.rtol}, {v.ulps})"
   _operand_emitter_by_type[lax.Tolerance] = emit_Tolerance
 
+  from jax._src import layout  # type: ignore
+  @partial(register_emitter_by_type, layout.Layout)
+  def emit_Layout(ctx: "EmitFunctionDefContext", v: layout.Layout) -> str:
+    return f"layout.Layout({v.major_to_minor}, {v.tiling}, sub_byte_element_size_in_bits={v.sub_byte_element_size_in_bits})"
+
   from jax._src import random  # type: ignore
   def emit_PRNGImpl(ctx: "EmitFunctionDefContext", v: random.PRNGImpl) -> str:
     return f"resolve_prng_impl(\"{v.name}\")"
