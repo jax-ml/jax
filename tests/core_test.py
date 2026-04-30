@@ -597,6 +597,32 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     core.check_jaxpr(jaxpr)
 
 
+class JaxprPrettyPrintTest(jtu.JaxTestCase):
+
+  def test_frozenset_pp_kv_pair(self):
+    context = core.JaxprPpContext()
+    settings = core.JaxprPpSettings()
+
+    v = frozenset({'b', 'a', 'c'})
+    doc = core.pp_kv_pair('test', v, context, settings)
+    self.assertEqual(str(doc), "test=frozenset({'a', 'b', 'c'})")
+
+    v_empty = frozenset()
+    doc_empty = core.pp_kv_pair('test_empty', v_empty, context, settings)
+    self.assertEqual(str(doc_empty), "test_empty=frozenset({})")
+
+
+  def test_function_pp_kv_pair(self):
+    context = core.JaxprPpContext()
+    settings = core.JaxprPpSettings()
+
+    def my_function():
+      pass
+
+    doc = core.pp_kv_pair('policy', my_function, context, settings)
+    self.assertRegex(str(doc), r"^policy=<function JaxprPrettyPrintTest\.test_function_pp_kv_pair\.<locals>\.my_function at 0xX+>$")
+
+
 class InternedTest(jtu.JaxTestCase):
 
   def test_manual_axis_type_pickle(self):

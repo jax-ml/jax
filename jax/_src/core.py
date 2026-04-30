@@ -26,6 +26,7 @@ import inspect
 import itertools as it
 import math
 import operator
+import re
 import threading
 import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar, final,
@@ -4030,8 +4031,13 @@ def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, settings: JaxprPpSettings
     pp_v = pp_jaxpr(v, context, settings)
   elif isinstance(v, ClosedJaxpr):
     pp_v = pp_jaxpr(v.jaxpr, context, settings)
+  elif isinstance(v, frozenset):
+    pp_v = pp.text(f"frozenset({{{', '.join(repr(e) for e in sorted(v))}}})")
   else:
-    pp_v = pp.text(str(v))
+    s = str(v)
+    s = re.sub(
+      r' at 0x([0-9a-fA-F]+)', lambda m: ' at 0x' + 'X' * len(m.group(1)), s)
+    pp_v = pp.text(s)
   return pp.text(f'{k}=') + pp_v
 
 def pp_kv_pairs(kv_pairs, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
