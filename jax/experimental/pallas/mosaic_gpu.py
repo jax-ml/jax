@@ -75,6 +75,7 @@ from jax._src.pallas.mosaic_gpu.primitives import commit_smem_to_gmem_group as c
 from jax._src.pallas.mosaic_gpu.primitives import commit_tmem as commit_tmem
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
+from jax._src.pallas.mosaic_gpu.primitives import async_store_smem as async_store_smem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
 from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multimem_load_reduce

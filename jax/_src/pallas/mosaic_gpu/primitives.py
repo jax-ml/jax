@@ -468,6 +468,188 @@ def copy_smem_to_gmem(
   return None
 
 
+async_store_smem_p = jax_core.Primitive("async_store_smem")
+async_store_smem_p.multiple_results = True
+
+
+@async_store_smem_p.def_effectful_abstract_eval
+def _async_store_smem_abstract_eval(
+    src,
+    ref,
+    barrier,
+    cluster_idx,
+    *flat_transforms_avals,
+    ref_transforms_treedef,
+    barrier_transforms_treedef,
+    **_,
+):
+  del cluster_idx  # Unused.
+  _check_ref(ref, "ref", gpu_core.SMEM)
+  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  flat_ref_transforms_avals, flat_barrier_transforms_avals = util.split_list(
+      flat_transforms_avals,
+      [ref_transforms_treedef.num_leaves],
+  )
+  ref_transform_avals = ref_transforms_treedef.unflatten(
+      flat_ref_transforms_avals
+  )
+  barrier_transform_avals = barrier_transforms_treedef.unflatten(
+      flat_barrier_transforms_avals
+  )
+  transformed_ref = pallas_core.TransformedRef(ref, ref_transform_avals)
+  if src.shape != transformed_ref.shape:
+    raise TypeError(
+        f"The stored value has shape {src.shape}, but the target reference has"
+        f" shape {transformed_ref.shape}"
+    )
+  if src.dtype != transformed_ref.dtype:
+    raise TypeError(
+        f"The stored value has dtype {src.dtype}, but the target reference has"
+        f" dtype {transformed_ref.dtype}"
+    )
+  transformed_barrier = pallas_core.TransformedRef(barrier, barrier_transform_avals)
+  if transformed_barrier.size != 1:
+    raise TypeError(
+        "Expected a single barrier, got a barrier reference with shape"
+        f" {transformed_barrier.shape}"
+    )
+
+  effs = {gpu_core._memory_effect, state.WriteEffect(1)}
+  return (), effs
+
+
+@lowering.register_lowering_rule(async_store_smem_p, mgpu.LoweringSemantics.Lane)
+def _async_store_smem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    ref,
+    barrier,
+    cluster_idx,
+    *flat_transforms,
+    ref_transforms_treedef,
+    barrier_transforms_treedef,
+    cluster_dim,
+    optimized,
+    atomic,
+):
+  flat_ref_transforms, flat_barrier_transforms = util.split_list(
+      flat_transforms,
+      [ref_transforms_treedef.num_leaves],
+  )
+  flat_ref_transforms_avals, _ = util.split_list(
+      ctx.avals_in[4:],
+      [ref_transforms_treedef.num_leaves],
+  )
+
+  ref_transform_avals = ref_transforms_treedef.unflatten(
+      flat_ref_transforms_avals
+  )
+  ref_aval = ctx.avals_in[1]
+  barrier_ref_aval = ctx.avals_in[2]
+  assert isinstance(ref_aval, state_types.AbstractRef)
+  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+
+  ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
+  barrier_transforms = barrier_transforms_treedef.unflatten(flat_barrier_transforms)
+
+  src = lowering._ensure_fa(src, ctx.avals_in[0].dtype)
+  ref_smem, _, remaining_ref_transforms = lowering._handle_transforms(
+      ctx,
+      ref_aval,
+      ref,
+      ref_transform_avals,
+      ref_transforms,
+      handle_transposes=True,
+  )
+
+  match remaining_ref_transforms:
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
+      pass
+    case _:
+      raise NotImplementedError("async_store_smem requires a tiled and swizzled ref")
+
+  base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
+  if base_index is not None:
+    barrier = barrier[base_index]
+
+  cluster_idx_val = lowering._as_index(cluster_idx)
+  gpu_cluster_dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, cluster_dim)
+
+  total_bits = math.prod(src.shape) * mgpu.bitwidth(src.mlir_dtype)
+  if total_bits % 8:
+    raise ValueError(
+        f"Can only transfer integer bytes (shape={src.shape}, dtype={src.mlir_dtype})"
+    )
+  total_bytes = total_bits // 8
+  if total_bytes % WARPGROUP_SIZE:
+    raise NotImplementedError(f"Transfer is not a multiple of {WARPGROUP_SIZE} bytes")
+  peer_barrier = barrier.remap_to_cluster(gpu_cluster_dim, cluster_idx_val)
+  peer_barrier.arrive_expect_tx(total_bytes // WARPGROUP_SIZE)
+
+  src.store_tiled_async(
+      ref_smem,
+      barrier,
+      cluster_dim=gpu_cluster_dim,
+      cluster_idx=cluster_idx_val,
+      swizzle=swizzle,
+      optimized=optimized,
+      tiling_rank=len(tiling),
+      atomic=atomic,
+  )
+  return ()
+
+
+def async_store_smem(
+    src: jax.Array,
+    ref: _Ref,
+    barrier: _Ref,
+    *,
+    cluster_idx: jax.Array,
+    cluster_dim: Hashable | int,
+    optimized: bool = True,
+    atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
+) -> None:
+  """Asynchronously stores an array to a SMEM reference within the cluster.
+
+  Args:
+    src: The array containing the data to be stored.
+    ref: The SMEM reference to store to.
+    barrier: The barrier to update when the copy has completed (in destination block).
+    cluster_idx: The index of the target cluster block within cluster_dim.
+    cluster_dim: The cluster axis of cluster_idx.
+    optimized: If True, the store is guaranteed not to cause any bank conflicts.
+    atomic: The reduction operation to apply instead of overwriting the data.
+  """
+  if atomic is not None:
+    raise NotImplementedError("Atomic async stores not implemented yet")
+  ref, ref_transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "async_store_smem"
+  )
+  barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "async_store_smem"
+  )
+  flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
+      ref_transforms
+  )
+  flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
+      barrier_transforms
+  )
+  async_store_smem_p.bind(
+      src,
+      ref,
+      barrier,
+      cluster_idx,
+      *flat_ref_transforms,
+      *flat_barrier_transforms,
+      ref_transforms_treedef=ref_transforms_treedef,
+      barrier_transforms_treedef=barrier_transforms_treedef,
+      cluster_dim=cluster_dim,
+      optimized=optimized,
+      atomic=atomic,
+  )
+  return None
+
+
 copy_gmem_to_smem_p = jax_core.Primitive("copy_gmem_to_smem")
 copy_gmem_to_smem_p.multiple_results = True
 

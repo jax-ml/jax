@@ -43,6 +43,7 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
+from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -3344,6 +3345,36 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     expected = jnp.flip(x, axis=0)
     np.testing.assert_array_equal(y, expected)
 
+  def test_cluster_ref_write(self):
+    self.skip_if_wg_semantics()
+    dtype = jnp.float32
+    logical_shape = (64, 32)
+    x_shape = (2, 64, 32)
+    transforms = self.default_transforms(dtype=dtype)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(x_shape, dtype),
+        scratch_shapes=[
+            plgpu.SMEM(logical_shape, dtype, transforms=transforms),
+            plgpu.Barrier(num_arrivals=1),
+        ],
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+    def kernel(x_ref, o_ref, smem_ref, barrier):
+      my_idx = jax.lax.axis_index("c")
+      x = plgpu.load(x_ref.at[my_idx], (), layout=plgpu.Layout.WGMMA, optimized=False)
+      plgpu.async_store_smem(
+        x, smem_ref, barrier, cluster_idx=1 - my_idx, cluster_dim="c"
+      )
+      plgpu.barrier_wait(barrier)
+      o_ref[my_idx] = plgpu.load(smem_ref, (), layout=plgpu.Layout.WGMMA)
+
+    x = jnp.arange(2 * 64 * 32, dtype=dtype).reshape(x_shape)
+    np.testing.assert_array_equal(kernel(x), np.flip(x, axis=0))
+
+
   def test_replicated_layout(self):
     shape = (32,)
     @functools.partial(
@@ -3683,7 +3714,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
-    expected_missing_primitives = set()
+    expected_missing_primitives = {mgpu_primitives.async_store_smem_p}
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 
