@@ -353,7 +353,8 @@ if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
       return xla::InvalidArgument("DLPack Error: data pointer is null.");
     }
     size_t alignment = dlmt->dl_tensor.dtype.bits / 8;
-    if (alignment > 0 && reinterpret_cast<uintptr_t>(dlmt->dl_tensor.data) % alignment != 0) {
+    uintptr_t data_ptr = reinterpret_cast<uintptr_t>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
+    if (alignment > 0 && data_ptr % alignment != 0) {
       return xla::InvalidArgument("DLPack Error: data pointer is not aligned to the required boundary.");
     }
   }
