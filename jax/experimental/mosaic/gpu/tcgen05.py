@@ -798,7 +798,7 @@ def commit_arrive(
 ) -> None:
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
-  elif barrier.type != ir.Type.parse("!llvm.ptr<3>"):
+  elif barrier.type != llvm.PointerType.get(address_space=3):
     raise ValueError(
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
@@ -850,7 +850,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
     if math.prod(ref_ty.shape) != 1:
       raise ValueError(f"tmem_addr must contain a single element, got: {ref_ty}")
     tmem_addr = utils.memref_ptr(tmem_addr, memory_space=3)
-  elif tmem_addr.type != ir.Type.parse("!llvm.ptr<3>"):
+  elif tmem_addr.type != llvm.PointerType.get(address_space=3):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
   group = nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
@@ -860,8 +860,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
 
 def _tmem_addr_to_ptr(tmem_addr: ir.Value) -> ir.Value:
   assert tmem_addr.type == ir.IntegerType.get_signless(32)
-  ptr_ty = ir.Type.parse("!llvm.ptr<6>")
-  return llvm.inttoptr(ptr_ty, tmem_addr)
+  return llvm.inttoptr(llvm.PointerType.get(address_space=6), tmem_addr)
 
 
 def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True) -> None:
@@ -907,11 +906,9 @@ def _tmem_load(tmem_addr, shape, num, pack: bool):
   num_out_regs, regs_vector = _tmem_access_helper(shape, num)
   pack_mod = ".pack::16b" if pack else ""
   regs = llvm.inline_asm(
-      ir.Type.parse(
-          "!llvm.struct<(" + ",".join("i32" for _ in range(num_out_regs)) + ")>"
-      ),
+      llvm.StructType.get_literal([i32] * num_out_regs),
       [tmem_addr],
-      f"tcgen05.ld.sync.aligned.{shape}.x{num}{pack_mod}.b32 {regs_vector}, [${num_out_regs}];",
+      f"tcgen05.ld.sync.aligned.{shape}.x{num}{pack_mod}.b32 {regs_vector}, [${num_out_regs}];",  # pylint: disable=line-too-long
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )

@@ -512,9 +512,10 @@ class Scratch:
     gpu_launch_op = self._find_first_op(gpu.LaunchOp, self._module_op.body)
     assert gpu_launch_op is not None
 
-    ptr_ty = ir.Type.parse("!llvm.ptr")
-    empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
+    i8 = ir.IntegerType.get_signless(8)
     i64 = ir.IntegerType.get_signless(64)
+    ptr_ty = llvm.PointerType.get()
+    empty_arr_ty = llvm.ArrayType.get(i8, 0)
 
     with ir.InsertionPoint(gpu_launch_op):
       alloc_op = llvm.AllocaOp(
@@ -560,9 +561,11 @@ class Scratch:
       return
     alloc_op, load_op, _ = self._find_alloc_load_and_device_ptr()
 
+    i8 = ir.IntegerType.get_signless(8)
+
     with ir.InsertionPoint(load_op):
       gmem_scratch_bytes = self.next_offset
-      scratch_arr_ty = ir.Type.parse(f"!llvm.array<{gmem_scratch_bytes} x i8>")
+      scratch_arr_ty = llvm.ArrayType.get(i8, gmem_scratch_bytes)
       alloc_op.elem_type = ir.TypeAttr.get(scratch_arr_ty)
       load_op.result.set_type(scratch_arr_ty)
       for init_callback in self.host_init:
@@ -718,7 +721,7 @@ class LaunchContext:
   def host_collective_metadata(self) -> ir.Value | None:
     if self.device_collective_metadata is None:
       return None
-    ptr_ty = ir.Type.parse("!llvm.ptr")
+    ptr_ty = llvm.PointerType.get()
     metadata_ty = ir.MemRefType.get(
       (get_collective_metadata_size(self.num_params, self.num_peers),),
       ir.IntegerType.get_signless(64),
@@ -742,7 +745,7 @@ class LaunchContext:
     kernel launch.
     """
     i8 = ir.IntegerType.get_signless(8)
-    ptr_ty = ir.Type.parse("!llvm.ptr")
+    ptr_ty = llvm.PointerType.get()
     if alignment is None:
       alignment = size
     if self.scratch.next_offset % alignment:
@@ -829,7 +832,7 @@ class LaunchContext:
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
       i32 = ir.IntegerType.get_signless(32)
       i64 = ir.IntegerType.get_signless(64)
-      ptr_ty = ir.Type.parse("!llvm.ptr")
+      ptr_ty = llvm.PointerType.get()
       def init_tma_desc(host_ptr: ir.Value):
         ref = gmem_ref
         for t in gmem_transform:
@@ -1370,7 +1373,7 @@ class LaunchContext:
           )
         gmem_base_ptr = utils.memref_ptr(gmem_ref)
         gmem_base_ptr = llvm.addrspacecast(
-            ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr
+            llvm.PointerType.get(address_space=1), gmem_base_ptr
         )
         smem_base_ptr = utils.memref_ptr(smem_ref, memory_space=3)
         bytes_per_transfer = layout.vec_size * element_bitwidth // 8
@@ -1411,7 +1414,9 @@ class LaunchContext:
             smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
         )
         gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
-        gmem_base_ptr = llvm.addrspacecast(ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr)
+        gmem_base_ptr = llvm.addrspacecast(
+            llvm.PointerType.get(address_space=1), gmem_base_ptr
+        )
         bytes_per_transfer = layout.vector_length * element_bitwidth // 8
         # Only 16-byte transfers can skip the L1 cache (this is what CG means).
         cache_modifier = (
@@ -2042,7 +2047,7 @@ class LaunchContext:
 
     if collective_metadata is None:
       self._ensure_nvshmem_decls()
-      if ref.type != ir.Type.parse("!llvm.ptr"):
+      if ref.type != llvm.PointerType.get():
         raise ValueError(f"Unsupported type for to_remote: {ref.type}")
       if peer.type != i32:
         raise ValueError(f"peer index must be an i32, got {peer.type}")
@@ -2139,9 +2144,7 @@ class LaunchContext:
         utils.memref_ptr(ref), parameter_on_current_device
     )
     multimem_address = arith.addi(multimem_ptr, ref_offset)
-
-    ptr_type = ir.Type.parse("!llvm.ptr")
-    multimem_ptr = llvm.inttoptr(ptr_type, multimem_address)
+    multimem_ptr = llvm.inttoptr(llvm.PointerType.get(), multimem_address)
     return utils.MultimemRef(utils.ptr_as_memref(multimem_ptr, result_type))
 
   def device_id(self, on_host: bool = False) -> ir.Value:

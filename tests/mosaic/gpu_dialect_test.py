@@ -76,7 +76,7 @@ def workgroup_ptr_ty() -> ir.Type:
   workgroup_nvptx_address_space = mgpu_utils.gpu_address_space_to_nvptx(
       gpu.AddressSpace.Workgroup
   )
-  return ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
+  return llvm.PointerType.get(workgroup_nvptx_address_space)
 
 
 def undefs(*tys: ir.Type) -> list[ir.Value]:
@@ -170,7 +170,7 @@ class DialectTest(MosaicGpuTest):
   def test_initialize_barrier_op_with_a_non_shared_base_pointer_fails(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
-          llvm.UndefOp(ir.Type.parse(f"!llvm.ptr<{0}>")),
+          llvm.UndefOp(llvm.PointerType.get(address_space=0)),
           arrival_count=1,
           num_barriers=2,
           orders_tensor_core=False,
@@ -1989,7 +1989,7 @@ class DialectLoweringTest(MosaicGpuTest):
       splat.attributes["out_layouts"] = ir.ArrayAttr.get([
           splat_layout_attr
       ])
-      ptr = llvm.mlir_undef(ir.Type.parse("!llvm.ptr"))
+      ptr = llvm.mlir_undef(llvm.PointerType.get())
       ref = mgpu_utils.ptr_as_memref(ptr, ir.MemRefType.get(shape, i32))
       other_vec = mgpu.dialect.VectorLoadOp(ref)
       strided_layout_attr = layouts.to_layout_attr(
