@@ -1248,10 +1248,17 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
 }
 
 def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
-  let arguments = (ins AnyMemRef:$input);
+  let arguments = (ins
+    AnyMemRef:$input,
+    // Dynamic offset shifts the memref pointer by the specified number of
+    // elements of the output type.
+    // NOTE: The size of the shift must be a multiple of the memory space word
+    // size for lowering to succeed.
+    Optional<I32>:$dynamic_offset
+  );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($result)
+    $input ($dynamic_offset^)? attr-dict `:` type($input) `->` type($result)
   }];
   let hasVerifier = 1;
 }

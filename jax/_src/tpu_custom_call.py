@@ -30,6 +30,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
+from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -74,6 +75,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   if (
       ctx.is_forward_compat()
       or backend is None
+      # TODO(tlongeri): Remove after 2026-06-01
+      or is_cloud_tpu_older_than(2026, 5, 1, backend)
   ):
     return _FWD_COMPAT_VERSION
   return None
