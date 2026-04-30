@@ -325,6 +325,18 @@ def lower_jaxpr_to_triton_module(
     attrs = module.operation.attributes
     module_name = mlir.sanitize_name(debug_info.func_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
+    new_mlir_ctx = mlir.ModuleContext(
+        platforms=mlir_ctx.platforms,
+        backend=mlir_ctx.backend,
+        axis_context=mlir_ctx.axis_context,
+        keepalives=mlir_ctx.keepalives,
+        channel_iterator=mlir_ctx.channel_iterator,
+        host_callbacks=mlir_ctx.host_callbacks,
+        lowering_parameters=mlir_ctx.lowering_parameters,
+        context=ir.Context.current,
+        module=module,
+        ip=ir.InsertionPoint(module.body),
+    )
     param_types = [
         # pyrefly: ignore[missing-attribute]
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
@@ -359,7 +371,7 @@ def lower_jaxpr_to_triton_module(
           mlir.TracebackCaches(),
           platform,
           compute_capability,
-          mlir_ctx=mlir_ctx,
+          mlir_ctx=new_mlir_ctx,
       )
       block_infos = [
           BlockInfo(
