@@ -13,7 +13,6 @@
 # limitations under the License.
 """TPU SparseCore Extensions to Pallas."""
 
-from jax._src.pallas.mosaic.sc_core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic.sc_core import get_sparse_core_info as get_sparse_core_info
 from jax._src.pallas.mosaic.sc_core import Indices as Indices
 from jax._src.pallas.mosaic.sc_core import MemoryRef as MemoryRef

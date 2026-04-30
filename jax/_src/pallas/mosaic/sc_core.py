@@ -92,63 +92,6 @@ class AbstractRef(state.AbstractRef):
     )
 
 
-@dataclasses.dataclass
-class BlockSpec(pallas_core.BlockSpec):
-  """A BlockSpec for SparseCore.
-
-  Attributes:
-    indexed_by: The optional index of a parameter to use as the indexer. If set,
-      the pipeline emitter will issue and indirect stream indexing into the
-      value of this parameter as part of the pipeline.
-    indexed_dim: The dimension to index into. Optional unless ``indexed_by`` is
-      set.
-
-  See also:
-    :class:`jax.experimental.pallas.BlockSpec`
-  """
-
-  indexed_by: int | None = None
-  indexed_dim: int | None = None
-
-  def __post_init__(self):
-    if (self.indexed_by is None) != (self.indexed_dim is None):
-      raise ValueError(
-          "indexed_by and indexed_dim must both be set or both unset"
-      )
-
-  def to_block_mapping(
-      self,
-      origin: pallas_core.OriginStr,
-      array_aval: jax_core.ShapedArray,
-      *,
-      index_map_avals: Sequence[jax_core.AbstractValue],
-      index_map_tree: tree_util.PyTreeDef,
-      grid: pallas_core.GridMappingGrid,
-      vmapped_dims: tuple[int, ...],
-      debug: bool = False,
-  ) -> BlockMapping:
-    bm = super().to_block_mapping(
-        origin,
-        array_aval,
-        index_map_avals=index_map_avals,
-        index_map_tree=index_map_tree,
-        grid=grid,
-        vmapped_dims=vmapped_dims,
-        debug=debug,
-    )
-    return BlockMapping(
-        **{f.name: getattr(bm, f.name) for f in dataclasses.fields(bm)},
-        indexed_by=self.indexed_by,
-        indexed_dim=self.indexed_dim,
-    )
-
-
-@dataclasses.dataclass(frozen=True)
-class BlockMapping(pallas_core.BlockMapping):
-  indexed_by: int | None = None
-  indexed_dim: int | None = None
-
-
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
   """Returns the SparseCore information for the current device."""
   return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(

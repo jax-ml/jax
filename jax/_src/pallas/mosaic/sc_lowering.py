@@ -106,15 +106,9 @@ def _block_spec_from_block_mapping(
   if memory_space is None or memory_space is pallas_core.MemorySpace.DEFAULT:
     memory_space = default_memory_space
 
-  if isinstance(bm, sc_core.BlockMapping):
-    return sc_core.BlockSpec(
-        bm.block_shape,
-        index_map,
-        indexed_by=bm.indexed_by,
-        indexed_dim=bm.indexed_dim,
-        memory_space=memory_space,
-    )
-  return sc_core.BlockSpec(bm.block_shape, index_map, memory_space=memory_space)
+  return pallas_core.BlockSpec(
+      bm.block_shape, index_map, memory_space=memory_space
+  )
 
 
 def _trace_index_map_to_jaxpr(
@@ -200,21 +194,6 @@ def lower_pipelined_jaxpr_into_module(
             "Unsupported block dimension type: "
             f"{type(bd)} for block shape: {bm.block_shape}"
         )
-    if isinstance(bm, sc_core.BlockMapping) and bm.indexed_by is not None:
-      # TODO(slebedev): Remove this branch once ``pltpu.emit_pipeline`` supports
-      # gathers/scatters.
-      lower_jaxpr_into_module(
-          lowering_context,
-          module,
-          grid_mapping,
-          jaxpr,
-          name=name,
-          dimension_semantics=dimension_semantics,
-          kernel_type=kernel_type,
-          mesh=mesh,
-          mpmd_meshes=mpmd_meshes,
-      )
-      return
     is_semaphore.append(bm.block_aval.memory_space is MemorySpace.SEMAPHORE)
 
   # Split out semaphores, because they do not need to be pipelined.
@@ -542,16 +521,7 @@ def lower_jaxpr_to_func(
   func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(
       ir.IntegerType.get_signless(64), num_scratch
   )
-  arg_attrs = [ir.DictAttr.get({})] * num_grid
-  for bm in mosaic_grid_mapping.block_mappings:
-    d: dict[str, ir.Attribute] = {}
-    if isinstance(bm, sc_core.BlockMapping) and bm.indexed_by is not None:
-      d["sc.indexed_by"] = mlir.i32_attr(bm.indexed_by)
-      d["sc.indexed_dim"] = mlir.i32_attr(bm.indexed_dim)
-    arg_attrs.append(ir.DictAttr.get(d))
-  arg_attrs.extend([ir.DictAttr.get({})] * num_scratch)
 
-  func_op.arg_attrs = ir.ArrayAttr.get(arg_attrs)
   try:
     func_op.verify()
   except Exception as e:

@@ -828,35 +828,6 @@ class VectorSubcoreTest(PallasSCTest):
     with self.assertRaisesRegex(NotImplementedError, "must be in VMEM, got HBM"):
       kernel(x, indices)
 
-  def test_implicit_gather_1d(self):
-    self.skip_if_tc_tiling()
-    num_steps = 4
-    x = jnp.arange(num_steps * self.num_lanes).reshape(num_steps, self.num_lanes)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(num_steps))
-
-    @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(num_steps, self.num_lanes), dtype=jnp.int32
-        ),
-        grid=(num_steps,),
-        in_specs=(
-            plsc.BlockSpec(
-                (pl.Squeezed(), self.num_lanes), indexed_by=1, indexed_dim=0
-            ),
-            pl.BlockSpec((1,), lambda i: i),
-        ),
-        out_specs=pl.BlockSpec(
-            (pl.Squeezed(), self.num_lanes), lambda i: (0, i)
-        ),
-    )
-    def kernel(x_ref, indices_ref, o_ref):
-      del indices_ref  # Unused.
-      o_ref[...] = x_ref[...]
-
-    np.testing.assert_array_equal(
-        kernel(x, indices), jnp.take(x, indices, axis=0)
-    )
-
   def test_load_gather_1d(self):
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
@@ -2608,7 +2579,7 @@ class PipelineTest(PallasSCTest):
         out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
     )
     def kernel(x_hbm_ref, o_hbm_ref):
-      spec = plsc.BlockSpec((self.num_lanes,), lambda i: (i,))
+      spec = pl.BlockSpec((self.num_lanes,), lambda i: (i,))
 
       @functools.partial(
           pltpu.emit_pipeline,
@@ -2636,7 +2607,7 @@ class PipelineTest(PallasSCTest):
         out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
     )
     def kernel(x_hbm_ref, o_hbm_ref):
-      spec = plsc.BlockSpec((pl.Squeezed(), 8, 128), lambda i: (i, 0, 0))
+      spec = pl.BlockSpec((pl.Squeezed(), 8, 128), lambda i: (i, 0, 0))
 
       @functools.partial(
           pltpu.emit_pipeline,
