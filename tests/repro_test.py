@@ -20,7 +20,6 @@ import gc
 import concurrent
 import logging
 import pathlib
-from functools import partial
 import os
 import re
 import weakref
@@ -35,10 +34,10 @@ try:
   import jax.experimental.pallas.ops.tpu.matmul
 except ImportError:
   pass
+from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import checkpoint as new_checkpoint
-from jax.experimental import hijax
 from jax.experimental import pjit
 from jax.experimental import shard_map as exp_shard_map
 from jax.sharding import PartitionSpec as P
@@ -56,6 +55,11 @@ from jax._src.repro import emitter
 from jax._src import test_util as jtu
 from jax._src import traceback_util
 from jax._src import tree_util
+
+try:
+  import tensorflow as tf
+except ImportError:
+  tf = None
 
 
 config.parse_flags_with_absl()
@@ -1155,6 +1159,86 @@ class ReproTest(jtu.JaxTestCase):
 
     self.collect_and_check(lambda *args: jax.eval_shape(f2, *args),
                       np.ones((8,), dtype=np.float32))
+
+  def test_export_0(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    def run_export(x):
+      exported = export.export(f)(x)
+      return exported.call(x)
+
+    self.collect_and_check(run_export,
+                           np.ones((8,), dtype=np.float32))
+
+  def test_export_disabled_checks(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    disabled_checks = [
+      export.DisabledSafetyCheck.custom_call("my_custom_call"),
+      export.DisabledSafetyCheck.platform(),
+    ]
+    def run_export(x):
+      exported = export.export(f, disabled_checks=disabled_checks)(x)
+      return exported.call(x)
+
+    self.collect_and_check(run_export,
+                           np.ones((8,), dtype=np.float32))
+
+  def test_export_grad(self):
+    @jax.jit
+    def f(x):
+      return jnp.sum(jnp.sin(x))
+
+    def run_export(x):
+      exported = export.export(f)(x)
+      return jax.grad(exported.call)(x)
+
+    self.collect_and_check(run_export,
+                           np.ones((8,), dtype=np.float32))
+
+  def test_jax2tf_0(self):
+    if tf is None: self.skipTest("Needs TF")
+    from jax.experimental import jax2tf
+    def f_jax(x, y):
+      return jnp.sin(x) + y  # x and y cannot be broadcast together
+
+    def top():
+      x = tf.ones((2, 3), dtype=np.float32)
+      y = tf.ones((2, 4), dtype=np.float32)
+      return jax2tf.convert(f_jax)(x, y)
+
+    self.collect_and_check(top,
+                           expect_exception=(TypeError, "incompatible shapes"))
+
+
+  def test_jax2tf_grad(self):
+    maybe_skip_known_failure()
+    from jax.experimental import jax2tf
+
+    def f_jax(x):
+      @jax.custom_gradient
+      def h(x):
+        def _grad(g, x=x):
+          y = jnp.ones((x.shape[0], x.shape[1] + 1), dtype=x.dtype)
+          return x + y  # incompatible shapes
+        return x, _grad
+      return h(x)
+
+    def top():
+      x = tf.ones((2, 3), dtype=np.float32)
+      @tf.function(autograph=False)
+      def bwd(x):
+        outputs = jax2tf.convert(f_jax)(x)
+        return tf.gradients(outputs, x)
+
+      return bwd(x)
+
+    self.collect_and_check(top,
+                           expect_exception=(TypeError, "incompatible shapes"))
 
 
   @jtu.ignore_warning(category=DeprecationWarning,

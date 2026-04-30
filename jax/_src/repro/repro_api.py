@@ -309,3 +309,22 @@ def flax_axes_scan_call(body_fun: Callable,
     return repro_bypass_wrapper(axes_scan.scan)(body_fun, *scan_args, **scan_kwargs)(*args, **kwargs)
   except ImportError:
     raise NotImplementedError("flax.core.axes_scan.scan is not available.")
+
+
+@partial(repro_boundary, repro_api_name="export_call")
+def export_call(fun: Callable, jit_kwargs: dict[str, Any],
+                exp_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src import api  # type: ignore
+  from jax._src.export import _export  # type: ignore
+  fun_jit = repro_bypass_wrapper(api.jit)(fun, **jit_kwargs)
+  return repro_bypass_wrapper(_export._export_internal)(fun_jit, **exp_kwargs)(*args, **kwargs)
+
+
+# TODO(necula): this is needed only for jax2tf
+@partial(repro_boundary, repro_api_name="export_internal_call")
+def export_internal_call(fun: Callable, jit_kwargs: dict[str, Any],
+                         exp_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src import api  # type: ignore
+  from jax._src.export import _export  # type: ignore
+  fun_jit = repro_bypass_wrapper(api.jit)(fun, **jit_kwargs)
+  return repro_bypass_wrapper(_export._export_internal)(fun_jit, **exp_kwargs)(*args, **kwargs)

@@ -193,7 +193,11 @@ def jit_trampoline(is_pjit: bool, real_jit: Callable) -> Callable:
     jit_call_trampoline._is_repro_trampoline = True  # pyrefly: ignore[missing-attribute]
     jit_call_trampoline.__wrapped__ = fun  # pyrefly: ignore[missing-attribute]
     jit_call_trampoline.lower = jit_aot_lower_trampoline  # pyrefly: ignore[missing-attribute]
-    jit_call_trampoline.clear_cache = lambda: None  # Caches are foiled  # pyrefly: ignore[missing-attribute]
+    jit_call_trampoline.clear_cache = lambda: None  # pyrefly: ignore[missing-attribute]
+    # Save some stuff for jax_export_trampoline
+    jit_call_trampoline.fun = fun  # pyrefly: ignore[missing-attribute]
+    jit_call_trampoline.jit_kwargs = jit_kwargs  # pyrefly: ignore[missing-attribute]
+    jit_call_trampoline.is_pjit = is_pjit  # pyrefly: ignore[missing-attribute]
     return jit_call_trampoline
 
   jit_trampoline_wrapper.real_api_fun = real_jit  # pyrefly: ignore[missing-attribute]
@@ -201,6 +205,24 @@ def jit_trampoline(is_pjit: bool, real_jit: Callable) -> Callable:
 
 api_trampolines["jax.jit"] = partial(jit_trampoline, False)
 api_trampolines["pjit.pjit"] = partial(jit_trampoline, True)
+
+
+@api_trampoline("jax.export.export")
+def jax_export_trampoline(real_export: Callable) -> Callable:
+  def export_trampoline(fun_jit, **exp_kwargs):
+    def exported_call(*args, **kwargs):
+      from jax._src.repro import repro_api
+      # We must be using a jitted function, expect jit_trampoline to have added
+      # the necessary attributes.
+      if not (hasattr(fun_jit, "fun") and hasattr(fun_jit, "jit_kwargs")):
+        raise NotImplementedError("jax.export.export called on a non-jitted function")
+      return repro_api.export_call(
+          fun_jit.fun, fun_jit.jit_kwargs, exp_kwargs, *args, **kwargs)
+
+    return exported_call
+
+  export_trampoline.real_api_fun = real_export  # pyrefly: ignore[missing-attribute]
+  return export_trampoline
 
 
 @api_trampoline("jax.custom_jvp.__call__")

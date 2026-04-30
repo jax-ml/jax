@@ -282,6 +282,15 @@ def initialize_operand_emitter():
 
   _operand_emitter_by_type[xla_client.ArrayCopySemantics] = emit_enum("xla_client.ArrayCopySemantics")
 
+  from jax import export  # type: ignore
+  @partial(register_emitter_by_type, export.DisabledSafetyCheck)
+  def emit_DisabledSafetyCheck(ctx: "EmitFunctionDefContext", v: export.DisabledSafetyCheck):
+    if v._impl == export.DisabledSafetyCheck.platform()._impl:
+      return "export.DisabledSafetyCheck.platform()"
+    if (cc := v.is_custom_call()) is not None:
+      return f"export.DisabledSafetyCheck.custom_call(\"{cc}\")"
+    raise NotImplementedError(v)
+
   from jax._src.state import indexing  # type: ignore
   @partial(register_emitter_by_type, indexing.Slice)
   def emit_Slice(ctx: "EmitFunctionDefContext", v: indexing.Slice) -> str:
