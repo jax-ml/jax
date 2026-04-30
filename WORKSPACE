@@ -212,6 +212,15 @@ load(
 
 nccl_configure(name = "local_config_nccl")
 
+# NCCL source for device API bitcode generation (Mosaic GPU integration).
+# Fetches source matching HERMETIC_NCCL_VERSION for device API headers.
+load(
+    "//third_party/nccl_device_bitcode:nccl_source_repo.bzl",
+    "nccl_source_repo",
+)
+
+nccl_source_repo(name = "nccl_source")
+
 load(
     "@rules_ml_toolchain//gpu/nvshmem:nvshmem_json_init_repository.bzl",
     "nvshmem_json_init_repository",
