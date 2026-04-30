@@ -38,15 +38,6 @@ jobs:
         timeout-minutes: 60
         run: |
           EXCLUDED_TARGETS=(
-            # Targets that depend on internal testing tools /testing/base/public
-            -//jaxlib/mosaic/dialect/gpu:mosaic_gpu_test
-            -//jaxlib/mosaic/gpu:custom_call_test
-            -//jaxlib/mosaic/gpu:dump_test
-            -//jaxlib/mosaic/gpu:gpu_module_to_assembly_test
-            -//jaxlib/mosaic:array_util_test
-            -//jaxlib/mosaic:tiled_layout_test
-            -//jaxlib/mosaic:tpu_ops_verification_test
-            -//jaxlib/mosaic:vreg_util_test
             # Targets dependent on missing TEST dependencies
             -//jax/experimental/jax2tf/tests:all
             -//jax/experimental/jax2tf/tests/flax_models:all
