@@ -1451,19 +1451,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_mpmd_test",
     srcs = ["tpu_pallas_mpmd_test.py"],
-    args = [
-        "--xla_msa_enable=false",
-        "--xla_tpu_vmem_scavenging_mode=NONE",
-        "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
-    ],
-    backend_variant_args = {
-        "tpu": if_oss(
-            [],
-            google_value = [
-                "--xla_tpu_enable_mlir_verifier=ALL",
-            ],
-        ),
-    },
+    args = if_oss(
+        [],
+        google_value = [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+            "--xla_msa_enable=false",
+            "--xla_tpu_vmem_scavenging_mode=NONE",
+            "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
+        ],
+    ),
     enable_backends = [],
     enable_configs = [
         "tpu_v6e",
