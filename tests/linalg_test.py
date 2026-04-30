@@ -104,6 +104,15 @@ def osp_linalg_circulant(c: np.ndarray) -> np.ndarray:
   return np.vectorize(
       scipy.linalg.circulant, signature="(n)->(n,n)", otypes=(c.dtype,))(c)
 
+def osp_linalg_companion(a: np.ndarray) -> np.ndarray:
+  """Batched scipy companion for testing."""
+  if scipy_version >= (1, 15):
+    return scipy.linalg.companion(a)
+  a = np.atleast_1d(a)
+  out_dtype = np.result_type(a.dtype, np.float32)
+  return np.vectorize(
+      scipy.linalg.companion, signature="(n)->(m,m)", otypes=(out_dtype,))(a)
+
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
   if scipy_version >= (1, 19):
@@ -2304,6 +2313,31 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(osp_linalg_circulant, jsp.linalg.circulant, args_maker)
     self._CompileAndCheck(jsp.linalg.circulant, args_maker)
+
+  @jtu.sample_product(
+     shape=[(2,), (3,), (5,), (8,), (2, 3), (1, 2, 4)],
+     dtype=float_types + complex_types + int_types,
+  )
+  def testCompanion(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      a = rng(shape, dtype)
+      lead = a[..., 0]
+      lead = np.where(lead == 0, np.ones_like(lead), lead)
+      a = a.copy()
+      a[..., 0] = lead
+      return [a]
+    tol = {np.complex64: 1e-5, np.float32: 1e-5}
+    self._CheckAgainstNumpy(osp_linalg_companion, jsp.linalg.companion,
+                            args_maker, atol=tol, rtol=tol, check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.companion, args_maker)
+
+  @jtu.sample_product(shape=[(0,), (1,), (3, 0), (3, 1)])
+  def testCompanionInvalidLength(self, shape):
+    a = jnp.zeros(shape)
+    with self.assertRaisesRegex(ValueError, "length of `a` along the last axis"):
+      jsp.linalg.companion(a)
+
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],

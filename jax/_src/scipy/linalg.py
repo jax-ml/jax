@@ -2612,6 +2612,50 @@ def _circulant(c: Array) -> Array:
   return c[idx]
 
 
+def companion(a: ArrayLike) -> Array:
+  r"""Construct a companion matrix.
+
+  JAX implementation of :func:`scipy.linalg.companion`.
+
+  Given polynomial coefficients :math:`a = [a_0, a_1, \ldots, a_{n-1}]` with
+  :math:`a_0 \neq 0`, the companion matrix is the :math:`(n-1) \times (n-1)`
+  matrix whose first row is :math:`-[a_1, a_2, \ldots, a_{n-1}] / a_0` and
+  whose first sub-diagonal is filled with ones.
+
+  Args:
+    a: array of shape ``(..., N)`` with ``N >= 2`` specifying the polynomial
+      coefficients.
+
+  Returns:
+    A companion matrix of shape ``(..., N - 1, N - 1)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.companion`, this function does not check at
+    runtime that ``a[..., 0]`` is non-zero; if the leading coefficient is
+    zero, the result will contain ``inf`` or ``nan`` entries.
+
+  Examples:
+    >>> jax.scipy.linalg.companion(jnp.array([1., -10., 31., -30.]))
+    Array([[ 10., -31.,  30.],
+           [  1.,   0.,   0.],
+           [  0.,   1.,   0.]], dtype=float32)
+  """
+  check_arraylike("companion", a)
+  a_arr = jnp.atleast_1d(a)
+  if a_arr.shape[-1] < 2:
+    raise ValueError(
+        "The length of `a` along the last axis must be at least 2; "
+        f"got shape {a_arr.shape}.")
+  return _companion(a_arr)
+
+@partial(jnp_vectorize.vectorize, signature="(n)->(m,m)")
+def _companion(a: Array) -> Array:
+  first_row = -a[1:] / a[0]
+  m = a.shape[0] - 1
+  out = jnp.eye(m, m, k=-1, dtype=first_row.dtype)
+  return out.at[0].set(first_row)
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.
