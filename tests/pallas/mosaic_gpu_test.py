@@ -865,7 +865,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[plgpu.SMEM(shape, dtype), plgpu.Barrier()],
-        grid=(1,),
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(
@@ -918,7 +917,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
             pl.BlockSpec(memory_space=plgpu.GMEM),
         ),
         scratch_shapes=[plgpu.SMEM(smem_shape, dtype), plgpu.Barrier()],
-        grid=(1,),
     )
     def kernel(x_ref_gmem, offset, o_ref, scratch_ref, barrier_ref):
       gmem_indexer = (pl.dslice(offset[...], 4096),)
@@ -1992,7 +1990,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         out_shape=jax.ShapeDtypeStruct((smem_size,), dtype),
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         scratch_shapes=[plgpu.SMEM((smem_size,), dtype), plgpu.Barrier()],
-        grid=(1,),
     )
     def kernel(start_idx, x_ref, o_ref, scratch_ref, barrier):
       # Initialize SMEM with -1s to indicate OOB values.
@@ -4906,8 +4903,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct((m, n), out_jax_dtype),
-        grid=(1,),
-        grid_names=("_",),
         cluster=(2,),
         cluster_names=("x",),
         scratch_shapes=scratch_shapes,
@@ -5042,8 +5037,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct((m, n), out_jax_dtype),
-        grid=(1,),
-        grid_names=("_",),
         cluster=(2,),
         cluster_names=("x",),
         scratch_shapes=scratch_shapes,
@@ -5477,8 +5470,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct((m, n), acc_type),
-        grid=(1,),
-        grid_names=("_",),
         cluster=(2,),
         cluster_names=("x",),
         scratch_shapes=scratch_shapes,
@@ -5596,8 +5587,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(full_acc_shape, dtype),
-        grid=(1,),
-        grid_names=("_",),
         cluster=(2,),
         cluster_names=("x",),
         scratch_shapes=scratch_shapes,
@@ -5863,8 +5852,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(block_size, jnp.float32),
-        grid=(1,),
-        grid_names=("_"),
         cluster_names=("x",),
         cluster=(2,),
         scratch_shapes=(
@@ -5897,8 +5884,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(block_size, jnp.float32),
-        grid=(1,),
-        grid_names=("_",),
         cluster_names=("x",),
         cluster=(2,),
         scratch_shapes=(
@@ -6305,8 +6290,6 @@ class PipelineTest(PallasTest):
     self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((block_x,), jnp.int32),
-        grid=(1,),
-        grid_names=("blocks",)
     )(0, x).block_until_ready()
 
   @parameterized.product(static=[False, True], short=[False, True])
@@ -6548,8 +6531,6 @@ class WarpSpecializedPipelineTest(PallasTest):
             jax.ShapeDtypeStruct((2 * blk_m, blk_n), jnp.float16),
         ),
         compiler_params=plgpu.CompilerParams(approx_math=True),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=2,
         thread_name="wg",
     )
@@ -6609,8 +6590,6 @@ class WarpSpecializedPipelineTest(PallasTest):
         pipeline,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
         compiler_params=plgpu.CompilerParams(approx_math=True),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=num_compute_wgs + 1,
         thread_name="wg",
     )
@@ -6629,8 +6608,6 @@ class WarpSpecializedPipelineTest(PallasTest):
             plgpu.SMEM((blk_m, blk_n), jnp.float32),
         ],
         compiler_params=plgpu.CompilerParams(approx_math=True),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=num_compute_wgs + 1,
         thread_name="wg",
     )
@@ -6732,8 +6709,6 @@ class WarpSpecializedPipelineTest(PallasTest):
         pipeline,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
         compiler_params=plgpu.CompilerParams(approx_math=True),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=num_compute_wgs + 1,
         thread_name="wg",
     )
@@ -6773,8 +6748,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     kernel = self.kernel(
         pipeline,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-        grid=(1,),
-        grid_names=("_",)
     )
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
     y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
@@ -6812,8 +6785,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     kernel_fn = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=2,
         thread_name="wg",
     )
@@ -6854,8 +6825,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
-        grid=(1,),
-        grid_names=("_",),
         num_threads=2,
         thread_name="wg",
     )
@@ -6989,8 +6958,6 @@ class WarpSpecializedPipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct((blk_m, blk_n), jnp.int32),
         compiler_params=plgpu.CompilerParams(approx_math=True),
         scratch_shapes=[plgpu.SMEM((blk_m, blk_n), jnp.int32)],
-        grid=(1,),
-        grid_names=("_",),
         num_threads=2,
         thread_name="wg",
     )
@@ -7051,8 +7018,6 @@ class WarpSpecializedPipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct((blk_m, blk_n), jnp.int32),
         compiler_params=plgpu.CompilerParams(approx_math=True),
         scratch_shapes=[plgpu.SMEM((blk_m, blk_n), jnp.int32)],
-        grid=(1,),
-        grid_names=("_",),
         num_threads=2,
         thread_name="wg",
     )
