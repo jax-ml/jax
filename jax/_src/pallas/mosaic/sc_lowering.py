@@ -919,9 +919,9 @@ def _dma_start_lowering_rule(
           ctx, device_id, device_id_type, device_id_aval, dest_kernel_type
       )
     tpu.enqueue_dma(
-        source=src_ref,
-        target=dst_ref,
-        target_semaphore=sem,
+        src_ref,
+        dst_ref,
+        sem,
         source_semaphore=src_sem,
         device_id=device_id,
         priority=priority,

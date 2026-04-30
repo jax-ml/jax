@@ -126,24 +126,6 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
 }
 
 LogicalResult enqueue_dma_downgrade(Operation* op, int version, bool&) {
-  if (version < 12) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
-    }
-    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
-    if (sizes.size() != 6) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
-    }
-    if (sizes[3] == 0) {
-      return op->emitError(
-          "Cannot downgrade enqueue_dma without target_semaphore to version "
-          "< 12");
-    }
-  }
   if (version < 8) {
     auto ordering_attr = op->getAttrOfType<BoolAttr>("strict_ordering");
     if (ordering_attr != nullptr) {

@@ -1376,6 +1376,7 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
+// core_type         : The core type that is being targeted for remote DMAs.
 // priority          : The priority of the DMA.
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
@@ -1385,7 +1386,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     AnyMemRef:$source,
     Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
     AnyMemRef:$target,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
+    MemRefOf<[TPU_SomeSemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
     // Smaller number means higher priority. 0 is the highest and the default.
@@ -1396,7 +1397,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     `source` `(` $source `:` type($source) `)`
     `target` `(` $target `:` type($target) `)`
     (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
-    (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
+    `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
     attr-dict
@@ -1496,31 +1497,6 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
-}
-
-// tpu.wait_dma waits for a DMA to complete.
-def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
-  let arguments = (ins
-    AnyMemRef:$source,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
-    AnyMemRef:$target,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
-    Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id,
-    DefaultValuedAttr<I32Attr, "0">:$priority,
-    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering,
-    BoolAttr:$wait_target
-  );
-  let assemblyFormat = [{
-    `source` `(` $source `:` type($source) `)`
-    `target` `(` $target `:` type($target) `)`
-    (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
-    (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
-    (`device_id` `(` $device_id^ `)`)?
-    (`core_id` `(` $core_id^ `)`)?
-    attr-dict
-  }];
-  let hasVerifier = 1;
 }
 
 // Like tpu.wait_dma2, but for indirect DMAs.
