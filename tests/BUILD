@@ -992,6 +992,9 @@ jax_multiplatform_test(
             "nomsan",
             "notsan",  # Times out.
         ],  # TODO(phawkins): Latest SciPy leaks memory.
+        "gpu": [
+            "noasan",  # Times out.
+        ],
     },
     shard_count = {
         "cpu": 40,
