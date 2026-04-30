@@ -45,7 +45,7 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-from jax._src.lib import jaxlib_extension_version, version as jaxlib_version
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -1599,8 +1599,7 @@ ormqr_p = standard_linalg_primitive(
     _ormqr_shape_rule, "ormqr")
 mlir.register_lowering(ormqr_p, mlir.lower_fun(
     _ormqr_lowering, multiple_results=False))
-if jaxlib_extension_version >= 422:
-  register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
+register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
 
 
 # LU decomposition
