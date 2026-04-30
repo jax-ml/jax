@@ -30,6 +30,7 @@ py_library(
     srcs = [
         "pgo_nsys_converter.py",
     ],
+    strict_deps = False,
 )
 
 py_library(
@@ -38,6 +39,7 @@ py_library(
         "__init__.py",
         "jax_to_ir.py",
     ],
+    strict_deps = False,
     tags = [
         "ignore_for_dep=third_party.py.jax.experimental.jax2tf",
         "ignore_for_dep=third_party.py.tensorflow",
@@ -50,6 +52,7 @@ py_library(
 py_library(
     name = "jax_to_ir_with_tensorflow",
     srcs = ["jax_to_ir.py"],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/experimental/jax2tf",

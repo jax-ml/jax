@@ -103,6 +103,7 @@ filegroup(
 
 py_library(
     name = "all_py_deps",
+    strict_deps = False,
     deps = all_py_deps([
         "zstandard",
         "tensorstore",

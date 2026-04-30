@@ -219,6 +219,7 @@ nanobind_pywrap_extension(
 # supported by the `nanobind_pywrap_extension`/`nanobind_extension` macros.
 py_library(
     name = "_tpu_ext_lib",
+    strict_deps = False,
     deps = [
         ":_tpu_ext",
         "//jaxlib/mlir:ir",

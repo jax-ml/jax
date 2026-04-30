@@ -503,6 +503,7 @@ rocm_nanobind_extension(
 
 py_library(
     name = "rocm_gpu_support",
+    strict_deps = False,
     deps = [
         ":_hybrid",
         ":_linalg",
@@ -571,6 +572,7 @@ rocm_nanobind_extension(
 
 py_library(
     name = "gpu_only_test_deps",
+    strict_deps = False,
     # `if_rocm_is_configured` will default to `[]`.
     deps = if_rocm_is_configured([
         ":rocm_gpu_support",

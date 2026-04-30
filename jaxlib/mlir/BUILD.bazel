@@ -56,6 +56,7 @@ symlink_inputs(
 
 py_library(
     name = "mlir",
+    strict_deps = False,
     deps = [
         "//jaxlib/mlir/_mlir_libs",
     ],
@@ -319,6 +320,7 @@ py_library(
         ":gpu_package_files",
         ":gpu_package_passes_files",
     ],
+    strict_deps = False,
     deps = [
         ":core",
         ":ir",
