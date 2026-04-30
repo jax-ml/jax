@@ -1108,32 +1108,6 @@ absl::StatusOr<std::vector<int64_t>> GetReplicaIds(
   return ParseInts(replica_ids_str);
 }
 
-// Returns the vector of booleans indicating whether the corresponding buffer
-// used with multimem instruction.
-absl::StatusOr<std::vector<bool>> ParseMultimemArgs(
-    xla::ffi::Dictionary attributes, size_t num_buffers) {
-  std::string_view multimem_args =
-      attributes.get<std::string_view>("multimem_parameters").value_or("");
-  if (multimem_args.empty()) {
-    return std::vector<bool>(num_buffers, false);
-  }
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> parameters_uses_multimem,
-                      ParseInts(multimem_args));
-  if (parameters_uses_multimem.size() != num_buffers) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "Multimem arguments list size %d is not equal to number "
-        "of buffers %d",
-        parameters_uses_multimem.size(), num_buffers));
-  }
-  std::vector<bool> result(num_buffers, false);
-  for (int64_t arg = 0; arg < num_buffers; ++arg) {
-    if (parameters_uses_multimem[arg] == 1) {
-      result[arg] = true;
-    }
-  }
-  return result;
-}
-
 absl::StatusOr<xla::gpu::GpuCliqueKey> GetCliqueKey(
     const xla::gpu::CollectiveParams& collective_params,
     const xla::ffi::Dictionary& attributes) {
@@ -1192,6 +1166,72 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
+// Allocate and zero dedicated buffer for cross-device barrier. This buffer
+// can't be a part of the output parameter used for collective metadata
+// because buffer assigner can use the same buffer for different ops and we
+// need to ensure that this buffer is zeroed on all devices for a given
+// operation. Barrier buffers are created and zeroed once during the first
+// custom call operation initialization. During reruns we can reuse the same
+// buffers for the same operation since multi-device barrier can be called
+// multiple times on the same buffers.
+absl::Status InitializeBarrier(
+    DeviceState& device_state, se::Stream* stream,
+    const xla::gpu::CollectiveParams* collective_params,
+    xla::gpu::CollectiveCliques* collective_cliques,
+    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank) {
+  if (!device_state.barrier_signal ||
+      device_state.barrier_signal->address().is_null()) {
+    // Barrier signal buffer should be allocated within a collective memory
+    // space (kCollective) since it's going to be registered as collective
+    // memory with the NCCL library.
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::MemoryAllocator> collective_allocator,
+        collective_params->executor->CreateMemoryAllocator(
+            se::MemorySpace::kCollective));
+
+    if (!device_state.barrier_signal_value ||
+        device_state.barrier_signal_value->address().is_null()) {
+      TF_ASSIGN_OR_RETURN(device_state.barrier_signal_value,
+                          collective_allocator->Allocate(
+                              xla::gpu::GetMultiGpuBarrierSignalValueSize()));
+      se::DeviceAddressBase barrier_signal_value_buffer_address =
+          device_state.barrier_signal_value->address();
+      TF_RETURN_IF_ERROR(
+          stream->MemZero(&barrier_signal_value_buffer_address,
+                          barrier_signal_value_buffer_address.size()));
+    }
+
+    TF_ASSIGN_OR_RETURN(device_state.barrier_signal,
+                        collective_allocator->Allocate(
+                            xla::gpu::GetMultiGpuBarrierSignalBufferSize()));
+
+    se::DeviceAddressBase barrier_signal_buffer_address =
+        device_state.barrier_signal->address();
+    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
+                                       barrier_signal_buffer_address.size()));
+  }
+
+  // It's important to zero the buffer synchronously to avoid the situation
+  // when peer barrier buffer is not zeroed before the first execution.
+  // We can guarantee a zeroed buffers in all participating devices since
+  // below we are running rendezvous to exchange peer parameters in the
+  // CollectParamToPeers call.
+  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+
+  if (device_state.barrier_signal_symmetric_memory.Expired()) {
+    TF_ASSIGN_OR_RETURN(auto* comm,
+                        collective_cliques->GetComm(clique_key, rank));
+    TF_ASSIGN_OR_RETURN(
+        auto symmetric_memory,
+        comm->CreateSymmetricMemory(device_state.barrier_signal->address()));
+
+    TF_ASSIGN_OR_RETURN(
+        device_state.barrier_signal_symmetric_memory,
+        collective_cliques->Tie(clique_key, std::move(symmetric_memory)));
+  }
+  return absl::OkStatus();
+}
+
 DeviceState& GetDeviceState(
     CustomCallResources* resources,
     const xla::gpu::CollectiveParams* collective_params) {
@@ -1238,8 +1278,6 @@ absl::Status MosaicGpuPrepare(
 
   TF_ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                       GetBuffers(inputs, results));
-  TF_ASSIGN_OR_RETURN(std::vector<bool> parameter_uses_multimem,
-                      ParseMultimemArgs(attributes, buffers.size()));
 
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
@@ -1248,12 +1286,12 @@ absl::Status MosaicGpuPrepare(
       GetCliqueDeviceGroups(*collective_params, attributes));
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
   for (int i = 0; i < buffers.size(); ++i) {
-    if (!parameter_uses_multimem[i]) {
-      continue;
-    }
+    se::DeviceAddressBase device_address = buffers[i].device_memory();
 
-    TF_RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
-        clique_key, buffers[i].device_memory()));
+    if (collective_params->executor->IsVmmMemory(device_address)) {
+      TF_RETURN_IF_ERROR(collective_memory_requests->RequestSymmetricAddress(
+          clique_key, buffers[i].device_memory()));
+    }
   }
 
   XLA_VLOG_DEVICE(5, device_ordinal)
@@ -1300,16 +1338,13 @@ absl::Status MosaicGpuInitialize(
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                       GetCliqueKey(*collective_params, attributes));
 
-  TF_ASSIGN_OR_RETURN(std::vector<bool> parameter_uses_multimem,
-                      ParseMultimemArgs(attributes, buffers.size()));
-
   for (int i = 0; i < buffers.size(); ++i) {
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "MosaicGpuInitialize processing buffer: " << i;
     se::DeviceAddressBase device_address = buffers[i].device_memory();
     collective_metadata_parameters[i] = device_address;
 
-    if (parameter_uses_multimem[i]) {
+    if (collective_params->executor->IsVmmMemory(device_address)) {
       // The physical memory range contains several allocations
       // (for example we have separate allocations for the HLO module parameters
       // and temporary buffers). Each allocation can contain several HLO buffers
@@ -1343,68 +1378,11 @@ absl::Status MosaicGpuInitialize(
     }
   }
 
-  DeviceState& device_state = GetDeviceState(resources, collective_params);
-  // Allocate and zero dedicated buffer for cross-device barrier. These buffers
-  // can't be a part of the output parameter used for collective metadata
-  // because buffer assigner can use the same buffer for different ops and we
-  // need to ensure that this buffer is zeroed between all devices for a given
-  // operation.
-  // Barrier buffers are created and zeroed once during the first custom call
-  // operation initialization. During reruns we can reuse the same buffers for
-  // the same operation since multi-device barrier can be called multiple times
-  // on the same buffers.
-  if (!device_state.barrier_signal ||
-      device_state.barrier_signal->address().is_null()) {
-    // Barrier signal buffer should be allocated within the collective memory
-    // space (kCollective) since it's going to be registered as collective
-    // memory with the NCCL library.
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::MemoryAllocator> collective_allocator,
-        collective_params->executor->CreateMemoryAllocator(
-            se::MemorySpace::kCollective));
-
-    if (!device_state.barrier_signal_value ||
-        device_state.barrier_signal_value->address().is_null()) {
-      TF_ASSIGN_OR_RETURN(device_state.barrier_signal_value,
-                          collective_allocator->Allocate(
-                              xla::gpu::GetMultiGpuBarrierSignalValueSize()));
-      se::DeviceAddressBase barrier_signal_value_buffer_address =
-          device_state.barrier_signal_value->address();
-      TF_RETURN_IF_ERROR(
-          stream->MemZero(&barrier_signal_value_buffer_address,
-                          barrier_signal_value_buffer_address.size()));
-    }
-
-    TF_ASSIGN_OR_RETURN(device_state.barrier_signal,
-                        collective_allocator->Allocate(
-                            xla::gpu::GetMultiGpuBarrierSignalBufferSize()));
-
-    se::DeviceAddressBase barrier_signal_buffer_address =
-        device_state.barrier_signal->address();
-    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
-                                       barrier_signal_buffer_address.size()));
-  }
-
-  // It's important to zero the buffer synchronously to avoid the situation
-  // when peer barrier buffer is not zeroed before the first execution.
-  // We can guarantee a zeroed buffers in all participating devices since
-  // below we are running rendezvous to exchange peer parameters in the
-  // CollectParamToPeers call.
-  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
-
   xla::RankId rank =
       clique_key.rank(collective_params->global_device_id).value();
-  if (device_state.barrier_signal_symmetric_memory.Expired()) {
-    TF_ASSIGN_OR_RETURN(auto* comm,
-                        collective_cliques->GetComm(clique_key, rank));
-    TF_ASSIGN_OR_RETURN(
-        auto symmetric_memory,
-        comm->CreateSymmetricMemory(device_state.barrier_signal->address()));
-
-    TF_ASSIGN_OR_RETURN(
-        device_state.barrier_signal_symmetric_memory,
-        collective_cliques->Tie(clique_key, std::move(symmetric_memory)));
-  }
+  DeviceState& device_state = GetDeviceState(resources, collective_params);
+  TF_RETURN_IF_ERROR(InitializeBarrier(device_state, stream, collective_params,
+                                       collective_cliques, clique_key, rank));
 
   TF_ASSIGN_OR_RETURN(
       std::vector<void*> param_to_peers,
