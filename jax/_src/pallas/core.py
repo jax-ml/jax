@@ -532,10 +532,6 @@ class BlockSpec:
 
   def __post_init__(self):
     if self.index_map is not None:
-      # TODO(sharadmv): Add this once we have a better way to handle
-      # index_map equality.
-      # self.index_map = _IndexMapFunc(
-      #     traceback_util.api_boundary(self.index_map, repro_user_func=True))
       self.index_map = _IndexMapFunc(self.index_map)
 
   def to_block_mapping(
