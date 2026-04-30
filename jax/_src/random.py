@@ -65,6 +65,15 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
+
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
@@ -2850,7 +2859,8 @@ def _wald(key, mean, shape, dtype) -> Array:
 def geometric(key: ArrayLike,
               p: RealArray,
               shape: Shape | None = None,
-              dtype: DTypeLikeInt | None = None) -> Array:
+              dtype: DTypeLikeInt | None = None,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Geometric random values with given shape and float dtype.
 
   The values are returned according to the probability mass function:
@@ -2869,6 +2879,14 @@ def geometric(key: ArrayLike,
       (None) produces a result shape equal to ``np.shape(p)``.
     dtype: optional, a int dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
+    out_sharding: optional, Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2880,22 +2898,18 @@ def geometric(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.integer):
     raise ValueError("dtype argument to `geometric` must be an int "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _geometric(key, p, shape, dtype)
+  shape = check_broadcast_shapes("geometric", shape, p)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "geometric", shape)
+  return _geometric(key, p, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _geometric(key, p, shape, dtype) -> Array:
-  if shape is None:
-    shape =  np.shape(p)
-  else:
-    _check_shape("geometric", shape, np.shape(p))
+@jit(static_argnums=(2, 3, 4))
+def _geometric(key, p, shape, dtype, out_sharding) -> Array:
   check_arraylike("geometric", p)
   p, = promote_dtypes_inexact(p)
-  u = uniform(key, shape, p.dtype)
+  u = uniform(key, shape, p.dtype, out_sharding=out_sharding)
   log_u = lax.log(u)
   log_one_minus_p = lax.log1p(-p)
-  log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape)
+  log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape, out_sharding=out_sharding)
   g = lax.floor(lax.div(log_u, log_one_minus_p)) + 1
   return g.astype(dtype)
 
