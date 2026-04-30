@@ -233,20 +233,10 @@ else
   ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
 fi
 
-# Merge results with prefixes to avoid overwriting
-mkdir -p test-artifacts
-if [[ -d test-artifacts-single ]]; then
-  for f in test-artifacts-single/*; do
-    [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/single_$(basename "$f")"
-  done
-fi
-if [[ -d test-artifacts-multi ]]; then
-  for f in test-artifacts-multi/*; do
-    [[ -e "$f" ]] || continue
-    cp "$f" "test-artifacts/multi_$(basename "$f")"
-  done
-fi
+# Merge results with prefixes to avoid overwriting.
+bash ci/utilities/merge_test_artifacts.sh test-artifacts \
+  single_=test-artifacts-single \
+  multi_=test-artifacts-multi
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
