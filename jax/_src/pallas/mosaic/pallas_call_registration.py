@@ -48,31 +48,6 @@ from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
 
-def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
-  """Casts boolean values to integers.
-
-  We perform this cast because Mosaic does not directly support bool values
-  for Memrefs. Instead, we load bools as integers and cast them to bools
-  after loading from a memref inside of the kernel.
-  """
-  assert isinstance(
-      x, (jax.Array, jax_core.ShapedArray, state_types.AbstractLinVal)
-  ) or (
-      isinstance(x, jax_core.Tracer)
-      and isinstance(x.aval, state_types.AbstractLinVal)
-  ), type(x)
-  if isinstance(x, jax.Array):
-    if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
-      return x.astype(lowering.BOOL_MEMREF_TYPE)
-    return x
-  else:
-    if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
-      if isinstance(x, state_types.AbstractLinVal):
-        raise NotImplementedError  # TODO(mattjj,sharadmv)
-      return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
-    return x
-
-
 def _check_sparsecore_availability(kernel_type: tpu_core.CoreType) -> None:
   if kernel_type in (
       tpu_core.CoreType.SC_SCALAR_SUBCORE,
