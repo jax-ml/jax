@@ -1375,7 +1375,7 @@ class LaunchContext:
         gmem_base_ptr = llvm.addrspacecast(
             llvm.PointerType.get(address_space=1), gmem_base_ptr
         )
-        smem_base_ptr = utils.memref_ptr(smem_ref, memory_space=3)
+        smem_base_ptr = utils.memref_ptr(smem_ref)
         bytes_per_transfer = layout.vec_size * element_bitwidth // 8
         cache_modifier = (
             nvvm.LoadCacheModifierKind.CG
@@ -1608,7 +1608,7 @@ class LaunchContext:
           # We should really take a slice here, but it doesn't matter. We're
           # just going to take the base pointer anyway.
           transfer_smem_ref = utils.memref_slice(smem_ref, smem_indices)
-          smem_ptr = utils.memref_ptr(transfer_smem_ref, memory_space=3)
+          smem_ptr = utils.memref_ptr(transfer_smem_ref)
           # The slice index needs to be folded into the gather col index.
           col_slice_offset = sum(
               idx * stride
@@ -1629,7 +1629,7 @@ class LaunchContext:
 
     assert gather_indices is None  # Only tiled TMA handled below.
 
-    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
+    smem_ptr = utils.memref_ptr(smem_ref)
     if isinstance(predicate, _DefaultPredicate):
       predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
     if predicate is None:

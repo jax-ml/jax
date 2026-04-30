@@ -229,7 +229,7 @@ def encode_descriptor(
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(ref_arg.type, ir.MemRefType):
-    ptr = utils.memref_ptr(ref_arg, 3)
+    ptr = utils.memref_ptr(ref_arg)
   else:
     ptr = ref_arg
   assert ptr.type == llvm.PointerType.get(address_space=3), ptr.type

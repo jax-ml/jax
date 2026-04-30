@@ -408,9 +408,8 @@ class OnDeviceProfiler:
         # offset += 2
         offset = memref.load(ctx.offset, [])
         base_ref = memref_slice(ctx.smem_buffer, offset)
-        base_ptr = memref_ptr(base_ref, memory_space=3)
         i64 = ir.IntegerType.get_signless(64)
-        base_addr = llvm.ptrtoint(i64, base_ptr)
+        base_addr = llvm.ptrtoint(i64, memref_ptr(base_ref))
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [ctx.is_profiling_thread, base_addr, c(modifier | name_id, i32)],

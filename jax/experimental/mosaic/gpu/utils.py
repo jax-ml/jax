@@ -1009,9 +1009,7 @@ class BarrierRef:
       raise NotImplementedError("Only up to 32 barriers per group supported")
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
-    address = memref_ptr(
-        barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-    )
+    address = memref_ptr(barrier_memref)
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     predicate = single_thread_predicate(scope=ThreadSubset.BLOCK)
@@ -1187,9 +1185,7 @@ class DialectBarrierRef:
     if num_barriers > 32:
       raise NotImplementedError("Only up to 32 barriers per group supported")
 
-    address = memref_ptr(
-        barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-    )
+    address = memref_ptr(barrier_memref)
     dialect.initialize_barrier(
         address, arrival_count, num_barriers, orders_tensor_core
     )
@@ -1702,12 +1698,22 @@ def warp_tree_reduce(value, op, group_size):
   return result
 
 
-def memref_ptr(memref_arg, memory_space: int | None = None):
+_MEMORY_SPACES = {f"#gpu.address_space<{str(x)}>": x for x in gpu.AddressSpace}
+
+
+def memref_ptr(memref_arg):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
   rank = len(memref_ty.shape)
-  # TODO: Read out memory space from memref
-  ptr_ty = llvm.PointerType.get(memory_space)
+
+  if (memory_space := memref_ty.memory_space) is None:
+    space = None
+  elif isinstance(memory_space, ir.IntegerAttr):
+    space = memory_space.value
+  else:
+    space = gpu_address_space_to_nvptx(_MEMORY_SPACES[str(memory_space)])
+
+  ptr_ty = llvm.PointerType.get(space)
   desc_ty_fields = [ptr_ty, ptr_ty, i64]
   if rank > 0:
     desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
@@ -2131,11 +2137,9 @@ def try_cluster_cancel(
   """
   if predicate is None:
     predicate = single_thread_predicate(ThreadSubset.BLOCK)
-
-  addr = memref_ptr(result_ref, memory_space=3)
   llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
-      [addr, barrier.get_ptr(), predicate],
+      [memref_ptr(result_ref), barrier.get_ptr(), predicate],
       "@$2 clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
       " [$0], [$1];",
       "r,r,b",
@@ -2155,11 +2159,9 @@ def query_cluster_cancel(
   i32 = ir.IntegerType.get_signless(32)
   i1 = ir.IntegerType.get_signless(1)
   struct_ty = llvm.StructType.get_literal([i32, i32, i32, i1])
-
-  addr = memref_ptr(result_ref, memory_space=3)
   desc = llvm.inline_asm(
       struct_ty,
-      [addr],
+      [memref_ptr(result_ref)],
       """
     {
         .reg .b128 handle;
@@ -2268,7 +2270,7 @@ def get_cluster_ref(
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
   return ptr_as_memref(
-      get_cluster_ptr(memref_ptr(ref, memory_space=3), flat_block, generic),
+      get_cluster_ptr(memref_ptr(ref), flat_block, generic),
       result_type,
       ptr_memory_space=None if generic else 7,
   )

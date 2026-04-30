@@ -3440,10 +3440,8 @@ class FragmentedArray:
               utils.multimem_store(ptr, get(self.registers))
           elif atomic is not None:
             is_smem = utils.is_smem_ref(transfer_ref)
-            memory_space = 3 if is_smem else None
             base_ptr = utils.memref_ptr(
-                utils.memref_slice(transfer_ref, tuple(idx)),
-                memory_space=memory_space,
+                utils.memref_slice(transfer_ref, tuple(idx))
             )
             self._store_register_atomic(
                 base_ptr, get(self.registers), atomic, is_smem,
@@ -4085,7 +4083,7 @@ class FragmentedArray:
     lane_offset = utils.dyn_dot(expand_nested_dims(layout.lane_indices()), dyn_tiled_strides)
     warp_offset = utils.dyn_dot(expand_nested_dims(layout.warp_indices()), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
-    ptr = utils.memref_ptr(ref, memory_space=llvm_memory_space)
+    ptr = utils.memref_ptr(ref)
     _as_consts = lambda consts: [c(const) for const in consts.tolist()]
     # This has bits set only for the offset bits that influence swizzling.
     swizzle_mask = swizzle_block_transfers - swizzle_tile_transfers
