@@ -15,7 +15,7 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Sequence, Mapping
 import contextlib
 import dataclasses
 import functools
@@ -50,8 +50,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import jax_mlir_ext, jaxlib_extension_version
 from jax._src.lib import xla_client
+from jax._src.lib import jax_mlir_ext, jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import cf
@@ -65,10 +65,10 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
-from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -209,7 +209,6 @@ class LoweringContext:
   # Meshes for devices this lowering can address.
   mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh]
   needs_layout_passes: bool = False
-  fuse_transposed_lhs_in_matmul: bool = False
 
   replace = dataclasses.replace
 
@@ -260,7 +259,6 @@ class PipelinedLoweringContext(LoweringContext):
       forward_compatible: bool,
       backend: Any | None,
       dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
-      fuse_transposed_lhs_in_matmul: bool,
   ):
     arg_block_shapes = [
         *mgm.scalar_prefetch_block_shapes,
@@ -281,7 +279,6 @@ class PipelinedLoweringContext(LoweringContext):
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         mpmd_meshes=mgm.mpmd_meshes,
-        fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
     )
 
 
@@ -300,7 +297,6 @@ class UnpipelinedLoweringContext(LoweringContext):
       mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
       needs_layout_passes: bool = False,
       mesh_indices: Sequence[ir.Value] = (),
-      fuse_transposed_lhs_in_matmul: bool = False,
   ):
     mesh_size = tuple(mesh_shape[i][1] for i in range(len(mesh_shape)))
     mesh_names = tuple(mesh_shape[i][0] for i in range(len(mesh_shape)))
@@ -325,7 +321,6 @@ class UnpipelinedLoweringContext(LoweringContext):
         dynamic_shape_replacement_fn=lambda x: x,
         mpmd_meshes=mpmd_meshes,
         needs_layout_passes=needs_layout_passes,
-        fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
     )
 
 
@@ -896,7 +891,6 @@ def lower_jaxpr_to_pipelined_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
-    fuse_transposed_lhs_in_matmul: bool = False,
 ) -> ir.Module:
   module = ir.Module.create()
   lower_jaxpr_into_pipelined_module(
@@ -910,7 +904,6 @@ def lower_jaxpr_to_pipelined_module(
       mesh=mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       mpmd_meshes=mpmd_meshes,
-      fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
   )
   return module
 
@@ -927,7 +920,6 @@ def lower_jaxpr_into_pipelined_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
-    fuse_transposed_lhs_in_matmul: bool = False,
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
@@ -993,8 +985,7 @@ def lower_jaxpr_into_pipelined_module(
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
-    )
+      )
 
   func_op = _lower_jaxpr_to_func_common(
       jaxpr,
@@ -1288,7 +1279,6 @@ def lower_jaxpr_into_unpipelined_module(
     mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
     num_scratch: int,
     needs_layout_passes: bool = False,
-    fuse_transposed_lhs_in_matmul: bool = False,
 ) -> None:
   if pallas_mesh is None:
     raise ValueError("Mesh must be provided.")
@@ -1325,7 +1315,6 @@ def lower_jaxpr_into_unpipelined_module(
         mpmd_meshes=mpmd_meshes,
         needs_layout_passes=needs_layout_passes,
         mesh_indices=mesh_indices,
-        fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
     )
 
   func_op = _lower_jaxpr_to_func_common(
@@ -2699,27 +2688,14 @@ def _dot_general_lowering_rule(
   out_tile = arith.constant(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
-  if jaxlib_extension_version < 447 or TYPE_CHECKING:
-    return tpu.matmul(  # pyrefly: ignore[missing-argument]
-        out_type,
-        x,
-        y,
-        out_tile,
-        *[],  # To silence the linter warning for older jaxlib versions.
-        dimension_numbers=tpu_dot_dims,
-        precision=precision_attr,
-    )
-  else:
-    return tpu.matmul(
-        out_type,
-        x,
-        y,
-        out_tile,
-        dimension_numbers=tpu_dot_dims,
-        precision=precision_attr,
-        transpose_lhs_hint=not ctx.forward_compatible
-        and ctx.lowering_context.fuse_transposed_lhs_in_matmul,
-    )
+  return tpu.matmul(
+      out_type,
+      x,
+      y,
+      out_tile,
+      dimension_numbers=tpu_dot_dims,
+      precision=precision_attr,
+  )
 
 
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:

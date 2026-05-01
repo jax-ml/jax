@@ -444,10 +444,7 @@ def pallas_call_tpu_lowering_rule(
 
   match kernel_type:
     case tpu_core.CoreType.TC:
-      lower_jaxpr_to_module = functools.partial(
-          lowering.lower_jaxpr_to_pipelined_module,
-          fuse_transposed_lhs_in_matmul=mosaic_params.fuse_transposed_lhs_in_matmul,
-      )
+      lower_jaxpr_to_module = lowering.lower_jaxpr_to_pipelined_module
     case (
         tpu_core.CoreType.SC_SCALAR_SUBCORE
         | tpu_core.CoreType.SC_VECTOR_SUBCORE
