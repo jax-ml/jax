@@ -1934,7 +1934,11 @@ def interpret_pallas_call(
     is_input = i < grid_mapping.num_inputs
     is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
     aval = var.aval
-    memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
+    if is_input or is_output:
+      memory_space = _forward_any_to_hbm(
+          grid_mapping.block_mappings[i].transformed_block_aval.memory_space)
+    else:
+      memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
     if memory_space is _SEMAPHORE:
       kernel_buffer_ids.append(
           callback.io_callback(
@@ -1982,7 +1986,10 @@ def interpret_pallas_call(
       [grid_mapping.num_index_operands, num_inputs, grid_mapping.num_outputs])
   input_vars, output_vars = split_list(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
-
+  input_var_memory_spaces, output_var_memory_spaces = split_list(
+      [_forward_any_to_hbm(bm.transformed_block_aval.memory_space)
+       for bm in grid_mapping.block_mappings],
+      [num_inputs])
   if grid:
     num_iterations = functools.reduce(jnp.multiply, grid)
   else:
@@ -2125,7 +2132,7 @@ def interpret_pallas_call(
           output_names = ["unknown",] * grid_mapping.num_outputs
 
         # Copy slices of the input to the kernel buffers.
-        def _store_slice_to_kernel_input(index, input_var):
+        def _store_slice_to_kernel_input(index, input_var, memory_space):
           # Copy from the HBM buffer for the pallas_call input to the kernel
           # input buffer.
           # TODO(jburnim): Just use input_args[j] when the input is not aliased?
@@ -2162,9 +2169,7 @@ def interpret_pallas_call(
               (),
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[
-                  _forward_any_to_hbm(input_var.aval.memory_space)
-              ],
+              TPU_MEMORY_SPACE_IDXS[memory_space],
               input_ids[index],
               (),
               sliced_val,
@@ -2172,7 +2177,7 @@ def interpret_pallas_call(
           )
 
         for j, var in enumerate(input_vars):
-          if _forward_any_to_hbm(var.aval.memory_space) is _HBM:
+          if input_var_memory_spaces[j] is _HBM:
             if var.aval.shape != block_shapes[j]:
               raise ValueError(
                   f'Kernel input {j} in HBM but does not have trivial'
@@ -2186,7 +2191,8 @@ def interpret_pallas_call(
               | jax.lax.reduce_or(
                   cur_start_indices[j] != prev_start_indices[j], axes=(0,)
               ),
-              functools.partial(_store_slice_to_kernel_input, j, var),
+              functools.partial(_store_slice_to_kernel_input, j, var,
+                                input_var_memory_spaces[j]),
               lambda: None,
           )
 
@@ -2194,7 +2200,7 @@ def interpret_pallas_call(
         _interpret_jaxpr(jaxpr, *kernel_buffer_ids, ctx=ctx)
 
         # Copy from the kernel buffers to slices of the output in HBM.
-        def _store_to_output_buffer(index, output_var, transform):
+        def _store_to_output_buffer(index, output_var, transform, memory_space):
           kernel_output_val = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # get is involved in a data race.
@@ -2202,9 +2208,7 @@ def interpret_pallas_call(
               output_var.aval,
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[
-                  _forward_any_to_hbm(output_var.aval.memory_space)
-              ],
+              TPU_MEMORY_SPACE_IDXS[memory_space],
               kernel_output_ids[index],
               (),
               ordered=True,
@@ -2227,7 +2231,7 @@ def interpret_pallas_call(
 
         output_slices : list[Any] = []
         for j, var in enumerate(output_vars):
-          if _forward_any_to_hbm(var.aval.memory_space) is _HBM:
+          if output_var_memory_spaces[j] is _HBM:
             if var.aval.shape != block_shapes[num_inputs + j]:
               raise ValueError(
                   f'Kernel output {j} in HBM but does not have trivial'
@@ -2262,7 +2266,8 @@ def interpret_pallas_call(
                   != next_start_indices[num_inputs + j],
                   axes=(0,),
               ),
-              functools.partial(_store_to_output_buffer, j, var, transform),
+              functools.partial(_store_to_output_buffer, j, var, transform,
+                                output_var_memory_spaces[j]),
               lambda: None,
           )
         callback.io_callback(
