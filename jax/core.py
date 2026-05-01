@@ -107,11 +107,11 @@ _deprecations = {
     _src_core.Effects,
   ),
   "InconclusiveDimensionOperation": (
-    "jax.core.InconclusiveDimensionOperation is deprecated. Use jax.extend.core.InconclusiveDimensionOperation.",
+    "jax.core.InconclusiveDimensionOperation is deprecated. Use jax.errors.InconclusiveDimensionOperation.",
     _src_core.InconclusiveDimensionOperation,
   ),
   "JaxprTypeError": (
-    "jax.core.JaxprTypeError is deprecated. Use jax.extend.core.JaxprTypeError.",
+    "jax.core.JaxprTypeError is deprecated. Use jax.errors.JaxprTypeError.",
     _src_core.JaxprTypeError,
   ),
   "check_jaxpr": (

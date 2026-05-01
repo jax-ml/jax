@@ -472,6 +472,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
               'JaxIndexError',
               'JAXTypeError',
               'JaxRuntimeError',
+              'JaxprTypeError',
           ]
       ],
   )
