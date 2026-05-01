@@ -2605,7 +2605,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     n=[0, 1, 5, 10, 20],
     )
   def testHilbert(self, n):
-    args_maker = lambda: []
+    args_maker = list
     osp_fun = partial(osp.linalg.hilbert, n=n)
     jsp_fun = partial(jsp.linalg.hilbert, n=n)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
@@ -2616,7 +2616,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     dtype=int_types + float_types,
   )
   def testHadamard(self, n, dtype):
-    args_maker = lambda: []
+    args_maker = list
     osp_fun = partial(osp.linalg.hadamard, n=n, dtype=dtype)
     jsp_fun = partial(jsp.linalg.hadamard, n=n, dtype=dtype)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
@@ -2665,7 +2665,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testPascal(self, n, kind):
-    args_maker = lambda: []
+    args_maker = list
     osp_fun = partial(osp.linalg.pascal, n=n, kind=kind, exact=False)
     jsp_fun = partial(jsp.linalg.pascal, n=n, kind=kind)
     self._CheckAgainstNumpy(osp_fun,

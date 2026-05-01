@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 from jax._src import ad_util
 from jax._src import core
@@ -82,7 +82,7 @@ effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEff
 effects.partial_eval_kept_effects.add_type(RefEffect)
 effects.remat_allowed_effects.add_type(RefEffect)
 
-StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
+StateEffect = ReadEffect | WriteEffect | AccumEffect
 
 
 # ## Transforms

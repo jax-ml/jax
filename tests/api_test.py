@@ -207,7 +207,7 @@ class JitTest(jtu.BufferDonationTestCase):
     assert len(side) == 3
 
   def test_static_args_equality(self):
-    class A():
+    class A:
 
       def __hash__(self):
         return 1

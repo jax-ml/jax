@@ -25,7 +25,7 @@ import abc
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Literal, Union
+from typing import cast, overload, Any, Literal
 from collections.abc import Callable
 import warnings
 
@@ -548,7 +548,7 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
 
 can_cast = np.can_cast
 
-JAXType = Union[type, DType]
+JAXType = type | DType
 
 # Enumeration of all valid JAX types in order.
 _weak_types: list[JAXType] = [int, float, complex]
@@ -769,7 +769,6 @@ _strict_lattice_ubs = _make_lattice_upper_bounds(strict=True, x64=True)
 @export
 class TypePromotionError(ValueError):
   """Raised when JAX type promotion fails."""
-  pass
 
 
 # We don't use util.memoize because there is no implicit X64 dependence.

@@ -13,7 +13,7 @@
 # limitations under the License.
 from collections.abc import Callable, Sequence
 from types import ModuleType
-from typing import Any, Protocol, runtime_checkable, Union
+from typing import Any, Protocol, runtime_checkable
 import numpy as np
 
 from jax._src.partition_spec import PartitionSpec as P
@@ -27,9 +27,9 @@ from jax._src.sharding import Sharding
 class SupportsDType(Protocol):
   @property
   def dtype(self) -> np.dtype: ...
-DTypeLike = Union[str, type[Any], np.dtype, SupportsDType]
+DTypeLike = str | type[Any] | np.dtype | SupportsDType
 
-Axis = Union[int, Sequence[int], None]
+Axis = int | Sequence[int] | None
 Shard = Any
 
 # TODO: alias this to xla_client.Traceback
@@ -273,16 +273,16 @@ class Array:
                 stream: int | Any | None = ...) -> Array: ...
 
 
-StaticScalar = Union[
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
-]
+StaticScalar = (
+  np.bool_ | np.number |  # NumPy scalar types
+  bool | int | float | complex  # Python scalar types
+)
 
-ArrayLike = Union[
-  Array,  # JAX array type
-  np.ndarray,  # NumPy array type
-  StaticScalar,  # valid scalars
-]
+ArrayLike = (
+  Array |  # JAX array type
+  np.ndarray |  # NumPy array type
+  StaticScalar  # valid scalars
+)
 
 
 # TODO: restructure to avoid re-defining this here?

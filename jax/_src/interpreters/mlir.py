@@ -27,7 +27,7 @@ import operator
 import re
 import types
 import typing
-from typing import Any, NamedTuple, Protocol, Union, cast as type_cast
+from typing import Any, NamedTuple, Protocol, cast as type_cast
 import warnings
 
 from jax._src import ad_util
@@ -640,8 +640,8 @@ def make_ir_context() -> ir.Context:
   return context
 
 
-AxisContext = Union[sharding_impls.SPMDAxisContext,
-                    sharding_impls.ShardingContext]
+AxisContext = (sharding_impls.SPMDAxisContext |
+               sharding_impls.ShardingContext)
 
 class ShapePolyLoweringState:
   # The names of the dimension variables, sorted by name. This is the order in

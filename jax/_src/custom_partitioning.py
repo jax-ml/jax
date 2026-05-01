@@ -187,8 +187,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   if ([(o.shape, o.dtype) for o in closed_jaxpr.out_avals] !=
       [(t.shape, t.dtype) for t in tiled_results]):
     raise ValueError(
-        "Mismatch in result shapes. %s vs %s"
-        % (repr(closed_jaxpr.out_avals), repr(tiled_results))
+        "Mismatch in result shapes. {} vs {}".format(repr(closed_jaxpr.out_avals), repr(tiled_results))
     )
   axis_context = sharding_impls.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
   with core.extend_axis_env_nd(mesh.shape.items()):

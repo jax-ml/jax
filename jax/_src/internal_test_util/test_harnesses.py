@@ -42,7 +42,7 @@ from collections.abc import Callable, Iterable, Sequence
 import operator
 import os
 from functools import partial
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple
 
 from absl.testing import parameterized as absl_parameterized
 import numpy as np
@@ -100,7 +100,7 @@ class CustomArg(NamedTuple):
   make: Callable[[Rng], Any]  # Called with a Rng to make a tensor
 
 
-ArgDescriptor = Union[RandArg, StaticArg, CustomArg, Any]
+ArgDescriptor = RandArg | StaticArg | CustomArg | Any
 
 
 class Harness:

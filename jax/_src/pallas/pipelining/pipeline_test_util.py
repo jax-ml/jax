@@ -29,7 +29,7 @@ def print_stage(
   """Evaluation function that prints the stage name and iteration number."""
   del args
   debugging.debug_print(
-      "[itr={}] %s" % stage, ctx.linearized_index, ordered=True)
+      "[itr={{}}] {}".format(stage), ctx.linearized_index, ordered=True)
 
 
 @dataclasses.dataclass(frozen=True)

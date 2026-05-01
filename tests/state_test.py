@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import itertools as it
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -973,7 +973,7 @@ def set_vmap_params(draw):
   bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape))
   return SetVmapParams(vmap_index_param, bat_ref, bat_val, bat_idxs)
 
-Indexer = tuple[Union[int, slice, np.ndarray]]
+Indexer = tuple[int | slice | np.ndarray]
 
 def _unpack_idx(idx: Indexer
     ) -> tuple[Sequence[int | np.ndarray], Sequence[bool]]:

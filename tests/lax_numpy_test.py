@@ -24,7 +24,7 @@ import io
 import itertools
 import math
 import platform
-from typing import Union, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 
@@ -2061,7 +2061,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testEye(self, n, m, k, dtype):
     np_fun = lambda: np.eye(n, M=m, k=k, dtype=dtype)
     jnp_fun = lambda: jnp.eye(n, M=m, k=k, dtype=dtype)
-    args_maker = lambda: []
+    args_maker = list
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -2318,7 +2318,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIdentity(self, n, dtype):
     np_fun = lambda: np.identity(n, dtype)
     jnp_fun = lambda: jnp.identity(n, dtype)
-    args_maker = lambda: []
+    args_maker = list
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -2706,7 +2706,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testWindowFunction(self, name, size, **kwds):
     jnp_fun = partial(getattr(jnp, name), size, **kwds)
     np_fun = jtu.with_jax_dtype_defaults(partial(getattr(np, name), size, **kwds))
-    args_maker = lambda: []
+    args_maker = list
     tol = (
         5e-6 if jtu.test_device_matches(['tpu']) and name == 'kaiser' else None
     )
@@ -2788,7 +2788,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testZerosOnes(self, op, shape, dtype):
     np_op = getattr(np, op)
     jnp_op = getattr(jnp, op)
-    args_maker = lambda: []
+    args_maker = list
     np_op = partial(np_op, shape, dtype)
     jnp_op = partial(jnp_op, shape, dtype)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
@@ -3662,7 +3662,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.iscomplexobj, args_maker)
 
   @parameterized.parameters(
-      None, bool(1), int(1), float(1), complex(1),
+      None, bool(1), 1, float(1), complex(1),
       np.int32(0), np.float32(1), np.complex64(1),
       (np.arange(5),)
   )
@@ -4506,7 +4506,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis)
       for shape in [(3,), (3, 4), (3, 4, 5)]
       for axis in itertools.chain(range(-len(shape), len(shape)),
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     index_shape=scalar_shapes + [(3,), (2, 1, 3)],
     dtype=all_dtypes,
@@ -4558,7 +4558,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         filter(_shapes_are_broadcast_compatible,
                itertools.combinations_with_replacement(nonempty_nonscalar_array_shapes, 2)))
       for axis in itertools.chain(range(len(x_shape)), [-1],
-                                  [cast(Union[int, None], None)])
+                                  [cast(int | None, None)])
     ],
     dtype=default_dtypes,
     index_dtype=int_dtypes,

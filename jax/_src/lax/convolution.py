@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import partial
 import operator
-from typing import NamedTuple, Union
+from typing import NamedTuple
 
 import numpy as np
 
@@ -50,11 +50,11 @@ class ConvDimensionNumbers(NamedTuple):
   rhs_spec: Sequence[int]
   out_spec: Sequence[int]
 
-ConvGeneralDilatedDimensionNumbers = Union[
-    tuple[str, str, str],
-    ConvDimensionNumbers,
-    None,
-]
+ConvGeneralDilatedDimensionNumbers = (
+    tuple[str, str, str] |
+    ConvDimensionNumbers |
+    None
+)
 
 # TODO(yashkatariya): conv_general_dilated should take `out_sharding` argument
 # similar to `dot_general`

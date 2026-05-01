@@ -22,7 +22,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, Generic, NoReturn, Protocol, TypeVar, cast
 from collections.abc import Generator
 
 from jax._src import logging_config
@@ -328,7 +328,7 @@ class StateContextManager(contextlib.ContextDecorator):
       if self.prev is config_ext.unset:
         self.state._update_thread_local_hook(None)
       else:
-        self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
+        self.state._update_thread_local_hook(cast(Any | None, self.prev))
 
 
 UPGRADE_BOOL_HELP = (

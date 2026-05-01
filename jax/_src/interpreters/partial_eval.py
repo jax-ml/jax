@@ -1072,8 +1072,8 @@ class Offloadable(NamedTuple):
   src: MemoryKind
   dst: MemoryKind
 
-RematCases = Union[RecomputeType, SaveableType, Offloadable]
-RematCases_ = Union[RematCases, bool]
+RematCases = RecomputeType | SaveableType | Offloadable
+RematCases_ = RematCases | bool
 
 def ensure_enum(case: bool | RematCases) -> RematCases:
   if isinstance(case, bool):
@@ -1099,7 +1099,7 @@ def ensure_enum(case: bool | RematCases) -> RematCases:
 #  * a list of Var instances representing residuals to be added (i.e. to be
 #    plumbed as outputs of the 'known' side jaxpr and added as input binders to
 #    the 'unknown' jaxpr).
-PartialEvalCustomResult = tuple[Union[JaxprEqn, None], Union[JaxprEqn, None],
+PartialEvalCustomResult = tuple[JaxprEqn | None, JaxprEqn | None,
                                 Sequence[bool], Sequence[bool], list[Var]]
 PartialEvalCustomRule = Callable[
     [Callable[..., RematCases_], Sequence[bool], Sequence[bool], JaxprEqn],
@@ -1402,7 +1402,7 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   return new_jaxpr, used_inputs
 
 DCERule = Callable[[list[bool], JaxprEqn],
-                   tuple[list[bool], Union[JaxprEqn, None]]]
+                   tuple[list[bool], JaxprEqn | None]]
 
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
@@ -1749,14 +1749,14 @@ class JaxprStackFrame:
 
 
 ConstFoldRule = Callable[
-    [list[Union[Any, None]], Any, list[AbstractValue]],
-    Union[list[Union[Any, None]], None],
+    [list[Any | None], Any, list[AbstractValue]],
+    list[Any | None] | None,
 ]
 const_fold_rules: dict[Primitive, ConstFoldRule] = {}
 
 ForwardingRule = Callable[
     [JaxprEqn],
-    tuple[list[Union[int, None]], Union[JaxprEqn, None]]
+    tuple[list[int | None], JaxprEqn | None]
 ]
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
 

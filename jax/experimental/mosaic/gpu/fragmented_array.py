@@ -4231,7 +4231,6 @@ class StaggeredTransferPlan(TransferPlan):
 
 class TransferPlanDerivationError(Exception):
   """Raised when a transfer plan cannot be derived due to a known limitation."""
-  pass
 
 
 def plan_tiled_transfer(

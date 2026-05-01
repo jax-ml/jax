@@ -22,7 +22,7 @@ from functools import partial
 import inspect
 import itertools as it
 import weakref
-from typing import NamedTuple, Any, Union
+from typing import NamedTuple, Any
 import warnings
 
 import numpy as np
@@ -84,7 +84,7 @@ zip, unsafe_zip = safe_zip, zip
 
 traceback_util.register_exclusion(__file__)
 
-PjitSharding = Union[GSPMDSharding, UnspecifiedValue]
+PjitSharding = GSPMDSharding | UnspecifiedValue
 
 
 class PjitInfo(NamedTuple):

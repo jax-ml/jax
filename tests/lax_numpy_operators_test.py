@@ -425,7 +425,7 @@ def _get_testcase_name(index, params):
 
 def _create_named_parameters(iter_params):
   for i, params in enumerate(iter_params):
-    yield dict(params, **{'testcase_name': _get_testcase_name(i, params)})
+    yield dict(params, testcase_name=_get_testcase_name(i, params))
 
 
 class JaxNumpyOperatorTests(jtu.JaxTestCase):

@@ -83,13 +83,12 @@ def _update_dim_sizes(
   if is_input:
     if len(shape) < num_core_dims:
       raise ValueError(
-          'input with shape %r does not have enough dimensions for all core '
-          'dimensions %r %s' % (shape, core_dims, error_context))
+          'input with shape {!r} does not have enough dimensions for all core '
+          'dimensions {!r} {}'.format(shape, core_dims, error_context))
   else:
     if len(shape) != num_core_dims:
       raise ValueError(
-          'output shape %r does not match core dimensions %r %s'
-          % (shape, core_dims, error_context))
+          'output shape {!r} does not match core dimensions {!r} {}'.format(shape, core_dims, error_context))
 
   core_shape = shape[-num_core_dims:] if core_dims else ()
   for dim, size in zip(core_dims, core_shape):
@@ -97,8 +96,7 @@ def _update_dim_sizes(
       dim_sizes[dim] = size
     elif size != dim_sizes[dim]:
       raise ValueError(
-          'inconsistent size for core dimension %r: %r vs %r %s'
-          % (dim, size, dim_sizes[dim], error_context))
+          'inconsistent size for core dimension {!r}: {!r} vs {!r} {}'.format(dim, size, dim_sizes[dim], error_context))
 
 
 def _parse_input_dimensions(
@@ -119,8 +117,7 @@ def _parse_input_dimensions(
   """
   if len(args) != len(input_core_dims):
     raise TypeError(
-        'wrong number of positional arguments: expected %r, got %r %s'
-        % (len(input_core_dims), len(args), error_context))
+        'wrong number of positional arguments: expected {!r}, got {!r} {}'.format(len(input_core_dims), len(args), error_context))
   shapes: list[tuple[int, ...]] = []
   dim_sizes: dict[str, int] = {}
   for arg, core_dims in zip(args, input_core_dims):
@@ -151,8 +148,7 @@ def _check_output_dims(
           "got: {!r}\n{}".format(out, error_context))
     if len(out_shapes) != len(output_core_dims):
       raise TypeError(
-          'wrong number of output arguments: expected %r, got %r %s'
-          % (len(output_core_dims), len(out_shapes), error_context))
+          'wrong number of output arguments: expected {!r}, got {!r} {}'.format(len(output_core_dims), len(out_shapes), error_context))
 
     sizes = dict(dim_sizes)
     for shape, core_dims in zip(out_shapes, output_core_dims):

@@ -19,7 +19,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import operator
-from typing import cast, Any, ClassVar, Union
+from typing import cast, Any, ClassVar
 
 from jax._src import core
 from jax._src import pretty_printer as pp
@@ -56,8 +56,8 @@ def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
       end_str = "" if end == dim else str(end)
       return f"{start_str}:{end_str}"
 
-IntIndexer = Union[int, Array, Any]
-DimIndexer = Union[IntIndexer, Slice]
+IntIndexer = int | Array | Any
+DimIndexer = IntIndexer | Slice
 
 def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
                                                   tuple[Slice, ...],

@@ -96,9 +96,7 @@ def prepare_srcs(deps: list[str], srcs_dir: str) -> None:
 
   for file in deps:
     if not (
-        file.startswith("bazel-out")
-        or file.startswith("external")
-        or file.startswith("jaxlib")
+        file.startswith(("bazel-out", "external", "jaxlib"))
     ):
       copy_file(file, srcs_dir)
 

@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
-from typing import Any, Union
+from typing import Any
 
 from jax._src.util import use_cpp_class, cache, use_cpp_method, unzip3
 from jax._src.lib import xla_client as xc
@@ -59,7 +59,7 @@ mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
 ArrayMapping = collections.OrderedDict[MeshAxisName, int]
-ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, UnspecifiedValue]
+ArrayMappingOrAutoOrUnspecified = ArrayMapping | UnspecifiedValue
 
 
 def _unpickle_named_sharding(mesh, spec, memory_kind, logical_device_ids):

@@ -803,12 +803,10 @@ def moveaxis(x, src: int, dst: int):
 # integer indicating which axis (if any) is the batch axis.
 
 # +
-from typing import Union
-
 class NotMapped: pass
 not_mapped = NotMapped()
 
-BatchAxis = Union[NotMapped, int]
+BatchAxis = NotMapped | int
 
 class BatchTracer(Tracer):
   def __init__(self, trace, val, batch_dim: BatchAxis):
@@ -1013,7 +1011,7 @@ class Lit:
     self.aval = aval = raise_to_shaped(get_aval(val))
     self.val = np.array(val, aval.dtype)
 
-Atom = Union[Var, Lit]
+Atom = Var | Lit
 
 class JaxprEqn(NamedTuple):
   primitive: Primitive
@@ -2159,7 +2157,7 @@ class JaxprEqnRecipe(NamedTuple):
   avals_out: list[ShapedArray]
   tracer_refs_out: list['ReferenceType[PartialEvalTracer]']
 
-JaxprRecipe = Union[LambdaBindingRecipe, ConstRecipe, JaxprEqnRecipe]
+JaxprRecipe = LambdaBindingRecipe | ConstRecipe | JaxprEqnRecipe
 
 
 # -

@@ -1835,7 +1835,6 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
 
 @register_lowering(lax.split_p)
 def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
-  pass
   # TODO(cjfj): Add support for larger powers of 2.
   num_parts = len(sizes)
   if num_parts != pallas_utils.next_power_of_2(num_parts):

@@ -23,7 +23,7 @@ import functools
 import itertools as it
 import logging
 import math
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -73,7 +73,7 @@ zip, unsafe_zip = safe_zip, zip
 
 logger = logging.getLogger(__name__)
 
-Index = Union[int, slice, tuple[Union[int, slice], ...]]
+Index = int | slice | tuple[int | slice, ...]
 PyTreeDef = tree_util.PyTreeDef
 
 MeshAxisName = sharding_impls.MeshAxisName
@@ -502,9 +502,9 @@ def manual_proto(
 
 
 ShardingInfo = tuple[
-    Union[JSharding, UnspecifiedValue],
+    JSharding | UnspecifiedValue,
     stages.MismatchType,
-    Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
+    Any | None,  # Any is dispatch.SourceInfo to avoid circular imports
 ]
 
 
@@ -584,7 +584,7 @@ def _get_and_check_device_assignment(
   else:
     return backend, None, abstract_mesh.size
 
-MaybeSharding = Union[JSharding, UnspecifiedValue]
+MaybeSharding = JSharding | UnspecifiedValue
 
 
 def prune_unused_inputs(
@@ -825,7 +825,7 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
   return tuple(safe_map(read, jaxpr.outvars))
 
 
-MaybeLayout = Sequence[Union[Layout, AutoLayoutSingleton, None]]
+MaybeLayout = Sequence[Layout | AutoLayoutSingleton | None]
 
 
 class AllArgsInfo(NamedTuple):

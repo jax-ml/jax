@@ -135,8 +135,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
       constants.keys())
   if overlapping_args:
     raise ValueError(
-        'Arguments appear in both `input_shapes` and `constants`: %s' %
-        ', '.join(sorted(overlapping_args)))
+        'Arguments appear in both `input_shapes` and `constants`: {}'.format(', '.join(sorted(overlapping_args))))
 
   # TODO(tomhennigan): Ideally we could avoid creating actual values here.
   args = [jnp.zeros(s.shape, s.dtype) for _, s in input_shapes]
@@ -221,7 +220,7 @@ def main(argv):
       v = jnp.asarray(v)
     if k in constants:
       raise ValueError(
-          'Argument appears in both --constants and --evaled_constants: %s' % k)
+          'Argument appears in both --constants and --evaled_constants: {}'.format(k))
     constants[k] = v
 
   ir, debug_ir = jax_to_ir(fn, input_shapes, constants=constants,

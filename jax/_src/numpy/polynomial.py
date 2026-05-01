@@ -745,7 +745,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
   n = len(v_arr) - 1
   scale = 1. / v_arr[0]
   q: Array = zeros(max(m - n + 1, 1), dtype = u_arr.dtype) # force same dtype
-  for k in range(0, m-n+1):
+  for k in range(m-n+1):
     d = scale * u_arr[k]
     q = q.at[k].set(d)
     u_arr = u_arr.at[k:k+n+1].add(-d*v_arr)

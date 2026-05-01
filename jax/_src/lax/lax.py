@@ -23,7 +23,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, NamedTuple, Never, TypeVar, Union, cast as type_cast, overload
+from typing import Any, NamedTuple, Never, TypeVar, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -2416,21 +2416,21 @@ class DotAlgorithmPreset(enum.Enum):
         return None
 
 
-PrecisionLike = Union[
-    None,
-    str,
-    Precision,
-    tuple[str, str],
-    tuple[Precision, Precision],
-    DotAlgorithm,
-    DotAlgorithmPreset,
-]
-CanonicalPrecision = Union[
-    None,
-    tuple[Precision, Precision],
-    DotAlgorithm,
-    DotAlgorithmPreset,
-]
+PrecisionLike = (
+    None |
+    str |
+    Precision |
+    tuple[str, str] |
+    tuple[Precision, Precision] |
+    DotAlgorithm |
+    DotAlgorithmPreset
+)
+CanonicalPrecision = (
+    None |
+    tuple[Precision, Precision] |
+    DotAlgorithm |
+    DotAlgorithmPreset
+)
 
 
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
@@ -2575,7 +2575,7 @@ def ragged_dot(
 
 
 @dataclasses.dataclass(frozen=True)
-class RaggedDotDimensionNumbers():
+class RaggedDotDimensionNumbers:
   """Describes ragged, group, and dot dimensions for ragged dot general.
 
   Args:
@@ -5918,7 +5918,7 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
   if accuracy is None:
     return None
   elif isinstance(accuracy, AccuracyMode):
-    return hlo.ResultAccuracyAttr.get(0.0, 0.0, int(0), str(accuracy.name))
+    return hlo.ResultAccuracyAttr.get(0.0, 0.0, 0, str(accuracy.name))
   elif isinstance(accuracy, Tolerance):
     return hlo.ResultAccuracyAttr.get(
         atol=accuracy.atol,

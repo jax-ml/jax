@@ -238,7 +238,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     dtype = jnp.zeros(0).dtype  # default float dtype.
     scipy_op = lambda: osp_special.bernoulli(n).astype(dtype)
     lax_op = functools.partial(lsp_special.bernoulli, n)
-    args_maker = lambda: []
+    args_maker = list
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 

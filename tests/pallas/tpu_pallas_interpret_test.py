@@ -63,7 +63,7 @@ class CountStoreCallbacksContext:
 
 
 @dataclasses.dataclass(frozen=True)
-class ProcessedGridPoint():
+class ProcessedGridPoint:
   """Represents a grid point and the ID of the core that has processed it."""
   grid_point: tuple[int, ...]
   core_id: int
