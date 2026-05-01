@@ -113,6 +113,15 @@ class CompilerParams:
       used for ``SC_*_SUBCORE`` kernels.
     needs_layout_passes: Whether to use vector layout inference passes. This
       flag is temporary and will eventually be removed.
+    fuse_transposed_lhs_in_matmul: Hint to compilers to attempt to fuse
+      transposed LHS in MXU if users specify the transposed layout of LHS in
+      matmul operations, e.g., `jnp.einsum('km,kn->mn', lhs, rhs)`; on the other
+      hand, When transposition is performed separately from multiplication (e.g.
+      jnp.matmul(lhs.T, rhs)), this flag does not affect the compiler's decision
+      (it might still decide to do it if obviously profitable). Note that this
+      flag is at the best-effort basis, and the fusion will only be performed
+      when compilers determine it is feasible. Also, the fusion is not always
+      profitable and therefore should be used sparingly.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -131,6 +140,7 @@ class CompilerParams:
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
   needs_layout_passes: bool = False
+  fuse_transposed_lhs_in_matmul: bool = False
 
   def __init__(
       self,
@@ -150,6 +160,7 @@ class CompilerParams:
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
       needs_layout_passes: bool | None = None,
+      fuse_transposed_lhs_in_matmul: bool = False,
   ):
     object.__setattr__(
         self,
@@ -187,6 +198,11 @@ class CompilerParams:
     )
     object.__setattr__(self, "use_tc_tiling_on_sc", use_tc_tiling_on_sc)
     object.__setattr__(self, "needs_layout_passes", needs_layout_passes)
+    object.__setattr__(
+        self,
+        "fuse_transposed_lhs_in_matmul",
+        fuse_transposed_lhs_in_matmul,
+    )
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

@@ -1104,6 +1104,40 @@ class OpsTest(ptu.PallasTPUTest):
         jnp.concatenate([x, y], axis=0),
     )
 
+  def test_fuse_transposed_lhs_in_matmul(self):
+    if not jtu.is_cloud_tpu_at_least(year=2026, month=5, day=4):
+      self.skipTest("Requires newer libtpu")
+
+    lhs_shape = (512, 128)
+    rhs_shape = (512, 256)
+
+    def kernel(lhs_ref, rhs_ref, o_ref):
+      o_ref[...] = jnp.einsum("km,kn->mn", lhs_ref[...], rhs_ref[...])
+
+    lhs_key, rhs_key = jax.random.split(jax.random.key(42), 2)
+    lhs = (
+        jax.random.normal(lhs_key, lhs_shape, dtype=jnp.float32)
+        .astype(jnp.bfloat16)
+        .astype(jnp.float32)
+    )
+    rhs = (
+        jax.random.normal(rhs_key, rhs_shape, dtype=jnp.float32)
+        .astype(jnp.bfloat16)
+        .astype(jnp.float32)
+    )
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(
+            (lhs_shape[1], rhs_shape[1]), jnp.float32
+        ),
+        compiler_params=pltpu.CompilerParams(
+            fuse_transposed_lhs_in_matmul=True
+        ),
+    )(lhs, rhs)
+    np.testing.assert_allclose(
+        result, jnp.einsum("km,kn->mn", lhs, rhs), atol=1e-5
+    )
+
 
 if __name__ == "__main__":
   absltest.main()
