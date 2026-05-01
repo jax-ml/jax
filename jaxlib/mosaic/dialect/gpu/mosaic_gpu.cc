@@ -360,6 +360,29 @@ llvm::LogicalResult AsyncStoreOp::verify() {
                                  getSliceLengths(), getIndices());
 }
 
+llvm::LogicalResult AsyncStoreSmemOp::verify() {
+  mlir::VectorType value_type = getValueToStore().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  if (value_type.getShape() != dest_type.getShape()) {
+    return emitOpError(
+        "The `valueToStore` and `destination` must have the same shape.");
+  }
+  if (value_type.getElementType() != dest_type.getElementType()) {
+    return emitOpError(
+        "The `valueToStore` and `destination` must have the same element "
+        "type.");
+  }
+
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (dest_type.getMemorySpace() != smem) {
+    return emitOpError("The `destination` memref must be in SMEM.");
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult TryClusterCancelOp::verify() {
   auto result_ty = getCancellationResult().getType();
   if (result_ty.getNumElements() != 16) {

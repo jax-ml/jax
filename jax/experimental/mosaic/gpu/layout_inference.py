@@ -796,7 +796,7 @@ def _multimem_load_reduce_constraint_system(
 @_add_constraint_system_derivation_rule(mgpu.VectorStoreOp)
 def _vector_store_constraint_system(
     ctx: DerivationContext,
-    op: mgpu.VectorStoreOp,
+    op: Any,  # This is mgpu.VectorStoreOp | mgpu.AsyncStoreSmemOp
 ) -> ConstraintSystemDerivationRuleResult:
   # Registers
   value = ValueSite(op, VariableType.OPERAND, 0)
@@ -831,6 +831,24 @@ def _vector_store_constraint_system(
 
   system = cs.ConstraintSystem(constraints=constraints)
   return system, value_sites_for_variable
+
+
+# TODO(apaszke): Remove once the minimal jaxlib version is 0.10.1
+if hasattr(mgpu, "AsyncStoreSmemOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemOp)
+  def _async_store_smem_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncStoreSmemOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    system, value_sites_for_variable = _vector_store_constraint_system(ctx, op)
+    var = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
+    extra_constraints = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(var, fa.WGStridedFragLayout),
+            cs.NotOfType(var, fa.WGSplatFragLayout),
+        ]
+    )
+    return system & extra_constraints, value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.DebugPrintOp)

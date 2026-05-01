@@ -2039,6 +2039,43 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.in_transforms(op), [expected_transforms]
     )
 
+  @parameterized.parameters(*mtu.RegisterLayout)
+  def test_infer_transforms_for_async_store_smem_op(self, layout):
+    shape = (128, 128)
+    elt_ty = ir.BF16Type.get()
+    optimized = layout != mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
+    layout = layout.to_mgpu(shape, elt_ty)
+
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      value_ty = ir.VectorType.get(shape, elt_ty)
+      barrier_ty = mgpu.dialect.BarrierType.get()
+      [smem_ref, value_to_store, barrier] = undefs(smem_ty, value_ty, barrier_ty)
+      value_to_store = layout_cast(value_to_store, layout)
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      op = mgpu.dialect.AsyncStoreSmemOp(
+          value_to_store,
+          smem_ref,
+          barrier,
+          cluster_dim=0,
+          cluster_idx=zero,
+          optimized=optimized,
+      )
+
+    if isinstance(layout, (fa.WGSplatFragLayout, fa.WGStridedFragLayout)):
+      with self.assertRaisesRegex(ValueError, "Failed to infer"):
+        mgpu.infer_layout(self.module)
+    else:
+      self.assertIsInstance(layout, fa.TiledLayout)
+      expected_transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.infer_layout(self.module)
+      self.assertSequenceEqual(
+          inference_utils.in_transforms(op), [expected_transforms]
+      )
+
   def test_infer_transforms_for_vector_store_op_downgrades_when_unspecified(self):
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get((128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem())

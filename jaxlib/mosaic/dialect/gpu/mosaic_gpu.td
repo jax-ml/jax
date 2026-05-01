@@ -582,6 +582,32 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncStoreSmemOp : Op<MosaicGPU_Dialect, "async_store_smem",
+      [MemoryEffects<[MemWrite]>]> {
+  let summary = "Issues an async store of a vector from registers to SMEM of a block in a cluster";
+  let description = [{
+    `cluster_dim` and `cluster_idx` specify the target block.
+
+    The target block can wait on the provided barrier (its local copy) to
+    observe the completion of this copy.
+
+    When `atomic` is specified, the store performs an atomic reduction on target
+    SMEM instead of overwriting it.
+  }];
+
+  let arguments = (ins
+    AnyFixedVectorOfNonZeroRank:$valueToStore,
+    AnyNon0RankedMemRef:$destination,
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    MosaicGPU_Dimension:$cluster_dim,
+    I32:$cluster_idx,
+    OptionalAttr<MosaicGPU_AtomicOpType>:$atomic_type,
+    OptionalAttr<BoolAttr>:$optimized
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 

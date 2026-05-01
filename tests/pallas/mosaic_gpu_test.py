@@ -43,7 +43,6 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
-from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import types as state_types
 from jax.experimental import pallas as _pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -3346,7 +3345,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y, expected)
 
   def test_cluster_ref_write(self):
-    self.skip_if_wg_semantics()
+    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
+    if not hasattr(mgpu.dialect, "AsyncStoreSmemOp"):
+      self.skip_if_wg_semantics()
     dtype = jnp.float32
     logical_shape = (64, 32)
     x_shape = (2, 64, 32)
@@ -3375,7 +3376,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), np.flip(x, axis=0))
 
   def test_cluster_ref_write_atomic(self):
-    self.skip_if_wg_semantics()
+    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
+    if not hasattr(mgpu.dialect, "AsyncStoreSmemOp"):
+      self.skip_if_wg_semantics()
     dtype = jnp.int32
     logical_shape = (64, 32)
     x_shape = (2, 64, 32)
@@ -3756,7 +3759,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
-    expected_missing_primitives = {mgpu_primitives.async_store_smem_p}
+    expected_missing_primitives = set()
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 
