@@ -929,12 +929,48 @@ def _replica_groups(axis_ctx, axis_name, axis_index_groups):
                       for axis_index_group in axis_index_groups]
   return replica_groups
 
-def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
-                        ) -> ir.DenseElementsAttr:
+
+def _device_list_replica_groups_hlo(
+    replica_groups: Sequence[Sequence[int]]) -> ir.DenseIntElementsAttr:
   # Uneven replica groups are padded with -1.
   groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
                     dtype=np.int64).T
   return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))
+
+
+def _try_mesh_axes_replica_group(ctx, axis_names, axis_index_groups):
+  axis_ctx = ctx.module_context.axis_context
+  if (
+      config.jax_use_rgv3.value
+      and config.use_shardy_partitioner.value
+      and axis_index_groups is None
+      and isinstance(axis_ctx, SPMDAxisContext)
+      and hasattr(hlo, "MeshAxisAttr")
+  ):
+    # Emit #stablehlo.replica_group_mesh_axes with inlined mesh if possible.
+    mesh_axis_attrs = [
+        hlo.MeshAxisAttr.get(str(name), size)
+        for name, size in axis_ctx.mesh.shape.items()
+    ]
+    mesh_attr = hlo.MeshAttr.get(ir.ArrayAttr.get(mesh_axis_attrs))
+    axes = ir.ArrayAttr.get([
+        hlo.AxisRefAttr.get(str(name))
+        for name in (
+            axis_names
+            if isinstance(axis_names, (tuple, list))
+            else (axis_names,)
+        )
+    ])
+    rgv3 = hlo.ReplicaGroupMeshAxesAttr.get(mesh_attr, axes)
+    return rgv3
+
+  # Fallback to the dense repr if mesh-axes based is not applicable.
+  return _device_list_replica_groups_hlo(
+      _replica_groups(
+          ctx.module_context.axis_context, axis_names, axis_index_groups
+      )
+  )
+
 
 def _allreduce_impl(prim, pos_reducer, arg, *, axes, axis_index_groups):
   assert axis_index_groups is None
@@ -998,9 +1034,9 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
   if not named_axes:
     return [arg]
 
-  replica_groups = _replica_groups_hlo(
-      _replica_groups(ctx.module_context.axis_context, named_axes,
-                      axis_index_groups))
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, named_axes, axis_index_groups
+  )
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
 
@@ -1280,10 +1316,19 @@ def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
   return v.take([source] * axis_size, d), d
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
-  def source_to_front(group):
-    return [group[source]] + list(group[:source]) + list(group[source + 1:])
-  replica_groups = [source_to_front(group) for group in replica_groups]
+  if source == 0:
+    replica_groups = _try_mesh_axes_replica_group(ctx, axis_name, None)
+  else:
+    replica_groups = _replica_groups(
+        ctx.module_context.axis_context, axis_name, None
+    )
+
+    def source_to_front(group):
+      return [group[source]] + list(group[:source]) + list(group[source + 1 :])
+
+    replica_groups = _device_list_replica_groups_hlo(
+        [source_to_front(group) for group in replica_groups]
+    )
   is_spmd = isinstance(
       ctx.module_context.axis_context,
       (SPMDAxisContext, ShardingContext),
@@ -1298,7 +1343,7 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   else:
     other_args = {}
   return hlo.CollectiveBroadcastOp(
-      x, replica_groups=_replica_groups_hlo(replica_groups), **other_args
+      x, replica_groups=replica_groups, **other_args
   ).results
 
 pbroadcast_p = core.Primitive('pbroadcast')
@@ -1328,14 +1373,26 @@ def _all_to_all_lowering(
     ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled
 ):
   del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
-  # Workaround for AllToAll not being implemented on CPU.
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                   axis_index_groups)
-  if len(replica_groups[0]) == 1:
+  dense_replica_groups = _replica_groups(
+      ctx.module_context.axis_context, axis_name, axis_index_groups
+  )
+  if len(dense_replica_groups[0]) == 1:
     return [x]
-  split_count = len(replica_groups[0])
-  if not all(split_count == len(g) for g in replica_groups):
+  split_count = len(dense_replica_groups[0])
+  if not all(split_count == len(g) for g in dense_replica_groups):
+    raise ValueError("Replica groups must be equally sized")
+
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
+    return [x]
+  split_count = len(replica_groups_dense[0])
+  if not all(split_count == len(g) for g in replica_groups_dense):
     raise ValueError('Replica groups must be equally sized')
+
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   is_spmd = isinstance(
       ctx.module_context.axis_context,
       (SPMDAxisContext, ShardingContext),
@@ -1350,12 +1407,13 @@ def _all_to_all_lowering(
   else:
     other_args = {}
   return hlo.AllToAllOp(
-    [x],
-    split_dimension=mlir.i64_attr(split_axis),
-    concat_dimension=mlir.i64_attr(concat_axis),
-    split_count=mlir.i64_attr(split_count),
-    replica_groups=_replica_groups_hlo(replica_groups),
-    **other_args).results
+      [x],
+      split_dimension=mlir.i64_attr(split_axis),
+      concat_dimension=mlir.i64_attr(concat_axis),
+      split_count=mlir.i64_attr(split_count),
+      replica_groups=replica_groups,
+      **other_args,
+  ).results
 
 def _all_to_all_transpose_rule(
     cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
@@ -1496,16 +1554,17 @@ def _ragged_all_to_all_lowering(
     ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     *, axis_name, axis_index_groups
 ):
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                   axis_index_groups)
+  dense_replica_groups = _replica_groups(
+      ctx.module_context.axis_context, axis_name, axis_index_groups
+  )
+  split_count = len(dense_replica_groups[0])
+  if not all(split_count == len(g) for g in dense_replica_groups):
+    raise ValueError("Replica groups must be equally sized")
 
-  # Assumes all groups are the same size
-  split_count = len(replica_groups[0])
-  if not all(split_count == len(g) for g in replica_groups):
-    raise ValueError('Replica groups must be equally sized')
+  replica_groups = _device_list_replica_groups_hlo(dense_replica_groups)
 
   ragged_all_to_all_attrs: dict[str, ir.Attribute] = {
-      "replica_groups": _replica_groups_hlo(replica_groups)
+      "replica_groups": replica_groups
   }
   is_spmd = isinstance(
       ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
@@ -1760,6 +1819,47 @@ def _all_gather(x, axis_name, *, axis_index_groups, axis, tiled, is_async):
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
+
+def _try_mesh_axes_replica_group(ctx, axis_names, axis_index_groups):
+  if (
+      ctx.module_context.lowering_parameters.for_export
+      or "cpu" in ctx.module_context.platforms
+  ):
+    return _replica_groups_hlo(
+        _replica_groups(
+            ctx.module_context.axis_context, axis_names, axis_index_groups
+        )
+    )
+  axis_ctx = ctx.module_context.axis_context
+  if (
+      config.jax_use_rgv3.value
+      and axis_index_groups is None
+      and isinstance(axis_ctx, SPMDAxisContext)
+      and hasattr(hlo, "MeshAxisAttr")
+  ):
+    mesh_axis_attrs = [
+        hlo.MeshAxisAttr.get(str(name), size)
+        for name, size in axis_ctx.mesh.shape.items()
+    ]
+    mesh_attr = hlo.MeshAttr.get(ir.ArrayAttr.get(mesh_axis_attrs))
+    axes = ir.ArrayAttr.get([
+        hlo.AxisRefAttr.get(str(name))
+        for name in (
+            axis_names
+            if isinstance(axis_names, (tuple, list))
+            else (axis_names,)
+        )
+    ])
+    rgv3 = hlo.ReplicaGroupMeshAxesAttr.get(mesh_attr, axes)
+    return rgv3
+
+  return _replica_groups_hlo(
+      _replica_groups(
+          ctx.module_context.axis_context, axis_names, axis_index_groups
+      )
+  )
+
+
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   raise AssertionError("Unexpected call to _all_gather_impl")
 
@@ -1779,8 +1879,9 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=new_shape)), x,
         mlir.dense_int_array(broadcast_dimensions))
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                    axis_index_groups)
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
@@ -1796,9 +1897,11 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   if not is_async:
     return hlo.AllGatherOp(
         [out_type],
-        [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_replica_groups_hlo(replica_groups),
-        **other_args).results
+        [x],
+        all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=replica_groups,
+        **other_args,
+    ).results
 
   future_type = hlo.FutureType.get([out_type])
   async_start = hlo.AsyncStartOp(future_type, [x])
@@ -1808,7 +1911,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         [out_type],
         [block.arguments[0]],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups,
         **other_args,
     ).results
     hlo.return_(results)
@@ -2020,8 +2123,9 @@ def _reduce_scatter_lowering(
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   scalar_aval = x_aval.update(shape=())
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                   axis_index_groups)
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   scatter_out_shape = list(x_aval.shape)
   scatter_out_shape[scatter_dimension] //= axis_size
   axis_context = ctx.module_context.axis_context
@@ -2040,11 +2144,14 @@ def _reduce_scatter_lowering(
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(
-      mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=scatter_out_shape)),
+      mlir.aval_to_ir_type(
+          ctx.module_context, x_aval.update(shape=scatter_out_shape)
+      ),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
-      replica_groups=_replica_groups_hlo(replica_groups),
-      **other_args)
+      replica_groups=replica_groups,
+      **other_args,
+  )
   scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
   reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_block):
