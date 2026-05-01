@@ -620,8 +620,6 @@ def async_store_smem(
     optimized: If True, the store is guaranteed not to cause any bank conflicts.
     atomic: The reduction operation to apply instead of overwriting the data.
   """
-  if atomic is not None:
-    raise NotImplementedError("Atomic async stores not implemented yet")
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "async_store_smem"
   )

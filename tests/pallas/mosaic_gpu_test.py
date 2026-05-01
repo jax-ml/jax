@@ -3374,6 +3374,48 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(2 * 64 * 32, dtype=dtype).reshape(x_shape)
     np.testing.assert_array_equal(kernel(x), np.flip(x, axis=0))
 
+  def test_cluster_ref_write_atomic(self):
+    self.skip_if_wg_semantics()
+    dtype = jnp.int32
+    logical_shape = (64, 32)
+    x_shape = (2, 64, 32)
+    transforms = self.default_transforms(dtype=dtype)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(x_shape, dtype),
+        scratch_shapes=[
+            plgpu.SMEM(logical_shape, dtype, transforms=transforms),
+            plgpu.ClusterBarrier(collective_axes=("c",), num_arrivals=1),
+            plgpu.Barrier(num_arrivals=1),
+            plgpu.Barrier(num_arrivals=1),
+        ],
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+    def kernel(x_ref, init_ref, o_ref, smem_ref, cluster_barrier, init_barrier, store_barrier):
+      my_idx = jax.lax.axis_index("c")
+      peer_idx = 1 - my_idx
+      plgpu.copy_gmem_to_smem(init_ref.at[my_idx], smem_ref, init_barrier)
+      plgpu.barrier_wait(init_barrier)
+      plgpu.barrier_arrive(cluster_barrier)
+      plgpu.barrier_wait(cluster_barrier)
+      x = plgpu.load(x_ref.at[my_idx], (), layout=plgpu.Layout.WGMMA, optimized=False)
+      plgpu.async_store_smem(
+          x,
+          smem_ref,
+          store_barrier,
+          cluster_idx=peer_idx,
+          cluster_dim="c",
+          atomic="add",
+      )
+      plgpu.barrier_wait(store_barrier)
+      o_ref[my_idx] = plgpu.load(smem_ref, (), layout=plgpu.Layout.WGMMA)
+
+    x = jnp.arange(2 * 64 * 32, dtype=dtype).reshape(x_shape)
+    init_data = jnp.ones(x_shape, dtype=dtype) * 10
+    np.testing.assert_array_equal(kernel(x, init_data), 10 + x[::-1])
+
 
   def test_replicated_layout(self):
     shape = (32,)
