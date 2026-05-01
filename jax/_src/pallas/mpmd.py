@@ -400,6 +400,8 @@ def mpmd_map(
     name: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> Callable[..., _T]:
+  interpret = (
+      config.pallas_tpu_interpret_mode_context_manager.value or interpret)
   return _mpmd_map(
       meshes_and_fns,
       out_types,

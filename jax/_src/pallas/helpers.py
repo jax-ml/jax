@@ -273,7 +273,8 @@ def kernel(
       out_type=out_type,
       scratch_types=scratch_types,
       compiler_params=compiler_params,
-      interpret=interpret,
+      interpret=(config.pallas_tpu_interpret_mode_context_manager.value
+                 or interpret),
       cost_estimate=cost_estimate,
       debug=debug,
       name=name,

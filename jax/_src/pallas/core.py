@@ -1489,6 +1489,9 @@ def core_map(
       and dict format. The space will be core-local unless the memory space type
       is specified to be shared (e.g., VMEM_SHARED).
   """
+  interpret = (
+      config.pallas_tpu_interpret_mode_context_manager.value or interpret)
+
   def wrapped(f):
     if isinstance(scratch_shapes, dict):
       fun_args = ((), scratch_shapes)
