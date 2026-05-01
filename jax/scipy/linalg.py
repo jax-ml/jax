@@ -32,6 +32,7 @@ from jax._src.scipy.linalg import (
   hankel as hankel,
   hilbert as hilbert,
   inv as inv,
+  leslie as leslie,
   lu as lu,
   lu_factor as lu_factor,
   lu_solve as lu_solve,
