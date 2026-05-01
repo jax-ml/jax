@@ -699,6 +699,9 @@ def get_fusion_values(
       fusion, *args, **kwargs
   )
   assert len(values) == len(jaxpr.constvars), (jaxpr, values)
+  if any(isinstance(v, jax.ref.Ref) for v in values):
+    raise ValueError('Refs are not currently supported in fusion values.')
+
   out_usages = tuple({Usage.REGULAR} for _ in jaxpr.outvars)
   read_usage_env = compute_usage(jaxpr, out_usages)
   constvar_usages = util.safe_map(read_usage_env, jaxpr.constvars)
