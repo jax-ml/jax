@@ -2762,8 +2762,10 @@ class Ref(metaclass=RefMeta):
     self._aval = aval
     self._refs = refs
 
-  # TODO(mattjj): update repr to handle non-lojax refs
-  def __repr__(self) -> str: return 'Ref' + repr(self._refs._buf)[5:]
+  def __repr__(self) -> str:
+    if self._aval.is_high:
+      return f"Ref({self._refs})"
+    return "Ref" + repr(self._refs._buf)[5:]
 
   # forward type-level info to aval
   aval = property(lambda self: self._aval)
@@ -2872,6 +2874,14 @@ empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
 empty_ref_p.ref_allocating = True
+empty_ref_p.is_high = lambda *, ty, memory_space: ty.is_high
+def _empty_ref_to_lojax(*, ty, memory_space):
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  hival_of_refs = ty.raise_val(
+      *map(empty_ref, ty.lo_ty(), [memory_space] * len(ty.lo_ty()))
+  )
+  return Ref(AbstractRef(ty), hival_of_refs)
+empty_ref_p.to_lojax = _empty_ref_to_lojax
 
 
 @empty_ref_p.def_effectful_abstract_eval
@@ -2932,6 +2942,13 @@ def freeze(ref: Ref) -> Array:
 freeze_p = Primitive('freeze')
 freeze_p.is_effectful = lambda params: True
 freeze_p.ref_primitive = True
+freeze_p.is_high = lambda aval: aval.is_high
+def _freeze_to_lojax(ref):
+  aval = typeof(ref._refs)
+  lovals = aval.lower_val(ref._refs)
+  vals = [freeze(loval) for loval in lovals]
+  return aval.raise_val(*vals)
+freeze_p.to_lojax = _freeze_to_lojax
 
 @freeze_p.def_effectful_abstract_eval
 def freeze_abstract_eval(ref_aval):

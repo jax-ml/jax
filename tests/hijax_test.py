@@ -495,6 +495,22 @@ def square(x):
 
 
 class HijaxTest(jtu.JaxTestCase):
+
+  def test_empty_ref_and_freeze(self):
+    qx = QArray(arr=jnp.ones((2, 3), dtype=jnp.int8),
+                scale=jnp.array([1.5, 2.5], dtype=jnp.float32))
+
+    def f():
+      q_ref = jax.empty_ref(jax.typeof(qx))
+      return jax.freeze(q_ref)
+
+    q_out = jax.jit(f)()
+    self.assertIsInstance(q_out, QArray)
+    self.assertEqual(q_out.arr.shape, (2, 3))
+    self.assertEqual(q_out.scale.shape, (2,))
+    self.assertEqual(q_out.arr.dtype, jnp.int8)
+    self.assertEqual(q_out.scale.dtype, jnp.float32)
+
   def test_basic_register(self):
     # older test that defines a slightly different QArray internally
     @dataclass(frozen=True)
