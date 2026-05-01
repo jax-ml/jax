@@ -978,7 +978,9 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
     DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
     OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
     // NOTE: User-level optional, once canonicalized, always present.
-    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers
+    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers,
+    // Hint to compilers whether to fuse the transposed LHS in the matmul.
+    BoolAttr:$transpose_lhs_hint
   );
   let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{

@@ -347,6 +347,31 @@ LogicalResult reinterpret_cast_downgrade(Operation* op, int version, bool&) {
   return success();
 }
 
+LogicalResult matmul_upgrade(Operation* op, int version, bool&) {
+  if (version < 13) {
+    op->setAttr("transpose_lhs_hint",
+                mlir::BoolAttr::get(op->getContext(), false));
+  }
+  return success();
+}
+
+LogicalResult matmul_downgrade(Operation* op, int version, bool&) {
+  if (version < 13) {
+    auto transpose_lhs_hint_attr =
+        op->getAttrOfType<BoolAttr>("transpose_lhs_hint");
+    if (!transpose_lhs_hint_attr) {
+      return op->emitOpError("Missing transpose_lhs_hint attribute");
+    }
+    if (transpose_lhs_hint_attr.getValue()) {
+      return op->emitOpError(
+          "Can only downgrade below version 12 when transpose_lhs_hint is "
+          "False ");
+    }
+    op->removeAttr("transpose_lhs_hint");
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
@@ -358,6 +383,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
        vector_multi_dim_reduce_upgrade},
       {StoreOp::getOperationName(), store_upgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_upgrade},
+      {MatmulOp::getOperationName(), matmul_upgrade},
   };
   return *rules;
 }
@@ -374,6 +400,7 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
        vector_multi_dim_reduce_downgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_downgrade},
       {ReinterpretCastOp::getOperationName(), reinterpret_cast_downgrade},
+      {MatmulOp::getOperationName(), matmul_downgrade},
   };
   return *rules;
 }
