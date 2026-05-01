@@ -285,7 +285,20 @@ class VectorSubcoreMesh(pallas_core.Mesh):
         return True
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the ScalarSubcoreMesh {other_mesh}.")
-    # TODO: Add support for mpmd with the TensorCore mesh.
+    elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
+      assert len(other_mesh.axis_names) == 1
+      axis_name = other_mesh.axis_names[0]
+      if self.core_axis_name == axis_name:
+        raise ValueError(
+            f"{self} should have a different core axis name from the"
+            f" TensorCoreMesh {other_mesh}."
+        )
+      if self.subcore_axis_name == axis_name:
+        raise ValueError(
+            f"{self} should have a different subcore axis name from the"
+            f" TensorCoreMesh {other_mesh}."
+        )
+      return True
     return super().check_is_compatible_with(other_mesh)
 
   @property

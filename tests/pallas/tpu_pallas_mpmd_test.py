@@ -32,6 +32,26 @@ SCV = pltpu.CoreType.SC_VECTOR_SUBCORE
 SCS = pltpu.CoreType.SC_SCALAR_SUBCORE
 
 
+def from_core_type(core_type):
+  match core_type:
+    case pltpu.CoreType.TC:
+      return pltpu.create_tensorcore_mesh(axis_name="tc_core", num_cores=1)
+    case pltpu.CoreType.SC_VECTOR_SUBCORE:
+      return plsc.VectorSubcoreMesh(
+          core_axis_name="s_core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+          num_subcores=1,
+      )
+    case pltpu.CoreType.SC_SCALAR_SUBCORE:
+      return plsc.ScalarSubcoreMesh(
+          axis_name="s_core",
+          num_cores=1,
+      )
+    case _:
+      raise ValueError(f"Unsupported core type: {core_type}")
+
+
 class PallasSCTest(jtu.JaxTestCase):
   USE_TC_TILING = False
 
@@ -58,11 +78,9 @@ class MpmdAsyncTest(jtu.JaxTestCase):
       self.skipTest("Not yet supported on Cloud TPU.")
     super().setUp()
 
-  def test_async_sc_tc_prefetch_vmem(self):
-    s_mesh = plsc.ScalarSubcoreMesh(
-        axis_name="core",
-        num_cores=1,
-    )
+  @parameterized.parameters([SCS, SCV])
+  def test_async_sc_tc_prefetch_vmem(self, sc_core_type):
+    mesh = from_core_type(sc_core_type)
     tc_mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
 
     def scalar_subcore_fn(x_ref, out_tc_vmem_ref, tc_sem, sem):
@@ -78,7 +96,7 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     def f(x):
       x_ref = jax.new_ref(x)
       out, sem = pl.kernel(
-          mesh=s_mesh,
+          mesh=mesh,
           out_type=(
               pltpu.VMEM(x.shape, x.dtype) @ tc_mesh,
               pltpu.SemaphoreType.DMA(()) @ tc_mesh,
@@ -87,11 +105,13 @@ class MpmdAsyncTest(jtu.JaxTestCase):
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=True,
           ),
+          name=f"sc_copy_start_{x.shape[0]}",
       )(scalar_subcore_fn)(x_ref)
       out_ref = jax.new_ref(out)
       sem_ref = jax.new_ref(sem)
       pl.kernel(
           mesh=tc_mesh,
+          name=f"tc_copy_end_{x.shape[0]}",
       )(tc_fn)(x_ref, out_ref, sem_ref)
       return jax.freeze(out_ref)
 
@@ -140,7 +160,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_mpmd_capture_scalar(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     axis_name = list(mesh.shape.keys())[0]
     def f(x, i):
       def body(x_ref, out_ref):
@@ -334,7 +354,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_refs(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
@@ -348,7 +368,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS])
   def test_passing_in_multiple_refs(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
     y = jnp.zeros_like(x)
 
@@ -379,7 +399,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCV])
   def test_mixed_outputs_and_refs(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
     num_lanes = pltpu.get_tpu_info().sparse_core.num_lanes
 
@@ -407,7 +427,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_refs_read_only(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
@@ -424,7 +444,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS])
   def test_passing_in_refs_with_scratch(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
@@ -447,7 +467,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_duplicate_refs_errors(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
@@ -463,7 +483,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_closed_over_refs(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
@@ -482,7 +502,7 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.parameters([TC, SCS, SCV])
   def test_closed_over_refs_with_scratch(self, core_type):
-    mesh = self.from_core_type(core_type)
+    mesh = from_core_type(core_type)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
 
     @jax.jit
