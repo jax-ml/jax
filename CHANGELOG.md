@@ -23,6 +23,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     matrices ({jax-issue}`#10144`).
   * Added {func}`jax.scipy.linalg.circulant` for constructing circulant
     matrices ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.dft` for constructing discrete Fourier
+    transform matrices ({jax-issue}`#10144`).
   * Moved RNG APIs from "implementations" to dtypes ({jax-issue}`#27854`):
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.

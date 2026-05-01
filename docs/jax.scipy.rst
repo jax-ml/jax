@@ -59,6 +59,7 @@ jax.scipy.linalg
    cholesky
    circulant
    det
+   dft
    eigh
    eigh_tridiagonal
    expm
