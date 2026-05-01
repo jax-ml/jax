@@ -2989,6 +2989,7 @@ class AbstractTodo(AbstractValue):
 
 ### Operations on shapes and dimension sizes.
 
+@set_module("jax.errors")
 class InconclusiveDimensionOperation(Exception):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
@@ -3468,6 +3469,7 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
       return ', so ' + ', '.join(mismatches[:-1]) + ', and ' + mismatches[-1]
   return ''
 
+@set_module("jax.errors")
 class JaxprTypeError(TypeError): pass
 
 custom_typechecks: dict[Primitive, Callable] = {}
