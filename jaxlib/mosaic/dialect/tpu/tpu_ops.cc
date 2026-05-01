@@ -193,6 +193,9 @@ LogicalResult MemRefSliceOp::verify() {
   auto target_memory_space = target_type.getMemorySpace();
   auto indices = getBaseIdx();
   auto slice_shape = getResult().getType().getShape();
+  if (source_type.getRank() != target_type.getRank()) {
+    return emitOpError("Source and target memrefs must have the same rank.");
+  }
   if (!source_type.hasStaticShape()) {
     return emitOpError(
         "Only slicing of memrefs with static shapes is supported.");
