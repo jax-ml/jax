@@ -69,15 +69,21 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
-_FWD_COMPAT_VERSION = 11
+_FWD_COMPAT_VERSION = 12
+_CLOUD_TPU_VERSION_BEFORE_MAY_1_2026 = 11
+
+
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  if (
-      ctx.is_forward_compat()
-      or backend is None
-      # TODO(tlongeri): Remove after 2026-06-01
-      or is_cloud_tpu_older_than(2026, 5, 1, backend)
-  ):
+  if backend is None:
+    return _FWD_COMPAT_VERSION
+  # TODO(tlongeri): Remove after 2026-06-01
+  if is_cloud_tpu_older_than(2026, 5, 1, backend):
+    return _CLOUD_TPU_VERSION_BEFORE_MAY_1_2026
+  # TODO(twsung): Remove after 2026-06-04
+  if is_cloud_tpu_older_than(2026, 5, 4, backend):
+    return _FWD_COMPAT_VERSION
+  if ctx.is_forward_compat():
     return _FWD_COMPAT_VERSION
   return None
 
