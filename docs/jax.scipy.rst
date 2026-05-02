@@ -68,6 +68,7 @@ jax.scipy.linalg
    fiedler
    funm
    hadamard
+   helmert
    hessenberg
    hankel
    hilbert
