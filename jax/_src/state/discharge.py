@@ -29,6 +29,7 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import custom_derivatives
 from jax._src.interpreters import ad
@@ -831,6 +832,8 @@ def _initial_style_jaxpr(fun: Callable,
 
 
 T = TypeVar('T')
+@partial(traceback_util.api_boundary,
+         repro_api_name="jax.experimental.pallas.run_state")
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     dbg = api_util.debug_info("run_state", f, (args,), {})

@@ -75,6 +75,7 @@ for repro_api_name, transform_name in [
   ("jax.value_and_grad", "value_and_grad"),
   ("jax.checkpoint", "checkpoint"),
   ("jax.experimental.pallas.pallas_call", "pallas_call"),
+  ("jax.experimental.pallas.run_state", "pallas_run_state"),
   ("jax.custom_gradient", "custom_gradient"),
   ("flax.core.axes_scan.scan", "flax_axes_scan"),
 ]:
@@ -271,3 +272,15 @@ def named_call_trampoline(real_api_fun: Callable):
   # TODO: handle named_call. The problem that a named_call can wrap a jit
   # with statics and the statics are then not handle properly
   return (lambda fun, *args, **kwargs: fun)
+
+
+@api_trampoline("jax.experimental.pallas.core_map")
+def pallas_core_map_trampoline(real_api_fun: Callable):
+  from jax._src.repro.repro_api import pallas_core_map
+
+  def pallas_core_map_trampoline(mesh, **core_map_kwargs):
+    def pallas_core_map_decorator(f):
+      return pallas_core_map(f, mesh, core_map_kwargs)
+    return pallas_core_map_decorator
+  pallas_core_map_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return pallas_core_map_trampoline

@@ -411,6 +411,33 @@ def initialize_operand_emitter_pallas():
     res = f"pallas_core.MemoryRef({inner_aval}, {memory_space})"
     return ctx.named_value(res, prefix="mr")
 
+  from jax._src.pallas.mosaic.core import TensorCoreMesh  # type: ignore
+  @partial(register_emitter_by_type, TensorCoreMesh)
+  def emit_TensorCoreMesh(ctx: "EmitFunctionDefContext", v: TensorCoreMesh) -> str:
+    # Emit using the factory function create_tensorcore_mesh
+    axis_names = v.axis_names
+    num_cores = len(v.devices)
+    if len(axis_names) == 1:
+      res = f"pltpu.create_tensorcore_mesh({axis_names[0]!r}, num_cores={num_cores})"
+    else:
+      raise NotImplementedError(f"TensorCoreMesh with multiple axes: {axis_names}")
+    return ctx.named_value(res, prefix="mesh")
+
+  from jax._src.pallas.mosaic.interpret.params import InterpretParams  # type: ignore
+  @partial(register_emitter_by_type, InterpretParams)
+  def emit_InterpretParams(ctx: "EmitFunctionDefContext", v: InterpretParams) -> str:
+    # Emit only non-default fields
+    defaults = InterpretParams()
+    kwargs = []
+    for f in dataclasses.fields(v):
+      val = getattr(v, f.name)
+      default_val = getattr(defaults, f.name)
+      if val != default_val:
+        kwargs.append(f"{f.name}={val!r}")
+    args_str = ", ".join(kwargs)
+    res = f"pltpu.InterpretParams({args_str})"
+    return ctx.named_value(res, prefix="ip")
+
 
 tracker.lazy_initializers.append(initialize_operand_emitter)  # type: ignore
 

@@ -380,3 +380,17 @@ def pallas_call_call(kernel: Callable, api_args: tuple[Any, ...],
   from jax._src.pallas import pallas_call  # type: ignore
   return repro_bypass_wrapper(pallas_call.pallas_call)(
     kernel, *api_args, **api_kwargs)(*args, **kwargs)
+
+
+@partial(repro_boundary, repro_api_name="pallas_core_map")
+def pallas_core_map(f: Callable, mesh, core_map_kwargs):
+  from jax._src.pallas import core as pallas_core  # type: ignore
+  return repro_bypass_wrapper(pallas_core.core_map)(mesh, **core_map_kwargs)(f)
+
+
+@partial(repro_boundary, repro_api_name="pallas_run_state_call")
+def pallas_run_state_call(f: Callable, api_args: tuple[Any, ...],
+                          api_kwargs: dict[str, Any], *args, **kwargs):
+  from jax._src.state import discharge  # type: ignore
+  return repro_bypass_wrapper(discharge.run_state)(
+    f, *api_args, **api_kwargs)(*args, **kwargs)
