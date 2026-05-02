@@ -262,9 +262,8 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logsf`
   """
   q, loc, scale = promote_args_inexact("expon.ppf", q, loc, scale)
-  neg_scaled_q = lax.div(lax.sub(loc, q), scale)
   return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
     np.nan,
-    lax.neg(lax.log1p(neg_scaled_q)),
+    lax.add(loc, lax.mul(scale, lax.neg(lax.log1p(lax.neg(q))))),
   )
