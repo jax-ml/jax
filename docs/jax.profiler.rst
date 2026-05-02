@@ -21,6 +21,7 @@ features.
   annotate_function
   TraceAnnotation
   StepTraceAnnotation
+  register_subprocess
 
 
 Device memory profiling

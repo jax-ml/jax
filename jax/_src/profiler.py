@@ -36,6 +36,7 @@ from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
+from jax._src.lib import jaxlib_extension_version as jaxlib_extension_version
 
 ProfileData = _profile_data.ProfileData
 ProfileEvent = _profile_data.ProfileEvent
@@ -50,13 +51,20 @@ class ProfileOptions(_profiler.ProfileOptions):
   """Profiler Options to configure the collectors for the profiler."""
 
 
-def start_server(port: int) -> _profiler.ProfilerServer:
+def start_server(
+    port: int, requires_backend: bool = True
+) -> _profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
   <https://www.tensorflow.org/tensorboard>`_ 2.2 or newer, you can
   connect to the profiler server and sample execution traces that show CPU,
   GPU, and/or TPU device activity.
+
+  Args:
+    port: The port to start the profiler server on.
+    requires_backend: If False, the profiler server will not wait for backends
+      to be initialized before starting. Default is True.
   """
   global _profiler_server
   if _profiler_server is not None:
@@ -68,7 +76,8 @@ def start_server(port: int) -> _profiler.ProfilerServer:
   # fail and no TPU operations will be included in the profile.
   # NOTE(skyewm): I'm not sure this is necessary for start_server (is definitely
   # is for start_trace), but I'm putting it here to be safe.
-  xla_bridge.get_backend()
+  if requires_backend:
+    xla_bridge.get_backend()
 
   _profiler_server = _profiler.start_server(port)
   return _profiler_server
@@ -80,6 +89,40 @@ def stop_server():
   if _profiler_server is None:
     raise ValueError("No active profiler server.")
   _profiler_server = None # Should destroy the profiler server
+
+
+def register_subprocess(pid: int, port: int) -> Callable[[], None]:
+  """Registers a subprocess's profiler server to be profiled alongside the current process.
+
+  When the current process collects a profile (either programmatically or via
+  its profiler server), it will propagate the request to all registered
+  subprocesses' profiler servers and subsequently, aggregate all their responses
+  into the main response returned by this process's profiler server.
+
+  This is helpful when running workers in separate processes that may affect the
+  performance of the main process (e.g. PyGrain).
+
+  NOTE: Currently, only CPU profiling of subprocesses is supported.
+
+  Args:
+    pid: The process ID of the subprocess.
+    port: The port of the profiler server in the subprocess.
+
+  Returns:
+    A function that when called or garbage collected will unregister the
+    subprocess from the main process's profiler.
+
+  Raises:
+    RuntimeError: If the subprocess fails to be registered (e.g. already
+    registered, unable to connect, etc.).
+  """
+  if jaxlib_extension_version >= 448:
+    return _profiler.register_subprocess(pid, port)
+  else:
+    raise RuntimeError(
+        "jaxlib version is too old, please upgrade to version 448 or later "
+        "to use register_subprocess."
+    )
 
 
 class _ProfileState:
