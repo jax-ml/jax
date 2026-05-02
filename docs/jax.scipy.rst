@@ -66,6 +66,7 @@ jax.scipy.linalg
    expm_frechet
    funm
    hadamard
+   helmert
    hessenberg
    hankel
    hilbert
