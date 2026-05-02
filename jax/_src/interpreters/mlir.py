@@ -1863,7 +1863,9 @@ def lower_jaxpr_to_fun(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
   if arg_names:
-    arg_locs = [ir.Location.unknown()] * (num_dim_vars + num_tokens)
+    arg_locs: list[ir.Location] = [ir.Location.unknown()] * (
+        num_dim_vars + num_tokens
+    )
     for n in arg_names:
       arg_locs.append(ir.Location.name(n) if n else ir.Location.unknown())
     entry_block = func_op.add_entry_block(arg_locs)
