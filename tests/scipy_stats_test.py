@@ -597,6 +597,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testExponPpfNonUnitScale(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/36757
+    # Previously expon.ppf ignored ``scale`` and returned the unit-rate value.
+    q = 0.5
+    for scale in (0.5, 2.0, 10.0):
+      for loc in (0.0, 1.5):
+        self.assertAllClose(
+          osp_stats.expon.ppf(q, loc=loc, scale=scale),
+          lsp_stats.expon.ppf(q, loc=loc, scale=scale),
+          atol=1e-6,
+        )
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
