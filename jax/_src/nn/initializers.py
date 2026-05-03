@@ -242,7 +242,8 @@ def _compute_fans(shape: Sequence[int],
     batch_size = shape[batch_axis]
   else:
     batch_size = math.prod([shape[i] for i in batch_axis])
-  receptive_field_size = math.prod(shape) / in_size / out_size / batch_size
+  denominator = in_size * out_size * batch_size
+  receptive_field_size = math.prod(shape) / denominator if denominator != 0 else 0
   fan_in = in_size * receptive_field_size
   fan_out = out_size * receptive_field_size
   return fan_in, fan_out
@@ -345,7 +346,7 @@ def variance_scaling(
     else:
       raise ValueError(
         f"invalid mode for variance scaling initializer: {mode}")
-    variance = jnp.array(scale / denominator, dtype=dtype)
+    variance = jnp.array(scale / denominator if denominator != 0 else 0, dtype=dtype)
 
     if distribution == "truncated_normal":
       if dtypes.issubdtype(dtype, np.floating):
