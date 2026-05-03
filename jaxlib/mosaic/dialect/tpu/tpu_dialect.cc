@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <numeric>
 #include <optional>
@@ -499,6 +500,28 @@ SmallVector<int64_t> TiledLayoutAttr::getExpandedStrides() const {
     }
   }
   return strides;
+}
+
+SmallVector<int64_t> TiledLayoutAttr::getSubtileUnit(
+    const ArrayRef<xla::Tile> tiles) {
+  assert(!tiles.empty());
+  const int64_t first_tile_rank = tiles.front().dimensions().size();
+  SmallVector<int64_t> subtile_unit(first_tile_rank, 1);
+
+  size_t current_tiled_rank = first_tile_rank;
+  for (const xla::Tile& tile : tiles.drop_front()) {
+    const size_t tile_rank = tile.dimensions().size();
+    // Tiled layout verifier disallows tiles that tile past the first tile.
+    assert(tile_rank <= current_tiled_rank);
+    for (int64_t i = 0; i < tile_rank; ++i) {
+      const int64_t tiled_dim = current_tiled_rank - tile_rank + i;
+      if (tiled_dim < first_tile_rank) {
+        subtile_unit[tiled_dim] *= tile.dimension(i);
+      }
+    }
+    current_tiled_rank += tile_rank;
+  }
+  return subtile_unit;
 }
 
 LogicalResult TiledLayoutAttr::verify(

@@ -172,6 +172,15 @@ def TPU_TiledLayoutAttr
       return getNumTrailingDimsWithContiguousTiles(shape) == getRank();
     }
 
+    // Returns the smallest tile that can be used to divide the first tile of
+    // `tiles` into contiguous subtiles.
+    // NOTE: For tiles (T1, T2, ..., Tn), let Ts be the subtile unit. Then,
+    //   (T1, T2, ..., Tn) is equivalent to (T1, Ts, T2, ..., Tn).
+    static ::llvm::SmallVector<int64_t> getSubtileUnit(::llvm::ArrayRef<::xla::Tile> tiles);
+    ::llvm::SmallVector<int64_t> getSubtileUnit() const {
+      return getSubtileUnit(getTiles());
+    }
+
     int64_t getRank() const {
       return getTileStrides().size();
     }
