@@ -1067,14 +1067,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testPinv(self, shape, hermitian, dtype):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-
-    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
-    def np_fn(a):
-      # Symmetrize the input matrix to match the jnp behavior.
+    def args_maker():
+      a = rng(shape, dtype)
       if hermitian:
         a = (a + T(a.conj())) / 2
-      return np.linalg.pinv(a, hermitian=hermitian)
+      return [a]
+
+    np_fn = partial(np.linalg.pinv, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-5)
 
@@ -1127,17 +1127,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertArraysEqual(np_result, jnp_result)
 
   @jtu.sample_product(
-    shape=[(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
-           (2, 3, 4, 5)],
+    [dict(shape=shape, hermitian=hermitian)
+     for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
+                   (2, 3, 4, 5)]
+     for hermitian in ([False, True] if len(shape) >= 2 and shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
-  def testMatrixRank(self, shape, dtype):
+  def testMatrixRank(self, shape, dtype, hermitian):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    a, = args_maker()
-    self._CheckAgainstNumpy(np.linalg.matrix_rank, jnp.linalg.matrix_rank,
+    def args_maker():
+      a = rng(shape, dtype)
+      if hermitian:
+        a = (a + T(a.conj())) / 2
+      return [a]
+
+    np_fn = partial(np.linalg.matrix_rank, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.matrix_rank, hermitian=hermitian)
+    self._CheckAgainstNumpy(np_fn, jnp_fn,
                             args_maker, check_dtypes=False, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.matrix_rank, args_maker,
+    self._CompileAndCheck(jnp_fn, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
   def testMatrixRankTol(self):
