@@ -58,6 +58,7 @@ jax.scipy.linalg
    cho_solve
    cholesky
    circulant
+   companion
    det
    dft
    eigh
