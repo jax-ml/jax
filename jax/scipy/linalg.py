@@ -27,6 +27,7 @@ from jax._src.scipy.linalg import (
   eigh_tridiagonal as eigh_tridiagonal,
   expm as expm,
   expm_frechet as expm_frechet,
+  fiedler as fiedler,
   hadamard as hadamard,
   hessenberg as hessenberg,
   hankel as hankel,

@@ -2612,6 +2612,34 @@ def _circulant(c: Array) -> Array:
   return c[idx]
 
 
+def fiedler(a: ArrayLike) -> Array:
+  r"""Construct a symmetric Fiedler matrix.
+
+  JAX implementation of :func:`scipy.linalg.fiedler`.
+
+  The Fiedler matrix has entries :math:`F_{ij} = |a_i - a_j|` for
+  :math:`0 \le i, j < n`, where ``a`` is the input vector. The result is
+  symmetric with a zero diagonal.
+
+  Args:
+    a: array of shape ``(..., N)``.
+
+  Returns:
+    A Fiedler matrix of shape ``(..., N, N)``.
+
+  Examples:
+    >>> jax.scipy.linalg.fiedler(jnp.array([1, 4, 12, 45, 77]))
+    Array([[ 0,  3, 11, 44, 76],
+           [ 3,  0,  8, 41, 73],
+           [11,  8,  0, 33, 65],
+           [44, 41, 33,  0, 32],
+           [76, 73, 65, 32,  0]], dtype=int32)
+  """
+  check_arraylike("fiedler", a)
+  arr = jnp.atleast_1d(a)
+  return jnp.abs(arr[..., None] - arr[..., None, :])
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.

@@ -104,6 +104,14 @@ def osp_linalg_circulant(c: np.ndarray) -> np.ndarray:
   return np.vectorize(
       scipy.linalg.circulant, signature="(n)->(n,n)", otypes=(c.dtype,))(c)
 
+def osp_linalg_fiedler(a: np.ndarray) -> np.ndarray:
+  """Batched scipy fiedler for testing."""
+  a = np.atleast_1d(a)
+  if scipy_version >= (1, 15):
+    return scipy.linalg.fiedler(a)
+  return np.vectorize(
+      scipy.linalg.fiedler, signature="(n)->(n,n)", otypes=(a.dtype,))(a)
+
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
   if scipy_version >= (1, 19):
@@ -2304,6 +2312,17 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(osp_linalg_circulant, jsp.linalg.circulant, args_maker)
     self._CompileAndCheck(jsp.linalg.circulant, args_maker)
+
+  @jtu.sample_product(
+     shape=[(), (1,), (3,), (5,), (2, 3), (1, 2, 4)],
+     dtype=float_types + int_types,
+  )
+  def testFiedler(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(osp_linalg_fiedler, jsp.linalg.fiedler, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.fiedler, args_maker)
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
