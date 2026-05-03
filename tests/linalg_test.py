@@ -2628,6 +2628,23 @@ class LaxLinalgTest(jtu.JaxTestCase):
       jsp.linalg.hadamard(n)
 
   @jtu.sample_product(
+    n=[1, 2, 3, 4, 5, 8],
+    full=[False, True],
+  )
+  def testHelmert(self, n, full):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.helmert, n=n, full=full)
+    jsp_fun = partial(jsp.linalg.helmert, n=n, full=full)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-5, rtol=1e-5, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(n=[0, -1, -5])
+  def testHelmertInvalidN(self, n):
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.helmert(n)
+
+  @jtu.sample_product(
     n=[0, 1, 2, 3, 5, 8, 16],
     scale=[None, 'sqrtn', 'n'],
   )
