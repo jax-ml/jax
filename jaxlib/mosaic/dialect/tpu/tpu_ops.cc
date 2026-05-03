@@ -1156,6 +1156,11 @@ LogicalResult MatmulOp::verify() {
                                    std::vector<bool>& seen_dims,
                                    const std::string_view operand) {
       for (int64_t dim : dims) {
+        if (dim < 0 || dim >= seen_dims.size()) {
+          emitOpError("Illegal: Dim ")
+              << dim << " is out of bounds for " << operand;
+          return failure();
+        }
         if (seen_dims[dim]) {
           emitOpError("Illegal: Dim ")
               << dim << " repeats in dimension numbers of " << operand;
