@@ -2131,6 +2131,97 @@ class DialectLoweringTest(MosaicGpuTest):
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
 
+  def test_lowering_memref_transpose_nd(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_logical = ir.MemRefType.get(
+          (64, 128, 256),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      in_tiling = (16, 32)
+      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
+      slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
+      slice_op.attributes["out_transforms"] = transforms_attr
+      ref_wrapped = slice_op.result
+      ref_transposed = mgpu_utils.memref_transpose(ref_wrapped, (0, 2, 1))
+      attributes = ref_transposed.owner.attributes
+      attributes["in_transforms"] = transforms_attr
+      out_tiling = in_tiling[::-1]
+      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(out_tiling)
+      transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
+      attributes["out_transforms"] = transforms_attr
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+
+    [new_transpose_op] = self.find_ops(memref.TransposeOp)
+    expected_permutation = ir.AffineMap.get_permutation([0, 2, 1, 4, 3])
+    self.assertEqual(new_transpose_op.permutation.value, expected_permutation)
+
+  def test_lowering_memref_transpose_nd_bad_inout_tiling(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_logical = ir.MemRefType.get(
+          (64, 128, 256),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      in_tiling = (16, 32)
+      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
+      slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
+      slice_op.attributes["out_transforms"] = transforms_attr
+      ref_wrapped = slice_op.result
+      ref_transposed = mgpu_utils.memref_transpose(ref_wrapped, (0, 2, 1))
+      attributes = ref_transposed.owner.attributes
+      attributes["in_transforms"] = attributes["out_transforms"] = transforms_attr
+
+    with self.assertRaisesRegex(ValueError, "Invalid in/out transforms."):
+      mgpu.lower_mgpu_dialect(self.module, None)
+
+  def test_lowering_memref_transpose_nd_size_mismatch_transforms_raises(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_logical = ir.MemRefType.get(
+          (64, 128, 256),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      in_tiling = (16, 32)
+      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
+      slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
+      slice_op.attributes["out_transforms"] = transforms_attr
+      ref_wrapped = slice_op.result
+      ref_transposed = mgpu_utils.memref_transpose(ref_wrapped, (0, 2, 1))
+      attributes = ref_transposed.owner.attributes
+      attributes["in_transforms"] = transforms_attr
+      out_transforms_attr = ir.ArrayAttr.get(
+          [ir.ArrayAttr.get([tile_transform_attr, tile_transform_attr])]
+      )
+      attributes["out_transforms"] = out_transforms_attr
+
+    with self.assertRaisesRegex(ValueError, "Size mismatch for in/out transforms."):
+      mgpu.lower_mgpu_dialect(self.module, None)
+
+  def test_lowering_memref_transposed_tiled_and_untiled_tims_raises(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_logical = ir.MemRefType.get(
+          (64, 128, 256),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.smem(),
+      )
+      in_tiling = (16, 32)
+      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
+      slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
+      slice_op.attributes["out_transforms"] = transforms_attr
+      ref_wrapped = slice_op.result
+      ref_transposed = mgpu_utils.memref_transpose(ref_wrapped, (2, 1, 0))
+      attributes = ref_transposed.owner.attributes
+      attributes["in_transforms"] = attributes["out_transforms"] = transforms_attr
+
+    with self.assertRaisesRegex(ValueError, "Cannot tile a transpose"):
+      mgpu.lower_mgpu_dialect(self.module, None)
+
   def test_optimized_gmem_transfers_are_not_supported(self):
     def body(ctx, input, output, scratch):
       del ctx, output, scratch
