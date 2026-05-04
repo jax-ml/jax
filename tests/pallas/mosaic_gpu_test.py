@@ -1694,6 +1694,61 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x * 2)
 
+  @parameterized.parameters(None, plgpu.Layout.WGMMA)
+  def test_get_swap_with_swizzle_transform(self, layout):
+    self.skip_if_wg_semantics()  # Swizzle transform with no tiling transform is not supported.
+    dtype = jnp.int32
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    shape = (64, swizzle_elems)
+    transforms = (plgpu.SwizzleTransform(swizzle),)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=[
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      tmp = plgpu.load(scratch_ref, (), layout=layout)
+      scratch_ref[...] = tmp * 2
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x * 2)
+
+  def test_get_swap_transposed_with_swizzle_transform(self):
+    self.skip_if_wg_semantics()  # Swizzle transform with no tiling transform is not supported.
+    dtype = jnp.bfloat16
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    shape = (swizzle_elems, swizzle_elems)
+    transforms = (plgpu.SwizzleTransform(swizzle),)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_shapes=[
+            plgpu.SMEM(shape, dtype, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      tmp = plgpu.load(scratch_ref.T, (), layout=plgpu.Layout.WGMMA_TRANSPOSED)
+      scratch_ref.T[...] = tmp * 2
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x * 2)
+
   def test_swap_scalar_constant(self):
     @functools.partial(
         self.kernel,
