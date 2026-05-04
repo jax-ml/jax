@@ -1159,13 +1159,13 @@ class OpsTest(PallasBaseTest):
       self.skipTest("64-bit types require x64_enabled")
 
     if jtu.test_device_matches(["tpu"]):
-      if dtype in ("int16", "float16"):
-        if not (
-            jtu.is_device_tpu_at_least(6)
-            and dtype == "int16"
-            and fn == jnp.negative
-        ):
-          self.skipTest("int16 and float16 are not supported on TPU")
+      if dtype == "float16":
+        self.skipTest("float16 is not supported on TPU")
+      if dtype == "int16":
+        if fn in (jnp.sign, jnp.abs) and not jtu.is_device_tpu_at_least(4):
+          self.skipTest("requires TPU v4+")
+        if fn == jnp.abs and not jtu.is_cloud_tpu_at_least(2026, 5, 10):
+          self.skipTest("requires newer libTPU")
       if (
           fn in (jnp.ceil, jnp.floor, jnp.sqrt, lax.rsqrt)
           and dtype == "bfloat16"
