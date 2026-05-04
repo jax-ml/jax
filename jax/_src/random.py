@@ -2413,7 +2413,9 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 def rademacher(key: ArrayLike,
                shape: Shape = (),
-               dtype: DTypeLikeInt | None = None) -> Array:
+               dtype: DTypeLikeInt | None = None,
+               *,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample from a Rademacher distribution.
 
   The values are distributed according to the probability mass function:
@@ -2427,6 +2429,14 @@ def rademacher(key: ArrayLike,
     key: a PRNG key.
     shape: The shape of the returned samples. Default ().
     dtype: The type used for samples.
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A jnp.array of samples, of shape `shape`. Each element in the output has
@@ -2437,12 +2447,14 @@ def rademacher(key: ArrayLike,
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  return _rademacher(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rademacher", shape)
+  return _rademacher(key, shape, dtype, out_sharding)
 
 
-@jit(static_argnums=(1, 2))
-def _rademacher(key, shape, dtype) -> Array:
-  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape).astype(dtype)
+@jit(static_argnums=(1, 2, 3))
+def _rademacher(key, shape, dtype, out_sharding) -> Array:
+  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape,
+                                out_sharding=out_sharding).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
