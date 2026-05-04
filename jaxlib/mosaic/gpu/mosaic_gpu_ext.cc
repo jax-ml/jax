@@ -29,12 +29,6 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/gpu/target.h"
 
-// JAX_CUPTI_HAS_MULTI_SUBSCRIBER is defined when the CUPTI V2 multi-subscriber
-// APIs are available (CUPTI_API_VERSION >= 130200, i.e. CUDA 13.2+).
-#if CUPTI_API_VERSION >= 130200
-#define JAX_CUPTI_HAS_MULTI_SUBSCRIBER
-#endif
-
 namespace jax::cuda {
 namespace {
 
@@ -61,19 +55,14 @@ namespace nb = nanobind;
     }                                            \
   } while (0)
 
-// Mosaic keeps a single global profiler state, so only one session may be
-// active at a time.
+// CUPTI can only have one subscriber per process, so it's ok to make the
+// profiler state global.
 struct {
   CUpti_SubscriberHandle subscriber;
   std::vector<std::tuple<const char* /*kernel_name*/, double /*ms*/>> timings;
 } profiler_state;
 
-#ifdef JAX_CUPTI_HAS_MULTI_SUBSCRIBER
-void callback_request(uint8_t **buffer, size_t *size, size_t *maxNumRecords,
-                      CUpti_BufferCallbackRequestInfo * /*info*/) {
-#else
-void callback_request(uint8_t **buffer, size_t *size, size_t *maxNumRecords) {
-#endif
+void callback_request(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
   // 10 MiB buffer size is generous but somewhat arbitrary, it's at the upper
   // bound of what's recommended in CUPTI documentation:
   // https://docs.nvidia.com/cupti/main/main.html#cupti-callback-api:~:text=For%20typical%20workloads%2C%20it%E2%80%99s%20suggested%20to%20choose%20a%20size%20between%201%20and%2010%20MB.
@@ -86,13 +75,8 @@ void callback_request(uint8_t **buffer, size_t *size, size_t *maxNumRecords) {
   *maxNumRecords = 0;
 }
 
-#ifdef JAX_CUPTI_HAS_MULTI_SUBSCRIBER
-void callback_complete(uint8_t *buffer, size_t size, size_t validSize,
-                       CUpti_BufferCallbackCompleteInfo * /*info*/) {
-#else
-void callback_complete(CUcontext context, uint32_t streamId, uint8_t *buffer,
+void callback_complete(CUcontext context, uint32_t streamId, uint8_t* buffer,
                        size_t size, size_t validSize) {
-#endif
   // take ownership of the buffer once CUPTI is done using it
   absl::Cleanup cleanup = [buffer]() {
     operator delete[](buffer, std::align_val_t(8));
@@ -119,13 +103,11 @@ void callback_complete(CUcontext context, uint32_t streamId, uint8_t *buffer,
     }
   }
 
-#ifndef JAX_CUPTI_HAS_MULTI_SUBSCRIBER
   size_t num_dropped;
   THROW_IF_CUPTI_ERROR(
       cuptiActivityGetNumDroppedRecords(context, streamId, &num_dropped),
       "failed to get number of dropped activity records");
   THROW_IF(num_dropped > 0, "activity records were dropped");
-#endif
 }
 
 NB_MODULE(_mosaic_gpu_ext, m) {
@@ -145,30 +127,6 @@ NB_MODULE(_mosaic_gpu_ext, m) {
   });
   m.def("_cupti_init", []() {
     profiler_state.timings.clear();
-#ifdef JAX_CUPTI_HAS_MULTI_SUBSCRIBER
-    // V2 API: allows coexistence with other subscribers, such as jax.profiler.
-    CUpti_SubscriberParams params = {};
-    params.structSize = CUpti_SubscriberParams_STRUCT_SIZE;
-    params.subscriberName = "MosaicGpuProfiler";
-    params.allowMultipleSubscribers = 1;
-    // Ok to pass nullptr for the callback here because we don't register any
-    // callbacks through cuptiEnableCallback.
-    THROW_IF_CUPTI_ERROR(cuptiSubscribe_v2(&profiler_state.subscriber,
-                                           /*callback=*/nullptr,
-                                           /*userdata=*/nullptr, &params),
-                         "failed to subscribe to CUPTI");
-    THROW_IF_CUPTI_ERROR(
-        cuptiActivityRegisterCallbacks_v2(profiler_state.subscriber,
-                                          callback_request, callback_complete),
-        "failed to register CUPTI activity callbacks");
-    CUpti_ActivityConfig act_cfg = {};
-    act_cfg.structSize = CUpti_ActivityConfig_STRUCT_SIZE;
-    THROW_IF_CUPTI_ERROR(
-        cuptiActivityEnable_v2(profiler_state.subscriber,
-                               CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL, &act_cfg),
-        "failed to enable tracking of kernel activity by CUPTI");
-#else
-    // V1 API: only one CUPTI subscriber allowed at a time.
     // Ok to pass nullptr for the callback here because we don't register any
     // callbacks through cuptiEnableCallback.
     auto subscribe_result = cuptiSubscribe(
@@ -187,41 +145,19 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     THROW_IF_CUPTI_ERROR(
         cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
         "failed to enable tracking of kernel activity by CUPTI");
-#endif
   });
   m.def(
       "_cupti_get_timings",
       [](bool finalize) {
-#ifdef JAX_CUPTI_HAS_MULTI_SUBSCRIBER
-        (void)finalize;  // unused in the V2 path
-        THROW_IF_CUPTI_ERROR(
-            cuptiActivityDisable_v2(profiler_state.subscriber,
-                                    CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
-                                    nullptr),
-            "failed to disable tracking of kernel activity by CUPTI");
-        THROW_IF_CUPTI_ERROR(
-            cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED),
-            "failed to flush CUPTI activity buffers");
-        // The legacy dropped-record query is process-global, so in the V2
-        // path it could attribute another subscriber's drops to Mosaic.
-        // TODO: In the V2 path, plumb enough context/stream information to
-        // query dropped activity records safely with
-        // cuptiActivityGetNumDroppedRecords().
-        // cuptiUnsubscribe() is sufficient here; cuptiFinalize() tears down
-        // global CUPTI state and breaks later V2 re-initialization.
-#else
         THROW_IF_CUPTI_ERROR(
             cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
             "failed to disable tracking of kernel activity by CUPTI");
         THROW_IF_CUPTI_ERROR(
             cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED),
             "failed to flush CUPTI activity buffers");
-        // In the V1 path, cuptiFinalize() is required to avoid leaking CUPTI
-        // state across repeated measurements.
         if (finalize) {
           THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
         }
-#endif
         THROW_IF_CUPTI_ERROR(cuptiUnsubscribe(profiler_state.subscriber),
                              "failed to unsubscribe from CUPTI");
         return profiler_state.timings;

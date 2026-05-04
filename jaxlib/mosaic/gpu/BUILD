@@ -428,10 +428,10 @@ nanobind_extension(
     ],
     pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
-        ":target",
         "//jaxlib:absl_status_casters",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
+        "//jaxlib/mosaic/gpu:target",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",

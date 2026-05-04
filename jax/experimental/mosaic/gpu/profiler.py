@@ -162,11 +162,10 @@ def measure(
   Notes:
     `CUPTI (CUDA Profiling Tools Interface)
     <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy profiling
-    API used by Nsight Systems and Nsight Compute. Before CUDA/CUPTI 13.2,
-    CUPTI allows only a single subscriber, so ``measure`` cannot be used with
-    other CUPTI-based tools like CUDA-GDB, Compute Sanitizer, Nsight Systems,
-    or Nsight Compute. On CUDA/CUPTI 13.2 and newer, ``measure`` uses the
-    CUPTI V2 subscriber APIs and can coexist with another CUPTI subscriber.
+    API used by Nsight Systems and Nsight Compute. The CUPTI API only allows a
+    single subscriber, so ``measure`` cannot be used with other CUPTI-based
+    tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
+    Compute.
   """  # fmt: skip
   if iterations < 1:
     raise ValueError(f"{iterations=} must be positive")
