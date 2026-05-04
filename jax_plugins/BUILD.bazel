@@ -32,6 +32,7 @@ py_library_providing_imports_info(
 
 py_library(
     name = "gpu_plugin_only_test_deps",
+    strict_deps = False,
     deps = [
         ":jax_plugins",
     ] + if_cuda_is_configured([

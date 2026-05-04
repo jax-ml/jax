@@ -35,12 +35,14 @@ py_library(
     srcs = [
         "__init__.py",
     ],
+    strict_deps = False,
     visibility = ["//jax:internal"],
 )
 
 py_library(
     name = "matmul",
     srcs = ["matmul.py"],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/experimental:mosaic_gpu",
@@ -50,6 +52,7 @@ py_library(
 py_library(
     name = "matmul_blackwell",
     srcs = ["matmul_blackwell.py"],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/experimental:mosaic_gpu",
@@ -59,6 +62,7 @@ py_library(
 py_library(
     name = "flash_attention",
     srcs = ["flash_attention.py"],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/experimental:mosaic_gpu",

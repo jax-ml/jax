@@ -25,7 +25,7 @@ load(
     "nanobind_extension",
     "proto_library",
     "py_deps",
-    "py_strict_test",
+    "py_test",
     "pytype_library",
     "pytype_strict_library",
 )
@@ -317,7 +317,7 @@ nanobind_pywrap_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "weakref_lru_cache_test",
     srcs = ["weakref_lru_cache_test.py"],
     deps = [
@@ -329,7 +329,7 @@ py_strict_test(
     ]),
 )
 
-py_strict_test(
+py_test(
     name = "weak_value_interner_test",
     srcs = ["weak_value_interner_test.py"],
     deps = [
@@ -1520,7 +1520,7 @@ pytype_strict_library(
     ]) + [":_jax"],
 )
 
-py_strict_test(
+py_test(
     name = "pytree_test",
     srcs = ["pytree_test.py"],
     deps = [
@@ -1532,7 +1532,7 @@ py_strict_test(
     ]),
 )
 
-py_strict_test(
+py_test(
     name = "config_test",
     srcs = ["config_test.py"],
     deps = [
@@ -1612,7 +1612,7 @@ nanobind_pywrap_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "exception_test",
     srcs = ["exception_test.py"],
     deps = [

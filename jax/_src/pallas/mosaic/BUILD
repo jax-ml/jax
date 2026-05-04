@@ -30,6 +30,7 @@ py_library(
         "__init__.py",
         "core.py",
     ],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/_src:core",
@@ -45,6 +46,7 @@ py_library(
 py_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
+    strict_deps = False,
     deps = [
         "//jax/_src:compiler",
         "//jax/_src:traceback_util",
@@ -55,6 +57,7 @@ py_library(
 py_library(
     name = "primitives",
     srcs = ["primitives.py"],
+    strict_deps = False,
     deps = [
         ":core",
         "//jax",
@@ -72,6 +75,7 @@ py_library(
 py_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
+    strict_deps = False,
     deps = [
         ":core",
         ":lowering",
@@ -204,6 +208,7 @@ pytype_strict_library(
 py_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
+    strict_deps = False,
     deps = [
         ":core",
         ":primitives",
@@ -220,6 +225,7 @@ py_library(
 py_library(
     name = "random",
     srcs = ["random.py"],
+    strict_deps = False,
     deps = [
         ":primitives",
         "//jax",
@@ -231,6 +237,7 @@ py_library(
 py_library(
     name = "helpers",
     srcs = ["helpers.py"],
+    strict_deps = False,
     deps = [
         ":core",
         ":primitives",
