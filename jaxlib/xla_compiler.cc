@@ -909,6 +909,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_ro("executable_build_options",
               &CompileOptions::executable_build_options)
       .def_rw("env_option_overrides", &CompileOptions::env_option_overrides)
+      .def_rw("compiler_variant", &CompileOptions::compiler_variant)
       .def_prop_rw(
           "num_replicas",
           [](const CompileOptions& options) {
