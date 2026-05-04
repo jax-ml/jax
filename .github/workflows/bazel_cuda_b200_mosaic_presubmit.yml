@@ -29,6 +29,9 @@ on:
       - main
 
 permissions: {}
+env:
+  JAXCI_TEST_XLA_REPOSITORY: "https://github.com/vladbelit/xla.git"
+  JAXCI_TEST_XLA_COMMIT: "e8343e40820a47eec9502d9436b1b8037857435c"
 
 # - For PRs, group by PR number and cancel stale in-progress runs.
 # - For workflow_dispatch events, group by actor+ref. Cancel stale in-progress runs from the same
@@ -151,6 +154,8 @@ jobs:
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
           JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_REPO: ${{ env.JAXCI_TEST_XLA_REPOSITORY }}
+          JAXCI_XLA_COMMIT: ${{ env.JAXCI_TEST_XLA_COMMIT }}
           # Only a couple of targets that run in under 10 minutes.
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_test_gpu

@@ -28,9 +28,11 @@ if [[ ! $(uname -s) =~ "MSYS_NT" ]]; then
   git config --global --add safe.directory $JAXCI_JAX_GIT_DIR
 fi
 
+xla_repo="${JAXCI_XLA_REPO:-https://github.com/openxla/xla.git}"
+
 function clone_main_xla() {
-  echo "Cloning XLA at HEAD to $(pwd)/xla"
-  git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+  echo "Cloning XLA at HEAD from ${xla_repo} to $(pwd)/xla"
+  git clone --depth=1 "${xla_repo}" $(pwd)/xla
   cd $(pwd)/xla
   echo "XLA commit: $(git log -1 --format=%H)"
   cd ..
@@ -57,8 +59,8 @@ if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
   fi
   pushd "$JAXCI_XLA_GIT_DIR"
 
-  git fetch --depth=1 origin "$JAXCI_XLA_COMMIT"
-  echo "JAXCI_XLA_COMMIT is set. Checking out XLA at $JAXCI_XLA_COMMIT"
+  git fetch --depth=1 "${xla_repo}" "$JAXCI_XLA_COMMIT"
+  echo "JAXCI_XLA_COMMIT is set. Checking out XLA at $JAXCI_XLA_COMMIT from ${xla_repo}"
   git checkout "$JAXCI_XLA_COMMIT"
 
   popd
@@ -68,7 +70,7 @@ if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
   echo "INFO: Overriding XLA to be read from $JAXCI_XLA_GIT_DIR instead of the"
   echo "pinned version in the WORKSPACE."
   echo "If you would like to revert this behavior, unset JAXCI_CLONE_MAIN_XLA"
-  echo "and JAXCI_XLA_COMMIT in your environment. Note that the Bazel RBE test"
+  echo "JAXCI_XLA_COMMIT, and JAXCI_XLA_REPO in your environment. Note that the Bazel RBE test"
   echo "commands overrides the XLA repository and thus require a local copy of"
   echo "XLA to run."
 fi
