@@ -4674,7 +4674,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     def regions_with_inaccuracies_keep(*to_keep):
       to_keep_parts = []
       for r in to_keep:
-        if r.endswith('.real') or r.endswith('.imag'):
+        if r.endswith(('.real', '.imag')):
           to_keep_parts.append(r)
         else:
           to_keep_parts.append(r + '.real')

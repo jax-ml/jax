@@ -599,8 +599,8 @@ def _div_taylor_rule(primals_in, series_in):
   w = [y] + y_terms
   v = [None] * len(u)
 
-  for k in range(0, len(v)):
-    conv = sum(v[j] * w[k-j] for j in range(0, k))
+  for k in range(len(v)):
+    conv = sum(v[j] * w[k-j] for j in range(k))
     v[k] = (u[k] - conv) / w[0]
   primal_out, *series_out = v
   return primal_out, series_out
@@ -633,8 +633,8 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   w = [y] + y_terms
   v: list[Any] = [None] * len(u)
   op = partial(prim.bind, **params)
-  for k in range(0, len(v)):
-    v[k] = sum(op(u[j], w[k-j]) for j in range(0, k+1))
+  for k in range(len(v)):
+    v[k] = sum(op(u[j], w[k-j]) for j in range(k+1))
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.dot_general_p] = partial(_bilinear_taylor_rule, lax.dot_general_p)

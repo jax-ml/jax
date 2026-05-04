@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import sys
-from typing import Any, Union
+from typing import Any
 
 from jax._src import deprecations
 from jax._src.lib import xla_client as xc
@@ -190,10 +190,10 @@ Array.__module__ = "jax"
 
 # StaticScalar is the Union of all scalar types that can be converted to
 # JAX arrays, and are possible to mark as static arguments.
-StaticScalar = Union[
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
-]
+StaticScalar = (
+  np.bool_ | np.number |  # NumPy scalar types
+  bool | int | float | complex  # Python scalar types
+)
 
 if sys.version_info[:2] < (3, 14):
   # Python 3.14 raises
@@ -205,11 +205,11 @@ if sys.version_info[:2] < (3, 14):
 # standard JAX array (i.e. not including future non-standard array types like
 # KeyArray and BInt). It's different than np.typing.ArrayLike in that it doesn't
 # accept arbitrary sequences, nor does it accept string data.
-ArrayLike = Union[
-  Array,  # JAX array type
-  np.ndarray,  # NumPy array type
-  StaticScalar,  # valid scalars
-]
+ArrayLike = (
+  Array |  # JAX array type
+  np.ndarray |  # NumPy array type
+  StaticScalar  # valid scalars
+)
 
 if sys.version_info[:2] < (3, 14):
   # Python 3.14 raises

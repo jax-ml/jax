@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import partial
 import json
 import types
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -85,7 +85,7 @@ def _get_to_lojax(ref, *idx, tree):
   return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
 get_p.to_lojax = _get_to_lojax
 
-Indexer = Union[int, slice, Array, types.EllipsisType]
+Indexer = int | slice | Array | types.EllipsisType
 
 
 def get_ref_and_transforms(

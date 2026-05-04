@@ -23,7 +23,7 @@ import functools
 import itertools
 import json
 import re
-from typing import Any, Protocol, TypeVar, Union, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import logging
 import numpy as np
@@ -67,7 +67,7 @@ zip = util.safe_zip
 DType = Any
 Shape = core.Shape
 # The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
+LoweringSharding = sharding.Sharding | pxla.UnspecifiedValue
 NamedSharding = sharding_impls.NamedSharding
 HloSharding = xla_client.HloSharding
 
@@ -996,13 +996,13 @@ def _wrap_main_func(
                                                                 result_attrs))
                          if is_token(typ, attrs)]
     nr_token_results = len(token_result_idxs)
-    assert token_result_idxs == list(range(0, nr_token_results))
+    assert token_result_idxs == list(range(nr_token_results))
     nr_array_results = len(orig_output_types) - nr_token_results
     assert nr_array_results >= 0
     new_main_arg_indices = (
         *range(nr_platform_index_args),
         *range(nr_platform_index_args + nr_dim_args, len(orig_input_types)))
-    new_main_result_indices = tuple(range(0, len(orig_output_types)))
+    new_main_result_indices = tuple(range(len(orig_output_types)))
 
     new_main_input_types = [orig_input_types[idx] for idx in new_main_arg_indices]
     new_main_output_types = [orig_output_types[idx] for idx in new_main_result_indices]

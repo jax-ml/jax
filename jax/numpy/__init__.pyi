@@ -4,7 +4,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Sequence
 import os
-from typing import Any, IO, Literal, NamedTuple, Protocol, TypeVar, Union, overload
+from typing import Any, IO, Literal, NamedTuple, Protocol, TypeVar, overload
 
 from jax._src import core as _core
 from jax._src import dtypes as _dtypes
@@ -24,7 +24,7 @@ import numpy as _np
 
 _T = TypeVar('_T')
 
-_Axis = Union[None, int, Sequence[int]]
+_Axis = None | int | Sequence[int]
 
 _Device = Device
 
@@ -639,7 +639,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: builtins.bool = True, retstep: builtins.bool = False,
              dtype: DTypeLike | None = ...,
              axis: int = 0,
-             *, device: _Device | _Sharding | None = ...) -> Union[Array, tuple[Array, Array]]: ...
+             *, device: _Device | _Sharding | None = ...) -> Array | tuple[Array, Array]: ...
 
 def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) -> Array: ...
 def log(x: ArrayLike, /) -> Array: ...
@@ -766,7 +766,7 @@ def packbits(
     a: ArrayLike, axis: int | None = ..., bitorder: str = ...
 ) -> Array: ...
 
-PadValueLike = Union[_T, Sequence[_T], Sequence[Sequence[_T]]]
+PadValueLike = _T | Sequence[_T] | Sequence[Sequence[_T]]
 def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | _np.ndarray],
         mode: str | Callable[..., Any] = ..., **kwargs) -> Array: ...
 

@@ -28,7 +28,7 @@ from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 from functools import partial
 import inspect
-from typing import (Any, Literal, Optional, TypeVar, overload,
+from typing import (Any, Literal, TypeVar, overload,
                     cast, TYPE_CHECKING)
 import weakref
 
@@ -122,7 +122,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
       # TODO(emilyaf): Shouldn't need this fallback.
       raise
 
-_post_hook_state = config_ext.Config[Optional[Callable]](
+_post_hook_state = config_ext.Config[Callable | None](
     "post_hook", None, include_in_jit_key=False
 )
 jax_jit.set_post_hook_state(_post_hook_state)

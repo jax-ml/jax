@@ -1805,7 +1805,7 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
   finfo = np.finfo(dtype)
 
   machine = platform.machine()
-  is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
+  is_arm_cpu = machine.startswith(('aarch', 'arm'))
   smallest = np.nextafter(finfo.tiny, finfo.max) if is_arm_cpu and platform.system() == 'Darwin' else finfo.tiny
 
   def make_axis_points(size):

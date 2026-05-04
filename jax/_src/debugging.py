@@ -22,7 +22,7 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union, overload
+from typing import Any, overload
 
 import numpy as np
 
@@ -149,7 +149,7 @@ def _debug_callback_partial_auto(axis_context, *args, **params):
     idx = lax.axis_index(*partial_auto)
     return lax.cond(idx == 0,
                     lambda: debug_callback_p.bind(*args, **params),
-                    lambda: [])
+                    list)
   return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
 def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
@@ -783,7 +783,7 @@ def _raise_to_slice(slc: slice | int):
     return slice(slc, slc + 1)
   return slc
 
-Color = Union[tuple[float, float, float], str]
+Color = tuple[float, float, float] | str
 ColorMap = Callable[[float], tuple[float, float, float, float]]
 
 def _canonicalize_color(color: Color) -> str:

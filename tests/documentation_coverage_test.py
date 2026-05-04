@@ -143,8 +143,7 @@ def get_all_documented_jax_apis() -> Mapping[str, list[str]]:
 
   apis = collections.defaultdict(list)
   for root, _, files in os.walk(path):
-    if (root.startswith(os.path.join(path, 'build'))
-        or root.startswith(os.path.join(path, '_autosummary'))):
+    if (root.startswith((os.path.join(path, 'build'), os.path.join(path, '_autosummary')))):
       continue
     for filename in files:
       if filename.endswith('.rst'):

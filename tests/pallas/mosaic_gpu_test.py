@@ -3738,7 +3738,6 @@ class PallasCallWarpPrimitiveSemanticsWGTest(
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
-  ...
 
   def test_missing_primitive_lowerings_are_tracked(self):
     # This test is a way to keep track of which primitives need to be adapted

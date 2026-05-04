@@ -1189,7 +1189,7 @@ Notice the gotcha here: no matter where in the argument list these parameters ap
 
 @partial(custom_jvp, nondiff_argnums=(0, 2))
 def app2(f, x, g):
-  return f(g((x)))
+  return f(g(x))
 
 @app2.defjvp
 def app2_jvp(f, g, primals, tangents):

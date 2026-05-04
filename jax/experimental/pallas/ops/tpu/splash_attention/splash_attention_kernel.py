@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import functools
 import json
-from typing import Any, Literal, NamedTuple, Optional, Union, overload
+from typing import Any, Literal, NamedTuple, overload
 
 import jax
 from jax import ad_checkpoint
@@ -68,23 +68,23 @@ class SegmentIds(NamedTuple):
 
 
 # Return type of SplashAttention function that implements the custom vjp rule.
-SplashCustomReturnType = Union[
+SplashCustomReturnType = (
     # out, no residuals
-    jax.Array,
+    jax.Array |
     # out, residuals:
     tuple[jax.Array, tuple[jax.Array,]]
-]
+)
 
 SplashResidualsType = tuple[
     jax.Array,  # q
     jax.Array,  # k
     jax.Array,  # v
-    Optional[SegmentIds],  # segment_ids
-    Optional[jax.Array],   # sinks
+    SegmentIds | None,  # segment_ids
+    jax.Array | None,   # sinks
     jax.Array,  # out
     jax.Array,  # logsumexp
-    Optional[mask_info_lib.MaskInfo],  # dq_mask_info
-    Optional[mask_info_lib.MaskInfo],  # dkv_mask_info
+    mask_info_lib.MaskInfo | None,  # dq_mask_info
+    mask_info_lib.MaskInfo | None,  # dkv_mask_info
 ]
 
 MaskFunctionType = Callable[..., jax.Array]

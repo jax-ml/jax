@@ -23,7 +23,7 @@ In this guide, we'll write a matrix multiplication routine using Pallas. We'll a
 
 #@title Imports
 import functools
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 from jax.experimental import pallas as pl

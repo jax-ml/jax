@@ -11246,7 +11246,7 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(hs3.num_dimensions(), 2)
     self.assertEqual(hs3.tile_assignment_dimensions(), [3, 3])
     self.assertEqual(hs3.num_devices(), 9)
-    self.assertEqual(hs3.tile_assignment_devices(), list(range(0, 9)))
+    self.assertEqual(hs3.tile_assignment_devices(), list(range(9)))
     self.assertEqual(
         hs3.subgroup_types(),
         [xc.OpSharding.Type.MANUAL, xc.OpSharding.Type.REPLICATED],

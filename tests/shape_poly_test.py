@@ -1710,7 +1710,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     # performance
     def f(x):  # x: i32[a, b]
       acc = 0
-      for start in range(0, 50):
+      for start in range(50):
         slice = x[start::2]  # exercises floordiv and min
         acc += jnp.sum(slice, axis=0)
 

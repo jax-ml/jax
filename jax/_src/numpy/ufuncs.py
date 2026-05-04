@@ -2938,7 +2938,7 @@ def signbit(x: ArrayLike, /) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
   elif not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(
-        "jax.numpy.signbit is not well defined for %s" % dtype)
+        "jax.numpy.signbit is not well defined for {}".format(dtype))
 
   info = dtypes.finfo(dtype)
   if info.bits not in _INT_DTYPES:

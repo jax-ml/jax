@@ -24,7 +24,6 @@ import itertools
 import json
 import logging
 import types
-from typing import Union
 
 from jax._src import config
 from jax._src import core
@@ -112,7 +111,7 @@ def source_locations(jaxpr: core.Jaxpr):
     return source_info_util.summarize(eqn.source_info)
   return histogram(jaxpr, key)
 
-MaybeEqn = Union[core.JaxprEqn, None]
+MaybeEqn = core.JaxprEqn | None
 
 def var_defs_and_refs(jaxpr: core.Jaxpr):
   defs: dict[core.Var, MaybeEqn] = {}

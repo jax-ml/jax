@@ -23,7 +23,7 @@ import enum
 import logging
 import os
 import threading
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 from jaxlib import _jax as _xla
 
@@ -58,7 +58,7 @@ xla_platform_names = {
 
 logger = logging.getLogger(__name__)
 
-_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 
 def make_cpu_client(
@@ -193,7 +193,7 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   if allocator not in ('default', 'platform', 'bfc', 'cuda_async', 'vmm'):
     raise ValueError(
         'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", "cuda_async", or "vmm", got "%s"' % allocator
+        '"bfc", "cuda_async", or "vmm", got "{}"'.format(allocator)
     )
   options['allocator'] = allocator
   if memory_fraction:

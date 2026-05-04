@@ -455,11 +455,11 @@ class DtypesTest(jtu.JaxTestCase):
   def testDtypeFromScalarValue(self):
     self.assertEqual(dtypes.dtype(bool(0)), np.dtype(np.bool_))
     if config.enable_x64.value:
-      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int64))
+      self.assertEqual(dtypes.dtype(0), np.dtype(np.int64))
       self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float64))
       self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex128))
     else:
-      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int32))
+      self.assertEqual(dtypes.dtype(0), np.dtype(np.int32))
       self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float32))
       self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
 

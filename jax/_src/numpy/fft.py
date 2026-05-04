@@ -443,8 +443,8 @@ def _axis_check_1d(func_name: str, axis: int | None):
   full_name = f"jax.numpy.fft.{func_name}"
   if isinstance(axis, (list, tuple)):
     raise ValueError(
-        "%s does not support multiple axes. Please use %sn. "
-        "Got axis = %r." % (full_name, full_name, axis)
+        "{} does not support multiple axes. Please use {}n. "
+        "Got axis = {!r}.".format(full_name, full_name, axis)
     )
 
 def _fft_core_1d(func_name: str, fft_type: lax_fft.FftType,
@@ -843,8 +843,7 @@ def _fft_core_2d(func_name: str, fft_type: lax_fft.FftType, a: ArrayLike,
   full_name = f"jax.numpy.fft.{func_name}"
   if len(axes) != 2:
     raise ValueError(
-        "%s only supports 2 axes. Got axes = %r."
-        % (full_name, axes)
+        "{} only supports 2 axes. Got axes = {!r}.".format(full_name, axes)
     )
   return _fft_core(func_name, fft_type, a, s, axes, norm)
 
@@ -1181,12 +1180,12 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
-          "Got n = %s." % list(n))
+          "Got n = {}.".format(list(n)))
 
   elif isinstance(d, (list, tuple)):
     raise ValueError(
           "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
-          "Got d = %s." % list(d))
+          "Got d = {}.".format(list(d)))
 
   out_dtype = dtype
   dtype = dtypes.finfo(dtypes.to_inexact_dtype(dtype)).dtype
@@ -1224,12 +1223,12 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "
-          "Got n = %s." % list(n))
+          "Got n = {}.".format(list(n)))
 
   elif isinstance(d, (list, tuple)):
     raise ValueError(
           "The d argument of jax.numpy.fft.rfftfreq only takes a single value. "
-          "Got d = %s." % list(d))
+          "Got d = {}.".format(list(d)))
 
   if n % 2 == 0:
     k = jnp.arange(0, n // 2 + 1, dtype=dtype)

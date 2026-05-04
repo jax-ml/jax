@@ -19,7 +19,6 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Union
 import warnings
 
 import numpy as np
@@ -161,8 +160,8 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
-KeyDTypeLike = Union[str, prng.KeyTy]
+PRNGSpecDesc = str | PRNGSpec | PRNGImpl | Hashable
+KeyDTypeLike = str | prng.KeyTy
 
 
 def resolve_prng_impl(
@@ -1916,7 +1915,7 @@ def gumbel(key: ArrayLike,
   if mode is None:
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
   if mode not in ("highest", "high", "low"):
-    raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
+    raise ValueError("Must provide valid mode for gumbel got: {}".format(mode))
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gumbel", shape)
   return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
                          mode=mode)(key)

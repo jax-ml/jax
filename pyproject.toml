@@ -113,6 +113,10 @@ ignore = [
     "B904",
     # Zip without explicit strict parameter
     "B905",
+    # Use format specifiers instead of percent format
+    "UP031",
+    # Use f-string instead of `format` call
+    "UP032",
 ]
 select = [
     "B9",
@@ -129,6 +133,8 @@ select = [
     "E225",
     "E227",
     "E228",
+    "PIE",
+    "UP",
 ]
 
 [tool.ruff.lint.mccabe]

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Literal, overload, Sequence
+from typing import Any, Literal, overload
+from collections.abc import Sequence
 
 from jax._src.core import AxisName
 from jax._src.cudnn.scaled_matmul_stablehlo import BlockScaleConfig
@@ -124,7 +125,7 @@ def scaled_dot_general(
     lhs: ArrayLike, rhs: ArrayLike,
     dimension_numbers: DotDimensionNumbers,
     preferred_element_type: DTypeLike = ...,
-    configs: List[BlockScaleConfig] | None = ...,
+    configs: list[BlockScaleConfig] | None = ...,
     implementation: Literal['cudnn'] | None = ...,
   ) -> Array: ...
 def scaled_matmul(

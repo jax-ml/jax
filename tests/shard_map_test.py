@@ -1136,8 +1136,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     prim = core.Primitive('prim')  # no rep rule here!
     prim.multiple_results = True
-    prim.def_impl(lambda: [])
-    prim.def_abstract_eval(lambda: [])
+    prim.def_impl(list)
+    prim.def_abstract_eval(list)
 
     @partial(shard_map, mesh=mesh, in_specs=(), out_specs=None, check_vma=True)
     def f():

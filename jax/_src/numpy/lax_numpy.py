@@ -30,7 +30,7 @@ from functools import partial
 import math
 import operator
 import os
-from typing import Any, IO, Literal, Protocol, TypeVar, Union, cast, overload
+from typing import Any, IO, Literal, Protocol, TypeVar, cast, overload
 
 import numpy as np
 
@@ -3821,7 +3821,7 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
 
 ### Padding
 
-PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValueLike = T | Sequence[T] | Sequence[Sequence[T]]
 PadValue = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):

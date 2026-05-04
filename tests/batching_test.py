@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from functools import partial
 import itertools as it
-from typing import Any, TypeVar, Union
+from typing import Any, TypeVar
 
 import numpy as np
 from absl.testing import absltest
@@ -1251,7 +1251,7 @@ class BatchingTest(jtu.JaxTestCase):
 
 Array = Any
 ArrayElt = Any
-Int = Union[int, core.Tracer]
+Int = int | core.Tracer
 
 # Can't used NamedTuple here b/c those are pytrees
 class NamedArray:

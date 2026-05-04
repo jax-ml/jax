@@ -18,7 +18,7 @@ import builtins
 from collections.abc import Callable, Sequence
 import math
 import operator
-from typing import overload, Any, Literal, Union
+from typing import overload, Any, Literal
 
 import numpy as np
 
@@ -44,7 +44,7 @@ export = set_module('jax.numpy')
 _all = builtins.all
 
 
-Axis = Union[int, Sequence[int], None]
+Axis = int | Sequence[int] | None
 
 def _isscalar(element: Any) -> bool:
   m = getattr(element, '__jax_array__', None)
