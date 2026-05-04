@@ -1105,7 +1105,7 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
   def test_fuse_transposed_lhs_in_matmul(self):
-    if not jtu.is_cloud_tpu_at_least(year=2026, month=5, day=4):
+    if not jtu.is_cloud_tpu_at_least(year=2026, month=5, day=5):
       self.skipTest("Requires newer libtpu")
 
     lhs_shape = (512, 128)
