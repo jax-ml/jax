@@ -864,9 +864,9 @@ def take_along_axis(
   if axis_size == 0:
     return lax.full(out_shape, 0, a.dtype)
 
-  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
-  indices = lax.convert_element_type(indices, index_dtype)
   if mode != "promise_in_bounds":
+    index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
+    indices = lax.convert_element_type(indices, index_dtype)
     indices = _normalize_index(indices, axis_size)
 
   if mode == "one_hot":

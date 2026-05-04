@@ -4599,6 +4599,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q1 = jnp.take_along_axis(arr, indices)
     np.testing.assert_array_equal(q0, q1)
 
+  def testTakeAlongAxisPromiseInBoundsRetainsDtype(self):
+    arr = jnp.arange(10, dtype=jnp.float32)
+    indices = jnp.array([1, 2, 3], dtype=jnp.int8)
+    jaxpr = jax.make_jaxpr(
+      lambda i: jnp.take_along_axis(arr, i, axis=0, mode="promise_in_bounds")
+    )(indices)
+    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    nested_jaxpr = jit_eqn.params['jaxpr']
+    [gather_eqn] = (eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p)
+    indices_var = gather_eqn.invars[1]
+    self.assertEqual(indices_var.aval.dtype, jnp.int8)
+
+  def testTakeAlongAxisWithInt8Indices(self):
+    h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
+    g = jtu.rand_int(self.rng(), -100, 99)((256, 256, 1), np.int8)
+    q0 = jnp.take_along_axis(h, g, axis=-1)
+    q1 = np.take_along_axis(h, g, axis=-1)
+    np.testing.assert_equal(q0, q1)
+
   def testTakeAlongAxisWithUint8IndicesDoesNotOverflow(self):
     # https://github.com/jax-ml/jax/issues/5088
     h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
