@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import base64
 import gzip
 import json
+import os
+import re
 
 from absl.testing import absltest
 
@@ -159,6 +161,36 @@ class JaxprStatsTest(jtu.JaxTestCase):
     # Verify the property resolves successfully and aggregates the nested equations
     # (should be > 1 due to the condition and branch eqns)
     self.assertEqual(jaxpr_util.count_eqns(jaxpr_nested), 5)
+
+  def test_jaxpr_to_html(self):
+    def f(x):
+      return x + 2
+    jaxpr = make_jaxpr(f)(42)
+
+    html_content = jaxpr_util.jaxpr_to_html(jaxpr.jaxpr)
+
+    self.assertIsInstance(html_content, str)
+    self.assertIn("<!DOCTYPE html>", html_content)
+    self.assertIn('<div id="jaxpr-container">', html_content)
+
+    # Extract base64 data
+    match = re.search(r'const base64Data = "([^"]+)";', html_content)
+    self.assertIsNotNone(match)
+    base64_data = match.group(1)
+
+    # Decode and decompress
+    compressed = base64.b64decode(base64_data)
+    decompressed = gzip.decompress(compressed).decode("utf-8")
+    data = json.loads(decompressed)
+
+    self.assertIn("lines", data)
+    self.assertIn("frames", data)
+    self.assertIn("dag", data)
+    self.assertIn("strings", data)
+
+    # Verify that the pretty printed jaxpr lines are present
+    lines = data["lines"]
+    self.assertTrue(any("add" in line for line in lines))
 
 
 if __name__ == "__main__":

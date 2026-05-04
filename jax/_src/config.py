@@ -1415,11 +1415,14 @@ hlo_source_file_canonicalization_regex = optional_string_state(
     default=None,
     help=('Used to canonicalize the source_path metadata of HLO instructions '
           'by removing the given regex. If set, re.sub() is called on each '
-          'source_file with the given regex, and all matches are removed. '
-          'This can be used to avoid spurious cache misses when using the '
-          'persistent compilation cache, which includes HLO metadata in the '
-          'cache key.'),
+          'source_file with the given regex, and all matches are removed.'),
     include_in_trace_context=True)
+
+source_url_schema = optional_string_state(
+    name='jax_source_url_schema',
+    default=None,
+    help=('URL format string used to generate links to source files in the HTML'
+          ' jaxpr dumps. Can contain `{file}` and `{line}` placeholders.'))
 
 include_full_tracebacks_in_locations = bool_state(
     name='jax_include_full_tracebacks_in_locations',
@@ -2190,7 +2193,7 @@ jax_dump_ir_modes = string_flag(
     name="jax_dump_ir_modes",
     default=os.getenv("JAX_DUMP_IR_MODES", "stablehlo"),
     help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
-         "default), 'jaxpr', or 'eqn_count_pprof' for "
+         "default), 'jaxpr', 'jaxpr_html', or 'eqn_count_pprof' for "
          "jaxpr equation count pprof profile.")
 
 jax_ragged_dot_use_ragged_dot_instruction = bool_state(

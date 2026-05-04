@@ -16,15 +16,18 @@
 
 from __future__ import annotations
 
+import base64
 from collections import Counter
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 import gzip
+import html
 import itertools
 import json
 import logging
+import re
 import types
-from typing import Union
+from typing import Any, Union
 
 from jax._src import config
 from jax._src import core
@@ -150,8 +153,6 @@ def var_defs_and_refs(jaxpr: core.Jaxpr):
   return [(jaxpr, res), *subs] if subs else (jaxpr, res)
 
 
-DEFAULT_WORKSPACE_ROOT: str | None = None
-
 def _strip_workspace_root(filename: str, workspace_root: str) -> str:
   i = filename.rfind(workspace_root)
   return filename[i+len(workspace_root):] if i >= 0 else filename
@@ -203,7 +204,11 @@ def _pprof_profile(
     name = code.co_qualname
     if workspace_root is not None:
       filename = _strip_workspace_root(filename, workspace_root)
-      name = f"{filename.removesuffix('.py').replace('/', '.')}.{name}"
+    else:
+      pattern = config.hlo_source_file_canonicalization_regex.value
+      if pattern:
+        filename = re.sub(pattern, '', filename)
+    name = f"{filename.removesuffix('.py').replace('/', '.')}.{name}"
     functions.append(
         {"id": func_id,
         "name": s[name],
@@ -244,7 +249,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr, *,
       (tb, eqn.primitive)
       for tb, eqn in _all_eqns_with_traceback(jaxpr, None, set())
   )
-  return _pprof_profile(d, workspace_root or DEFAULT_WORKSPACE_ROOT)
+  return _pprof_profile(d, workspace_root)
 
 
 def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
@@ -300,7 +305,11 @@ def maybe_dump_jaxpr_to_file(
   if not (out_dir := path.make_jax_dump_dir(config.jax_dump_ir_to.value)):
     return None
   modes = config.jax_dump_ir_modes.value.split(",")
-  if "jaxpr" not in modes and "eqn_count_pprof" not in modes:
+  if (
+      "jaxpr" not in modes
+      and "jaxpr_html" not in modes
+      and "eqn_count_pprof" not in modes
+  ):
     return None
   id = next(_jaxpr_id_counter)
   if "jaxpr" in modes:
@@ -309,6 +318,12 @@ def maybe_dump_jaxpr_to_file(
     )
     jaxpr_path = out_dir / f"jax_{id:06d}_{fun_name}.jaxpr.txt"
     jaxpr_path.write_text(jaxpr.pretty_print())
+  if "jaxpr_html" in modes:
+    logging.log(
+        logging.INFO, "Dumping jaxpr HTML for %s to %s.", fun_name, out_dir
+    )
+    html_path = out_dir / f"jax_{id:06d}_{fun_name}.jaxpr.html"
+    html_path.write_text(jaxpr_to_html(jaxpr))
   if "eqn_count_pprof" in modes:
     logging.log(
         logging.INFO, "Dumping eqn count pprof for %s to %s.", fun_name, out_dir
@@ -316,3 +331,439 @@ def maybe_dump_jaxpr_to_file(
     eqn_prof_path = out_dir / f"jax_{id:06d}_{fun_name}.eqn_count_pprof"
     eqn_prof_path.write_bytes(pprof_equation_profile(jaxpr))
   return fun_name
+
+
+def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
+  """Renders a Jaxpr as HTML with interactive tracebacks and search."""
+
+  # 1. Render jaxpr to string and get source map
+  source_map_output: list[list[tuple[int, int, Any]]] = []
+  rendered_str = jaxpr.pretty_print(
+      source_map=source_map_output, use_color=False
+  )
+
+  # 2. Process source map and build traceback DAG
+  raw_frame_to_idx: dict[tuple[types.CodeType, int], int] = {}
+  dag_nodes: list[dict[str, int | None]] = []
+  node_to_idx: dict[tuple[int, int | None], int] = {}
+  tb_to_node_idx: dict[Any, int | None] = {}
+
+  def get_frame_idx(code: types.CodeType, lasti: int) -> int:
+    key = (code, lasti)
+    idx = raw_frame_to_idx.get(key)
+    if idx is None:
+      idx = len(raw_frame_to_idx)
+      raw_frame_to_idx[key] = idx
+    return idx
+
+  def get_node_idx(frame_idx: int, parent_node_idx: int | None) -> int:
+    key = (frame_idx, parent_node_idx)
+    idx = node_to_idx.get(key)
+    if idx is None:
+      idx = len(dag_nodes)
+      dag_nodes.append({"frame_idx": frame_idx, "parent": parent_node_idx})
+      node_to_idx[key] = idx
+    return idx
+
+  def process_tb(tb: Any) -> int | None:
+    idx = tb_to_node_idx.get(tb)
+    if idx is not None:
+      return idx
+
+    code, lasti = tb.raw_frames()
+
+    parent_node_idx = None
+    # raw_frames gives inner to outer. We iterate from outer to inner.
+    for i in reversed(range(len(code))):
+      frame_idx = get_frame_idx(code[i], lasti[i])
+      parent_node_idx = get_node_idx(frame_idx, parent_node_idx)
+
+    tb_to_node_idx[tb] = parent_node_idx
+    return parent_node_idx
+
+  # 3. Generate HTML lines with spans
+  lines = rendered_str.splitlines()
+  html_lines = []
+
+  for i, line in enumerate(lines):
+    spans = source_map_output[i] if i < len(source_map_output) else []
+    # Sort spans by start column
+    spans.sort(key=lambda x: x[0])
+
+    result = []
+    last_idx = 0
+    for start, end, tb in spans:
+      if start > last_idx:
+        result.append(html.escape(line[last_idx:start]))
+
+      tb_node_idx = process_tb(tb)
+      if tb_node_idx is not None:
+        result.append(f'<span class="traceable" data-tb-idx="{tb_node_idx}">')
+        result.append(html.escape(line[start:end]))
+        result.append("</span>")
+      else:
+        result.append(html.escape(line[start:end]))
+      last_idx = end
+
+    if last_idx < len(line):
+      result.append(html.escape(line[last_idx:]))
+
+    html_lines.append("".join(result))
+
+  # 4. Convert raw frames to final Frame representations with string pooling
+  final_frames = []
+  string_to_idx: dict[str, int] = {}
+
+  def get_string_idx(s: str) -> int:
+    idx = string_to_idx.get(s)
+    if idx is None:
+      idx = len(string_to_idx)
+      string_to_idx[s] = idx
+    return idx
+
+  for code, lasti in raw_frame_to_idx:
+    frame = source_info_util.raw_frame_to_frame(code, lasti)
+    pattern = config.hlo_source_file_canonicalization_regex.value
+    file_name = (
+        re.sub(pattern, "", frame.file_name) if pattern else frame.file_name
+    )
+    final_frames.append({
+        "file_idx": get_string_idx(file_name),
+        "func_idx": get_string_idx(frame.function_name),
+        "line": frame.start_line,
+        "col": frame.start_column,
+    })
+
+  # 5. Construct final HTML and compress data
+
+  data = {
+      "frames": final_frames,
+      "dag": dag_nodes,
+      "strings": list(string_to_idx),
+      "lines": html_lines,
+  }
+
+  json_data = json.dumps(data)
+  compressed_data = gzip.compress(json_data.encode("utf-8"))
+  base64_data = base64.b64encode(compressed_data).decode("utf-8")
+
+  source_url_schema = config.source_url_schema.value or ""
+  html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body {{
+    display: flex;
+    font-family: monospace;
+    margin: 0;
+    height: 100vh;
+  }}
+  #jaxpr-container {{
+    flex: 7;
+    overflow: auto;
+    padding: 10px;
+    background-color: #f5f5f5;
+    line-height: 18px;
+    font-size: 14px;
+  }}
+  .line {{
+    height: 18px;
+    white-space: pre;
+  }}
+  #pane-divider {{
+    width: 5px;
+    cursor: col-resize;
+    background-color: #ccc;
+  }}
+  #side-pane {{
+    flex: 3;
+    overflow: auto;
+    padding: 10px;
+    background-color: #fff;
+    border-left: 1px solid #ccc;
+  }}
+  .traceable {{
+    cursor: pointer;
+    background-color: #e8f0fe;
+  }}
+  .traceable:hover {{
+    background-color: #d2e3fc;
+  }}
+  .selected {{
+    background-color: #aecbfa;
+  }}
+  .search-match {{
+    background-color: #fff59d;
+  }}
+  .current-match {{
+    background-color: #fff59d;
+    border: 1px solid #f57f17;
+    box-sizing: border-box;
+  }}
+  .frame {{
+    margin-bottom: 8px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 4px;
+  }}
+  .frame-file {{ color: #5f6368; }}
+  .frame-func {{ color: #1a73e8; font-weight: bold; }}
+  .frame-loc {{ color: #80868b; }}
+  #search-controls {{
+    margin-bottom: 10px;
+  }}
+  #search-input {{
+    width: 60%;
+  }}
+</style>
+</head>
+<body>
+
+<div id="jaxpr-container">
+  <div id="virtual-scroll-spacer" style="position: relative;">
+    <div id="visible-lines-container" style="position: absolute; top: 0; left: 0; right: 0;"></div>
+  </div>
+</div>
+
+<div id="pane-divider"></div>
+
+<div id="side-pane">
+  <h3>Search</h3>
+  <div id="search-controls">
+    <input type="text" id="search-input" placeholder="Search jaxpr...">
+    <button id="search-prev">&lt;</button>
+    <button id="search-next">&gt;</button>
+    <span id="search-count"></span>
+  </div>
+  <div id="total-lines"></div>
+  <hr>
+  <h3>Traceback</h3>
+  <div id="traceback-content">Click on a shaded line to see the traceback.</div>
+</div>
+
+<script>
+  async function decompress(base64Data) {{
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {{
+      bytes[i] = binary.charCodeAt(i);
+    }}
+    const stream = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
+    const result = await new Response(stream).text();
+    return JSON.parse(result);
+  }}
+
+  const base64Data = "{base64_data}";
+  const sourceUrlSchema = "{source_url_schema}";
+
+  decompress(base64Data).then(data => {{
+    const frames = data.frames;
+    const dag = data.dag;
+    const strings = data.strings;
+    const allLines = data.lines;
+
+    document.getElementById('total-lines').textContent = `Total lines: ${{allLines.length}}`;
+
+    const lineHeight = 18;
+    const container = document.getElementById('jaxpr-container');
+    const spacer = document.getElementById('virtual-scroll-spacer');
+    const visibleContainer = document.getElementById('visible-lines-container');
+
+    const MAX_HEIGHT = 10000000; // Reduce to 10M pixels to be safer with browser limits
+    const totalHeight = allLines.length * lineHeight;
+    const useScaling = totalHeight > MAX_HEIGHT;
+    const spacerHeight = useScaling ? MAX_HEIGHT : totalHeight;
+
+    spacer.style.height = spacerHeight + 'px';
+
+    const buffer = 5;
+    let matchingLines = [];
+    let currentMatchIdx = -1;
+
+    function renderVisibleLines() {{
+      const scrollTop = container.scrollTop;
+      const containerHeight = container.clientHeight;
+
+      const scale = useScaling ? ((totalHeight - containerHeight) / (MAX_HEIGHT - containerHeight)) : 1.0;
+      const virtualScrollTop = scrollTop * scale;
+
+      const startIdx = Math.floor(virtualScrollTop / lineHeight);
+      const offset = virtualScrollTop % lineHeight;
+
+      const renderedStartIdx = Math.max(0, startIdx - buffer);
+      const actualBuffer = startIdx - renderedStartIdx;
+
+      const endIdx = Math.min(allLines.length, Math.ceil((virtualScrollTop + containerHeight) / lineHeight) + buffer);
+
+      visibleContainer.innerHTML = allLines.slice(renderedStartIdx, endIdx).map((line, idx) => {{
+        const lineAbsoluteIdx = renderedStartIdx + idx;
+        const isMatch = matchingLines.includes(lineAbsoluteIdx);
+        const isCurrent = currentMatchIdx !== -1 && lineAbsoluteIdx === matchingLines[currentMatchIdx];
+
+        let className = "line";
+        if (isMatch) className += " search-match";
+        if (isCurrent) className += " current-match";
+
+        return `<div class="${{className}}">${{line}}</div>`;
+      }}).join('');
+
+      if (useScaling) {{
+        visibleContainer.style.top = (scrollTop - offset - (actualBuffer * lineHeight)) + 'px';
+      }} else {{
+        visibleContainer.style.top = (renderedStartIdx * lineHeight) + 'px';
+      }}
+    }}
+
+    container.addEventListener('scroll', renderVisibleLines);
+    window.addEventListener('resize', renderVisibleLines);
+    renderVisibleLines();
+
+    // Event Delegation
+    let selectedElement = null;
+    container.addEventListener('click', (e) => {{
+      const traceable = e.target.closest('.traceable');
+      if (traceable) {{
+        if (selectedElement) {{
+          selectedElement.classList.remove('selected');
+        }}
+        traceable.classList.add('selected');
+        selectedElement = traceable;
+        const tbIdx = parseInt(traceable.getAttribute('data-tb-idx'));
+        renderTraceback(tbIdx);
+      }}
+    }});
+
+    function renderTraceback(nodeIdx) {{
+      const contentDiv = document.getElementById('traceback-content');
+      contentDiv.innerHTML = '';
+
+      let currentIdx = nodeIdx;
+      const renderedFrames = [];
+
+      while (currentIdx !== null && currentIdx !== undefined) {{
+        const node = dag[currentIdx];
+        const frame = frames[node.frame_idx];
+        const file = strings[frame.file_idx];
+        const func = strings[frame.func_idx];
+        renderedFrames.push({{file: file, func: func, line: frame.line, col: frame.col}});
+        currentIdx = node.parent;
+      }}
+
+      renderedFrames.reverse();
+
+      renderedFrames.forEach(frame => {{
+        const frameDiv = document.createElement('div');
+        frameDiv.className = 'frame';
+        if (sourceUrlSchema) {{
+          const url = sourceUrlSchema.replace('{{file}}', frame.file).replace('{{line}}', frame.line);
+          frameDiv.innerHTML = `
+            <a href="${{url}}" target="_blank">${{escapeHtml(frame.file)}}:${{frame.line}}</a>
+            in <span class="frame-func">${{escapeHtml(frame.func)}}</span>
+          `;
+        }} else {{
+          frameDiv.innerHTML = `
+            <span class="frame-file">${{escapeHtml(frame.file)}}:${{frame.line}}</span>
+            in <span class="frame-func">${{escapeHtml(frame.func)}}</span>
+          `;
+        }}
+        contentDiv.appendChild(frameDiv);
+      }});
+
+      if (renderedFrames.length === 0) {{
+        contentDiv.innerHTML = 'No traceback information available.';
+      }}
+    }}
+
+    function escapeHtml(text) {{
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }}
+
+    // Search Logic
+    const searchInput = document.getElementById('search-input');
+    const searchPrev = document.getElementById('search-prev');
+    const searchNext = document.getElementById('search-next');
+    const searchCount = document.getElementById('search-count');
+
+    function performSearch() {{
+      const query = searchInput.value.trim().toLowerCase();
+      matchingLines = [];
+      currentMatchIdx = -1;
+
+      if (query) {{
+        allLines.forEach((line, idx) => {{
+          // Strip HTML tags for searching
+          const text = line.replace(/<[^>]*>/g, '').toLowerCase();
+          if (text.includes(query)) {{
+            matchingLines.push(idx);
+          }}
+        }});
+      }}
+
+      updateSearchUI();
+      renderVisibleLines();
+    }}
+
+    function updateSearchUI() {{
+      if (matchingLines.length > 0) {{
+        if (currentMatchIdx === -1) currentMatchIdx = 0;
+        searchCount.textContent = `${{currentMatchIdx + 1}} / ${{matchingLines.length}}`;
+      }} else {{
+        searchCount.textContent = searchInput.value.trim() ? "0 / 0" : "";
+        currentMatchIdx = -1;
+      }}
+    }}
+
+    function goToMatch(idx) {{
+      if (matchingLines.length === 0) return;
+      currentMatchIdx = (idx + matchingLines.length) % matchingLines.length;
+      updateSearchUI();
+
+      const lineIdx = matchingLines[currentMatchIdx];
+      const scale = useScaling ? (totalHeight / MAX_HEIGHT) : 1.0;
+      const virtualScrollTop = lineIdx * lineHeight;
+      const scrollTop = useScaling ? (virtualScrollTop / scale) : virtualScrollTop;
+
+      container.scrollTop = scrollTop;
+      renderVisibleLines();
+    }}
+
+    searchInput.addEventListener('input', performSearch);
+    searchPrev.addEventListener('click', () => goToMatch(currentMatchIdx - 1));
+    searchNext.addEventListener('click', () => goToMatch(currentMatchIdx + 1));
+  }});
+
+  // Simple resizable pane logic
+  const divider = document.getElementById('pane-divider');
+  const leftPane = document.getElementById('jaxpr-container');
+  const rightPane = document.getElementById('side-pane');
+
+  let isResizing = false;
+
+  divider.addEventListener('mousedown', (e) => {{
+    isResizing = true;
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
+  }});
+
+  document.addEventListener('mousemove', (e) => {{
+    if (!isResizing) return;
+    const offsetRight = document.body.clientWidth - e.clientX;
+
+    if (offsetRight > 100 && offsetRight < document.body.clientWidth - 100) {{
+      rightPane.style.flex = 'none';
+      rightPane.style.width = offsetRight + 'px';
+    }}
+  }});
+
+  document.addEventListener('mouseup', () => {{
+    isResizing = false;
+    document.body.style.cursor = 'default';
+  }});
+</script>
+
+</body>
+</html>
+"""
+  return html_content

@@ -45,8 +45,11 @@ def make_jaxpr_dump(jaxpr: core.Jaxpr, **_) -> common.SourceMapDump:
   for pprint_map_line in pprint_mappings:
     mappings.new_group()
     for pprint_segment in pprint_map_line:
-      start_col, end_col, frame = pprint_segment
+      start_col, end_col, tb = pprint_segment
       del end_col
+      frame = source_info_util.user_frame(tb)
+      if frame is None:
+        continue
       file_name = canonicalize_filename(frame.file_name)
       if file_name not in used_source_files:
         used_source_files.append(file_name)

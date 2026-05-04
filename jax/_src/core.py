@@ -4075,8 +4075,8 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
   doc = rule(eqn, context, settings)
-  user_frame = source_info_util.user_frame(eqn.source_info.traceback)
-  return doc if user_frame is None else pp.source_map(doc, user_frame)
+  return (doc if eqn.source_info.traceback is None
+          else pp.source_map(doc, eqn.source_info.traceback))
 
 def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
             params: Sequence[str] | None = None) -> pp.Doc:
