@@ -138,9 +138,14 @@ class Reshape:
 @dataclasses.dataclass(frozen=True)
 class Transpose:
   expression: Expression
+  permutation: tuple[int, ...]
+
+  def __post_init__(self):
+    if sorted(self.permutation) != list(range(len(self.permutation))):
+      raise ValueError(f"Invalid permutation {self.permutation}")
 
   def __str__(self):
-    return f"T({self.expression})"
+    return f"T({self.expression}, permutation={self.permutation})"
 
 
 Expression = (
@@ -216,13 +221,19 @@ def reduce_transpose_expression(
       if tile_transform is None:
         return SMEMTiling(None)
       tiling = tile_transform.tiling
-      if len(tiling) != 2:
-        raise NotImplementedError(
-            f"Only 2D tilings are supported, got {len(tiling)}"
-        )
-      return SMEMTiling(lc.TileTransform(tiling[::-1]))
+      permutation = transpose.permutation
+      tiling_offset = len(permutation) - len(tiling)
+      # We reject if there's a swap between tiled dimensions and untiled dimensions.
+      #
+      # For example:
+      #   A permutation (0, 3, 2, 1) and tiling of length <=2, we reject because tiling becomes non-contiguous.
+      #   A permutation (0, 3, 2, 1) and tiling of length 3, we accept.
+      if any(dim < tiling_offset for dim in permutation[-len(tiling) :]):
+        return Unsatisfiable()
+      new_tiling = tuple(tiling[dim - tiling_offset] for dim in permutation[-len(tiling):])
+      return SMEMTiling(lc.TileTransform(new_tiling))
     case _:
-      return Transpose(expression=reduced_expr)
+      return Transpose(expression=reduced_expr, permutation=transpose.permutation)
 
 
 def reduce_reduce_expression(

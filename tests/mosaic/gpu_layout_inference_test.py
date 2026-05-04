@@ -2629,16 +2629,27 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
-  @parameterized.parameters([False, True])
-  def test_infer_transforms_for_memref_transpose(self, annotate_input):
-    in_shape = (32, 64)
-    out_shape = (64, 32)
+  @parameterized.product(
+      annotate_input=[False, True],
+      rank=[2, 3],
+  )
+  def test_infer_transforms_for_memref_transpose(self, annotate_input, rank):
+    if rank == 2:
+      in_shape = (32, 64)
+      out_shape, out_strides = (64, 32), [1, 64]
+      perm, in_tile, out_tile = (1, 0), (8, 16), (16, 8)
+    else:
+      assert rank == 3
+      in_shape = (16, 32, 64)
+      out_shape, out_strides = (64, 16, 32), [1, 2048, 64]
+      perm, in_tile, out_tile = (2, 0, 1), (4, 8, 16), (16, 4, 8)
+
     elt_ty = ir.BF16Type.get()
 
     in_ref_ty = ir.MemRefType.get(
         in_shape, elt_ty, memory_space=mgpu.utils.smem()
     )
-    layout = ir.StridedLayoutAttr.get(0, strides=[1, 64])
+    layout = ir.StridedLayoutAttr.get(0, strides=out_strides)
     out_ref_ty = ir.MemRefType.get(
         out_shape, elt_ty, layout=layout, memory_space=mgpu.utils.smem()
     )
@@ -2647,18 +2658,18 @@ class LayoutInferenceTest(parameterized.TestCase):
       [in_ref] = undefs(in_ref_ty)
 
       in_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 16)),
+          mgpu.dialect.TileTransformAttr.get(in_tile),
           mgpu.dialect.SwizzleTransformAttr.get(32),
       ])
 
       if annotate_input:
         in_ref = mgpu.dialect.with_transforms(in_ref, in_transforms)
 
-      permutation = ir.AffineMap.get_permutation((1, 0))
+      permutation = ir.AffineMap.get_permutation(perm)
       transpose_op = memref.TransposeOp(out_ref_ty, in_ref, permutation)
 
       out_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((16, 8)),
+          mgpu.dialect.TileTransformAttr.get(out_tile),
           mgpu.dialect.SwizzleTransformAttr.get(32),
       ])
 

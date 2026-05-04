@@ -1151,9 +1151,7 @@ def _mgpu_async_load_op_lowering_rule(
     unwrapped_dst = utils.memref_transpose(
         unwrapped_dst, permutation
     )
-    if transforms:
-      raise NotImplementedError("Can't transpose transformed refs.")
-    transforms = (lc.TransposeTransform(permutation),)
+    transforms = (*transforms, lc.TransposeTransform(permutation))
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
@@ -1239,9 +1237,7 @@ def _mgpu_async_store_op_lowering_rule(
     unwrapped_source = utils.memref_transpose(
         unwrapped_source, permutation
     )
-    if transforms:
-      raise NotImplementedError("Can't transpose transformed refs.")
-    transforms = (lc.TransposeTransform(permutation),)
+    transforms = (*transforms, lc.TransposeTransform(permutation))
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, store_op)
 

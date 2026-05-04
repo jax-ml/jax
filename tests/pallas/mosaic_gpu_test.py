@@ -1321,8 +1321,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(f(x), x * 2)
 
   def test_copy_with_transforms_and_indexing(self):
-    # TODO(olechwierowicz): handle nD transposes correctly.
-    self.skip_if_wg_semantics()
     def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
       transposed_scratch = plgpu.transpose_ref(scratch_ref, (1, 0, 2, 3))
       for i in range(2):
@@ -1425,9 +1423,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_smem_gmem_transposed_copies(self, tiling):
     shape = (2, 2, 64)
     transforms = (tiling,) if tiling is not None else ()
-    if transforms:
-      # NotImplementedError: Only 2D tilings are supported, got 1
-      self.skip_if_wg_semantics()
 
     @functools.partial(
         self.kernel,
