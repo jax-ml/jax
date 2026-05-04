@@ -226,6 +226,7 @@ _OUT_SHARDING_CASES = [
     ('exponential', lambda key, n, s: random.exponential(key, shape=(n,), out_sharding=s)),
     ('f', lambda key, n, s: random.f(key, dfnum=2.0, dfden=3.0, shape=(n,), out_sharding=s)),
     ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
+    ('maxwell', lambda key, n, s: random.maxwell(key, shape=(n,), out_sharding=s)),
     ('multivariate_normal', lambda key, n, s: random.multivariate_normal(key, mean=jnp.zeros((n,)), cov=jnp.eye(n), shape=(n,), out_sharding=s)),
     ('laplace', lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
     ('loggamma', lambda key, n, s: random.loggamma(key, a=2.0, shape=(n,), out_sharding=s)),
