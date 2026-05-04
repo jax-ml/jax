@@ -272,9 +272,6 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
   absl::SetVLogLevel("custom_call", 5);
 
   std::string serialized;
-  xla::CompileOptions compile_options;
-  compile_options.executable_build_options.mutable_debug_options()
-      ->set_xla_gpu_experimental_aot_compiled_thunks(true);
   {
     absl::ScopedMockLog log;
     // Should be compiled only once.
@@ -287,7 +284,7 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
     ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<xla::PjRtLoadedExecutable> executable,
         client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                               /*options=*/std::move(compile_options)));
+                               xla::CompileOptions()));
     ASSERT_OK_AND_ASSIGN(serialized,
                          executable->GetExecutable()->SerializeExecutable());
   }
