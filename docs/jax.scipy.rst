@@ -123,6 +123,7 @@ jax.scipy.signal
    csd
    detrend
    istft
+   hilbert
    stft
    welch
 
