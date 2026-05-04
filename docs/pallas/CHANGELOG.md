@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Changes
+
+  * Added {func}`jax.experimental.pallas.align_to`, a utility that rounds a
+    value up to the nearest multiple of a given alignment.
+
 ### Mosaic GPU
 
 * New features
