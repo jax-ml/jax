@@ -1138,6 +1138,49 @@ class OpsTest(ptu.PallasTPUTest):
         result, jnp.einsum("km,kn->mn", lhs, rhs), atol=1e-5
     )
 
+  def test_sublane_padding_in_element_window(self):
+
+    def kernel(x_ref, o_ref):
+      o_ref[:] = x_ref[:]
+
+    N, D = 512, 128
+    STRIDE = 128
+    OVERLAP = 64
+    TILE = OVERLAP + STRIDE
+    N_TILES = N // STRIDE
+
+    x = jnp.arange(N * D, dtype=jnp.float32).reshape(N, D)
+
+    out_high = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((N_TILES, TILE, D), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(
+                (pl.Element(TILE, padding=(0, OVERLAP)), pl.Element(D)),
+                lambda i: (i * STRIDE, 0),
+            )
+        ],
+        out_specs=pl.BlockSpec((None, TILE, D), lambda i: (i, 0, 0)),
+        grid=(N_TILES,),
+    )(x)
+    np.testing.assert_array_equal(out_high[0], x[:TILE])
+    np.testing.assert_array_equal(out_high[-1, :STRIDE, :], x[N - STRIDE :])
+
+    x = jnp.arange(N * D, dtype=jnp.float32).reshape(N, D)
+    out_low = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((N_TILES, TILE, D), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(
+                (pl.Element(TILE, padding=(OVERLAP, 0)), pl.Element(D)),
+                lambda i: (i * STRIDE, 0),
+            )
+        ],
+        out_specs=pl.BlockSpec((None, TILE, D), lambda i: (i, 0, 0)),
+        grid=(N_TILES,),
+    )(x)
+    np.testing.assert_array_equal(out_low[0, OVERLAP:, :], x[:STRIDE])
+    np.testing.assert_array_equal(out_low[-1], x[N - TILE :])
 
 if __name__ == "__main__":
   absltest.main()
