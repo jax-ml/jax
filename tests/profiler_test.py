@@ -532,7 +532,6 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
-  @unittest.skip("Profiler takes >30s on Cloud TPUs")
   @unittest.skipIf(
       not (portpicker and _pywrap_profiler_plugin),
     "Test requires xprof and portpicker")
@@ -545,7 +544,13 @@ class ProfilerTest(unittest.TestCase):
     # Mock XProf call in collect_profile.
     _pywrap_profiler_plugin.trace = unittest.mock.MagicMock()
     def on_profile():
-      jax.collect_profile(port, 500, logdir, no_perfetto_link=True)
+      jax.collect_profile.collect_profile(
+          port=port,
+          duration_in_ms=500,
+          host="127.0.0.1",
+          log_dir=logdir,
+          no_perfetto_link=True,
+      )
       profile_done.set()
 
     thread_profiler = threading.Thread(
