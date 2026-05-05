@@ -38,9 +38,9 @@ on:
         type: string
         default: "7"
       rocm-tag:
-        description: "ROCm tag for container image (e.g., rocm720)"
+        description: "ROCm tag for container image (e.g., rocm722)"
         type: string
-        default: "rocm720"
+        default: "rocm722"
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string

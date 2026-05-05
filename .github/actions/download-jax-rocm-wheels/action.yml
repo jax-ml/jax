@@ -8,7 +8,7 @@ inputs:
     required: true
   rocm-version:
     description: "Which ROCm version should the artifact be downloaded for?"
-    default: "7.2.0"
+    default: "7.2.2"
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"
     default: "head"
