@@ -42,9 +42,11 @@ import weakref
 
 from absl import logging
 from absl.testing import absltest, parameterized
+
 import jax
 from jax import device_put, float0, grad, hessian, jacfwd, jacrev, jit
 from jax import lax
+from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax import tree_util
 from jax._src import api, api_util, dtypes, lib
 from jax._src import array
@@ -8091,6 +8093,48 @@ class TracebackTest(jtu.JaxTestCase):
 
     f(1.0)
     grad(f)(1.0)
+
+
+class EvalJaxprPrimitiveTest(jtu.JaxTestCase):
+  """Tests for eval_jaxpr_p and its transformation rules."""
+
+  def _bind_eval_jaxpr(self, f, *args):
+    """Trace f into a jaxpr and evaluate it via eval_jaxpr_p.bind."""
+    closed_jaxpr = jax.make_jaxpr(f)(*args)
+    return eval_jaxpr_p.bind(*args, jaxpr=closed_jaxpr)
+
+  def test_eval_jaxpr_impl(self):
+    def f(x, y):
+      return [x * y + 1.0]
+    x, y = jnp.array(3.0), jnp.array(4.0)
+    [result] = self._bind_eval_jaxpr(f, x, y)
+    self.assertAllClose(result, x * y + 1.0)
+
+  def test_eval_jaxpr_jvp(self):
+    def g(x):
+      return self._bind_eval_jaxpr(lambda x: [x ** 3], x)[0]
+    x = jnp.array(2.0)
+    primals, tangents = jax.jvp(g, (x,), (jnp.ones_like(x),))
+    self.assertAllClose(primals, x ** 3)
+    self.assertAllClose(tangents, 3.0 * x ** 2)
+
+  def test_eval_jaxpr_grad(self):
+    def g(x):
+      return self._bind_eval_jaxpr(lambda x: [x ** 3], x)[0]
+    x = jnp.array(2.0)
+    self.assertAllClose(jax.grad(g)(x), 3.0 * x ** 2)
+
+  def test_eval_jaxpr_vmap(self):
+    def g(x):
+      return self._bind_eval_jaxpr(lambda x: [x ** 2 + 1.0], x)[0]
+    xs = jnp.array([1.0, 2.0, 3.0])
+    self.assertAllClose(jax.vmap(g)(xs), xs ** 2 + 1.0)
+
+  def test_eval_jaxpr_jit(self):
+    def g(x):
+      return self._bind_eval_jaxpr(lambda x: [jnp.sin(x)], x)[0]
+    x = jnp.array(1.0)
+    self.assertAllClose(jax.jit(g)(x), jnp.sin(x))
 
 
 if __name__ == '__main__':
