@@ -664,6 +664,20 @@ class NNFunctionsTest(jtu.JaxTestCase):
     result = jax.nn.standardize(x)
     self.assertFalse(jnp.any(jnp.isnan(result)))
 
+  def testStandardizeStableAlgorithm(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37281
+    # The stable algorithm should give consistent results regardless of
+    # compilation context.
+    x = jnp.array([1e6, 1e6 + 1, 1e6 + 2], dtype=jnp.float32)
+    result_eager = nn.standardize(x, algorithm="stable")
+    result_jit = jax.jit(lambda x: nn.standardize(x, algorithm="stable"))(x)
+    self.assertAllClose(result_eager, result_jit, atol=1e-5)
+    # Should be close to [-1, 0, 1] * scale
+    self.assertFalse(jnp.any(jnp.isnan(result_eager)))
+    # Fast algorithm should also work (backward compat)
+    result_fast = nn.standardize(x, algorithm="fast")
+    self.assertFalse(jnp.any(jnp.isnan(result_fast)))
+
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
