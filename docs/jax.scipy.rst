@@ -58,6 +58,7 @@ jax.scipy.linalg
    cho_solve
    cholesky
    circulant
+   convolution_matrix
    det
    dft
    eigh
