@@ -1035,7 +1035,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = jf.lower(inp).as_text('hlo')
     out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
-    self.assertLen(out, 1)
+    self.assertLen(out, 2)
 
   def test_compute_on_remat(self):
     inp = jnp.arange(16.)
