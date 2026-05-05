@@ -187,5 +187,5 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
-    ],
+    ] + py_deps("numpy"),
 )
