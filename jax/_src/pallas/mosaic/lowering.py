@@ -4634,7 +4634,10 @@ def lower_with_transformed_refs(f, args, avals, block_shapes=None):
     aval_leaves, tree = tpu_primitives._dma_flatten(avals)
     aval_shapes = jax.tree.map(lambda x: x.shape, aval_leaves)
     (block_shapes,) = _dma_unflatten(tree, aval_shapes)
-  args = list(zip(args, avals, block_shapes))
+  args = [
+      (ref, ref_ty, ref_block_shape, ())
+      for ref, ref_ty, ref_block_shape in zip(args, avals, block_shapes)
+  ]
   return _lower_transformed_refs(f, [], args)
 
 
@@ -4642,44 +4645,59 @@ def _lower_transformed_refs(f, args, rest_args):
   """Recursively iterate through TransformedRefs and lower them in the call to f."""
   if rest_args == []:
     return f(*args)
-  (ref, ref_ty, ref_block_shape), *rest_refs = rest_args
+  (ref, ref_ty, ref_block_shape, outer_transforms), *rest_refs = rest_args
 
   if not isinstance(ref, state.TransformedRef):
-    return _lower_transformed_refs(f, args + [ref], rest_refs)
+    lowered_ref = ref
+    for transforms, aval, shape in reversed(outer_transforms):
+      lowered_ref, _ = _transform_ref(lowered_ref, aval, shape, transforms)
+    return _lower_transformed_refs(f, args + [lowered_ref], rest_refs)
   if not ref.multiref:
     return _lower_single_transformed_ref(
-        f, ref, ref_ty, ref_block_shape, args, rest_refs
+        f, ref, ref_ty, ref_block_shape, outer_transforms, args, rest_refs
     )
   return _lower_multiref_transformed_ref(
-      f, ref, ref_ty, ref_block_shape, args, rest_refs
+      f, ref, ref_ty, ref_block_shape, outer_transforms, args, rest_refs
   )
 
-def _lower_single_transformed_ref(f, ref, ref_ty, ref_block_shape, prev_args,
-                                  rest_args):
+
+def _lower_single_transformed_ref(
+    f, ref, ref_ty, ref_block_shape, outer_transforms, prev_args, rest_args
+):
   """Let the lowering callback f run the single-ref transforms for `ref`."""
   assert isinstance(ref, state.TransformedRef) and not ref.multiref
   aval = ref_ty.ref
   if isinstance(aval, state.TransformedRef):
     aval = aval.type
-
-  def new_f(*newf_args):
-    prev, (x,), rest = split_list(newf_args, [len(prev_args), 1])
-    new_x, _ = _transform_ref(x, aval, ref_ty.ref.shape, ref.transforms)
-    return f(*prev, new_x, *rest)
-
-  next_args = (ref.ref, ref_ty.ref, ref_block_shape.ref)
-  return _lower_transformed_refs(new_f, prev_args, [next_args] + rest_args)
+  outer_transforms += ((ref.transforms, aval, ref_ty.ref.shape),)
+  next_args = (ref.ref, ref_ty.ref, ref_block_shape.ref, outer_transforms)
+  return _lower_transformed_refs(f, prev_args, [next_args] + rest_args)
 
 
-def _lower_multiref_transformed_ref(f, ref, ref_ty, ref_block_shape, args,
-                                   rest_refs):
+def _lower_multiref_transformed_ref(
+    f, ref, ref_ty, ref_block_shape, outer_transforms, args, rest_refs
+):
   """Lower f with args as a multiref TransformedRef."""
   assert isinstance(ref, state.TransformedRef) and ref.multiref
   assert isinstance(ref.transforms[0], state_types.MultiRefTransform)
   match ref.transforms[0]:
     case state_types.SelectTransform(idx=idx):
       select_options = list(zip(ref.ref, ref_ty.ref, ref_block_shape.ref))
+      select_options = [
+          (r, rt, rbs, outer_transforms) for r, rt, rbs in select_options
+      ]
       return _select_to_ifop(f, args, rest_refs, cast(Any, idx), select_options)
+    case state_types.ConcatTransform(axis=axis):
+      concat_subrefs = list(zip(ref.ref, ref_ty.ref, ref_block_shape.ref))
+      return _concat_to_multi_dma(
+          f,
+          args,
+          rest_refs,
+          axis,
+          concat_subrefs,
+          arg_index=len(args),
+          outer_transforms=outer_transforms,
+      )
     case _:
       raise ValueError(f"Unsupported transform: {ref.transforms[0]}")
 
@@ -4701,6 +4719,198 @@ def _select_to_ifop(f, prev_refs, rest_refs, idx, options):
       out = _lower_transformed_refs(f, prev_refs, [options[1]] + rest_refs)
     scf.yield_(out)
   return if_op.results
+
+
+def _build_slice_indexer(
+    shape: tuple[int, ...],
+    axis: int,
+    local_start: int | Any,
+    local_size: int | Any,
+    outer_indexer: NDIndexer | None,
+) -> NDIndexer:
+  """Build an NDIndexer that slices a concatenation ref at the given range."""
+  indices: list[Any] = [indexing.Slice(0, s) for s in shape]
+  indices[axis] = indexing.Slice(local_start, local_size)
+
+  # If outer_indexer is provided, fold non-concat-axis slices in
+  if outer_indexer is not None:
+    for d, idx in enumerate(outer_indexer.indices):
+      if d != axis:
+        indices[d] = idx
+
+  out_shape = tuple(
+      idx.size if isinstance(idx, indexing.Slice) else 1 for idx in indices
+  )
+  return NDIndexer(
+      indices=tuple(indices),
+      shape=shape,
+      int_indexer_shape=out_shape,
+  )
+
+
+def _concat_to_multi_dma(
+    f, prev_args, rest_refs, axis, subrefs, arg_index, outer_transforms=()
+):
+  """Lower a ConcatTransform by emitting one DMA per constituent ref.
+
+  For each constituent ref in the concat, we construct ``NDIndexer`` objects
+  for both the constituent and its counterpart, then delegate to
+  ``_slice_memref`` to perform the actual IR slicing.  This avoids
+  duplicating the ``tpu.memref_slice`` IR-construction logic.
+
+  When ``outer_transforms`` is non-empty (e.g., an NDIndexer from ``.at[4:12]``
+  applied on top of the concat), the outer slice is decomposed per constituent
+  by intersecting with each constituent's range in the virtual concatenated
+  shape.
+
+  The outer start may be dynamic (an ``ir.Value`` from a traced index).  In
+  that case, the intersection is computed with MLIR arith ops and each
+  constituent's DMA is guarded by an ``scf.IfOp``.
+  """
+  # Concat is only valid on data refs (src=0, dst=1), not semaphores (2+).
+  if arg_index >= 2:
+    raise ValueError(
+        "ConcatTransform is not supported on semaphore arguments."
+    )
+  counterpart_index = 1 - arg_index  # src↔dst
+
+  # Extract outer NDIndexer if present.
+  outer_indexer = None
+  for transforms, _, _ in outer_transforms:
+    for t in transforms:
+      if isinstance(t, NDIndexer):
+        if outer_indexer is not None:
+          raise NotImplementedError(
+              "Multiple NDIndexers on concat not supported."
+          )
+        outer_indexer = t
+      else:
+        raise NotImplementedError(
+            f"Unsupported outer transform on concat: {type(t).__name__}"
+        )
+
+  # Compute the concat-axis range from the outer indexer.
+  if outer_indexer is not None:
+    concat_axis_slice = outer_indexer.indices[axis]
+    if not isinstance(concat_axis_slice, indexing.Slice):
+      raise NotImplementedError(
+          "Integer indexing on concat axis not supported."
+      )
+    outer_start = concat_axis_slice.start
+    outer_size = concat_axis_slice.size
+  else:
+    outer_start = 0
+    outer_size = sum(sr[1].shape[axis] for sr in subrefs)
+
+  # Detect whether the outer start is dynamic (an MLIR ir.Value).
+  is_dynamic = isinstance(outer_start, ir.Value)
+
+  # Pre-compute shared MLIR values for dynamic starts.  Unconditionally
+  # initialised so that pyrefly can see them as always bound.
+  i32 = ir.IntegerType.get_signless(32)
+  outer_end_val: Any = None
+  cp_offset_val: Any = None
+  has_intersection: Any = None
+  if is_dynamic:
+    outer_size_val = (outer_size if isinstance(outer_size, ir.Value)
+                      else ir_constant(outer_size, i32))
+    outer_end_val = arith.addi(outer_start, outer_size_val)
+    cp_offset_val = ir_constant(0, i32)
+
+  cum_offset = 0
+  counterpart_offset = 0
+  all_results = []
+
+  for subref in subrefs:
+    _subref_ref, subref_aval, _subref_block_shape = subref
+    constituent_size = subref_aval.shape[axis]
+
+    if is_dynamic:
+      # Emit MLIR ops for dynamic intersection computation.
+      cum_offset_cst = ir_constant(cum_offset, i32)
+      cum_end_cst = ir_constant(cum_offset + constituent_size, i32)
+
+      inter_start = arith.maxsi(outer_start, cum_offset_cst)  # pyrefly: ignore[bad-argument-type]
+      inter_end = arith.minsi(outer_end_val, cum_end_cst)
+
+      local_start = arith.subi(inter_start, cum_offset_cst)
+      local_size = arith.maxsi(
+          arith.subi(inter_end, inter_start), ir_constant(0, i32)
+      )
+
+      has_intersection = arith.cmpi(
+          arith.CmpIPredicate.slt, inter_start, inter_end
+      )
+      current_cp_offset = cp_offset_val
+    else:
+      # Static intersection computation.
+      inter_start = max(outer_start, cum_offset)
+      inter_end = min(outer_start + outer_size, cum_offset + constituent_size)
+
+      if inter_start >= inter_end:
+        cum_offset += constituent_size
+        continue
+
+      local_start = inter_start - cum_offset
+      local_size = inter_end - inter_start
+      current_cp_offset = counterpart_offset
+
+    # Closure that slices this subref and counterpart, then calls f.
+    def new_f(
+        *all_args,
+        _local_start=local_start,
+        _local_size=local_size,
+        _cp_offset=current_cp_offset,
+        _axis=axis,
+        _outer_indexer=outer_indexer,
+        _shape=subref_aval.shape,
+    ):
+      args_list = list(all_args)
+
+      # Slice the subref if outer transforms require it.
+      if _outer_indexer is not None:
+        indexer = _build_slice_indexer(
+            _shape, _axis, _local_start, _local_size, _outer_indexer
+        )
+        args_list[arg_index], _ = _slice_memref(
+            args_list[arg_index],
+            indexer,
+            cast(Any, None),
+            _shape,
+        )
+
+      # Slice the counterpart on the concat axis.
+      cp_shape = tuple(ir.MemRefType(args_list[counterpart_index].type).shape)
+      cp_indexer = _build_slice_indexer(
+          cp_shape, _axis, _cp_offset, _local_size, outer_indexer=None
+      )
+      args_list[counterpart_index], _ = _slice_memref(
+          args_list[counterpart_index], cp_indexer,
+          cast(Any, None), cp_shape,
+      )
+
+      return f(*args_list)
+
+    # Execute DMA — conditionally for dynamic case.
+    if is_dynamic:
+      if_op = scf.IfOp(has_intersection, [], has_else=False)
+      with ir.InsertionPoint(if_op.then_block):
+        result = _lower_transformed_refs(
+            new_f, prev_args, [subref + ((),)] + rest_refs
+        )
+        scf.yield_(result)
+      all_results.extend(if_op.results)
+      cp_offset_val = arith.addi(cp_offset_val, local_size)  # pyrefly: ignore[bad-argument-type]
+    else:
+      result = _lower_transformed_refs(
+          new_f, prev_args, [subref + ((),)] + rest_refs
+      )
+      all_results.extend(result)
+      counterpart_offset += local_size  # pyrefly: ignore[unsupported-operation]
+
+    cum_offset += constituent_size
+
+  return all_results
 
 
 @register_lowering_rule(lax.axis_index_p, kernel_types=[*tpu_core.CoreType])
