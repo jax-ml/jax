@@ -1995,6 +1995,114 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+    op=['convolve', 'correlate'],
+    xshape=[(5,), (12,)],
+    yshape=[(1,), (3,), (12,)],
+    lag_spec=[
+        ('maxlag', 0), ('maxlag', 1), ('maxlag', 4),
+        ('lags', range(-2, 3)),
+        ('lags', range(0, 4)),
+        ('lags', range(-3, 6, 2)),
+        ('lags', slice(-1, 3)),
+        ('lags', slice(2, -3, -1)),
+        ('lags', range(-20, -10)),  # entirely below full range -> zeros
+        ('lags', range(20, 25)),    # entirely above full range -> zeros
+        ('lags', range(-10, 15)),   # overflows full range on both sides
+    ],
+    dtype=[np.float32, np.float64, np.complex64],
+  )
+  def testCorrelateConvolveLags(self, op, xshape, yshape, lag_spec, dtype):
+    jnp_op = getattr(jnp, op)
+    np_op = getattr(np, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    kind, value = lag_spec
+    kwargs = {kind: value}
+    precision = lax.Precision.HIGHEST if jtu.test_device_matches(["tpu"]) else None
+    jnp_fun = partial(jnp_op, precision=precision, **kwargs)
+
+    def np_fun(x, y):
+      # numpy's correlate/convolve don't support maxlag/lags yet, so emulate
+      # by computing 'full' and slicing per the documented lag-to-index map.
+      full = np_op(x, y, mode='full')
+      M = y.shape[0]
+      if kind == 'maxlag':
+        m0, m1, step = -value, value + 1, 1
+      else:
+        if isinstance(value, range):
+          m0, m1, step = value.start, value.stop, value.step
+        elif isinstance(value, slice):
+          m0, m1, step = value.start, value.stop, value.step or 1
+        else:
+          m0, m1, step = int(value[0]), int(value[-1]) + 1, 1
+      lag_values = list(range(m0, m1, step))
+      if not lag_values:
+        return np.zeros(0, dtype=full.dtype)
+      pad_left = max(0, -(M - 1) - min(lag_values))
+      pad_right = max(0, max(lag_values) - (full.shape[0] - M))
+      padded = np.pad(full, (pad_left, pad_right))
+      idx = np.array([L + M - 1 + pad_left for L in lag_values])
+      return padded[idx].astype(dtypes.to_inexact_dtype(dtype))
+
+    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-12,
+           np.complex64: 1e-2, np.complex128: 1e-12}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testCorrelateConvolveLagsErrors(self):
+    a = jnp.arange(5.0)
+    v = jnp.arange(3.0)
+    # mode default differs by op: 'valid' for correlate, 'full' for convolve.
+    # Setting mode to its own default + maxlag/lags is allowed (we treat the
+    # default as "unspecified"); setting it to a non-default mode is rejected.
+    for op, non_default in [(jnp.correlate, 'full'), (jnp.convolve, 'valid')]:
+      with self.assertRaisesRegex(TypeError, "cannot specify both"):
+        op(a, v, maxlag=1, lags=range(-1, 2))
+      with self.assertRaisesRegex(ValueError, "cannot be used with mode"):
+        op(a, v, mode=non_default, maxlag=1)
+      with self.assertRaisesRegex(ValueError, "cannot be used with mode"):
+        op(a, v, mode=non_default, lags=range(2))
+      with self.assertRaisesRegex(ValueError, "is required for mode='lags'"):
+        op(a, v, mode='lags')
+      with self.assertRaisesRegex(ValueError, "arithmetic progression"):
+        op(a, v, lags=jnp.array([0, 1, 3]))
+      with self.assertRaisesRegex(ValueError, "must be non-negative"):
+        op(a, v, maxlag=-1)
+      with self.assertRaisesRegex(TypeError, "must be an integer"):
+        op(a, v, maxlag=1.5)
+
+  def testCorrelationLags(self):
+    # Mode-based: matches numpy element-by-element with `correlate`/`convolve`.
+    for N, M in [(5, 3), (3, 5), (4, 4), (1, 7)]:
+      for mode in ('valid', 'same', 'full'):
+        a = self.rng().standard_normal(N).astype(np.float32)
+        v = self.rng().standard_normal(M).astype(np.float32)
+        result = np.asarray(jnp.correlate(a, v, mode=mode))
+        lags = np.asarray(jnp.correlation_lags(N, M, mode=mode))
+        self.assertEqual(result.shape, lags.shape)
+        # Lag 0 entry should equal sum_j a_j * conj(v_j) over overlapping indices,
+        # which for full-overlap equals correlate(a, v, 'valid')[*].  Verify the
+        # lag arrays match numpy/scipy convention by comparing shapes.
+        if mode == 'full':
+          self.assertEqual(int(lags[0]), -(M - 1))
+          self.assertEqual(int(lags[-1]), N - 1)
+
+    # maxlag form
+    self.assertArraysEqual(jnp.correlation_lags(5, 3, maxlag=2),
+                           jnp.arange(-2, 3))
+    # explicit lags form
+    self.assertArraysEqual(jnp.correlation_lags(5, 3, lags=range(-1, 4, 2)),
+                           jnp.arange(-1, 4, 2))
+
+    # error cases
+    with self.assertRaisesRegex(TypeError, "cannot specify both"):
+      jnp.correlation_lags(5, 3, maxlag=1, lags=range(-1, 2))
+    with self.assertRaisesRegex(ValueError, "cannot be used with mode"):
+      jnp.correlation_lags(5, 3, mode='full', maxlag=1)
+    with self.assertRaisesRegex(ValueError, "is required for mode='lags'"):
+      jnp.correlation_lags(5, 3, mode='lags')
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))],

@@ -590,9 +590,128 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: lax.PrecisionLike,
   return result[0, 0, out_order]
 
 
+def _lags_from_maxlag(maxlag: int) -> tuple[int, int, int]:
+  if not isinstance(maxlag, (int, np.integer)) or isinstance(maxlag, bool):
+    raise TypeError("maxlag must be an integer")
+  m = int(maxlag)
+  if m < 0:
+    raise ValueError("maxlag must be non-negative")
+  return (-m, m + 1, 1)
+
+
+def _lags_from_lags(lag: Any) -> tuple[int, int, int]:
+  if isinstance(lag, range):
+    return (lag.start, lag.stop, lag.step)
+  if isinstance(lag, slice):
+    if lag.start is None or lag.stop is None:
+      raise ValueError("lags slice must have explicit start and stop")
+    step = 1 if lag.step is None else int(lag.step)
+    if step == 0:
+      raise ValueError("lagstep must not be zero")
+    return (int(lag.start), int(lag.stop), step)
+  arr = np.asarray(lag)
+  if arr.ndim != 1 or arr.size == 0:
+    raise ValueError("lags must be a 1-D non-empty sequence")
+  if not np.issubdtype(arr.dtype, np.integer):
+    raise TypeError("lags values must be integers")
+  if arr.size == 1:
+    return (int(arr[0]), int(arr[0]) + 1, 1)
+  step = int(arr[1] - arr[0])
+  if step == 0:
+    raise ValueError("lagstep must not be zero")
+  expected = arr[0] + step * np.arange(arr.size)
+  if not (arr == expected).all():
+    raise ValueError("lags array must be an arithmetic progression "
+                     "(use a range or slice for non-arithmetic patterns)")
+  return (int(arr[0]), int(arr[-1]) + step, step)
+
+
+def _resolve_lag_tuple(mode: str, maxlag: Any, lags: Any,
+                       default_mode: str) -> tuple[int, int, int]:
+  """Resolve maxlag/lags into a (start, stop, step) lag tuple.
+
+  Only called when at least one of ``maxlag`` or ``lags`` is provided.
+  ``mode`` is accepted as ``'lags'`` or as the function's default mode (so
+  passing only ``maxlag``/``lags`` works without specifying ``mode='lags'``);
+  any other ``mode`` raises.
+  """
+  if mode not in (default_mode, 'lags'):
+    raise ValueError("maxlag/lags cannot be used with mode "
+                     "'valid', 'same', or 'full'")
+  if maxlag is not None and lags is not None:
+    raise TypeError("cannot specify both maxlag and lags")
+  if maxlag is not None:
+    return _lags_from_maxlag(maxlag)
+  return _lags_from_lags(lags)
+
+
+def _mode_lag_range(N: int, M: int, mode: str) -> tuple[int, int]:
+  """Return inclusive [start, end] lag range covered by ``mode``'s output.
+
+  N = len(a), M = len(v).  Matches numpy's ``correlation_lags`` convention.
+  """
+  if mode == 'full':
+    return (-(M - 1), N - 1)
+  if mode == 'valid':
+    return (0, N - M) if N >= M else (N - M, 0)
+  if mode == 'same':
+    if N >= M:
+      return (-(M // 2), N - 1 - (M // 2))
+    return (N // 2 - M + 1, N // 2)
+  raise ValueError(f"invalid mode: {mode!r}")
+
+
+def _select_mode_for_lags(N: int, M: int,
+                          lag_tuple: tuple[int, int, int]) -> str:
+  """Pick the smallest mode whose output covers all requested lags.
+
+  Falls back to ``'full'`` if requested lags extend beyond it (out-of-range
+  lags will be zero-padded by the caller).
+  """
+  m0, m1, step = lag_tuple
+  if (step > 0 and m0 >= m1) or (step < 0 and m0 <= m1):
+    return 'valid'  # empty
+  # last element of range(m0, m1, step), without materializing the range
+  last = m0 + ((m1 - m0 - (1 if step > 0 else -1)) // step) * step
+  min_req = builtins.min(m0, last)
+  max_req = builtins.max(m0, last)
+  for mode in ('valid', 'same', 'full'):
+    s, e = _mode_lag_range(N, M, mode)
+    if s <= min_req and max_req <= e:
+      return mode
+  return 'full'
+
+
+def _slice_with_lags(arr: Array, mode_output_start: int,
+                   lag_tuple: tuple[int, int, int]) -> Array:
+  """Slice ``arr`` (the output of a mode-based correlate/convolve) to the
+  user-requested lag range.
+
+  ``mode_output_start`` is the lag (offset of ``v`` relative to ``a``)
+  corresponding to ``arr[0]``: e.g. ``-(M-1)`` for ``'full'`` or ``0`` for
+  ``'valid'`` when ``N >= M``.  ``lag_tuple = (m0, m1, step)`` is the
+  user-requested ``range(m0, m1, step)`` of output lags.  Requested lags
+  outside the range covered by ``arr`` yield zeros.
+  """
+  m0, m1, step = lag_tuple
+  indices = np.arange(m0, m1, step, dtype=np.int64)
+  if indices.size == 0:
+    return arr[0:0]
+  first, last = int(indices[0]), int(indices[-1])
+  min_req = builtins.min(first, last)
+  max_req = builtins.max(first, last)
+  end_lag = mode_output_start + arr.shape[0] - 1
+  pad_left = builtins.max(0, mode_output_start - min_req)
+  pad_right = builtins.max(0, max_req - end_lag)
+  if pad_left or pad_right:
+    arr = pad(arr, (pad_left, pad_right))
+  return arr[indices - mode_output_start + pad_left]
+
+
 @export
-@api.jit(static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
+             maxlag: int | None = None,
+             lags: range | slice | Sequence[int] | np.ndarray | None = None,
              precision: lax.PrecisionLike = None,
              preferred_element_type: DTypeLike | None = None) -> Array:
   r"""Convolution of two one dimensional arrays.
@@ -615,7 +734,17 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
         is the same size as ``a``.
       * ``"valid"``: return the portion of the ``"full"`` output which do not
         depend on padding at the array edges.
+      * ``"lags"``: return the convolution at the lag indices specified by
+        ``maxlag`` or ``lags``.  When ``maxlag`` or ``lags`` is provided,
+        ``mode`` must be either ``"full"`` (the default) or ``"lags"``.
 
+    maxlag: if given, compute the convolution at lags
+      ``-maxlag, -maxlag+1, ..., maxlag`` (a symmetric inclusive window of
+      ``2*maxlag+1`` lags around 0).  Mutually exclusive with ``lags``.
+    lags: explicit lag specification.  Accepts a Python ``range``, a ``slice``
+      with explicit ``start`` and ``stop``, or a 1-D array-like containing an
+      arithmetic progression of integer lag indices.  Mutually exclusive with
+      ``maxlag``.
     precision: Specify the precision of the computation. Refer to
       :class:`jax.lax.Precision` for a description of available values.
 
@@ -629,6 +758,7 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
   See Also:
     - :func:`jax.scipy.signal.convolve`: ND convolution
     - :func:`jax.numpy.correlate`: 1D correlation
+    - :func:`jax.numpy.correlation_lags`: Lag indices for a convolution result.
 
   Examples:
     A few 1D convolution examples:
@@ -654,6 +784,11 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
     >>> jnp.convolve(x, y, mode='valid')
     Array([16., 15., 12.], dtype=float32)
 
+    Compute the convolution at a small symmetric window of lags around zero:
+
+    >>> jnp.convolve(x, y, maxlag=1)
+    Array([ 9., 16., 15.], dtype=float32)
+
     For complex-valued inputs:
 
     >>> x1 = jnp.array([3+1j, 2, 4-3j])
@@ -662,13 +797,23 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
     Array([ 3. +1.j, 11. -7.j, 15.+10.j,  7. -8.j, 31. +8.j], dtype=complex64)
   """
   a, v = util.ensure_arraylike("convolve", a, v)
-  return _conv(a, v, mode=mode, op='convolve',
-               precision=precision, preferred_element_type=preferred_element_type)
+  if maxlag is None and lags is None:
+    if mode == 'lags':
+      raise ValueError("maxlag or lags is required for mode='lags'")
+    return _conv(a, v, mode=mode, op='convolve',
+                 precision=precision, preferred_element_type=preferred_element_type)
+  lag_tuple = _resolve_lag_tuple(mode, maxlag, lags, default_mode='full')
+  N, M = a.shape[0], v.shape[0]
+  chosen = _select_mode_for_lags(N, M, lag_tuple)
+  out = _conv(a, v, mode=chosen, op='convolve',
+              precision=precision, preferred_element_type=preferred_element_type)
+  return _slice_with_lags(out, _mode_lag_range(N, M, chosen)[0], lag_tuple)
 
 
 @export
-@api.jit(static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
+              maxlag: int | None = None,
+              lags: range | slice | Sequence[int] | np.ndarray | None = None,
               precision: lax.PrecisionLike = None,
               preferred_element_type: DTypeLike | None = None) -> Array:
   r"""Correlation of two one dimensional arrays.
@@ -693,7 +838,17 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
         is the same size as ``a``.
       * ``"valid"``: (default) return the portion of the ``"full"`` output which do not
         depend on padding at the array edges.
+      * ``"lags"``: return the cross-correlation at the lag indices specified
+        by ``maxlag`` or ``lags``.  When ``maxlag`` or ``lags`` is provided,
+        ``mode`` must be either ``"valid"`` (the default) or ``"lags"``.
 
+    maxlag: if given, compute the cross-correlation at lags
+      ``-maxlag, -maxlag+1, ..., maxlag`` (a symmetric inclusive window of
+      ``2*maxlag+1`` lags around 0).  Mutually exclusive with ``lags``.
+    lags: explicit lag specification.  Accepts a Python ``range``, a ``slice``
+      with explicit ``start`` and ``stop``, or a 1-D array-like containing an
+      arithmetic progression of integer lag indices.  Mutually exclusive with
+      ``maxlag``.
     precision: Specify the precision of the computation. Refer to
       :class:`jax.lax.Precision` for a description of available values.
 
@@ -707,6 +862,7 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
   See Also:
     - :func:`jax.scipy.signal.correlate`: ND correlation
     - :func:`jax.numpy.convolve`: 1D convolution
+    - :func:`jax.numpy.correlation_lags`: Lag indices for a correlation result.
 
   Examples:
     >>> x = jnp.array([1, 2, 3, 2, 1])
@@ -730,6 +886,12 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
     >>> jnp.correlate(x, y, mode='same')
     Array([17., 32., 35., 28., 13.], dtype=float32)
 
+    Compute the cross-correlation at a small symmetric window of lags
+    around zero:
+
+    >>> jnp.correlate(x, y, maxlag=1)
+    Array([17., 32., 35.], dtype=float32)
+
     If both the inputs arrays are real-valued and symmetric then the result will
     also be symmetric and will be equal to the result of ``jax.numpy.convolve``.
 
@@ -748,8 +910,70 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
     Array([ 3. +1.j,  3.+17.j, 18.+11.j, 27. +4.j,  8.-12.j], dtype=complex64)
   """
   a, v = util.ensure_arraylike("correlate", a, v)
-  return _conv(a, v, mode=mode, op='correlate',
-               precision=precision, preferred_element_type=preferred_element_type)
+  if maxlag is None and lags is None:
+    if mode == 'lags':
+      raise ValueError("maxlag or lags is required for mode='lags'")
+    return _conv(a, v, mode=mode, op='correlate',
+                 precision=precision, preferred_element_type=preferred_element_type)
+  lag_tuple = _resolve_lag_tuple(mode, maxlag, lags, default_mode='valid')
+  N, M = a.shape[0], v.shape[0]
+  chosen = _select_mode_for_lags(N, M, lag_tuple)
+  out = _conv(a, v, mode=chosen, op='correlate',
+              precision=precision, preferred_element_type=preferred_element_type)
+  return _slice_with_lags(out, _mode_lag_range(N, M, chosen)[0], lag_tuple)
+
+
+@export
+def correlation_lags(a_len: int, v_len: int, mode: str | None = None, *,
+                     maxlag: int | None = None,
+                     lags: range | slice | Sequence[int] | np.ndarray
+                     | None = None) -> Array:
+  """Lag indices for a :func:`correlate` or :func:`convolve` result.
+
+  JAX implementation of :func:`numpy.correlation_lags`.
+
+  Args:
+    a_len: length of the first input sequence (``len(a)`` in
+      ``correlate(a, v, ...)``).
+    v_len: length of the second input sequence (``len(v)`` in
+      ``correlate(a, v, ...)``).
+    mode: the same ``mode`` that would be passed to :func:`correlate` /
+      :func:`convolve`.  If ``maxlag`` or ``lags`` is provided and ``mode`` is
+      not specified, ``mode`` defaults to ``"lags"``.
+    maxlag: the same ``maxlag`` that would be passed to :func:`correlate` /
+      :func:`convolve`.  Mutually exclusive with ``lags``.
+    lags: the same ``lags`` that would be passed to :func:`correlate` /
+      :func:`convolve`.  Mutually exclusive with ``maxlag``.
+
+  Returns:
+    1-D array of lag indices corresponding element-by-element to the output
+    of ``correlate(a, v, mode, maxlag=maxlag, lags=lags)``.
+
+  See Also:
+    - :func:`jax.numpy.correlate`
+    - :func:`jax.numpy.convolve`
+
+  Examples:
+    >>> jnp.correlation_lags(5, 3, mode='full')
+    Array([-2, -1,  0,  1,  2,  3,  4], dtype=int32)
+    >>> jnp.correlation_lags(5, 3, maxlag=2)
+    Array([-2, -1,  0,  1,  2], dtype=int32)
+  """
+  lags_given = maxlag is not None or lags is not None
+  if mode is None:
+    mode = 'lags' if lags_given else 'valid'
+  if mode in ('valid', 'same', 'full'):
+    if lags_given:
+      raise ValueError("maxlag/lags cannot be used with mode "
+                       "'valid', 'same', or 'full'")
+    start, end = _mode_lag_range(int(a_len), int(v_len), mode)
+    return arange(start, end + 1)
+  if mode == 'lags':
+    if not lags_given:
+      raise ValueError("maxlag or lags is required for mode='lags'")
+    m0, m1, step = _resolve_lag_tuple('lags', maxlag, lags, default_mode='lags')
+    return arange(m0, m1, step)
+  raise ValueError("mode must be one of 'valid', 'same', 'full', 'lags'")
 
 
 @export
