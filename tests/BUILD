@@ -687,6 +687,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
+    env = {
+        "XLA_FLAGS": "--xla_gpu_fusion_autotune_top_k_configs=1",
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
