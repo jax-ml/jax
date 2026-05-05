@@ -3590,7 +3590,7 @@ def _scan_lowering_rule(
     jaxpr: jax_core.ClosedJaxpr,
     length: int,
     reverse: bool,
-    unroll: bool | int,
+    unroll: int,
     num_consts: int,
     num_carry: int,
 ):

@@ -3725,30 +3725,98 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
 
-  if (
-      not isinstance(start, ir.Value)
-      and not isinstance(num_steps, ir.Value)
-      and num_steps == unroll
-  ):
+  is_static_start = not isinstance(start, ir.Value)
+  is_static_steps = not isinstance(num_steps, ir.Value)
+
+  if unroll == 0:
+    if is_static_steps:
+      unroll = num_steps
+    else:
+      raise ValueError(
+        "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
+
+  if is_static_start and is_static_steps and num_steps == unroll:
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
       args = _run_body(
           ir_constant(i, mlir_type=_dtype_to_ir_type(jnp.int32)), args
       )
     return args
-  if unroll != 1:
-    raise NotImplementedError(
-        f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
+
   lbd = _ensure_mlir_value(start, pallas_core.index_map_grid_aval)
-  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, pallas_core.index_map_grid_aval))
-  step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.int32))
-  for_op = scf.ForOp(lbd, ubd, step, args)
-  with ir.InsertionPoint(for_op.body):
-    iv = for_op.induction_variable
-    inner_args = for_op.inner_iter_args
-    inner_out = _run_body(iv, inner_args)
-    scf.yield_(inner_out)
-  return for_op.results
+  remainder = 0
+  main_range = 0
+  ubd = lbd
+
+  if is_static_steps:
+    num_steps_int = cast(int, num_steps)
+    main_steps = num_steps_int // unroll
+    remainder = num_steps_int % unroll
+
+    main_range = main_steps * unroll
+    main_ubd = arith.addi(
+        lbd, ir_constant(main_range, mlir_type=_dtype_to_ir_type(jnp.int32))
+    )
+
+    has_main = main_steps > 0
+    has_static_remainder = remainder > 0
+    has_dynamic_remainder = False
+  else:
+    num_steps_val = _ensure_mlir_value(
+        num_steps, pallas_core.index_map_grid_aval
+    )
+    ubd = arith.addi(lbd, num_steps_val)
+
+    unroll_val = ir_constant(unroll, mlir_type=_dtype_to_ir_type(jnp.int32))
+    main_steps_val = arith.divsi(num_steps_val, unroll_val)
+    main_range_val = arith.muli(main_steps_val, unroll_val)
+    main_ubd = arith.addi(lbd, main_range_val)
+
+    has_main = True
+    has_static_remainder = False
+    has_dynamic_remainder = True
+
+  if has_main:
+    step_val = ir_constant(unroll, mlir_type=_dtype_to_ir_type(jnp.int32))
+    main_for_op = scf.ForOp(lbd, main_ubd, step_val, args)
+    with ir.InsertionPoint(main_for_op.body):
+      iv = main_for_op.induction_variable
+      inner_args = main_for_op.inner_iter_args
+
+      loop_args = inner_args
+      for step_idx in range(unroll):
+        if step_idx == 0:
+          actual_i = iv
+        else:
+          actual_i = arith.addi(
+              iv,
+              ir_constant(step_idx, mlir_type=_dtype_to_ir_type(jnp.int32)),
+          )
+        loop_args = _run_body(actual_i, loop_args)
+      scf.yield_(loop_args)
+    args = main_for_op.results
+
+  if has_static_remainder:
+    for i in range(remainder):
+      actual_i = arith.addi(
+          lbd,
+          ir_constant(
+              main_range + i, mlir_type=_dtype_to_ir_type(jnp.int32)
+          ),
+      )
+      args = _run_body(actual_i, args)
+
+  elif has_dynamic_remainder:
+    one_val = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.int32))
+    rem_for_op = scf.ForOp(main_ubd, ubd, one_val, args)
+    with ir.InsertionPoint(rem_for_op.body):
+      iv = rem_for_op.induction_variable
+      inner_args = rem_for_op.inner_iter_args
+      inner_out = _run_body(iv, inner_args)
+      scf.yield_(inner_out)
+    args = rem_for_op.results
+
+  return args
 
 
 @register_lowering_rule(
@@ -3760,7 +3828,7 @@ def _scan_lowering_rule(
     jaxpr: jax_core.ClosedJaxpr,
     length: int,
     reverse: bool,
-    unroll: bool | int,
+    unroll: int,
     num_consts: int,
     num_carry: int,
 ):
