@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <variant>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "xla/literal.h"
+#include "xla/pjrt/exceptions.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/shape.h"
 
@@ -65,6 +67,9 @@ class PyDevice {
   MemoryStats() const;
 
   absl::StatusOr<std::intptr_t> GetStreamForExternalReadyEvents() const;
+
+  absl::StatusOr<bool> PoisonExecution(
+      int32_t launch_id, std::variant<std::string, nanobind::object> error);
 
   static void Register(nanobind::module_& m);
 

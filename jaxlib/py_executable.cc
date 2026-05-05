@@ -480,7 +480,8 @@ absl::flat_hash_map<uint64_t, uint32_t>* PyLoadedExecutable::next_launch_id_ =
     new absl::flat_hash_map<uint64_t, uint32_t>();
 
 absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
-    std::vector<PyArray> args, bool with_tokens) {
+    std::vector<PyArray> args, bool with_tokens,
+    std::optional<int32_t> launch_id) {
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (ifrt_loaded_executable_->devices().has_value()) {
@@ -488,7 +489,11 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   }
 
   xla::ifrt::ExecuteOptions options = options_;
-  options.launch_id = GetNextLaunchId();
+  if (launch_id.has_value()) {
+    options.launch_id = *launch_id;
+  } else {
+    options.launch_id = GetNextLaunchId();
+  }
   options.fill_status = with_tokens;
   options.execution_stream_id = GetExecutionStreamId();
   if (options.execution_stream_id == 0) {
@@ -586,7 +591,8 @@ void PyLoadedExecutable::Register(nb::module_& m) {
           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
       .def("execute_sharded",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
-           nb::arg("arguments"), nb::arg("with_tokens") = false)
+           nb::arg("arguments"), nb::arg("with_tokens") = false,
+           nb::arg("launch_id").none() = std::nullopt)
       .def("hlo_modules",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::HloModules))
       .def("get_output_memory_kinds",
