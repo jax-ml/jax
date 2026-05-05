@@ -3,6 +3,7 @@
 # #############################################################################
 # Enable Bzlmod
 common --enable_bzlmod --noenable_workspace
+common:bzlmod --enable_bzlmod
 common --incompatible_use_plus_in_repo_names
 ## Make sure direct dependencies specified match the resolved version.
 common --check_direct_dependencies=warning
@@ -514,6 +515,7 @@ common:cross_compile_base --config=clang_local
 common:cross_compile_base --host_cpu=k8
 common:cross_compile_base --host_crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 common:cross_compile_base --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
+common:cross_compile_base --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_x86_toolchain
 
 # Linux Aarch64
 common:cross_compile_linux_aarch64 --config=cross_compile_base
@@ -522,6 +524,7 @@ common:cross_compile_linux_aarch64 --config=cross_compile_base
 common:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_aarch64 --cpu=aarch64
 common:cross_compile_linux_aarch64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+common:cross_compile_linux_aarch64 --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_aarch64_toolchain
 
 common:rbe_cross_compile_base --config=rbe
 common:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
