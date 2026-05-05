@@ -21,6 +21,7 @@ from jax._src.scipy.linalg import (
   cho_factor as cho_factor,
   cho_solve as cho_solve,
   circulant as circulant,
+  convolution_matrix as convolution_matrix,
   det as det,
   dft as dft,
   eigh as eigh,

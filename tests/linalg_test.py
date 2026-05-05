@@ -2339,6 +2339,37 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jsp.linalg.leslie(jnp.array([1., 2.]), jnp.array([]))
 
   @jtu.sample_product(
+     m=[1, 2, 3, 5],
+     n=[1, 2, 3, 5, 7],
+     mode=['full', 'valid', 'same'],
+     batch=[(), (2,), (1, 3)],
+     dtype=float_types + int_types + complex_types,
+  )
+  def testConvolutionMatrix(self, m, n, mode, batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    shape = (*batch, m)
+    args_maker = lambda: [rng(shape, dtype)]
+    osp_fun = partial(osp.linalg.convolution_matrix, n=n, mode=mode)
+    jsp_fun = partial(jsp.linalg.convolution_matrix, n=n, mode=mode)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testConvolutionMatrixInvalidArgs(self):
+    a = jnp.array([1., 2., 3.])
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, 0)
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, -1)
+    with self.assertRaisesRegex(ValueError, "mode must be one of"):
+      jsp.linalg.convolution_matrix(a, 3, mode='bad')
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((0,)), 3)
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((2, 0)), 3)
+    with self.assertRaisesRegex(ValueError, "must be at least 1-dimensional"):
+      jsp.linalg.convolution_matrix(jnp.array(5.0), 3)
+
+  @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
     dtype = float_types + complex_types,
     method = ["schur", "eigen"]

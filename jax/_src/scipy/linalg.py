@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import math
+import operator
 import textwrap
 from typing import overload, Any, Literal
 import warnings
@@ -2655,6 +2656,75 @@ def leslie(f: ArrayLike, s: ArrayLike) -> Array:
 def _leslie(f: Array, s: Array) -> Array:
   f, s = promote_dtypes(f, s)
   return jnp.diag(s, k=-1).at[0].set(f)
+
+
+@partial(jit, static_argnames=("n", "mode"))
+def convolution_matrix(a: ArrayLike, n: int, mode: str = 'full') -> Array:
+  r"""Construct a convolution matrix.
+
+  JAX implementation of :func:`scipy.linalg.convolution_matrix`.
+
+  Builds a Toeplitz matrix :math:`A` such that ``A @ v`` equals
+  ``jnp.convolve(a, v, mode)``. The returned array has ``n`` columns;
+  the row count :math:`k` depends on ``mode``:
+
+  - ``'full'``: :math:`k = m + n - 1`
+  - ``'same'``: :math:`k = \max(m, n)`
+  - ``'valid'``: :math:`k = \max(m, n) - \min(m, n) + 1`
+
+  where :math:`m` is the size of ``a`` along the last axis.
+
+  Args:
+    a: array of shape ``(..., m)`` to convolve. Must have ``m >= 1``.
+    n: number of columns in the output. Must be a positive integer.
+    mode: one of ``'full'``, ``'same'``, ``'valid'``. Defaults to ``'full'``.
+
+  Returns:
+    A convolution matrix of shape ``(..., k, n)``, where ``k`` depends on
+    ``mode`` as described above.
+
+  See also:
+    :func:`jax.scipy.linalg.toeplitz`
+
+  Examples:
+    >>> jax.scipy.linalg.convolution_matrix(jnp.array([-1, 4, -2]), 5, mode='same')
+    Array([[ 4, -1,  0,  0,  0],
+           [-2,  4, -1,  0,  0],
+           [ 0, -2,  4, -1,  0],
+           [ 0,  0, -2,  4, -1],
+           [ 0,  0,  0, -2,  4]], dtype=int32)
+  """
+  n = operator.index(n)
+  if n <= 0:
+    raise ValueError(f"n must be a positive integer; got {n}.")
+  check_arraylike("convolution_matrix", a)
+  a_arr = jnp.asarray(a)
+  if a_arr.ndim == 0:
+    raise ValueError(
+        "convolution_matrix: a must be at least 1-dimensional, got a scalar.")
+  m = a_arr.shape[-1]
+  if m < 1:
+    raise ValueError(f"len(a) must be at least 1; got shape {a_arr.shape}.")
+  if mode not in ('full', 'valid', 'same'):
+    raise ValueError(
+        f"mode must be one of 'full', 'valid', 'same'; got {mode!r}.")
+  pad_widths = [(0, 0)] * (a_arr.ndim - 1) + [(0, n - 1)]
+  az = jnp.pad(a_arr, pad_widths)
+  raz = jnp.pad(jnp.flip(a_arr, axis=-1), pad_widths)
+  L = m + n - 1
+  if mode == 'same':
+    trim = min(n, m) - 1
+    tb = trim // 2
+    te = trim - tb
+  elif mode == 'valid':
+    tb = min(n, m) - 1
+    te = tb
+  else:  # 'full'
+    tb = 0
+    te = 0
+  col0 = lax.slice_in_dim(az, tb, L - te, axis=-1)
+  row0 = lax.slice_in_dim(raz, L - n - tb, L - tb, axis=-1)
+  return toeplitz(col0, row0)
 
 
 @jit(static_argnames=("n",))
