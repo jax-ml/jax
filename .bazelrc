@@ -3,6 +3,7 @@
 # #############################################################################
 # Enable Bzlmod
 common --enable_bzlmod --noenable_workspace
+common --incompatible_use_plus_in_repo_names
 ## Make sure direct dependencies specified match the resolved version.
 common --check_direct_dependencies=warning
 
