@@ -10,6 +10,14 @@ common:bzlmod --check_direct_dependencies=warning
 # Make Bazel print out all options from rc files.
 common --announce_rc
 
+# Use a downloader config to mirror GitHub downloads.
+# We use the experimental_ name for better compatibility with different Bazel versions.
+build --experimental_downloader_config=bazel_downloader.cfg
+test --experimental_downloader_config=bazel_downloader.cfg
+fetch --experimental_downloader_config=bazel_downloader.cfg
+sync --experimental_downloader_config=bazel_downloader.cfg
+query --experimental_downloader_config=bazel_downloader.cfg
+
 # By default, execute all actions locally.
 common --spawn_strategy=local
 
