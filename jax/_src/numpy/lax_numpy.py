@@ -621,8 +621,8 @@ def _lags_from_lags(lag: Any) -> tuple[int, int, int]:
     raise ValueError("lagstep must not be zero")
   expected = arr[0] + step * np.arange(arr.size)
   if not (arr == expected).all():
-    raise ValueError("lags array must be an arithmetic progression "
-                     "(use a range or slice for non-arithmetic patterns)")
+    raise ValueError("lags array must be an arithmetic progression; "
+                     "arbitrary lag sequences are not supported.")
   return (int(arr[0]), int(arr[-1]) + step, step)
 
 
