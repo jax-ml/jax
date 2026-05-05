@@ -68,6 +68,7 @@ use_repo(llvm, "llvm-project")
 third_party = use_extension("@xla//third_party/extensions:third_party.bzl", "third_party_ext")
 use_repo(
     third_party,
+    "compute_library",
     "dlpack",
     "eigen_archive",
     "gloo",
