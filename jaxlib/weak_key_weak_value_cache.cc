@@ -78,7 +78,7 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
       if (it != self->entries_.end()) {
         nb::object x_ref = it->second.first();
         nb::object ans = it->second.second();
-        // Another thread might have freed one of both of the weakrefs, so
+        // Another thread might have freed one or both of the weakrefs, so
         // check they are valid.
         if (!ans.is_none() && x_ref.ptr() == x) {
           return ans.release().ptr();
@@ -100,9 +100,21 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
         self->weakref_to_key_[it->second.first.ptr()] = x;
         self->weakref_to_key_[it->second.second.ptr()] = x;
       } else {
-        // If !inserted, another thread populated the cache. Because we hold a
-        // strong reference to `x`, we know the entry refers to our object.
-        result = it->second.second();
+        // Because we hold a strong reference to `x`, we know the entry we have
+        // found refers to our object.
+        nb::object existing_ans = it->second.second();
+        if (existing_ans.is_none()) {
+          // There is already an entry, but its value is dead. This can happen
+          // if the weakref has died but the weakref's callback has not yet
+          // run. Replace the old entry with our new one.
+          PyObject* old_ans_ptr = it->second.second.ptr();
+          self->weakref_to_key_.erase(old_ans_ptr);
+          it->second.second = std::move(ansref);
+          self->weakref_to_key_[it->second.second.ptr()] = x;
+        } else {
+          // Another thread has populated the cache for this key.
+          result = existing_ans;
+        }
       }
     }
 
