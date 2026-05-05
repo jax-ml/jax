@@ -93,6 +93,7 @@ if [[ "${xla_track}" == 'head' ]]; then
     exit 1
   fi
   bazel_args+=(--override_repository=xla="${JAXCI_XLA_GIT_DIR}")
+  bazel_args+=(--override_module=xla="${JAXCI_XLA_GIT_DIR}")
 fi
 
 if [[ -n "${JAXCI_TEST_TAG_FILTERS:-}" ]]; then

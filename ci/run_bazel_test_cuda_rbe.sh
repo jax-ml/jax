@@ -36,7 +36,7 @@ source "ci/utilities/setup_build_environment.sh"
 
 OVERRIDE_XLA_REPO=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 if [[ "$JAXCI_BUILD_JAXLIB" != "true" ]]; then

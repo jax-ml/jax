@@ -534,6 +534,7 @@ async def main():
   if args.local_xla_path:
     logging.debug("Local XLA path: %s", args.local_xla_path)
     wheel_build_command_base.append(f"--override_repository=xla=\"{args.local_xla_path}\"")
+    wheel_build_command_base.append(f"--override_module=xla=\"{args.local_xla_path}\"")
 
   if args.target_cpu:
     logging.debug("Target CPU: %s", args.target_cpu)
