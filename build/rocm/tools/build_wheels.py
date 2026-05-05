@@ -87,7 +87,8 @@ def find_clang_path():
 
 
 def build_jaxlib_wheel(
-    jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"
+    jax_path, rocm_path, python_version, xla_path=None, compiler="gcc",
+    local_aiter_path=None,
 ):
     use_clang = "true" if compiler == "clang" else "false"
 
@@ -123,6 +124,9 @@ def build_jaxlib_wheel(
 
     if xla_path:
         cmd.append("--bazel_options=--override_repository=xla=%s" % xla_path)
+
+    if local_aiter_path:
+        cmd.append("--bazel_options=--repo_env=LOCAL_AITER_PATH=%s" % local_aiter_path)
 
     cpy = to_cpy_ver(python_version)
     py_bin = "/opt/python/%s-%s/bin" % (cpy, cpy)
@@ -261,6 +265,12 @@ def parse_args():
         help="Optional directory where XLA source is located to use instead of JAX builtin XLA",
     )
     p.add_argument(
+        "--local-aiter-path",
+        type=str,
+        default=None,
+        help="Optional directory containing locally-built AITER shared libraries and headers",
+    )
+    p.add_argument(
         "--compiler",
         type=str,
         default="gcc",
@@ -291,13 +301,14 @@ def main():
     print("PYTHON_VERSIONS=%r" % python_versions)
     print("JAX_PATH=%s" % args.jax_path)
     print("XLA_PATH=%s" % args.xla_path)
+    print("LOCAL_AITER_PATH=%s" % args.local_aiter_path)
 
     rocm_path = build_rocm_path(args.rocm_version)
 
     update_rocm_targets(rocm_path, GPU_DEVICE_TARGETS)
 
     for py in python_versions:
-        build_jaxlib_wheel(args.jax_path, rocm_path, py, args.xla_path, args.compiler)
+        build_jaxlib_wheel(args.jax_path, rocm_path, py, args.xla_path, args.compiler, args.local_aiter_path)
         wheel_paths = find_wheels(os.path.join(args.jax_path, "dist"))
         for wheel_path in wheel_paths:
             # skip jax wheel since it is non-platform
