@@ -531,7 +531,8 @@ class MpmdTest(PallasSCTest):
   def test_parallel_subkernels_semaphores(
       self, use_tc_tiling, full_core_spec, signalling_direction, subcores
   ):
-    self.skipTest("Needs compiler support.")
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 15):
+      self.skipTest("Needs a newer libtpu")
 
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core",
