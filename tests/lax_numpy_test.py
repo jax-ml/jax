@@ -573,7 +573,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
-          ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]],
+          ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1)),
+          ("tensor-tensor-both-1", (1, 5, 4), (1, 4, 3))]],
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
@@ -590,6 +591,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
       self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
+
+  def testMatmulBothSize1BatchDimsSqueezedJaxpr(self):
+    x = jax.ShapeDtypeStruct((1, 5, 4), jnp.float32)
+    y = jax.ShapeDtypeStruct((1, 4, 3), jnp.float32)
+    jaxpr = jax.make_jaxpr(jnp.matmul)(x, y)
+    [dot_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == lax.dot_general_p)
+    self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
+    self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
+    self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
