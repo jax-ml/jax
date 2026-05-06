@@ -52,7 +52,7 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 1
+        clone_main_xla: 0
         upload_artifacts_to_gcs: false
 
   run_tests:
@@ -91,4 +91,4 @@ jobs:
       build_jaxlib: ${{ 'true' }}
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
-      clone_main_xla: 1
+      clone_main_xla: 0

@@ -20,7 +20,7 @@ on:
         description: 'XLA revision used by tests.'
         type: choice
         required: true
-        default: 'head'
+        default: 'pinned'
         options:
         - 'pinned'
         - 'head'
@@ -150,7 +150,7 @@ jobs:
       - name: Run Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
           # Only a couple of targets that run in under 10 minutes.
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_test_gpu

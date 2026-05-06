@@ -172,7 +172,7 @@ jobs:
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
-        shell: cmd
+        shell: cmd  # zizmor: ignore[misfeature] allow the workflow to use cmd shell
         run:  gcloud storage cp -r "dist/*.whl" "%INPUTS_GCS_UPLOAD_URI%"/
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}

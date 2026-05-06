@@ -152,6 +152,10 @@ def ref_get(
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
+  if isinstance(ref, TransformedRef) and ref.multiref:
+    raise NotImplementedError(
+        "ref_get with multi-ref TransformedRef is not supported."
+    )
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return get_p.bind(ref, *flat_transforms, tree=tree)
@@ -244,6 +248,10 @@ def ref_swap(
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
+  if isinstance(ref, TransformedRef) and ref.multiref:
+    raise NotImplementedError(
+        "ref_swap with multi-ref TransformedRef is not supported."
+    )
   if hasattr(ref, 'dtype'):
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)

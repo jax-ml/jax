@@ -44,7 +44,7 @@ fi
 
 OVERRIDE_XLA_REPO=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 NB_TPUS=$JAXCI_TPU_CORES

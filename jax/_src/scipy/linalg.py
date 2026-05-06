@@ -2612,6 +2612,51 @@ def _circulant(c: Array) -> Array:
   return c[idx]
 
 
+def leslie(f: ArrayLike, s: ArrayLike) -> Array:
+  r"""Construct a Leslie matrix.
+
+  JAX implementation of :func:`scipy.linalg.leslie`.
+
+  Given fecundity coefficients ``f`` of shape ``(..., N)`` and survival
+  coefficients ``s`` of shape ``(..., N - 1)``, the Leslie matrix has ``f`` as
+  its first row, ``s`` along its first sub-diagonal, and zeros elsewhere.
+
+  Args:
+    f: array of shape ``(..., N)`` with ``N >= 2`` containing the fecundity
+      coefficients.
+    s: array of shape ``(..., N - 1)`` containing the survival coefficients.
+
+  Returns:
+    A Leslie matrix of shape ``(..., N, N)``.
+
+  Examples:
+    >>> jax.scipy.linalg.leslie(jnp.array([0.1, 2.0, 1.0, 0.1]),
+    ...                         jnp.array([0.2, 0.8, 0.7]))
+    Array([[0.1, 2. , 1. , 0.1],
+           [0.2, 0. , 0. , 0. ],
+           [0. , 0.8, 0. , 0. ],
+           [0. , 0. , 0.7, 0. ]], dtype=float32)
+  """
+  check_arraylike("leslie", f, s)
+  f_arr = jnp.atleast_1d(f)
+  s_arr = jnp.atleast_1d(s)
+  if f_arr.shape[-1] < 2:
+    raise ValueError(
+        "The length of f along the last axis must be at least 2; "
+        f"got shape {f_arr.shape}.")
+  if s_arr.shape[-1] != f_arr.shape[-1] - 1:
+    raise ValueError(
+        "Incorrect lengths for f and s. The length of s along the last axis "
+        f"must be one less than the length of f; got f shape {f_arr.shape} "
+        f"and s shape {s_arr.shape}.")
+  return _leslie(f_arr, s_arr)
+
+@partial(jnp_vectorize.vectorize, signature="(n),(m)->(n,n)")
+def _leslie(f: Array, s: Array) -> Array:
+  f, s = promote_dtypes(f, s)
+  return jnp.diag(s, k=-1).at[0].set(f)
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.

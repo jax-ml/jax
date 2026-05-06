@@ -104,6 +104,17 @@ def osp_linalg_circulant(c: np.ndarray) -> np.ndarray:
   return np.vectorize(
       scipy.linalg.circulant, signature="(n)->(n,n)", otypes=(c.dtype,))(c)
 
+def osp_linalg_leslie(f: np.ndarray, s: np.ndarray) -> np.ndarray:
+  """Batched scipy leslie for testing."""
+  f = np.atleast_1d(f)
+  s = np.atleast_1d(s)
+  if scipy_version >= (1, 15):
+    return scipy.linalg.leslie(f, s)
+  out_dtype = np.result_type(f.dtype, s.dtype)
+  return np.vectorize(
+      scipy.linalg.leslie, signature="(n),(m)->(n,n)",
+      otypes=(out_dtype,))(f, s)
+
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
   if scipy_version >= (1, 19):
@@ -1067,14 +1078,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testPinv(self, shape, hermitian, dtype):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-
-    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
-    def np_fn(a):
-      # Symmetrize the input matrix to match the jnp behavior.
+    def args_maker():
+      a = rng(shape, dtype)
       if hermitian:
         a = (a + T(a.conj())) / 2
-      return np.linalg.pinv(a, hermitian=hermitian)
+      return [a]
+
+    np_fn = partial(np.linalg.pinv, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-5)
 
@@ -1127,17 +1138,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertArraysEqual(np_result, jnp_result)
 
   @jtu.sample_product(
-    shape=[(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
-           (2, 3, 4, 5)],
+    [dict(shape=shape, hermitian=hermitian)
+     for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
+                   (2, 3, 4, 5)]
+     for hermitian in ([False, True] if len(shape) >= 2 and shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
-  def testMatrixRank(self, shape, dtype):
+  def testMatrixRank(self, shape, dtype, hermitian):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    a, = args_maker()
-    self._CheckAgainstNumpy(np.linalg.matrix_rank, jnp.linalg.matrix_rank,
+    def args_maker():
+      a = rng(shape, dtype)
+      if hermitian:
+        a = (a + T(a.conj())) / 2
+      return [a]
+
+    np_fn = partial(np.linalg.matrix_rank, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.matrix_rank, hermitian=hermitian)
+    self._CheckAgainstNumpy(np_fn, jnp_fn,
                             args_maker, check_dtypes=False, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.matrix_rank, args_maker,
+    self._CompileAndCheck(jnp_fn, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
   def testMatrixRankTol(self):
@@ -2304,6 +2323,28 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(osp_linalg_circulant, jsp.linalg.circulant, args_maker)
     self._CompileAndCheck(jsp.linalg.circulant, args_maker)
+
+  @jtu.sample_product(
+     n=[2, 3, 5, 8],
+     batch=[(), (2,), (1, 3)],
+     dtype=float_types + int_types,
+  )
+  def testLeslie(self, n, batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    f_shape = batch + (n,)
+    s_shape = batch + (n - 1,)
+    args_maker = lambda: [rng(f_shape, dtype), rng(s_shape, dtype)]
+    self._CheckAgainstNumpy(osp_linalg_leslie, jsp.linalg.leslie, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.leslie, args_maker)
+
+  def testLeslieInvalidLength(self):
+    with self.assertRaisesRegex(ValueError, "length of f along the last axis"):
+      jsp.linalg.leslie(jnp.array([1.0]), jnp.array([]))
+    with self.assertRaisesRegex(ValueError, "Incorrect lengths for f and s"):
+      jsp.linalg.leslie(jnp.array([1., 2., 3.]), jnp.array([0.5]))
+    with self.assertRaisesRegex(ValueError, "Incorrect lengths for f and s"):
+      jsp.linalg.leslie(jnp.array([1., 2.]), jnp.array([]))
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],

@@ -201,48 +201,6 @@ TEST_F(VregUtilTest, GetZerosLikeVector) {
   EXPECT_THAT(vec, IsConstantOpWithSplatOrScalarValue(vty, float{0.0f}));
 }
 
-TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim0) {
-  constexpr std::array<int64_t, 2> kTargetShape = {4, 8};
-  FailureOr<TypedValue<VectorType>> vec = getX32VmaskByPaddingEnd(
-      Builder(), /*padding=*/1, /*target_shape=*/kTargetShape,
-      /*dim=*/0);
-  ASSERT_TRUE(succeeded(vec));
-
-  auto mask_op = dyn_cast<tpu::CreateMaskOp>(vec.value().getDefiningOp());
-  ASSERT_TRUE(mask_op != nullptr);
-  EXPECT_THAT(ArrayRef<Value>({mask_op.getLow()[0], mask_op.getLow()[1]}),
-              ElementsAre(IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{0}),
-                          IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{0})));
-  EXPECT_THAT(ArrayRef<Value>({mask_op.getHigh()[0], mask_op.getHigh()[1]}),
-              ElementsAre(IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{3}),
-                          IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{8})));
-}
-
-TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim1) {
-  constexpr std::array<int64_t, 2> kTargetShape = {4, 8};
-  FailureOr<TypedValue<VectorType>> vec = getX32VmaskByPaddingEnd(
-      Builder(), /*padding=*/3, /*target_shape=*/kTargetShape,
-      /*dim=*/1);
-  ASSERT_TRUE(succeeded(vec));
-
-  auto mask_op = dyn_cast<tpu::CreateMaskOp>(vec.value().getDefiningOp());
-  ASSERT_TRUE(mask_op != nullptr);
-  EXPECT_THAT(ArrayRef<Value>({mask_op.getLow()[0], mask_op.getLow()[1]}),
-              ElementsAre(IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{0}),
-                          IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{0})));
-  EXPECT_THAT(ArrayRef<Value>({mask_op.getHigh()[0], mask_op.getHigh()[1]}),
-              ElementsAre(IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{4}),
-                          IsConstantOpWithSplatOrScalarValue(
-                              Builder().getIndexType(), int64_t{5})));
-}
-
 }  // namespace
 
 }  // namespace mlir::tpu

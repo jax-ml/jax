@@ -70,6 +70,7 @@ jax.scipy.linalg
    hankel
    hilbert
    inv
+   leslie
    lu
    lu_factor
    lu_solve

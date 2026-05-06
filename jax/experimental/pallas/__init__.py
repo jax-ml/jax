@@ -47,6 +47,7 @@ from jax._src.pallas.helpers import empty_ref_like as empty_ref_like
 from jax._src.pallas.helpers import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.helpers import kernel as kernel
 from jax._src.pallas.helpers import loop as loop
+from jax._src.pallas.helpers import select_ref as select_ref
 from jax._src.pallas.helpers import when as when
 from jax._src.pallas.helpers import with_scoped as with_scoped
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
@@ -64,6 +65,7 @@ from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.utils import align_to as align_to
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape

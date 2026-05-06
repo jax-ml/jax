@@ -645,13 +645,15 @@ def _softmax_deprecated(
   return result
 
 
-@api.jit(static_argnames=("axis",))
+@api.jit(static_argnames=("axis", "algorithm"))
 def standardize(x: ArrayLike,
                 axis: Axis = -1,
                 mean: ArrayLike | None = None,
                 variance: ArrayLike | None = None,
                 epsilon: ArrayLike = 1e-5,
-                where: ArrayLike | None = None) -> Array:
+                where: ArrayLike | None = None,
+                *,
+                algorithm: str = "fast") -> Array:
   r"""Standardizes input to zero mean and unit variance.
 
   The standardization is given by:
@@ -675,6 +677,11 @@ def standardize(x: ArrayLike,
       to ``1E-5``.
     where: optional boolean mask specifying which elements to use when computing
       the mean and variance.
+    algorithm: variance computation algorithm. ``"fast"`` uses ``mean(x^2) - mean(x)^2``
+      which may be faster but can suffer from catastrophic cancellation and produce
+      different results in eager vs JIT contexts. ``"stable"`` uses the two-pass
+      formula ``mean((x - mean(x))^2)`` which is numerically stable. Default is
+      ``"fast"`` for backward compatibility.
 
   Returns:
     An array of the same shape as ``x`` containing the standardized input.
@@ -684,17 +691,23 @@ def standardize(x: ArrayLike,
   if mean is None:
     mean = jnp.mean(x, axis, keepdims=True, where=where)
   if variance is None:
-    # this definition is traditionally seen as less accurate than jnp.var's
-    # mean((x - mean(x))**2) but may be faster and even, given typical
-    # activation distributions and low-precision arithmetic, more accurate
-    # when used in neural network normalization layers
-    variance = jnp.mean(
-        jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
-    # Because we're using a less accurate variance definition, it may return
-    # negative values. This is problematic for the rsqrt, so we clip to 0.
-    # Note that this clipping only matters when the variance is vanishingly
-    # small compared to the mean of x, so the gradient should be unaffected.
-    variance = jnp.clip(variance, 0)
+    if algorithm == "stable":
+      variance = jnp.mean(
+          jnp.square(jnp.subtract(x, mean)), axis, keepdims=True, where=where)
+    elif algorithm == "fast":
+      # This definition is traditionally seen as less accurate than the
+      # two-pass mean((x - mean(x))**2) but may be faster and even, given
+      # typical activation distributions and low-precision arithmetic, more
+      # accurate when used in neural network normalization layers.
+      variance = jnp.mean(
+          jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
+      # Because we're using a less accurate variance definition, it may
+      # return negative values. This is problematic for the rsqrt, so we
+      # clip to 0.
+      variance = jnp.clip(variance, 0)
+    else:
+      raise ValueError(
+          f"Unknown algorithm '{algorithm}'. Expected 'fast' or 'stable'.")
   return jnp.subtract(x, mean) * lax.rsqrt(variance + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.

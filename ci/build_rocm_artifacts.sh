@@ -60,7 +60,7 @@ fi
 
 override_xla_repo=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  override_xla_repo="--bazel_options=--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+  override_xla_repo="--bazel_options=--override_repository=xla=${JAXCI_XLA_GIT_DIR} --bazel_options=--override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 wheel_version_suffix_flag=""

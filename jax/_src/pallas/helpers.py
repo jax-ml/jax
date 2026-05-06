@@ -13,23 +13,24 @@
 # limitations under the License.
 """Pallas helper functions."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import functools
 from typing import Any, TypeVar, cast, overload
-from collections.abc import Hashable
 
 from jax._src import api
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import lax as lax
 from jax._src import numpy as jnp
 from jax._src import tree_util
 from jax._src import typing as jax_typing
-import jax._src.lax as lax
 from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import mpmd
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas import utils as pl_utils
+from jax._src.state import types as state_types
 
 
 empty = api.named_call(lax.empty)
@@ -178,24 +179,6 @@ def debug_check(condition, message):
   """
   return checkify.debug_check(condition, message)
 
-def _make_kernel(meshes_and_fns: Sequence[tuple[pl_core.Mesh, Callable]],
-                 out_type: object,
-                 scratch_types: pl_core.ScratchShapeTree = (),
-                 name: str | None = None,
-                 **mesh_kwargs
-                 ):
-  def wrapper(*operands):
-    from jax._src.pallas import mpmd
-
-    return mpmd.mpmd_map(
-        meshes_and_fns,
-        out_types=out_type,
-        scratch_types=scratch_types,
-        name=name,
-        **mesh_kwargs,
-    )(*operands)
-  return wrapper
-
 
 def kernel(
     body: Callable | Sequence[Callable] | api.NotSpecified = api.NotSpecified(),
@@ -269,23 +252,27 @@ def kernel(
   """
   # Note we default out_shape to None to allow `body` to come before it
   # in the function signature, but `body` itself is optional.
-  kwds = dict(
-      out_type=out_type,
+  make_kernel = functools.partial(
+      mpmd.mpmd_map,
+      out_types=out_type,
       scratch_types=scratch_types,
       compiler_params=compiler_params,
-      interpret=(config.pallas_tpu_interpret_mode_context_manager.value
-                 or interpret),
+      interpret=(
+          config.pallas_tpu_interpret_mode_context_manager.value or interpret
+      ),
       cost_estimate=cost_estimate,
       debug=debug,
       name=name,
-      metadata=metadata)
+      metadata=metadata,
+  )
+
   if isinstance(body, api.NotSpecified):
     # Decorator mode.
     if isinstance(mesh, Sequence):
       raise ValueError(
           "mesh cannot be a sequence when using pl.kernel as a decorator."
       )
-    return lambda fun: _make_kernel([(mesh, fun)], **kwds)
+    return lambda fun: make_kernel([(mesh, fun)])
   elif isinstance(body, Sequence):
     # MPMD mode.
     if not isinstance(mesh, Sequence):
@@ -295,13 +282,13 @@ def kernel(
     if len(body) != len(mesh):
       raise ValueError("body and mesh sequences must have the same length.")
     meshes_and_fns = list(zip(mesh, body))
-    return _make_kernel(meshes_and_fns, **kwds)
+    return make_kernel(meshes_and_fns)
   # Single kernel.
   if isinstance(mesh, Sequence):
     raise ValueError(
         "mesh cannot be a sequence when body is a single callable."
     )
-  return _make_kernel([(mesh, body)], **kwds)
+  return make_kernel([(mesh, body)])
 
 
 def with_scoped(
@@ -344,3 +331,29 @@ def with_scoped(
       )
     return inner
   return decorator
+
+
+def select_ref(idx: jax_typing.Array, *refs) -> state_types.TransformedRef:
+  """Selects a ref from a list of refs based on the runtime value of a scalar index.
+
+  This is currently only supported for DMA operations and at the top level of a
+  ref. It can wrap other ref operations like `at` underneath.
+
+  Example::
+
+    x_ref = pl.select_ref(idx, x0_ref.at[...], x1_ref)
+    pltpu.async_copy(x_ref, y_ref, sem).wait()
+
+  Args:
+    idx: A scalar array specifying which ref to select.
+    *refs: A sequence of refs to select from.
+
+  Returns:
+    A TransformedRef that represents the selection.
+  """
+  if len(refs) <= 1:
+    raise ValueError("At least two refs are required for pl.select_ref.")
+  return state_types.TransformedRef(
+      ref=refs,
+      transforms=(state_types.SelectTransform(idx),),
+  )

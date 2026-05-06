@@ -123,6 +123,7 @@ def build_jaxlib_wheel(
 
     if xla_path:
         cmd.append("--bazel_options=--override_repository=xla=%s" % xla_path)
+        cmd.append("--bazel_options=--override_module=xla=%s" % xla_path)
 
     cpy = to_cpy_ver(python_version)
     py_bin = "/opt/python/%s-%s/bin" % (cpy, cpy)

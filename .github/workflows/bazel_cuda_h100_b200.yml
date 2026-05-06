@@ -24,7 +24,7 @@ on:
         description: 'XLA revision used by tests.'
         type: choice
         required: true
-        default: 'pinned'
+        default: 'head'
         options:
         - 'pinned'
         - 'head'
@@ -86,7 +86,7 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
           JAXCI_BAZEL_TARGETS: |
             //tests:cudnn_fusion_test_gpu
             //tests:scaled_matmul_stablehlo_test_gpu
@@ -133,7 +133,7 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_tests
             //tests/pallas:gpu_tests

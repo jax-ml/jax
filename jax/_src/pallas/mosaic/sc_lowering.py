@@ -67,6 +67,7 @@ _make_index = tc_lowering._make_index
 _transform_ref = tc_lowering._transform_ref
 _dma_unflatten = tpu_primitives._dma_unflatten
 _get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
+_get_ref = tpu_primitives._get_ref
 
 
 def dynamic_shape_replacement_fn(x):
@@ -591,7 +592,6 @@ def _load_lowering_rule(
         "Integer indexing of refs that follows a non-trivial slice is not"
         " supported on SC"
     )
-  del sizes  # Currently unused.
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
         "Get only supports slices with stride 1, got {strides}"
@@ -616,10 +616,26 @@ def _load_lowering_rule(
 
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Get", out_aval)
-  vec_type = ir.VectorType.get(
+  out_vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  return tpu.vector_load(vec_type, ref, indices=starts, strides=[], mask=mask)
+  if not ctx.lowering_context.needs_layout_passes:
+    return tpu.vector_load(
+        out_vec_type, ref, indices=starts, strides=[], mask=mask
+    )
+  # Load at the full memref rank, keeping integer-indexed dims as size 1,
+  # because apply-vector-layout requires the vector rank to match the memref.
+  memref_vec_shape = cast(
+      Sequence[int],
+      [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
+  )
+  memref_vec_type = ir.VectorType.get(
+      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+  )
+  load_val = tpu.vector_load(
+      memref_vec_type, ref, indices=starts, strides=[], mask=mask
+  )
+  return vector.shape_cast(out_vec_type, load_val)
 
 
 @register_lowering_rule(state_primitives.swap_p)
@@ -701,11 +717,29 @@ def _store_lowering_rule(
 
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Swap", out_aval)
-  vec_type = ir.VectorType.get(
+  out_vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  old_val = tpu.vector_load(vec_type, ref, starts, strides=[], mask=mask)
-  tpu.vector_store(val, ref, starts, strides=[], mask=mask, add=add)
+  if not ctx.lowering_context.needs_layout_passes:
+    old_val = tpu.vector_load(out_vec_type, ref, starts, strides=[], mask=mask)
+    _ = tpu.vector_store(
+        val, ref, indices=starts, strides=[], mask=mask, add=add
+    )
+    return old_val
+  # Load and store at the full memref rank, keeping integer-indexed dims as
+  # size 1, because apply-vector-layout requires the vector rank to match
+  # the memref.
+  memref_vec_shape = cast(
+      Sequence[int],
+      [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
+  )
+  memref_vec_type = ir.VectorType.get(
+      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+  )
+  old_val = tpu.vector_load(memref_vec_type, ref, starts, strides=[], mask=mask)
+  old_val = vector.shape_cast(out_vec_type, old_val)
+  val_memref_rank = vector.shape_cast(memref_vec_type, val)
+  tpu.vector_store(val_memref_rank, ref, starts, strides=[], mask=mask, add=add)
   return old_val
 
 
@@ -784,16 +818,17 @@ def _prepare_dma_refs(
     is_add: bool = False,
 ):
   """Prepares the DMA source and destination references."""
-  src_ref, src_transforms = _get_ref_and_transforms(src_ref)
-  dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
-  src_aval, src_transforms_aval = _get_ref_and_transforms(src_aval)
-  dst_aval, dst_transforms_aval = _get_ref_and_transforms(dst_aval)
+  src_ref_orig, dst_ref_orig = src_ref, dst_ref
   src_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       src_aval.memory_space, core_type
   )
   dst_memory_space = tpu_core.memory_space_to_tpu_memory_space(
       dst_aval.memory_space, core_type
   )
+  src_ref, src_transforms = _get_ref_and_transforms(src_ref)
+  dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
+  src_aval, src_transforms_aval = _get_ref_and_transforms(src_aval)
+  dst_aval, dst_transforms_aval = _get_ref_and_transforms(dst_aval)
   match src_memory_space, dst_memory_space:
     case MemorySpace.HBM | MemorySpace.VMEM_SHARED, MemorySpace.VMEM:
       if _has_indirect_offsets(dst_transforms, dst_transforms_aval, core_type):
@@ -804,9 +839,9 @@ def _prepare_dma_refs(
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval, dst_aval.shape, dst_transforms
       )
-      dst_ref_shape = ir.MemRefType(dst_ref.type).shape
+      dst_ref_shape = tuple(ir.MemRefType(dst_ref.type).shape)
       indirect_offsets, src_transforms = _extract_indirect_offsets(
-          src_transforms, tuple(dst_ref_shape), src_transforms_aval, core_type
+          src_transforms, dst_ref_shape, src_transforms_aval, core_type
       )
       src_ref, _ = _transform_ref(
           src_ref, src_aval, src_aval.shape, src_transforms
@@ -821,9 +856,9 @@ def _prepare_dma_refs(
       src_ref, _ = _transform_ref(
           src_ref, src_aval, src_aval.shape, src_transforms
       )
-      src_ref_shape = ir.MemRefType(src_ref.type).shape
+      src_ref_shape = tuple(ir.MemRefType(src_ref.type).shape)
       indirect_offsets, dst_transforms = _extract_indirect_offsets(
-          dst_transforms, tuple(src_ref_shape), dst_transforms_aval, core_type
+          dst_transforms, src_ref_shape, dst_transforms_aval, core_type
       )
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval, dst_aval.shape, dst_transforms
@@ -847,12 +882,6 @@ def _prepare_dma_refs(
             f"HBM/VMEM_SHARED."
             f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
         )
-      src_ref, _ = _transform_ref(
-          src_ref, src_aval, src_aval.shape, src_transforms
-      )
-      dst_ref, _ = _transform_ref(
-          dst_ref, dst_aval, dst_aval.shape, dst_transforms
-      )
       indirect_offsets = None
       indirect_offsets_ref_str = ""
   if is_add and indirect_offsets is None:
@@ -863,6 +892,9 @@ def _prepare_dma_refs(
         " or `pltpu.async_copy(..., {ref}={ref}.at[indices_ref],"
         " ...)`.".format(ref=indirect_offsets_ref_str)
     )
+  if indirect_offsets is None:
+    # If typical DMA path, don't alter the refs.
+    return src_ref_orig, dst_ref_orig, None
   return src_ref, dst_ref, indirect_offsets
 
 
@@ -883,8 +915,6 @@ def _dma_start_lowering_rule(
   src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
   )
-  sem_aval, _ = _get_ref_and_transforms(sem_aval)
-  src_sem_aval, _ = _get_ref_and_transforms(src_sem_aval)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref,
@@ -902,39 +932,42 @@ def _dma_start_lowering_rule(
         "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
         "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
     )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
-  if src_sem is not None:
-    src_sem, _ = _transform_ref(src_sem, src_sem_aval, src_sem_aval.shape)
+  core_index = None
+  if device_id is not None:
+    kernel_type = ctx.lowering_context.kernel_type
+    if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
+      dest_kernel_type = sem_aval.memory_space.mesh.core_type
+    else:
+      dest_kernel_type = kernel_type
+    device_id, core_index = tc_lowering._device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval, dest_kernel_type
+    )
 
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
-    core_index = None
-    if device_id is not None:
-      kernel_type = ctx.lowering_context.kernel_type
-      if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
-        dest_kernel_type = sem_aval.memory_space.mesh.core_type
-      else:
-        dest_kernel_type = kernel_type
-      device_id, core_index = tc_lowering._device_id_to_logical(
-          ctx, device_id, device_id_type, device_id_aval, dest_kernel_type
-      )
-    tpu.enqueue_dma(
-        source=src_ref,
-        target=dst_ref,
-        target_semaphore=sem,
-        source_semaphore=src_sem,
-        device_id=device_id,
-        priority=priority,
+    def _dma_start(src_ref, dst_ref, sem, src_sem):
+      tpu.enqueue_dma(
+          source=src_ref,
+          target=dst_ref,
+          target_semaphore=sem,
+          source_semaphore=src_sem,
+          device_id=device_id,
+          priority=priority,
         core_id=core_index,
+      )
+      return []
+
+    return tc_lowering.lower_with_transformed_refs(
+        _dma_start,
+        [src_ref, dst_ref, sem, src_sem],
+        [src_aval, dst_aval, sem_aval, src_sem_aval],
     )
-    return []
 
   if device_id is not None:
     raise NotImplementedError(
         "Scatter/gather to or from a remote device via `pltpu.async_copy` is"
         " not supported"
     )
-  del priority  # Unused by indirect DMAs.
 
   offset_filter = None
   if indirect_offsets.ignored_value is not None:
@@ -942,6 +975,8 @@ def _dma_start_lowering_rule(
         indirect_offsets.ignored_value, jax_core.ShapedArray((), jnp.int32)
     )
 
+  sem_aval, _ = _get_ref_and_transforms(sem_aval)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
   tpu.enqueue_indirect_dma(
       src_ref,
       dst_ref,
@@ -969,7 +1004,6 @@ def _dma_wait_lowering_rule(
   src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
   )
-  sem_aval, _ = _get_ref_and_transforms(sem_aval)
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
       src_ref,
@@ -978,33 +1012,40 @@ def _dma_wait_lowering_rule(
       dst_aval,
       ctx.lowering_context.kernel_type,
   )
-  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
+  core_id = None
+  if insert_dummy_device:
+    i32 = ir.IntegerType.get_signless(32)
+    core_id = device_id = arith.constant(i32, ir.IntegerAttr.get(i32, 0))
+  elif device_id is not None:
+    device_id, core_id = tc_lowering._device_id_to_logical(
+        ctx, device_id, device_id_type, device_id_aval
+    )
+    if core_id:
+      raise NotImplementedError(
+          "Core index must be None when waiting on a local DMA."
+      )
+
 
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
-    if insert_dummy_device:
-      i32 = ir.IntegerType.get_signless(32)
-      core_id = device_id = arith.constant(i32, ir.IntegerAttr.get(i32, 0))
-    elif device_id is not None:
-      device_id, core_id = tc_lowering._device_id_to_logical(
-          ctx, device_id, device_id_type, device_id_aval
-      )
-      if core_id:
-        raise NotImplementedError(
-            "Core index must be None when waiting on a local DMA."
-        )
-    else:
-      core_id = None
-    tpu.wait_dma2(
+    def _dma_wait(sem, src_ref, dst_ref):
+      tpu.wait_dma2(
         sem, src_ref, dst_ref, device_id=device_id, core_id=core_id
+      )
+      return []
+    return tc_lowering.lower_with_transformed_refs(
+        _dma_wait,
+        [sem, src_ref, dst_ref],
+        [sem_aval, src_aval, dst_aval],
     )
-    return []
 
   if device_id is not None:
     raise NotImplementedError(
         "Scatter/gather to or from a remote device via `pltpu.async_copy` is"
         " not supported"
     )
+  sem_aval, _ = _get_ref_and_transforms(sem_aval)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape)
   tpu.wait_indirect_dma(sem, src_ref, dst_ref)
   return []
 

@@ -239,7 +239,9 @@ class MemorySpace(enum.Enum):
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
   def like(self, shape_dtype_like):
-    return self(shape_dtype_like.shape, shape_dtype_like.dtype)
+    if isinstance(shape_dtype_like, jax_core.AbstractValue):
+      return self.from_type(shape_dtype_like)
+    return self.from_type(jax.typeof(shape_dtype_like))
 
   def __matmul__(self, other, /):
     if not isinstance(other, pallas_core.Mesh):

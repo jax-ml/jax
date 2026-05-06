@@ -41,7 +41,7 @@ jobs:
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
-      clone_main_xla: 1
+      clone_main_xla: 0
       upload_artifacts_to_gcs: false
 
   run-tests:
@@ -94,4 +94,4 @@ jobs:
       build_jax: ${{ 'true' }}
       run_tests_with_rbe: ${{ 'true' }}
       build_artifacts_with_rbe: ${{ 'true' }}
-      clone_main_xla: 1
+      clone_main_xla: 0

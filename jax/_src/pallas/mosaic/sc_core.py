@@ -93,14 +93,15 @@ class AbstractRef(state.AbstractRef):
 
 
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
-  """Returns the SparseCore information for the current device."""
-  return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(
-      num_cores=0,
-      num_subcores=0,
-      num_lanes=0,
-      vmem_capacity_bytes=0,
-      dma_granule_size_bytes=0,
-  )
+  """Returns the SparseCore information for the current device.
+
+  Raises:
+    RuntimeError: If the current TPU does not have SparseCores.
+  """
+  sc_info = tpu_info.get_tpu_info().sparse_core
+  if sc_info is None:
+    raise RuntimeError("The current TPU does not have SparseCores")
+  return sc_info
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

@@ -541,19 +541,36 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(reg_to_smem.holds(), holds)
     self.assertEqual(smem_to_reg.holds(), holds)
 
-  def test_transpose_expression(self):
-    def transpose(tiling):
-      transform = None if tiling is None else lc.TileTransform(tiling)
-      return cs.Transpose(cs.SMEMTiling(transform))
+  @parameterized.parameters(
+      (None, (), None),
+      ((2, 3), (1, 0), (3, 2)),
+      ((3,), (0,), (3,)),
+      ((2, 4, 8), (1, 0, 2), (4, 2, 8)),
+      ((2, 4, 8), (1, 2, 0), (4, 8, 2)),
+      ((2, 4, 8), (2, 1, 0), (8, 4, 2)),
+      ((2, 4), (1, 0, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 2, 3), (2, 4)),
 
-    self.assertEqual(
-        cs.reduce_expression(transpose(None), {}),
-        cs.SMEMTiling(None),
-    )
-    self.assertEqual(
-        cs.reduce_expression(transpose((2, 3)), {}),
-        cs.SMEMTiling(lc.TileTransform((3, 2))),
-    )
+  )
+  def test_transpose_expression(self, tiling, permutation, expected):
+    transform = None if tiling is None else lc.TileTransform(tiling)
+    expected_transform = None if expected is None else lc.TileTransform(expected)
+    expr = cs.Transpose(cs.SMEMTiling(transform), permutation)
+    self.assertEqual(cs.reduce_expression(expr, {}), cs.SMEMTiling(expected_transform))
+
+  @parameterized.parameters(
+      ((2, 32), (1, 0, 2)),
+      ((2, 32), (1, 2, 0)),
+      ((2, 32), (2, 0, 1)),
+      ((2, 32), (2, 1, 0)),
+      ((2, 4), (2, 3, 1, 0)),
+  )
+  def test_reduce_transpose_of_untiled_and_tiled_dimensions_is_unsatisfiable(
+      self, tiling, permutation
+  ):
+    expr = cs.Transpose(cs.SMEMTiling(lc.TileTransform(tiling)), permutation)
+    self.assertIsInstance(cs.reduce_expression(expr, {}), cs.Unsatisfiable)
 
   def test_divides_constraint_are_satisfied_by_empty_tiling(self):
     self.assertTrue(cs.Divides(cs.SMEMTiling(None), (1, 2)).holds())

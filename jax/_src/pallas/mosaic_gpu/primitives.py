@@ -1305,11 +1305,7 @@ def _barrier_test_pp_eqn(
 jax_core.pp_eqn_rules[barrier_test_p] = _barrier_test_pp_eqn
 
 
-@lowering.register_lowering_rule(barrier_test_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(barrier_test_p, *gpu_core.LANExWARP_SEMANTICS)
-@lowering.register_lowering_rule(
-    barrier_test_p, mgpu.LoweringSemantics.Warpgroup
-)
 @lowering.register_lowering_rule(barrier_test_p, *gpu_core.WGxWARP_SEMANTICS)
 def _barrier_test_lowering(
     ctx: lowering.LoweringRuleContext,
@@ -1326,6 +1322,9 @@ def _barrier_test_lowering(
   base_index = _get_barrier_base_index(barrier_aval, transforms)
   if base_index is not None:
     barrier = barrier[base_index]
+  # Ensure that all threads in the warp have converged and will not read
+  # different values from the barrier.
+  mgpu.utils.warp_barrier()
   wait_complete = barrier.test(orders_tensor_core=orders_tensor_core)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     return wait_complete
@@ -1337,6 +1336,8 @@ def barrier_test(barrier: state.AbstractRef) -> jax.Array:
 
   This is a non-blocking equivalent of `barrier_wait`, which returns a boolean
   indicating whether or not the current barrier phase is complete.
+
+  `barrier_test` is only supported within a warp context.
   """
   barrier, transforms = state_primitives.get_ref_and_transforms(
       barrier, None, "barrier_test"

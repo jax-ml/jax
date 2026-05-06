@@ -13,11 +13,17 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Changes
+
+  * Added {func}`jax.experimental.pallas.align_to`, a utility that rounds a
+    value up to the nearest multiple of a given alignment.
+
 ### Mosaic GPU
 
 * New features
 
-  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`.
+  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`
+    only supported in a warp context.
 
 * Changes
 

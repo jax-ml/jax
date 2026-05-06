@@ -72,7 +72,7 @@ from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax._src.state.types import BitcastTransform, ReshapeTransform
+from jax._src.state import types as state_types
 from jax._src.typing import Array, DTypeLike
 from jax._src.util import foreach
 from jax._src.util import safe_map
@@ -116,6 +116,7 @@ PHYSICAL_EXTENDED_DTYPES = {pallas_core.semaphore_dtype}
 
 _dma_unflatten = tpu_primitives._dma_unflatten
 _get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
+_dma_tree_leaves = tpu_primitives._dma_tree_leaves
 
 
 # TODO(slebedev): Make this a TypeIs function, once we migrate to Pyrefly.
@@ -1892,7 +1893,7 @@ def _slice_memref(
 
 def _bitcast_memref(
     ref: ir.Value,
-    bitcaster: BitcastTransform,
+    bitcaster: state_types.BitcastTransform,
     ref_aval: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
@@ -1932,7 +1933,7 @@ def _bitcast_memref(
 
 def _reshape_memref(
     ref: ir.Value,
-    reshaper: ReshapeTransform,
+    reshaper: state_types.ReshapeTransform,
     ref_aval: state.AbstractRef,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int, ...]]:
@@ -1971,19 +1972,26 @@ def _transform_ref(ref, ref_ty, ref_block_shape, transforms=()):
     ref_ty, _ = _get_ref_and_transforms(ref_ty)
   if isinstance(ref_block_shape, state.TransformedRef):
     ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
+  assert not isinstance(ref_ty, state.TransformedRef)
+  assert not isinstance(ref_block_shape, state.TransformedRef)
   for transform in transforms:
     match transform:
       case NDIndexer():
         ref, ref_block_shape = _slice_memref(
             ref, transform, ref_ty, ref_block_shape
         )
-      case BitcastTransform():
+      case state_types.BitcastTransform():
         ref, ref_block_shape = _bitcast_memref(
             ref, transform, ref_ty, ref_block_shape
         )
-      case ReshapeTransform():
+      case state_types.ReshapeTransform():
         ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_ty, ref_block_shape
+        )
+      case state_types.SelectTransform():
+        raise NotImplementedError(
+            "_transform_ref() only supports single ref transforms. Got:"
+            f" {ref = }, {ref_ty = }, {ref_block_shape = }, {transforms = }"
         )
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
@@ -3717,30 +3725,98 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
 
-  if (
-      not isinstance(start, ir.Value)
-      and not isinstance(num_steps, ir.Value)
-      and num_steps == unroll
-  ):
+  is_static_start = not isinstance(start, ir.Value)
+  is_static_steps = not isinstance(num_steps, ir.Value)
+
+  if unroll == 0:
+    if is_static_steps:
+      unroll = num_steps
+    else:
+      raise ValueError(
+        "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
+
+  if is_static_start and is_static_steps and num_steps == unroll:
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
       args = _run_body(
           ir_constant(i, mlir_type=_dtype_to_ir_type(jnp.int32)), args
       )
     return args
-  if unroll != 1:
-    raise NotImplementedError(
-        f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
+
   lbd = _ensure_mlir_value(start, pallas_core.index_map_grid_aval)
-  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, pallas_core.index_map_grid_aval))
-  step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.int32))
-  for_op = scf.ForOp(lbd, ubd, step, args)
-  with ir.InsertionPoint(for_op.body):
-    iv = for_op.induction_variable
-    inner_args = for_op.inner_iter_args
-    inner_out = _run_body(iv, inner_args)
-    scf.yield_(inner_out)
-  return for_op.results
+  remainder = 0
+  main_range = 0
+  ubd = lbd
+
+  if is_static_steps:
+    num_steps_int = cast(int, num_steps)
+    main_steps = num_steps_int // unroll
+    remainder = num_steps_int % unroll
+
+    main_range = main_steps * unroll
+    main_ubd = arith.addi(
+        lbd, ir_constant(main_range, mlir_type=_dtype_to_ir_type(jnp.int32))
+    )
+
+    has_main = main_steps > 0
+    has_static_remainder = remainder > 0
+    has_dynamic_remainder = False
+  else:
+    num_steps_val = _ensure_mlir_value(
+        num_steps, pallas_core.index_map_grid_aval
+    )
+    ubd = arith.addi(lbd, num_steps_val)
+
+    unroll_val = ir_constant(unroll, mlir_type=_dtype_to_ir_type(jnp.int32))
+    main_steps_val = arith.divsi(num_steps_val, unroll_val)
+    main_range_val = arith.muli(main_steps_val, unroll_val)
+    main_ubd = arith.addi(lbd, main_range_val)
+
+    has_main = True
+    has_static_remainder = False
+    has_dynamic_remainder = True
+
+  if has_main:
+    step_val = ir_constant(unroll, mlir_type=_dtype_to_ir_type(jnp.int32))
+    main_for_op = scf.ForOp(lbd, main_ubd, step_val, args)
+    with ir.InsertionPoint(main_for_op.body):
+      iv = main_for_op.induction_variable
+      inner_args = main_for_op.inner_iter_args
+
+      loop_args = inner_args
+      for step_idx in range(unroll):
+        if step_idx == 0:
+          actual_i = iv
+        else:
+          actual_i = arith.addi(
+              iv,
+              ir_constant(step_idx, mlir_type=_dtype_to_ir_type(jnp.int32)),
+          )
+        loop_args = _run_body(actual_i, loop_args)
+      scf.yield_(loop_args)
+    args = main_for_op.results
+
+  if has_static_remainder:
+    for i in range(remainder):
+      actual_i = arith.addi(
+          lbd,
+          ir_constant(
+              main_range + i, mlir_type=_dtype_to_ir_type(jnp.int32)
+          ),
+      )
+      args = _run_body(actual_i, args)
+
+  elif has_dynamic_remainder:
+    one_val = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.int32))
+    rem_for_op = scf.ForOp(main_ubd, ubd, one_val, args)
+    with ir.InsertionPoint(rem_for_op.body):
+      iv = rem_for_op.induction_variable
+      inner_args = rem_for_op.inner_iter_args
+      inner_out = _run_body(iv, inner_args)
+      scf.yield_(inner_out)
+    args = rem_for_op.results
+
+  return args
 
 
 @register_lowering_rule(
@@ -3752,7 +3828,7 @@ def _scan_lowering_rule(
     jaxpr: jax_core.ClosedJaxpr,
     length: int,
     reverse: bool,
-    unroll: bool | int,
+    unroll: int,
     num_consts: int,
     num_carry: int,
 ):
@@ -4456,14 +4532,9 @@ def _dma_start_lowering_rule(
   src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, ctx.avals_in)
   )
-  if _get_ref_and_transforms(src_ref_aval)[0].dtype == jnp.bool_:
+  if any(r.dtype == jnp.bool_ for r in _dma_tree_leaves(src_ref_aval)):
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = _dma_unflatten(tree, ctx.block_shapes)
-  src_ref, _ = _transform_ref(src_ref, src_ref_aval, block_shapes[0])
-  if src_sem is not None:
-    src_sem, _ = _transform_ref(src_sem, src_sem_aval, block_shapes[3])
-  dst_ref, _ = _transform_ref(dst_ref, dst_ref_aval, block_shapes[1])
-  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
   kernel_type = ctx.lowering_context.kernel_type
   if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
     dest_kernel_type = sem_aval.memory_space.mesh.core_type
@@ -4479,16 +4550,24 @@ def _dma_start_lowering_rule(
           ctx, device_id, device_id_type, device_id_aval,
           dest_kernel_type=dest_kernel_type
       )
-  tpu.enqueue_dma(
-      source=src_ref,
-      target=dst_ref,
-      target_semaphore=sem,
-      source_semaphore=src_sem,
-      device_id=device_id,
-      core_id=core_id,
-      priority=priority,
-  )
-  return []
+
+  def _dma_start(src_ref, dst_ref, sem, src_sem) -> list[ir.Value]:
+    tpu.enqueue_dma(
+        source=src_ref,
+        target=dst_ref,
+        target_semaphore=sem,
+        source_semaphore=src_sem,
+        device_id=device_id,
+        core_id=core_id,
+        priority=priority,
+    )
+    return []
+
+  return lower_with_transformed_refs(
+      _dma_start,
+      [src_ref, dst_ref, sem, src_sem],
+      [src_ref_aval, dst_ref_aval, sem_aval, src_sem_aval],
+      block_shapes[:4],)
 
 
 @register_lowering_rule(tpu_primitives.dma_wait_p)
@@ -4500,10 +4579,6 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       tree, ctx.avals_in
   )
   block_shapes = _dma_unflatten(tree, ctx.block_shapes)
-  block_shapes = [_get_ref_and_transforms(r)[0] for r in block_shapes]
-  src, _ = _transform_ref(src, src_aval, block_shapes[0])
-  dst, _ = _transform_ref(dst, dst_aval, block_shapes[1])
-  sem, _ = _transform_ref(sem, sem_aval, block_shapes[2])
 
   if insert_dummy_device:
     i32 = ir.IntegerType.get_signless(32)
@@ -4515,11 +4590,90 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   else:
     core_id = None
 
-  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 27):
-    tpu.wait_dma2(sem, src, dst, core_id=core_id)
-  else:
-    tpu.wait_dma2(sem, src, dst, device_id=device_id, core_id=core_id)
-  return []
+  def _dma_wait(src_ref, dst_ref, sem) -> list[ir.Value]:
+    if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 27):
+      tpu.wait_dma2(sem, src_ref, dst_ref, core_id=core_id)
+    else:
+      tpu.wait_dma2(sem, src_ref, dst_ref, device_id=device_id, core_id=core_id)
+    return []
+
+  return lower_with_transformed_refs(_dma_wait, [src, dst, sem], [src_aval, dst_aval, sem_aval], block_shapes[:3])
+
+
+def lower_with_transformed_refs(f, args, avals, block_shapes=None):
+  """Lower f with args as potentially nested TransformedRefs."""
+  # If block_shapes is not provided, infer them from the avals.
+  if block_shapes is None:
+    aval_leaves, tree = tpu_primitives._dma_flatten(avals)
+    aval_shapes = jax.tree.map(lambda x: x.shape, aval_leaves)
+    (block_shapes,) = _dma_unflatten(tree, aval_shapes)
+  args = list(zip(args, avals, block_shapes))
+  return _lower_transformed_refs(f, [], args)
+
+
+def _lower_transformed_refs(f, args, rest_args):
+  """Recursively iterate through TransformedRefs and lower them in the call to f."""
+  if rest_args == []:
+    return f(*args)
+  (ref, ref_ty, ref_block_shape), *rest_refs = rest_args
+
+  if not isinstance(ref, state.TransformedRef):
+    return _lower_transformed_refs(f, args + [ref], rest_refs)
+  if not ref.multiref:
+    return _lower_single_transformed_ref(
+        f, ref, ref_ty, ref_block_shape, args, rest_refs
+    )
+  return _lower_multiref_transformed_ref(
+      f, ref, ref_ty, ref_block_shape, args, rest_refs
+  )
+
+def _lower_single_transformed_ref(f, ref, ref_ty, ref_block_shape, prev_args,
+                                  rest_args):
+  """Let the lowering callback f run the single-ref transforms for `ref`."""
+  assert isinstance(ref, state.TransformedRef) and not ref.multiref
+  aval = ref_ty.ref
+  if isinstance(aval, state.TransformedRef):
+    aval = aval.type
+
+  def new_f(*newf_args):
+    prev, (x,), rest = split_list(newf_args, [len(prev_args), 1])
+    new_x, _ = _transform_ref(x, aval, ref_ty.ref.shape, ref.transforms)
+    return f(*prev, new_x, *rest)
+
+  next_args = (ref.ref, ref_ty.ref, ref_block_shape.ref)
+  return _lower_transformed_refs(new_f, prev_args, [next_args] + rest_args)
+
+
+def _lower_multiref_transformed_ref(f, ref, ref_ty, ref_block_shape, args,
+                                   rest_refs):
+  """Lower f with args as a multiref TransformedRef."""
+  assert isinstance(ref, state.TransformedRef) and ref.multiref
+  assert isinstance(ref.transforms[0], state_types.MultiRefTransform)
+  match ref.transforms[0]:
+    case state_types.SelectTransform(idx=idx):
+      select_options = list(zip(ref.ref, ref_ty.ref, ref_block_shape.ref))
+      return _select_to_ifop(f, args, rest_refs, cast(Any, idx), select_options)
+    case _:
+      raise ValueError(f"Unsupported transform: {ref.transforms[0]}")
+
+
+def _select_to_ifop(f, prev_refs, rest_refs, idx, options):
+  # TODO(b/502722198): Use IndexSwitchOp instead of nested IfOp if it's fixed.
+  assert len(options) >= 2
+  pred = arith.cmpi(arith.CmpIPredicate.eq, idx, ir_constant(0, idx.type))
+  if_op = scf.IfOp(pred, [], has_else=True)
+  with ir.InsertionPoint(if_op.then_block):
+    out = _lower_transformed_refs(f, prev_refs, [options[0]] + rest_refs)
+    scf.yield_(out)
+  assert if_op.else_block is not None
+  with ir.InsertionPoint(if_op.else_block):
+    if len(options) > 2:
+      idx = arith.subi(idx, ir_constant(1, idx.type))
+      out = _select_to_ifop(f, prev_refs, rest_refs, idx, options[1:])
+    else:
+      out = _lower_transformed_refs(f, prev_refs, [options[1]] + rest_refs)
+    scf.yield_(out)
+  return if_op.results
 
 
 @register_lowering_rule(lax.axis_index_p, kernel_types=[*tpu_core.CoreType])

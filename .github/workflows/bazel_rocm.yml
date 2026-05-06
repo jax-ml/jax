@@ -95,7 +95,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest
+      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
       volumes:
         - /data:/data
       options: >-
