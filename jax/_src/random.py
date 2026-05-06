@@ -2471,7 +2471,9 @@ def _rademacher(key, shape, dtype, out_sharding) -> Array:
 
 def maxwell(key: ArrayLike,
             shape: Shape = (),
-            dtype: DTypeLikeFloat | None = None) -> Array:
+            dtype: DTypeLikeFloat | None = None,
+            *,
+            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample from a one sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2483,8 +2485,17 @@ def maxwell(key: ArrayLike,
 
   Args:
     key: a PRNG key.
-    shape: The shape of the returned samples.
-    dtype: The type used for samples.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A jnp.array of samples, of shape `shape`.
@@ -2499,13 +2510,14 @@ def maxwell(key: ArrayLike,
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  return _maxwell(key, shape, dtype)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "maxwell", shape)
+  return _maxwell(key, shape, dtype, out_sharding)
 
 
-@jit(static_argnums=(1, 2))
-def _maxwell(key, shape, dtype) -> Array:
+@jit(static_argnums=(1, 2, 3))
+def _maxwell(key, shape, dtype, out_sharding) -> Array:
   shape = shape + (3,)
-  norm_rvs = normal(key=key, shape=shape, dtype=dtype)
+  norm_rvs = normal(key=key, shape=shape, dtype=dtype, out_sharding=out_sharding)
   return jnp_linalg.norm(norm_rvs, axis=-1)
 
 
