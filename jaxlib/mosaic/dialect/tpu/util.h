@@ -75,7 +75,8 @@ limitations under the License.
     return mlir::failure();                                         \
   }                                                                 \
   FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
-      (std::move(failureor).value());
+      (std::move(failureor).value())
+
 #define FAILUREOR_ASSIGN_OR_RETURN(lhs, rhs) \
   FAILUREOR_ASSIGN_OR_RETURN_IMPL(           \
       TF_STATUS_MACROS_CONCAT_NAME(failureor, __COUNTER__), lhs, rhs)
