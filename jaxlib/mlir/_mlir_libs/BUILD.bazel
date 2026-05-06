@@ -464,6 +464,14 @@ pywrap_library(
     common_lib_def_files_or_filters = {
         "jaxlib/mlir/_mlir_libs/mlir_for_stubgen_common": "mlir_for_stubgen.json",
     },
+    common_lib_linkopts = {
+        "jaxlib/mlir/_mlir_libs/mlir_for_stubgen_common": select({
+            "//jaxlib/tools:linux_x86_64": [
+                "-lgcc_s",
+            ],
+            "//conditions:default": [],
+        }),
+    },
     visibility = ["//visibility:private"],
     deps = [
         ":_chlo",
