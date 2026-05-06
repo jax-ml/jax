@@ -160,7 +160,10 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     },
     hub_name = "jax_pypi",
     python_version = python_version,
-    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_").replace("-", "_")),
+    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    requirements_by_platform = {} if python_version in ["3.11", "3.12"] else {
+        "//build:requirements_lock_{}_ft.txt".format(python_version.replace(".", "_")): "linux_x86_64_freethreaded,windows_x86_64_freethreaded,osx_x86_64_freethreaded,osx_aarch64_freethreaded",
+    },
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
@@ -169,8 +172,6 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     "3.12",
     "3.13",
     "3.14",
-    "3.13-ft",
-    "3.14-ft",
 ]]
 
 use_repo(pip, "pypi_mods", pypi = "jax_pypi")
