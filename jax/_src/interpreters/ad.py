@@ -19,7 +19,6 @@ import contextlib
 import functools
 import itertools as it
 from functools import partial
-import operator as op
 from typing import Any
 
 from jax._src import config
@@ -318,11 +317,13 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
   consts = [c for c, used in zip(consts, used_consts) if used]
-  out_zeros = map(op.not_, out_nzs)
+  out_tangents_pvals = [pe.PartialVal.unknown(core.typeof(t)) if nz else
+                        pe.PartialVal.known(zeros_like_aval(t.aval))
+                        for t, nz in zip(out_tangents, out_nzs)]
   if has_aux:
-    return out_primals, out_zeros, jaxpr, consts, aux
+    return out_primals, out_tangents_pvals, jaxpr, consts, aux
   else:
-    return out_primals, out_zeros, jaxpr, consts
+    return out_primals, out_tangents_pvals, jaxpr, consts
 
 def linearize(traceable: lu.WrappedFun, *primals, has_aux=False, is_vjp=False):
   if config.use_direct_linearize.value:
@@ -346,13 +347,12 @@ def linearize(traceable: lu.WrappedFun, *primals, has_aux=False, is_vjp=False):
         "This is typically caused by attempting to differentiate a function "
         "using an operation that does not support reverse-mode autodiff.")
   out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
-  out_tangents_zeros = [pval.is_known() for pval in out_tangents_pvals]
   if not has_aux:
     assert aux is None
-    return out_primals_consts, out_tangents_zeros, jaxpr, consts
+    return out_primals_consts, out_tangents_pvals, jaxpr, consts
   else:
     assert aux is not None
-    return out_primals_consts, out_tangents_zeros, jaxpr, consts, aux()
+    return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
 
 
 class UndefinedPrimal:

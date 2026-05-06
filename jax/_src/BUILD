@@ -262,7 +262,6 @@ pytype_strict_library(
     deps = [
         ":abstract_arrays",
         ":ad",
-        ":ad_util",
         ":api_util",
         ":basearray",
         ":batching",
