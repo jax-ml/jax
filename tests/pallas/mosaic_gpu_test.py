@@ -7994,7 +7994,7 @@ class HelpersTest(PallasTest):
       cluster_idx = ()
       if cluster:
         cluster_idx = tuple(lax.axis_index(axis) for axis in cluster_names)
-      @plgpu.dynamic_scheduling_loop(grid_names)
+      @plgpu.dynamic_scheduling_loop(grid_names, cluster_axes=cluster_names)
       def loop_body(loop_info: plgpu.NDLoopInfo):
         out_gmem[*loop_info.index, *cluster_idx] = sm_idx
     out_shape = (*grid, *cluster)
