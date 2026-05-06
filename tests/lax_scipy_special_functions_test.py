@@ -441,6 +441,16 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
 
+  def testBetalnHessianAtZero(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/34353
+    def f(log_a, log_b):
+      a = jnp.exp(log_a)
+      b = jnp.exp(log_b)
+      return lsp_special.betaln(a, b) - lsp_special.betaln(a + 1, b)
+    hess = jax.hessian(f, argnums=(0, 1))(0., 0.)
+    expected = jnp.array([[0.25, -0.25], [-0.25, 0.25]])
+    self.assertAllClose(jnp.array(hess), expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
