@@ -31,14 +31,15 @@ from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
-from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
@@ -596,6 +597,24 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
+def _constrain_memory_spaces(
+    ref_avals: Sequence[state.AbstractRef],
+    avals: Sequence[jax_core.ShapedArray],
+) -> jax_core.AbstractValue:
+  new_avals = []
+  for ref_aval, aval in zip(ref_avals, avals, strict=True):
+    if (
+        isinstance(ref_aval, state.AbstractRef)
+        and ref_aval.memory_space is not None
+    ):
+      new_avals.append(
+          aval.update(memory_space=ref_aval.memory_space)
+      )
+    else:
+      new_avals.append(aval)
+  return new_avals
+
+
 def mpmd_map_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -610,10 +629,17 @@ def mpmd_map_tpu_lowering_rule(
     metadata,
     name,
     external_meshes,
-    num_scratch,
 ):
   del interpret  # Unused.
-
+  num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
+  num_outputs = len(ctx.avals_out)
+  kernel_avals = [v.aval for v in jaxprs[0].invars]
+  in_kernel_avals, out_kernel_avals, _ = util.split_list(
+      kernel_avals, [len(in_nodes), num_outputs]
+  )
+  ctx = ctx.replace(
+      avals_in=_constrain_memory_spaces(in_kernel_avals, ctx.avals_in),
+      avals_out=_constrain_memory_spaces(out_kernel_avals, ctx.avals_out))
   if debug:
     for idx, jaxpr in enumerate(jaxprs):
       print(

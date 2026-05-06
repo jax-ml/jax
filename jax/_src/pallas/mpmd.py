@@ -27,6 +27,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
+from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
@@ -43,7 +44,7 @@ from jax._src.typing import Array
 _T = TypeVar("_T")
 
 
-mpmd_map_p = jax_core.Primitive("mpmd_map")
+mpmd_map_p = hijax.HiPrimitive("mpmd_map")
 mpmd_map_p.multiple_results = True
 
 
@@ -200,6 +201,12 @@ def _mpmd_map_discharge_rule(
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(write_indices):
     new_aliases[in_idx] = num_out_orig + out_idx
+  if debug:
+    print("discharged mpmd_map")
+    for mesh, jaxpr in zip(meshes, new_jaxprs):
+      print(f"mesh: {mesh}")
+      print(f"new_jaxpr: {jaxpr}")
+    print(f"new_aliases: {new_aliases}")
 
   res = mpmd_map_p.bind(
       *args,
@@ -228,6 +235,83 @@ def _mpmd_map_discharge_rule(
 state_discharge.register_discharge_rule(mpmd_map_p)(_mpmd_map_discharge_rule)
 
 
+def _mpmd_map_is_high(*args, jaxprs, **params):
+  del args, params
+  return any(jaxpr.is_high for jaxpr in jaxprs)
+mpmd_map_p.is_high = _mpmd_map_is_high
+
+
+def _mpmd_map_to_lojax(
+    *hi_args,
+    meshes,
+    jaxprs,
+    external_meshes,
+    out_avals,
+    input_output_aliases,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
+    metadata,
+    name,
+    **params,
+):
+  in_avals = [jax_core.typeof(a) for a in hi_args]
+  if any(aval.has_qdd for aval in in_avals):
+    raise NotImplementedError("mpmd_map does not support QDD for inputs")
+  if any(aval.has_qdd for aval in out_avals):
+    raise NotImplementedError("mpmd_map does not support QDD for outputs")
+
+  lo_args = [
+      lo_val
+      for aval, x in zip(in_avals, hi_args)
+      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
+  ]
+
+  lo_out_avals = [lo_aval for aval in out_avals for lo_aval in aval.lo_ty()]
+
+  super_mesh_shape = get_super_mesh_shape(it.chain(meshes, external_meshes))
+  lo_jaxprs = []
+  with (
+      jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+      config._check_vma(False),
+  ):
+    for jaxpr in jaxprs:
+      closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+      closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
+      assert not closed_lo_jaxpr.consts
+      lo_jaxprs.append(closed_lo_jaxpr.jaxpr)
+
+  input_index_mapping = pallas_call._get_index_mapping(in_avals)
+  output_index_mapping = pallas_call._get_index_mapping(out_avals)
+  new_input_output_aliases = {}
+  for i, o in input_output_aliases.items():
+    assert i in input_index_mapping
+    assert o in output_index_mapping
+    for i_lo, o_lo in zip(input_index_mapping[i], output_index_mapping[o]):
+      new_input_output_aliases[i_lo] = o_lo
+
+  lo_outs = mpmd_map_p.bind(
+      *lo_args,
+      meshes=meshes,
+      jaxprs=tuple(lo_jaxprs),
+      external_meshes=external_meshes,
+      out_avals=tuple(lo_out_avals),
+      input_output_aliases=FrozenDict(new_input_output_aliases),
+      compiler_params=compiler_params,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      metadata=metadata,
+      name=name,
+      **params,
+  )
+  return pe.raise_lo_outs(out_avals, lo_outs)
+
+
+mpmd_map_p.to_lojax = _mpmd_map_to_lojax
+
+
 def _mpmd_map_tpu_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -247,7 +331,6 @@ def _mpmd_map_tpu_lowering(
     from jax._src.pallas.mosaic import pallas_call_registration
   except ImportError:
     raise pallas_call._unsupported_lowering_error("tpu")
-  num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
   return pallas_call_registration.mpmd_map_tpu_lowering_rule(
       ctx,
       *in_nodes,
@@ -262,7 +345,6 @@ def _mpmd_map_tpu_lowering(
       metadata=metadata,
       name=name,
       external_meshes=external_meshes,
-      num_scratch=num_scratch,
   )
 
 
@@ -433,6 +515,8 @@ def _aval_to_ref_aval(
           )
         memory_space = list(defaults)[0]
       return state.AbstractRef(aval, memory_space=memory_space)
+    case jax_core.AbstractValue():
+      return state.AbstractRef(aval, memory_space=None)
     case _ if hasattr(aval, "get_ref_aval"):
       ref_aval = aval.get_ref_aval()
       assert isinstance(ref_aval, state.AbstractRef)
@@ -670,20 +754,20 @@ def _mpmd_map(
     unflat_in_avals = in_tree.unflatten(flat_avals)
     unflat_out_avals = out_tree.unflatten(flat_out_avals)
     unflat_scratch_types = scratch_tree.unflatten(flat_scratch_types)
-    kernel_args = list(unflat_in_avals)
+    kernel_arg_avals = list(unflat_in_avals)
     if is_output_sequence:
-      kernel_args.extend(unflat_out_avals)
+      kernel_arg_avals.extend(unflat_out_avals)
     else:
-      kernel_args.append(unflat_out_avals)
+      kernel_arg_avals.append(unflat_out_avals)
     if isinstance(unflat_scratch_types, Mapping):
-      kernel_kwargs = unflat_scratch_types
+      kernel_kwarg_avals = unflat_scratch_types
     else:
-      kernel_args.extend(unflat_scratch_types)
-      kernel_kwargs = {}
+      kernel_arg_avals.extend(unflat_scratch_types)
+      kernel_kwarg_avals = {}
 
     unflat_kernel_avals = tree_util.tree_map(
         functools.partial(_aval_to_ref_aval, meshes=meshes),
-        (kernel_args, kernel_kwargs),
+        (kernel_arg_avals, kernel_kwarg_avals),
     )
     flat_kernel_avals, kernel_aval_tree = tree_util.tree_flatten(
         unflat_kernel_avals
