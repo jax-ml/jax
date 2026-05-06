@@ -160,7 +160,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     },
     hub_name = "jax_pypi",
     python_version = python_version,
-    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_").replace("-", "_")),
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
@@ -169,6 +169,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     "3.12",
     "3.13",
     "3.14",
+    "3.14-ft",
 ]]
 
 use_repo(pip, "pypi_mods", pypi = "jax_pypi")
