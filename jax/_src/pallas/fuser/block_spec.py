@@ -154,7 +154,8 @@ class PushRuleContext:
   avals_out: tuple[core.AbstractValue, ...]
 
 
-@functools.partial(api_boundary, repro_api_name="fuser.make_scalar_prefetch_handler")
+@functools.partial(api_boundary,
+                   repro_api_name="fuser.make_scalar_prefetch_handler")
 def make_scalar_prefetch_handler(*args):
   def scalar_prefetch_getter(*sp_inputs):
     result = sp_inputs

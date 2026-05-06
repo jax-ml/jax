@@ -35,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
@@ -665,6 +666,8 @@ def _run_scoped_to_lojax(*args, jaxpr, **params):
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.experimental.pallas.run_scoped")
 def run_scoped(
     f: Callable[..., Any],
     *types: Any,

@@ -131,6 +131,7 @@ def switch(index, branches: Sequence[Callable], *operands: Any,
                           branches_platforms=None)
 
 
+@partial(api_boundary, repro_api_name="jax.lax.switch")
 def _switch_internal(
     index: ArrayLike,
     branches: Sequence[Callable],
@@ -184,7 +185,7 @@ def _switch_internal(
   assert next(out_, None) is None
   return out_avalss[0].update(out).unflatten()
 
-@partial(api_boundary, repro_api_name="jax_cond")
+@partial(api_boundary, repro_api_name="jax.lax.cond")
 def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel):
   """Conditionally apply ``true_fun`` or ``false_fun``.
