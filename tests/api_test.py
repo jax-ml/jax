@@ -3022,6 +3022,11 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f_jvp(T)
 
+  def test_linearize_instantiates_zero_outputs(self):
+    _, f_lin = api.linearize(lambda x: (x, 1.), 3.)
+    _, y = f_lin(1.)
+    self.assertAllClose(y + 1, 1, check_dtypes=False)  # don't crash
+
   def test_grad_of_int_errors(self):
     # Errors without allow_int=True
     dfn = grad(lambda x: x ** 2)
