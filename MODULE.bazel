@@ -215,6 +215,11 @@ use_repo(nvshmem_redist, "nvidia_nvshmem")
 cccl_extension = use_extension("@xla//third_party/cccl:cccl_extension.bzl", "cccl_extension")
 use_repo(cccl_extension, "cuda_cccl")
 
+override_repo(
+    cuda_redist_init_ext,
+    cuda_cccl = "cuda_cccl",
+)
+
 ### Toolchains
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
