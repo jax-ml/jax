@@ -2105,6 +2105,7 @@ class FragmentedArray:
     f8e4m3fn = ir.Float8E4M3FNType.get()
     f8e5m2 = ir.Float8E5M2Type.get()
     f8e8m0fnu = ir.Float8E8M0FNUType.get()
+    f4e2m1fn = ir.Float4E2M1FNType.get()
 
     cur_dtype = self.mlir_dtype
     if cur_dtype == new_dtype:
@@ -2604,6 +2605,81 @@ class FragmentedArray:
           f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
           " which is expensive. Cast to f32 explicitly if you really want it."
       )
+    # f4e2m1fn casts
+    if f4e2m1fn in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+      raise ValueError(
+          "f4e2m1fn casts only supported on Blackwell and newer GPUs"
+      )
+    # TODO DNS: Is it any faster if we use longer vectors to our advantage?
+    if cur_dtype == f4e2m1fn and new_dtype in {bf16, f16}:
+      if (
+          new_dtype == bf16
+          and mgpu_lib is not None
+          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() < 92  # pylint: disable=protected-access
+      ):
+        return self.astype(f32).astype(bf16)
+      ptx = f"""{{
+            .reg .b8 b;
+          mov.b16 {{b,_}}, $1;
+          cvt.rn.{f16_ptx_names[new_dtype]}x2.e2m1x2 $0, b;
+      }}"""
+      def do_convert(pair_vec):
+        i8_val = utils.bitcast(pair_vec, i8)
+        i16_val = arith.extui(i16, i8_val)
+        return llvm.inline_asm(i32, [i16_val], ptx, "=r,h")
+      return pairwise_convert(do_convert)
+    if (cur_dtype == f4e2m1fn and new_dtype in f8_ptx_names) or (
+        new_dtype == f4e2m1fn and cur_dtype in f8_ptx_names
+    ):
+      if (
+          mgpu_lib is not None
+          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 91  # pylint: disable=protected-access
+      ):
+        fp16_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
+        return self.astype(supported_f8_f16[fp16_type]).astype(new_dtype)
+      else:
+        return self.astype(f32).astype(new_dtype)
+    if cur_dtype == f4e2m1fn and new_dtype == f32:
+      return self.astype(f16).astype(f32)
+    if new_dtype == f4e2m1fn and cur_dtype in {bf16, f16}:
+      if (
+          mgpu_lib is not None
+          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 91  # pylint: disable=protected-access
+      ):
+        def do_convert(pair_vec):
+          f16x2_val = utils.bitcast(pair_vec, i32)
+          i16_res = llvm.inline_asm(
+              i16,
+              [f16x2_val],
+              f"""{{
+                  .reg .b8 r;
+                  cvt.rn.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2 r, $1;
+                  mov.b16 $0, {{r, r}};
+              }}""",
+              "=h,r",
+          )
+          return arith.trunci(i8, i16_res)  # pytype: disable=bad-argument-type
+        return pairwise_convert(do_convert)
+      else:
+        return self.astype(f32).astype(f4e2m1fn)
+    if new_dtype == f4e2m1fn and cur_dtype == f32:
+      def do_convert(pair_vec):
+        pair_f32 = utils.bitcast(pair_vec, ir.VectorType.get((2,), f32))
+        e0 = vector.extract(pair_f32, [], [0])
+        e1 = vector.extract(pair_f32, [], [1])
+        i16_res = llvm.inline_asm(
+            i16,
+            [e1, e0],
+            """{
+                .reg .b8 r;
+                cvt.rn.satfinite.e2m1x2.f32 r, $1, $2;
+                mov.b16 $0, {r, r};
+            }""",
+            "=h,f,f",
+        )
+        return arith.trunci(i8, i16_res)  # pytype: disable=bad-argument-type
+      return pairwise_convert(do_convert)
+    assert new_dtype != f4e2m1fn and cur_dtype != f4e2m1fn
 
     # Generic path.
     from_float = isinstance(cur_dtype, ir.FloatType)
