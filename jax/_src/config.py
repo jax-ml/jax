@@ -1434,7 +1434,7 @@ include_full_tracebacks_in_locations = bool_state(
 
 traceback_in_locations_limit = int_state(
     name='jax_traceback_in_locations_limit',
-    default=10,
+    default=100,
     help=(
         'Limit the number of frames at the Python traceback frames included in '
         'MLIR locations. If set to the negative value, traceback will not be '
