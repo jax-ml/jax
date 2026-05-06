@@ -784,13 +784,14 @@ def check_avals_context_mesh(avals, prim_name):
 TraceType = TypeVar('TraceType', bound='Trace')
 
 class Trace:
-  __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low")
+  __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low", "loggers")
 
   def __init__(self):
     self._invalidated = False
     # We frequently need a weakref to a trace, so let's precompute one.
     self._weakref = weakref.ref(self)
     self.requires_low = True
+    self.loggers = {}  # dict mapping logger objects to partial logs
 
   def stage_value(self, val):
     """Lifts a value into a trace.
