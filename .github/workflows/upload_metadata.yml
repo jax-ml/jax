@@ -41,6 +41,11 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Fetch and Upload Metadata
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -66,3 +71,7 @@ jobs:
 
           # Upload everything
           gcloud storage cp -r workflow_run.json jobs.json logs "$gcs_upload_uri/"
+
+          # Process test results using the script
+          # TODO(dsuo): Enable processing test results once GHA runner GCP permissions are resolved.
+          # bash third_party/py/jax/oss/ci/postprocess/process_test_results.sh "$gcs_upload_uri"
