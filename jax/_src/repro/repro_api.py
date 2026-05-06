@@ -414,6 +414,14 @@ def pallas_kernel_call(body: Callable, kernel_kwargs: dict[str, Any],
     body, **kernel_kwargs)(*operands)
 
 
+@partial(repro_boundary, repro_api_name="pallas_parallel_loop_call")
+def pallas_parallel_loop_call(body: Callable, api_args: tuple[Any, ...],
+                              api_kwargs: dict[str, Any]):
+  from jax._src.pallas.mosaic import sc_primitives  # type: ignore
+  return repro_bypass_wrapper(sc_primitives.parallel_loop)(
+    *api_args, **api_kwargs)(body)
+
+
 @partial(repro_boundary, repro_api_name="pallas_gpu_emit_pipeline_call",
          map_user_func_args=_pallas_call_call_map_user_func_args)
 def pallas_gpu_emit_pipeline_call(f: Callable, api_args: tuple[Any, ...],

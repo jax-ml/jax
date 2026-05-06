@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
 from typing import Any
 
@@ -27,6 +28,7 @@ from jax._src import pretty_printer as pp
 from jax._src import prng as jax_prng
 from jax._src import random as jax_random
 from jax._src import state
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
@@ -673,6 +675,8 @@ def _get_ref(ref):
   return _get_ref_and_transforms(ref)[0]
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pltpu.make_async_copy")
 def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
@@ -694,6 +698,8 @@ def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   )
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pltpu.async_copy")
 def async_copy(
     src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
 ) -> AsyncCopyDescriptor:
@@ -703,6 +709,8 @@ def async_copy(
   return copy_descriptor
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pltpu.make_async_remote_copy")
 def make_async_remote_copy(
     src_ref,
     dst_ref,

@@ -19,9 +19,12 @@ import jax
 from jax._src.pallas import helpers as pl_helpers
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src import traceback_util
 from jax._src.pallas.mosaic import primitives as plm_primitives
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pltpu.sync_copy")
 def sync_copy(src_ref, dst_ref, *, add: bool = False) -> None:
   """Synchronously copies a PyTree of refs to another PyTree of refs."""
   if not jax.tree.leaves(src_ref):

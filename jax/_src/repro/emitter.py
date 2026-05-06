@@ -442,6 +442,14 @@ def initialize_operand_emitter_pallas():
     res = f"pltpu.InterpretParams({args_str})"
     return ctx.named_value(res, prefix="ip")
 
+  from jax._src.pallas.mosaic.sc_core import VectorSubcoreMesh  # type: ignore
+  @partial(register_emitter_by_type, VectorSubcoreMesh)
+  def emit_VectorSubcoreMesh(ctx: "EmitFunctionDefContext", v: VectorSubcoreMesh) -> str:
+    res = (f"plsc.VectorSubcoreMesh(core_axis_name={v.core_axis_name!r}, "
+           f"subcore_axis_name={v.subcore_axis_name!r}, "
+           f"num_cores={v.num_cores}, num_subcores={v.num_subcores})")
+    return ctx.named_value(res, prefix="mesh")
+
 
 tracker.lazy_initializers.append(initialize_operand_emitter)  # type: ignore
 

@@ -32,6 +32,10 @@ try:
 except ImportError:
   pltpu = None  # type: ignore
 try:
+  from jax.experimental.pallas import tpu_sc as plsc  # type: ignore  # noqa: F401
+except ImportError:
+  plsc = None  # type: ignore
+try:
   from jax.experimental.pallas import fuser  # type: ignore  # noqa: F401
 except ImportError:
   fuser = None  # type: ignore

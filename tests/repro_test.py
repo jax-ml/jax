@@ -44,6 +44,7 @@ import jax.experimental.pallas as pl
 from jax.experimental import pjit
 from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas import tpu_sc as plsc
 try:
   import jax.experimental.pallas.ops.tpu.matmul
 except ImportError:
@@ -2645,6 +2646,50 @@ class ReproTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with tracker.flags_override(fake_array_threshold=x.size + 1):
       self.collect_and_check(f, x)
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  @jtu.thread_unsafe_test()
+  def test_pallas_parallel_loop(self, *, interpret: bool):
+    if interpret:
+      # parallel_loop has no state discharge rule, so interpret mode is not
+      # supported.
+      self.skipTest("parallel_loop does not support interpret mode")
+
+    if jtu.device_under_test() not in ["tpu", "cpu"]:
+      self.skipTest("Test runs only on CPU and TPU")
+
+    run_native = interpret or jtu.is_device_tpu_at_least(5)
+    mock_context = mock_tpu_context(tpu_info.ChipVersion.TPU_V6E)
+
+    with mock_context:
+      mesh = plsc.VectorSubcoreMesh(core_axis_name="x", subcore_axis_name="y")
+
+      def body(x_ref, o_ref):
+        @plsc.parallel_loop(0, x_ref.shape[0], 1)
+        def _(i):
+          o_ref[i] = x_ref[i] + 1
+
+      @jax.jit
+      def g(x):
+        compiler_params = pltpu.CompilerParams(
+          kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE)
+        return pl.kernel(body, out_type=x, mesh=mesh, interpret=interpret,
+                         compiler_params=compiler_params)(x)
+
+      def f(x):
+        if run_native:
+          return g(x)
+        else:  # On CPU without interpret, we try to trace
+          exp = jax.export.export(g, platforms=("tpu",))(x)
+          _ = g.trace(x)
+          return 0.
+
+      x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+      with tracker.flags_override(fake_array_threshold=x.size + 1):
+        self.collect_and_check(f, x)
 
   def test_pallas_run_scoped(self):
     mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)

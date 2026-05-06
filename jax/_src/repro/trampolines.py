@@ -319,6 +319,10 @@ def pallas_kernel_trampoline(real_api_fun: Callable):
   return pallas_kernel_trampoline
 
 
+api_trampolines["jax.experimental.pallas.tpu_sc.parallel_loop"] = partial(
+  uncurry_decorator_trampoline, "pallas_parallel_loop")
+
+
 @api_trampoline("fuser.fuse")
 def fuser_fuse_trampoline(real_api_fun: Callable) -> Callable:
   from jax._src.repro.repro_api import fuser_fuse
