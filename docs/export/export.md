@@ -66,6 +66,18 @@ Serialization is broken down into two stages:
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
 
+:::{warning}
+The serialized byte array produced by ``exported.serialize()`` is **trusted
+input**. ``export.deserialize(blob)`` rehydrates an ``Exported`` (including
+the embedded MLIR module and the ``disabled_safety_checks`` set) without
+re-running the validation performed at export time. Only deserialize blobs
+that come from a trusted source; treat them with the same level of trust as
+the source code that produced them. The ``DisabledSafetyCheck`` mechanism
+signals serialization-time decisions (e.g. that the export contains custom
+calls not vetted as stable) and is not intended as an authorization or
+sandboxing layer for untrusted inputs.
+:::
+
 ## Support for reverse-mode AD
 
 Serialization can optionally support higher-order reverse-mode AD. This is done
