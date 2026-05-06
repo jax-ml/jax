@@ -5531,7 +5531,7 @@ def _check_specs_match(lhs_spec, rhs_spec, msg):
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
                                out_sharding):
-  if (not lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty and
+  if ((not lhs.sharding.mesh.empty or not rhs.sharding.mesh.empty) and
       lhs.sharding.mesh != rhs.sharding.mesh):
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
@@ -5548,8 +5548,8 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
   lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
   msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
-        f"to have the consistent sharding, got {lhs_batch_spec} and "
-        f"{rhs_batch_spec}.")
+         f"to have the consistent sharding, got {lhs_batch_spec} and "
+         f"{rhs_batch_spec}.")
   _check_specs_match(lhs_batch_spec, rhs_batch_spec, msg)
 
   msg = ("dot_general requires contracting dimensions to have consistent "

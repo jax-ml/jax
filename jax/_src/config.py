@@ -986,8 +986,9 @@ pallas_tpu_interpret_mode_context_manager = config_ext.Config(
 
 class UserConfig:
   def __init__(self, default_value):
-    self._obj = config_ext.Config("user_context", default_value, include_in_jit_key=True,
-                                  include_in_trace_context=True)
+    self._obj = config_ext.Config(
+        "user_context", default_value, include_in_jit_key=True,
+        include_in_trace_context=True)
 
   @property
   def value(self):
@@ -1033,8 +1034,7 @@ def make_user_context(default_value=None):
     f(1.)  # tracing cache miss
   ```
   """
-  obj = UserConfig(default_value)
-  return obj
+  return UserConfig(default_value)
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.

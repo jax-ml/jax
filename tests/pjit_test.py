@@ -8231,27 +8231,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
-  @jtu.with_explicit_mesh((2,), 'x')
-  def test_dot_empty_mesh_lhs_rhs(self, mesh):
-    np_inp = np.ones((2, 2))
-    arr = jax.device_put(np.ones((2, 2)), P('x'))
-
-    @jax.jit
-    def f(x, y):
-      return jnp.dot(x, y)
-
-    out = f(np_inp, arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
-
-    def g(x, y):
-      return jnp.sum(f(x, y))
-
-    jax.jit(jax.grad(g))(np_inp, arr)  # doesn't crash
-
-    out2 = f(arr, np_inp)
-    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', None)))
-    jax.jit(jax.grad(g))(arr, np_inp)  # doesn't crash
-
   @parameterized.named_parameters(
       ('mesh1', (1, 4)),
       ('mesh2', (2, 2)),
@@ -10642,6 +10621,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     b = jnp.ones((2,), jnp.int32, out_sharding=jax.P("x"))
     self.assertEqual(jax.typeof(b).sharding,
                      NamedSharding(mesh.abstract_mesh, P('x')))
+
+  def test_dot_lhs_rhs_mesh_empty(self):
+    mesh = jtu.create_mesh((2,), ("x",), axis_types=(AxisType.Explicit,))
+    x = jax.device_put(np.ones((32, 128)), NamedSharding(mesh, jax.P("x")))
+    w = jnp.ones((128, 64))
+
+    @jax.jit
+    @jax.grad
+    def f(w, x):
+      x = jax.lax.dot(x, w)
+      return x.sum()
+
+    with jax.set_mesh(mesh):
+      with self.assertRaisesRegex(
+          core.ShardingTypeError, "Mesh of both lhs and rhs should match"):
+        f(w, x)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
