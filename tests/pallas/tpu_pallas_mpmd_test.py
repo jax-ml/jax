@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for Pallas MPMD kernels."""
+import dataclasses
 import functools
 import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
+from jax._src import hijax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -627,6 +630,232 @@ class MpmdTest(PallasSCTest):
     ):
       with jax.sharding.set_mesh(device_mesh):
         test_mpmd_map()
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTuple:
+  x0: jax.Array
+  x1: jax.Array
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTupleTy(hijax.HiType):
+  x0_aval: jax_core.ShapedArray
+  x1_aval: jax_core.ShapedArray
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.x0_aval.shape
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.x0_aval.dtype
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.x0_aval, self.x1_aval]
+
+  def lower_val(self, hi_val: WeirdTuple) -> list[jax.Array]:
+    assert isinstance(hi_val, WeirdTuple), f"Expected WeirdTuple, got {type(hi_val)}"
+    return [hi_val.x0, hi_val.x1]
+
+  def raise_val(self, x0, x1) -> WeirdTuple:
+    return WeirdTuple(x0, x1)
+
+  def get_ref_aval(self):
+    from jax._src import state
+
+    return state.AbstractRef(self, memory_space=self.memory_space)
+
+  def dma_start(
+      self,
+      src_ref,
+      dst_ref,
+      src_sem,
+      dst_sem,
+      device_id,
+      device_id_type,
+      priority,
+      add,
+  ) -> None:
+    assert device_id is None
+    assert src_sem is None
+    src_x0_ref = src_ref._refs.x0
+    src_x1_ref = src_ref._refs.x1
+    dst_x0_ref = dst_ref._refs.x0
+    dst_x1_ref = dst_ref._refs.x1
+
+    desc_x0 = pltpu.make_async_copy(src_x0_ref, dst_x0_ref, dst_sem)
+    desc_x0.start(priority=priority, add=add)
+
+    desc_x1 = pltpu.make_async_copy(src_x1_ref, dst_x1_ref, dst_sem)
+    desc_x1.start(priority=priority, add=add)
+
+  def dma_wait(
+      self, src_ref, dst_ref, src_sem, dst_sem, device_id, device_id_type
+  ):
+    assert device_id is None
+    assert src_sem is None
+
+    src_x0_ref = src_ref._refs.x0
+    src_x1_ref = src_ref._refs.x1
+    dst_x0_ref = dst_ref._refs.x0
+    dst_x1_ref = dst_ref._refs.x1
+
+    desc_x0 = pltpu.make_async_copy(src_x0_ref, dst_x0_ref, dst_sem)
+    desc_x0.wait()
+
+    desc_x1 = pltpu.make_async_copy(src_x1_ref, dst_x1_ref, dst_sem)
+    desc_x1.wait()
+
+hijax.register_hitype(
+    WeirdTuple, lambda t: WeirdTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
+)
+
+unpack_p = hijax.HiPrimitive("unpack")
+unpack = unpack_p.bind
+unpack_p.multiple_results = True
+unpack_p.is_high = lambda *_: True
+unpack_p.def_abstract_eval(lambda x: [x.x0_aval, x.x1_aval])
+unpack_p.to_lojax = lambda x: [x.x0, x.x1]
+
+pack_p = hijax.HiPrimitive("pack")
+pack = pack_p.bind
+pack_p.is_high = lambda *_: True
+pack_p.def_abstract_eval(lambda x0, x1: WeirdTupleTy(x0, x1))
+pack_p.to_lojax = lambda x0, x1: WeirdTuple(x0, x1)
+
+
+class MpmdHijaxTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu():
+      self.skipTest("Only works on TPU.")
+    super().setUp()
+
+  def test_pass_weird_tuple_into_mpmd_map(self):
+    xt = WeirdTuple(
+        x0=jnp.ones((8, 8), dtype=jnp.int32),
+        x1=jnp.zeros((8,), dtype=jnp.int32),
+    )
+
+    def kernel(xt_ref, ot_ref, xt_vmem_ref, ot_vmem_ref):
+      pltpu.sync_copy(xt_ref, xt_vmem_ref)
+      ot_vmem_ref[...] = xt_vmem_ref[...]
+      pltpu.sync_copy(ot_vmem_ref, ot_ref)
+
+    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+
+    ot = pl.kernel(
+        body=kernel,
+        mesh=mesh,
+        out_type=jax.typeof(xt),
+        scratch_types=(
+            pltpu.VMEM.like(WeirdTupleTy(jax.typeof(xt.x0), jax.typeof(xt.x1))),
+            pltpu.VMEM.like(WeirdTupleTy(jax.typeof(xt.x0), jax.typeof(xt.x1))),
+        ),
+    )(xt)
+
+    self.assertArraysEqual(ot.x0, xt.x0)
+    self.assertArraysEqual(ot.x1, xt.x1)
+
+  def test_mpmd_map_hijax_input_output_aliasing(self):
+    xt = WeirdTuple(
+        x0=jnp.ones((8, 8), dtype=jnp.int32),
+        x1=jnp.zeros((8,), dtype=jnp.int32),
+    )
+    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+
+    def kernel(xt_ref_inner, scratch_vmem_ref):
+      pltpu.sync_copy(xt_ref_inner, scratch_vmem_ref)
+      x0, x1 = unpack(scratch_vmem_ref[...])
+      scratch_vmem_ref[...] = pack(x0 + 1, x1)
+      pltpu.sync_copy(scratch_vmem_ref, xt_ref_inner)
+
+    @jax.jit
+    def f(xt):
+      xt_ref = jax.new_ref(xt)
+      pl.kernel(
+          body=kernel,
+          mesh=mesh,
+          scratch_types=(pltpu.VMEM.like(jax.typeof(xt)),),
+      )(xt_ref)
+      return jax.freeze(xt_ref)
+
+    x1 = f(xt)
+    self.assertArraysEqual(x1.x0, xt.x0 + 1)
+    self.assertArraysEqual(x1.x1, xt.x1)
+
+  def test_parallel_subkernels_hijax(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
+      self.skipTest("Needs a newer libtpu")
+    xt = WeirdTuple(
+        x0=jnp.ones((8, 128), dtype=jnp.int32),
+        x1=jnp.zeros((8,), dtype=jnp.int32),
+    )
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="s_core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="s_core",
+        num_cores=1,
+    )
+
+    def scalar_subcore_fn(x_ref, os_ref, ov_ref):
+      del ov_ref
+      pltpu.sync_copy(x_ref, os_ref)
+
+    def vector_subcore_fn(x_ref, os_ref, ov_ref):
+      del os_ref
+      pltpu.sync_copy(x_ref, ov_ref)
+
+    ot_s, ot_v = pl.kernel(
+        body=[vector_subcore_fn, scalar_subcore_fn],
+        mesh=[v_mesh, s_mesh],
+        out_type=[jax.typeof(xt), jax.typeof(xt)],
+    )(xt)
+    self.assertArraysEqual(ot_s.x0, xt.x0)
+    self.assertArraysEqual(ot_s.x1, xt.x1)
+    self.assertArraysEqual(ot_v.x0, xt.x0)
+    self.assertArraysEqual(ot_v.x1, xt.x1)
+
+  def test_closed_over_hijax_refs(self):
+    xt = WeirdTuple(
+        x0=jnp.ones((8, 8), dtype=jnp.int32),
+        x1=jnp.zeros((8,), dtype=jnp.int32),
+    )
+    mesh = pltpu.create_tensorcore_mesh("tc_core", num_cores=1)
+
+    @jax.jit
+    def f(xt_in):
+      xt_ref = jax.new_ref(xt_in)
+      ot_ref = jax.empty_ref(jax.typeof(xt_in))
+
+      def kernel(xt_vmem_ref, ot_vmem_ref):
+        pltpu.sync_copy(xt_ref, xt_vmem_ref)
+        ot_vmem_ref[...] = xt_vmem_ref[...]
+        pltpu.sync_copy(ot_vmem_ref, ot_ref)
+
+      pl.kernel(
+          body=kernel,
+          mesh=mesh,
+          scratch_types=(
+              pltpu.VMEM.like(
+                  WeirdTupleTy(jax.typeof(xt.x0), jax.typeof(xt.x1))
+              ),
+              pltpu.VMEM.like(
+                  WeirdTupleTy(jax.typeof(xt.x0), jax.typeof(xt.x1))
+              ),
+          ),
+      )()
+      return jax.freeze(ot_ref)
+
+    ot = f(xt)
+    self.assertArraysEqual(ot.x0, xt.x0)
+    self.assertArraysEqual(ot.x1, xt.x1)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
