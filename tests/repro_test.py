@@ -2611,6 +2611,41 @@ class ReproTest(jtu.JaxTestCase):
     with tracker.flags_override(fake_array_threshold=x.size + 1):
       self.collect_and_check(f, x)
 
+  @jtu.parameterized_filterable(
+    kwargs=[dict(interpret=interpret)
+                 for interpret in [False, True]
+    ])
+  def test_pallas_kernel_basic(self, *, interpret: bool):
+    if interpret:
+      maybe_skip_known_failure("pl.kernel interpret=True")
+
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
+
+    if jtu.device_under_test() not in ["tpu", "cpu"]:
+      self.skipTest("Test runs only on CPU and TPU")
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    @jax.jit
+    def g(x):
+      compiler_params = pltpu.CompilerParams()
+      return pl.kernel(body, out_type=x, mesh=mesh, interpret=interpret,
+                       compiler_params=compiler_params)(x)
+
+    def f(x):
+      if interpret or jtu.device_under_test() == "tpu":
+        return g(x)
+      else:  # On CPU without interpret, we try to trace
+        exp = jax.export.export(g, platforms=("tpu",))(x)
+        t = g.trace(x)
+        l = t.lower()
+        return 0.
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with tracker.flags_override(fake_array_threshold=x.size + 1):
+      self.collect_and_check(f, x)
+
   def test_pallas_run_scoped(self):
     mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
 

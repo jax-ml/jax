@@ -406,6 +406,14 @@ def pallas_gpu_kernel_call(body: Callable, api_args: tuple[Any, ...],
     body, *api_args, **api_kwargs)(*args, **kwargs)
 
 
+@partial(repro_boundary, repro_api_name="pallas_kernel_call")
+def pallas_kernel_call(body: Callable, kernel_kwargs: dict[str, Any],
+                       *operands):
+  from jax._src.pallas import helpers as pallas_helpers  # type: ignore
+  return repro_bypass_wrapper(pallas_helpers.kernel)(
+    body, **kernel_kwargs)(*operands)
+
+
 @partial(repro_boundary, repro_api_name="pallas_gpu_emit_pipeline_call",
          map_user_func_args=_pallas_call_call_map_user_func_args)
 def pallas_gpu_emit_pipeline_call(f: Callable, api_args: tuple[Any, ...],

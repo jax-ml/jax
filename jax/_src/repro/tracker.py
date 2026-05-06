@@ -1210,4 +1210,7 @@ TODO:
   with the argument 0 (from get_dma_slice) and then it is called with actual
   tracers. We ignore the **2nd** call, and we generate a body that uses the
   value 0 for the argument!!!
+* I want to dump a repro source even if there were errors during repro
+  generation, with error_mode="defer". But right now the error comes out of
+  col.to_source() and we never get to "save".
 """

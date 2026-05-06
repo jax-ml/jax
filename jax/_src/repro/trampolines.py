@@ -293,6 +293,32 @@ def pallas_core_map_trampoline(real_api_fun: Callable):
   return pallas_core_map_trampoline
 
 
+# TODO: this trampoline is generic, a version of the uncurry one
+@api_trampoline("jax.experimental.pallas.kernel")
+def pallas_kernel_trampoline(real_api_fun: Callable):
+  from jax._src import api as _api
+  from jax._src.repro.repro_api import pallas_kernel_call
+
+  def pallas_kernel_trampoline(
+      body=_api.NotSpecified(), out_type=(), **kernel_kwargs):
+    kernel_kwargs["out_type"] = out_type
+    if isinstance(body, _api.NotSpecified):
+      # Decorator factory mode: pl.kernel(out_type=..., mesh=...)(body)(operands)
+      def pallas_kernel_decorator(body):
+        def call_with_operands(*operands):
+          return pallas_kernel_call(body, kernel_kwargs, *operands)
+        return call_with_operands
+      return pallas_kernel_decorator
+    else:
+      # Direct call mode: pl.kernel(body, out_type=..., mesh=...)(operands)
+      def call_with_operands(*operands):
+        return pallas_kernel_call(body, kernel_kwargs, *operands)
+      return call_with_operands
+
+  pallas_kernel_trampoline.real_api_fun = real_api_fun  # pyrefly: ignore[missing-attribute]
+  return pallas_kernel_trampoline
+
+
 @api_trampoline("fuser.fuse")
 def fuser_fuse_trampoline(real_api_fun: Callable) -> Callable:
   from jax._src.repro.repro_api import fuser_fuse

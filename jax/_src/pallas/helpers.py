@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import numpy as jnp
 from jax._src import tree_util
+from jax._src import traceback_util
 from jax._src import typing as jax_typing
 import jax._src.lax as lax
 from jax._src.lax.control_flow import conditionals
@@ -198,6 +199,8 @@ def _make_kernel(meshes_and_fns: Sequence[tuple[pl_core.Mesh, Callable]],
   return wrapper
 
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="jax.experimental.pallas.kernel")
 def kernel(
     body: Callable | Sequence[Callable] | api.NotSpecified = api.NotSpecified(),
     out_type: object | None = (),
