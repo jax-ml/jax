@@ -679,7 +679,7 @@ def broadcast_flattened_prefix_with_treedef(
   return ret
 
 
-# flatten_one_level is not exported.
+@export
 def flatten_one_level(tree: Any) -> tuple[Iterable[Any], Hashable]:
   """Flatten the given pytree node by one level.
 
@@ -710,7 +710,7 @@ def flatten_one_level(tree: Any) -> tuple[Iterable[Any], Hashable]:
     return out
 
 
-# flatten_one_level_with_keys is not exported.
+@export
 def flatten_one_level_with_keys(
     tree: Any,
 ) -> tuple[Iterable[KeyLeafPair], Hashable]:
