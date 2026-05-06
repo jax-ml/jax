@@ -203,7 +203,7 @@ def _find_wheel_assets(release, python_version, rocm_version):
     return plugin_asset, pjrt_asset
 
 def _rocm_wheels_repository_impl(repository_ctx):
-    python_version = repository_ctx.attr.python_version
+    python_version = repository_ctx.os.environ.get("HERMETIC_PYTHON_VERSION", repository_ctx.attr.python_version)
     jaxlib_version = repository_ctx.attr.jaxlib_version
     rocm_version = repository_ctx.attr.rocm_version
 
@@ -299,6 +299,6 @@ rocm_wheels_repository = repository_rule(
             doc = "ROCm version to match, e.g. '7.2.0'. If empty, picks the first match.",
         ),
     },
-    environ = ["GITHUB_TOKEN"],
+    environ = ["GITHUB_TOKEN", "HERMETIC_PYTHON_VERSION"],
     doc = "Downloads ROCm plugin wheels from a GitHub release and exposes them as py_import targets.",
 )
