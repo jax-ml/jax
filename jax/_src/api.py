@@ -1588,7 +1588,7 @@ def _lift_linearized(jaxpr, in_avals, out_avals, io_tree, out_known, consts, *py
             f"but expected {expected_tangent_aval}.{extra_msg}")
     tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
     tangents_out_ = iter(tangents_out)
-    full_out = [a2tz(aval) if known else next(tangents_out_)
+    full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
                 for aval, known in zip(out_avals, out_known)]
     assert next(tangents_out_, None) is None
     return full_out
