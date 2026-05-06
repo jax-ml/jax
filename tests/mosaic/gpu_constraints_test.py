@@ -765,6 +765,38 @@ class ConstraintSystemTest(parameterized.TestCase):
         cs.IsSupportedBroadcast(RL(src), RL(dst), dims).holds(), holds
     )
 
+  @parameterized.parameters(
+      (cs.SMEMTiling(lc.TileTransform((2, 8))), 4, True),
+      (cs.SMEMTiling(lc.TileTransform((2, 8))), 3, False),
+      (cs.SMEMTiling(None), 4, True),
+      (RL(mgpu.WGMMA_LAYOUT), 8, True),
+      (RL(mgpu.WGMMA_LAYOUT), 16, False),
+      (cs.TMEMLayout(mgpu.tmem_native_layout(2)), 2, True),
+      (cs.TMEMLayout(mgpu.tmem_native_layout(1)), 2, False),
+      (cs.SMEMTiling(lc.TileTransform(())), 4, True),
+  )
+  def test_minor_dim_byte_aligned_constraint_holds(self, tiling, divisor, expected):
+    self.assertEqual(cs.MinorDimByteAligned(tiling, divisor).holds(), expected)
+
+  def test_minor_dim_byte_aligned_reduces_to_true(self):
+    v0 = V(0)
+    tiling = cs.SMEMTiling(lc.TileTransform((2, 8)))
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimByteAligned(v0, 4)],
+    )
+    reduced = cs.reduce(system)
+    self.assertEqual(reduced.constraints, [])
+
+  def test_minor_dim_byte_aligned_reduces_to_false(self):
+    v0 = V(0)
+    tiling = cs.SMEMTiling(lc.TileTransform((2, 8)))
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimByteAligned(v0, 3)],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
