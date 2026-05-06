@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/mlir/utils/error_util.h"
@@ -791,6 +792,86 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
       /*strict_ordering=*/true);
 
   ASSERT_OK(VerifyOp(dma));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       DmaSemaphoreTypeNotAllowedAsSrcOrDst) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaSemaphore(),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/false);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("Neither src nor dst memref should have an element "
+                            "type of SemaphoreType or DMASemaphoreType")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SemaphoreMemrefCannotHaveLayout) {
+  auto sem_type = MemRefType::get(
+      {}, DMASemaphoreType::get(builder().getContext()),
+      StridedLayoutAttr::get(builder().getContext(), 42, {}),
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem));
+
+  auto op = Create<AllocaSemaphoreOp>(sem_type);
+  ASSERT_THAT(
+      VerifyOp(op),
+      StatusIs(
+          _, HasSubstr(
+                 "When a memref is created with element type DMASemaphoreType "
+                 "or SemaphoreType it should never have layout")));
+}
+
+TEST_F(TpuOpsVerificationTest, FuncOpSemaphoreArgumentCannotHaveLayout) {
+  auto sem_type = MemRefType::get(
+      {}, DMASemaphoreType::get(builder().getContext()),
+      StridedLayoutAttr::get(builder().getContext(), 42, {}),
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem));
+  auto func_op = Create<func::FuncOp>(
+      "test_kernel", builder().getFunctionType({sem_type}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  func_op->setAttr("sym_visibility", builder().getStringAttr("private"));
+  BaseScopedDiagnosticHandler diag(builder().getContext());
+
+  ASSERT_THAT(
+      mlir::verify(func_op).succeeded() ? absl::OkStatus()
+                                        : diag.ConsumeStatus(),
+      StatusIs(
+          _, HasSubstr(
+                 "When a memref is created with element type DMASemaphoreType "
+                 "or SemaphoreType it should never have layout")));
+}
+
+TEST_F(TpuOpsVerificationTest, FuncOpSemaphoreArgumentCannotHaveNonZeroRank) {
+  auto sem_type = MemRefType::get(
+      {2}, DMASemaphoreType::get(builder().getContext()), nullptr,
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem));
+  auto func_op = Create<func::FuncOp>(
+      "rank_kernel", builder().getFunctionType({sem_type}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  func_op->setAttr("sym_visibility", builder().getStringAttr("private"));
+  BaseScopedDiagnosticHandler diag(builder().getContext());
+
+  ASSERT_THAT(mlir::verify(func_op).succeeded() ? absl::OkStatus()
+                                                : diag.ConsumeStatus(),
+              StatusIs(_, HasSubstr("Semaphore memref must be rank 0")));
+}
+
+TEST_F(TpuOpsVerificationTest, AllocaSemaphoreCannotHaveNonZeroRank) {
+  auto sem_type = MemRefType::get(
+      {2}, DMASemaphoreType::get(builder().getContext()), nullptr,
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem));
+
+  auto op = Create<AllocaSemaphoreOp>(sem_type);
+  ASSERT_THAT(VerifyOp(op),
+              StatusIs(_, HasSubstr("Semaphore memref must be rank 0")));
 }
 
 TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {

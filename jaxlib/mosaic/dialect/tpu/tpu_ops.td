@@ -1325,6 +1325,7 @@ def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let arguments = (ins);
   let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
+  let hasVerifier = 1;
 }
 
 def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
