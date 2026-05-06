@@ -111,6 +111,12 @@ single_version_override(
     version = "1.8.5",
 )
 
+single_version_override(
+    module_name = "protobuf",
+    patches = ["//third_party/protobuf:protobuf_arena.patch"],
+    version = "32.1",
+)
+
 ### Toolchains
 
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
@@ -191,10 +197,12 @@ use_repo(
     "cuda_curand",
     "cuda_cusolver",
     "cuda_cusparse",
+    "cuda_driver",
     "cuda_nvcc",
     "cuda_nvdisasm",
     "cuda_nvjitlink",
     "cuda_nvml",
+    "cuda_nvrtc",
     "cuda_nvtx",
     "cuda_nvvm",
 )
