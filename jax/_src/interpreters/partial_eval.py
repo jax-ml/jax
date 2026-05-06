@@ -2272,8 +2272,26 @@ def _lower_debug_info(debug_info, *, in_avals=None, out_avals=None):
     debug_info = debug_info._replace(result_paths=lo_result_paths)
   return debug_info
 
-@weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
+    fun: Callable,
+    in_avals: FlatTree,  # (args, kwargs) pair
+    debug_info: core.DebugInfo,
+    *context_for_cache_key,
+    fun_returns_flat_tree=False,
+    requires_low=False):
+  jaxpr, out_avals_loggers = trace_to_jaxpr_with_loggers(
+      fun, in_avals, debug_info, *context_for_cache_key,
+      fun_returns_flat_tree =fun_returns_flat_tree,
+      requires_low=requires_low)
+
+  # out_avals, out_logger_avals = out_avals_loggers.unpack()
+  # out_logger_avals_pt = out_logger_avals.unflatten()
+  # assert not out_logger_avals_pt
+  # return jaxpr, out_avals
+  return jaxpr, out_avals_loggers
+
+@weakref_lru_cache(maxsize=None, explain=explain)
+def trace_to_jaxpr_with_loggers(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
@@ -2319,8 +2337,12 @@ def trace_to_jaxpr(
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
+
+    loggers = FlatTree.flatten(trace.loggers)
+    ans = FlatTree.pack((ans, loggers))
     ans = ans.map(_canonicalize_dtype)
     out_avals = ans.map(typeof)
+
     if requires_low:
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
                           for aval, hi_val in zip(out_avals, ans)
@@ -2331,7 +2353,8 @@ def trace_to_jaxpr(
                           for x in ans]
 
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
-    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
+    # TODO: debug info
+    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), None,
                                          source_info)
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)

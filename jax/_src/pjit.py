@@ -170,7 +170,9 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)  # should always raise.
     raise RuntimeError("Internal error") from e  # fall-back error to be safe.
 
-  outs = tree_unflatten(p.out_tree, out_flat)
+  outs, loggers = tree_unflatten(p.out_tree, out_flat)
+  for logger, vals in loggers.items():
+    logger.extend(vals)
   return (outs, out_flat, p.out_tree, args_flat,
           p.params['jaxpr'], compiled, profiler, const_args)
 
@@ -184,6 +186,7 @@ def _get_fastpath_data(
     pgle_profiler, const_args: Sequence[ArrayLike]
     ) -> pxla.MeshExecutableFastpathData | None:
   if (
+      True or  # TODO(dougalm): figure out fastpath for loggers
       executable is None
       or not isinstance(executable, pxla.MeshExecutable)
       or not isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
