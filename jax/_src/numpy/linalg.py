@@ -412,9 +412,10 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 
 
 @export
-@api.jit
+@api.jit(static_argnames=('hermitian',))
 def matrix_rank(
-  M: ArrayLike, rtol: ArrayLike | None = None, *, tol: ArrayLike | None = None) -> Array:
+  M: ArrayLike, rtol: ArrayLike | None = None,
+  *, hermitian: bool = False, tol: ArrayLike | None = None) -> Array:
   """Compute the rank of a matrix.
 
   JAX implementation of :func:`numpy.linalg.matrix_rank`.
@@ -428,6 +429,8 @@ def matrix_rank(
       smaller than `rtol * largest_singular_value` are considered to be zero. If
       ``rtol`` is None (the default), a reasonable default is chosen based the
       floating point precision of the input.
+    hermitian: if True, then the input is assumed to be Hermitian, and a more
+      efficient algorithm is used (default: False)
     tol: alias of the ``rtol`` argument present for backward compatibility.
       Only one of `rtol` or `tol` may be specified.
 
@@ -459,7 +462,7 @@ def matrix_rank(
   M, = promote_dtypes_inexact(M)
   if M.ndim < 2:
     return (M != 0).any().astype(np.int32)
-  S = svd(M, full_matrices=False, compute_uv=False)
+  S = svd(M, full_matrices=False, compute_uv=False, hermitian=hermitian)
   if rtol is None:
     rtol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
   rtol = jnp.expand_dims(rtol, np.ndim(rtol))
