@@ -569,3 +569,5 @@ infrastructure and a bunch of basic APIs (jit, grad, vmap, etc.) and subsequent
 ones adding more exotic APIs: various Pallas APIs, fuser, hijax. Those are
 still in flux. It is also useful to see what it takes to add support for a new
 API.
+
+See [repro_skill_adding_api.md](repro_skill_adding_api.md) for a step-by-step guide.
