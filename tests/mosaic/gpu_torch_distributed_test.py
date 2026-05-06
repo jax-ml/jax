@@ -41,13 +41,14 @@ except ImportError:
 
 class TorchTest(parameterized.TestCase):
 
-  def setUpClass():
+  @classmethod
+  def setUpClass(cls):
+    if torch is None:
+      raise unittest.SkipTest("Test requires torch")
     if jtu.test_device_matches(["rocm"]):
       raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
     torch.cuda.set_device("cuda:0")
     torch.set_default_device("cuda")
-    if torch is None:
-      raise unittest.SkipTest("Test requires torch")
     if not torch.cuda.is_available():
       raise unittest.SkipTest("Test requires torch with CUDA support")
     if (not jtu.test_device_matches(["cuda"]) or
