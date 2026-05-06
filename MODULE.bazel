@@ -190,7 +190,6 @@ use_repo(cuda_json_ext, "cuda_redist_json")
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(
     cuda_redist_init_ext,
-    "cuda_cccl",
     "cuda_crt",
     "cuda_cublas",
     "cuda_cudart",
@@ -212,6 +211,9 @@ use_repo(
 
 nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
 use_repo(nvshmem_redist, "nvidia_nvshmem")
+
+cccl_extension = use_extension("@xla//third_party/cccl:cccl_extension.bzl", "cccl_extension")
+use_repo(cccl_extension, "cuda_cccl")
 
 ### Toolchains
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
