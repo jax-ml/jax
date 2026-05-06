@@ -43,13 +43,21 @@ class Intensity(enum.Enum):
 
   BRIGHT = 1
 
+class OutputFormat(enum.Enum):
+  TEXT = 0
+
+  HTML = 1
+
 class Doc:
   def __repr__(self) -> str: ...
   def __add__(self, other: Doc) -> Doc: ...
   def _format(
       self,
       width: int,
+      *,
       use_color: bool,
+      output_format: OutputFormat,
+      separable_lines: bool,
       annotation_prefix: str,
       source_map: list | None,
   ) -> str: ...

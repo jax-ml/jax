@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cstddef>
 #include <new>
 #include <optional>
 #include <stack>
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -34,6 +36,7 @@ limitations under the License.
 namespace nb = nanobind;
 
 namespace jax {
+namespace {
 
 enum class Color {
   kBlack = 30,
@@ -86,6 +89,11 @@ std::string IntensityToString(Intensity intensity) {
       return "bright";
   }
 }
+
+enum class OutputFormat {
+  kText,
+  kHtml,
+};
 
 struct FormatState;
 struct FormatAgendum;
@@ -593,10 +601,62 @@ struct FormatState {
   int source_start;
   nb::object source;
   std::vector<Line> lines;
+  OutputFormat output_format = OutputFormat::kText;
+
+  // If true, color/style is reset to default at the end of each line and
+  // restored at the start of the next line. This makes each line in the output
+  // cleanly splittable (independent) of other lines.
+  bool separable_lines = false;
 };
 
-std::string UpdateColor(std::optional<ColorState>& state,
-                        const ColorState& update) {
+void EscapeHtml(std::string* out, absl::string_view data) {
+  out->reserve(out->size() + data.size());
+  for (size_t pos = 0; pos != data.size(); ++pos) {
+    switch (data[pos]) {
+      case '&':
+        out->append("&amp;");
+        break;
+      case '\"':
+        out->append("&quot;");
+        break;
+      case '\'':
+        out->append("&apos;");
+        break;
+      case '<':
+        out->append("&lt;");
+        break;
+      case '>':
+        out->append("&gt;");
+        break;
+      default:
+        out->append(&data[pos], 1);
+        break;
+    }
+  }
+}
+
+std::string GetHtmlSpanOpeningTag(const ColorState& state) {
+  if (state == kDefaultColors) return "";
+  std::string result = "<span class=\"";
+  absl::InlinedVector<std::string, 3> classes;
+  if (state.foreground != Color::kReset) {
+    classes.push_back(
+        absl::StrCat("ansi-fg-", static_cast<int>(state.foreground)));
+  }
+  if (state.background != Color::kReset) {
+    classes.push_back(
+        absl::StrCat("ansi-bg-", static_cast<int>(state.background) + 10));
+  }
+  if (state.intensity != Intensity::kNormal) {
+    classes.push_back(
+        absl::StrCat("ansi-intensity-", static_cast<int>(state.intensity)));
+  }
+  absl::StrAppend(&result, absl::StrJoin(classes, " "), "\">");
+  return result;
+}
+
+std::string UpdateColorAnsi(std::optional<ColorState>& state,
+                            const ColorState& update) {
   if (!state.has_value() || *state == update) {
     return "";
   }
@@ -616,11 +676,73 @@ std::string UpdateColor(std::optional<ColorState>& state,
   return result;
 }
 
+std::string UpdateColorHtml(std::optional<ColorState>& state,
+                            const ColorState& update) {
+  if (!state.has_value() || *state == update) {
+    return "";
+  }
+  std::string result;
+  if (*state != kDefaultColors) {
+    result.append("</span>");
+  }
+  if (update != kDefaultColors) {
+    result.append(GetHtmlSpanOpeningTag(update));
+  }
+  state = update;
+  return result;
+}
+
+std::string UpdateColor(std::optional<ColorState>& color, OutputFormat format,
+                        const ColorState& update) {
+  if (format == OutputFormat::kHtml) {
+    return UpdateColorHtml(color, update);
+  } else {
+    return UpdateColorAnsi(color, update);
+  }
+}
+
+void EndLine(FormatState& state, int next_indent) {
+  if (state.source_map.has_value()) {
+    // We want to ensure that source map boundaries do not fall in the middle
+    // of color regions so if we, e.g., wrap them in an HTML tag, then the tags
+    // are properly nested. Source map boundaries always end at line boundaries
+    // so we reset to the default color if ending a line.
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, kDefaultColors));
+
+    int pos = state.line_text.size();
+    if (state.source_start != pos && state.source.ptr() != nullptr) {
+      state.line_source_map.append(
+          nb::make_tuple(state.source_start, pos, state.source));
+    }
+    state.source_map->append(state.line_source_map);
+    state.line_source_map = nb::list();
+    state.source_start = next_indent;
+  }
+
+  // Transition to default color at line ends if separable or if annotations
+  // exist.
+  if (state.separable_lines || !state.line_annotations.empty()) {
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, kDefaultColors));
+  }
+
+  state.lines.push_back(Line{std::move(state.line_text), state.k,
+                             std::move(state.line_annotations)});
+}
+
 void NilDoc::Format(const FormatAgendum& agendum, FormatState& state) const {}
 
 void TextDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
-  absl::StrAppend(&state.line_text, UpdateColor(state.color, agendum.color),
-                  text_);
+  absl::StrAppend(&state.line_text,
+                  UpdateColor(state.color, state.output_format, agendum.color));
+  if (state.output_format == OutputFormat::kHtml) {
+    EscapeHtml(&state.line_text, text_);
+  } else {
+    absl::StrAppend(&state.line_text, text_);
+  }
   if (annotation_.has_value()) {
     state.line_annotations.push_back(*annotation_);
   }
@@ -636,28 +758,20 @@ void ConcatDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
 
 void BreakDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
   if (agendum.mode == BreakMode::kBreak) {
-    if (!state.line_annotations.empty()) {
-      absl::StrAppend(&state.line_text,
-                      UpdateColor(state.color, kAnnotationColors));
-    }
-    if (state.source_map.has_value()) {
-      int pos = state.line_text.size();
-      if (state.source_start != pos && state.source.ptr() != nullptr) {
-        state.line_source_map.append(
-            nb::make_tuple(state.source_start, pos, state.source));
-      }
-      state.source_map->append(state.line_source_map);
-      state.line_source_map = nb::list();
-      state.source_start = agendum.indent;
-    }
-    state.lines.push_back(Line{std::move(state.line_text), state.k,
-                               std::move(state.line_annotations)});
+    EndLine(state, agendum.indent);
+
     state.line_text = std::string(agendum.indent, ' ');
     state.line_annotations.clear();
     state.k = agendum.indent;
   } else {
-    absl::StrAppend(&state.line_text, UpdateColor(state.color, agendum.color),
-                    text_);
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, agendum.color));
+    if (state.output_format == OutputFormat::kHtml) {
+      EscapeHtml(&state.line_text, text_);
+    } else {
+      absl::StrAppend(&state.line_text, text_);
+    }
     state.k += text_.size();
   }
 }
@@ -699,15 +813,19 @@ void ColorDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
 }
 
 std::string Format(const Doc* doc, int width, bool use_color,
+                   OutputFormat output_format, bool separable_lines,
                    std::string annotation_prefix,
                    std::optional<nb::list> source_map) {
   FormatState state;
   if (use_color) {
     state.color = kDefaultColors;
   }
+  state.output_format = output_format;
+  state.separable_lines = separable_lines;
   state.width = width;
   state.source_start = 0;
   state.source_map = source_map;
+
   state.agenda.push(
       FormatAgendum{0, BreakMode::kBreak, doc, kDefaultColors, nb::object()});
   state.k = 0;
@@ -715,6 +833,11 @@ std::string Format(const Doc* doc, int width, bool use_color,
     FormatAgendum agendum = state.agenda.top();
     state.agenda.pop();
     if (source_map.has_value() && agendum.source.ptr() != state.source.ptr()) {
+      // Transition back to default before recording pos.
+      absl::StrAppend(
+          &state.line_text,
+          UpdateColor(state.color, state.output_format, kDefaultColors));
+
       int pos = state.line_text.size();
       if (state.source_start != pos && state.source.ptr() != nullptr) {
         state.line_source_map.append(
@@ -725,42 +848,52 @@ std::string Format(const Doc* doc, int width, bool use_color,
     }
     agendum.doc->Format(agendum, state);
   }
-  if (!state.line_annotations.empty()) {
-    absl::StrAppend(&state.line_text,
-                    UpdateColor(state.color, kAnnotationColors));
-  }
-  if (state.source_map.has_value()) {
-    int pos = state.line_text.size();
-    if (state.source_start != pos && state.source.ptr() != nullptr) {
-      state.line_source_map.append(
-          nb::make_tuple(state.source_start, pos, state.source));
-    }
-    state.source_map->append(state.line_source_map);
-  }
-  state.lines.push_back(Line{std::move(state.line_text), state.k,
-                             std::move(state.line_annotations)});
+
+  // Handle the final line.
+  EndLine(state, 0);
 
   int max_width = 0;
   for (const auto& line : state.lines) {
     max_width = std::max(max_width, line.width);
   }
-  std::string out =
-      absl::StrJoin(state.lines, "\n", [&](std::string* out, const Line& line) {
-        if (line.annotations.empty()) {
-          absl::StrAppend(out, line.text);
-        } else {
-          absl::StrAppend(out, line.text,
-                          std::string(max_width - line.width, ' '),
-                          annotation_prefix, line.annotations[0]);
-          for (int i = 1; i < line.annotations.size(); ++i) {
-            absl::StrAppend(out, std::string(max_width, ' '), annotation_prefix,
-                            line.annotations[i]);
-          }
-        }
-      });
-  absl::StrAppend(&out, UpdateColor(state.color, kDefaultColors));
+
+  std::string out = "";
+
+  for (size_t i = 0; i < state.lines.size(); ++i) {
+    if (i > 0) {
+      absl::StrAppend(&out, "\n");
+    }
+
+    const Line& line = state.lines[i];
+
+    absl::StrAppend(&out, line.text);
+
+    for (size_t j = 0; j < line.annotations.size(); ++j) {
+      if (j > 0) {
+        absl::StrAppend(&out, "\n");
+      }
+
+      if (use_color) {
+        absl::StrAppend(&out, UpdateColor(state.color, state.output_format,
+                                          kAnnotationColors));
+      }
+      int padding = (j == 0) ? (max_width - line.width) : max_width;
+      absl::StrAppend(&out, std::string(padding, ' '), annotation_prefix,
+                      line.annotations[j]);
+      if (use_color) {
+        absl::StrAppend(&out, UpdateColor(state.color, state.output_format,
+                                          kDefaultColors));
+      }
+    }
+  }
+  if (use_color) {
+    absl::StrAppend(
+        &out, UpdateColor(state.color, state.output_format, kDefaultColors));
+  }
   return out;
 }
+
+}  // namespace
 
 NB_MODULE(_pretty_printer, m) {
   nb::enum_<Color>(m, "Color")
@@ -778,6 +911,10 @@ NB_MODULE(_pretty_printer, m) {
       .value("DIM", Intensity::kDim)
       .value("NORMAL", Intensity::kNormal)
       .value("BRIGHT", Intensity::kBright);
+
+  nb::enum_<OutputFormat>(m, "OutputFormat")
+      .value("TEXT", OutputFormat::kText)
+      .value("HTML", OutputFormat::kHtml);
 
   std::string doc_name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".Doc");
@@ -805,12 +942,14 @@ NB_MODULE(_pretty_printer, m) {
       nb::is_method(), nb::arg("other"));
 
   doc_type_obj.attr("_format") = nb::cpp_function(
-      [](PyDoc self, int width, bool use_color, std::string annotation_prefix,
+      [](PyDoc self, int width, bool use_color, OutputFormat output_format,
+         bool separable_lines, std::string annotation_prefix,
          std::optional<nb::list> source_map) {
-        return Format(self.get(), width, use_color, annotation_prefix,
-                      source_map);
+        return Format(self.get(), width, use_color, output_format,
+                      separable_lines, annotation_prefix, source_map);
       },
-      nb::is_method(), nb::arg("width"), nb::arg("use_color"),
+      nb::is_method(), nb::arg("width"), nb::kw_only(), nb::arg("use_color"),
+      nb::arg("output_format"), nb::arg("separable_lines"),
       nb::arg("annotation_prefix"), nb::arg("source_map").none());
 
   // Define subclasses

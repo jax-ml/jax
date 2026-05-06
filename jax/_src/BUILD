@@ -938,6 +938,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":path",
+        ":pretty_printer",
         ":source_info_util",
         ":util",
         "//jax/_src/lib",
