@@ -28,16 +28,20 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
-import jax.numpy as jnp
 from jax.ad_checkpoint import checkpoint_name, Offloadable, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding, PartitionSpec as P)
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.xla_metadata import set_xla_metadata
-from jax.experimental.compute_on import compute_on
 from jax._src.compute_on import compute_on2
 from jax._src.shard_map import shard_map
+from jax.experimental.compute_on import compute_on
+try:
+  import jax.experimental.pallas.mosaic_gpu as plgpu
+except ImportError:
+  plgpu = None
+import jax.numpy as jnp
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -2055,6 +2059,53 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
     self.assertIn('inlineable="false"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
+
+  def test_pallas_kernels_can_overlap_using_multiple_streams(self):
+    if plgpu is None:
+      self.skipTest("Pallas GPU backend not available.")
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Stream annotation is only supported on GPU.")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on a GPU with capability >= sm90")
+
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] * 2.0
+
+    def f_sequential(x, y):
+      res_x = kernel(x)
+      res_y = kernel(y)
+      return res_x, res_y
+
+    def f_async(x, y):
+      res_x = compute_on2(
+          kernel, compute_type="gpu_stream:0",
+          out_memory_spaces=jax.memory.Space.Device,
+      )(x)
+      res_y = compute_on2(
+          kernel, compute_type="gpu_stream:1",
+          out_memory_spaces=jax.memory.Space.Device,
+      )(y)
+      return res_x, res_y
+
+    x = jnp.ones((128,), dtype=jnp.float32)
+
+    opts = {"xla_gpu_experimental_stream_annotation": True}
+    compiled_seq = jax.jit(f_sequential).lower(x, x).compile(opts)
+    compiled_async = jax.jit(f_async).lower(x, x).compile(opts)
+
+    # A profile should show that the async version of the kernel runs on two
+    # compute streams allowing the two kernel calls to overlap, while the
+    # sequential version runs on a single stream.
+    seq_text = compiled_seq.as_text()
+    async_text = compiled_async.as_text()
+    self.assertIn("call-start", async_text)
+    self.assertIn("_xla_stream_annotation", async_text)
+    self.assertNotIn("call-start", seq_text)
+    self.assertNotIn("_xla_stream_annotation", seq_text)
 
   @jtu.skip_on_devices('cpu')
   def test_compute_on2_out_mem_space(self):
