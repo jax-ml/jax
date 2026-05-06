@@ -70,7 +70,7 @@ fi
 
 FREETHREADED_FLAG=""
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
   FREETHREADED_FLAG="--bazel_options=--@rules_python//python/config_settings:py_freethreaded=yes"
 fi
 

@@ -55,7 +55,7 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
