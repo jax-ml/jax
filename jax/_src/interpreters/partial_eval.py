@@ -1710,7 +1710,6 @@ class JaxprStackFrame:
     constvars, constvals = unzip2(self.constvar_to_val.copy().items())
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
-    constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
 
     # TODO(dougalm): handle qdd for consts
@@ -1759,22 +1758,6 @@ ForwardingRule = Callable[
     tuple[list[Union[int, None]], Union[JaxprEqn, None]]
 ]
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
-
-
-def _drop_unused_vars(constvars, constvals, eqns, outvars
-                      ) -> tuple[tuple[Var, ...], tuple[Any, ...]]:
-  # modifies eqns in-place!
-  def vars(atom: Atom) -> list[Var]:
-    if isinstance(atom, Literal):
-      return []
-    return [atom]
-  used: set[Var] = {v for atom in outvars for v in vars(atom)}
-  for eqn in eqns[::-1]:
-    eqn.outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
-    used.update(v for atom in eqn.invars for v in vars(atom))
-  constvars, constvals = unzip2(
-      (v, val) for v, val in zip(constvars, constvals) if v in used)
-  return constvars, constvals
 
 
 @multi_weakref_lru_cache
