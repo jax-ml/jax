@@ -153,6 +153,11 @@ class TpuInfo:
   num_lanes: int
   num_sublanes: int
   mxu_column_size: int
+  # The number of MXUs available for each core.
+  num_mxus: int
+  # The number of (num_sublanes, mxu_column_size)-shaped 32-bit accumulator
+  # buffers available for each MXU.
+  num_accumulators: int
   vmem_capacity_bytes: int
   cmem_capacity_bytes: int
   smem_capacity_bytes: int
@@ -291,6 +296,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=1,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=16 * 1024,  # 16 KiB per core
@@ -309,6 +316,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=1,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=16 * 1024,  # 16 KiB per core
@@ -327,6 +336,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=4,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=134_000_000,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
@@ -345,6 +356,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=4,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=134_000_000 // tensor_cores_per_chip,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
@@ -363,6 +376,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=4,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=128 * 1024 * 1024,  # 128 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
@@ -381,6 +396,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_LT_6,
+          num_mxus=4,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
@@ -406,6 +423,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=NUM_LANES,
           num_sublanes=NUM_SUBLANES,
           mxu_column_size=MXU_COLUMN_SIZE_GEN_GE_6,
+          num_mxus=4,
+          num_accumulators=0,  # Not Available
           vmem_capacity_bytes=128 * 1024 * 1024,  # 128 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
@@ -431,6 +450,8 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_lanes=128,
           num_sublanes=8,
           mxu_column_size=256,
+          num_mxus=2,
+          num_accumulators=128,
           vmem_capacity_bytes=64 * 1024 * 1024,  # 64 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
