@@ -1363,11 +1363,37 @@ LogicalResult SortOp::verify() {
   return success();
 }
 
+LogicalResult AllocaSemaphoreOp::verify() {
+  auto sem_type = getResult().getType();
+  if (sem_type.getRank() != 0) {
+    return emitOpError("Semaphore memref must be rank 0");
+  }
+  auto layout = sem_type.getLayout();
+  bool invalid_layout = layout && !layout.isIdentity() &&
+                        !(isa<TiledLayoutAttr>(layout) &&
+                          cast<TiledLayoutAttr>(layout).getTiles().empty());
+  if (invalid_layout) {
+    return emitOpError(
+        "When a memref is created with element type DMASemaphoreType or "
+        "SemaphoreType it should never have layout");
+  }
+  return success();
+}
+
 LogicalResult GetBarrierSemaphoreOp::verify() {
   MemRefType sem_type = getResult().getType();
   if (sem_type.getRank() != 0) {
     emitOpError("Barrier semaphore reference must be rank 0");
     return failure();
+  }
+  auto layout = sem_type.getLayout();
+  bool invalid_layout = layout && !layout.isIdentity() &&
+                        !(isa<TiledLayoutAttr>(layout) &&
+                          cast<TiledLayoutAttr>(layout).getTiles().empty());
+  if (invalid_layout) {
+    return emitOpError(
+        "When a memref is created with element type DMASemaphoreType or "
+        "SemaphoreType it should never have layout");
   }
   return success();
 }
@@ -1435,6 +1461,12 @@ LogicalResult EnqueueDMAOp::verify() {
   }
   MemRefType source_ty = getMemRefType(getSource());
   MemRefType target_ty = getMemRefType(getTarget());
+  if (isa<SemaphoreType, DMASemaphoreType>(source_ty.getElementType()) ||
+      isa<SemaphoreType, DMASemaphoreType>(target_ty.getElementType())) {
+    return emitOpError(
+        "Neither src nor dst memref should have an element type of "
+        "SemaphoreType or DMASemaphoreType");
+  }
   if (source_ty.getElementType() != target_ty.getElementType()) {
     return emitOpError("DMA source and target element type mismatch");
   }

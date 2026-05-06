@@ -763,4 +763,31 @@ std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation* op) {
   return std::make_pair(state.has_communication, state.has_custom_barrier);
 }
 
+LogicalResult TPUDialect::verifyOperationAttribute(Operation* op,
+                                                   NamedAttribute attr) {
+  if (auto func_op = dyn_cast<func::FuncOp>(op)) {
+    for (Type arg_type : func_op.getArgumentTypes()) {
+      if (auto memref_type = dyn_cast<MemRefType>(arg_type)) {
+        if (isa<SemaphoreType, DMASemaphoreType>(
+                memref_type.getElementType())) {
+          if (memref_type.getRank() != 0) {
+            return op->emitOpError("Semaphore memref must be rank 0");
+          }
+          auto layout = memref_type.getLayout();
+          bool invalid_layout =
+              layout && !layout.isIdentity() &&
+              !(isa<TiledLayoutAttr>(layout) &&
+                cast<TiledLayoutAttr>(layout).getTiles().empty());
+          if (invalid_layout) {
+            return op->emitOpError(
+                "When a memref is created with element type DMASemaphoreType "
+                "or SemaphoreType it should never have layout");
+          }
+        }
+      }
+    }
+  }
+  return success();
+}
+
 }  // namespace mlir::tpu
