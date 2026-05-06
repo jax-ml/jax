@@ -214,6 +214,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   # Dimensions to squeeze from the inputs.
   a_squeeze: list[int] = []
   b_squeeze: list[int] = []
+  # Dimensions squeezed from both inputs (in output dimension indices).
+  both_squeeze: list[int] = []
 
   # Positions of batch dimensions in squeezed inputs.
   a_batch = []
@@ -229,6 +231,12 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
       idx_b_other.append(i)
     elif bb is None:
       idx_a_other.append(i)
+    # We generate a cleaner (and more Mosaic-friendly) dot_general by
+    # squeezing both and not just treating the B dim as non-contracting below.
+    elif core.definitely_equal(ba, 1) and core.definitely_equal(bb, 1):
+      a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
+      b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
+      both_squeeze.append(i)
     elif core.definitely_equal(ba, 1):
       idx_b_other.append(i)
       a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
@@ -256,6 +264,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
     precision=precision, preferred_element_type=preferred_element_type,
     out_sharding=out_sharding)
   result = lax.transpose(out, perm)
+  if both_squeeze:
+    result = lax.expand_dims(result, tuple(both_squeeze))
   return lax._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
