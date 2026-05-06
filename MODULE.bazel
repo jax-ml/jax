@@ -120,6 +120,17 @@ single_version_override(
     version = "32.1",
 )
 
+single_version_override(
+    module_name = "abseil-cpp",
+    patch_strip = 1,
+    patches = [
+        "//third_party/absl:btree.patch",
+        "//third_party/absl:build_dll.patch",
+        "//third_party/absl:endian.patch",
+        "//third_party/absl:append_and_overwrite.patch",
+    ],
+)
+
 ### Toolchains
 
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
