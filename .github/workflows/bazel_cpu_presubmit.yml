@@ -1,4 +1,5 @@
 name: CI - Bazel CPU tests
+# Just testing things
 
 on:
   workflow_dispatch:
