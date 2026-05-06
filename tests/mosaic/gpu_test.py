@@ -4442,6 +4442,45 @@ class FragmentedArrayTest(TestCase):
     )(values)
     self.assertTrue(np.array_equal(res, expected, equal_nan=True))
 
+  @parameterized.product(
+      jax_wide_dtype=(jnp.float32, jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),
+      to_narrow=(False, True),
+      vec_len=(2, 4, 8),
+  )
+  def test_conversion_f4_(self, jax_wide_dtype, to_narrow, vec_len):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("f4 conversions not supported on pre-Blackwell GPUs")
+
+    if to_narrow:
+      jax_dtype_from = jax_wide_dtype
+      jax_dtype_to = jnp.float4_e2m1fn
+    else:
+      jax_dtype_from = jnp.float4_e2m1fn
+      jax_dtype_to = jax_wide_dtype
+
+    layout = fa.tmem_native_layout(vec_len)
+    mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
+    m = 128
+    n = 64
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(inp, layout=layout, optimized=False)
+      t = t.astype(mlir_dtype_to)
+      t.store_untiled(out, optimized=False)
+
+    iota_part = np.tile(np.arange(-8, 8, dtype=np.int8), ((m // 2) * n) // 16).reshape(m // 2, n)
+    random_part = self.prng.integers(low=-8, high=8, size=(m // 2, n), dtype=np.int8)
+    bits = np.concatenate([iota_part, random_part], axis=0)
+    bits = jnp.asarray(bits).astype(jnp.int4)
+    f4_values = jax.lax.bitcast_convert_type(bits, jnp.float4_e2m1fn)
+
+    values = f4_values.astype(jax_dtype_from)
+    expected = values.astype(jax_dtype_to)
+    res = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+    )(values)
+    np.testing.assert_array_equal(res, expected)
+
   def test_rounding_f8e8m0fnu(self):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
