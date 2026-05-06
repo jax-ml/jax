@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
+    "py_library",
 )
 
 package(
@@ -39,6 +39,7 @@ py_library(
         "primitives.py",
         "utils.py",
     ],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/_src:ad",
@@ -78,6 +79,7 @@ py_library(
     srcs = [
         "pallas_test_util.py",
     ],
+    strict_deps = False,
     deps = [
         ":pallas",
         "//jax/_src:test_util",

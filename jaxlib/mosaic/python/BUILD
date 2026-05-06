@@ -15,7 +15,7 @@
 # Mosaic Python bindings
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -28,6 +28,7 @@ py_library(
         "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_enums.py",
         "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_ops.py",
     ],
+    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
@@ -82,6 +83,7 @@ py_library(
         "_tpu_ops_gen.py",
         "tpu.py",
     ],
+    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
@@ -94,6 +96,7 @@ py_library(
     srcs = [
         "layout_defs.py",
     ],
+    strict_deps = False,
     visibility = [
         "//visibility:public",
     ],

@@ -14,10 +14,10 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
+    "py_library",
     "pytype_strict_library",
 )
 
@@ -31,6 +31,7 @@ package(
 py_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
+    strict_deps = False,
     deps = [
         ":core",
         ":pallas_call_registration",

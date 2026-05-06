@@ -14,8 +14,7 @@
 
 # Package for Pallas GPU Interpret Mode
 
-load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "py_deps", "py_library", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -42,6 +41,7 @@ py_library(
         "__init__.py",
         "interpret_pallas_call.py",
     ],
+    strict_deps = False,
     deps = [
         ":gpu_callbacks",
         ":jaxpr_interpret",

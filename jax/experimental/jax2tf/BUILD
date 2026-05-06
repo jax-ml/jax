@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "jax2tf_deps",
     "jax_visibility",
     "py_deps",
+    "py_library",
 )
 
 licenses(["notice"])
@@ -30,6 +30,7 @@ package(
 py_library(
     name = "jax2tf",
     srcs = ["__init__.py"],
+    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [":jax2tf_internal"],
 )
@@ -40,6 +41,7 @@ py_library(
         "call_tf.py",
         "jax2tf.py",
     ],
+    strict_deps = False,
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
     visibility = jax_visibility("jax2tf_internal"),

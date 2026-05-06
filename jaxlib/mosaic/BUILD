@@ -1,4 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 # Copyright 2023 The JAX Authors.
 #
@@ -13,9 +15,7 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_library")
 
 licenses(["notice"])
 
@@ -28,6 +28,7 @@ package(
 
 py_library(
     name = "mosaic",
+    strict_deps = False,
     deps = [
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",

@@ -15,12 +15,12 @@
 # NVIDIA CUDA kernels
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "cuda_library",
     "if_cuda_is_configured",
     "nanobind_extension",
+    "py_library",
 )
 
 licenses(["notice"])
@@ -619,6 +619,7 @@ nanobind_extension(
 
 py_library(
     name = "cuda_gpu_support",
+    strict_deps = False,
     deps = [
         ":_hybrid",
         ":_linalg",
@@ -695,6 +696,7 @@ nanobind_extension(
 # a standalone py_library target.
 py_library(
     name = "gpu_only_test_deps",
+    strict_deps = False,
     # `if_cuda_is_configured` will default to `[]`.
     deps = if_cuda_is_configured([
         ":cuda_gpu_support",

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_binary", "py_library")
-load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_deps")
+load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_binary", "py_deps", "py_library")
 
 licenses(["notice"])
 
@@ -26,6 +25,7 @@ py_library(
     srcs = [
         "__init__.py",
     ],
+    strict_deps = False,
     visibility = ["//jax:internal"],
 )
 
@@ -34,6 +34,7 @@ py_library(
     srcs = [
         "jax2tf_limitations.py",
     ],
+    strict_deps = False,
     visibility = jax_visibility("jax2tf_limitations"),
     deps = [
         "//jax/_src:internal_test_harnesses",
@@ -46,6 +47,7 @@ py_library(
     srcs = [
         "tf_test_util.py",
     ],
+    strict_deps = False,
     # //:wheel_additives needs visibility to this target
     visibility = jax_visibility("tf_test_util") + if_oss(["//:__pkg__"]),
     deps = [
@@ -62,6 +64,7 @@ py_library(
         "converters.py",
         "model_harness.py",
     ],
+    strict_deps = False,
     deps = [
         "//jax",
         "//jax/experimental/jax2tf/tests/flax_models",
@@ -288,6 +291,7 @@ py_binary(
     data = [
         "//jax/experimental/jax2tf/g3doc:convert_models_results",
     ],
+    strict_deps = False,
     deps = [
         ":models_util",
         "//jax",

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_library")
 
 licenses(["notice"])
 
@@ -24,6 +24,7 @@ package(
 py_library(
     name = "back_compat_testdata",
     srcs = glob(["*.py"]),
+    strict_deps = False,
     deps = [
         "//third_party/py/numpy",
         "//third_party/py/typing_extensions",
