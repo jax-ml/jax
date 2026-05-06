@@ -169,6 +169,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     "3.12",
     "3.13",
     "3.14",
+    "3.13-ft",
     "3.14-ft",
 ]]
 
