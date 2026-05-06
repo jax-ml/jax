@@ -972,7 +972,7 @@ class PallasCallElementIndexingTest(ptu.PallasTest):
     self.assertAllClose(pids, expected_pids)
 
     # Both low and high padding
-    self.skipTest("TODO: low padding not supported yet")
+    # self.skipTest("TODO: low padding not supported yet")
     pids = show_program_ids(
         shape=(11, 128),
         block_shape=(pl.Element(8, (3, 2)), pl.Element(128, (0, 0))),
@@ -980,6 +980,32 @@ class PallasCallElementIndexingTest(ptu.PallasTest):
     )
     expected_pids = np.array([[0] * 128] * 5 + [[1] * 128] * 6, dtype=np.int32)
     self.assertAllClose(pids, expected_pids)
+
+    # Minor-most (lane) padding error
+    if not self.INTERPRET and jtu.is_device_tpu():
+      expected_regex = (
+          r"Padding on the minor-most \(lane\) dimension is not supported"
+      )
+      with self.assertRaisesRegex(Exception, expected_regex):
+        show_program_ids(
+            shape=(16, 125),
+            block_shape=(pl.Element(8, (0, 0)), pl.Element(128, (0, 3))),
+            grid=(2,),
+        )
+
+      with self.assertRaisesRegex(Exception, expected_regex):
+        show_program_ids(
+            shape=(16, 125),
+            block_shape=(pl.Element(8, (0, 0)), pl.Element(128, (3, 0))),
+            grid=(2,),
+        )
+
+      with self.assertRaisesRegex(Exception, expected_regex):
+        show_program_ids(
+            shape=(16, 128),
+            block_shape=(pl.Element(8, (0, 0)), pl.Element(128, (0, 128))),
+            grid=(2,),
+        )
 
   @parameterized.parameters("int32", "float32")
   def test_block_spec_element_padding_is_nan(self, dtype_name):
