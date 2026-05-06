@@ -48,7 +48,7 @@ single_version_override(
 single_version_override(
     module_name = "curl",
     patches = ["//third_party/curl:remove_linker_script.patch"],
-    version = "8.11.0",
+    version = "8.12.0.bcr.1",
 )
 
 ##############################################################
@@ -68,6 +68,7 @@ use_repo(llvm, "llvm-project")
 third_party = use_extension("@xla//third_party/extensions:third_party.bzl", "third_party_ext")
 use_repo(
     third_party,
+    "compute_library",
     "dlpack",
     "eigen_archive",
     "gloo",
@@ -110,6 +111,26 @@ single_version_override(
     version = "1.8.5",
 )
 
+single_version_override(
+    module_name = "protobuf",
+    patches = [
+        "//third_party/protobuf:protobuf_arena.patch",
+        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
+    ],
+    version = "32.1",
+)
+
+single_version_override(
+    module_name = "abseil-cpp",
+    patch_strip = 1,
+    patches = [
+        "//third_party/absl:btree.patch",
+        "//third_party/absl:build_dll.patch",
+        "//third_party/absl:endian.patch",
+        "//third_party/absl:append_and_overwrite.patch",
+    ],
+)
+
 ### Toolchains
 
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
@@ -140,6 +161,9 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
     hub_name = "jax_pypi",
     python_version = python_version,
     requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    requirements_by_platform = {} if python_version in ["3.11", "3.12"] else {
+        "//build:requirements_lock_{}_ft.txt".format(python_version.replace(".", "_")): "linux_x86_64_freethreaded,windows_x86_64_freethreaded,osx_x86_64_freethreaded,osx_aarch64_freethreaded",
+    },
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
@@ -180,7 +204,6 @@ use_repo(cuda_json_ext, "cuda_redist_json")
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(
     cuda_redist_init_ext,
-    "cuda_cccl",
     "cuda_crt",
     "cuda_cublas",
     "cuda_cudart",
@@ -190,12 +213,25 @@ use_repo(
     "cuda_curand",
     "cuda_cusolver",
     "cuda_cusparse",
+    "cuda_driver",
     "cuda_nvcc",
     "cuda_nvdisasm",
     "cuda_nvjitlink",
     "cuda_nvml",
+    "cuda_nvrtc",
     "cuda_nvtx",
     "cuda_nvvm",
+)
+
+nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
+use_repo(nvshmem_redist, "nvidia_nvshmem")
+
+cccl_extension = use_extension("@xla//third_party/cccl:cccl_extension.bzl", "cccl_extension")
+use_repo(cccl_extension, "cuda_cccl")
+
+override_repo(
+    cuda_redist_init_ext,
+    cuda_cccl = "cuda_cccl",
 )
 
 ### Toolchains

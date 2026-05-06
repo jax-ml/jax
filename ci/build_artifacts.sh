@@ -69,7 +69,7 @@ else
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
 fi
 
 if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then

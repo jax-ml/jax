@@ -1,11 +1,12 @@
 # #############################################################################
 # All default build options below. These apply to all build commands.
 # #############################################################################
-# TODO: Enable Bzlmod
-common --noenable_bzlmod
-common:bzlmod --enable_bzlmod --noenable_workspace
+# Enable Bzlmod
+common --enable_bzlmod --noenable_workspace
+common:bzlmod --enable_bzlmod
+common --incompatible_use_plus_in_repo_names
 ## Make sure direct dependencies specified match the resolved version.
-common:bzlmod --check_direct_dependencies=warning
+common --check_direct_dependencies=warning
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
@@ -137,10 +138,10 @@ common --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
 # See https://github.com/bazel-contrib/rules_python/issues/2445
 common --@rules_python//python/config_settings:precompile=force_disabled
 
-# Do not do this. If enabled protobuf's core internal target 
+# Do not do this. If enabled protobuf's core internal target
 # @com_google_protobuf//python:protobuf_python will start depending on a bunch
-# of cc_binary shared libraries artifacts, which will mess with how we link 
-# protobuf dependencies ourselves. By default this value is false, but some 
+# of cc_binary shared libraries artifacts, which will mess with how we link
+# protobuf dependencies ourselves. By default this value is false, but some
 # projects enable it, which we don't want here.
 # common --define=use_fast_cpp_protos=true
 
@@ -514,6 +515,7 @@ common:cross_compile_base --config=clang_local
 common:cross_compile_base --host_cpu=k8
 common:cross_compile_base --host_crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 common:cross_compile_base --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
+common:cross_compile_base --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_x86_toolchain
 
 # Linux Aarch64
 common:cross_compile_linux_aarch64 --config=cross_compile_base
@@ -522,6 +524,7 @@ common:cross_compile_linux_aarch64 --config=cross_compile_base
 common:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_aarch64 --cpu=aarch64
 common:cross_compile_linux_aarch64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+common:cross_compile_linux_aarch64 --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_aarch64_toolchain
 
 common:rbe_cross_compile_base --config=rbe
 common:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
