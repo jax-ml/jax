@@ -838,6 +838,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
