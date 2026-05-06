@@ -44,5 +44,5 @@ jobs:
       halt-for-connection: ${{ inputs.halt-for-connection }}
       build_jaxlib: ${{ 'true' }}
       build_jax: ${{ 'true' }}
-      clone_main_xla: 1
+      clone_main_xla: 0
     # End Presubmit Naming Check github-tpu-presubmits
